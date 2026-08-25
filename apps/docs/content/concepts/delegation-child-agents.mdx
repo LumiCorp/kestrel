@@ -1,0 +1,29 @@
+---
+title: Delegation and child agents
+summary: Let a parent Run assign bounded work to child agents while preserving lineage, limits, authority, and result ownership.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+A parent agent investigating a regression delegates dependency research to one child and test-history analysis to another. Both finish, and the parent uses their results to choose the patch.
+
+The children are not merely two tasks running in parallel.
+
+## The parent splits attention, not responsibility
+
+Each child receives a bounded objective and context, executes through its own Session or Run lineage, and returns a result to the parent. The relationship records who delegated, which child performed the work, and where the result re-enters the parent's loop.
+
+Depth and concurrency ceilings prevent an unbounded tree of children. Budget, tool, sandbox, and external-effect authority must be inherited or independently granted according to policy; a parent cannot delegate power it does not have.
+
+A child needs enough source material and constraints to complete its objective, not the parent's entire conversational history by default. Bounded context reduces cost and accidental authority transfer. Result fan-in should preserve provenance so the parent can distinguish two child findings and resolve disagreement.
+
+## Three kinds of parallel work
+
+A child result is evidence, not automatic acceptance. The parent decides how it changes the next step, whether another tool is needed, and what can be claimed in the terminal result.
+
+A delegated child has agent lineage and returns evidence for parent synthesis. A task graph can describe the durable plan that motivated delegation, but it does not itself spawn a child. A parallel tool batch executes independent calls inside one loop step without creating a new agent relationship.
+
+[The agent loop](/concepts/agent-loop) shows how child evidence changes the parent's next decision. [Task graphs and work state](/concepts/task-graphs-work-state) owns the durable plan around it.

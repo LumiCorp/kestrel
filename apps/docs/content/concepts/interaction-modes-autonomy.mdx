@@ -1,0 +1,43 @@
+---
+title: Interaction modes and autonomy
+summary: Separate how a user and agent collaborate from the permissions and approvals that govern each concrete action.
+section: concepts
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+“The checkout test is failing. Fix it, verify the patch, and deploy it.”
+
+The sentence contains investigation, planning, workspace mutation, verification, and an external effect. One label cannot safely answer every question it raises.
+
+## In Chat, investigate the claim
+
+In Chat, the agent can inspect and explain within the mode's tool classes. It may identify the failing assumption and describe a repair. The mode does not become Build merely because the user used the word “fix.”
+
+The agent may identify the failing assumption and describe a repair. The mode does not become Build merely because the user used the word “fix.” If the next honest step is mutation, Chat should make that boundary visible.
+
+## In Plan, settle the work
+
+Plan permits the agent to create or update planning artifacts and converge on an executable approach. Its `planning_write` class is deliberately not general workspace mutation. A decision-complete plan can specify the patch, verification, and deploy handoff while remaining something other than the patch.
+
+## In Build, change and verify
+
+Build permits the mutation and sandboxed execution classes needed to edit and test. It does not erase other boundaries. A deploy can still require a capability, budget, environment authorization, and action-bound approval.
+
+## Deployment still has its own authority
+
+Modes establish an interaction contract: which categories of work are in bounds and what kind of handoff the user should expect. They are not tones of voice, model aliases, or escalating levels of general trust. Build is not simply Plan plus unlimited permission.
+
+The legacy `strict`, `safe`, and `full_auto` values refine Build behavior. They do not form a global permission ladder. Per-call approval policy and the authority of each tool or effect remain separate. Build is therefore not Plan plus unlimited permission, and none of the modes is merely a tone of voice or model alias.
+
+## When “go ahead” finally arrives
+
+When a Run waits, the response applies to the exact request that produced the wait. “Go ahead” can satisfy a deployment approval only when it is bound to that pending action, actor, parameters, and environment. The same words sent as an unrelated new message are not a reusable grant.
+
+Noninteractive work cannot wait for a conversational answer. It should finish with a concrete blocker that an operator or later run can inspect.
+
+Kestrel also exports an L0–L4 `AutonomyPolicy` helper for classifying proposed work. That advisory assessment is not the mode contract, and escalation reasons do not mechanically rewrite every `allowed` decision. The execution boundary still validates the real action.
+
+The exact handoff continues in [Waiting, resume, and cancellation](/concepts/waiting-resume-cancellation); consequential deployment effects get their own treatment in [Approvals and external effects](/concepts/approvals-external-effects).

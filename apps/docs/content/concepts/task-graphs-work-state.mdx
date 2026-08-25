@@ -1,0 +1,39 @@
+---
+title: Task graphs and work state
+summary: Preserve a versioned plan of work, dependencies, and current state beyond the lifetime of any single Run.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+An agent plans three steps: reproduce the defect, patch the calculation, and verify the checkout flow. The first Run ends after reproduction. The process restarts before the patch begins.
+
+The plan should not exist only in the model's last message.
+
+## After reproduction, the graph says what remains
+
+A task graph records tasks, root ordering, dependencies, status, source, linked Session or Thread identities, current runtime state, and selected working memory. It lets later Runs discover what remains and why a step is blocked.
+
+Task-graph reads and writes return a `task.graph` event containing the current graph and version, allowing products to project work state without scraping progress prose. The separate `task.updated` event belongs to child-agent delegation lifecycle; it is not a graph-mutation notification.
+
+## After restart, a new Run reads the same plan
+
+The graph—not the model's recollection—tells the new attempt that reproduction is complete and that the patch still blocks verification. A Run can fail while its task remains planned for recovery; a task can be completed across several Runs.
+
+## When two workers edit it, versioning protects intent
+
+Graph writes carry `expectedVersion`. If another worker has already advanced the graph, a stale writer must reconcile against the new plan. This prevents an old completion update from erasing a newly added dependency or re-opening accepted work.
+
+The graph can change because the user edits the plan, the agent proposes work, execution updates a task, or review changes acceptance state. Recording source and version keeps those actors legible.
+
+## Live progress stays live
+
+Live progress can describe what the current attempt is doing without changing the durable task graph on every token. A progress stream is evidence about motion, not an alternate writer for the plan.
+
+## The neighboring concepts keep their own authority
+
+A child agent may perform one task, but parent/child lineage and result fan-in belong to delegation. Mission Control adds project attempts, evidence, review, and acceptance; the graph cannot accept its own work.
+
+[Delegation and child agents](/concepts/delegation-child-agents) follows the child relationship. [Project actions and review](/concepts/project-actions-review) follows work into acceptance.

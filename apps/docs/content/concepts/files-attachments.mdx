@@ -1,0 +1,31 @@
+---
+title: Files and attachments
+summary: Keep file identity durable while URLs, local paths, extracted text, and model-ready representations change over time.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+A user attaches a design PDF. The application stores it, produces a signed download URL, and starts a Run. By the time an operator reopens the Session, the URL has expired.
+
+The attachment has not disappeared. The temporary way of reaching one representation has.
+
+## The file changes clothes
+
+`fileId` is the durable handle carried by conversation and runtime contracts. A browser upload object, local path, signed URL, provider upload ID, extracted-text artifact, and thumbnail may all represent the same logical file at different boundaries. None should silently replace its identity.
+
+Scope matters with identity. An attachment available to one tenant, project, Thread, or Session is not globally readable because somebody learned its ID. Authorization must be checked whenever the file or a derived representation is resolved.
+
+The next transformation may be extraction. Images can travel through a vision-capable route; documents may need bounded extraction; archives or source trees may become controlled workspace material. The extracted text is a derived, possibly truncated representation—not proof that the entire file was understood. Keep its provenance back to the `fileId`, and contain parsers in their isolated worker boundary.
+
+## The file outlives each outfit
+
+Applications should validate count, size, media type, and aggregate limits before a Run begins. Supported upload types do not imply that every selected model can consume the original bytes. Images may be passed through a vision-capable route; documents may need bounded extraction; archives or source trees may become controlled workspace material.
+
+Upload, scan, representation generation, selection, use, retention, and deletion can happen at different times. Conversation records should retain stable attachment metadata even when a short-lived delivery URL must be refreshed. A model-provider copy may have its own lifecycle and must not become the application's source of truth.
+
+When a Run resumes, resolve the authorized file from its durable identity and create whatever current representation the target needs. Do not replay an expired URL from transcript text.
+
+The exact count, size, media, and aggregate limits belong in the [Files package reference](/reference/files). The containment story continues in [Sandbox and workspace execution](/concepts/sandbox-workspace-execution).

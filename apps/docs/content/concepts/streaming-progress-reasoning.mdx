@@ -1,0 +1,35 @@
+---
+title: Streaming, progress, and reasoning
+summary: Present live Kestrel work without turning transient transport deltas or provider reasoning into committed agent output.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The last event before a connection closes is a reasoning delta: “I should verify the migration.” The UI displays it as the final answer.
+
+The Run may still be active. The sentence was never committed as assistant output.
+
+## One stream carries different voices
+
+Runner streams can contain lifecycle status, assistant-text deltas, provider-returned reasoning, agent-authored progress, tool activity, logs, interactions, and terminal events. They share a transport so the caller can follow one Run; they do not share meaning.
+
+Provider reasoning is model-produced working material. Agent progress is a deliberate runtime message about committed work or next actions. Tool events describe execution boundaries. Assistant text is user-facing output. Presentation should preserve those labels instead of concatenating everything into one transcript bubble.
+
+## Live does not mean durable
+
+Some deltas are provisional. The application can render them optimistically while retaining their event identity and state. Persisted conversation activity and terminal results remain the durable source for reconnection and final status.
+
+If a stream ends unexpectedly, do not call the last visible delta complete. Await `stream.result` when the transport contract can still deliver it, or reattach/query the Run through its durable identity.
+
+## The settling event closes the attempt
+
+`run.completed`, `run.failed`, and `run.cancelled` settle the current attempt and resolve the SDK stream's `result`. The envelope and the output status answer different questions: a wait is delivered as `run.completed` with `output.status: "WAITING"` and an exact `waitFor` request. The Session may resume later, but the old stream is finished.
+
+For completed work, the terminal output keeps `assistantText` and `finalizedPayload` explicit. A waiting output instead carries the interaction evidence required for the next handoff.
+
+This division lets a UI be lively without becoming the runtime's state machine. It may animate progress, collapse reasoning, and group tool calls while still branching on typed events.
+
+Use [Runner events](/build/runner-events) for integration guidance and [Reasoning and agent progress](/reference/reasoning-and-agent-progress) for the exact boundary.

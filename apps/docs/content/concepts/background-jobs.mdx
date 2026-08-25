@@ -1,0 +1,35 @@
+---
+title: Background jobs
+summary: Run durable, noninteractive agent work with explicit job identity, event observation, blockers, and terminal results.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+At 2:00 a.m., a scheduled job prepares a release report. It discovers that one repository has no configured credentials and asks, “Which account should I use?”
+
+Nobody is present to answer.
+
+## 2:00 a.m.: submit
+
+`runJob()` and `streamJob()` submit durable work through the advanced runner client. The job can still carry a Turn input, Session identity, actor context, profile, and the same model/tool loop. What it lacks is an attached human interaction channel.
+
+Scheduling belongs above execution. Kestrel executes the job contract; an application or Kestrel One schedule owns when, why, and for which tenant it is submitted. Because each public command submission creates fresh execution identity, scheduler deduplication must happen at the application boundary before calling `runJob()` or `streamJob()`.
+
+## 2:03 a.m.: observe—or leave
+
+`streamJob()` provides live events and a `result` promise. `runJob()` returns the terminal outcome without requiring the caller to consume a stream. Filtered subscriptions can observe job-related activity after the initiating process exits.
+
+The terminal result uses the same explicit output distinctions as an interactive Run: status, `assistantText`, and `finalizedPayload` are not inferred from one another.
+
+## 2:07 a.m.: block honestly
+
+If work requires user information or approval, the job should end with a concrete noninteractive blocker or enter an operator-owned state defined by the application. It must not wait forever for a chat response that cannot arrive.
+
+## Morning: read the result as a job result
+
+A job is not a Turn synonym. The Turn describes conversational advancement inside the input; the job describes how durable noninteractive execution is submitted and observed.
+
+[Subscriptions, cursors, and reattachment](/concepts/subscriptions-cursors-reattachment) covers background observation. [Concurrency and idempotency](/concepts/concurrency-idempotency) shows where duplicate schedule delivery must be stopped.

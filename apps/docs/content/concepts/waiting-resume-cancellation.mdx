@@ -1,0 +1,56 @@
+---
+title: Waiting, resume, and cancellation
+summary: Distinguish missing information, action approval, and an in-flight effect, then resume or cancel the exact blocked work.
+section: concepts
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+Three Runs stop moving:
+
+1. One needs the name of an API key.
+2. One needs permission to deploy version 0.8.8.
+3. One dispatched the deployment but has not learned whether the provider committed it.
+
+They are not the same wait.
+
+## Run one asks a question
+
+`wait_user` requests information needed to continue. `wait_approval` asks an authorized actor to grant one exact action. `wait_effect` preserves an external effect whose outcome is still in flight or uncertain. Each wait should tell the application what kind of response is valid and which request owns it.
+
+`wait_user` requests information needed to continue. The prompt and exact request identity make it durable runtime state, not assistant prose that happens to end with a question mark.
+
+## Run two asks for authority
+
+`wait_approval` asks an authorized actor to grant one exact action. The UI should show the actor, action, parameters, and environment because a generic “yes” has no safe meaning outside that request.
+
+## Run three is waiting on reality
+
+`wait_effect` preserves an external effect whose outcome is still in flight or uncertain. It is not asking permission retroactively. The valid response is effect evidence or a registered recovery action, not a blind replay.
+
+## Resume names the one it answers
+
+```ts
+await agent.resume(
+  {
+    sessionId,
+    requestId: waitingRequestId,
+    message: "Approved for the production Environment.",
+  },
+  context,
+);
+```
+
+The request ID prevents an old answer from satisfying a newer prompt. Resume also re-establishes current actor and tenant context; a response copied from another Session or authority is not portable.
+
+If the pending request has already been resolved or cancelled, the stale response should fail explicitly. Creating a new user message is not a substitute for binding the answer.
+
+## Cancellation stops what can still stop
+
+Cancellation targets an exact Run. It can interrupt model work, contained execution, and future loop steps. It cannot guarantee rollback of a tool or external effect that already committed. The terminal result should report cancellation while preserving effect evidence and any remaining uncertainty.
+
+For noninteractive jobs, an unmet interaction becomes a concrete blocker because no conversational caller is available.
+
+[Approvals and external effects](/concepts/approvals-external-effects) follows the unknown outcome. [Subscriptions, cursors, and reattachment](/concepts/subscriptions-cursors-reattachment) follows the observer who disconnected.

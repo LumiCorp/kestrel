@@ -17,11 +17,52 @@ const RUNTIME_VERSION = "0.8.8";
 const DESKTOP_VERSION = "0.8.6";
 const KESTREL_ONE_VERSION = "0.8.5";
 
-test("navigation exposes exactly six ordered public journeys", async () => {
+const CONCEPT_SLUGS = [
+  "concepts",
+  "concepts/architecture",
+  "concepts/agent-loop",
+  "concepts/creating-an-agent",
+  "concepts/profiles-models-capabilities",
+  "concepts/request-context-durability",
+  "concepts/interaction-modes-autonomy",
+  "concepts/sessions-turns-runs",
+  "concepts/messages-instructions-history",
+  "concepts/files-attachments",
+  "concepts/context-management-compaction",
+  "concepts/conversation-state-projection",
+  "concepts/composer-queues-interactions",
+  "concepts/session-state-versioned-memory",
+  "concepts/governed-memory",
+  "concepts/tools-tool-results",
+  "concepts/apps-mcp-services",
+  "concepts/workspace-skills",
+  "concepts/sandbox-workspace-execution",
+  "concepts/structured-output-terminal-results",
+  "concepts/limits-budgets-guardrails",
+  "concepts/approvals-external-effects",
+  "concepts/streaming-progress-reasoning",
+  "concepts/waiting-resume-cancellation",
+  "concepts/subscriptions-cursors-reattachment",
+  "concepts/failures-retries-recovery",
+  "concepts/background-jobs",
+  "concepts/concurrency-idempotency",
+  "concepts/task-graphs-work-state",
+  "concepts/delegation-child-agents",
+  "concepts/workspace-checkpoints-promotions",
+  "concepts/operator-control",
+  "concepts/project-actions-review",
+  "concepts/execution-protocol-compatibility",
+  "concepts/nextjs-routes",
+  "concepts/ai-sdk-presentation",
+  "concepts/observability-trace-context",
+] as const;
+
+test("navigation exposes exactly seven ordered public journeys", async () => {
   const navigation = await getNavigation();
   assert.deepEqual(navigation.map((group) => group.section), [...DOCS_NAV_SECTIONS]);
   assert.deepEqual(navigation.map((group) => group.title), [
     "Start",
+    "Concepts",
     "Desktop",
     "Kestrel One",
     "Build",
@@ -66,6 +107,7 @@ test("every navigation, related, and Markdown link resolves to a public docs pag
 
 test("the complete 0.8 documentation surface is represented", async () => {
   const required = [
+    ...CONCEPT_SLUGS,
     "start/quickstart",
     "desktop/providers",
     "desktop/apps",
@@ -88,7 +130,6 @@ test("the complete 0.8 documentation surface is represented", async () => {
     "reference/compatibility",
     "reference/ai-sdk",
     "reference/conversation",
-    "start/runtime-model",
     "desktop/updates",
     "kestrel-one/source-and-hosting",
     "build/upgrading-to-0-8",
@@ -104,6 +145,21 @@ test("the complete 0.8 documentation surface is represented", async () => {
   ];
   for (const slug of required) {
     assert.ok(await getRenderedPageBySlug(slug.split("/")), `missing /${slug}`);
+  }
+});
+
+test("Concepts is one landing plus 36 distinct public articles", async () => {
+  const pages = await getPublicPages();
+  const concepts = pages.filter(({ meta }) => meta.section === "concepts");
+  assert.equal(concepts.length, 37);
+  assert.deepEqual(concepts.map(({ meta }) => meta.url).sort(), CONCEPT_SLUGS.map((slug) => `/${slug}`).sort());
+
+  const landing = concepts.find(({ meta }) => meta.url === "/concepts");
+  assert.ok(landing);
+  assert.equal(landing.meta.showSectionListing, false);
+  for (const slug of CONCEPT_SLUGS.filter((slug) => slug !== "concepts")) {
+    const link = `](/${slug})`;
+    assert.equal(landing.rawContent.split(link).length - 1, 1, `/${slug} should appear once on the Concepts landing`);
   }
 });
 
@@ -194,7 +250,7 @@ test("current 0.8 pages exclude retired project APIs and unversioned Kestrel One
     if (!allowedHistory.has(page.meta.url)) {
       assert.doesNotMatch(
         page.rawContent,
-        /task\.graph|project\.snapshot|updateProjectSnapshot/u,
+        /project\.snapshot|updateProjectSnapshot/u,
         `${page.meta.url} exposes a retired project API`,
       );
     }

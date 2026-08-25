@@ -1,0 +1,44 @@
+---
+title: The agent loop
+summary: See how Kestrel turns a model's next-step proposal into validated work, durable evidence, and an explicit terminal or waiting result.
+section: concepts
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The checkout test is failing. The user asks Kestrel to find the cause, fix it, and verify the patch.
+
+The first model response is not an answer. It proposes reading the test and implementation. Kestrel validates the proposed tool call, executes it through the tool owner, and returns the result to the conversation. Only then can the model decide what to inspect next.
+
+This repeating decision is the agent loop.
+
+## A proposal is not an action
+
+The model can propose text, a tool call, or a next interaction. It cannot make that proposal true merely by emitting it. The runtime parses the response, checks the active mode and tool contract, resolves authorization, and dispatches through the execution engine. Invalid arguments return a tool failure; a consequential action may become an approval wait; a permitted read may execute immediately.
+
+The distinction protects both correctness and the story told to the model. A tool result says what the tool boundary observed. It is new evidence for the next decision, not proof that the overall job is complete.
+
+## The result changes the next step
+
+Suppose the first test output shows a null value entering a price calculation. The model proposes reading the calculation. That result reveals an unchecked optional field. The model proposes an edit. Kestrel records the workspace change. The model proposes rerunning the focused test. Only the verification result supports a final claim that the defect is fixed.
+
+Each pass therefore has a different context even when the user has said nothing new. Tool results, durable progress, policy decisions, and remaining limits all shape the next model call.
+
+## The loop can yield without finishing
+
+Some next steps cannot proceed autonomously:
+
+- `wait_user` asks for missing information, such as the intended fallback price.
+- `wait_approval` requests permission for one exact consequential action.
+- `wait_effect` records that an external effect is in flight or has an uncertain outcome.
+- finalization commits the terminal result when no further step is required.
+
+A wait is not a failure. It is a durable handoff with an exact request identity. Resume must answer that request rather than adding vaguely related prose to the session.
+
+## Stopping is part of the contract
+
+The loop also stops on cancellation, an invocation or loop limit, a budget or policy guardrail, a structured failure, or no-progress detection. Repeating the same ineffective step is not useful autonomy. Kestrel preserves the evidence and asks for a different plan or intervention instead of silently spinning.
+
+The terminal result remains authoritative after the stream ends. It can be completed, failed, or cancelled, and its assistant text and structured finalized payload remain separate fields. Learn how identities surround the loop in [Sessions, Turns, and Runs](/concepts/sessions-turns-runs), then use [terminal results](/reference/terminal-results) for the exact contract.
