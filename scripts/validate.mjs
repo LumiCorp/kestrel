@@ -17,6 +17,10 @@ import {
   RUNTIME_HERMETIC_WORKERS,
   validateRuntimeHermeticLaneManifest,
 } from "./validation/runtime-hermetic-lanes.mjs";
+import {
+  processModuleIds,
+  validateProcessModuleManifest,
+} from "./validation/process-modules.mjs";
 import { runWeightedTaskQueue } from "./validation/weighted-task-queue.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -37,6 +41,12 @@ const RUNTIME_HERMETIC_LANE_MANIFEST = JSON.parse(
     "utf8",
   ),
 );
+const PROCESS_MODULE_MANIFEST = JSON.parse(
+  readFileSync(
+    path.join(ROOT, "scripts/validation/process-modules.json"),
+    "utf8",
+  ),
+);
 const startedAt = Date.now();
 const active = new Set();
 const measurements = [];
@@ -49,6 +59,10 @@ let postgres;
 const request = parseRequest(process.argv.slice(2));
 if (request.mode === "plan") {
   printPlan();
+  process.exit(0);
+}
+if (request.mode === "processModules") {
+  printProcessModules();
   process.exit(0);
 }
 
@@ -69,7 +83,12 @@ async function runValidation(validationRequest) {
     if (validationRequest.mode === "full") await runFullValidation();
     else if (validationRequest.mode === "lane")
       await runHermeticLane(validationRequest.lane);
-    else await runLeaf(validationRequest.boundary, validationRequest.workspace);
+    else
+      await runLeaf(
+        validationRequest.boundary,
+        validationRequest.workspace,
+        validationRequest.processModule,
+      );
     const elapsedMs = Date.now() - startedAt;
     writeReport("passed", undefined, validationRequest);
     process.stdout.write(`\n[validate] passed in ${formatMs(elapsedMs)}\n`);
@@ -165,32 +184,54 @@ function webProductionBuildTask() {
   );
 }
 
-function processTasks() {
-  return testTasksForBoundary("process");
+function processTasks(processModule = "all") {
+  const tasks = testTasksForBoundary("process");
+  if (processModule === "all") return tasks;
+  return tasks.filter((item) => item.processModule === processModule);
 }
 
-function processSetupTasks() {
-  buildInvocations += 2;
-  return [
+function processSetupTasks(processModule = "all") {
+  const includesWorkspaceRuntime =
+    processModule === "all" || processModule === "workspace-runtime";
+  const includesPackedConsumer =
+    processModule === "all" || processModule === "e2e";
+  const includesTui = processModule === "all" || processModule === "ops";
+  buildInvocations += 1 + (includesWorkspaceRuntime ? 1 : 0);
+
+  const setup = [
     task("shared and root artifacts", PNPM, ["run", "build"]),
-    task("Workspace Runtime artifact", PNPM, [
-      "--filter",
-      "@kestrel/workspace-runtime",
-      "run",
-      "build:self",
-    ]),
-    task("packed consumer fixture", process.execPath, [
-      "--import",
-      "tsx",
-      "scripts/validation/prepare-packed-consumer.ts",
-    ]),
-    nodeTests("TUI PTY journeys", ROOT, ["tests/ops/tui/tui.ops.ts"], 1),
   ];
+  if (includesWorkspaceRuntime) {
+    setup.push(
+      task("Workspace Runtime artifact", PNPM, [
+        "--filter",
+        "@kestrel/workspace-runtime",
+        "run",
+        "build:self",
+      ]),
+    );
+  }
+  if (includesPackedConsumer) {
+    setup.push(
+      task("packed consumer fixture", process.execPath, [
+        "--import",
+        "tsx",
+        "scripts/validation/prepare-packed-consumer.ts",
+      ]),
+    );
+  }
+  if (includesTui) {
+    setup.push(
+      nodeTests("TUI PTY journeys", ROOT, ["tests/ops/tui/tui.ops.ts"], 1),
+    );
+  }
+  return setup;
 }
 
 function testTasksForBoundary(boundary) {
   const groups = new Map();
   const rootHermeticFiles = [];
+  const discoveredProcessFiles = [];
   for (const file of trackedTests([
     "tests/",
     "agents/",
@@ -207,6 +248,7 @@ function testTasksForBoundary(boundary) {
     const source = readFileSync(path.join(ROOT, file), "utf8");
     if (testBoundary(file, source) !== boundary) continue;
     if (boundary === "process" && file === "tests/ops/tui/tui.ops.ts") continue;
+    if (boundary === "process") discoveredProcessFiles.push(file);
     const execution = executionRoot(file);
     if (boundary === "hermetic" && execution.label === "runtime") {
       rootHermeticFiles.push(execution.relativeFile);
@@ -215,6 +257,24 @@ function testTasksForBoundary(boundary) {
     const group = groups.get(execution.cwd) ?? { ...execution, files: [] };
     group.files.push(execution.relativeFile);
     groups.set(execution.cwd, group);
+  }
+
+  const processModules =
+    boundary === "process"
+      ? validateProcessModuleManifest(
+          PROCESS_MODULE_MANIFEST,
+          discoveredProcessFiles,
+        )
+      : undefined;
+  const processModuleByExecutionFile = new Map();
+  if (processModules !== undefined) {
+    for (const [repoFile, processModule] of processModules) {
+      const execution = executionRoot(repoFile);
+      processModuleByExecutionFile.set(
+        `${execution.cwd}:${execution.relativeFile}`,
+        processModule,
+      );
+    }
   }
 
   if (boundary === "hermetic") {
@@ -276,6 +336,13 @@ function testTasksForBoundary(boundary) {
           [file],
           singleThreaded.has(file) ? 1 : 4,
           group.prefix,
+          processModules === undefined
+            ? {}
+            : {
+                processModule: processModuleByExecutionFile.get(
+                  `${group.cwd}:${file}`,
+                ),
+              },
         ),
       );
     });
@@ -717,10 +784,19 @@ function printPlan() {
       ),
       "remaining hermetic groups: process-per-file isolation",
       "focused manual boundaries: process, postgres, chromium, audit",
+      `process modules: ${processModuleIds(PROCESS_MODULE_MANIFEST).join(", ")}`,
       "durations: recorded, never blocking",
       "operational watchdog: GitHub Actions job timeout",
       "",
     ].join("\n"),
+  );
+}
+
+function printProcessModules() {
+  process.stdout.write(
+    PROCESS_MODULE_MANIFEST.modules
+      .map((module) => `${module.id}: ${module.description}`)
+      .join("\n") + "\n",
   );
 }
 
@@ -744,7 +820,7 @@ async function runHermeticLane(lane) {
   });
 }
 
-async function runLeaf(boundary, workspace) {
+async function runLeaf(boundary, workspace, processModule = "all") {
   if (
     !["hermetic", "process", "postgres", "chromium", "audit"].includes(
       boundary,
@@ -753,6 +829,19 @@ async function runLeaf(boundary, workspace) {
   ) {
     throw new Error(
       "usage: node scripts/validate.mjs --leaf <hermetic|process|postgres|chromium|audit> <workspace|all|.>",
+    );
+  }
+  if (boundary !== "process" && processModule !== "all") {
+    throw new Error("--module is only supported for process validation");
+  }
+  if (
+    processModule !== "all" &&
+    !processModuleIds(PROCESS_MODULE_MANIFEST).includes(processModule)
+  ) {
+    throw new Error(
+      `unknown process module '${processModule}'; expected one of all, ${processModuleIds(
+        PROCESS_MODULE_MANIFEST,
+      ).join(", ")}`,
     );
   }
   if (
@@ -785,11 +874,17 @@ async function runLeaf(boundary, workspace) {
     await phase("chromium", await chromiumTasks(postgres));
     return;
   }
-  const allTasks = boundary === "hermetic" ? hermeticTasks() : processTasks();
+  const allTasks =
+    boundary === "hermetic" ? hermeticTasks() : processTasks(processModule);
+  if (allTasks.length === 0) {
+    throw new Error(
+      `${processModule} has no ${boundary} tests; refusing to pass an empty module`,
+    );
+  }
   if (workspace === "all") {
     const options =
       boundary === "process"
-        ? { setup: processSetupTasks() }
+        ? { setup: processSetupTasks(processModule) }
         : boundary === "hermetic"
           ? { resourceBudget: HERMETIC_RESOURCE_BUDGET }
           : undefined;
@@ -802,7 +897,7 @@ async function runLeaf(boundary, workspace) {
     throw new Error(`${workspace} has no ${boundary} tests`);
   const setup =
     boundary === "process" && workspace === "."
-      ? processSetupTasks()
+      ? processSetupTasks(processModule)
       : undefined;
   await phase(boundary, tasks, {
     setup,
@@ -814,13 +909,36 @@ async function runLeaf(boundary, workspace) {
 function parseRequest(args) {
   if (args.length === 0) return { mode: "full" };
   if (args.length === 1 && args[0] === "--plan") return { mode: "plan" };
+  if (args.length === 1 && args[0] === "--process-modules") {
+    return { mode: "processModules" };
+  }
   if (args.length === 2 && args[0] === "--lane") {
     return { mode: "lane", lane: args[1] };
   }
-  if (args.length === 3 && args[0] === "--leaf") {
-    return { mode: "leaf", boundary: args[1], workspace: args[2] };
+  if (args.length >= 3 && args[0] === "--leaf") {
+    const [boundary, workspace, ...options] = args.slice(1);
+    if (options[0] === "--") options.shift();
+    let processModule = "all";
+    if (options.length > 0) {
+      if (
+        options.length !== 2 ||
+        options[0] !== "--module" ||
+        options[1].length === 0
+      ) {
+        throw new Error(
+          "usage: node scripts/validate.mjs --leaf process all --module <module>",
+        );
+      }
+      processModule = options[1];
+    }
+    return {
+      mode: "leaf",
+      boundary,
+      workspace,
+      processModule,
+    };
   }
   throw new Error(
-    "usage: node scripts/validate.mjs [--plan | --lane <runtime-lane> | --leaf <boundary> <workspace|all|.>]",
+    "usage: node scripts/validate.mjs [--plan | --process-modules | --lane <runtime-lane> | --leaf <boundary> <workspace|all|.> [--module <module>]]",
   );
 }
