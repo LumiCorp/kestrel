@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { SandboxCapabilityAdapterFailure } from "./SandboxCapabilityAdapterRegistry.js";
 
 import type {
   CodeExecutionArtifact,
@@ -26,6 +27,11 @@ const SANDBOX_UID = 65_532;
 const SANDBOX_GID = 65_532;
 const DOCKER_LIFECYCLE_TIMEOUT_MS = 10_000;
 const DOCKER_LIFECYCLE_OUTPUT_BYTES = 16_000;
+const DOCKER_OWNERSHIP_INSPECTION_LIMIT = 5;
+const DOCKER_OWNERSHIP_RETRY_DELAY_MS = 100;
+export const DOCKER_CAPABILITY_ENDPOINT = "http://127.0.0.1:43127/v1/capability";
+const DOCKER_CAPABILITY_PORT = 43_127;
+const DOCKER_INVOCATION_LABEL = "com.kestrel.code.invocation";
 
 const LANGUAGE_IMAGE: Record<CodeExecutionLanguage, string> = {
   javascript: "node:20-alpine",
@@ -52,9 +58,13 @@ export class DockerSandboxCancellationError extends Error {}
 
 export interface DockerSandboxExecutorOptions {
   containerNameFactory?: (() => string) | undefined;
+  capabilityConfinementProbe?: ((signal?: AbortSignal | undefined) => Promise<boolean>) | undefined;
+  createCommandRunner?: ((args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>) | undefined;
+  ownershipInspectRunner?: ((containerName: string) => Promise<DockerProcessResult>) | undefined;
+  beforeAmbiguousCreateCleanup?: ((containerName: string, containerId: string) => Promise<void>) | undefined;
 }
 
-interface DockerProcessResult {
+export interface DockerProcessResult {
   exitCode: number | null;
   timedOut: boolean;
   cancelled: boolean;
@@ -64,19 +74,37 @@ interface DockerProcessResult {
 
 export class DockerSandboxExecutor implements SandboxExecutor {
   private readonly containerNameFactory: () => string;
+  private readonly capabilityConfinementProbe: (signal?: AbortSignal | undefined) => Promise<boolean>;
+  private readonly createCommandRunner: (args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>;
+  private readonly ownershipInspectRunner: (containerName: string) => Promise<DockerProcessResult>;
+  private readonly beforeAmbiguousCreateCleanup: (containerName: string, containerId: string) => Promise<void>;
 
   constructor(options: DockerSandboxExecutorOptions = {}) {
     this.containerNameFactory =
       options.containerNameFactory ?? (() => `kestrel-code-${randomUUID()}`);
+    this.capabilityConfinementProbe =
+      options.capabilityConfinementProbe ?? probeDockerCapabilityConfinement;
+    this.createCommandRunner = options.createCommandRunner ?? ((args, signal) =>
+      runDockerProcess(
+        args,
+        DOCKER_LIFECYCLE_TIMEOUT_MS,
+        DOCKER_LIFECYCLE_OUTPUT_BYTES,
+        signal,
+      ));
+    this.ownershipInspectRunner = options.ownershipInspectRunner ?? inspectContainerOwnership;
+    this.beforeAmbiguousCreateCleanup = options.beforeAmbiguousCreateCleanup ?? (async () => {});
   }
 
   async execute(input: SandboxExecutionInput): Promise<SandboxExecutionOutput> {
     throwIfCancelled(input.signal);
+    await assertSupportedNetworkMode(input, this.capabilityConfinementProbe);
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-code-"));
     const stagingDir = path.join(rootDir, "staging");
     const snapshotDir = path.join(rootDir, "snapshot");
     const mainFile = LANGUAGE_MAIN_FILE[input.request.language];
     const containerName = this.containerNameFactory();
+    const brokerContainerName = `${containerName}-broker`;
+    const invocationMarker = randomUUID();
     const declaredFiles = normalizeFiles(input.request.files);
 
     await mkdir(stagingDir, { recursive: true, mode: 0o777 });
@@ -90,12 +118,38 @@ export class DockerSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     let run: DockerProcessResult | undefined;
     let snapshotError: string | undefined;
+    let ownedWorkloadContainerId: string | undefined;
+    let ownedBrokerContainerId: string | undefined;
+    const adapterPumpController = new AbortController();
+    let adapterPump: Promise<void> | undefined;
+    let teardownReason: "completed" | "failed" | "cancelled" | "timeout" = "failed";
+    let completedOutput: SandboxExecutionOutput | undefined;
 
     try {
-      await runRequiredDockerCommand(
-        buildDockerCreateCommand(input, containerName),
+      if (input.capability !== undefined) {
+        await startCapabilityBroker(input, brokerContainerName, invocationMarker, this.createCommandRunner, this.ownershipInspectRunner, this.beforeAmbiguousCreateCleanup, (containerId) => {
+          ownedBrokerContainerId = containerId;
+        });
+        if (input.capability.adapter !== undefined) {
+          adapterPump = runCapabilityAdapterPump(
+            input.capability,
+            brokerContainerName,
+            adapterPumpController.signal,
+          );
+        }
+      }
+      ownedWorkloadContainerId = await createOwnedContainer(
+        withInvocationMarker(
+          buildDockerCreateCommand(input, containerName, brokerContainerName),
+          invocationMarker,
+        ),
+        containerName,
+        invocationMarker,
         "create sandbox container",
         input.signal,
+        this.createCommandRunner,
+        this.ownershipInspectRunner,
+        this.beforeAmbiguousCreateCleanup,
       );
       await runRequiredDockerCommand(
         ["start", containerName],
@@ -124,6 +178,8 @@ export class DockerSandboxExecutor implements SandboxExecutor {
           "Docker sandbox execution was cancelled",
         );
       }
+      adapterPumpController.abort();
+      await adapterPump;
 
       throwIfCancelled(input.signal);
       try {
@@ -153,7 +209,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
         }
       }
 
-      const artifacts = snapshotError === undefined
+      let artifacts = snapshotError === undefined
         ? await collectArtifacts({
             workspaceDir: snapshotDir,
             baselinePaths: new Set([
@@ -165,7 +221,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
           })
         : [];
       const durationMs = Date.now() - startedAt;
-      const stderr = snapshotError === undefined
+      let stderr = snapshotError === undefined
         ? run.stderr
         : appendBounded(
             run.stderr,
@@ -173,28 +229,71 @@ export class DockerSandboxExecutor implements SandboxExecutor {
             input.policy.maxOutputBytes,
           );
 
+      let stdout = run.stdout;
+      if (input.capability !== undefined) {
+        stdout = redactSensitiveValue(stdout, input.capability.lease);
+        stderr = redactSensitiveValue(stderr, input.capability.lease);
+        artifacts = artifacts.map((artifact) => ({
+          ...artifact,
+          ...(artifact.preview === undefined ? {} : {
+            preview: {
+              ...artifact.preview,
+              text: redactSensitiveValue(artifact.preview.text, input.capability!.lease),
+            },
+          }),
+        }));
+      }
+
       if (run.timedOut) {
-        return {
+        teardownReason = "timeout";
+        completedOutput = {
           status: "timeout",
           exitCode: null,
-          stdout: run.stdout,
+          stdout,
           stderr,
           durationMs,
           artifacts,
         };
+        return completedOutput;
       }
 
-      return {
+      teardownReason = run.exitCode === 0 ? "completed" : "failed";
+      completedOutput = {
         status: run.exitCode === 0 ? "ok" : "error",
         exitCode: run.exitCode,
-        stdout: run.stdout,
+        stdout,
         stderr,
         durationMs,
         artifacts,
       };
+      return completedOutput;
     } finally {
-      await removeContainer(containerName);
+      adapterPumpController.abort();
+      await adapterPump?.catch(() => {});
+      const cancelledDuringTeardown = input.signal?.aborted === true;
+      if (cancelledDuringTeardown) teardownReason = "cancelled";
+      let lifecycleError: unknown;
+      let completedResultCommitted = false;
+      try {
+        const lifecycleResult = await input.capability?.lifecycle?.beforeContainerTeardown(
+          teardownReason,
+          completedOutput,
+        );
+        completedResultCommitted = lifecycleResult?.completedResultCommitted === true;
+      } catch (error) {
+        lifecycleError = error;
+      }
+      if (ownedWorkloadContainerId !== undefined) {
+        await removeContainer(ownedWorkloadContainerId);
+      }
+      if (ownedBrokerContainerId !== undefined) {
+        await removeContainer(ownedBrokerContainerId);
+      }
       await rm(rootDir, { recursive: true, force: true });
+      if (lifecycleError !== undefined) throw lifecycleError;
+      if (cancelledDuringTeardown && !completedResultCommitted) {
+        throw new DockerSandboxCancellationError("Docker sandbox execution was cancelled");
+      }
     }
   }
 }
@@ -269,6 +368,7 @@ function sanitizeRelativePath(value: string): string | undefined {
 export function buildDockerCreateCommand(
   input: SandboxExecutionInput,
   containerName: string,
+  brokerContainerName = `${containerName}-broker`,
 ): string[] {
   const image = LANGUAGE_IMAGE[input.request.language];
   return [
@@ -290,7 +390,7 @@ export function buildDockerCreateCommand(
     "--security-opt",
     "no-new-privileges",
     "--network",
-    input.policy.network === "off" ? "none" : "bridge",
+    input.capability === undefined ? "none" : `container:${brokerContainerName}`,
     "--tmpfs",
     buildTmpfsSpec(
       "/workspace",
@@ -312,6 +412,445 @@ export function buildDockerCreateCommand(
     "-lc",
     "while :; do sleep 3600; done",
   ];
+}
+
+async function assertSupportedNetworkMode(
+  input: SandboxExecutionInput,
+  confinementProbe: (signal?: AbortSignal | undefined) => Promise<boolean>,
+): Promise<void> {
+  if (input.capability === undefined) {
+    if (input.policy.network === "on") {
+      throw new DockerUnavailableError(
+        "Unrestricted Docker networking is disabled; a confined capability grant is required",
+      );
+    }
+    return;
+  }
+  if (input.capability.transport !== "docker-shared-loopback-v1") {
+    throw new DockerUnavailableError("Docker capability transport is unsupported");
+  }
+  if (await confinementProbe(input.signal) === false) {
+    throw new DockerUnavailableError(
+      "Active Docker backend cannot enforce the shared-loopback capability transport",
+    );
+  }
+}
+
+async function probeDockerCapabilityConfinement(
+  signal?: AbortSignal | undefined,
+): Promise<boolean> {
+  const info = await runDockerProcess(
+    ["info", "--format", "{{.OSType}}"],
+    DOCKER_LIFECYCLE_TIMEOUT_MS,
+    DOCKER_LIFECYCLE_OUTPUT_BYTES,
+    signal,
+  );
+  if (info.cancelled) {
+    throw new DockerSandboxCancellationError("Docker sandbox execution was cancelled");
+  }
+  return info.timedOut === false && info.exitCode === 0 && info.stdout.trim() === "linux";
+}
+
+const CAPABILITY_BROKER_SCRIPT = String.raw`
+const fs = require("node:fs");
+const http = require("node:http");
+const configPath = "/run/kestrel/config";
+const requestPath = "/run/kestrel/request";
+const requestTempPath = "/run/kestrel/request.tmp";
+const responsePath = "/run/kestrel/response";
+let acceptedRequests = 0;
+function load() {
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    fs.unlinkSync(configPath);
+    if (typeof config.lease !== "string" || config.lease.length < 16) process.exit(64);
+    http.createServer((request, response) => {
+      if (request.method === "GET" && request.url === "/health") {
+        response.writeHead(204); response.end(); return;
+      }
+      if (request.method !== "POST" || request.url !== "/v1/capability") {
+        response.writeHead(404); response.end(JSON.stringify({ error: "unknown_endpoint" })); return;
+      }
+      if (typeof config.expiresAt === "string" && Date.now() >= Date.parse(config.expiresAt)) {
+        response.writeHead(410); response.end(JSON.stringify({ error: "capability_expired" })); return;
+      }
+      if (acceptedRequests >= (config.maxRequests ?? 1)) {
+        response.writeHead(429); response.end(JSON.stringify({ error: "request_ceiling_reached" })); return;
+      }
+      let body = "";
+      let rejected = false;
+      request.setEncoding("utf8");
+      request.on("data", chunk => {
+        if (rejected) return;
+        body += chunk;
+        if (body.length > 4096) {
+          rejected = true;
+          response.writeHead(413); response.end(JSON.stringify({ error: "request_too_large" }));
+        }
+      });
+      request.on("end", () => {
+        if (rejected) return;
+        let value;
+        try { value = JSON.parse(body); } catch { response.writeHead(400); response.end(JSON.stringify({ error: "invalid_request" })); return; }
+        if (value === null || typeof value !== "object" || Array.isArray(value)) {
+          response.writeHead(400); response.end(JSON.stringify({ error: "invalid_request" })); return;
+        }
+        const expectedKeys = config.expectedInput === undefined ? 2 : 3;
+        if (value.operation !== config.operation || value.destination !== config.destination || Object.keys(value).length !== expectedKeys || (config.expectedInput !== undefined && JSON.stringify(value.input) !== JSON.stringify(config.expectedInput))) {
+          response.writeHead(403); response.end(JSON.stringify({ error: "capability_denied" })); return;
+        }
+        acceptedRequests += 1;
+        if (config.adapter === true) {
+          fs.writeFileSync(requestTempPath, JSON.stringify(value), { mode: 0o600 });
+          fs.renameSync(requestTempPath, requestPath);
+          const waitForResponse = () => {
+            try {
+              const mediated = JSON.parse(fs.readFileSync(responsePath, "utf8"));
+              fs.unlinkSync(responsePath);
+              fs.unlinkSync(requestPath);
+              if (mediated.ok !== true) { response.writeHead(502); response.end(JSON.stringify({ error: mediated.errorCode === "capability_timeout" ? "capability_timeout" : "adapter_failed" })); return; }
+              if (typeof config.expiresAt === "string" && Date.now() >= Date.parse(config.expiresAt)) { response.writeHead(410); response.end(JSON.stringify({ error: "capability_expired" })); return; }
+              const serialized = JSON.stringify(mediated.response);
+              if (Buffer.byteLength(serialized, "utf8") > (config.maxResponseBytes ?? 64000)) { response.writeHead(502); response.end(JSON.stringify({ error: "response_too_large" })); return; }
+              response.writeHead(200, { "content-type": "application/json" }); response.end(serialized);
+            } catch (error) {
+              if (error && error.code === "ENOENT") setTimeout(waitForResponse, 10);
+              else { response.writeHead(502); response.end(JSON.stringify({ error: "adapter_failed" })); }
+            }
+          };
+          waitForResponse();
+          return;
+        }
+        const serialized = JSON.stringify(config.response);
+        if (Buffer.byteLength(serialized, "utf8") > (config.maxResponseBytes ?? 64000)) {
+          response.writeHead(502); response.end(JSON.stringify({ error: "response_too_large" })); return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(serialized);
+      });
+    }).listen(${DOCKER_CAPABILITY_PORT}, "127.0.0.1");
+  } catch (error) {
+    if (error && error.code === "ENOENT") setTimeout(load, 10); else process.exit(65);
+  }
+}
+load();`;
+
+async function startCapabilityBroker(
+  input: SandboxExecutionInput,
+  brokerContainerName: string,
+  invocationMarker: string,
+  createCommandRunner: (args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>,
+  ownershipInspectRunner: (containerName: string) => Promise<DockerProcessResult>,
+  beforeAmbiguousCreateCleanup: (containerName: string, containerId: string) => Promise<void>,
+  onCreated: (containerId: string) => void,
+): Promise<void> {
+  const grant = input.capability;
+  if (grant === undefined) return;
+  const containerId = await createOwnedContainer(withInvocationMarker([
+    "create", "--init", "--name", brokerContainerName,
+    "--user", `${SANDBOX_UID}:${SANDBOX_GID}`,
+    "--read-only", "--memory", "64m", "--pids-limit", "32",
+    "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+    "--network", "none",
+    "--tmpfs", `/run/kestrel:rw,nosuid,nodev,noexec,size=1m,uid=${SANDBOX_UID},gid=${SANDBOX_GID},mode=0700`,
+    "node:20-alpine", "node", "-e", CAPABILITY_BROKER_SCRIPT,
+  ], invocationMarker), brokerContainerName, invocationMarker, "create confined capability broker", input.signal, createCommandRunner, ownershipInspectRunner, beforeAmbiguousCreateCleanup);
+  onCreated(containerId);
+  await runRequiredDockerCommand(["start", brokerContainerName], "start confined capability broker", input.signal);
+  const configuration = Buffer.from(JSON.stringify({
+    lease: grant.lease,
+    operation: grant.operation,
+    destination: grant.destination,
+    response: grant.response,
+    expiresAt: grant.expiresAt,
+    maxRequests: grant.maxRequests,
+    maxResponseBytes: grant.maxResponseBytes,
+    authority: grant.authority,
+    expectedInput: grant.expectedInput,
+    adapter: grant.adapter !== undefined,
+  }), "utf8");
+  const written = await runDockerProcess([
+    "exec", "--interactive", "--user", `${SANDBOX_UID}:${SANDBOX_GID}`,
+    brokerContainerName, "sh", "-c", "umask 077; cat > /run/kestrel/config.tmp && mv /run/kestrel/config.tmp /run/kestrel/config",
+  ], DOCKER_LIFECYCLE_TIMEOUT_MS, DOCKER_LIFECYCLE_OUTPUT_BYTES, input.signal, configuration);
+  requireSuccessfulDockerResult(written, "load the capability broker grant");
+  const deadline = Date.now() + DOCKER_LIFECYCLE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const ready = await runDockerProcess([
+      "exec", "--user", `${SANDBOX_UID}:${SANDBOX_GID}`, brokerContainerName,
+      "node", "-e", `require('http').get('http://127.0.0.1:${DOCKER_CAPABILITY_PORT}/health',r=>process.exit(r.statusCode===204?0:1)).on('error',()=>process.exit(1))`,
+    ], 1_000, 1_000, input.signal);
+    if (ready.exitCode === 0) return;
+  }
+  const state = await runDockerProcess(
+    ["inspect", "--format", "{{json .State}}", brokerContainerName],
+    2_000,
+    2_000,
+    input.signal,
+  );
+  throw new Error(
+    `Timed out while waiting for the confined capability broker${state.stdout.trim().length > 0 ? `: ${state.stdout.trim()}` : ""}`,
+  );
+}
+
+async function runCapabilityAdapterPump(
+  grant: NonNullable<SandboxExecutionInput["capability"]>,
+  brokerContainerName: string,
+  signal: AbortSignal,
+): Promise<void> {
+  if (grant.adapter === undefined || grant.expectedInput === undefined) return;
+  while (signal.aborted === false) {
+    const request = await runDockerProcess(
+      ["exec", "--user", `${SANDBOX_UID}:${SANDBOX_GID}`, brokerContainerName, "sh", "-c", "test -f /run/kestrel/request && cat /run/kestrel/request"],
+      1_000,
+      8_192,
+      signal,
+    );
+    if (request.cancelled) return;
+    if (request.exitCode === 0 && request.stdout.trim().length > 0) {
+      let mediated: { ok: true; response: unknown } | { ok: false; errorCode?: "capability_timeout" | undefined };
+      try {
+        const value = JSON.parse(request.stdout) as Record<string, unknown>;
+        const adapterInput = value.input as Record<string, unknown> | undefined;
+        if (
+          value.operation !== grant.operation ||
+          value.destination !== grant.destination ||
+          Object.keys(value).length !== 3 ||
+          adapterInput === undefined ||
+          canonicalAdapterInput(adapterInput) !== canonicalAdapterInput(grant.expectedInput)
+        ) {
+          throw new Error("Broker request does not match the trusted capability grant");
+        }
+        const invocation = await grant.lifecycle?.beforeProviderInvocation();
+        const responseByteLimit = invocation?.responseByteLimit ?? grant.maxResponseBytes ?? 64_000;
+        if (!Number.isSafeInteger(responseByteLimit) || responseByteLimit <= 0) {
+          throw new Error("Capability invocation response-byte reservation is invalid");
+        }
+        let response: unknown;
+        try {
+          response = await invokeAdapterUntilAbort(
+            grant.adapter,
+            grant.expectedInput,
+            signal,
+          );
+          if (signal.aborted) {
+            throw new DockerSandboxCancellationError("Capability adapter completed after cancellation");
+          }
+          const responseBytes = Buffer.byteLength(JSON.stringify(response), "utf8");
+          if (responseBytes > responseByteLimit) {
+            throw new Error("Adapter response exceeds the trusted capability ceiling");
+          }
+          await grant.lifecycle?.commitProviderResult({
+            result: response,
+            responseBytes,
+            resultCount: readCapabilityResultCount(response),
+          });
+        } catch (error) {
+          // Teardown owns cancellation/timeout classification. Recording a
+          // generic failure first would make that terminal outcome immutable.
+          if (!signal.aborted) await grant.lifecycle?.recordProviderFailure(error);
+          throw error;
+        }
+        mediated = { ok: true, response };
+      } catch (error) {
+        mediated = {
+          ok: false,
+          ...(error instanceof SandboxCapabilityAdapterFailure && error.code === "CAPABILITY_DEADLINE_EXCEEDED"
+            ? { errorCode: "capability_timeout" }
+            : {}),
+        };
+      }
+      if (signal.aborted) return;
+      const written = await runDockerProcess(
+        ["exec", "--interactive", "--user", `${SANDBOX_UID}:${SANDBOX_GID}`, brokerContainerName, "sh", "-c", "umask 077; cat > /run/kestrel/response.tmp && mv /run/kestrel/response.tmp /run/kestrel/response"],
+        DOCKER_LIFECYCLE_TIMEOUT_MS,
+        DOCKER_LIFECYCLE_OUTPUT_BYTES,
+        signal,
+        Buffer.from(JSON.stringify(mediated), "utf8"),
+      );
+      if (written.cancelled) return;
+      requireSuccessfulDockerResult(written, "return the capability adapter response");
+      return;
+    }
+    await waitForAdapterRequest(signal);
+  }
+}
+
+function readCapabilityResultCount(value: unknown): number {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return 0;
+  const results = (value as { results?: unknown }).results;
+  return Array.isArray(results) ? results.length : 0;
+}
+
+async function invokeAdapterUntilAbort(
+  adapter: NonNullable<NonNullable<SandboxExecutionInput["capability"]>["adapter"]>,
+  input: Record<string, unknown>,
+  signal: AbortSignal,
+): Promise<unknown> {
+  if (signal.aborted) throw new DockerSandboxCancellationError("Capability adapter pump was cancelled");
+  return adapter(input, signal);
+}
+
+function canonicalAdapterInput(value: Record<string, unknown>): string {
+  const canonical = (item: unknown): string => {
+    if (Array.isArray(item)) return `[${item.map(canonical).join(",")}]`;
+    if (typeof item === "object" && item !== null) {
+      const record = item as Record<string, unknown>;
+      return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`).join(",")}}`;
+    }
+    return JSON.stringify(item);
+  };
+  return canonical(value);
+}
+
+async function waitForAdapterRequest(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(finish, 25);
+    function finish() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    }
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
+function withInvocationMarker(args: string[], marker: string): string[] {
+  const createIndex = args.indexOf("create");
+  if (createIndex < 0) {
+    throw new Error("Docker create command is missing its create operation");
+  }
+  return [
+    ...args.slice(0, createIndex + 1),
+    "--label",
+    `${DOCKER_INVOCATION_LABEL}=${marker}`,
+    ...args.slice(createIndex + 1),
+  ];
+}
+
+async function createOwnedContainer(
+  args: string[],
+  containerName: string,
+  invocationMarker: string,
+  action: string,
+  signal: AbortSignal | undefined,
+  runner: (args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>,
+  ownershipInspectRunner: (containerName: string) => Promise<DockerProcessResult>,
+  beforeAmbiguousCreateCleanup: (containerName: string, containerId: string) => Promise<void>,
+): Promise<string> {
+  const result = await runner(args, signal);
+  const reconciliationDeadline = Date.now() + DOCKER_LIFECYCLE_TIMEOUT_MS;
+  if (result.exitCode === 0 && result.timedOut === false && result.cancelled === false) {
+    try {
+      return parseDockerContainerId(result.stdout, `${action} output`);
+    } catch (outputError) {
+      const inspectedContainerId = await resolveOwnedContainerId(
+        containerName,
+        invocationMarker,
+        ownershipInspectRunner,
+        reconciliationDeadline,
+      );
+      if (inspectedContainerId !== undefined) {
+        return inspectedContainerId;
+      }
+      throw outputError;
+    }
+  }
+  const ownedContainerId = await resolveOwnedContainerId(
+    containerName,
+    invocationMarker,
+    ownershipInspectRunner,
+    reconciliationDeadline,
+  );
+  if (ownedContainerId !== undefined) {
+    await beforeAmbiguousCreateCleanup(containerName, ownedContainerId);
+    await removeContainer(ownedContainerId);
+  }
+  if (result.cancelled) {
+    throw new DockerSandboxCancellationError("Docker sandbox execution was cancelled");
+  }
+  if (result.timedOut) {
+    throw new Error(`Timed out while attempting to ${action}`);
+  }
+  const detail = result.stderr.trim() || result.stdout.trim();
+  throw new Error(`Unable to ${action}${detail.length > 0 ? `: ${detail}` : ""}`);
+}
+
+async function inspectContainerOwnership(containerName: string): Promise<DockerProcessResult> {
+  return runDockerProcess(
+    ["inspect", "--format", `{{.Id}}|{{index .Config.Labels "${DOCKER_INVOCATION_LABEL}"}}`, containerName],
+    DOCKER_LIFECYCLE_TIMEOUT_MS,
+    DOCKER_LIFECYCLE_OUTPUT_BYTES,
+    undefined,
+  );
+}
+
+async function resolveOwnedContainerId(
+  containerName: string,
+  marker: string,
+  inspectRunner: (containerName: string) => Promise<DockerProcessResult>,
+  deadline: number,
+): Promise<string | undefined> {
+  for (
+    let attempt = 1;
+    attempt <= DOCKER_OWNERSHIP_INSPECTION_LIMIT && Date.now() < deadline;
+    attempt += 1
+  ) {
+    let inspected: DockerProcessResult;
+    try {
+      inspected = await inspectRunner(containerName);
+    } catch {
+      await waitForOwnershipRetry(attempt, deadline);
+      continue;
+    }
+    if (inspected.exitCode !== 0 || inspected.timedOut || inspected.cancelled) {
+      await waitForOwnershipRetry(attempt, deadline);
+      continue;
+    }
+    const fields = inspected.stdout.trim().split("|");
+    if (fields.length !== 2) {
+      await waitForOwnershipRetry(attempt, deadline);
+      continue;
+    }
+    let containerId: string;
+    try {
+      containerId = parseDockerContainerId(fields[0] ?? "", "Docker inspect container ID");
+    } catch {
+      await waitForOwnershipRetry(attempt, deadline);
+      continue;
+    }
+    if (fields[1] !== marker) {
+      return;
+    }
+    return containerId;
+  }
+  return;
+}
+
+async function waitForOwnershipRetry(attempt: number, deadline: number): Promise<void> {
+  if (
+    attempt >= DOCKER_OWNERSHIP_INSPECTION_LIMIT ||
+    Date.now() + DOCKER_OWNERSHIP_RETRY_DELAY_MS >= deadline
+  ) {
+    return;
+  }
+  await new Promise<void>((resolve) =>
+    setTimeout(resolve, DOCKER_OWNERSHIP_RETRY_DELAY_MS));
+}
+
+function parseDockerContainerId(value: string, label: string): string {
+  const normalized = value.trim();
+  if (/^[a-f0-9]{64}$/u.test(normalized) === false) {
+    throw new Error(`${label} is not a valid immutable Docker container ID`);
+  }
+  return normalized;
+}
+
+function redactSensitiveValue(value: string, sensitiveValue: string): string {
+  return sensitiveValue.length === 0
+    ? value
+    : value.split(sensitiveValue).join("[redacted:capability]");
 }
 
 function buildTmpfsSpec(

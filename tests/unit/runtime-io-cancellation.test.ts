@@ -21,6 +21,12 @@ import { buildAgentToolFailedOutputResult } from "../../tools/toolResult.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
+import { CodeExecutionService } from "../../src/code/CodeExecutionService.js";
+import { SandboxCapabilityLeaseCoordinator } from "../../src/code/SandboxCapabilityLeaseCoordinator.js";
+import { DEFAULT_CODE_MODE_ENABLED_CONFIG } from "../../src/code/contracts.js";
+import { fingerprintSandboxCapabilityCatalogV2, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
+import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 
 const guardrailConfig = {
   maxStepsPerRun: 10,
@@ -619,6 +625,103 @@ test("RuntimeIO redacts registered sensitive values from successful tool results
   const result = await io.tool("fs.read_text", { path: "result.txt" });
   assert.equal(JSON.stringify(result).includes("tool-result-secret"), false);
   assert.equal(JSON.stringify(result).includes("[REDACTED]"), true);
+});
+
+test("real Tavily adapter echoes are redacted before RuntimeIO persistence and model projection", async () => {
+  const secret = "tavily-provider-echo-secret";
+  const profile: SandboxCapabilityProfileV1 = {
+    version: 1,
+    capabilityId: "tavily.search.read",
+    operations: ["search"],
+    resource: "https://api.tavily.com/search",
+    audience: { tenantId: "tenant-runtime-io", environmentId: "environment-runtime-io" },
+    maxRequests: 1,
+    maxQueryChars: 100,
+    maxResults: 2,
+    maxResponseBytes: 4_096,
+    timeoutMs: 1_000,
+    maxExpiryMs: 5_000,
+    brokerAuthority: { authorityId: "broker-runtime-io", revision: "revision-runtime-io" },
+  };
+  const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  const leaseCoordinator = new SandboxCapabilityLeaseCoordinator({
+    store: new InMemorySessionStore(),
+    validateCurrent: async () => ({ authorized: true }),
+    persistResult: async () => ({ digest: "b".repeat(64), reference: "artifact:runtime-io-capability-result" }),
+  });
+  const service = new CodeExecutionService({
+    executor: {
+      async execute(input) {
+        assert.ok(input.capability?.adapter);
+        const providerResponse = await input.capability.adapter(
+          { query: "kestrel", maxResults: 1 },
+          input.signal ?? new AbortController().signal,
+        );
+        const reflected = JSON.stringify(providerResponse);
+        return {
+          status: "ok",
+          exitCode: 0,
+          stdout: reflected,
+          stderr: `provider diagnostic: ${secret}`,
+          durationMs: 1,
+          artifacts: [{
+            path: "provider-response.json",
+            sizeBytes: Buffer.byteLength(reflected),
+            sha256: "a".repeat(64),
+            preview: { text: reflected, truncated: false },
+          }],
+        };
+      },
+    },
+  });
+  const runEvents: RunEvent[] = [];
+  let projected = false;
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    runEvents,
+    executionBoundaryRuntime: boundaryRuntime,
+    toolCall: async () => {
+      const output = await service.execute(
+        { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+        { language: "javascript", code: "fetch through broker", capability: { capabilityId: "tavily.search.read", input: { query: "kestrel", maxResults: 1 } } },
+        { capabilityRuntime: {
+          tenantId: profile.audience.tenantId,
+          environmentId: profile.audience.environmentId,
+          sessionId: "session-runtime-io",
+          runId: "run-runtime-io",
+          toolCallId: "call-runtime-io",
+          profileFingerprint: fingerprintSandboxCapabilityProfileV1(profile),
+          capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV2([profile]),
+          executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+          brokerAuthority: profile.brokerAuthority,
+          credentialSnapshot: { credentialId: "tool.tavily.default", revision: "credential-runtime-io", secret },
+          fetchImpl: async (_url, init) => {
+            assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${secret}`);
+            return new Response(JSON.stringify({ results: [{ title: "Echo", url: "https://example.com", content: secret }] }), { status: 200 });
+          },
+          registerSensitiveValue: (input) => boundaryRuntime.sensitiveValues.register({
+            reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
+            value: input.value,
+          }),
+          redactSensitiveValues: <T>(value: T) => boundaryRuntime.sensitiveValues.redact(value).value,
+          leaseCoordinator,
+        } },
+      );
+      return buildAgentToolSuccessResult({ toolName: "code.execute", input: { capabilityId: profile.capabilityId }, output });
+    },
+    afterToolResult: async () => {
+      projected = true;
+      assert.equal(boundaryRuntime.sensitiveValues.registeredValueDigests().length, 0);
+    },
+  });
+
+  const result = await io.tool("code.execute", { capabilityId: profile.capabilityId });
+  assert.equal(projected, true);
+  assert.equal(JSON.stringify(result).includes(secret), false);
+  assert.equal(JSON.stringify(runEvents).includes(secret), false);
+  assert.match(JSON.stringify(result), /redacted/iu);
+  assert.equal(boundaryRuntime.sensitiveValues.registeredValueDigests().length, 0);
 });
 
 test("RuntimeIO never retries exec_command after dispatch", async () => {

@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type { CodeModeProfileConfig } from "../../src/code/contracts.js";
 import { DEFAULT_CODE_MODE_DISABLED_CONFIG } from "../../src/code/contracts.js";
+import { normalizeSandboxCapabilityProfilesV2 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import type { DevShellProfileConfig } from "../../src/devshell/contracts.js";
 import { DEFAULT_DEV_SHELL_DISABLED_CONFIG } from "../../src/devshell/contracts.js";
 import type { GuardrailConfig } from "../../src/kestrel/contracts/execution.js";
@@ -23,6 +24,7 @@ import {
 } from "../../src/profile/modelPolicy.js";
 import {
   composeKestrelOneProfile,
+  defaultApprovalPolicyPackForPreset,
   KESTREL_ONE_DIALOG_TOOL_NAMES,
   KESTREL_ONE_POLICY_ID,
   LEGACY_KESTREL_ONE_POLICY_ID,
@@ -661,7 +663,9 @@ export function applyProfileDefaults(profile: TuiProfile): TuiProfile {
     capabilityPacks: [...resolvedProfile.capabilityPacks],
     modelProvider: profile.modelProvider ?? "openrouter",
     storeDriver: profile.storeDriver ?? "auto",
-    approvalPolicyPackId: profile.approvalPolicyPackId ?? "dev",
+    approvalPolicyPackId:
+      profile.approvalPolicyPackId ??
+      defaultApprovalPolicyPackForPreset(resolvedProfile.presetId),
     modeSystemV2Enabled:
       profile.agent === "kestrel" || profile.agent === "reference-react"
         ? true
@@ -1343,11 +1347,11 @@ function parseApprovalPolicyPackId(
   if (value === undefined) {
     return;
   }
-  if (value === "dev" || value === "ci_bot" || value === "production") {
+  if (value === "dev" || value === "isolated_code" || value === "ci_bot" || value === "production") {
     return value;
   }
   throw new Error(
-    `Profile '${profileId}' field 'approvalPolicyPackId' must be dev, ci_bot, or production`,
+    `Profile '${profileId}' field 'approvalPolicyPackId' must be dev, isolated_code, ci_bot, or production`,
   );
 }
 
@@ -1693,6 +1697,9 @@ function parseCodeMode(
   const sandbox = parseCodeModeSandbox(input.sandbox, profileId);
   const retention = parseCodeModeRetention(input.retention, profileId);
   const approvalMode = input.approvalMode;
+  const capabilities = input.capabilities === undefined
+    ? undefined
+    : normalizeSandboxCapabilityProfilesV2(input.capabilities);
   if (approvalMode !== undefined && approvalMode !== "auto") {
     throw new Error(
       `Profile '${profileId}' field 'codeMode.approvalMode' must be 'auto'`,
@@ -1704,7 +1711,8 @@ function parseCodeMode(
     languages === undefined &&
     sandbox === undefined &&
     retention === undefined &&
-    approvalMode === undefined
+    approvalMode === undefined &&
+    capabilities === undefined
   ) {
     return;
   }
@@ -1721,6 +1729,7 @@ function parseCodeMode(
       ...(retention ?? {}),
     },
     approvalMode: "auto",
+    ...(capabilities === undefined ? {} : { capabilities }),
   };
 }
 

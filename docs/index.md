@@ -42,6 +42,7 @@ task instead of reading the repository as one long manual.
 - [Conversation kernel](../packages/conversation/README.md)
 - [Observability](../packages/observability/README.md)
 - [Protocol and terminal results](../apps/docs/content/build/protocol-and-results.mdx)
+- [Sandbox capability adapters](../apps/docs/content/reference/sandbox-capability-adapters.mdx)
 
 ### Operate Kestrel
 
@@ -51,6 +52,7 @@ task instead of reading the repository as one long manual.
 - [Quality gates](../apps/docs/content/operations/quality-gates.mdx)
 - [Deployment troubleshooting](../apps/docs/content/deploy/deployment-troubleshooting.mdx)
 - [Production release runbook](production-delivery-channels.md)
+- [Sandbox capability black-box qualification](operations/sandbox-capability-qualification.md)
 - [Hosted Workspace runtime recovery](hosted-workspace-runtime-recovery.md)
 - [Operations glossary](glossary.md)
 - [Evaluations with Ruhroh](../apps/docs/content/operations/evaluations.mdx)
@@ -63,6 +65,8 @@ task instead of reading the repository as one long manual.
 - [Design principles](../DESIGN.md)
 - [Plans index](PLANS.md)
 - [Architecture decisions](decisions/0001-unified-suite-version-and-release-channels.md)
+  - [Confined Docker capability transport](decisions/0003-confined-docker-capability-transport.md)
+  - [Tavily sandbox read capability](decisions/0004-tavily-sandbox-read-capability.md)
 - [Stable Runtime Bundle authority](adr/0001-stable-runtime-bundle-authority.md)
 - [Independent production delivery channels](adr/0002-independent-production-delivery-channels.md)
 - [CI validation](ci-validation.md)

@@ -116,6 +116,7 @@
     "conversation:smoke": "pnpm --filter @kestrel-agents/conversation smoke:import",
     "conversation:release-check": "pnpm --filter @kestrel-agents/conversation release:check",
     "files:release-check": "pnpm --filter @kestrel-agents/files release:check",
+    "files:repair-representations": "pnpm --filter @kestrel/kestrel-one files:repair-representations",
     "memory:release-check": "pnpm --filter @kestrel-agents/memory release:check",
     "workspace-skills:release-check": "pnpm --filter @kestrel-agents/workspace-skills release:check",
     "sdk:build": "pnpm --filter @kestrel-agents/sdk build",
@@ -192,6 +193,7 @@
     "swe:passing": "bash scripts/swe-passing.sh",
     "swe:medium-low": "bash scripts/swe-medium-low.sh",
     "runner:service": "node --import tsx cli/runner/service.ts",
+    "qualification:sandbox-capability": "node --import tsx scripts/qualify-sandbox-capability.ts",
     "test:runner-service": "node --import tsx scripts/test-runner-service.ts",
     "test:web-runner": "node --import tsx scripts/test-web-runner.ts",
     "test:web-runner:live": "node --import tsx scripts/test-web-runner-live.ts",
@@ -256,6 +258,9 @@
   "pnpm": {
     "overrides": {
       "baseline-browser-mapping": "2.10.43"
+    },
+    "patchedDependencies": {
+      "@napi-rs/canvas@0.1.80": "patches/@napi-rs__canvas@0.1.80.patch"
     }
   },
   "packageManager": "pnpm@9.12.2+sha512.22721b3a11f81661ae1ec68ce1a7b879425a1ca5b991c975b074ac220b187ce56c708fe5db69f4c962c989452eee76c82877f4ee80f474cebd61ee13461b6228",

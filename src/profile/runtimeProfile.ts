@@ -88,7 +88,7 @@ export const SHELL_PRESET_PACKS: Record<ShellPresetId, CapabilityPackId[]> = {
     "desktop_host",
   ],
   desktop_dev_local: ["balanced", "filesystem", "dev_shell", "desktop_host"],
-  workspace_hosted: ["balanced", "filesystem", "dev_shell"],
+  workspace_hosted: ["balanced", "filesystem", "dev_shell", "sandbox_code"],
 };
 
 const DEFAULT_PRESET_BY_SHELL: Record<ShellKind, ShellPresetId> = {

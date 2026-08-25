@@ -40,6 +40,7 @@ test(
     assert.match(dockerignore, /^tmp$/mu);
     assert.match(dockerignore, /^\.pnpm-store$/mu);
     assert.match(dockerignore, /^apps\/web\/\.next$/mu);
+    assert.match(dockerignore, /^apps\/web\/\.kestrel-runtime$/mu);
     assert.match(dockerignore, /^apps\/web\/node_modules$/mu);
     assert.equal(
       packageJson.scripts?.["worker:turns"],
@@ -515,7 +516,7 @@ test(
 );
 
 test(
-  "dev:all supervises the durable turn worker with the app",
+  "dev:all supervises the durable turn and Knowledge workers with the app",
   async () => {
     const devAllSource = await readFile(
       new URL("../../scripts/dev-all.sh", import.meta.url),
@@ -523,6 +524,7 @@ test(
     );
 
     assert.match(devAllSource, /pnpm worker:turns &/u);
+    assert.match(devAllSource, /pnpm worker:knowledge:local &/u);
     assert.match(devAllSource, /load_env_file "\.\.\/\.\.\/\.env"/u);
     assert.match(devAllSource, /run runner:service &/u);
     assert.match(
@@ -543,15 +545,25 @@ test(
       /export KESTREL_BUILD_ID="\$\{KESTREL_BUILD_ID:-local-dev\}"/u,
     );
     assert.match(devAllSource, /TURN_WORKER_PID=\$!/u);
+    assert.match(devAllSource, /KNOWLEDGE_WORKER_PID=\$!/u);
+    assert.match(devAllSource, /KESTREL_LOCAL_TURN_WORKER_HEALTH_PORT:-43107/u);
+    assert.match(devAllSource, /KESTREL_LOCAL_KNOWLEDGE_WORKER_HEALTH_PORT:-43108/u);
     assert.match(
       devAllSource,
       /export REDIS_URL="\$\{REDIS_URL:-redis:\/\/127\.0\.0\.1:\$\{LOCAL_REDIS_PORT:-56379\}\}"/u,
     );
     assert.match(devAllSource, /monitor_app_processes/u);
     assert.match(devAllSource, /kill -0 "\$TURN_WORKER_PID"/u);
+    assert.match(devAllSource, /kill -0 "\$KNOWLEDGE_WORKER_PID"/u);
     assert.match(devAllSource, /kill -0 "\$RUNNER_PID"/u);
+    assert.match(devAllSource, /Building the physical attachment worker/u);
+    assert.match(devAllSource, /pnpm --filter @kestrel-agents\/files build/u);
     assert.ok(
       devAllSource.indexOf('log "Starting durable turn worker"') <
+        devAllSource.indexOf('log "Ready at http://'),
+    );
+    assert.ok(
+      devAllSource.indexOf('log "Starting local Knowledge worker"') <
         devAllSource.indexOf('log "Ready at http://'),
     );
   },

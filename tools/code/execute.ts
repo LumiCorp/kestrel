@@ -1,10 +1,16 @@
-import { CodeExecutionService } from "../../src/code/CodeExecutionService.js";
+import {
+  CodeExecutionService,
+  DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY,
+} from "../../src/code/CodeExecutionService.js";
 import type {
   CodeExecutionRequest,
   CodeNetworkMode,
   CodeExecutionLanguage,
 } from "../../src/code/contracts.js";
 import { mergeCodeModeConfig } from "../../src/code/PolicyEngine.js";
+import {
+  normalizeSandboxCapabilitySelectionV2,
+} from "../../src/kestrel/contracts/sandbox-capability.js";
 import type { SharedToolModule } from "../contracts.js";
 import {
   createToolInputError,
@@ -59,6 +65,23 @@ export const codeExecuteTool: SharedToolModule = {
           type: "array",
           items: { type: "string" },
         },
+        capability: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            capabilityId: { type: "string", enum: ["tavily.search.read"] },
+            input: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                query: { type: "string", minLength: 1, maxLength: 400 },
+                maxResults: { type: "integer", minimum: 1, maximum: 20 },
+              },
+              required: ["query"],
+            },
+          },
+          required: ["capabilityId", "input"],
+        },
       },
       required: ["language", "code"],
     },
@@ -84,16 +107,91 @@ export const codeExecuteTool: SharedToolModule = {
     return async (input: unknown) => {
       const request = parseCodeExecutionRequest(input);
       const profileConfig = mergeCodeModeConfig(context.codeMode);
+      const selectedProfile = request.capability === undefined
+        ? undefined
+        : profileConfig.capabilities?.find((item) => item.capabilityId === request.capability?.capabilityId);
+      const capabilityRuntime = request.capability === undefined
+        ? undefined
+        : await (async () => {
+            if (selectedProfile === undefined || context.sandboxCapabilityRuntime === undefined || context.runtime?.toolCallId === undefined) {
+              throw createToolInputError("code.execute", "Selected capability is unavailable in the trusted runtime context.");
+            }
+            const parentAuthorization = context.sandboxCapabilityRuntime.resolveParentAuthorization === undefined
+              ? undefined
+              : await context.sandboxCapabilityRuntime.resolveParentAuthorization({
+                  sessionId: context.runtime.sessionId,
+                  runId: context.runtime.runId,
+                  toolCallId: context.runtime.toolCallId,
+                });
+            const preparedContext = context.sandboxCapabilityRuntime as typeof context.sandboxCapabilityRuntime & {
+              preparedPolicy?: import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1;
+              preparedApproval?: import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolApprovalAuthorityV1;
+            };
+            if (preparedContext.preparedPolicy === undefined) {
+              throw createToolInputError("code.execute", "Selected capability is missing its prepared policy authority.");
+            }
+            return {
+              ...context.sandboxCapabilityRuntime,
+              sessionId: context.runtime.sessionId,
+              runId: context.runtime.runId,
+              toolCallId: context.runtime.toolCallId,
+              ...(context.runtime.threadId === undefined ? {} : { threadId: context.runtime.threadId }),
+              profileFingerprint: context.sandboxCapabilityRuntime.profileFingerprint,
+              policy: preparedContext.preparedPolicy,
+              ...(preparedContext.preparedApproval === undefined ? {} : { approval: preparedContext.preparedApproval }),
+              ...(parentAuthorization === undefined ? {} : { parentAuthorization }),
+            };
+          })();
       const result = await service.execute(profileConfig, request, {
         signal: context.signal,
+        ...(capabilityRuntime === undefined ? {} : { capabilityRuntime }),
+        ...(context.persistCompletedCapabilityResult === undefined
+          ? {}
+          : { persistCompletedCapabilityResult: context.persistCompletedCapabilityResult }),
       });
       return result;
     };
   },
 };
 
+export function codeExecuteDefinitionForProfile(codeMode: import("../../src/code/contracts.js").CodeModeProfileConfig | undefined) {
+  const definition = structuredClone(codeExecuteTool.definition);
+  const properties = definition.inputSchema.properties as Record<string, unknown>;
+  const authoredIds = [...new Set((codeMode?.capabilities ?? []).map((item) => item.capabilityId))];
+  if (authoredIds.length === 0) {
+    delete properties.capability;
+  } else {
+    const branches = authoredIds.map((capabilityId) => {
+      const adapter = DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY.requireExact({ capabilityId });
+      return {
+        type: "object",
+        additionalProperties: false,
+        description: `${adapter.modelContract.description} ${adapter.modelContract.usage}`,
+        properties: {
+          version: { const: 2 },
+          capabilityId: { const: adapter.capabilityId },
+          operation: { const: adapter.operation },
+          input: structuredClone(adapter.modelContract.selectionInputSchema),
+        },
+        required: ["version", "capabilityId", "operation", "input"],
+      };
+    });
+    properties.capability = {
+      description: "Optional trusted host capability. Omit it for ordinary isolated computation; the workload has no direct network access.",
+      oneOf: branches,
+    };
+    definition.description += " The workload has no direct network access. Select an advertised optional capability only when its fixed host operation is required.";
+  }
+  return definition;
+}
+
 function parseCodeExecutionRequest(input: unknown): CodeExecutionRequest {
   const body = parseObjectInput("code.execute", input);
+  const allowed = new Set(["language", "code", "files", "timeoutMs", "network", "dependencies", "args", "capability"]);
+  const unknown = Object.keys(body).find((key) => allowed.has(key) === false);
+  if (unknown !== undefined) {
+    throw createToolInputError("code.execute", `code.execute contains unknown field '${unknown}'.`, { field: unknown });
+  }
   const language = parseLanguage(readString(body, "language"));
   const code = requireStringField("code.execute", body, "code");
 
@@ -109,6 +207,9 @@ function parseCodeExecutionRequest(input: unknown): CodeExecutionRequest {
   const network = parseNetwork(readString(body, "network"));
   const dependencies = parseOptionalStringArray(body, "dependencies", 50);
   const args = parseOptionalStringArray(body, "args", 50);
+  const capability = body.capability === undefined
+    ? undefined
+    : normalizeSandboxCapabilitySelectionV2(body.capability);
 
   return {
     language,
@@ -118,6 +219,7 @@ function parseCodeExecutionRequest(input: unknown): CodeExecutionRequest {
     ...(network !== undefined ? { network } : {}),
     ...(dependencies.length > 0 ? { dependencies } : {}),
     ...(args.length > 0 ? { args } : {}),
+    ...(capability === undefined ? {} : { capability }),
   };
 }
 

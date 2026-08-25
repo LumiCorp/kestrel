@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import type { ProcessRole } from "./process-contracts";
 
-type WorkerRole = Exclude<ProcessRole, "web">;
+type WorkerRole = Exclude<ProcessRole, "web"> | "knowledge-worker";
 
 export async function resolveWorkerBuildId() {
   const configured = process.env.KESTREL_BUILD_ID?.trim();

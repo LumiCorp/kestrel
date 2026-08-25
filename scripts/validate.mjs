@@ -561,8 +561,8 @@ async function startPostgres() {
 }
 
 async function allocateProductEnvironment(context) {
-  const [appPort, fakePort, runnerPort, workerHealthPort] =
-    await allocatePorts(4);
+  const [appPort, fakePort, runnerPort, workerHealthPort, knowledgeWorkerHealthPort] =
+    await allocatePorts(5);
   const storageRoot = path.join(REPORT_DIR, "product-storage");
   mkdirSync(storageRoot, { recursive: true });
   return {
@@ -570,6 +570,7 @@ async function allocateProductEnvironment(context) {
     KESTREL_PRODUCT_FAKE_OPENROUTER_PORT: String(fakePort),
     KESTREL_PRODUCT_RUNNER_PORT: String(runnerPort),
     KESTREL_PRODUCT_WORKER_HEALTH_PORT: String(workerHealthPort),
+    KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT: String(knowledgeWorkerHealthPort),
     KESTREL_PRODUCT_STORAGE_ROOT: storageRoot,
     ...context.environment,
   };

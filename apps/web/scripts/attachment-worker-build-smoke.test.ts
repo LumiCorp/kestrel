@@ -39,13 +39,16 @@ const runtimeFiles = [
   "node_modules/@napi-rs/canvas/js-binding.js",
   "node_modules/@napi-rs/canvas-linux-x64-gnu/package.json",
   "node_modules/@napi-rs/canvas-linux-x64-gnu/skia.linux-x64-gnu.node",
+  "apps/web/.kestrel-runtime/canvas-native.node",
 ];
 
 test("production build externalizes and traces the attachment package", async () => {
-  const [config, manifest, attachmentManifest] = await Promise.all([
+  const [config, manifest, attachmentManifest, rootManifest, canvasPatch] = await Promise.all([
     readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../../../packages/attachments/package.json", import.meta.url), "utf8"),
+    readFile(new URL("../../../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../../../patches/@napi-rs__canvas@0.1.80.patch", import.meta.url), "utf8"),
   ]);
   assert.match(config, /serverExternalPackages:[\s\S]*"@kestrel-agents\/files"/u);
   assert.match(config, /webpackBuildWorker: true/u);
@@ -57,6 +60,7 @@ test("production build externalizes and traces the attachment package", async ()
   assert.match(config, /"pdf-parse"/u);
   assert.match(config, /"pdfjs-dist"/u);
   assert.match(config, /"@napi-rs\/canvas"/u);
+  assert.match(config, /"\.kestrel-runtime\/canvas-native\.node"/u);
   const workspaceModulePaths = [...config.matchAll(/"([^"\n]*node_modules\/[^"\n]+)"/gu)]
     .map((match) => match[1] as string)
     .filter((path) => path.startsWith("../../packages/attachments/node_modules/") || path.startsWith("./node_modules/"));
@@ -73,8 +77,20 @@ test("production build externalizes and traces the attachment package", async ()
   assert.match(config, /"\/api\/cron\/attachments\/\*\*"/u);
   assert.match(config, /"\/api\/files\/\*\*"/u);
   assert.match(config, /"\/api\/knowledge\/documents\/\*\*"/u);
-  assert.match(manifest, /next build --webpack && pnpm run smoke:attachment-worker-build/u);
+  assert.match(manifest, /stage:pdf-canvas-native && next build --webpack && pnpm run smoke:attachment-worker-build/u);
   assert.match(attachmentManifest, /"require": "\.\/dist\/index\.cjs"/u);
+  assert.match(rootManifest, /"@napi-rs\/canvas@0\.1\.80": "patches\/@napi-rs__canvas@0\.1\.80\.patch"/u);
+  assert.match(canvasPatch, /return require\(process\.env\.NAPI_RS_NATIVE_LIBRARY_PATH\)/u);
+});
+
+test("attachment extraction resolves its worker through the package boundary", async () => {
+  const source = await readFile(
+    new URL("../../../packages/attachments/src/index.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /createRequire\(import\.meta\.url\)\.resolve/u);
+  assert.match(source, /@kestrel-agents\/files\/worker-runtime/u);
+  assert.doesNotMatch(source, /new URL\("\.\/worker\.js", import\.meta\.url\)/u);
 });
 
 test("build smoke rejects an attachment worker bundled anywhere in server output", async (context) => {

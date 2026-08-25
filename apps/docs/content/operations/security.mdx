@@ -31,6 +31,8 @@ Resolve a versioned provider entry and qualified capability set before issuing a
 
 Expose only canonical tool descriptors allowed by the active profile. Validate arguments at invocation, isolate filesystem and Docker access, prevent symlink escapes, and keep storage authority narrower than the worker's host account.
 
+Sandbox capability adapters are exact static registrations, not general network access. Each registration fixes its capability ID, operation, HTTPS resource, credential reference, and `read_only` or `external_effect` classification. Unknown or mismatched values fail before provider contact. Capability-free code remains network-off, while capability-enabled code reaches only the route-free loopback broker; the trusted host adapter alone contacts its fixed provider resource and rejects redirects.
+
 ## Action-bound external approvals
 
 Approval binds actor, grant, canonical action, intended effect, scope, and expiry. Revalidate immediately before the effect and store the decision and result as separate evidence.
@@ -42,6 +44,8 @@ Environment policy controls which MCP services are visible and whether OCI workl
 ## Required evidence
 
 Retain request/run correlation, authority decision, profile/provider revisions, tool descriptor, approval/effect identifiers, terminal result, and release identity without storing secrets or private continuation state.
+
+Keep mock, isolated-provider, and production evidence labeled separately. Sandbox capability qualification requires the shared adapter conformance suite plus Local Core and hosted runner end-to-end evidence. Do not rescore scoped-secret control 038 from documentation or unit evidence alone.
 
 ## Verify the controls
 

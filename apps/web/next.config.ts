@@ -5,6 +5,7 @@ import { loadKestrelBuildIdentity } from "./lib/deployment/build-identity";
 const monorepoRoot = fileURLToPath(new URL("../..", import.meta.url));
 export const kestrelBuildIdentity = loadKestrelBuildIdentity();
 const canvasRuntimeFiles = [
+  ".kestrel-runtime/canvas-native.node",
   "../../node_modules/.pnpm/@napi-rs+canvas@*/node_modules/@napi-rs/canvas/**/*",
   "../../node_modules/.pnpm/@napi-rs+canvas-*@*/node_modules/@napi-rs/canvas-*/**/*",
   "../../node_modules/.pnpm/pdfjs-dist@*/node_modules/@napi-rs/canvas/**/*",

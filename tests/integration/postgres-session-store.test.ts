@@ -530,7 +530,7 @@ test("startRun reconciles a stale terminal lease before creating a new run", asy
     { match: /^UPDATE runs\s+SET status = \$2,/i, rowCount: 1 },
     { match: /^UPDATE sessions\s+SET active_run_id = NULL,/i, rowCount: 1 },
     { match: /^UPDATE sessions\s+SET active_run_id = \$2,/i, rows: [{ session_id: "session-stale" }], rowCount: 1 },
-    { match: /^INSERT INTO runs \(run_id, session_id, event_type, status\)/, rowCount: 1 },
+    { match: /^INSERT INTO runs \(run_id, session_id, event_type, status, tenant_id, tenant_ownership_state\)/, rowCount: 1 },
     { match: /^COMMIT/ },
   ]);
 
@@ -652,7 +652,7 @@ test("startRun releases a missing active run row before creating a new run", asy
       rows: [{ session_id: "session-missing-run" }],
       rowCount: 1,
     },
-    { match: /^INSERT INTO runs \(run_id, session_id, event_type, status\)/, rowCount: 1 },
+    { match: /^INSERT INTO runs \(run_id, session_id, event_type, status, tenant_id, tenant_ownership_state\)/, rowCount: 1 },
     { match: /^COMMIT/ },
   ]);
 

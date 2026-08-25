@@ -2,6 +2,7 @@ FROM node:22-bookworm-slim AS build
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+COPY patches patches
 COPY apps/workspace-runtime/package.json apps/workspace-runtime/package.json
 COPY packages/attachments/package.json packages/attachments/package.json
 COPY packages/conversation/package.json packages/conversation/package.json

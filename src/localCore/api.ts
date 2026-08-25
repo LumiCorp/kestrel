@@ -877,6 +877,7 @@ async function createExecutionBundle(input: {
   const storeHandle = await ensureLocalCoreStore({
     homePath: input.status.home.homePath,
     mode: input.status.dbMode === "external" ? "external" : "pglite",
+    tenantId: normalizeString((input.options.env ?? process.env).KESTREL_TENANT_ID),
     ...(input.status.dbMode !== "external" && repoRoot !== undefined
       ? { migrationsDir: path.join(repoRoot, "db", "migrations") }
       : {}),
@@ -927,6 +928,13 @@ async function createExecutionBundle(input: {
     ),
     profileSourcePolicy: "registered-only",
     eventJournal,
+    ...(storeHandle.store.readExactEffectResult === undefined || storeHandle.store.claimExactEffectCancellation === undefined ? {} : {
+      exactEffectResultStore: {
+        readExactEffectResult: storeHandle.store.readExactEffectResult.bind(storeHandle.store),
+        claimExactEffectCancellation: storeHandle.store.claimExactEffectCancellation.bind(storeHandle.store),
+      },
+      exactEffectResultTenantId: (input.options.env ?? process.env).KESTREL_TENANT_ID,
+    }),
   });
   try {
     await handler.ready();

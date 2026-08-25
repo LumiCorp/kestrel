@@ -144,13 +144,21 @@ export async function resolveHostedTurnAttachments(input: {
   const seen = new Set<string>();
   for (const [index, attachment] of attachments.entries()) {
     const source = expected[index];
+    const hasSourceUrl =
+      typeof attachment?.sourceUrl === "string" &&
+      attachment.sourceUrl.length > 0;
+    const hasInlineData = typeof attachment?.data === "string";
+    const hasValidSource =
+      hasSourceUrl !== hasInlineData &&
+      (hasSourceUrl
+        ? typeof attachment?.sourceUrlExpiresAt === "string"
+        : attachment?.sourceUrlExpiresAt === undefined);
     if (
       !attachment ||
       typeof attachment.fileId !== "string" ||
       attachment.fileId !== source.fileId ||
       seen.has(attachment.fileId) ||
-      typeof attachment.sourceUrl !== "string" ||
-      typeof attachment.sourceUrlExpiresAt !== "string" ||
+      !hasValidSource ||
       typeof attachment.sha256 !== "string" ||
       typeof attachment.sizeBytes !== "number" ||
       typeof attachment.mimeType !== "string" ||

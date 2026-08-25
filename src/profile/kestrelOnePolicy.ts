@@ -31,7 +31,7 @@ import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
 export const KESTREL_POLICY_ID = "kestrel";
 export const KESTREL_POLICY_LABEL = "Kestrel";
-export const KESTREL_POLICY_VERSION = 3;
+export const KESTREL_POLICY_VERSION = 4;
 export const KESTREL_PROMPT_POLICY_ID = "kestrel";
 export const KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
   "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
@@ -171,6 +171,23 @@ export const KESTREL_HARNESS_ECONOMICS = Object.freeze({
   modelProfiles: [
     {
       version: 1,
+      profileId: "openrouter:gpt-5-nano-2025-08-07:v1",
+      provider: "openrouter",
+      model: "gpt-5-nano-2025-08-07",
+      contextWindowTokens: 400_000,
+      maxOutputTokens: 128_000,
+      counting: {
+        counter: "utf8-byte-upper-bound",
+        counterVersion: "1",
+        method: "conservative_estimate",
+        confidence: "conservative",
+      },
+      cache: {
+        behavior: "provider_automatic",
+      },
+    },
+    {
+      version: 1,
       profileId: "openrouter:z-ai/glm-5.2:v1",
       provider: "openrouter",
       model: "z-ai/glm-5.2",
@@ -284,7 +301,7 @@ export const KESTREL_ONE_ENVIRONMENT_PRESETS: Readonly<
     id: "desktop_dev_local",
     version: 1,
   }),
-  workspace_hosted: Object.freeze({ id: "workspace_hosted", version: 1 }),
+  workspace_hosted: Object.freeze({ id: "workspace_hosted", version: 2 }),
 });
 
 export interface KestrelOneProfileOverlay {
@@ -385,6 +402,11 @@ function composeLegacyKestrelOneProfile(
     ...KESTREL_ONE_DIALOG_TOOL_NAMES,
   ]);
   assertRequiredKestrelOneTools(toolAllowlist);
+  assertToolPolicySatisfiable(
+    toolAllowlist,
+    input.overlay?.approvalPolicyPackId ??
+      defaultApprovalPolicyPackForPreset(input.environmentPresetId),
+  );
 
   const fingerprint = fingerprintKestrelOneComposition({
     ...kestrelPolicyFingerprintRevision(),
@@ -436,7 +458,9 @@ function composeLegacyKestrelOneProfile(
       ? { modelTimeoutMs: input.overlay.modelTimeoutMs }
       : {}),
     storeDriver: input.overlay?.storeDriver ?? "auto",
-    approvalPolicyPackId: input.overlay?.approvalPolicyPackId ?? "dev",
+    approvalPolicyPackId:
+      input.overlay?.approvalPolicyPackId ??
+      defaultApprovalPolicyPackForPreset(input.environmentPresetId),
     modeSystemV2Enabled: true,
     defaultInteractionMode: DEFAULT_INTERACTION_MODE,
     defaultActSubmode: DEFAULT_ACT_SUBMODE,
@@ -543,6 +567,7 @@ export function composeKestrelProfile(
     ...KESTREL_ONE_DIALOG_TOOL_NAMES,
   ]);
   assertRequiredKestrelOneTools(toolAllowlist);
+  assertToolPolicySatisfiable(toolAllowlist, binding.approvals.policyPackId);
   const fingerprint = fingerprintKestrelOneComposition({
     ...kestrelPolicyFingerprintRevision(),
     profileDefinitionRevision: definition.revision,
@@ -716,7 +741,9 @@ export function createKestrelEnvironmentBindingFromOverlay(input: {
       ) as Array<Record<string, unknown>>,
     },
     approvals: {
-      policyPackId: input.overlay?.approvalPolicyPackId ?? "dev",
+      policyPackId:
+        input.overlay?.approvalPolicyPackId ??
+        defaultApprovalPolicyPackForPreset(input.environmentPresetId),
     },
     storage: { driver: input.overlay?.storeDriver ?? "auto" },
     queues: { tool: { ...(input.overlay?.toolQueue ?? {}) } },
@@ -735,6 +762,34 @@ export function createKestrelEnvironmentBindingFromOverlay(input: {
             }
         : { scope: "local" }),
   });
+}
+
+export function defaultApprovalPolicyPackForPreset(
+  presetId: ShellPresetId,
+): NonNullable<TuiProfile["approvalPolicyPackId"]> {
+  return presetId === "cli_safe_local" || presetId === "desktop_safe_local"
+    ? "isolated_code"
+    : presetId === "workspace_hosted"
+      ? "ci_bot"
+    : "dev";
+}
+
+function assertToolPolicySatisfiable(
+  toolAllowlist: readonly string[],
+  policyPackId: NonNullable<TuiProfile["approvalPolicyPackId"]>,
+): void {
+  const permitsCode = policyPackId === "isolated_code" || policyPackId === "ci_bot";
+  const permitsShell = policyPackId === "dev" || policyPackId === "ci_bot";
+  if (toolAllowlist.includes("code.execute") && !permitsCode) {
+    throw new Error(
+      `Approval policy pack '${policyPackId}' does not authorize advertised tool 'code.execute'.`,
+    );
+  }
+  if (toolAllowlist.includes("exec_command") && !permitsShell) {
+    throw new Error(
+      `Approval policy pack '${policyPackId}' does not authorize advertised tool 'exec_command'.`,
+    );
+  }
 }
 
 export function createKestrelProfileDefinitionFromOverlay(

@@ -118,7 +118,7 @@ export function formatKestrelHelp(): string {
     "  web [--host <host>] [--port <port>] [--token <token>]",
     "  job preflight --json-in <file> --json-out <file>",
     "  job run --json-in <file> --json-out <file> [--profile <id>]",
-    "  setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]",
+    "  setup [--profile <id>] [--approval-pack dev|isolated_code|ci_bot|production] [--full]",
     "  runtime replay <query> [--event-type <event-type>]... [--json]",
     "  runtime doctor <query> [--json]",
     "  runtime bundle <query> --out <file>",

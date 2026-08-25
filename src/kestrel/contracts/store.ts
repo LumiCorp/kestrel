@@ -37,6 +37,11 @@ import type {
   RuntimeEvent,
   RuntimeEventIntent,
 } from "./events.js";
+import { parseAgentToolResultV2, parsePreparedToolCallV1, type AgentToolResultV2 } from "./tool-invocation.js";
+import { canonicalJson } from "./tool-contract.js";
+
+export class SandboxCapabilityExactResultCancelledError extends Error {}
+export class SandboxCapabilityExactResultConflictError extends Error {}
 import type {
   ArtifactIntent,
   ClaimIntent,
@@ -75,6 +80,7 @@ import type {
   ThreadRecord,
   ThreadStatus,
 } from "./orchestration.js";
+import type { SandboxCapabilityChildReservationV1, SandboxCapabilityLeaseTransitionRecordV1 } from "./sandbox-capability.js";
 
 export interface LegacySessionArchive {
   sessionId: string;
@@ -440,13 +446,150 @@ export interface StepCommitStore {
 
 export interface EffectStore {
   listPendingEffects(sessionId: string): Promise<PersistedEffect[]>;
+  getPersistedEffect?(idempotencyKey: string): Promise<PersistedEffect | null>;
   getEffectResult(idempotencyKey: string): Promise<EffectResult | null>;
   saveEffectResult(runId: string, sessionId: string, result: EffectResult): Promise<void>;
-  markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus): Promise<void>;
+  markEffectStatus(
+    idempotencyKey: string,
+    status: EffectExecutionStatus,
+    owner: { runId: string; sessionId: string },
+  ): Promise<void>;
   listReadyRegionWorkItems(sessionId: string): Promise<RegionWorkItem[]>;
   claimNextRegionWorkItem(sessionId: string, cursor?: string): Promise<RegionWorkItem | null>;
   completeRegionWorkItem(itemId: number, outcome: "DONE" | "FAILED", error?: Record<string, unknown>): Promise<void>;
   spawnRegionWorkItems(sessionId: string, items: RegionWorkIntent[]): Promise<void>;
+}
+
+export type ExactEffectResultRead =
+  | { status: "found"; result: AgentToolResultV2 }
+  | { status: "not_found" }
+  | { status: "incomplete" }
+  | { status: "conflict" };
+
+export type ExactEffectCancellationClaim =
+  | { status: "cancelled" }
+  | { status: "completed" }
+  | { status: "not_found" }
+  | { status: "conflict" };
+
+export interface ExactEffectResultStore {
+  readExactEffectResult(input: {
+    sessionId: string;
+    runId: string;
+    idempotencyKey: string;
+    tenantId: string;
+  }): Promise<ExactEffectResultRead>;
+  claimExactEffectCancellation(input: {
+    sessionId: string;
+    runId: string;
+    idempotencyKey: string;
+    tenantId: string;
+  }): Promise<ExactEffectCancellationClaim>;
+}
+
+export function validateExactEffectCancellationCandidate(input: {
+  requested: { sessionId: string; runId: string; idempotencyKey: string };
+  effect: PersistedEffect | null;
+}): "ready" | "not_found" | "conflict" {
+  const { requested, effect } = input;
+  if (effect === null) return "not_found";
+  if (
+    effect.sessionId !== requested.sessionId ||
+    effect.runId !== requested.runId ||
+    effect.idempotencyKey !== requested.idempotencyKey
+  ) return "not_found";
+  if (effect.type !== "execute_tool_call") return "conflict";
+  let prepared;
+  try { prepared = parsePreparedToolCallV1(effect.payload.preparedToolCall); } catch { return "conflict"; }
+  if (
+    prepared.sessionId !== requested.sessionId ||
+    prepared.runId !== requested.runId ||
+    prepared.callId !== requested.idempotencyKey
+  ) return "conflict";
+  return "ready";
+}
+
+export function validateExactEffectCancellationTenantBinding(input: {
+  requested: { sessionId: string; runId: string; idempotencyKey: string; tenantId: string };
+  lease: SandboxCapabilityLeaseTransitionRecordV1 | null;
+}): "ready" | "not_found" | "conflict" {
+  if (input.lease === null) return "conflict";
+  const binding = input.lease.binding;
+  if (
+    binding.tenantId !== input.requested.tenantId ||
+    binding.sessionId !== input.requested.sessionId ||
+    binding.runId !== input.requested.runId ||
+    binding.toolCallId !== input.requested.idempotencyKey
+  ) return "not_found";
+  return "ready";
+}
+
+export function exactEffectRequiresCapabilityTenantBinding(
+  effect: PersistedEffect,
+): boolean {
+  const prepared = parsePreparedToolCallV1(effect.payload.preparedToolCall);
+  return Object.prototype.hasOwnProperty.call(prepared.effectiveInput, "capability");
+}
+
+export function validateExactEffectResultRead(input: {
+  requested: { sessionId: string; runId: string; idempotencyKey: string };
+  effect: PersistedEffect | null;
+  effectResult: EffectResult | null;
+}): ExactEffectResultRead {
+  const { requested, effect, effectResult } = input;
+  if (effect === null) return { status: "not_found" };
+  if (
+    effect.sessionId !== requested.sessionId ||
+    effect.runId !== requested.runId ||
+    effect.idempotencyKey !== requested.idempotencyKey
+  ) return { status: "not_found" };
+  if (effect.type !== "execute_tool_call") return { status: "conflict" };
+  let prepared;
+  try { prepared = parsePreparedToolCallV1(effect.payload.preparedToolCall); } catch { return { status: "conflict" }; }
+  if (
+    prepared.sessionId !== requested.sessionId ||
+    prepared.runId !== requested.runId ||
+    prepared.callId !== requested.idempotencyKey
+  ) return { status: "conflict" };
+  if (effect.status !== "DONE" || effectResult === null) return { status: "incomplete" };
+  if (effectResult.idempotencyKey !== requested.idempotencyKey) return { status: "conflict" };
+  if (effectResult.status !== "DONE" || effectResult.output === undefined) return { status: "incomplete" };
+  let result: AgentToolResultV2;
+  try { result = parseAgentToolResultV2(effectResult.output); } catch { return { status: "conflict" }; }
+  if (
+    result.toolCallId !== requested.idempotencyKey ||
+    result.toolName !== prepared.activation.descriptor.toolId ||
+    canonicalJson(result.activation) !== canonicalJson(prepared.activation) ||
+    canonicalJson(result.outcome.activation) !== canonicalJson(prepared.activation) ||
+    canonicalJson(result.auditRecord.input) !== canonicalJson(prepared.effectiveInput)
+  ) return { status: "conflict" };
+  return { status: "found", result };
+}
+
+export function validateExactEffectResultTenantBinding(input: {
+  read: ExactEffectResultRead;
+  requested: { sessionId: string; runId: string; idempotencyKey: string; tenantId: string };
+  lease: SandboxCapabilityLeaseTransitionRecordV1 | null;
+}): ExactEffectResultRead {
+  if (input.read.status !== "found") return input.read;
+  const rawOutput = input.read.result.outcome.kind === "success" || input.read.result.outcome.kind === "partial"
+    ? input.read.result.outcome.rawOutput
+    : undefined;
+  if (typeof rawOutput !== "object" || rawOutput === null || Array.isArray(rawOutput)) return { status: "conflict" };
+  const replayEvidence = (rawOutput as Record<string, unknown>).capabilityReplayEvidence;
+  if (typeof replayEvidence !== "object" || replayEvidence === null || Array.isArray(replayEvidence)) return { status: "conflict" };
+  const leaseId = (replayEvidence as Record<string, unknown>).leaseId;
+  if (typeof leaseId !== "string" || leaseId.length === 0 || input.lease === null || input.lease.leaseId !== leaseId) {
+    return { status: "conflict" };
+  }
+  const binding = input.lease.binding;
+  if (
+    binding.tenantId !== input.requested.tenantId ||
+    binding.sessionId !== input.requested.sessionId ||
+    binding.runId !== input.requested.runId ||
+    binding.toolCallId !== input.requested.idempotencyKey
+  ) return { status: "not_found" };
+  return input.read;
 }
 
 export interface OutboxStore {
@@ -486,6 +629,53 @@ export interface EventStore {
     turnId?: string | undefined;
     limit?: number | undefined;
   }): Promise<ModelCallProvenanceRecord[]>;
+}
+
+export interface SandboxCapabilityLeaseStore {
+  appendSandboxCapabilityLeaseTransition(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1>;
+  issueSandboxCapabilityLease(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+    childReservation?: SandboxCapabilityChildReservationV1 | undefined;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1>;
+  reserveSandboxCapabilityInvocation(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1 & { invocationResponseByteLimit: number }>;
+  /** Atomically persists the exact DONE result and transitions its owning effect to DONE. */
+  saveSandboxCapabilityEffectResult(input: {
+    leaseId: string;
+    bindingDigest: string;
+    toolCallId: string;
+    runId: string;
+    sessionId: string;
+    result: EffectResult;
+    signal?: AbortSignal | undefined;
+  }): Promise<void>;
+  getSandboxCapabilityLease(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1 | null>;
+  listSandboxCapabilityLeaseTransitions(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1[]>;
+  listRecoverableSandboxCapabilityLeases(input: {
+    before: string;
+    limit?: number | undefined;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1[]>;
+  reserveSandboxCapabilityChild(input: {
+    expectedParentSequence: number;
+    reservation: SandboxCapabilityChildReservationV1;
+  }): Promise<SandboxCapabilityChildReservationV1>;
+  settleSandboxCapabilityChild(input: {
+    reservationId: string;
+    expectedSequence: number;
+    status: "committed" | "released";
+    requestsCommitted: number;
+    responseBytesCommitted: number;
+    reason?: string | undefined;
+    occurredAt: string;
+  }): Promise<SandboxCapabilityChildReservationV1>;
+  getSandboxCapabilityChildReservation(reservationId: string): Promise<SandboxCapabilityChildReservationV1 | null>;
+  listSandboxCapabilityChildReservations(parentLeaseId: string): Promise<SandboxCapabilityChildReservationV1[]>;
 }
 
 export interface ArtifactStore {
@@ -649,6 +839,8 @@ export interface SessionStore
     MissionControlProjectRepository,
     ThreadStore,
     AssemblyStore {
+  readExactEffectResult?: ExactEffectResultStore["readExactEffectResult"];
+  claimExactEffectCancellation?: ExactEffectResultStore["claimExactEffectCancellation"];
   recoverOrphanedActiveRun?(
     sessionId: string,
   ): Promise<{ runId?: string | undefined }>;

@@ -109,6 +109,17 @@ export function formatReplayInspection(replay: ReplayResult): string[] {
       lines.push(formatRuntimeNarration("runtimeNarration", replay.runtimePlan.latestNarration));
     }
   }
+  for (const capability of replay.sandboxCapabilities?.leases ?? []) {
+    lines.push(
+      `sandboxCapability lease=${capability.leaseId} capability=${capability.capabilityId} status=${capability.status} expiresAt=${capability.expiresAt} remainingRequests=${capability.remainingRequests} remainingBytes=${capability.remainingResponseBytes} childRequestsAllocated=${capability.childRequestsAllocated} childBytesAllocated=${capability.childResponseBytesAllocated}` +
+      `${capability.terminalOutcome !== undefined ? ` terminal=${capability.terminalOutcome}` : ""}` +
+      `${capability.parentLeaseId !== undefined ? ` parentLease=${capability.parentLeaseId}` : ""}` +
+      `${capability.resultReference !== undefined ? ` resultRef=${capability.resultReference}` : ""}`,
+    );
+  }
+  if ((replay.sandboxCapabilities?.invalidTransitionEvents ?? 0) > 0) {
+    lines.push(`sandboxCapability invalidTransitions=${replay.sandboxCapabilities?.invalidTransitionEvents ?? 0}`);
+  }
   for (const approval of replay.approvals) {
     lines.push(
       `approval requestId=${approval.request.requestId} status=${approval.status} actionable=${approval.actionable ? "yes" : "no"} latestGrant=${approval.latestGrant?.grantId ?? "n/a"}`,

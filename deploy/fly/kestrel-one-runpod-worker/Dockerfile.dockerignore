@@ -27,5 +27,6 @@ apps/*
 !apps/web
 apps/web/.next
 apps/web/.local
+apps/web/.kestrel-runtime
 apps/web/node_modules
 apps/web/tsconfig.tsbuildinfo

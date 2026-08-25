@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import mammoth from "mammoth";
 import { read, utils } from "xlsx";
+import { createRequire } from "node:module";
 import { dirname, join, resolve, sep } from "node:path";
 import { Worker } from "node:worker_threads";
 
@@ -28,7 +29,14 @@ export async function extractAttachmentTextIsolated(input: {
   if (input.buffer.byteLength > MAX_ATTACHMENT_PROCESSOR_INPUT_BYTES) {
     throw new Error("Attachment processor input exceeds the 100 MiB limit.");
   }
-  const worker = new Worker(new URL("./worker.js", import.meta.url), {
+  // Resolve the worker through the package export instead of deriving it from
+  // import.meta.url. Server bundlers can rewrite import.meta.url to a generated
+  // chunk, while Node package resolution continues to identify the physical
+  // worker shipped with this package.
+  const workerPath = createRequire(import.meta.url).resolve(
+    "@kestrel-agents/files/worker-runtime",
+  );
+  const worker = new Worker(workerPath, {
     // The extractor owns its worker runtime. Hosting platforms may start the
     // parent with flags that Node explicitly rejects for Worker instances.
     execArgv: [],
@@ -82,7 +90,7 @@ export async function extractAttachmentTextIsolated(input: {
   });
 }
 
-const EXTRACTABLE_MEDIA_TYPES = new Set([
+export const ATTACHMENT_TEXT_EXTRACTABLE_MEDIA_TYPES = [
   "application/pdf",
   "application/json",
   "application/yaml",
@@ -95,7 +103,11 @@ const EXTRACTABLE_MEDIA_TYPES = new Set([
   "text/markdown",
   "text/plain",
   "text/yaml",
-]);
+] as const;
+
+const EXTRACTABLE_MEDIA_TYPES = new Set<string>(
+  ATTACHMENT_TEXT_EXTRACTABLE_MEDIA_TYPES,
+);
 
 export function isAttachmentTextExtractable(mediaType: string): boolean {
   return mediaType.startsWith("text/") || EXTRACTABLE_MEDIA_TYPES.has(mediaType);

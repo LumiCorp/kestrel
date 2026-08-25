@@ -404,6 +404,7 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
     },
   },
   "run.cancel": { sessionId: "session-1", runId: "run-1" },
+  "effect.result.get": { sessionId: "session-1", runId: "run-1", idempotencyKey: "call-1" },
   "session.describe": { sessionId: "session-1" },
   "session.state": { sessionId: "session-1" },
   "operator.inbox": { sessionId: "session-1" },
@@ -624,6 +625,23 @@ test("conversation message cursors and recovery pages are boundary validated", (
   }), /result\.output\.runId must match message\.runId/u);
 });
 
+const exactResultActivation = {
+  version: "v1",
+  descriptor: { version: "v1", toolId: "code.execute", sourceKind: "builtin", sourceId: "builtin", contractRevision: `sha256:${"a".repeat(64)}`, inputSchemaHash: `sha256:${"b".repeat(64)}`, outputContractHash: `sha256:${"c".repeat(64)}` },
+  registryGeneration: "generation-1",
+  scopeFingerprint: `sha256:${"d".repeat(64)}`,
+};
+const exactLoadedResult = {
+  version: "v2",
+  toolName: "code.execute",
+  status: "OK",
+  toolCallId: "call-1",
+  activation: exactResultActivation,
+  outcome: { version: "v1", callId: "call-1", activation: exactResultActivation, kind: "success", startedAt: "2026-07-13T12:00:00.000Z", completedAt: "2026-07-13T12:00:01.000Z", effectState: "not_applicable", rawOutput: {} },
+  modelContext: { text: "ok", rawOutputRef: "sha256:result", truncated: false },
+  auditRecord: { toolName: "code.execute", input: {}, output: {}, startedAt: "2026-07-13T12:00:00.000Z", completedAt: "2026-07-13T12:00:01.000Z", durationMs: 1000, status: "OK" },
+};
+
 const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "profile.listed": { profiles: [profile] },
   "profile.loaded": { profile },
@@ -687,6 +705,13 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "run.failed": {
     result: { ...terminalResult, output: { ...terminalResult.output, status: "FAILED" } },
     error: { code: "RUN_FAILED", message: "Run failed" },
+  },
+  "effect.result.loaded": {
+    version: 1,
+    sessionId: "session-1",
+    runId: "run-1",
+    idempotencyKey: "call-1",
+    result: exactLoadedResult,
   },
   "runner.error": { code: "INVALID_COMMAND", message: "Invalid command" },
   "runner.pong": { nonce: "ping-1" },
@@ -1424,6 +1449,15 @@ test("canonical event parser accepts every registered discriminant", () => {
     assert.equal(parsed.type, type);
     assert.equal(parsed.id, `event:${type}`);
   }
+});
+
+test("effect.result.loaded rejects malformed or internally conflicting AgentToolResult evidence", () => {
+  const parse = (result: unknown) => parseRunnerEventV2({ id: "event-effect-result", type: "effect.result.loaded", ts: "2026-07-13T12:00:00.000Z", payload: { version: 1, sessionId: "session-1", runId: "run-1", idempotencyKey: "call-1", result } });
+  assert.throws(() => parse({ version: "v2" }), /toolName/u);
+  assert.throws(() => parse({ ...exactLoadedResult, extra: true }), /extra is not supported/u);
+  assert.throws(() => parse({ ...exactLoadedResult, toolCallId: "other-call" }), /identities do not agree/u);
+  assert.throws(() => parse({ ...exactLoadedResult, activation: { ...exactResultActivation, descriptor: { ...exactResultActivation.descriptor, toolId: "other.tool" } } }), /identities do not agree/u);
+  assert.throws(() => parse({ ...exactLoadedResult, outcome: { ...exactLoadedResult.outcome, activation: { ...exactResultActivation, registryGeneration: "other-generation" } } }), /identities do not agree/u);
 });
 
 test("provider reasoning events reject opaque continuation state at the protocol boundary", () => {

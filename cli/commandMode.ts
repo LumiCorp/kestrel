@@ -1294,15 +1294,15 @@ function readOptionalInteger(value: string | undefined): number | undefined {
 
 function readOptionalApprovalPack(
   value: string | undefined,
-): "dev" | "ci_bot" | "production" | undefined {
+): "dev" | "isolated_code" | "ci_bot" | "production" | undefined {
   if (value === undefined) {
     return;
   }
-  if (value === "dev" || value === "ci_bot" || value === "production") {
+  if (value === "dev" || value === "isolated_code" || value === "ci_bot" || value === "production") {
     return value;
   }
   throw new Error(
-    `Unsupported approval pack '${value}'. Expected dev|ci_bot|production.`,
+    `Unsupported approval pack '${value}'. Expected dev|isolated_code|ci_bot|production.`,
   );
 }
 

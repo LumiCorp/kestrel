@@ -79,6 +79,16 @@ secrets belong in server-side, Local Core, or operating-system-backed
 configuration. They do not belong in browser bundles, source control, public
 logs, or readable API responses.
 
+Authenticated sandbox capabilities do not inject provider credentials into the
+workload. A statically registered trusted host adapter owns one exact HTTPS
+resource and receives the credential only for that bounded invocation. The
+workload and its broker retain network-off confinement, redirects are rejected,
+and adapter failures, audit records, replay, and artifacts remain secret-free.
+Unknown adapters, operations, resources, authorities, and effect
+classifications fail closed. External-effect adapters additionally require the
+existing exact action-bound approval and effect-idempotency authority; no
+sandbox write adapter is enabled by default.
+
 ## User-enabled MCP servers
 
 Custom OCI MCP servers receive no network by default. Administrators may author

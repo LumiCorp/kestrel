@@ -1,0 +1,51 @@
+---
+title: Sandbox capability adapters
+summary: Author and operate exact, credential-confined capabilities for isolated code without creating arbitrary egress.
+section: reference
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-23
+---
+
+A sandbox capability adapter is a trusted host component registered under one exact capability ID, operation, HTTPS resource, credential reference, and effect classification. Registration is static and versioned. Kestrel does not discover adapters at runtime or choose them with keywords, URL matching, fallback ranking, or other heuristics.
+
+## Adapter author contract
+
+An adapter must declare one `read_only` or `external_effect` classification. Missing and unknown classifications fail closed. Its parser rejects unknown profile and selection fields, and its canonical input enforces the authored request ceilings before provider contact.
+
+The adapter owns one exact credential-free HTTPS resource. It must not accept a model-authored base URL, proxy, redirect target, adapter name, credential reference, lease, identity, approval, or authority revision. Redirects are disabled. The sandbox and broker have no external network route; only the trusted host adapter contacts the registered resource.
+
+Every registered adapter passes the shared conformance suite. The suite covers exact registration, profile and selection parsing, operation and resource matching, request and response ceilings, redirects, expiry and timeout, stable secret-free failures, and cancellation. Adapter-specific bypasses are not permitted.
+
+## Profile author contract
+
+A profile may narrow the registered adapter's audience, broker authority, request count, response bytes, timeout, expiry, and adapter-specific input limits. It cannot change the registered operation, resource, credential, or effect classification. Unknown adapters and stale catalog, profile, policy, credential, or broker revisions are rejected before provider contact.
+
+Model input selects only an authored capability ID, operation, and bounded non-secret input. It never carries provider authority.
+
+## Read-only and external-effect operations
+
+A `read_only` operation receives only its exact source authority and cannot authorize an external effect.
+
+An `external_effect` operation requires the existing prepared action-bound approval and effect-idempotency contracts. Approval must describe the same canonical action and payload, run, tool call, effect idempotency identity, actor authority, and unexpired policy revision. A source grant, read-only grant, prior approval, approval for another action, or another idempotency key cannot authorize it. Kestrel currently ships no sandbox write adapter.
+
+## Credentials and failures
+
+Credentials remain in the trusted Local Core or hosted runner environment. Register them with the execution-boundary redactor before use and dispose of them before container removal. They must never enter generated code, sandbox input or environment, broker configuration visible to the workload, logs, errors, audit records, replay, or retained artifacts.
+
+Adapter failures expose a stable capability error category and a secret-free message. Do not return provider exception text, response headers, credential-bearing URLs, or transport configuration.
+
+## Operator evidence
+
+Run the same conformance and isolated-provider scenarios for Local Core and the hosted runner. Verify cancellation, restart, expiry, replay, audit inspection, and capability-free `code.execute`. Replay must use the recorded canonical result without resolving credentials, contacting the provider, or starting Docker.
+
+Label evidence as `mock`, `isolated_provider`, or `production`. One category never substitutes for another. Preserve the Docker escape, secret-canary, mount, quota, cleanup, and network-off process proofs.
+
+Control 038 remains unchanged until merged process and end-to-end evidence demonstrates the scoped secret channel in both deployment forms. Documentation or adapter unit tests alone are insufficient evidence for rescoring.
+
+## Compatibility and rollout
+
+Durable version 1 Tavily lease and replay records remain readable. Version 2 profiles use the generic adapter registration and include the exact operation, resource, and effect classification in their fingerprints and authority. Mixed-version readers must preserve the canonical legacy meaning; they must not reinterpret an unknown version, invent a registration, or downgrade an `external_effect` to `read_only`.
+
+Deploy registry, profile-authoring, Local Core, hosted runner, and persistence support as one compatible boundary. If a deployment cannot resolve the exact contract version or registry fingerprint, it fails before credential resolution, Docker creation, or provider contact. There is no adapter fallback or bridge-network compatibility mode.

@@ -24,6 +24,7 @@ apps/desktop/.npm-cache/
 apps/desktop/.forge-package/
 .kestrel/
 /.artifacts/
+/artifacts/qualification/
 /apps/web/.local/
 test-results/
 /runs/

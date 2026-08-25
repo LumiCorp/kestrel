@@ -35,6 +35,27 @@ test("Docker create command carries the canonical sandbox hardening contract", (
   }
 });
 
+test("Docker capability create command joins only the trusted broker namespace", () => {
+  const capabilityInput = input();
+  capabilityInput.capability = {
+    transport: "docker-shared-loopback-v1",
+    lease: "opaque-test-lease",
+    operation: "search",
+    destination: "api.tavily.com",
+    response: { answer: "ok" },
+  };
+  const command = buildDockerCreateCommand(
+    capabilityInput,
+    "kestrel-command-contract",
+    "kestrel-trusted-broker",
+  );
+
+  assert.equal(argumentAfter(command, "--network"), "container:kestrel-trusted-broker");
+  assert.equal(command.includes("bridge"), false);
+  assert.equal(command.includes("host"), false);
+  assert.equal(command.join(" ").includes("opaque-test-lease"), false);
+});
+
 function input(): SandboxExecutionInput {
   return {
     request: {

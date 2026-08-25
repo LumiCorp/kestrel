@@ -35,6 +35,7 @@ import type {
   ProjectReviewGetCommandPayload,
   ProjectSnapshotGetCommandPayload,
   RunCancelCommandPayload,
+  EffectResultGetCommandPayload,
   RunnerCommand,
   RunnerPingCommandPayload,
   RunStartCommandPayload,
@@ -178,6 +179,11 @@ export class CommandRouter {
       if (command.type === "run.cancel") {
         const payload = validateRunCancelPayload(command.payload);
         await this.host.runCancel(command.id, payload, command.metadata);
+        return;
+      }
+
+      if (command.type === "effect.result.get") {
+        await this.host.effectResultGet(command.id, validateEffectResultGetPayload(command.payload), command.metadata);
         return;
       }
 
@@ -1844,6 +1850,15 @@ function validateRunCancelPayload(value: unknown): RunCancelCommandPayload {
   }
 
   return value as RunCancelCommandPayload;
+}
+
+function validateEffectResultGetPayload(value: unknown): EffectResultGetCommandPayload {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("effect.result.get payload must be an object");
+  const record = value as Record<string, unknown>;
+  const allowed = new Set(["sessionId", "runId", "idempotencyKey"]);
+  if (Object.keys(record).some((key) => !allowed.has(key))) throw new Error("effect.result.get payload contains unknown fields");
+  for (const key of allowed) if (typeof record[key] !== "string" || (record[key] as string).trim().length === 0) throw new Error(`effect.result.get payload.${key} must be a non-empty string`);
+  return record as unknown as EffectResultGetCommandPayload;
 }
 
 function validateSessionDescribePayload(

@@ -1,0 +1,198 @@
+import {
+  normalizeSandboxCapabilityProfileV2,
+  normalizeSandboxCapabilitySelectionV2,
+  TAVILY_SEARCH_CAPABILITY_ID,
+  TAVILY_SEARCH_OPERATION,
+  TAVILY_SEARCH_RESOURCE,
+  type SandboxCapabilityProfileV2,
+  type SandboxCapabilitySelectionV2,
+  type TavilySearchAdapterResponseV1,
+} from "../../kestrel/contracts/sandbox-capability.js";
+import { SandboxCapabilityAdapterFailure, type SandboxCapabilityAdapter } from "../SandboxCapabilityAdapterRegistry.js";
+export { SandboxCapabilityAdapterFailure } from "../SandboxCapabilityAdapterRegistry.js";
+
+export const tavilySearchReadAdapter: SandboxCapabilityAdapter<
+  SandboxCapabilityProfileV2,
+  SandboxCapabilitySelectionV2 & { input: { query: string; maxResults?: number | undefined } },
+  { query: string; maxResults: number },
+  TavilySearchAdapterResponseV1
+> = {
+  capabilityId: TAVILY_SEARCH_CAPABILITY_ID,
+  operation: TAVILY_SEARCH_OPERATION,
+  resource: TAVILY_SEARCH_RESOURCE,
+  credentialId: "tool.tavily.default",
+  effectClass: "read_only",
+  modelContract: {
+    description: "Run one bounded Tavily web search through the trusted host adapter. The sandbox has no direct DNS, internet, loopback, LAN, link-local, or metadata-network access.",
+    usage: "When the user explicitly requires fresh Tavily search results, include this capability in the same code.execute input and invoke only its fixed loopback broker from the sandbox. Omit capability for ordinary isolated computation.",
+    optional: true,
+    selectionInputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        query: { type: "string", minLength: 1, maxLength: 400 },
+        maxResults: { type: "integer", minimum: 1, maximum: 20 },
+      },
+      required: ["query"],
+    },
+    examples: [{ query: "Kestrel agent runtime", maxResults: 5 }],
+  },
+  parseProfile(value) {
+    const profile = normalizeSandboxCapabilityProfileV2(value);
+    if (profile.capabilityId !== TAVILY_SEARCH_CAPABILITY_ID || profile.operation !== TAVILY_SEARCH_OPERATION || profile.resource !== TAVILY_SEARCH_RESOURCE || profile.effectClass !== "read_only") {
+      throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROFILE_MISMATCH", "Tavily adapter profile does not match its exact registration");
+    }
+    const maxQueryChars = boundedAdapterInteger(profile.adapterConfig.maxQueryChars, 1, 400, "maxQueryChars");
+    const maxResults = boundedAdapterInteger(profile.adapterConfig.maxResults, 1, 20, "maxResults");
+    return { ...profile, adapterConfig: { maxQueryChars, maxResults } };
+  },
+  parseSelection(value) {
+    const selection = normalizeSandboxCapabilitySelectionV2(value);
+    if (selection.capabilityId !== TAVILY_SEARCH_CAPABILITY_ID || selection.operation !== TAVILY_SEARCH_OPERATION) {
+      throw new SandboxCapabilityAdapterFailure("CAPABILITY_SELECTION_MISMATCH", "Tavily adapter selection does not match its exact registration");
+    }
+    const keys = Object.keys(selection.input);
+    if (keys.some((key) => key !== "query" && key !== "maxResults")) throw new SandboxCapabilityAdapterFailure("CAPABILITY_INPUT_INVALID", "Tavily adapter input contains an unknown field");
+    if (typeof selection.input.query !== "string" || selection.input.query.trim().length === 0) throw new SandboxCapabilityAdapterFailure("CAPABILITY_INPUT_INVALID", "Tavily adapter query is required");
+    const maxResults = selection.input.maxResults === undefined ? undefined : boundedAdapterInteger(selection.input.maxResults, 1, 20, "maxResults");
+    return { ...selection, input: { query: selection.input.query, ...(maxResults === undefined ? {} : { maxResults }) } } as SandboxCapabilitySelectionV2 & { input: { query: string; maxResults?: number | undefined } };
+  },
+  canonicalInput(profile, selection) {
+    const query = selection.input.query;
+    const maxQueryChars = profile.adapterConfig.maxQueryChars as number;
+    const profileMaxResults = profile.adapterConfig.maxResults as number;
+    if (query.length > maxQueryChars) {
+      throw new SandboxCapabilityAdapterFailure("CAPABILITY_REQUEST_CEILING_EXCEEDED", "Sandbox Tavily query exceeds the profile ceiling");
+    }
+    const maxResults = selection.input.maxResults ?? Math.min(5, profileMaxResults);
+    if (maxResults > profileMaxResults) {
+      throw new SandboxCapabilityAdapterFailure("CAPABILITY_REQUEST_CEILING_EXCEEDED", "Sandbox Tavily result request exceeds the profile ceiling");
+    }
+    return { query, maxResults };
+  },
+  destination() {
+    return new URL(TAVILY_SEARCH_RESOURCE).hostname;
+  },
+  async invoke(input, context) {
+    const deadlineSignal = AbortSignal.timeout(Math.min(context.timeoutMs, context.expiryMs));
+    const signal = AbortSignal.any([context.signal, deadlineSignal]);
+    let response: Response;
+    try {
+      response = await context.fetchImpl(TAVILY_SEARCH_RESOURCE, {
+        method: "POST",
+        redirect: "manual",
+        signal,
+        headers: { "content-type": "application/json", authorization: `Bearer ${context.credential}` },
+        body: JSON.stringify({ query: input.query, max_results: input.maxResults }),
+      });
+    } catch (error) {
+      if (deadlineSignal.aborted) {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_DEADLINE_EXCEEDED", "Sandbox capability adapter deadline expired");
+      }
+      if (context.signal.aborted) {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_CANCELLED", "Sandbox capability adapter invocation was cancelled");
+      }
+      if (hasTransportCode(error, "ENOTFOUND") || hasTransportCode(error, "EAI_AGAIN")) {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_DNS", "Sandbox capability provider DNS lookup failed");
+      }
+      if (hasTransportCode(error, "ECONNREFUSED") || hasTransportCode(error, "ECONNRESET") || hasTransportCode(error, "ETIMEDOUT")) {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_NETWORK", "Sandbox capability provider network request failed");
+      }
+      throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_FAILED", "Sandbox capability provider request failed");
+    }
+    if (response.status >= 300 && response.status < 400) {
+      throw new SandboxCapabilityAdapterFailure("CAPABILITY_REDIRECT_REJECTED", "Tavily adapter rejected a redirect response");
+    }
+    if (response.ok === false) {
+      if (response.status === 401 || response.status === 403) {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_AUTH_REJECTED", "Tavily adapter rejected its credential");
+      }
+      if (response.status === 429) {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_RATE_LIMITED", "Tavily adapter request was rate limited");
+      }
+      throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_FAILED", `Tavily adapter failed with status ${response.status}`);
+    }
+    const assertActive = () => {
+      if (deadlineSignal.aborted) throw new SandboxCapabilityAdapterFailure("CAPABILITY_DEADLINE_EXCEEDED", "Sandbox capability adapter deadline expired");
+      if (context.signal.aborted) throw new SandboxCapabilityAdapterFailure("CAPABILITY_CANCELLED", "Sandbox capability adapter invocation was cancelled");
+    };
+    const text = await readBoundedResponseBody(response, context.maxResponseBytes, signal, assertActive);
+    assertActive();
+    let value: { results?: unknown };
+    try {
+      value = JSON.parse(text) as { results?: unknown };
+    } catch {
+      throw new SandboxCapabilityAdapterFailure("CAPABILITY_RESPONSE_INVALID", "Tavily adapter returned an invalid response");
+    }
+    if (Array.isArray(value.results) === false) {
+      throw new SandboxCapabilityAdapterFailure("CAPABILITY_RESPONSE_INVALID", "Tavily adapter returned an invalid response");
+    }
+    const results = value.results.slice(0, input.maxResults).map((item: unknown) => {
+      const record = typeof item === "object" && item !== null ? item as Record<string, unknown> : {};
+      const url = typeof record.url === "string" ? record.url : "";
+      let parsed: URL;
+      try { parsed = new URL(url); } catch {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_RESPONSE_INVALID", "Tavily adapter returned an unsafe result URL");
+      }
+      if (parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "") {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_RESPONSE_INVALID", "Tavily adapter returned an unsafe result URL");
+      }
+      return { title: clipField(record.title, 300), url: parsed.toString(), content: clipField(record.content, 2_000) };
+    });
+    return { version: 1, results };
+  },
+};
+
+async function readBoundedResponseBody(response: Response, maxBytes: number, signal: AbortSignal, assertActive: () => void): Promise<string> {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  const abort = () => { void reader.cancel(signal.reason).catch(() => {}); };
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    while (true) {
+      assertActive();
+      const chunk = await reader.read().catch((error: unknown) => {
+        assertActive();
+        throw error;
+      });
+      assertActive();
+      if (chunk.done) break;
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_RESPONSE_CEILING_EXCEEDED", "Tavily adapter response exceeds the profile ceiling");
+      }
+      chunks.push(chunk.value);
+    }
+  } finally {
+    signal.removeEventListener("abort", abort);
+    reader.releaseLock();
+  }
+  assertActive();
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function clipField(value: unknown, max: number): string {
+  return (typeof value === "string" ? value : "").slice(0, max);
+}
+
+function boundedAdapterInteger(value: unknown, min: number, max: number, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < min || (value as number) > max) {
+    throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROFILE_INVALID", `Tavily adapter ${label} is outside its allowed range`);
+  }
+  return value as number;
+}
+
+function hasTransportCode(value: unknown, expected: string): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = value;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const record = current as Record<string, unknown>;
+    if (record.code === expected) return true;
+    current = record.cause;
+  }
+  return false;
+}

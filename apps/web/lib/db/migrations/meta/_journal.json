@@ -568,6 +568,13 @@
       "when": 1787446800000,
       "tag": "0080_file_blob_availability",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1787613576000,
+      "tag": "0081_knowledge_document_file_ownership",
+      "breakpoints": true
     }
   ]
 }

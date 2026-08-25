@@ -478,6 +478,9 @@ export class OperatorControlPlane {
         providers,
         models,
       },
+      ...(replay.sandboxCapabilities !== undefined
+        ? { sandboxCapabilities: replay.sandboxCapabilities }
+        : {}),
       ...(runtimePlan !== undefined ? { runtimePlan } : {}),
       timeline: replay.timeline.map((entry) => ({
         seq: entry.seq,

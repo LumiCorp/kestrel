@@ -1,0 +1,13 @@
+diff --git a/js-binding.js b/js-binding.js
+index 352ca74b74aa82f43e2044c60b0a43d1a3cc61c4..73e9f7bb486806b0d86d53ba8481c242941a33f4 100644
+--- a/js-binding.js
++++ b/js-binding.js
+@@ -59,7 +59,7 @@ const isMuslFromChildProcess = () => {
+ function requireNative() {
+   if (process.env.NAPI_RS_NATIVE_LIBRARY_PATH) {
+     try {
+-      nativeBinding = require(process.env.NAPI_RS_NATIVE_LIBRARY_PATH)
++      return require(process.env.NAPI_RS_NATIVE_LIBRARY_PATH)
+     } catch (err) {
+       loadErrors.push(err)
+     }

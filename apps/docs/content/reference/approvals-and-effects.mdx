@@ -45,3 +45,5 @@ Do not retry an uncertain external effect automatically. Inspect whether it occu
 ## Security invariants
 
 No keyword inference, target substitution, cross-tenant use, model-issued self-approval, or reusable blanket authorization.
+
+Sandbox capability adapters use the same contract. An adapter declared `external_effect` must receive the exact prepared approval for its canonical action and the same tool-call/effect idempotency identity. A source grant, `read_only` capability, previously consumed approval, another action key, or another idempotency key does not authorize it. Unknown effect classifications fail closed, and Kestrel ships no sandbox write adapter.
