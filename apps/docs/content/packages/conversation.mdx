@@ -9,7 +9,8 @@ updatedAt: 2026-08-13
 ---
 
 `@kestrel-agents/conversation` is the shared, framework-neutral conversation
-kernel used by Kestrel Desktop and Kestrel One. It owns identity-based ordering,
+kernel used by Kestrel Desktop and Kestrel One. It owns identity-based turn
+ownership and causally constrained transcript order,
 live and persisted reconciliation, streamed activity accumulation, queue and
 composer policy, typed interactions, and mode-switch retry idempotency.
 
@@ -37,6 +38,10 @@ const projection = projectConversationSnapshot(
 
 Turn ownership comes from explicit message, turn, run, and request identities.
 The projector does not infer ownership from text, timestamps, or array position.
+After ownership is known, the host message array is the durable transcript
+preference. The projector preserves that order unless the turn input or a linked
+interaction proves that another message must appear first. Roles and UUIDs do
+not establish chronology.
 
 ## Register host renderers
 
