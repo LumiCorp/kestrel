@@ -162,7 +162,9 @@ export function buildAnthropicHttpRequestV2(
   const tools = toAnthropicTools(
     request.tools,
     request.providerOptions?.anthropic?.cacheControl === "ephemeral",
+    request.requirements.tools.strictArguments,
   );
+  assertAnthropicStrictToolContract(request, tools);
   if (tools.length > 0) body.tools = tools;
   const toolRequirements = request.requirements.tools;
   if (toolRequirements.choice === "named") {
@@ -234,8 +236,7 @@ export function mapAnthropicResponse<TOutput>(
   const textParts: string[] = [];
   const toolIntents: ModelToolIntent[] = [];
   const visible: NonNullable<ModelResponse["reasoning"]>["visible"] = [];
-  const continuation: NonNullable<ModelResponse["reasoning"]>["continuation"] =
-    [];
+  const continuationBlocks: Array<Record<string, unknown>> = [];
 
   for (const block of content) {
     const record = asRecord(block);
@@ -253,12 +254,20 @@ export function mapAnthropicResponse<TOutput>(
         visible.push({ format: "provider_thinking", text: thinking });
       }
       if (record?.signature !== undefined) {
-        continuation.push({
-          provider: "anthropic",
-          kind: "signature",
-          value: record,
-        });
+        continuationBlocks.push(record);
       }
+      continue;
+    }
+    if (type === "redacted_thinking") {
+      if (
+        record?.signature === undefined ||
+        asString(record?.data) === undefined
+      ) {
+        throw createAnthropicBadResponseError(
+          "Anthropic returned a redacted-thinking block without native opaque state.",
+        );
+      }
+      continuationBlocks.push(record);
       continue;
     }
     if (type === "tool_use") {
@@ -281,6 +290,19 @@ export function mapAnthropicResponse<TOutput>(
 
   const text = textParts.length > 0 ? textParts.join("") : undefined;
   const output = parseOutput<TOutput>(text, context.structuredOutput);
+  const continuation: NonNullable<ModelResponse["reasoning"]>["continuation"] =
+    continuationBlocks.length === 0
+      ? []
+      : [
+          {
+            provider: "anthropic",
+            kind: "signature",
+            value:
+              continuationBlocks.length === 1
+                ? continuationBlocks[0]
+                : continuationBlocks,
+          },
+        ];
 
   return {
     output,
@@ -435,17 +457,17 @@ function toAnthropicMessages(
     .filter(
       (item) => item.provider === "anthropic" && item.kind === "signature",
     )
-    .map((item) => asRecord(item.value));
+    .flatMap((item) => toAnthropicThinkingContinuationBlocks(item.value));
   if (
     strictContinuation &&
-    continuation.some((item) => item?.type !== "thinking")
+    continuation.some((item) => !isAnthropicThinkingContinuationBlock(item))
   ) {
     throw createAnthropicBadResponseError(
-      "Anthropic continuation must preserve a native thinking block.",
+      "Anthropic continuation must preserve a native thinking or redacted-thinking block.",
     );
   }
   const thinkingContinuation = continuation.filter(
-    (item): item is Record<string, unknown> => item?.type === "thinking",
+    isAnthropicThinkingContinuationBlock,
   );
   if (thinkingContinuation.length === 0) {
     return mapped;
@@ -561,12 +583,14 @@ function contentText(content: ModelMessage["content"]): string {
 function toAnthropicTools(
   tools: ModelToolSpec[] | undefined,
   useEphemeralCache: boolean,
+  strict = false,
 ): Array<Record<string, unknown>> {
   const mapped: Array<Record<string, unknown>> = Array.isArray(tools)
     ? tools.map((tool) => ({
         name: tool.name,
         description: tool.description,
         input_schema: tool.inputSchema,
+        ...(strict ? { strict: true } : {}),
       }))
     : [];
 
@@ -581,6 +605,42 @@ function toAnthropicTools(
   }
 
   return mapped;
+}
+
+function assertAnthropicStrictToolContract(
+  request: ModelRequestV2,
+  tools: Array<Record<string, unknown>>,
+): void {
+  const requirements = request.requirements.tools;
+  if (!requirements.strictArguments) return;
+  if (requirements.choice === "none" || tools.length === 0) {
+    throw createAnthropicBadResponseError(
+      "Anthropic strict tool input requires at least one native tool and a non-none tool choice.",
+    );
+  }
+  if (
+    requirements.choice === "named" &&
+    !tools.some((tool) => tool.name === requirements.toolName)
+  ) {
+    throw createAnthropicBadResponseError(
+      "Anthropic strict tool input requires the named native tool to be present.",
+    );
+  }
+}
+
+function isAnthropicThinkingContinuationBlock(
+  value: Record<string, unknown> | undefined,
+): value is Record<string, unknown> {
+  return value?.type === "thinking" || value?.type === "redacted_thinking";
+}
+
+function toAnthropicThinkingContinuationBlocks(
+  value: unknown,
+): Array<Record<string, unknown> | undefined> {
+  const block = asRecord(value);
+  if (block !== undefined) return [block];
+  const blocks = asArray(value);
+  return blocks === undefined ? [undefined] : blocks.map(asRecord);
 }
 
 function toProviderToolName(name: string): string {

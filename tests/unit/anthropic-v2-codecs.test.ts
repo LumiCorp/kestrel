@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createModelRequestV2,
+  type ModelRequestV2,
   PROVIDER_RUNTIME_CONFIGURATION_VERSION,
 } from "../../src/kestrel/contracts/model-registration.js";
 import { createAnthropicInvoker } from "../../models/anthropic/AnthropicInvoker.js";
@@ -47,8 +48,30 @@ test("Anthropic V2 combines native output_config.format, ordinary tools, named c
       name: "lookup",
       description: "Find a record.",
       input_schema: toolSchema(),
+      strict: true,
     },
   ]);
+});
+
+test("Anthropic V2 fails closed when strict tool input cannot be encoded natively", () => {
+  const source = request({ tools: true });
+  const impossible: ModelRequestV2 = {
+    ...source,
+    tools: undefined,
+    requirements: {
+      ...source.requirements,
+      tools: {
+        choice: "required",
+        strictArguments: true,
+        parallelism: "forbidden",
+      },
+    },
+  };
+
+  assert.throws(
+    () => buildAnthropicHttpRequestV2(impossible, env),
+    /strict tool input requires at least one native tool/u,
+  );
 });
 
 test("Anthropic V2 omits thinking and output configuration that were not requested", () => {
@@ -102,6 +125,69 @@ test("Anthropic V2 preserves native thinking signatures and fails malformed nati
       ),
     /without a valid name and object input/u,
   );
+});
+
+test("Anthropic V2 preserves and replays ordinary and redacted thinking blocks in provider order", () => {
+  const thinking = {
+    type: "thinking",
+    thinking: "Checked.",
+    signature: "ordinary-opaque",
+  };
+  const redactedThinking = {
+    type: "redacted_thinking",
+    data: "redacted-opaque",
+    signature: "redacted-signature",
+  };
+  const mapped = mapAnthropicResponseV2(
+    {
+      model: "claude-sonnet-test",
+      stop_reason: "end_turn",
+      content: [thinking, redactedThinking],
+    },
+    { requestedModel: "claude-sonnet-test" },
+  );
+  assert.deepEqual(mapped.reasoning?.continuation, [
+    {
+      provider: "anthropic",
+      kind: "signature",
+      value: [thinking, redactedThinking],
+    },
+  ]);
+
+  const source = request({ reasoning: true });
+  const { fingerprints: _fingerprints, ...sourceAuthoring } = source;
+  const replay = createModelRequestV2({
+    ...sourceAuthoring,
+    messages: [
+      { role: "user", content: "Find Kestrel." },
+      { role: "assistant", content: "I checked." },
+    ],
+    reasoning: {
+      mode: "provider_visible",
+      effort: "high",
+      continuation: mapped.reasoning?.continuation,
+    },
+    requirements: {
+      ...source.requirements,
+      reasoning: {
+        mode: "provider_visible",
+        effort: "high",
+        continuationKinds: ["signature"],
+      },
+    },
+  });
+  const body = buildAnthropicHttpRequestV2(replay, env).body;
+  assert.deepEqual(body.messages, [
+    { role: "user", content: [{ type: "text", text: "Find Kestrel." }] },
+    {
+      role: "assistant",
+      content: [
+        thinking,
+        redactedThinking,
+        { type: "text", text: "I checked." },
+      ],
+    },
+  ]);
 });
 
 test("Anthropic V2 stream requires message_stop and never repairs malformed input deltas", async () => {
