@@ -1,4 +1,15 @@
-import type { ModelMessage, ModelRequest, ModelResponse, ModelToolIntent, ModelToolSpec } from "../../src/kestrel/contracts/model-io.js";
+import type {
+  ModelMessage,
+  ModelRequest,
+  ModelResponse,
+  ModelToolIntent,
+  ModelToolSpec,
+} from "../../src/kestrel/contracts/model-io.js";
+import {
+  MODEL_RESPONSE_V2_VERSION,
+  type ModelRequestV2,
+  type ModelResponseV2,
+} from "../../src/kestrel/contracts/model-registration.js";
 
 import { createAnthropicBadResponseError } from "./AnthropicErrors.js";
 import type { AnthropicEnvConfig } from "../contracts.js";
@@ -20,31 +31,37 @@ export function buildAnthropicHttpRequest(
   const provider = request.providerOptions?.anthropic;
   const fallback = request.providerOptions?.openrouter;
   const requestedToolChoice = provider?.toolChoice ?? fallback?.toolChoice;
-  const parallelToolCalls = provider?.parallelToolCalls ?? fallback?.parallelToolCalls;
-  const forcedToolAction = requestedToolChoice === "required";
+  const parallelToolCalls =
+    provider?.parallelToolCalls ?? fallback?.parallelToolCalls;
   const model = request.model ?? env.model;
   const useEphemeralCache = provider?.cacheControl === "ephemeral";
   const system = toSystemPrompt(request.messages, useEphemeralCache);
-  const messages = toAnthropicMessages(request, !forcedToolAction);
+  const messages = toAnthropicMessages(request);
   const structuredOutput = resolveStructuredOutput(request);
-  const tools = toAnthropicTools(request.tools, structuredOutput, useEphemeralCache);
+  const tools = toAnthropicTools(request.tools, useEphemeralCache);
 
   const body: Record<string, unknown> = {
     model,
     messages,
   };
-  if (
-    !forcedToolAction &&
-    request.reasoning !== undefined &&
-    request.reasoning.mode !== "off"
-  ) {
+  const outputConfig: Record<string, unknown> = {};
+  if (request.reasoning !== undefined && request.reasoning.mode !== "off") {
     body.thinking = {
       type: "adaptive",
       display: "summarized",
     };
     if (request.reasoning.effort !== undefined) {
-      body.output_config = { effort: request.reasoning.effort };
+      outputConfig.effort = request.reasoning.effort;
     }
+  }
+  if (structuredOutput?.schema !== undefined) {
+    outputConfig.format = {
+      type: "json_schema",
+      schema: structuredOutput.schema,
+    };
+  }
+  if (Object.keys(outputConfig).length > 0) {
+    body.output_config = outputConfig;
   }
   if (system !== undefined) {
     body.system = system;
@@ -62,28 +79,24 @@ export function buildAnthropicHttpRequest(
   if (tools.length > 0) {
     body.tools = tools;
   }
-  if (structuredOutput?.schemaName !== undefined && request.tools === undefined) {
-    body.tool_choice = {
-      type: "tool",
-      name: structuredOutput.schemaName,
-      ...(parallelToolCalls === false ? { disable_parallel_tool_use: true } : {}),
-    };
-  } else {
-    const toolChoice = requestedToolChoice;
-    if (typeof toolChoice === "string") {
-      body.tool_choice =
-        toolChoice === "required"
-          ? {
-              type: "any",
-              ...(parallelToolCalls === false ? { disable_parallel_tool_use: true } : {}),
-            }
-          : toolChoice === "none"
-            ? { type: "none" }
-            : {
-                type: "auto",
-                ...(parallelToolCalls === false ? { disable_parallel_tool_use: true } : {}),
-              };
-    }
+  const toolChoice = requestedToolChoice;
+  if (typeof toolChoice === "string") {
+    body.tool_choice =
+      toolChoice === "required"
+        ? {
+            type: "any",
+            ...(parallelToolCalls === false
+              ? { disable_parallel_tool_use: true }
+              : {}),
+          }
+        : toolChoice === "none"
+          ? { type: "none" }
+          : {
+              type: "auto",
+              ...(parallelToolCalls === false
+                ? { disable_parallel_tool_use: true }
+                : {}),
+            };
   }
   if (request.metadata !== undefined) {
     body.metadata = request.metadata;
@@ -94,6 +107,112 @@ export function buildAnthropicHttpRequest(
     path: "/v1/messages",
     body,
     ...(structuredOutput !== undefined ? { structuredOutput } : {}),
+  };
+}
+
+/**
+ * Anthropic's Messages API has one native endpoint.  This codec deliberately
+ * takes the V2 requirements as the authority: provider options are transport
+ * settings and must not silently weaken required output, tool, or reasoning
+ * semantics.
+ */
+export function buildAnthropicHttpRequestV2(
+  request: ModelRequestV2,
+  env: AnthropicEnvConfig,
+): ReturnType<typeof buildAnthropicHttpRequest> {
+  if (request.requirements.endpoint !== "messages") {
+    throw createAnthropicBadResponseError(
+      "Anthropic V2 requests require the native Messages endpoint.",
+    );
+  }
+  const model = request.model ?? env.model;
+  const messages = toAnthropicMessages(request, true);
+  const body: Record<string, unknown> = { model, messages };
+  const outputConfig: Record<string, unknown> = {};
+  const output = request.requirements.output;
+  if (output.kind !== "text") {
+    outputConfig.format = {
+      type: "json_schema",
+      schema:
+        output.kind === "json_schema"
+          ? request.responseSchema
+          : { type: "object" },
+    };
+  }
+  if (request.requirements.reasoning.mode !== "off") {
+    body.thinking = { type: "adaptive", display: "summarized" };
+    if (request.requirements.reasoning.effort !== undefined) {
+      outputConfig.effort = request.requirements.reasoning.effort;
+    }
+  }
+  if (Object.keys(outputConfig).length > 0) body.output_config = outputConfig;
+  const system = toSystemPrompt(
+    request.messages,
+    request.providerOptions?.anthropic?.cacheControl === "ephemeral",
+  );
+  if (system !== undefined) body.system = system;
+  const maxTokens = request.providerOptions?.anthropic?.maxTokens;
+  body.max_tokens = typeof maxTokens === "number" ? maxTokens : 2048;
+  if (typeof request.providerOptions?.anthropic?.temperature === "number") {
+    body.temperature = request.providerOptions.anthropic.temperature;
+  }
+  if (typeof request.providerOptions?.anthropic?.topP === "number") {
+    body.top_p = request.providerOptions.anthropic.topP;
+  }
+  const tools = toAnthropicTools(
+    request.tools,
+    request.providerOptions?.anthropic?.cacheControl === "ephemeral",
+  );
+  if (tools.length > 0) body.tools = tools;
+  const toolRequirements = request.requirements.tools;
+  if (toolRequirements.choice === "named") {
+    if (toolRequirements.toolName === undefined) {
+      throw createAnthropicBadResponseError(
+        "Named Anthropic tool choice requires an exact tool name.",
+      );
+    }
+    body.tool_choice = {
+      type: "tool",
+      name: toolRequirements.toolName,
+      ...(toolRequirements.parallelism === "forbidden"
+        ? { disable_parallel_tool_use: true }
+        : {}),
+    };
+  } else if (toolRequirements.choice === "required") {
+    body.tool_choice = {
+      type: "any",
+      ...(toolRequirements.parallelism === "forbidden"
+        ? { disable_parallel_tool_use: true }
+        : {}),
+    };
+  } else if (toolRequirements.choice === "auto") {
+    body.tool_choice = {
+      type: "auto",
+      ...(toolRequirements.parallelism === "forbidden"
+        ? { disable_parallel_tool_use: true }
+        : {}),
+    };
+  } else {
+    body.tool_choice = { type: "none" };
+  }
+  if (request.metadata !== undefined) body.metadata = request.metadata;
+  return {
+    model,
+    path: "/v1/messages",
+    body,
+    ...(output.kind !== "text"
+      ? {
+          structuredOutput: {
+            mode:
+              output.kind === "json_schema"
+                ? ("constrained" as const)
+                : ("json_object" as const),
+            ...(output.schemaName !== undefined
+              ? { schemaName: output.schemaName }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -115,8 +234,8 @@ export function mapAnthropicResponse<TOutput>(
   const textParts: string[] = [];
   const toolIntents: ModelToolIntent[] = [];
   const visible: NonNullable<ModelResponse["reasoning"]>["visible"] = [];
-  const continuation: NonNullable<ModelResponse["reasoning"]>["continuation"] = [];
-  let structuredOutputValue: TOutput | undefined;
+  const continuation: NonNullable<ModelResponse["reasoning"]>["continuation"] =
+    [];
 
   for (const block of content) {
     const record = asRecord(block);
@@ -134,7 +253,11 @@ export function mapAnthropicResponse<TOutput>(
         visible.push({ format: "provider_thinking", text: thinking });
       }
       if (record?.signature !== undefined) {
-        continuation.push({ provider: "anthropic", kind: "signature", value: record });
+        continuation.push({
+          provider: "anthropic",
+          kind: "signature",
+          value: record,
+        });
       }
       continue;
     }
@@ -142,34 +265,38 @@ export function mapAnthropicResponse<TOutput>(
       const name = asString(record?.name);
       const input = asRecord(record?.input);
       if (name === undefined || input === undefined) {
-        continue;
+        throw createAnthropicBadResponseError(
+          "Anthropic returned a tool-use block without a valid name and object input.",
+        );
       }
-      if (context.structuredOutput?.schemaName === name) {
-        structuredOutputValue = input as TOutput;
-      } else {
-        toolIntents.push({
-          name,
-          input,
-          ...(asString(record?.id) !== undefined ? { id: asString(record?.id) } : {}),
-        });
-      }
+      toolIntents.push({
+        name,
+        input,
+        ...(asString(record?.id) !== undefined
+          ? { id: asString(record?.id) }
+          : {}),
+      });
     }
   }
 
   const text = textParts.length > 0 ? textParts.join("") : undefined;
-  const output = structuredOutputValue ?? parseOutput<TOutput>(text);
+  const output = parseOutput<TOutput>(text, context.structuredOutput);
 
   return {
     output,
     ...(text !== undefined ? { text } : {}),
     toolIntents,
     usage: mapUsage(asRecord(root?.usage)),
-    ...(visible.length > 0 || continuation.length > 0 ? { reasoning: { visible, continuation } } : {}),
+    ...(visible.length > 0 || continuation.length > 0
+      ? { reasoning: { visible, continuation } }
+      : {}),
     provider: {
       name: "anthropic",
       model: asString(root?.model) ?? context.requestedModel,
-      endpoint: "chat",
-      ...(context.requestId !== undefined ? { requestId: context.requestId } : {}),
+      endpoint: "messages",
+      ...(context.requestId !== undefined
+        ? { requestId: context.requestId }
+        : {}),
       ...(context.structuredOutput !== undefined
         ? {
             structuredOutput: {
@@ -185,20 +312,78 @@ export function mapAnthropicResponse<TOutput>(
   };
 }
 
-function resolveStructuredOutput(
-  request: ModelRequest,
-): {
-  mode: "constrained" | "json_object";
-  schemaName?: string | undefined;
-  schema?: Record<string, unknown> | undefined;
-} | undefined {
-  if (request.responseFormat !== "json") {
-    return ;
+/** Provider-owned terminal proof and exact Messages endpoint identity for V2. */
+export function mapAnthropicResponseV2<TOutput>(
+  payload: unknown,
+  context: Parameters<typeof mapAnthropicResponse>[1] & {
+    streamTerminalEvent?: string | undefined;
+    visibleOutputStarted?: boolean | undefined;
+  },
+): ModelResponseV2<TOutput> {
+  const mapped = mapAnthropicResponse<TOutput>(payload, context);
+  const terminal = anthropicTerminal(payload, context.streamTerminalEvent);
+  return {
+    ...mapped,
+    version: MODEL_RESPONSE_V2_VERSION,
+    terminal: {
+      ...terminal,
+      visibleOutputStarted:
+        context.visibleOutputStarted ??
+        (mapped.text !== undefined || mapped.toolIntents.length > 0),
+    },
+    validation:
+      terminal.state === "completed"
+        ? { state: "not_requested" }
+        : {
+            state: "failed",
+            failureCode: `MODEL_${terminal.state.toUpperCase()}_RESPONSE`,
+          },
+  };
+}
+
+function anthropicTerminal(
+  payload: unknown,
+  streamTerminalEvent: string | undefined,
+): Omit<ModelResponseV2["terminal"], "visibleOutputStarted"> {
+  const root = asRecord(payload);
+  const stopReason = asString(root?.stop_reason);
+  if (
+    streamTerminalEvent !== undefined &&
+    streamTerminalEvent !== "message_stop"
+  ) {
+    return { state: "malformed", providerTerminalEvent: streamTerminalEvent };
   }
-  if (request.responseSchema !== undefined && Array.isArray(request.tools) && request.tools.length > 0) {
-    throw createAnthropicBadResponseError(
-      "Anthropic gateway cannot combine request.responseSchema with request.tools in this MVP.",
-    );
+  const providerTerminalEvent = streamTerminalEvent ?? "message";
+  switch (stopReason) {
+    case "end_turn":
+    case "tool_use":
+      return { state: "completed", providerTerminalEvent };
+    case "max_tokens":
+      return { state: "truncated", providerTerminalEvent };
+    case "refusal":
+      return { state: "refused", providerTerminalEvent };
+    case "pause_turn":
+    case "stop_sequence":
+      return { state: "incomplete", providerTerminalEvent };
+    case undefined:
+      return {
+        state: "malformed",
+        ...(streamTerminalEvent !== undefined ? { providerTerminalEvent } : {}),
+      };
+    default:
+      return { state: "interrupted", providerTerminalEvent };
+  }
+}
+
+function resolveStructuredOutput(request: ModelRequest):
+  | {
+      mode: "constrained" | "json_object";
+      schemaName?: string | undefined;
+      schema?: Record<string, unknown> | undefined;
+    }
+  | undefined {
+  if (request.responseFormat !== "json") {
+    return;
   }
   if (request.responseSchema !== undefined) {
     return {
@@ -213,42 +398,82 @@ function resolveStructuredOutput(
   }
   return {
     mode: "json_object",
+    schema: { type: "object" },
   };
 }
 
 function toAnthropicMessages(
   request: ModelRequest,
-  includeThinkingContinuation = true,
+  strictContinuation = false,
 ): Array<Record<string, unknown>> {
-  const messages = Array.isArray(request.messages) && request.messages.length > 0
-    ? request.messages.filter((message) => message.role !== "system")
-    : [{
-        role: "user",
-        content: typeof request.input === "string" ? request.input : safeJsonStringify(request.input),
-      } satisfies ModelMessage];
+  const messages =
+    Array.isArray(request.messages) && request.messages.length > 0
+      ? request.messages.filter((message) => message.role !== "system")
+      : [
+          {
+            role: "user",
+            content:
+              typeof request.input === "string"
+                ? request.input
+                : safeJsonStringify(request.input),
+          } satisfies ModelMessage,
+        ];
 
   const mapped = messages.map(mapAnthropicMessage);
-  const continuation = includeThinkingContinuation
-    ? (request.reasoning?.continuation ?? [])
-    .filter((item) => item.provider === "anthropic" && item.kind === "signature")
-    .map((item) => asRecord(item.value))
-    .filter((item): item is Record<string, unknown> => item?.type === "thinking")
-    : [];
-  if (continuation.length === 0) {
+  const continuations = request.reasoning?.continuation ?? [];
+  if (
+    strictContinuation &&
+    continuations.some(
+      (item) => item.provider !== "anthropic" || item.kind !== "signature",
+    )
+  ) {
+    throw createAnthropicBadResponseError(
+      "Anthropic Messages cannot encode a continuation from another provider or kind.",
+    );
+  }
+  const continuation = continuations
+    .filter(
+      (item) => item.provider === "anthropic" && item.kind === "signature",
+    )
+    .map((item) => asRecord(item.value));
+  if (
+    strictContinuation &&
+    continuation.some((item) => item?.type !== "thinking")
+  ) {
+    throw createAnthropicBadResponseError(
+      "Anthropic continuation must preserve a native thinking block.",
+    );
+  }
+  const thinkingContinuation = continuation.filter(
+    (item): item is Record<string, unknown> => item?.type === "thinking",
+  );
+  if (thinkingContinuation.length === 0) {
     return mapped;
   }
   for (let index = mapped.length - 1; index >= 0; index -= 1) {
     const message = mapped[index];
     if (message?.role !== "assistant") continue;
     const content = Array.isArray(message.content) ? message.content : [];
-    mapped[index] = { ...message, content: [...continuation, ...content] };
-    break;
+    mapped[index] = {
+      ...message,
+      content: [...thinkingContinuation, ...content],
+    };
+    return mapped;
+  }
+  if (strictContinuation) {
+    throw createAnthropicBadResponseError(
+      "Anthropic continuation requires the preceding assistant message.",
+    );
   }
   return mapped;
 }
 
 function mapAnthropicMessage(message: ModelMessage): Record<string, unknown> {
-  if (message.role === "assistant" && Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
+  if (
+    message.role === "assistant" &&
+    Array.isArray(message.toolCalls) &&
+    message.toolCalls.length > 0
+  ) {
     const text = contentText(message.content).trim();
     const content = [
       ...(text.length > 0 ? [{ type: "text", text }] : []),
@@ -270,7 +495,9 @@ function mapAnthropicMessage(message: ModelMessage): Record<string, unknown> {
       content: [
         {
           type: "tool_result",
-          ...(message.toolCallId !== undefined ? { tool_use_id: message.toolCallId } : {}),
+          ...(message.toolCallId !== undefined
+            ? { tool_use_id: message.toolCallId }
+            : {}),
           content: contentText(message.content),
         },
       ],
@@ -287,20 +514,22 @@ function toSystemPrompt(
   useEphemeralCache: boolean,
 ): string | Array<Record<string, unknown>> | undefined {
   if (Array.isArray(messages) === false) {
-    return ;
+    return;
   }
   const system = messages
     .filter((message) => message.role === "system")
     .map((message) => contentText(message.content).trim())
     .filter((message) => message.length > 0);
-  if (system.length === 0) return ;
+  if (system.length === 0) return;
   const text = system.join("\n\n");
   return useEphemeralCache
     ? [{ type: "text", text, cache_control: { type: "ephemeral" } }]
     : text;
 }
 
-function toAnthropicContent(content: ModelMessage["content"]): Array<Record<string, unknown>> {
+function toAnthropicContent(
+  content: ModelMessage["content"],
+): Array<Record<string, unknown>> {
   if (typeof content === "string") {
     return [{ type: "text", text: content }];
   }
@@ -331,13 +560,6 @@ function contentText(content: ModelMessage["content"]): string {
 
 function toAnthropicTools(
   tools: ModelToolSpec[] | undefined,
-  structuredOutput:
-    | {
-        mode: "constrained" | "json_object";
-        schemaName?: string | undefined;
-        schema?: Record<string, unknown> | undefined;
-      }
-    | undefined,
   useEphemeralCache: boolean,
 ): Array<Record<string, unknown>> {
   const mapped: Array<Record<string, unknown>> = Array.isArray(tools)
@@ -347,14 +569,6 @@ function toAnthropicTools(
         input_schema: tool.inputSchema,
       }))
     : [];
-
-  if (structuredOutput?.mode === "constrained" && structuredOutput.schema !== undefined) {
-    mapped.push({
-      name: structuredOutput.schemaName ?? "kestrel_response",
-      description: "Return the structured response payload for this turn.",
-      input_schema: structuredOutput.schema,
-    });
-  }
 
   if (useEphemeralCache && mapped.length > 0) {
     const finalTool = mapped[mapped.length - 1];
@@ -373,32 +587,46 @@ function toProviderToolName(name: string): string {
   return name.replace(/[^A-Za-z0-9_]/gu, "_");
 }
 
-function parseOutput<TOutput>(text: string | undefined): TOutput | undefined {
+function parseOutput<TOutput>(
+  text: string | undefined,
+  structuredOutput:
+    | { mode: "constrained" | "json_object"; schemaName?: string | undefined }
+    | undefined,
+): TOutput | undefined {
   if (text === undefined) {
-    return ;
+    return;
   }
   const trimmed = text.trim();
   if (trimmed.length === 0) {
-    return ;
+    return;
   }
   try {
     return JSON.parse(trimmed) as TOutput;
   } catch {
-    return ;
+    if (structuredOutput !== undefined) {
+      throw createAnthropicBadResponseError(
+        "Anthropic structured output was not one complete JSON value.",
+      );
+    }
+    return;
   }
 }
 
 function mapUsage(value: Record<string, unknown> | undefined) {
   if (value === undefined) {
-    return ;
+    return;
   }
   const directInputTokens = asNumber(value.input_tokens);
   const outputTokens = asNumber(value.output_tokens);
   const cachedInputTokens = asNumber(value.cache_read_input_tokens);
   const cacheWriteInputTokens = asNumber(value.cache_creation_input_tokens);
   const inputTokens =
-    directInputTokens !== undefined || cachedInputTokens !== undefined || cacheWriteInputTokens !== undefined
-      ? (directInputTokens ?? 0) + (cachedInputTokens ?? 0) + (cacheWriteInputTokens ?? 0)
+    directInputTokens !== undefined ||
+    cachedInputTokens !== undefined ||
+    cacheWriteInputTokens !== undefined
+      ? (directInputTokens ?? 0) +
+        (cachedInputTokens ?? 0) +
+        (cacheWriteInputTokens ?? 0)
       : undefined;
   const totalTokens =
     inputTokens !== undefined || outputTokens !== undefined
@@ -427,7 +655,7 @@ function asArray(value: unknown): unknown[] {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return ;
+    return;
   }
   return value as Record<string, unknown>;
 }
@@ -437,5 +665,7 @@ function asString(value: unknown): string | undefined {
 }
 
 function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
