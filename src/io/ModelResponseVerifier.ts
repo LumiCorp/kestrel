@@ -1,6 +1,7 @@
 import type { ValidateFunction } from "ajv";
 
 import {
+  type ModelProviderIdentityV1,
   type ModelRequestV2,
   type ModelResponseV2,
   parseModelResponseV2,
@@ -38,6 +39,25 @@ export function verifyModelResponseV2<TOutput>(
     ...response,
     validation,
   });
+}
+
+/**
+ * Rejects opaque continuation that belongs to another configured provider
+ * before it reaches that provider's request codec or transport.
+ */
+export function verifyModelRequestV2BeforeInvocation(
+  request: ModelRequestV2,
+  providerId: ModelProviderIdentityV1,
+): void {
+  for (const continuation of request.reasoning?.continuation ?? []) {
+    if (continuation.provider !== providerId) {
+      throw createRuntimeFailure(
+        "MODEL_CONTINUATION_PROVIDER_MISMATCH",
+        "Reasoning continuation does not belong to the configured provider.",
+        { provider: providerId, continuationProvider: continuation.provider },
+      );
+    }
+  }
 }
 
 function parseResponse<TOutput>(value: unknown): ModelResponseV2<TOutput> {
@@ -99,6 +119,18 @@ function verifyContinuation(
   request: ModelRequestV2,
   response: ModelResponseV2,
 ): void {
+  if (
+    request.requirements.endpoint !== "any" &&
+    response.provider.endpoint !== request.requirements.endpoint
+  ) {
+    throw proofFailure(
+      "MODEL_ENDPOINT_MISMATCH",
+      "Provider response endpoint did not match the requested contract.",
+      response,
+      { requiredEndpoint: request.requirements.endpoint },
+    );
+  }
+
   const requestContinuation = request.reasoning?.continuation ?? [];
   const responseContinuation = response.reasoning?.continuation ?? [];
   const allowedKinds = new Set(request.requirements.reasoning.continuationKinds);

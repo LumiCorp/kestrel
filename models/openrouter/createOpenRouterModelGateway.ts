@@ -51,6 +51,7 @@ export function createOpenRouterModelGatewayFromEnv(
       ...(options.retryCount !== undefined
         ? { retryCount: options.retryCount }
         : {}),
+      providerId: "openrouter",
     }
   );
 }

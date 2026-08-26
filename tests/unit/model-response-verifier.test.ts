@@ -13,11 +13,19 @@ function request({
   parallelism = "forbidden",
   streaming = false,
   includeSecondTool = false,
+  endpoint = "any",
+  continuation,
 }: {
   choice?: "auto" | "required" | "named";
   parallelism?: "forbidden" | "allowed" | "required";
   streaming?: boolean;
   includeSecondTool?: boolean;
+  endpoint?: "any" | "chat" | "responses" | "messages";
+  continuation?: Array<{
+    provider: "openai" | "anthropic" | "openrouter";
+    kind: "encrypted_content" | "signature" | "reasoning_details";
+    value: unknown;
+  }>;
 } = {}) {
   return createModelRequestV2({
     version: "model_request_v2",
@@ -48,6 +56,9 @@ function request({
           ]
         : []),
     ],
+    ...(continuation === undefined
+      ? {}
+      : { reasoning: { mode: "provider_visible" as const, continuation } }),
     requirements: {
       runtimeRole: "test",
       output: { kind: "text", assurance: "none" },
@@ -57,13 +68,19 @@ function request({
         parallelism,
         ...(choice === "named" ? { toolName: "lookup" } : {}),
       },
-      reasoning: { mode: "off", continuationKinds: [] },
+      reasoning:
+        continuation === undefined
+          ? { mode: "off", continuationKinds: [] }
+          : {
+              mode: "provider_visible",
+              continuationKinds: continuation.map((entry) => entry.kind),
+            },
       streaming: {
         required: streaming,
         terminalBehavior: streaming ? "required" : "not_required",
       },
       inputModalities: ["text"],
-      endpoint: "any",
+      endpoint,
     },
   });
 }
@@ -132,6 +149,57 @@ test("response verifier rejects continuation from another provider", () => {
       }),
     (error: unknown) =>
       (error as { code?: unknown }).code === "MODEL_CONTINUATION_PROVIDER_MISMATCH",
+  );
+});
+
+test("gateway rejects foreign continuation before it invokes a configured provider", async () => {
+  let attempts = 0;
+  const gateway = new RetryingModelGateway(async () => {
+    attempts += 1;
+    return response({ query: "Kestrel" }) as never;
+  }, { providerId: "openai" });
+
+  await assert.rejects(
+    () =>
+      gateway.call(
+        request({
+          continuation: [
+            { provider: "anthropic", kind: "signature", value: "opaque" },
+          ],
+        }),
+      ),
+    (error: unknown) =>
+      (error as { code?: unknown }).code === "MODEL_CONTINUATION_PROVIDER_MISMATCH",
+  );
+  assert.equal(attempts, 0);
+});
+
+test("response verifier rejects a continuation returned from another endpoint", () => {
+  assert.throws(
+    () =>
+      verifyModelResponseV2(
+        request({
+          endpoint: "responses",
+          continuation: [
+            { provider: "openai", kind: "encrypted_content", value: "opaque" },
+          ],
+        }),
+        {
+          ...response({ query: "Kestrel" }),
+          provider: { name: "openai", model: "test", endpoint: "chat" },
+          reasoning: {
+            visible: [],
+            continuation: [
+              {
+                provider: "openai",
+                kind: "encrypted_content",
+                value: "next-opaque",
+              },
+            ],
+          },
+        },
+      ),
+    (error: unknown) => (error as { code?: unknown }).code === "MODEL_ENDPOINT_MISMATCH",
   );
 });
 

@@ -65,6 +65,7 @@ export function createOpenAiModelGatewayFromEnv(
       ...(options.retryCount !== undefined
         ? { retryCount: options.retryCount }
         : {}),
+      providerId: config.providerName,
     }
   );
 }

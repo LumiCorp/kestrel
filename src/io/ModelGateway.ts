@@ -12,7 +12,11 @@ import {
 import { RunCancelledError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { classifyModelTransportFailure } from "./ModelTransportError.js";
 import { parseModelRequestV2 } from "../kestrel/contracts/model-registration.js";
-import { verifyModelResponseV2 } from "./ModelResponseVerifier.js";
+import type { ModelProviderIdentityV1 } from "../kestrel/contracts/model-registration.js";
+import {
+  verifyModelRequestV2BeforeInvocation,
+  verifyModelResponseV2,
+} from "./ModelResponseVerifier.js";
 
 export type ModelInvoker = <T>(request: ModelRequest, options?: ModelGatewayCallOptions) => Promise<T>;
 
@@ -20,6 +24,7 @@ interface ModelGatewayConfig {
   timeoutMs: number;
   retryCount: number;
   timingPolicy: ModelTimingPolicyConfig;
+  providerId?: ModelProviderIdentityV1 | undefined;
 }
 
 const DEFAULT_CONFIG: ModelGatewayConfig = {
@@ -47,6 +52,9 @@ export class RetryingModelGateway implements ModelGateway {
     const verifiedV2Request = request.version === "model_request_v2"
       ? parseModelRequestV2(request)
       : undefined;
+    if (verifiedV2Request !== undefined && this.config.providerId !== undefined) {
+      verifyModelRequestV2BeforeInvocation(verifiedV2Request, this.config.providerId);
+    }
     const effectiveRequest = verifiedV2Request ?? request;
     let lastError: unknown;
     let attemptsMade = 0;

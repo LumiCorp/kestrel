@@ -52,6 +52,7 @@ export function createAnthropicModelGatewayFromEnv(
       ...(options.retryCount !== undefined
         ? { retryCount: options.retryCount }
         : {}),
+      providerId: "anthropic",
     }
   );
 }
