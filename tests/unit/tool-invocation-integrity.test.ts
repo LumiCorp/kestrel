@@ -969,7 +969,23 @@ test("approval resume rebinds an exact dynamic invocation to the current handler
   const blockedRunContext: ToolRunContext = {
     runId: "run-dynamic-approval-blocked",
     sessionId: "session-dynamic-approval",
-    payload: {},
+    payload: {
+      clientCapabilities: {
+        kestrelOne: { contextGrantId: "project-context-old" },
+      },
+      workspace: {
+        workspaceRoot: "/workspace/approved",
+        leaseId: "workspace-lease-old",
+      },
+      orchestration: {
+        devShellSourceWriteApprovalGrants: [{
+          grantId: "source-write-old",
+          command: "apply approved change",
+          writablePaths: ["/workspace/approved"],
+          expiresAt: "2026-08-26T18:00:00.000Z",
+        }],
+      },
+    },
     sessionState: {},
   };
   const originalProvider = new VersionedMcpProvider();
@@ -1003,6 +1019,21 @@ test("approval resume rebinds an exact dynamic invocation to the current handler
     payload: {
       resumeBlockedRun: true,
       metadata: { blockedRunId: blockedRunContext.runId },
+      clientCapabilities: {
+        kestrelOne: { contextGrantId: "project-context-current" },
+      },
+      workspace: {
+        workspaceRoot: "/workspace/approved",
+        leaseId: "workspace-lease-current",
+      },
+      orchestration: {
+        devShellSourceWriteApprovalGrants: [{
+          grantId: "source-write-current",
+          command: "apply approved change",
+          writablePaths: ["/workspace/approved"],
+          expiresAt: "2026-08-26T19:00:00.000Z",
+        }],
+      },
     },
   };
   const currentProvider = new VersionedMcpProvider();
@@ -1242,15 +1273,6 @@ test("approval resume rehydrates an exact static built-in before inspection and 
   assert.equal(result.status, "OK");
   assert.match(JSON.stringify(result.auditRecord.output), /sentinel\.txt/u);
   for (const rejectedRunContext of [
-    {
-      ...resumedRunContext,
-      payload: {
-        ...resumedRunContext.payload,
-        clientCapabilities: {
-          kestrelOne: { contextGrantId: "context-grant-unrelated" },
-        },
-      },
-    },
     {
       ...resumedRunContext,
       payload: {

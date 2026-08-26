@@ -492,9 +492,13 @@ export async function consumeAppOperationApproval(input: {
     }
     const directSourceTurn = interaction.turnId === consumingTurn.id;
     const retrySourceTurn = consumingTurn.resumeInteractionId === interaction.id;
+    const interactionIsExecutable =
+      runnerBinding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION
+        ? interaction.status === "processing"
+        : interaction.status === "resolved";
     if (
       !sourceTurn ||
-      interaction.status !== "resolved" ||
+      !interactionIsExecutable ||
       !(directSourceTurn || retrySourceTurn) ||
       runnerBinding.approvalId !== interaction.runtimeApprovalId ||
       runnerBinding.threadId !== interaction.threadId ||

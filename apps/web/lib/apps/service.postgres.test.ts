@@ -747,9 +747,13 @@ test(
         ) VALUES (
           ${`interaction-${runtimeApprovalId}`}, ${`request-${runtimeApprovalId}`},
           ${organizationId}, ${threadId}, ${approvalTurnId}, 'runtime', 'approval',
-          'user.approval', 'Approve?', 'resolved',
+          'user.approval', 'Approve?', ${approval.preparedInvocationId ? "processing" : "resolved"},
           ${sql.json({ approval })},
-          ${sql.json({ approved: true })}, ${runtimeApprovalId}, ${runId},
+          ${sql.json(
+            approval.preparedInvocationId
+              ? { decision: "approve_once" }
+              : { approved: true },
+          )}, ${runtimeApprovalId}, ${runId},
           ${userId}, ${now}, ${now}
         )
       `;

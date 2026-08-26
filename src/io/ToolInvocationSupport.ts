@@ -524,7 +524,6 @@ export function fingerprintToolRunScopeV1(
   const organizationId = readString(hosted?.organizationId);
   const environmentId = readString(hosted?.environmentId);
   const gatewayUrl = sanitizeGatewayUrl(readString(hosted?.gatewayUrl));
-  const grantId = readString(hosted?.grantId);
   const projectId =
     readString(hosted?.projectId) ?? readString(projectContext?.projectId);
   const threadId =
@@ -548,20 +547,15 @@ export function fingerprintToolRunScopeV1(
     ? orchestration.devShellSourceWriteApprovalGrants
         .flatMap((value) => {
           const grant = asRecord(value);
-          const grantId = readString(grant?.grantId);
-          if (grantId === undefined) return [];
+          if (readString(grant?.grantId) === undefined) return [];
           return [
             {
-              grantId,
               ...(readString(grant?.command) === undefined
                 ? {}
                 : { command: readString(grant?.command) }),
               ...(readString(grant?.cwd) === undefined
                 ? {}
                 : { cwd: readString(grant?.cwd) }),
-              ...(readString(grant?.expiresAt) === undefined
-                ? {}
-                : { expiresAt: readString(grant?.expiresAt) }),
               writablePaths: Array.isArray(grant?.writablePaths)
                 ? grant.writablePaths
                     .filter(
@@ -574,16 +568,19 @@ export function fingerprintToolRunScopeV1(
             },
           ];
         })
-        .sort((left, right) => left.grantId.localeCompare(right.grantId))
+        .sort((left, right) =>
+          hashCanonical(left).localeCompare(hashCanonical(right)),
+        )
     : [];
   return fingerprintToolScopeV1({
     version: "v1",
+    // The continuation proves its relationship to this run separately while
+    // execution credentials themselves remain renewable.
     runId: runContext?.runId ?? "unscoped",
     sessionId: runContext?.sessionId ?? "unscoped",
     ...(organizationId === undefined ? {} : { organizationId }),
     ...(environmentId === undefined ? {} : { environmentId }),
     ...(gatewayUrl === undefined ? {} : { gatewayUrl }),
-    ...(grantId === undefined ? {} : { grantId }),
     ...(projectId === undefined ? {} : { projectId }),
     ...(threadId === undefined ? {} : { threadId }),
     ...(readString(kestrelOne?.tenantId ?? kestrelOne?.organizationId) ===
@@ -594,9 +591,6 @@ export function fingerprintToolRunScopeV1(
             kestrelOne?.tenantId ?? kestrelOne?.organizationId,
           ),
         }),
-    ...(readString(kestrelOne?.contextGrantId) === undefined
-      ? {}
-      : { contextGrantId: readString(kestrelOne?.contextGrantId) }),
     ...(appApprovalModes === undefined ? {} : { appApprovalModes }),
     ...(appApprovalPolicies === undefined ? {} : { appApprovalPolicies }),
     ...(toolAllowlist === undefined ? {} : { toolAllowlist }),
@@ -622,9 +616,6 @@ export function fingerprintToolRunScopeV1(
       ...(readString(workspace?.sourceWorkspaceRoot) === undefined
         ? {}
         : { sourceWorkspaceRoot: readString(workspace?.sourceWorkspaceRoot) }),
-      ...(readString(workspace?.leaseId) === undefined
-        ? {}
-        : { leaseId: readString(workspace?.leaseId) }),
       ...(workspace?.managedWorktree === true ? { managedWorktree: true } : {}),
       ...(workspace?.managedWorktreeRequired === false
         ? { managedWorktreeRequired: false }
