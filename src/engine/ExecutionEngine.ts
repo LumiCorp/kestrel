@@ -7,7 +7,10 @@ import type { RunEventType, RuntimeError, TransitionStatus } from "../kestrel/co
 import type { MemorySnapshot, ProgressPhase, ProgressUpdateV1, RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { Effect, GuardrailConfig, ManagedTaskWorktreeBinding, NormalizedOutput, RegionWorkItem, ResolvedEffect, RuntimeDependencies, StepContext, StepIO, StepTransition, Transition } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelRequest, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
-import type { AgentToolResultV2 } from "../kestrel/contracts/tool-invocation.js";
+import {
+  parseDurablePreparedToolCallV1,
+  type AgentToolResultV2,
+} from "../kestrel/contracts/tool-invocation.js";
 import {
   hashCanonical,
   parseToolSurfaceSnapshotV1,
@@ -17,6 +20,7 @@ import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
 import {
   createRunnerStructuredReviewInteractionV1,
   parseRunnerExternalApprovalBindingV1,
+  parseRunnerExternalApprovalBindingV2,
   serializeCanonicalApprovalPayload,
 } from "@kestrel-agents/protocol";
 
@@ -3010,6 +3014,91 @@ export class ExecutionEngine {
             fields: retiredRecoveryFields,
           },
         );
+      }
+      if (payload?.preparedToolCall !== undefined) {
+        const mixedPreparedFields = [
+          "toolName",
+          "toolInput",
+          "modelToolCallId",
+          "toolSurfaceSnapshot",
+        ].filter((field) => Object.hasOwn(payload, field));
+        if (mixedPreparedFields.length > 0) {
+          throw createRuntimeFailure(
+            "TOOL_EFFECT_PREPARATION_FAILED",
+            "A prepared tool effect cannot include reconstructible tool-call fields.",
+            {
+              recoverable: false,
+              effectType: effect.type,
+              fields: mixedPreparedFields,
+            },
+          );
+        }
+        let preparedToolCall;
+        let externalApprovalBinding;
+        try {
+          preparedToolCall = parseDurablePreparedToolCallV1(
+            payload.preparedToolCall,
+          );
+          externalApprovalBinding = parseRunnerExternalApprovalBindingV2(
+            preparedToolCall.approval?.externalApprovalBinding,
+          );
+        } catch (error) {
+          throw createRuntimeFailure(
+            "TOOL_EFFECT_PREPARATION_FAILED",
+            "The approved prepared invocation is invalid.",
+            {
+              recoverable: false,
+              effectType: effect.type,
+              cause: error instanceof Error ? error.message : String(error),
+            },
+          );
+        }
+        const pendingApproval = readPendingToolApproval(session.state);
+        if (
+          preparedToolCall.sessionId !== session.sessionId ||
+          preparedToolCall.callId !== idempotencyKey ||
+          externalApprovalBinding.preparedInvocationId !==
+            preparedToolCall.callId ||
+          pendingApproval?.version !== "hosted_tool_approval_v2" ||
+          pendingApproval.preparedInvocationId !== preparedToolCall.callId ||
+          serializeCanonicalApprovalPayload(
+            pendingApproval.externalApprovalBinding,
+          ) !== serializeCanonicalApprovalPayload(externalApprovalBinding)
+        ) {
+          throw createRuntimeFailure(
+            "TOOL_EFFECT_PREPARATION_FAILED",
+            "The approved prepared invocation does not match the committed approval wait.",
+            {
+              recoverable: false,
+              effectType: effect.type,
+              preparedInvocationId: preparedToolCall.callId,
+            },
+          );
+        }
+        if (this.deps.toolGateway.preRun !== undefined) {
+          await this.deps.toolGateway.preRun({
+            runId,
+            event: {
+              id: `tool-resume:${runId}:${idempotencyKey}`,
+              type: effect.type,
+              sessionId: session.sessionId,
+              payload: runtimePayload ?? {},
+              ...(session.currentStepAgent === undefined
+                ? {}
+                : { stepAgent: session.currentStepAgent }),
+            },
+            session,
+          });
+        }
+        return {
+          type: effect.type,
+          payload: {
+            preparedToolCall,
+            ...(runtimePayload === undefined ? {} : { runtimePayload }),
+          },
+          idempotencyKey,
+          failurePolicy: effect.failurePolicy ?? "STOP",
+        };
       }
       const toolName = this.asString(payload?.toolName);
       const rawInput = this.asRecord(payload?.toolInput);

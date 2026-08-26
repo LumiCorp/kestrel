@@ -66,7 +66,7 @@ import type {
 import { appendAgentObservation } from "./shared.js";
 
 export type PolicyGateResult =
-  | { kind: "allowed" }
+  | { kind: "allowed"; preparedToolCall?: PreparedToolCallV1 | undefined }
   | { kind: "blocked"; transition: Transition };
 
 export async function checkToolPolicyGate(input: {
@@ -201,6 +201,15 @@ export async function checkToolPolicyGate(input: {
       toolIntent: input.toolIntent,
       io: input.io,
     });
+    if (
+      approvalTransition !== undefined &&
+      "preparedToolCall" in approvalTransition
+    ) {
+      return {
+        kind: "allowed",
+        preparedToolCall: approvalTransition.preparedToolCall,
+      };
+    }
     if (approvalTransition !== undefined) {
       return { kind: "blocked", transition: approvalTransition };
     }
@@ -551,7 +560,9 @@ async function maybeRequireToolApproval(input: {
           | undefined;
       }
     | undefined;
-}): Promise<Transition | undefined> {
+}): Promise<
+  Transition | { preparedToolCall: PreparedToolCallV1 } | undefined
+> {
   if (
     !requiresExplicitToolApproval({
       interactionMode: input.interactionMode,
@@ -849,7 +860,14 @@ async function maybeRequireToolApproval(input: {
         }
       }
     }
-    if (exactApprovalMatches) return;
+    if (exactApprovalMatches) {
+      return durablePreparedToolCall === undefined
+        ? undefined
+        : {
+            preparedToolCall:
+              parseDurablePreparedToolCallV1(durablePreparedToolCall),
+          };
+    }
   }
 
   if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "deny") {

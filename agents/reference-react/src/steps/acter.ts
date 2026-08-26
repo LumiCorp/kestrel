@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { ArtifactIntent, StepAgent, StepIO, Transition, } from "../../../../src/kestrel/contracts/execution.js";
 import type { AgentToolResult } from "../../../../src/kestrel/contracts/model-io.js";
+import type { PreparedToolCallV1 } from "../../../../src/kestrel/contracts/tool-invocation.js";
 import {
   hashCanonical,
   parseToolActivationRefV1,
@@ -732,6 +733,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
             : undefined,
           toolExecutionClass: toolClass,
           executionRole: "executionRole" in actionForDispatch ? actionForDispatch.executionRole : undefined,
+          preparedToolCall: policyGate.preparedToolCall,
         });
       }
 
@@ -1074,14 +1076,20 @@ function dispatchDurableToolCall(input: {
   toolSurfaceSnapshot?: import("../../../../src/kestrel/contracts/tool-contract.js").ToolSurfaceSnapshotV1 | undefined;
   toolExecutionClass?: "read_only" | "planning_write" | "sandboxed_only" | "external_side_effect" | undefined;
   executionRole?: unknown;
+  preparedToolCall?: PreparedToolCallV1 | undefined;
 }) {
-  const idempotencyKey = buildDurableToolIdempotencyKey(
-    input.sessionId,
-    input.runId,
-    input.stepIndex,
-    input.toolName,
-    input.toolInput,
-  );
+  const idempotencyKey = input.preparedToolCall?.callId ??
+    buildDurableToolIdempotencyKey(
+      input.sessionId,
+      input.runId,
+      input.stepIndex,
+      input.toolName,
+      input.toolInput,
+    );
+  const effectiveToolName =
+    input.preparedToolCall?.activation.descriptor.toolId ?? input.toolName;
+  const effectiveToolInput =
+    input.preparedToolCall?.effectiveInput ?? input.toolInput;
 
   const pendingEffectPatch = {
     pendingApproval: undefined,
@@ -1092,8 +1100,8 @@ function dispatchDurableToolCall(input: {
     pendingEffectKey: idempotencyKey,
     pendingEffectType: "execute_tool_call",
     pendingToolCall: {
-      name: input.toolName,
-      input: input.toolInput,
+      name: effectiveToolName,
+      input: effectiveToolInput,
       ...(input.executionRole !== undefined ? { executionRole: input.executionRole } : {}),
       idempotencyKey,
     },
@@ -1107,7 +1115,7 @@ function dispatchDurableToolCall(input: {
     activeRegion: input.activeRegion,
     phase: "ACT",
     reactPatch: {
-      ...(isFilesystemInspectionCacheInvalidatingTool(input.toolName, input.toolExecutionClass)
+      ...(isFilesystemInspectionCacheInvalidatingTool(effectiveToolName, input.toolExecutionClass)
         ? { filesystemInspectionCache: [] }
         : {}),
       decisionTrace: [
@@ -1116,14 +1124,14 @@ function dispatchDurableToolCall(input: {
           phase: "acter",
           decisionCode: "tool.dispatch_durable",
           metadata: {
-            toolName: input.toolName,
+            toolName: effectiveToolName,
           },
         },
       ],
     },
     execPatch: pendingEffectPatch,
     regionReactPatch: {
-      ...(isFilesystemInspectionCacheInvalidatingTool(input.toolName, input.toolExecutionClass)
+      ...(isFilesystemInspectionCacheInvalidatingTool(effectiveToolName, input.toolExecutionClass)
         ? { filesystemInspectionCache: [] }
         : {}),
     },
@@ -1131,18 +1139,24 @@ function dispatchDurableToolCall(input: {
     effects: [
       {
         type: "execute_tool_call",
-        payload: {
-          toolName: input.toolName,
-          toolInput: input.toolInput,
-          ...(input.toolCallId === undefined
-            ? {}
-            : { modelToolCallId: input.toolCallId }),
-          ...(input.toolSurfaceSnapshot === undefined
-            ? {}
-            : { toolSurfaceSnapshot: input.toolSurfaceSnapshot }),
-        },
+        payload: input.preparedToolCall === undefined
+          ? {
+              toolName: input.toolName,
+              toolInput: input.toolInput,
+              ...(input.toolCallId === undefined
+                ? {}
+                : { modelToolCallId: input.toolCallId }),
+              ...(input.toolSurfaceSnapshot === undefined
+                ? {}
+                : { toolSurfaceSnapshot: input.toolSurfaceSnapshot }),
+            }
+          : { preparedToolCall: input.preparedToolCall },
         idempotencyKey,
-        failurePolicy: shouldContinueToolFailure(input) ? "CONTINUE" as const : "STOP" as const,
+        failurePolicy: shouldContinueToolFailure({
+          ...input,
+          toolName: effectiveToolName,
+          toolInput: effectiveToolInput,
+        }) ? "CONTINUE" as const : "STOP" as const,
       },
     ],
   });

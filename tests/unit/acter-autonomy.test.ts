@@ -1541,10 +1541,19 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
   assert.equal(resumed.nextStepAgent, "agent.exec.wait_effect");
   assert.equal(resumed.effects?.length, 1);
   assert.equal(resumed.effects?.[0]?.type, "execute_tool_call");
-  assert.deepEqual(resumed.effects?.[0]?.payload, {
-    toolName: definition.name,
-    toolInput,
-  });
+  const resumedPreparedToolCall = parsePreparedToolCallV1(
+    resumed.effects?.[0]?.payload.preparedToolCall,
+  );
+  assert.equal(resumed.effects?.[0]?.idempotencyKey, "prepared-github-1");
+  assert.equal(resumedPreparedToolCall.callId, "prepared-github-1");
+  assert.deepEqual(resumedPreparedToolCall.effectiveInput, normalizedToolInput);
+  assert.deepEqual(
+    resumedPreparedToolCall,
+    ((waitingAgent.waitingFor as Record<string, unknown>).metadata as Record<
+      string,
+      unknown
+    >).preparedToolCall,
+  );
   const resumedAgent = resumed.statePatch?.agent as Record<string, unknown>;
   const resumedExec = resumedAgent.exec as Record<string, unknown>;
   assert.equal(resumedExec.pendingApproval, undefined);
