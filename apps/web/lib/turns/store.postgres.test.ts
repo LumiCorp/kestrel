@@ -47,7 +47,11 @@ test(
     const suffix = crypto.randomUUID();
     const organizationId = `turn-org-${suffix}`;
     const userId = `turn-user-${suffix}`;
+    const otherUserId = `turn-other-user-${suffix}`;
+    const memberId = `turn-member-${suffix}`;
+    const otherMemberId = `turn-other-member-${suffix}`;
     const environmentId = `turn-environment-${suffix}`;
+    const projectId = `turn-project-${suffix}`;
     const successfulThreadId = `turn-success-${suffix}`;
     const dispatchFailureThreadId = `turn-dispatch-failure-${suffix}`;
     const groupContendedThreadId = `turn-group-contended-${suffix}`;
@@ -67,6 +71,7 @@ test(
       await queue.stopDurableThreadTurnWorker();
       await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
       await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+      await sql`DELETE FROM "user" WHERE "id" = ${otherUserId}`;
       await resetDbRuntimeForTests();
       await sql.end({ timeout: 0 });
     });
@@ -75,10 +80,15 @@ test(
       await transaction`
         INSERT INTO "user" (
           "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
-        ) VALUES (
-          ${userId}, 'Turn Worker User', ${`${userId}@example.test`},
-          true, ${now}, ${now}
-        )
+        ) VALUES
+          (
+            ${userId}, 'Turn Worker User', ${`${userId}@example.test`},
+            true, ${now}, ${now}
+          ),
+          (
+            ${otherUserId}, 'Other Project Member', ${`${otherUserId}@example.test`},
+            true, ${now}, ${now}
+          )
       `;
       await transaction`
         INSERT INTO "organization" ("id", "name", "slug", "createdAt")
@@ -95,6 +105,28 @@ test(
           ${environmentId}, ${organizationId}, ${userId}, 'Default', 'default',
           'iad', 'ready', true
         )
+      `;
+      await transaction`
+        INSERT INTO "member" (
+          "id", "organizationId", "userId", "role", "createdAt"
+        ) VALUES
+          (${memberId}, ${organizationId}, ${userId}, 'owner', ${now}),
+          (${otherMemberId}, ${organizationId}, ${otherUserId}, 'member', ${now})
+      `;
+      await transaction`
+        INSERT INTO "projects" (
+          "id", "organization_id", "environment_id", "created_by_user_id", "name"
+        ) VALUES (
+          ${projectId}, ${organizationId}, ${environmentId}, ${userId},
+          'Hosted Approval Project'
+        )
+      `;
+      await transaction`
+        INSERT INTO "project_members" (
+          "project_id", "organization_member_id", "role"
+        ) VALUES
+          (${projectId}, ${memberId}, 'owner'),
+          (${projectId}, ${otherMemberId}, 'member')
       `;
       await transaction`
         INSERT INTO "threads" (
@@ -683,10 +715,20 @@ test(
           descriptorContractRevision: "descriptor-v1",
           approvalAuthorityRevision: "authority-v1",
         },
+        requestingActor: {
+          actorType: "end_user" as const,
+          actorId: userId,
+          tenantId: organizationId,
+        },
       },
       source: "runtime" as const,
       status: "pending" as const,
     };
+    const {
+      source: _approvalSource,
+      status: _approvalStatus,
+      ...approvalRequestEnvelope
+    } = approvalInteraction;
     await store.persistDurableAssistantOutcome({
       turnId: approvalTurn.turn.id,
       messages: [{
@@ -702,6 +744,11 @@ test(
       }],
       interaction: approvalInteraction,
     });
+    await sql`
+      UPDATE "threads"
+      SET "project_id" = ${projectId}
+      WHERE "id" = ${approvalThreadId}
+    `;
     await assert.rejects(
       store.resolveDurableRuntimeInteraction({
         threadId: approvalThreadId,
@@ -717,6 +764,61 @@ test(
       }),
       /does not match its version/u,
     );
+    for (const [decision, source] of [
+      ["decline", "web"],
+      ["approve_once", "mobile"],
+    ] as const) {
+      await assert.rejects(
+        store.resolveDurableRuntimeInteraction({
+          threadId: approvalThreadId,
+          organizationId,
+          userId: otherUserId,
+          requestId: approvalRequestId,
+          eventType: "user.approval",
+          turnId: approvalTurn.turn.id,
+          message: decision,
+          decision,
+          messageId: `other-${decision}-${suffix}`,
+          source,
+        }),
+        /requesting actor/u,
+      );
+    }
+    const wrongTenantApprovalInteraction = {
+      ...approvalRequestEnvelope,
+      approval: {
+        ...approvalRequestEnvelope.approval,
+        requestingActor: {
+          ...approvalRequestEnvelope.approval.requestingActor,
+          tenantId: `other-org-${suffix}`,
+        },
+      },
+    };
+    await sql`
+      UPDATE "thread_interactions"
+      SET "request_envelope" = ${sql.json(wrongTenantApprovalInteraction)}
+      WHERE "request_id" = ${approvalRequestId}
+    `;
+    await assert.rejects(
+      store.resolveDurableRuntimeInteraction({
+        threadId: approvalThreadId,
+        organizationId,
+        userId,
+        requestId: approvalRequestId,
+        eventType: "user.approval",
+        turnId: approvalTurn.turn.id,
+        message: "Approve once",
+        decision: "approve_once",
+        messageId: `wrong-tenant-${suffix}`,
+        source: "web",
+      }),
+      /requesting actor/u,
+    );
+    await sql`
+      UPDATE "thread_interactions"
+      SET "request_envelope" = ${sql.json(approvalRequestEnvelope)}
+      WHERE "request_id" = ${approvalRequestId}
+    `;
     await store.resolveDurableRuntimeInteraction({
       threadId: approvalThreadId,
       organizationId,
@@ -737,6 +839,11 @@ test(
         eventType: "user.approval",
         message: "Approve once",
         decision: "approve_once",
+        decidingActor: {
+          actorType: "end_user",
+          actorId: userId,
+          tenantId: organizationId,
+        },
       },
     );
     await store.completeDurableThreadTurn({

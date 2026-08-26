@@ -5,6 +5,7 @@ import {
   parseStableToolApprovalIdentityV1,
   type HostedToolApprovalDecision,
   type RememberedToolApprovalEvidenceV1,
+  type RunnerApprovalActorAuthorityV1,
   type StableToolApprovalIdentityV1,
 } from "./approvals.js";
 import {
@@ -527,6 +528,7 @@ export interface RunnerTurnInput {
   resumeRequestId?: string | undefined;
   recoveryOptionId?: string | undefined;
   decision?: "decline" | "approve_once" | undefined;
+  decidingActor?: RunnerActorMetadata | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: RunnerInteractionMode | undefined;
@@ -635,6 +637,7 @@ export interface RunnerHostedToolApprovalInteractionV2
     preparedInvocationId: string;
     toolName: string;
     stableToolIdentity: StableToolApprovalIdentityV1;
+    requestingActor: RunnerApprovalActorAuthorityV1;
     presentation?: unknown;
   };
 }
@@ -1261,6 +1264,7 @@ export type OrdinaryConversationTurn = Omit<
   | "resumeRequestId"
   | "recoveryOptionId"
   | "decision"
+  | "decidingActor"
   | "stepAgent"
 >;
 
@@ -2673,6 +2677,7 @@ function parseRunnerCommandPayloadV2(
         "resumeRequestId",
         "recoveryOptionId",
         "decision",
+        "decidingActor",
         "stepAgent",
       ]) {
         if (Object.hasOwn(turn, forbidden)) {
@@ -3567,6 +3572,9 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalNonEmptyString(turn.resumeRequestId, `${label}.resumeRequestId`);
   validateOptionalNonEmptyString(turn.recoveryOptionId, `${label}.recoveryOptionId`);
   validateOptionalEnum(turn.decision, `${label}.decision`, ["decline", "approve_once"]);
+  const decidingActor = turn.decidingActor === undefined
+    ? undefined
+    : parseRunnerActorMetadata(turn.decidingActor, `${label}.decidingActor`);
   if (turn.resumeBlockedRun === true && turn.resumeRequestId === undefined) {
     throw new RunnerProtocolContractError(
       `${label}.resumeRequestId is required when resumeBlockedRun is true`,
@@ -3586,6 +3594,16 @@ function validateRunTurn(value: unknown, label: string): void {
   ) {
     throw new RunnerProtocolContractError(
       `${label}.decision requires a user.approval resumeRequestId`,
+    );
+  }
+  if (turn.decision !== undefined && decidingActor === undefined) {
+    throw new RunnerProtocolContractError(
+      `${label}.decidingActor is required for an approval decision`,
+    );
+  }
+  if (decidingActor !== undefined && turn.decision === undefined) {
+    throw new RunnerProtocolContractError(
+      `${label}.decidingActor requires an approval decision`,
     );
   }
   validateOptionalNonEmptyString(turn.stepAgent, `${label}.stepAgent`);
@@ -4110,6 +4128,7 @@ function validateRunnerHostedToolApprovalInteractionV2(
       "preparedInvocationId",
       "toolName",
       "stableToolIdentity",
+      "requestingActor",
       "presentation",
     ],
   );
@@ -4124,6 +4143,25 @@ function validateRunnerHostedToolApprovalInteractionV2(
   if (stableToolIdentity.toolId !== approval.toolName) {
     throw new RunnerProtocolContractError(
       `${label}.approval.stableToolIdentity.toolId must match ${label}.approval.toolName`,
+    );
+  }
+  try {
+    const requestingActor = requireRecord(
+      approval.requestingActor,
+      `${label}.approval.requestingActor`,
+    );
+    rejectUnknownFields(
+      requestingActor,
+      `${label}.approval.requestingActor`,
+      ["actorType", "actorId", "tenantId"],
+    );
+    parseRunnerActorMetadata(
+      requestingActor,
+      `${label}.approval.requestingActor`,
+    );
+  } catch (error) {
+    throw new RunnerProtocolContractError(
+      `${label}.approval.requestingActor is invalid: ${error instanceof Error ? error.message : "unknown error"}`,
     );
   }
   if (approval.presentation !== undefined) {
@@ -4540,11 +4578,14 @@ function parseRunnerCommandMetadata(value: unknown): RunnerCommandMetadata {
   };
 }
 
-function parseRunnerActorMetadata(value: unknown): RunnerActorMetadata {
-  const actor = requireRecord(value, "runner command.metadata.actor");
+function parseRunnerActorMetadata(
+  value: unknown,
+  label = "runner command.metadata.actor",
+): RunnerActorMetadata {
+  const actor = requireRecord(value, label);
   const actorId = requireNonEmptyString(
     actor.actorId,
-    "runner command.metadata.actor.actorId",
+    `${label}.actorId`,
   );
   if (
     actor.actorType !== "end_user"
@@ -4552,20 +4593,20 @@ function parseRunnerActorMetadata(value: unknown): RunnerActorMetadata {
     && actor.actorType !== "service"
   ) {
     throw new RunnerProtocolContractError(
-      "runner command.metadata.actor.actorType must be 'end_user', 'operator', or 'service'",
+      `${label}.actorType must be 'end_user', 'operator', or 'service'`,
     );
   }
   const displayName = parseOptionalNonEmptyString(
     actor.displayName,
-    "runner command.metadata.actor.displayName",
+    `${label}.displayName`,
   );
   const tenantId = parseOptionalNonEmptyString(
     actor.tenantId,
-    "runner command.metadata.actor.tenantId",
+    `${label}.tenantId`,
   );
   if (actor.orgRole !== undefined && actor.orgRole !== "member" && actor.orgRole !== "org_admin") {
     throw new RunnerProtocolContractError(
-      "runner command.metadata.actor.orgRole must be 'member' or 'org_admin'",
+      `${label}.orgRole must be 'member' or 'org_admin'`,
     );
   }
   return {

@@ -74,12 +74,21 @@ test("run.start carries only strict hosted approval decisions", () => {
           eventType: "user.approval",
           resumeRequestId: "approval-request",
           decision,
+          decidingActor: {
+            actorType: "end_user",
+            actorId: "user-1",
+            tenantId: "org-1",
+          },
         },
       },
     });
     assert.equal(
       parsed.type === "run.start" ? parsed.payload.turn.decision : undefined,
       decision,
+    );
+    assert.deepEqual(
+      parsed.type === "run.start" ? parsed.payload.turn.decidingActor : undefined,
+      { actorType: "end_user", actorId: "user-1", tenantId: "org-1" },
     );
   }
   assert.throws(() => parseRunnerCommandV2({

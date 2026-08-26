@@ -1346,11 +1346,31 @@ export async function claimDurableThreadTurn(
         .set({ resumedAt: now, updatedAt: now })
         .where(eq(schema.threadInteractions.id, interaction.id));
     }
-    const response = interaction?.responseEnvelope;
+    const response = readPlainRecord(interaction?.responseEnvelope);
+    const hostedV2Approval = interaction
+      ? parseHostedV2ApprovalInteraction(interaction)
+      : null;
+    const decidingActor =
+      hostedV2Approval &&
+      (response?.decision === "decline" || response?.decision === "approve_once")
+        ? hostedV2Approval.approval.requestingActor
+        : undefined;
+    if (
+      decidingActor !== undefined &&
+      (decidingActor.actorType !== "end_user" ||
+        decidingActor.actorId !== interaction?.resolvedByUserId ||
+        decidingActor.tenantId !== interaction?.organizationId)
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The hosted approval deciding actor is invalid.",
+      );
+    }
     return running
       ? {
           ...running,
           interactionResponse:
+            interaction &&
             response &&
             typeof response.eventType === "string" &&
             typeof response.message === "string"
@@ -1367,6 +1387,11 @@ export async function claimDurableThreadTurn(
                         decision: response.decision as
                           | "decline"
                           | "approve_once",
+                        decidingActor: {
+                          actorType: decidingActor!.actorType,
+                          actorId: decidingActor!.actorId,
+                          tenantId: decidingActor!.tenantId,
+                        },
                       }
                     : {}),
                   ...(typeof response.reason === "string"
@@ -1919,7 +1944,18 @@ export async function resolveDurableRuntimeInteraction(input: {
         "The interaction response event type does not match the pending request.",
       );
     }
-    const hostedV2Approval = isHostedV2ApprovalInteraction(interaction);
+    const hostedV2Approval = parseHostedV2ApprovalInteraction(interaction);
+    if (
+      hostedV2Approval !== null &&
+      (hostedV2Approval.approval.requestingActor.actorType !== "end_user" ||
+        hostedV2Approval.approval.requestingActor.actorId !== input.userId ||
+        hostedV2Approval.approval.requestingActor.tenantId !== input.organizationId)
+    ) {
+      throw new DurableTurnError(
+        "TURN_FORBIDDEN",
+        "Only the authenticated requesting actor may decide this approval.",
+      );
+    }
     if (
       interaction.status === "processing" ||
       interaction.status === "resolved" ||
@@ -2619,12 +2655,12 @@ function isApprovedResponseEnvelope(
   return value?.decision === "approve_once" || value?.approved === true;
 }
 
-function isHostedV2ApprovalInteraction(
+function parseHostedV2ApprovalInteraction(
   interaction: typeof schema.threadInteractions.$inferSelect,
-): boolean {
-  if (interaction.kind !== "approval") return false;
+): ReturnType<typeof parseRunnerHostedToolApprovalInteractionV2> | null {
+  if (interaction.kind !== "approval") return null;
   if (readPlainRecord(interaction.requestEnvelope)?.version === "v1") {
-    return false;
+    return null;
   }
   try {
     const parsed = parseRunnerHostedToolApprovalInteractionV2(
@@ -2634,7 +2670,7 @@ function isHostedV2ApprovalInteraction(
     if (parsed.requestId !== interaction.requestId) {
       throw new Error("request identity mismatch");
     }
-    return true;
+    return parsed;
   } catch {
     throw new DurableTurnError(
       "TURN_CONFLICT",

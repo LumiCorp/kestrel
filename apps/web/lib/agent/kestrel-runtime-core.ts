@@ -17,7 +17,10 @@ import type {
   RunnerTelemetry,
   RunnerStream,
 } from "@kestrel-agents/sdk";
-import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
+import type {
+  RunnerActorMetadata,
+  RunnerTurnAttachment,
+} from "@kestrel-agents/protocol";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -59,6 +62,7 @@ export type KestrelOneAgentTurnInput = KestrelAgentTurnInput & {
   abortBehavior?: "cancel" | "detach" | undefined;
   resumeRequestId?: string | undefined;
   decision?: "decline" | "approve_once" | undefined;
+  decidingActor?: RunnerActorMetadata | undefined;
 };
 
 export type KestrelOneRunnerStreamEvent = RunnerRunStreamEvent;
@@ -166,6 +170,7 @@ export type KestrelOneAgentResponseInput = {
         message: string;
         approved?: boolean | undefined;
         decision?: "decline" | "approve_once" | undefined;
+        decidingActor?: RunnerActorMetadata | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;
       }
@@ -295,6 +300,9 @@ export function createKestrelOneAgentResponseFromAgent(
                     resumeRequestId: interactionResponse.requestId,
                     ...(interactionResponse.decision !== undefined
                       ? { decision: interactionResponse.decision }
+                      : {}),
+                    ...(interactionResponse.decidingActor !== undefined
+                      ? { decidingActor: interactionResponse.decidingActor }
                       : {}),
                     ...(interactionResponse.recoveryOptionId !== undefined
                       ? { recoveryOptionId: interactionResponse.recoveryOptionId }

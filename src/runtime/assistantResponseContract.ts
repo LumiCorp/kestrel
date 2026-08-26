@@ -9,6 +9,7 @@ import type { InteractionRequestRecord } from "../kestrel/contracts/orchestratio
 import {
   parseRunnerHostedToolApprovalInteractionV2,
   parseRunnerStructuredReviewInteractionV1,
+  RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
 } from "@kestrel-agents/protocol";
 import { parsePreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
 import {
@@ -337,6 +338,12 @@ export function projectHostedToolApprovalInteractionV2(input: {
     input.requestId ?? prepared.approval?.approvalId ?? prepared.callId;
   const reasonCode = readToolApprovalReasonCode(prepared.policy.reasonCode);
   const binding = prepared.approval?.externalApprovalBinding;
+  if (binding?.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION) {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      "A new-version hosted approval must contain its complete external approval binding.",
+    );
+  }
   const presentation = buildToolApprovalPresentation({
     toolName: prepared.activation.descriptor.toolId,
     effectiveInput: prepared.effectiveInput,
@@ -372,6 +379,7 @@ export function projectHostedToolApprovalInteractionV2(input: {
       preparedInvocationId: prepared.callId,
       toolName: prepared.activation.descriptor.toolId,
       stableToolIdentity: prepared.stableToolIdentity,
+      requestingActor: binding.requestingActor,
       presentation,
     },
   }) as RuntimeHostedToolApprovalInteractionV2;

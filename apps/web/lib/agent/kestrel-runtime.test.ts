@@ -404,6 +404,11 @@ test("createKestrelOneAgentResponse carries strict hosted approval decisions", a
         eventType: "user.approval",
         message: decision,
         decision,
+        decidingActor: {
+          actorType: "end_user",
+          actorId: session.user.id,
+          tenantId: "org_123",
+        },
       },
       resolvedAttachments: [],
       messages: [{
@@ -415,6 +420,11 @@ test("createKestrelOneAgentResponse carries strict hosted approval decisions", a
     await response.text();
     assert.equal(capturedInput?.resumeRequestId, "approval-request");
     assert.equal(capturedInput?.decision, decision);
+    assert.deepEqual(capturedInput?.decidingActor, {
+      actorType: "end_user",
+      actorId: session.user.id,
+      tenantId: "org_123",
+    });
   }
 });
 

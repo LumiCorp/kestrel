@@ -64,6 +64,7 @@ export interface RuntimeTurnInput {
   resumeRequestId?: string | undefined;
   recoveryOptionId?: string | undefined;
   decision?: "decline" | "approve_once" | undefined;
+  decidingActor?: RuntimeTurnActor | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: InteractionMode | undefined;
@@ -249,6 +250,9 @@ export function materializeCompiledRuntimeTurn(
       : {}),
     ...(prepared.input.decision !== undefined
       ? { decision: prepared.input.decision }
+      : {}),
+    ...(prepared.input.decidingActor !== undefined
+      ? { decidingActor: prepared.input.decidingActor }
       : {}),
     metadata: prepared.metadata,
     orchestration: {

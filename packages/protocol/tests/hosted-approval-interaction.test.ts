@@ -29,11 +29,20 @@ const interaction = {
       descriptorContractRevision: `sha256:${"a".repeat(64)}`,
       approvalAuthorityRevision: "approval-authority-v1",
     },
+    requestingActor: {
+      actorType: "end_user",
+      actorId: "user-1",
+      tenantId: "org-1",
+    },
     presentation: { title: "Approve tool" },
   },
 } as const;
 
 test("hosted approval interaction V2 is separate from strict V1", () => {
+  const {
+    requestingActor: _requestingActor,
+    ...approvalWithoutRequestingActor
+  } = interaction.approval;
   assert.deepEqual(
     parseRunnerHostedToolApprovalInteractionV2(interaction),
     interaction,
@@ -68,6 +77,28 @@ test("hosted approval interaction V2 is separate from strict V1", () => {
         },
       }),
     /inputSchema is invalid/u,
+  );
+  assert.throws(
+    () =>
+      parseRunnerHostedToolApprovalInteractionV2({
+        ...interaction,
+        approval: {
+          ...interaction.approval,
+          requestingActor: {
+            ...interaction.approval.requestingActor,
+            actorId: "",
+          },
+        },
+      }),
+    /requestingActor is invalid/u,
+  );
+  assert.throws(
+    () =>
+      parseRunnerHostedToolApprovalInteractionV2({
+        ...interaction,
+        approval: approvalWithoutRequestingActor,
+      }),
+    /requestingActor is invalid/u,
   );
   assert.throws(
     () =>

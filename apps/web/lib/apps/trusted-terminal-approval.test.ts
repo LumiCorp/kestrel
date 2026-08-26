@@ -249,6 +249,7 @@ function waitingV2Event(): RunnerRunTerminalEvent {
                 preparedInvocationId,
                 toolName,
                 stableToolIdentity,
+                requestingActor: binding.requestingActor,
                 presentation: { title: "Approve send?" },
               },
             },
