@@ -113,6 +113,39 @@ test("exact effect result reads return the complete persisted AgentToolResult on
   assert.deepEqual(validateExactEffectResultRead({ requested, effect, effectResult }), { status: "found", result });
 });
 
+test("exact effect result replay permits continuation run ownership without weakening prepared identity", () => {
+  const continuation = { ...requested, runId: "run-continuation" };
+  assert.deepEqual(validateExactEffectResultRead({
+    requested: continuation,
+    effect: { ...effect, runId: continuation.runId },
+    effectResult,
+  }), { status: "found", result });
+  assert.deepEqual(validateExactEffectResultRead({
+    requested: continuation,
+    effect: { ...effect, runId: continuation.runId },
+    effectResult: {
+      ...effectResult,
+      output: { ...result, outcome: { ...result.outcome, callId: "other-call" } },
+    },
+  }), { status: "conflict" });
+});
+
+test("in-memory execution claim has one atomic PENDING to CLAIMED winner", async () => {
+  const store = new InMemorySessionStore();
+  (store as unknown as { effects: Array<PersistedEffect & { tenantOwnershipState: string }> }).effects.push({
+    ...effect,
+    status: "PENDING",
+    tenantOwnershipState: "explicit_unbound",
+  });
+  const claims = await Promise.all([
+    store.claimEffectExecution(requested.idempotencyKey, requested),
+    store.claimEffectExecution(requested.idempotencyKey, requested),
+  ]);
+  assert.deepEqual(claims.sort(), ["already_claimed", "claimed"]);
+  assert.equal((await store.getPersistedEffect(requested.idempotencyKey))?.status, "CLAIMED");
+  assert.deepEqual((await store.listPendingEffects(requested.sessionId)).map((candidate) => candidate.status), ["CLAIMED"]);
+});
+
 test("in-memory exact completion and cancellation claims have a single durable winner", async () => {
   const cancellationWins = new InMemorySessionStore({ tenantId: "tenant-1" });
   await cancellationWins.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: leaseRecord });

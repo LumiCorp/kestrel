@@ -448,6 +448,10 @@ export interface EffectStore {
   listPendingEffects(sessionId: string): Promise<PersistedEffect[]>;
   getPersistedEffect?(idempotencyKey: string): Promise<PersistedEffect | null>;
   getEffectResult(idempotencyKey: string): Promise<EffectResult | null>;
+  claimEffectExecution(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"claimed" | "already_claimed" | "terminal">;
   saveEffectResult(runId: string, sessionId: string, result: EffectResult): Promise<void>;
   markEffectStatus(
     idempotencyKey: string,
@@ -503,7 +507,6 @@ export function validateExactEffectCancellationCandidate(input: {
   try { prepared = parsePreparedToolCallV1(effect.payload.preparedToolCall); } catch { return "conflict"; }
   if (
     prepared.sessionId !== requested.sessionId ||
-    prepared.runId !== requested.runId ||
     prepared.callId !== requested.idempotencyKey
   ) return "conflict";
   return "ready";
@@ -548,7 +551,6 @@ export function validateExactEffectResultRead(input: {
   try { prepared = parsePreparedToolCallV1(effect.payload.preparedToolCall); } catch { return { status: "conflict" }; }
   if (
     prepared.sessionId !== requested.sessionId ||
-    prepared.runId !== requested.runId ||
     prepared.callId !== requested.idempotencyKey
   ) return { status: "conflict" };
   if (effect.status !== "DONE" || effectResult === null) return { status: "incomplete" };
@@ -559,6 +561,7 @@ export function validateExactEffectResultRead(input: {
   if (
     result.toolCallId !== requested.idempotencyKey ||
     result.toolName !== prepared.activation.descriptor.toolId ||
+    result.outcome.callId !== requested.idempotencyKey ||
     canonicalJson(result.activation) !== canonicalJson(prepared.activation) ||
     canonicalJson(result.outcome.activation) !== canonicalJson(prepared.activation) ||
     canonicalJson(result.auditRecord.input) !== canonicalJson(prepared.effectiveInput)

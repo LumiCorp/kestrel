@@ -76,6 +76,143 @@ test("Effect runner reports compiled tool activity", async () => {
   assert.equal((activities[1]?.output as { status?: string }).status, "OK");
 });
 
+test("Effect runner durably claims immediately before invoking the validated handler", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const effect = {
+    runId: "run-claim",
+    sessionId: "session-claim",
+    stepIndex: 0,
+    type: "test.claimed",
+    payload: {},
+    idempotencyKey: "claim-1",
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+  registry.register(effect.type, async () => {
+    assert.equal((await store.listPendingEffects(effect.sessionId))[0]?.status, "CLAIMED");
+    return { ok: true };
+  });
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+
+  assert.equal(outcome.stop, false);
+  assert.deepEqual(store.operationLog.filter((entry) =>
+    entry.startsWith("claimEffectExecution:") || entry.startsWith("saveEffectResult:")
+  ), ["claimEffectExecution:claim-1", "saveEffectResult:claim-1:DONE"]);
+});
+
+test("Effect runner records terminal unknown and never repeats a claimed prepared call without a result", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  let handlerCalls = 0;
+  registry.register("execute_tool_call", async () => {
+    handlerCalls += 1;
+    return { repeated: true };
+  });
+  const gateway = adaptLegacyTestToolGateway({
+    validateInput: async (_name, input) => input,
+    call: async () => ({ unreachable: true }),
+  });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway,
+    toolName: "fs.write_text",
+    toolInput: { path: "unknown.txt", text: "once" },
+    runId: "run-original",
+    sessionId: "session-unknown",
+    callId: "call-unknown",
+  });
+  const effect = {
+    runId: "run-continuation",
+    sessionId: "session-unknown",
+    stepIndex: 1,
+    type: "execute_tool_call",
+    payload: { preparedToolCall },
+    idempotencyKey: "call-unknown",
+    failurePolicy: "STOP" as const,
+    status: "CLAIMED" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+  const runner = new InlineEffectRunner(store, registry);
+
+  const first = await runner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  const recorded = await store.getEffectResult(effect.idempotencyKey);
+  const output = recorded?.output as { toolCallId?: string; outcome?: { effectState?: string; retryable?: boolean } };
+  assert.equal(first.stop, true);
+  assert.equal(first.errors[0]?.code, "EFFECT_EXECUTION_OUTCOME_UNKNOWN");
+  assert.equal(recorded?.status, "FAILED");
+  assert.equal(output.toolCallId, effect.idempotencyKey);
+  assert.deepEqual(output.outcome, {
+    ...(output.outcome ?? {}),
+    effectState: "unknown",
+    retryable: false,
+  });
+  assert.equal(handlerCalls, 0);
+
+  const replay = await runner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  assert.equal(replay.stop, true);
+  assert.equal(handlerCalls, 0);
+});
+
+test("Effect runner accepts a continuation effect run while preserving prepared identity", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  let handlerCalls = 0;
+  registry.register("execute_tool_call", async () => {
+    handlerCalls += 1;
+    return { ok: true };
+  });
+  const gateway = adaptLegacyTestToolGateway({
+    validateInput: async (_name, input) => input,
+    call: async () => ({ unreachable: true }),
+  });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway,
+    toolName: "fs.write_text",
+    toolInput: { path: "continuation.txt", text: "exact" },
+    runId: "run-original",
+    sessionId: "session-continuation",
+    callId: "call-continuation",
+  });
+  const effect = {
+    runId: "run-continuation",
+    sessionId: preparedToolCall.sessionId,
+    stepIndex: 2,
+    type: "execute_tool_call",
+    payload: { preparedToolCall },
+    idempotencyKey: preparedToolCall.callId,
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+
+  assert.equal(outcome.stop, false);
+  assert.equal(handlerCalls, 1);
+  assert.equal(preparedToolCall.runId, "run-original");
+});
+
 test("Effect runner STOP policy halts on failure", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();

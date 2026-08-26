@@ -5,18 +5,21 @@ import type {
 import type {
   EffectRunner,
 } from "../kestrel/contracts/execution.js";
-import type {
-  PersistedEffect,
-  EffectStore,
-  SandboxCapabilityLeaseStore,
-  SessionRepository,
+import {
+  validateExactEffectResultRead,
+  type EffectStore,
+  type PersistedEffect,
+  type SandboxCapabilityLeaseStore,
+  type SessionRepository,
 } from "../kestrel/contracts/store.js";
 import {
   parseAgentToolResultV2,
   parsePreparedToolCallV1,
+  type PreparedToolCallV1,
 } from "../kestrel/contracts/tool-invocation.js";
 import type { ToolActivationRefV1 } from "../kestrel/contracts/tool-contract.js";
 import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
+import { buildUnknownPreparedToolCallResultV1 } from "../io/ToolInvocationSupport.js";
 import type { EffectRegistry } from "./EffectRegistry.js";
 import { createEffectExecutionError } from "./errors.js";
 
@@ -55,6 +58,7 @@ export class InlineEffectRunner implements EffectRunner {
       const existingResult = await this.store.getEffectResult(effect.idempotencyKey);
       if (existingResult !== null) {
         if (existingResult.status === "DONE") {
+          assertExactRecordedToolResult(effect, existingResult);
           await this.store.markEffectStatus(effect.idempotencyKey, "DONE", effect);
           continue;
         }
@@ -77,19 +81,86 @@ export class InlineEffectRunner implements EffectRunner {
 
       const toolActivity = readEffectToolActivity(effect);
       const startedAt = Date.now();
-      if (toolActivity !== undefined) {
-        await notifyToolActivity(context.onToolActivity, {
-          phase: "started",
-          toolCallId: toolActivity.toolCallId,
-          toolName: toolActivity.toolName,
-          input: toolActivity.toolInput,
-          ...(toolActivity.activation === undefined
-            ? {}
-            : { activation: toolActivity.activation }),
-        });
-      }
       try {
         const handler = this.registry.resolve(effect.type);
+        const prepared = validatePreparedEffectForExecution(effect, context);
+        const claim = await this.store.claimEffectExecution(effect.idempotencyKey, effect);
+        if (claim !== "claimed") {
+          const racedResult = await this.store.getEffectResult(effect.idempotencyKey);
+          if (racedResult?.status === "DONE") {
+            assertExactRecordedToolResult(effect, racedResult);
+            await this.store.markEffectStatus(effect.idempotencyKey, "DONE", effect);
+            continue;
+          }
+          if (racedResult?.status === "FAILED") {
+            await this.store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
+            if (racedResult.error !== undefined) errors.push(racedResult.error);
+            if (effect.failurePolicy === "CONTINUE") continue;
+            return {
+              stop: true,
+              terminalStatus: effect.failurePolicy === "WAIT" ? "WAITING" : "FAILED",
+              errors,
+            };
+          }
+
+          const runtimeError: RuntimeError = {
+            code: "EFFECT_EXECUTION_OUTCOME_UNKNOWN",
+            message: "Effect execution was durably claimed without a recorded exact result; refusing to repeat it",
+            details: {
+              idempotencyKey: effect.idempotencyKey,
+              effectType: effect.type,
+              claimState: claim,
+              effectState: "unknown",
+              retryable: false,
+            },
+          };
+          const unknownOutput = prepared === undefined
+            ? undefined
+            : buildUnknownPreparedToolCallResultV1({
+                prepared,
+                error: runtimeError,
+                startedAt: new Date(startedAt).toISOString(),
+              });
+          errors.push(runtimeError);
+          await this.store.saveEffectResult(effect.runId, effect.sessionId, {
+            idempotencyKey: effect.idempotencyKey,
+            status: "FAILED",
+            ...(unknownOutput === undefined ? {} : { output: unknownOutput }),
+            error: runtimeError,
+            timestamp: new Date().toISOString(),
+          });
+          await this.store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
+          if (toolActivity !== undefined) {
+            await notifyToolActivity(context.onToolActivity, {
+              phase: "failed",
+              toolCallId: toolActivity.toolCallId,
+              toolName: toolActivity.toolName,
+              input: toolActivity.toolInput,
+              error: runtimeError,
+              durationMs: Date.now() - startedAt,
+              ...(unknownOutput === undefined
+                ? {}
+                : { activation: unknownOutput.activation, outcome: unknownOutput.outcome }),
+            });
+          }
+          if (effect.failurePolicy === "CONTINUE") continue;
+          return {
+            stop: true,
+            terminalStatus: effect.failurePolicy === "WAIT" ? "WAITING" : "FAILED",
+            errors,
+          };
+        }
+        if (toolActivity !== undefined) {
+          await notifyToolActivity(context.onToolActivity, {
+            phase: "started",
+            toolCallId: toolActivity.toolCallId,
+            toolName: toolActivity.toolName,
+            input: toolActivity.toolInput,
+            ...(toolActivity.activation === undefined
+              ? {}
+              : { activation: toolActivity.activation }),
+          });
+        }
         let completedEffectResult: {
           idempotencyKey: string;
           status: "DONE";
@@ -264,6 +335,41 @@ export class InlineEffectRunner implements EffectRunner {
       result,
       signal,
     });
+  }
+}
+
+function validatePreparedEffectForExecution(
+  effect: PersistedEffect,
+  context: { runId: string; sessionId: string },
+): PreparedToolCallV1 | undefined {
+  if (effect.runId !== context.runId || effect.sessionId !== context.sessionId) {
+    throw new Error("Effect execution context does not match its persisted continuation owner");
+  }
+  if (effect.type !== "execute_tool_call" && effect.type !== "tool.execute") return;
+  const payload = parseOptionalRecord(effect.payload);
+  if (payload?.preparedToolCall === undefined) return;
+  const prepared = parsePreparedToolCallV1(payload.preparedToolCall);
+  if (prepared.sessionId !== effect.sessionId || prepared.callId !== effect.idempotencyKey) {
+    throw new Error("Prepared tool call does not match the persisted effect identity");
+  }
+  return prepared;
+}
+
+function assertExactRecordedToolResult(effect: PersistedEffect, result: Awaited<ReturnType<EffectStore["getEffectResult"]>>): void {
+  if (result === null || (effect.type !== "execute_tool_call" && effect.type !== "tool.execute")) return;
+  const payload = parseOptionalRecord(effect.payload);
+  if (payload?.preparedToolCall === undefined) return;
+  const read = validateExactEffectResultRead({
+    requested: {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      idempotencyKey: effect.idempotencyKey,
+    },
+    effect: { ...effect, status: "DONE" },
+    effectResult: result,
+  });
+  if (read.status !== "found") {
+    throw new Error(`Recorded tool result is not the exact prepared invocation result (${read.status})`);
   }
 }
 

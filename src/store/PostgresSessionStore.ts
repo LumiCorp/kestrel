@@ -1567,7 +1567,7 @@ export class PostgresSessionStore implements SessionStore {
               e.payload_json, e.idempotency_key, e.failure_policy, e.status, e.created_at
          FROM effects e
         WHERE e.session_id = $1
-          AND e.status = 'PENDING'
+          AND e.status IN ('PENDING', 'CLAIMED')
         ORDER BY e.id ASC`,
       [sessionId],
     );
@@ -1818,6 +1818,49 @@ export class PostgresSessionStore implements SessionStore {
           normalizeTimestampString(result.timestamp),
         ],
       );
+    });
+  }
+
+  async claimEffectExecution(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"claimed" | "already_claimed" | "terminal"> {
+    await this.ensureSchemaV3();
+    return this.withTransaction(async (executor) => {
+      const effect = await executor.query<{
+        run_id: string; session_id: string; status: PersistedEffect["status"];
+        tenant_id: string | null; tenant_ownership_state: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
+        effect_type: string; payload_json: Record<string, unknown>;
+        step_index: number; failure_policy: PersistedEffect["failurePolicy"]; created_at: string;
+      }>(
+        `SELECT run_id, session_id, status, tenant_id, tenant_ownership_state, effect_type, payload_json,
+                step_index, failure_policy, created_at
+           FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const row = effect.rows[0];
+      if (row === undefined || row.run_id !== owner.runId || row.session_id !== owner.sessionId) {
+        throw new SandboxCapabilityExactResultConflictError("Effect execution owner or tenant does not match the locked effect");
+      }
+      if (!await this.hasTrustedPostgresEffectTenant(executor, {
+        runId: row.run_id, sessionId: row.session_id, stepIndex: row.step_index,
+        type: row.effect_type, payload: row.payload_json, idempotencyKey,
+        failurePolicy: row.failure_policy, status: row.status, createdAt: normalizeTimestampString(row.created_at),
+      }, row.tenant_id, row.tenant_ownership_state)) {
+        throw new SandboxCapabilityExactResultConflictError("Effect execution owner or tenant does not match durable authority");
+      }
+      if (row.status !== "PENDING") {
+        return row.status === "CLAIMED" ? "already_claimed" : "terminal";
+      }
+      const claimed = await executor.query(
+        `UPDATE effects SET status = 'CLAIMED'
+          WHERE idempotency_key = $1 AND run_id = $2 AND session_id = $3 AND status = 'PENDING'`,
+        [idempotencyKey, owner.runId, owner.sessionId],
+      );
+      if (claimed.rowCount !== 1) {
+        throw new SandboxCapabilityExactResultConflictError("Effect execution claim lost its serialized authority");
+      }
+      return "claimed";
     });
   }
 
@@ -2172,9 +2215,9 @@ export class PostgresSessionStore implements SessionStore {
         if (canonicalStoreJson(recorded) !== canonicalStoreJson(exactInput.result)) {
           throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result conflicts with recorded exact replay output");
         }
-        if (effectRow.status === "PENDING") {
+        if (effectRow.status === "PENDING" || effectRow.status === "CLAIMED") {
           const completed = await executor.query(
-            `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status = 'PENDING'`,
+            `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status IN ('PENDING', 'CLAIMED')`,
             [exactInput.toolCallId],
           );
           if (completed.rowCount !== 1) {
@@ -2200,7 +2243,7 @@ export class PostgresSessionStore implements SessionStore {
         ],
       );
       const completed = await executor.query(
-        `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status = 'PENDING'`,
+        `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status IN ('PENDING', 'CLAIMED')`,
         [exactInput.toolCallId],
       );
       if (completed.rowCount !== 1) {

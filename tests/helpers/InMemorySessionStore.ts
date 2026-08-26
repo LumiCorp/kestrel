@@ -609,7 +609,7 @@ export class InMemorySessionStore implements SessionStore {
 
   async listPendingEffects(sessionId: string) {
     return this.effects
-      .filter((effect) => effect.sessionId === sessionId && effect.status === "PENDING")
+      .filter((effect) => effect.sessionId === sessionId && (effect.status === "PENDING" || effect.status === "CLAIMED"))
       .map((effect) => ({ ...effect }));
   }
 
@@ -628,6 +628,23 @@ export class InMemorySessionStore implements SessionStore {
 
     this.effectResults.set(result.idempotencyKey, { ...result });
     this.operationLog.push(`saveEffectResult:${result.idempotencyKey}:${result.status}`);
+  }
+
+  async claimEffectExecution(
+    idempotencyKey: string,
+    _owner: { runId: string; sessionId: string },
+  ): Promise<"claimed" | "already_claimed" | "terminal"> {
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+    if (effect === undefined) {
+      this.operationLog.push(`claimEffectExecution:${idempotencyKey}`);
+      return "claimed";
+    }
+    if (effect.status === "PENDING") {
+      effect.status = "CLAIMED";
+      this.operationLog.push(`claimEffectExecution:${idempotencyKey}`);
+      return "claimed";
+    }
+    return effect.status === "CLAIMED" ? "already_claimed" : "terminal";
   }
 
   async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, _owner: { runId: string; sessionId: string }): Promise<void> {

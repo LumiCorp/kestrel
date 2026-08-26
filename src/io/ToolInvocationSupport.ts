@@ -360,6 +360,47 @@ export async function executePinnedToolCallV1(input: {
   return buildCompletedToolResult({ prepared, pinned: input.pinned, rawOutput, startedAt });
 }
 
+export function buildUnknownPreparedToolCallResultV1(input: {
+  prepared: PreparedToolCallV1;
+  error: { code: string; message: string; details?: Record<string, unknown> | undefined };
+  startedAt: string;
+}): AgentToolResultV2 {
+  const prepared = parsePreparedToolCallV1(input.prepared);
+  const completedAt = new Date().toISOString();
+  const legacyError = Object.assign(new Error(input.error.message), {
+    ...(input.error.details === undefined ? {} : { details: input.error.details }),
+  });
+  const legacy = buildAgentToolFailureResult({
+    toolName: prepared.activation.descriptor.toolId,
+    input: prepared.effectiveInput,
+    error: legacyError,
+    startedAt: input.startedAt,
+    completedAt,
+  });
+  const outcome: ToolExecutionOutcomeV1 = {
+    version: TOOL_EXECUTION_OUTCOME_VERSION,
+    callId: prepared.callId,
+    activation: prepared.activation,
+    kind: "failure",
+    startedAt: input.startedAt,
+    completedAt,
+    effectState: "unknown",
+    normalizedFailureCode: input.error.code,
+    retryable: false,
+    error: {
+      message: input.error.message,
+      ...(input.error.details === undefined ? {} : { details: input.error.details }),
+    },
+  };
+  return Object.freeze({
+    ...legacy,
+    version: AGENT_TOOL_RESULT_VERSION,
+    toolCallId: prepared.callId,
+    activation: prepared.activation,
+    outcome,
+  });
+}
+
 function buildCompletedToolResult(input: {
   prepared: PreparedToolCallV1;
   pinned: PinnedToolExecutionV1;
