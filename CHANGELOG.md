@@ -15,6 +15,8 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Hosted approval failures now preserve the distinction between retryable
   transaction metadata failures and terminal access or resource failures.
+- Project-bound Kestrel One turns now preserve their exact context authorization
+  when an approved tool resumes or a worker reconnects.
 - Kestrel One can create a real downloadable Word document from a Build-mode
   request, with the existing workspace preview lifecycle handling publication
   and cleanup.

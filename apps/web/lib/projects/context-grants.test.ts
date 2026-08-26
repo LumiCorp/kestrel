@@ -70,6 +70,24 @@ test("Project context grant resolution revalidates membership, Thread, revision,
   );
   assert.match(
     source,
-    /redis\.del\(`\$\{GRANT_PREFIX\}\$\{grantId\.trim\(\)\}`\)/
+    /redis\.call\("GET", KEYS\[1\]\) == ARGV\[1\]/
+  );
+  assert.match(source, /return redis\.call\("DEL", KEYS\[1\]\)/);
+});
+
+test("durable turn continuations refresh persisted grant identity and revoke only their generation", () => {
+  const source = fs.readFileSync(
+    fileURLToPath(new URL("../turns/process-runtime.ts", import.meta.url)),
+    "utf8",
+  );
+  assert.match(source, /resolveProjectContextGrantContinuationId/);
+  assert.match(source, /refreshProjectContextGrant/);
+  assert.match(
+    source,
+    /reattachExecutionId \?\? recoveredCompletedExecutionId/,
+  );
+  assert.match(
+    source,
+    /projectContext\.grantId,\s*projectContext\.revocationGrant/,
   );
 });

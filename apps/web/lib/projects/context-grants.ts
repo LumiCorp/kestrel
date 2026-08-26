@@ -16,6 +16,21 @@ export type ProjectContextGrant = {
   expiresAt: string;
 };
 
+export class ProjectContextGrantContinuityError extends Error {
+  readonly code = "PROJECT_CONTEXT_GRANT_CONTINUITY_INVALID";
+
+  constructor() {
+    super("Project context authorization continuity could not be verified.");
+    this.name = "ProjectContextGrantContinuityError";
+  }
+}
+
+type ProjectContextGrantIdentity = Omit<ProjectContextGrant, "expiresAt">;
+
+type ProjectContextGrantContinuation =
+  | { executionId: string; resumeInteractionId?: never }
+  | { executionId?: never; resumeInteractionId: string };
+
 let redisClient: RedisClientType | null = null;
 let redisConnectPromise: Promise<RedisClientType> | null = null;
 
@@ -70,6 +85,70 @@ export async function refreshProjectContextGrant(input: {
   };
   await writeProjectContextGrant(input.grantId, grant, ttlSeconds);
   return grant;
+}
+
+export async function resolveProjectContextGrantContinuationId(
+  input: ProjectContextGrantIdentity & ProjectContextGrantContinuation,
+) {
+  let executionId: string;
+  let sourceRuntimeRunId: string | null = null;
+
+  if (input.executionId !== undefined) {
+    executionId = input.executionId;
+  } else {
+    const resumeInteractionId = input.resumeInteractionId;
+    const interaction = await knowledgeDb.query.threadInteractions.findFirst({
+      where: (table, { and, eq, isNotNull }) => and(
+        eq(table.id, resumeInteractionId),
+        eq(table.organizationId, input.organizationId),
+        eq(table.threadId, input.threadId),
+        eq(table.source, "runtime"),
+        eq(table.status, "processing"),
+        isNotNull(table.resumedAt),
+      ),
+      columns: { turnId: true, sourceRuntimeRunId: true },
+    });
+    if (!(interaction?.turnId && interaction.sourceRuntimeRunId)) {
+      throw new ProjectContextGrantContinuityError();
+    }
+    const sourceTurn = await knowledgeDb.query.threadTurns.findFirst({
+      where: (table, { and, eq }) => and(
+        eq(table.id, interaction.turnId!),
+        eq(table.organizationId, input.organizationId),
+        eq(table.threadId, input.threadId),
+        eq(table.authorUserId, input.actorUserId),
+        eq(table.projectContextRevisionId, input.contextRevisionId),
+      ),
+      columns: { environmentExecutionId: true },
+    });
+    if (!sourceTurn?.environmentExecutionId) {
+      throw new ProjectContextGrantContinuityError();
+    }
+    executionId = sourceTurn.environmentExecutionId;
+    sourceRuntimeRunId = interaction.sourceRuntimeRunId;
+  }
+
+  const execution = await knowledgeDb.query.environmentRunExecutions.findFirst({
+    where: (table, { and, eq }) => and(
+      eq(table.id, executionId),
+      eq(table.organizationId, input.organizationId),
+      eq(table.threadId, input.threadId),
+      eq(table.actorId, input.actorUserId),
+      eq(table.projectId, input.projectId),
+      eq(table.projectContextRevisionId, input.contextRevisionId),
+    ),
+    columns: {
+      projectContextGrantId: true,
+      runtimeRunId: true,
+    },
+  });
+  if (
+    !execution?.projectContextGrantId?.trim() ||
+    (sourceRuntimeRunId !== null && execution.runtimeRunId !== sourceRuntimeRunId)
+  ) {
+    throw new ProjectContextGrantContinuityError();
+  }
+  return execution.projectContextGrantId;
 }
 
 async function writeProjectContextGrant(
@@ -128,9 +207,25 @@ export async function resolveProjectContextGrant(grantId: string) {
   return { grant, role: access.role };
 }
 
-export async function revokeProjectContextGrant(grantId: string) {
+export async function revokeProjectContextGrant(
+  grantId: string,
+  expectedGrant?: ProjectContextGrant,
+) {
   const redis = await getContextGrantRedis();
-  await redis.del(`${GRANT_PREFIX}${grantId.trim()}`);
+  const key = `${GRANT_PREFIX}${grantId.trim()}`;
+  if (!expectedGrant) {
+    await redis.del(key);
+    return;
+  }
+  await redis.eval(
+    `
+      if redis.call("GET", KEYS[1]) == ARGV[1] then
+        return redis.call("DEL", KEYS[1])
+      end
+      return 0
+    `,
+    { keys: [key], arguments: [JSON.stringify(expectedGrant)] },
+  );
 }
 
 function readGrantTtlSeconds() {
