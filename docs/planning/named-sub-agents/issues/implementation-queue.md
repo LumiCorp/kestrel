@@ -10,11 +10,11 @@ None.
 
 ## In progress
 
-- [Recover each saved collaborator reply once](03-recover-saved-replies-once.md)
+- [Show local collaborator status and closed history](04-show-local-status-and-history.md)
 
 ## Blocked
 
-- [Show local collaborator status and closed history](04-show-local-status-and-history.md) — blocked by [Recover each saved collaborator reply once](03-recover-saved-replies-once.md)
+None.
 
 ## Implemented
 
@@ -24,3 +24,4 @@ None.
 
 - [Make local collaborator close terminal](01-make-local-close-terminal.md)
 - [Give the parent all five local dialog tools](02-give-parent-five-local-tools.md)
+- [Recover each saved collaborator reply once](03-recover-saved-replies-once.md)
