@@ -9,11 +9,11 @@ Implementation must start from deployed-source revision
 
 ## Ready
 
-- [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md)
+None.
 
 ## In progress
 
-None.
+- [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md) — rollout proof and compatibility controls implemented; production qualification, rollout evidence, drain observation, and post-drain cleanup remain.
 
 ## Blocked
 

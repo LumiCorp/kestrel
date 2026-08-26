@@ -5,8 +5,8 @@ import { evaluateHostedApprovalDatabaseDrain } from "@/lib/apps/hosted-approval-
 import { knowledgeDb } from "@/lib/knowledge/db";
 
 const INCIDENT_THREAD_ID = "36dd83cc-5dc8-4343-914a-f2bd71026b60";
-const observedSince = requiredTimestamp(argumentValue("--since"));
 const now = new Date();
+const observedSince = requiredTimestamp(argumentValue("--since"), now);
 const rows = await knowledgeDb.execute(sql`
   SELECT
     count(*) FILTER (
@@ -17,6 +17,24 @@ const rows = await knowledgeDb.execute(sql`
           'v1'
         ) <> 'runner_hosted_tool_approval_interaction_v3'
     )::int AS "compatibilityDecisions",
+    count(*) FILTER (
+      WHERE coalesce(
+          interaction.request_envelope->>'version',
+          'v1'
+        ) <> 'runner_hosted_tool_approval_interaction_v3'
+        AND EXISTS (
+          SELECT 1
+          FROM thread_turn_events event
+          WHERE event.turn_id = interaction.turn_id
+            AND event.type IN (
+              'interaction.execution_settled',
+              'interaction.authorization_denied',
+              'interaction.authorization_failed'
+            )
+            AND event.data->>'requestId' = interaction.request_id
+            AND event.created_at >= ${observedSince}
+        )
+    )::int AS "legacyInteractionTerminals",
     count(*) FILTER (
       WHERE interaction.status IN ('pending', 'processing')
         AND coalesce(
@@ -68,6 +86,7 @@ const report = evaluateHostedApprovalDatabaseDrain({
   generatedAt: now.toISOString(),
   counts: {
     compatibilityDecisions: readCount(row.compatibilityDecisions),
+    legacyInteractionTerminals: readCount(row.legacyInteractionTerminals),
     pendingOldInteractions: readCount(row.pendingOldInteractions),
     actionableLegacyProviderApprovals: readCount(
       row.actionableLegacyProviderApprovals,
@@ -106,10 +125,13 @@ function argumentValue(name: string) {
   return args[index + 1]!;
 }
 
-function requiredTimestamp(value: string) {
+function requiredTimestamp(value: string, upperBound: Date) {
   const parsed = new Date(value);
   if (!Number.isFinite(parsed.getTime())) {
     throw new Error("--since must be an ISO timestamp.");
+  }
+  if (parsed > upperBound) {
+    throw new Error("--since cannot be in the future.");
   }
   return parsed;
 }

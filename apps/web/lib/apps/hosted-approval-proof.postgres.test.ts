@@ -139,3 +139,66 @@ test("hosted approval proof reports actor, payload, execution, and effect mismat
     "settled.effect",
   ]);
 });
+
+test("hosted approval proof rejects an approved decision without durable execution proof", () => {
+  const result = compareHostedApprovalProof({
+    ...proof,
+    interaction: {
+      ...proof.interaction,
+      resolvedByUserId: "user-2",
+      effectState: "not_started",
+    },
+    providerApproval: {
+      ...proof.providerApproval,
+      availabilityStatus: "available",
+      consumedExecutionId: null,
+    },
+    consumingExecution: null,
+    remembered: null,
+    settled: null,
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.mismatches, [
+    "interaction.resolver",
+    "provider.availability",
+    "provider.consumption.missing",
+    "remembered.missing",
+    "settled.missing",
+    "interaction.effect",
+  ]);
+});
+
+test("decline proves no execution, no remembered grant, and a not-started effect", () => {
+  const result = compareHostedApprovalProof({
+    ...proof,
+    interaction: {
+      ...proof.interaction,
+      decision: "decline",
+      effectState: "not_started",
+    },
+    providerApproval: {
+      ...proof.providerApproval,
+      availabilityStatus: "expired",
+      consumedExecutionId: null,
+    },
+    consumingExecution: null,
+    remembered: null,
+    settled: null,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.mismatches, []);
+});
+
+test("approve once proves execution without creating remembered authority", () => {
+  const result = compareHostedApprovalProof({
+    ...proof,
+    interaction: {
+      ...proof.interaction,
+      decision: "approve_once",
+    },
+    remembered: null,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.mismatches, []);
+  assert.equal(result.rememberedEvidence, "not_recorded");
+});

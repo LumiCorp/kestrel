@@ -5,7 +5,7 @@ import {
   parseRunnerHostedToolApprovalInteractionV2,
   parseRunnerHostedToolApprovalInteractionV3,
 } from "@kestrel-agents/protocol";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { hostedMutationOperationKey } from "@/lib/apps/hosted-app-operation-identity";
 
@@ -62,6 +62,7 @@ export async function readHostedApprovalProof(
             where: and(
               eq(schema.threadTurnEvents.turnId, interaction.turnId),
               eq(schema.threadTurnEvents.type, "interaction.execution_settled"),
+              sql`${schema.threadTurnEvents.data}->>'requestId' = ${interaction.requestId}`,
             ),
             orderBy: (table, { desc }) => [desc(table.sequence)],
           })
@@ -315,6 +316,20 @@ export function compareHostedApprovalProof(input: {
 }) {
   const mismatches: string[] = [];
   const { interaction, thread, providerApproval, binding } = input;
+  check(
+    mismatches,
+    "interaction.version",
+    interaction.version,
+    "runner_hosted_tool_approval_interaction_v3",
+  );
+  check(mismatches, "interaction.status", interaction.status, "resolved");
+  check(
+    mismatches,
+    "interaction.resolver",
+    interaction.resolvedByUserId,
+    interaction.requestingActorId,
+  );
+  check(mismatches, "interaction.failure", interaction.failureCode, null);
   check(mismatches, "policy.mode", interaction.policy.mode, "ask");
   check(
     mismatches,
@@ -332,6 +347,12 @@ export function compareHostedApprovalProof(input: {
   if (!providerApproval) {
     mismatches.push("provider_approval.missing");
   } else {
+    check(
+      mismatches,
+      "provider.lifecycle",
+      providerApproval.lifecycleVersion,
+      "interaction_v2",
+    );
     check(
       mismatches,
       "provider.operation",
@@ -429,9 +450,21 @@ export function compareHostedApprovalProof(input: {
   if (input.requestedExecution) {
     check(
       mismatches,
+      "requested_execution.id",
+      input.requestedExecution.id,
+      providerApproval?.requestedExecutionId ?? null,
+    );
+    check(
+      mismatches,
       "requested_execution.organization",
       input.requestedExecution.organizationId,
       interaction.organizationId,
+    );
+    check(
+      mismatches,
+      "requested_execution.environment",
+      input.requestedExecution.environmentId,
+      providerApproval?.environmentId ?? null,
     );
     check(
       mismatches,
@@ -453,6 +486,37 @@ export function compareHostedApprovalProof(input: {
     );
   } else if (providerApproval) {
     mismatches.push("requested_execution.missing");
+  }
+  const executionApproved =
+    interaction.decision === "approve_once" ||
+    interaction.decision === "remember_approval";
+  if (executionApproved) {
+    check(
+      mismatches,
+      "provider.availability",
+      providerApproval?.availabilityStatus ?? null,
+      "consumed",
+    );
+    if (!providerApproval?.consumedExecutionId) {
+      mismatches.push("provider.consumption.missing");
+    } else if (
+      providerApproval.consumedExecutionId ===
+      providerApproval.requestedExecutionId
+    ) {
+      mismatches.push("provider.credential_refresh.missing");
+    }
+  } else if (interaction.decision === "decline") {
+    check(
+      mismatches,
+      "provider.availability",
+      providerApproval?.availabilityStatus ?? null,
+      "expired",
+    );
+    if (providerApproval?.consumedExecutionId) {
+      mismatches.push("provider.unexpected_consumption");
+    }
+  } else {
+    mismatches.push("interaction.decision.invalid");
   }
   if (providerApproval?.consumedExecutionId) {
     if (!input.consumingExecution) {
@@ -496,6 +560,11 @@ export function compareHostedApprovalProof(input: {
       );
     }
   }
+  if (interaction.decision === "remember_approval" && !input.remembered) {
+    mismatches.push("remembered.missing");
+  } else if (interaction.decision !== "remember_approval" && input.remembered) {
+    mismatches.push("remembered.unexpected");
+  }
   if (input.remembered) {
     check(
       mismatches,
@@ -528,6 +597,11 @@ export function compareHostedApprovalProof(input: {
       interaction.authorityRevision,
     );
   }
+  if (executionApproved && !input.settled) {
+    mismatches.push("settled.missing");
+  } else if (!executionApproved && input.settled) {
+    mismatches.push("settled.unexpected");
+  }
   if (input.settled) {
     check(
       mismatches,
@@ -537,11 +611,23 @@ export function compareHostedApprovalProof(input: {
     );
     check(
       mismatches,
+      "settled.outcome",
+      input.settled.outcomeKind ?? null,
+      "success",
+    );
+    check(
+      mismatches,
       "settled.effect",
       input.settled.effectState ?? null,
-      interaction.effectState,
+      "committed",
     );
   }
+  check(
+    mismatches,
+    "interaction.effect",
+    interaction.effectState,
+    executionApproved ? "committed" : "not_started",
+  );
   return {
     ok: mismatches.length === 0,
     mismatches,

@@ -1,5 +1,6 @@
 export type HostedApprovalDrainCounts = {
   compatibilityDecisions: number;
+  legacyInteractionTerminals: number;
   pendingOldInteractions: number;
   actionableLegacyProviderApprovals: number;
   legacyProviderConsumptions: number;
@@ -15,14 +16,22 @@ export function evaluateHostedApprovalDatabaseDrain(input: {
   const blockers = Object.entries(input.counts)
     .filter(([, count]) => count !== 0)
     .map(([name, count]) => `${name}:${count}`);
+  const observedSince = Date.parse(input.observedSince);
+  const generatedAt = Date.parse(input.generatedAt);
+  if (
+    Number.isNaN(observedSince) ||
+    Number.isNaN(generatedAt) ||
+    observedSince > generatedAt
+  ) {
+    blockers.push("observation_window_invalid");
+  }
   const latestLegacyExpiry =
     input.latestLegacyExpiry === null
       ? null
       : Date.parse(input.latestLegacyExpiry);
   if (
     latestLegacyExpiry !== null &&
-    (Number.isNaN(latestLegacyExpiry) ||
-      latestLegacyExpiry > Date.parse(input.generatedAt))
+    (Number.isNaN(latestLegacyExpiry) || latestLegacyExpiry > generatedAt)
   ) {
     blockers.push("legacy_expiry_window_open");
   }

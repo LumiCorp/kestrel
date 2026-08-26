@@ -204,10 +204,19 @@ pnpm production:image:publish --role environment-router --tag <activation-tag>
 pnpm production:image:publish --role turn-worker --tag <activation-tag>
 ```
 
-Before general V3 rollout, run those images only on one controlled canary
-Environment and one selected started turn-worker Machine. Preserve all
-other readers on the compatibility images. Use exact-target provider changes;
-do not activate an app-wide Fly secret to perform this canary.
+Before emitting V3, qualify the activation runtime pair with its disposable
+canary, then roll the activation image to every started turn-worker Machine,
+one Machine at a time while preserving capacity. Require the exact `worker`
+check after each update and inventory every eligible queue consumer before
+continuing. The turn queue has no per-Machine routing, so a hosted canary while
+any started worker still runs the compatibility image cannot prove which image
+consumed it.
+
+After every started queue consumer is on the activation image, update only one
+controlled canary Environment to the activation runtime pair and wait for
+`environment.update.ready`. Preserve stopped workers and every other
+Environment on compatibility images. Use exact-target provider changes; do not
+activate an app-wide Fly secret to perform this canary.
 
 Run the V3 Chromium canary with
 `KESTREL_ONE_CANARY_APPROVAL_PROTOCOL=durable_v3`,
@@ -248,23 +257,27 @@ pnpm --dir apps/web hosted-approval:proof -- \
   --interaction <interaction-id>
 ```
 
-**Stop condition:** any identity mismatch, duplicate consumption, approved
+**Stop condition:** any started turn-worker not provably running the activation
+image; any identity mismatch, duplicate consumption, approved
 state without committed effect, decline with an effect, remembered call that
 shows a card, or new thread that skips the card.
 
 **Resume evidence:** browser video or trace, canary JSON, proof JSON, GitHub
 effect URL, negative acceptance results, restart proof, credential-rotation
-proof, and exact canary target images.
+proof, the complete started-worker image inventory, and exact canary
+Environment images.
 
 ## Stage 4 — activate V3 broadly
 
 Use the exact activation images accepted in Stage 3. Do not rebuild or assign
 a second tag between canary acceptance and general rollout.
 
-Repeat the exact turn-worker and runtime-pair rollout from Stage 2: one started
-worker, durable plus hosted canaries, remaining started workers, stopped
-workers, disposable pair canary, one canary Environment, live canaries,
-activation, then every approved Environment individually.
+Update stopped turn-worker Machines individually without starting them. Re-run
+one durable ordinary turn and the hosted acceptance against the now-uniform
+started fleet. Run the live Workspace and Preview canaries on the accepted
+canary Environment, activate the exact accepted runtime pair, then update every
+approved noncanary Environment through a separate operation. Do not rebuild
+images or repeat a mixed-fleet canary.
 
 Existing V2 interactions finish as V2 or expire. Existing V3 interactions
 finish as V3. Never downgrade either into reconstruction.
@@ -286,16 +299,17 @@ pnpm --dir apps/web hosted-approval:drain-report -- \
   --since <drain-start-ISO-timestamp>
 ```
 
-Repeat it throughout the observation window. Any compatibility decision or
-legacy provider consumption resets the drain start. `databaseDrainReady=true`
-is necessary but never authorizes cleanup; the report deliberately always
-returns `cleanupAuthorized=false`.
+Repeat it throughout the observation window. Any compatibility decision, late
+terminal activity from an old interaction, or legacy provider consumption
+resets the drain start. A future `--since` boundary is invalid.
+`databaseDrainReady=true` is necessary but never authorizes cleanup; the
+report deliberately always returns `cleanupAuthorized=false`.
 
-Retain zero old decisions and pending interactions, zero actionable or newly
-consumed `legacy_v1` provider approvals, closed old authority expiries,
-terminal incident targets, every started and stopped turn-worker image, every
-tenant runtime pair, and one complete worker rollout cycle after the last
-compatibility use.
+Retain zero old decisions, late old-interaction terminal events, and pending
+interactions; zero actionable or newly consumed `legacy_v1` provider
+approvals; closed old authority expiries; terminal incident targets; every
+started and stopped turn-worker image; every tenant runtime pair; and one
+complete worker rollout cycle after the last compatibility use.
 
 The current provider approval cap is five minutes, but the actual retained row
 expiry and complete image inventories are authoritative. Do not substitute a
