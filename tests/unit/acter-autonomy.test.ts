@@ -913,6 +913,10 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
         approvalCapabilities: [
           ...(definition.capability.approvalCapabilities ?? []),
         ],
+        approvalAuthority: {
+          kind: "hosted_app_policy" as const,
+          revision: "hosted-app-policy-revision",
+        },
         executionClass: definition.capability.executionClass,
       },
     ],
@@ -1176,7 +1180,8 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
   assert.equal(binding.actionKey, definition.name);
   assert.equal(binding.preparedInvocationId, "prepared-github-1");
   assert.equal(binding.threadId, "session-1");
-  assert.equal(binding.authorityKind, "runtime_policy");
+  assert.equal(binding.authorityKind, "hosted_app_policy");
+  assert.equal(binding.authorityRevision, "hosted-app-policy-revision");
   assert.deepEqual(
     binding.capabilities,
     [...(definition.capability.approvalCapabilities ?? [])].sort(),
@@ -1519,7 +1524,7 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
             workspaceRoot: "/workspace/project",
             leaseId: "rotated-workspace-lease",
           },
-          decision: "approve_once",
+          decision: "remember_approval",
           approvalId: pendingApproval.approvalId,
         },
       },

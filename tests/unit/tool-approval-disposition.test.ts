@@ -76,7 +76,23 @@ test("approval disposition never lets a lower layer widen its ceiling", () => {
       strictApprovalPerCall: true,
       authority,
     }).reasonCode,
-    "environment_policy",
+    "runtime_strict",
+  );
+  assert.equal(
+    resolveToolApprovalDispositionV1({
+      environment: "ask",
+      subject: "ask",
+      authority,
+    }).reasonCode,
+    "subject_restriction",
+  );
+  assert.equal(
+    resolveToolApprovalDispositionV1({
+      environment: "ask",
+      minimum: "ask",
+      authority,
+    }).reasonCode,
+    "tool_minimum",
   );
 });
 

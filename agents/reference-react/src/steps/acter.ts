@@ -2761,6 +2761,7 @@ function bindApprovalAuthorityToActivation(
   activation: ToolActivationRefV1 | undefined,
 ) {
   if (authority === undefined || activation === undefined) return authority;
+  if (authority.kind === "hosted_app_policy") return authority;
   return {
     kind: authority.kind,
     revision: hashCanonical({

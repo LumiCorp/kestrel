@@ -1753,6 +1753,265 @@ test(
         "organization_id" = ${organizationId}
         AND "runtime_approval_id" = ${rememberApprovalId}
     `;
+    const createAdditionalRememberInteraction = async (input: {
+      label: string;
+      sequence: number;
+    }) => {
+      const approvalId = `remember-${input.label}-approval-${suffix}`;
+      const preparedInvocationId = `remember-${input.label}-prepared-${suffix}`;
+      const interactionId = `remember-${input.label}-interaction-${suffix}`;
+      const requestId = `remember-${input.label}-request-${suffix}`;
+      const turnId = `remember-${input.label}-turn-${suffix}`;
+      const expiresAt = new Date(Date.now() + 60_000);
+      await appApprovals.recordAppOperationApprovalRequest({
+        projectId,
+        requestedExecutionId: runId,
+        expiresAt,
+        runtimeBinding: {
+          version: RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
+          approvalId,
+          preparedInvocationId,
+          threadId,
+          actionKey: rememberToolName,
+          payloadHash: `sha256:${"e".repeat(64)}`,
+          stableAuthorityFingerprint: `sha256:${"f".repeat(64)}`,
+          stableToolIdentity: rememberToolIdentity,
+          requestingActor: {
+            actorType: "end_user",
+            actorId: userId,
+            tenantId: organizationId,
+          },
+          toolClass: "external_side_effect",
+          capabilities: ["network.call"],
+          authorityKind: "hosted_app_policy",
+          authorityRevision: rememberToolIdentity.approvalAuthorityRevision,
+          requestedAt: now.toISOString(),
+          expiresAt: expiresAt.toISOString(),
+        },
+        binding: {
+          organizationId,
+          environmentId,
+          workspaceId,
+          threadId,
+          actorUserId: userId,
+          agentId: "kestrel-one",
+          appKey: googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY,
+          capabilityKey: "calendar.events.create",
+          connectionId: googleConnection.id,
+          resourceId: rememberResource.id,
+          resourceType: rememberResource.resourceType,
+          operationKey: "events.create",
+          runtimeApprovalId: approvalId,
+          payload: {
+            event: {
+              summary: `Remembered approval ${input.label}`,
+              start: { dateTime: "2026-08-27T15:00:00.000Z" },
+              end: { dateTime: "2026-08-27T16:00:00.000Z" },
+            },
+          },
+        },
+      });
+      const requestEnvelope = {
+        ...rememberRequestEnvelope,
+        requestId,
+        approval: {
+          ...rememberRequestEnvelope.approval,
+          preparedInvocationId,
+        },
+      };
+      await sql.begin(async (transaction) => {
+        await transaction`
+            INSERT INTO "thread_turns" (
+              "id", "organization_id", "thread_id", "author_user_id",
+              "approval_id", "approval_approved", "requested_environment_id",
+              "idempotency_key", "sequence", "queue_ordinal", "status"
+            ) VALUES (
+              ${turnId}, ${organizationId}, ${threadId}, ${userId},
+              ${approvalId}, true, ${environmentId},
+              ${`remember-${input.label}-${suffix}`}, ${input.sequence},
+              ${input.sequence}, 'waiting_for_input'
+            )
+          `;
+        await transaction`
+            INSERT INTO "thread_interactions" (
+              "id", "request_id", "organization_id", "thread_id", "turn_id",
+              "source", "kind", "event_type", "prompt", "status",
+              "request_envelope", "runtime_approval_id", "source_runtime_run_id"
+            ) VALUES (
+              ${interactionId}, ${requestId}, ${organizationId}, ${threadId},
+              ${turnId}, 'runtime', 'approval', 'user.approval',
+              ${requestEnvelope.prompt}, 'pending',
+              ${transaction.json(requestEnvelope)}, ${approvalId}, ${runId}
+            )
+          `;
+        await transaction`
+            INSERT INTO "thread_turn_queue_state" (
+              "thread_id", "active_turn_id", "next_sequence", "state",
+              "pause_reason", "version"
+            ) VALUES (
+              ${threadId}, ${turnId}, ${input.sequence + 1}, 'paused',
+              'interaction_required', 1
+            )
+            ON CONFLICT ("thread_id") DO UPDATE SET
+              "active_turn_id" = EXCLUDED."active_turn_id",
+              "next_sequence" = EXCLUDED."next_sequence",
+              "state" = EXCLUDED."state",
+              "pause_reason" = EXCLUDED."pause_reason",
+              "version" = "thread_turn_queue_state"."version" + 1
+          `;
+        await transaction`
+            UPDATE "app_operation_approvals"
+            SET "interaction_id" = ${interactionId}
+            WHERE
+              "organization_id" = ${organizationId}
+              AND "runtime_approval_id" = ${approvalId}
+          `;
+      });
+      return { approvalId, interactionId, requestId, turnId };
+    };
+
+    const mixedClient = await createAdditionalRememberInteraction({
+      label: "mixed-client",
+      sequence: 100,
+    });
+    const mixedClientResolution =
+      await turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: mixedClient.requestId,
+        eventType: "user.approval",
+        turnId: mixedClient.turnId,
+        message: "Approve",
+        approved: true,
+        messageId: `remember-mixed-client-message-${suffix}`,
+        source: "web",
+      });
+    assert.equal(mixedClientResolution.shouldDispatch, true);
+    const [mixedClientState] = await sql<
+      Array<{
+        approved: boolean | null;
+        decision: string | null;
+        rememberedCount: number;
+      }>
+    >`
+        SELECT
+          (interaction."response_envelope"->>'approved')::boolean AS "approved",
+          interaction."response_envelope"->>'decision' AS "decision",
+          (SELECT count(*)::int FROM "remembered_tool_approvals" remembered
+            WHERE remembered."source_interaction_id" = interaction."id")
+            AS "rememberedCount"
+        FROM "thread_interactions" interaction
+        WHERE interaction."id" = ${mixedClient.interactionId}
+      `;
+    assert.deepEqual(mixedClientState, {
+      approved: null,
+      decision: "approve_once",
+      rememberedCount: 0,
+    });
+
+    const policyChanged = await createAdditionalRememberInteraction({
+      label: "policy-changed",
+      sequence: 101,
+    });
+    await projectAppService.saveProjectAppCapabilityPolicy({
+      organizationId,
+      projectId,
+      appKey: googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY,
+      capabilityKey: "calendar.events.create",
+      actorUserId: userId,
+      enabled: false,
+      approvalMode: "deny",
+    });
+    const policyChangedResolution =
+      await turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: policyChanged.requestId,
+        eventType: "user.approval",
+        turnId: policyChanged.turnId,
+        message: "Remember approval",
+        decision: "remember_approval",
+        messageId: `remember-policy-changed-message-${suffix}`,
+        source: "web",
+      });
+    assert.equal(policyChangedResolution.shouldDispatch, false);
+    const [policyChangedState] = await sql<
+      Array<{
+        availabilityStatus: string;
+        effectStatus: string | null;
+        failureCode: string | null;
+        interactionStatus: string;
+        rememberedCount: number;
+      }>
+    >`
+        SELECT
+          approval."availability_status" AS "availabilityStatus",
+          interaction."effect_status" AS "effectStatus",
+          interaction."response_failure_code" AS "failureCode",
+          interaction."status" AS "interactionStatus",
+          (SELECT count(*)::int FROM "remembered_tool_approvals" remembered
+            WHERE remembered."source_interaction_id" = interaction."id")
+            AS "rememberedCount"
+        FROM "thread_interactions" interaction
+        JOIN "app_operation_approvals" approval
+          ON approval."interaction_id" = interaction."id"
+        WHERE interaction."id" = ${policyChanged.interactionId}
+      `;
+    assert.deepEqual(policyChangedState, {
+      availabilityStatus: "expired",
+      effectStatus: "not_started",
+      failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED",
+      interactionStatus: "failed",
+      rememberedCount: 0,
+    });
+    const repeatedPolicyChanged =
+      await turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: policyChanged.requestId,
+        eventType: "user.approval",
+        turnId: policyChanged.turnId,
+        message: "Remember approval",
+        decision: "remember_approval",
+        messageId: `remember-policy-changed-replay-${suffix}`,
+        source: "mobile",
+      });
+    assert.equal(repeatedPolicyChanged.shouldDispatch, false);
+    await assert.rejects(
+      turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: policyChanged.requestId,
+        eventType: "user.approval",
+        turnId: policyChanged.turnId,
+        message: "Decline",
+        decision: "decline",
+        messageId: `remember-policy-changed-conflict-${suffix}`,
+        source: "web",
+      }),
+      /conflicts with the recorded decision/u,
+    );
+    await projectAppService.saveProjectAppCapabilityPolicy({
+      organizationId,
+      projectId,
+      appKey: googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY,
+      capabilityKey: "calendar.events.create",
+      actorUserId: userId,
+      enabled: true,
+      approvalMode: "ask",
+    });
+    await sql`
+      DELETE FROM "app_operation_approvals"
+      WHERE
+        "organization_id" = ${organizationId}
+        AND "runtime_approval_id" IN (
+          ${mixedClient.approvalId}, ${policyChanged.approvalId}
+        )
+    `;
     const [availabilitySharing] = await sql<
       Array<{ enabled: boolean; audience: string }>
     >`

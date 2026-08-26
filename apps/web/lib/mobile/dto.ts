@@ -202,14 +202,21 @@ export function mobileInteractionDto(
           "runner_hosted_tool_approval_interaction_v2"
         ? ("runner_hosted_tool_approval_interaction_v2" as const)
         : ("legacy" as const);
+    const approval = asRecord(interaction.requestEnvelope.approval);
+    const presentation = asRecord(approval?.presentation);
+    const policy = asRecord(presentation?.policy);
+    const rememberEligible =
+      version === "runner_hosted_tool_approval_interaction_v3" &&
+      policy?.reasonCode === "environment_policy";
     return {
       id,
       kind: "approval" as const,
       version,
       decisions:
-        version === "runner_hosted_tool_approval_interaction_v3"
+        rememberEligible
           ? (["decline", "approve_once", "remember_approval"] as const)
-          : version === "runner_hosted_tool_approval_interaction_v2"
+          : version === "runner_hosted_tool_approval_interaction_v2" ||
+              version === "runner_hosted_tool_approval_interaction_v3"
             ? (["decline", "approve_once"] as const)
           : (["approve", "deny"] as const),
       title: "Allow this agent request?",

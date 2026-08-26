@@ -110,6 +110,9 @@ test("hosted V3 approval publishes the remembered decision vocabulary", () => {
       status: "pending",
       requestEnvelope: {
         version: "runner_hosted_tool_approval_interaction_v3",
+        approval: {
+          presentation: { policy: { reasonCode: "environment_policy" } },
+        },
       },
       createdAt: new Date("2026-07-13T12:00:00.000Z"),
     },
@@ -122,4 +125,27 @@ test("hosted V3 approval publishes the remembered decision vocabulary", () => {
     "approve_once",
     "remember_approval",
   ]);
+});
+
+test("hosted V3 approval hides remember for a stricter current policy", () => {
+  const dto = mobileInteractionDto(
+    {
+      id: "runtime-interaction-2",
+      requestId: "approval-2",
+      source: "runtime",
+      kind: "approval",
+      prompt: "Approve this exact tool?",
+      status: "pending",
+      requestEnvelope: {
+        version: "runner_hosted_tool_approval_interaction_v3",
+        approval: {
+          presentation: { policy: { reasonCode: "runtime_strict" } },
+        },
+      },
+      createdAt: new Date("2026-07-13T12:00:00.000Z"),
+    },
+  );
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
 });

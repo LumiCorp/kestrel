@@ -1742,7 +1742,10 @@ async function resolveApprovalDecision(input: {
     return ;
   }
   if (input.strictV2 === true) {
-    if (input.eventPayload?.decision === "approve_once") return "approve";
+    if (
+      input.eventPayload?.decision === "approve_once" ||
+      input.eventPayload?.decision === "remember_approval"
+    ) return "approve";
     if (input.eventPayload?.decision === "decline") return "deny";
     return ;
   }

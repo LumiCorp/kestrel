@@ -59,14 +59,16 @@ export function resolveToolApprovalDispositionV1(input: {
   if (isStricterApprovalMode(input.subject, mode)) {
     mode = input.subject!;
     reasonCode = "subject_restriction";
+  } else if (input.subject === "ask" && mode === "ask") {
+    reasonCode = "subject_restriction";
   }
-  if (input.minimum === "ask" && mode === "auto") {
-    mode = "ask";
-    reasonCode = "tool_minimum";
+  if (input.minimum === "ask" && mode !== "deny") {
+    if (mode === "auto") mode = "ask";
+    if (mode === "ask") reasonCode = "tool_minimum";
   }
-  if (input.strictApprovalPerCall === true && mode === "auto") {
-    mode = "ask";
-    reasonCode = "runtime_strict";
+  if (input.strictApprovalPerCall === true && mode !== "deny") {
+    if (mode === "auto") mode = "ask";
+    if (mode === "ask") reasonCode = "runtime_strict";
   }
   return { mode, reasonCode, authority: { ...input.authority } };
 }
