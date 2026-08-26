@@ -348,7 +348,7 @@ async function executeProbe(input: {
       terminalState: response.terminal.state,
       validationOutcome: response.validation.state,
       ...(outcome === "failed"
-        ? { failureCode: response.validation.failureCode ?? "MODEL_QUALIFICATION_FAILED" }
+        ? { failureCode: normalizeQualificationFailureCode(response.validation.failureCode) }
         : {}),
     });
   } catch (error) {
@@ -488,7 +488,18 @@ function secretFreeResponse(response: ModelResponseV2): Record<string, unknown> 
       hasProviderTerminalEvent:
         response.terminal.providerTerminalEvent !== undefined,
     },
-    validation: response.validation,
+    validation: {
+      state: response.validation.state,
+      ...(response.validation.schemaHash !== undefined
+        ? { schemaHash: response.validation.schemaHash }
+        : {}),
+      ...(response.validation.toolSurfaceHash !== undefined
+        ? { toolSurfaceHash: response.validation.toolSurfaceHash }
+        : {}),
+      ...(response.validation.failureCode !== undefined
+        ? { failureCode: normalizeQualificationFailureCode(response.validation.failureCode) }
+        : {}),
+    },
     toolIntents: response.toolIntents.map(({ name }) => ({ name })),
     reasoning: {
       visibleFormats: response.reasoning?.visible?.map(({ format }) => format) ?? [],
@@ -504,6 +515,12 @@ function qualificationFailureCode(error: unknown): string {
     if (typeof code === "string" && isQualificationCode(code)) return code;
   }
   return "MODEL_QUALIFICATION_FAILED";
+}
+
+function normalizeQualificationFailureCode(value: unknown): string {
+  return typeof value === "string" && isQualificationCode(value)
+    ? value
+    : "MODEL_QUALIFICATION_FAILED";
 }
 
 function validateProbes(
