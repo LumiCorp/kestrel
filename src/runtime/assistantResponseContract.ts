@@ -37,6 +37,7 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
   options: {
     requestId?: string | undefined;
     fallbackRequestId?: string | undefined;
+    hostedApprovalProtocolVersion?: "v2" | "v3" | undefined;
   } = {},
 ): T {
   if (waitFor.kind !== "user" && waitFor.kind !== "approval") {
@@ -104,10 +105,15 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
     waitFor.kind === "approval"
       ? metadata?.preparedToolCall === undefined
         ? undefined
-        : projectHostedToolApprovalInteractionV3({
-            preparedToolCall: metadata.preparedToolCall,
-            requestId,
-          })
+        : options.hostedApprovalProtocolVersion === "v3"
+          ? projectHostedToolApprovalInteractionV3({
+              preparedToolCall: metadata.preparedToolCall,
+              requestId,
+            })
+          : projectHostedToolApprovalInteractionV2({
+              preparedToolCall: metadata.preparedToolCall,
+              requestId,
+            })
       : undefined;
   const interaction: RuntimeInteractionRequest =
     authoredStructuredReview?.kind === "structured_review"
@@ -150,11 +156,11 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
     interaction,
   };
 }
-
 export function finalizeRuntimeAssistantResponse(input: {
   output: NormalizedOutput;
   assistantText: string | null | undefined;
   request?: InteractionRequestRecord | undefined;
+  hostedApprovalProtocolVersion?: "v2" | "v3" | undefined;
 }): { output: NormalizedOutput; assistantText: string | null } {
   let output = input.output;
   if (output.status === "WAITING" && output.waitFor !== undefined) {
@@ -163,6 +169,7 @@ export function finalizeRuntimeAssistantResponse(input: {
       waitFor: materializeUserFacingWaitInteraction(output.waitFor, {
         requestId: input.request?.requestId,
         fallbackRequestId: `request-${output.runId}`,
+        hostedApprovalProtocolVersion: input.hostedApprovalProtocolVersion,
       }),
     };
   }

@@ -177,6 +177,23 @@ test("new hosted approval card reloads its action from the persisted prepared ca
     preparedAt: "2026-08-26T12:00:00.000Z",
   });
   const restartedPrepared = JSON.parse(JSON.stringify(prepared)) as unknown;
+  const compatibilityResult = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: restartedPrepared,
+        },
+      },
+    }),
+    assistantText: "stale",
+  });
+  assert.equal(
+    compatibilityResult.output.waitFor?.interaction?.version,
+    "runner_hosted_tool_approval_interaction_v2",
+  );
   const result = finalizeRuntimeAssistantResponse({
     output: output("WAITING", {
       waitFor: {
@@ -191,6 +208,7 @@ test("new hosted approval card reloads its action from the persisted prepared ca
       },
     }),
     assistantText: "stale",
+    hostedApprovalProtocolVersion: "v3",
   });
   const interaction = result.output.waitFor?.interaction;
   assert.equal(interaction?.version, "runner_hosted_tool_approval_interaction_v3");

@@ -31,6 +31,11 @@ derive image identity from Git.
 - Managed RunPod worker and profile changes are separate manual operations.
 - Every tenant Environment is changed manually. No command widens the rollout.
 
+Hosted approval V3 uses a compatibility-first, activation, drain, and cleanup
+sequence. Follow the dedicated
+[hosted approval V3 guided rollout](operations/hosted-approval-v3-rollout-runbook.md)
+in addition to this runbook.
+
 ## Before starting
 
 Work from the repository root. Decide which of these targets are actually in

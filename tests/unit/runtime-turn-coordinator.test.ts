@@ -16,6 +16,7 @@ import type { ThreadRecord } from "../../src/kestrel/contracts/orchestration.js"
 import type { SessionRecord } from "../../src/kestrel/contracts/store.js";
 import { appendUserTurnToTranscript } from "../../src/runtime/modelTranscript.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
+import { resolveHostedApprovalProtocolVersion } from "../../src/runtime/RuntimeTurnCoordinator.js";
 
 import type {
   ResumeBlockedTurnInput,
@@ -34,6 +35,23 @@ class RuntimeTurnCoordinatorService extends BaseRuntimeTurnCoordinatorService {
     });
   }
 }
+test("hosted approval protocol activation is explicit and fail-closed", () => {
+  assert.equal(resolveHostedApprovalProtocolVersion({}), "v2");
+  assert.equal(
+    resolveHostedApprovalProtocolVersion({ KESTREL_HOSTED_APPROVAL_PROTOCOL: "v2" }),
+    "v2",
+  );
+  assert.equal(
+    resolveHostedApprovalProtocolVersion({ KESTREL_HOSTED_APPROVAL_PROTOCOL: "v3" }),
+    "v3",
+  );
+  assert.throws(
+    () => resolveHostedApprovalProtocolVersion({
+      KESTREL_HOSTED_APPROVAL_PROTOCOL: "automatic",
+    }),
+    /must be 'v2' or 'v3'/u,
+  );
+});
 
 test("RuntimeTurnCoordinatorService fails closed without boundary decision persistence", async () => {
   const coordinator = new BaseRuntimeTurnCoordinatorService({

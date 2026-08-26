@@ -11,6 +11,18 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- Kestrel One Ask First cards can offer Decline, Approve Once, and Remember
+  Approval. Remember Approval applies only to the authenticated user, stable
+  tool, and current thread; it does not change Environment or Project policy.
+
+### Changed
+
+- Kestrel One hosted approvals now carry an explicit V2/V3 producer setting so
+  compatible readers can deploy and be proven before V3 is activated on exact
+  runtime and worker targets.
+
 ### Fixed
 
 - Hosted approval failures now preserve the distinction between retryable
