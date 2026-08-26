@@ -4,7 +4,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Prove structured output and tool calls before success](02-prove-model-responses.md)
 - [Correct OpenAI Chat and Responses codecs](03-correct-openai-codecs.md)
 - [Make OpenRouter codecs and routing contract-safe](04-correct-openrouter-codecs-and-routing.md)
 - [Use native Anthropic Messages contracts](05-correct-anthropic-codec.md)
@@ -12,7 +11,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## In progress
 
-- None.
+- [Prove structured output and tool calls before success](02-prove-model-responses.md)
 
 ## Blocked
 

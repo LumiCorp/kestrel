@@ -11,6 +11,8 @@ import {
 } from "./ModelTimingPolicy.js";
 import { RunCancelledError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { classifyModelTransportFailure } from "./ModelTransportError.js";
+import { parseModelRequestV2 } from "../kestrel/contracts/model-registration.js";
+import { verifyModelResponseV2 } from "./ModelResponseVerifier.js";
 
 export type ModelInvoker = <T>(request: ModelRequest, options?: ModelGatewayCallOptions) => Promise<T>;
 
@@ -42,6 +44,10 @@ export class RetryingModelGateway implements ModelGateway {
     request: ModelRequest,
     options: ModelGatewayCallOptions = {},
   ): Promise<T> {
+    const verifiedV2Request = request.version === "model_request_v2"
+      ? parseModelRequestV2(request)
+      : undefined;
+    const effectiveRequest = verifiedV2Request ?? request;
     let lastError: unknown;
     let attemptsMade = 0;
     const retryDelaysMs: number[] = [];
@@ -73,23 +79,23 @@ export class RetryingModelGateway implements ModelGateway {
       try {
         const elapsedMs = Date.now() - startedAtMs;
         const timeoutMetadata = withAttemptBudgetMetadata(
-          request.metadata,
+          effectiveRequest.metadata,
           this.config.timeoutMs,
           elapsedMs,
         );
-        if (typeof request.model === "string" && typeof timeoutMetadata.model !== "string") {
-          timeoutMetadata.model = request.model;
+        if (typeof effectiveRequest.model === "string" && typeof timeoutMetadata.model !== "string") {
+          timeoutMetadata.model = effectiveRequest.model;
         }
         const timeoutMs = deriveModelTimeoutMs(
           {
-            ...request,
+            ...effectiveRequest,
             metadata: timeoutMetadata,
           },
           this.config.timingPolicy,
         );
         return await withTimeout(
           this.invoke<T>({
-            ...request,
+            ...effectiveRequest,
             metadata: timeoutMetadata,
           }, {
             signal: options.signal,
@@ -101,12 +107,15 @@ export class RetryingModelGateway implements ModelGateway {
           options.signal,
           timeoutMetadata,
         ).then(async (result) => {
+          const verifiedResult = verifiedV2Request === undefined
+            ? result
+            : verifyModelResponseV2(verifiedV2Request, result) as unknown as T;
           await options.onEvent?.({
             type: "attempt.completed",
             attempt: attemptNumber,
             latencyMs: Date.now() - attemptStartedAtMs,
           });
-          return result;
+          return verifiedResult;
         });
       } catch (error) {
         lastError = error;
@@ -124,7 +133,7 @@ export class RetryingModelGateway implements ModelGateway {
           visibleOutputStarted === false &&
           retryable &&
           hasBudgetForAnotherAttempt(
-            request.metadata,
+            effectiveRequest.metadata,
             this.config.timingPolicy,
             Date.now() - startedAtMs,
           );
@@ -294,6 +303,10 @@ function isRetryableModelError(error: unknown): boolean {
   const code = typeof record?.code === "string" ? record.code : undefined;
   const status = typeof record?.status === "number" ? record.status : undefined;
 
+  if (code !== undefined && MODEL_PROOF_FAILURE_CODES.has(code)) {
+    return false;
+  }
+
   if (
     status === 401 ||
     status === 403 ||
@@ -340,6 +353,29 @@ function isRetryableModelError(error: unknown): boolean {
 
   return false;
 }
+
+const MODEL_PROOF_FAILURE_CODES = new Set([
+  "MODEL_INCOMPLETE_RESPONSE",
+  "MODEL_MALFORMED_RESPONSE",
+  "MODEL_NAMED_TOOL_CALL_MISSING",
+  "MODEL_OUTPUT_NOT_JSON_OBJECT",
+  "MODEL_OUTPUT_SCHEMA_INVALID",
+  "MODEL_REFUSED",
+  "MODEL_REQUIRED_TOOL_CALL_MISSING",
+  "MODEL_RESPONSE_SCHEMA_INVALID",
+  "MODEL_RESPONSE_SCHEMA_MISSING",
+  "MODEL_STRUCTURED_OUTPUT_MISSING",
+  "MODEL_TOOL_ARGUMENTS_INVALID",
+  "MODEL_TOOL_CALL_ID_DUPLICATE",
+  "MODEL_TOOL_CALL_ID_MISSING",
+  "MODEL_TOOL_CALL_UNEXPECTED",
+  "MODEL_TOOL_PARALLELISM_FORBIDDEN",
+  "MODEL_TOOL_PARALLELISM_REQUIRED",
+  "MODEL_TOOL_SCHEMA_INVALID",
+  "MODEL_TOOL_UNKNOWN",
+  "MODEL_TRUNCATED_RESPONSE",
+  "MODEL_INTERRUPTED_RESPONSE",
+]);
 
 function isRateLimitedModelError(error: unknown): boolean {
   const record = asRecord(error);
