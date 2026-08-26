@@ -20,7 +20,8 @@ export function verifyModelResponseV2<TOutput>(
   value: unknown,
 ): ModelResponseV2<TOutput> {
   const response = parseResponse<TOutput>(value);
-  assertCompletedTerminal(response);
+  assertCompletedTerminal(request, response);
+  verifyContinuation(request, response);
 
   const schemaHash = verifyStructuredOutput(request, response);
   const toolSurfaceHash = verifyToolCalls(request, response);
@@ -46,22 +47,79 @@ function parseResponse<TOutput>(value: unknown): ModelResponseV2<TOutput> {
     throw createRuntimeFailure(
       "MODEL_MALFORMED_RESPONSE",
       "Provider response did not satisfy the V2 model response contract.",
+      malformedResponseDiagnostics(value),
     );
   }
 }
 
-function assertCompletedTerminal(response: ModelResponseV2): void {
-  if (response.terminal.state === "completed") return;
+function malformedResponseDiagnostics(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) return {};
+  const provider = isRecord(value.provider) ? value.provider : undefined;
+  const terminal = isRecord(value.terminal) ? value.terminal : undefined;
 
-  const failure = {
-    refused: ["MODEL_REFUSED", "Provider refused the model request."],
-    incomplete: ["MODEL_INCOMPLETE_RESPONSE", "Provider response was incomplete."],
-    truncated: ["MODEL_TRUNCATED_RESPONSE", "Provider response was truncated."],
-    interrupted: ["MODEL_INTERRUPTED_RESPONSE", "Provider response was interrupted."],
-    malformed: ["MODEL_MALFORMED_RESPONSE", "Provider response was malformed."],
-  } as const;
-  const [code, message] = failure[response.terminal.state];
-  throw createRuntimeFailure(code, message, providerDiagnostics(response));
+  return {
+    ...(typeof provider?.requestId === "string"
+      ? { requestId: provider.requestId }
+      : {}),
+    ...(typeof terminal?.providerTerminalEvent === "string"
+      ? { providerTerminalEvent: terminal.providerTerminalEvent }
+      : {}),
+  };
+}
+
+function assertCompletedTerminal(
+  request: ModelRequestV2,
+  response: ModelResponseV2,
+): void {
+  if (response.terminal.state !== "completed") {
+    const failure = {
+      refused: ["MODEL_REFUSED", "Provider refused the model request."],
+      incomplete: ["MODEL_INCOMPLETE_RESPONSE", "Provider response was incomplete."],
+      truncated: ["MODEL_TRUNCATED_RESPONSE", "Provider response was truncated."],
+      interrupted: ["MODEL_INTERRUPTED_RESPONSE", "Provider response was interrupted."],
+      malformed: ["MODEL_MALFORMED_RESPONSE", "Provider response was malformed."],
+    } as const;
+    const [code, message] = failure[response.terminal.state];
+    throw createRuntimeFailure(code, message, providerDiagnostics(response));
+  }
+
+  if (
+    request.requirements.streaming.terminalBehavior === "required" &&
+    response.terminal.providerTerminalEvent === undefined
+  ) {
+    throw proofFailure(
+      "MODEL_STREAM_TERMINAL_EVIDENCE_MISSING",
+      "Provider stream completed without required terminal evidence.",
+      response,
+    );
+  }
+}
+
+function verifyContinuation(
+  request: ModelRequestV2,
+  response: ModelResponseV2,
+): void {
+  const requestContinuation = request.reasoning?.continuation ?? [];
+  const responseContinuation = response.reasoning?.continuation ?? [];
+  const allowedKinds = new Set(request.requirements.reasoning.continuationKinds);
+
+  for (const continuation of [...requestContinuation, ...responseContinuation]) {
+    if (continuation.provider !== response.provider.name) {
+      throw proofFailure(
+        "MODEL_CONTINUATION_PROVIDER_MISMATCH",
+        "Reasoning continuation does not belong to the responding provider.",
+        response,
+      );
+    }
+    if (!allowedKinds.has(continuation.kind)) {
+      throw proofFailure(
+        "MODEL_CONTINUATION_KIND_UNSUPPORTED",
+        "Provider returned a reasoning continuation outside the requested contract.",
+        response,
+        { continuationKind: continuation.kind },
+      );
+    }
+  }
 }
 
 function verifyStructuredOutput(
@@ -187,6 +245,17 @@ function verifyToolCalls(
     throw proofFailure(
       "MODEL_NAMED_TOOL_CALL_MISSING",
       "Provider did not return the required named tool call.",
+      response,
+      { toolName: requirements.toolName },
+    );
+  }
+  if (
+    requirements.choice === "named" &&
+    intents.some((intent) => intent.name !== requirements.toolName)
+  ) {
+    throw proofFailure(
+      "MODEL_NAMED_TOOL_CALL_UNEXPECTED",
+      "Provider returned a tool call outside the required named tool contract.",
       response,
       { toolName: requirements.toolName },
     );
