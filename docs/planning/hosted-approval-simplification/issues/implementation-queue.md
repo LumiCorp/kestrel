@@ -11,6 +11,10 @@ Implementation must start from deployed-source revision
 
 - [Use one canonical persisted invocation for card and approval](01b-canonical-prepared-invocation-state.md)
 - [Align the V2 approval prompt with its strict decisions](01e-align-v2-prompt-decisions.md)
+- [Reject downgraded V2 pending approval state](01a2-reject-downgraded-v2-pending-state.md)
+- [Close replay and snapshot-creation races](01c2-close-replay-and-snapshot-races.md)
+- [Make production MCP cleanup retryable](01c3-make-mcp-cleanup-retryable.md)
+- [Preserve canonical turn lock order for remembered approval](01f2-preserve-turn-lock-order.md)
 
 ## In progress
 
@@ -35,8 +39,11 @@ None.
 - [Bind remembered records to the exact atomic remember decision](01f-bind-remembered-record-to-decision.md)
   — review blocked by [Derive remembered identity from the locked source interaction](01f1-derive-remembered-identity-from-source.md)
 - [Bind persisted V2 approval to current hosted authority](01a1-bind-v2-to-current-host-authority.md)
+  — review blocked by [Reject downgraded V2 pending approval state](01a2-reject-downgraded-v2-pending-state.md)
 - [Complete prepared execution ownership and shutdown safety](01c1-complete-prepared-resource-ownership.md)
+  — review blocked by [Close replay and snapshot-creation races](01c2-close-replay-and-snapshot-races.md) and [Make production MCP cleanup retryable](01c3-make-mcp-cleanup-retryable.md)
 - [Derive remembered identity from the locked source interaction](01f1-derive-remembered-identity-from-source.md)
+  — review blocked by [Preserve canonical turn lock order for remembered approval](01f2-preserve-turn-lock-order.md)
 
 ## Done
 
