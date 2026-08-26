@@ -1414,10 +1414,9 @@ function parseModelRequestRequirementsV2(
     );
   }
   if (request.responseFormat !== undefined) {
-    const expected = request.responseFormat === "text" ? "text" : "json_object";
     if (
-      output.kind !== expected &&
-      !(request.responseSchema !== undefined && output.kind === "json_schema")
+      (request.responseFormat === "text" && output.kind !== "text") ||
+      (request.responseFormat === "json" && output.kind === "text")
     ) {
       throw new Error(
         "model request V2 output requirement conflicts with responseFormat",
@@ -3082,11 +3081,8 @@ function parseCredentialReference(
     "provider credential reference",
   );
   return {
-    source: requireString(
-      record.source,
-      "provider credential reference.source",
-    ),
-    id: requireString(record.id, "provider credential reference.id"),
+    source: requireCredentialHandleSource(record.source),
+    id: requireCredentialHandleId(record.id),
   };
 }
 
@@ -3276,6 +3272,26 @@ function optionalSafeRevision(
   label: string,
 ): string | undefined {
   return value === undefined ? undefined : requireSafeRevision(value, label);
+}
+
+function requireCredentialHandleSource(value: unknown): string {
+  const source = requireString(value, "provider credential reference.source");
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(source)) {
+    throw new Error(
+      "provider credential reference.source must be a credential-handle source",
+    );
+  }
+  return source;
+}
+
+function requireCredentialHandleId(value: unknown): string {
+  const id = requireString(value, "provider credential reference.id");
+  if (!/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/u.test(id)) {
+    throw new Error(
+      "provider credential reference.id must be a non-secret credential handle",
+    );
+  }
+  return id;
 }
 
 function requireBoolean(value: unknown, label: string): boolean {

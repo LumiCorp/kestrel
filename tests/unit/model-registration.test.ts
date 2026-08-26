@@ -241,6 +241,20 @@ test("provider runtime configuration binds exact identity, protocol, auth, and c
     () =>
       parseProviderRuntimeConfigurationV1({
         ...providerConfiguration(),
+        authentication: {
+          mode: "required",
+          credentialReference: {
+            source: "local-core",
+            id: "sk-live-EXAMPLESECRET",
+          },
+        },
+      }),
+    /non-secret credential handle/u,
+  );
+  assert.throws(
+    () =>
+      parseProviderRuntimeConfigurationV1({
+        ...providerConfiguration(),
         allowedHeaders: ["X-Test", "x-test"],
       }),
     /contains duplicates/u,
@@ -459,6 +473,14 @@ test("V2 provider-neutral requirements are canonical and reject conflicting lega
         providerOptions: { openai: { endpoint: "responses" } },
       }),
     /belongs in requirements.endpoint/u,
+  );
+  assert.throws(
+    () =>
+      createModelRequestV2({
+        ...requestAuthoringV2(),
+        responseFormat: "text",
+      }),
+    /conflicts with responseFormat/u,
   );
   assert.throws(
     () =>
