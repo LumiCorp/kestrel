@@ -1359,6 +1359,14 @@ export async function claimDurableThreadTurn(
                   ...(typeof response.approved === "boolean"
                     ? { approved: response.approved }
                     : {}),
+                  ...(response.decision === "decline" ||
+                  response.decision === "approve_once"
+                    ? {
+                        decision: response.decision as
+                          | "decline"
+                          | "approve_once",
+                      }
+                    : {}),
                   ...(typeof response.reason === "string"
                     ? { reason: response.reason }
                     : {}),
@@ -1867,6 +1875,7 @@ export async function resolveDurableRuntimeInteraction(input: {
   turnId: string;
   message: string;
   approved?: boolean | undefined;
+  decision?: "decline" | "approve_once" | undefined;
   reason?: string | undefined;
   recoveryOptionId?: string | undefined;
   messageId: string;
@@ -1908,6 +1917,7 @@ export async function resolveDurableRuntimeInteraction(input: {
         "The interaction response event type does not match the pending request.",
       );
     }
+    const hostedV2Approval = isHostedV2ApprovalInteraction(interaction);
     if (
       interaction.status === "processing" ||
       interaction.status === "resolved" ||
@@ -1917,7 +1927,9 @@ export async function resolveDurableRuntimeInteraction(input: {
       if (
         interaction.resolvedByUserId !== input.userId ||
         (interaction.kind === "approval" &&
-          recordedResponse?.approved !== input.approved)
+          (hostedV2Approval
+            ? recordedResponse?.decision !== input.decision
+            : recordedResponse?.approved !== input.approved))
       ) {
         throw new DurableTurnError(
           "TURN_CONFLICT",
@@ -1948,14 +1960,17 @@ export async function resolveDurableRuntimeInteraction(input: {
         "The runtime interaction is no longer pending.",
       );
     }
-    if (
-      interaction.kind === "approval" &&
-      typeof input.approved !== "boolean"
-    ) {
-      throw new DurableTurnError(
-        "TURN_CONFLICT",
-        "An approval interaction requires an explicit decision.",
-      );
+    if (interaction.kind === "approval") {
+      const validDecision = hostedV2Approval
+        ? input.approved === undefined &&
+          (input.decision === "decline" || input.decision === "approve_once")
+        : input.decision === undefined && typeof input.approved === "boolean";
+      if (!validDecision) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The approval decision does not match its version.",
+        );
+      }
     }
     const structuredReview = parseRunnerStructuredReviewInteractionV1(
       interaction.requestEnvelope,
@@ -2036,6 +2051,7 @@ export async function resolveDurableRuntimeInteraction(input: {
       ...(typeof input.approved === "boolean"
         ? { approved: input.approved }
         : {}),
+      ...(input.decision !== undefined ? { decision: input.decision } : {}),
       ...(input.reason ? { reason: input.reason } : {}),
       ...(input.recoveryOptionId !== undefined
         ? { recoveryOptionId: input.recoveryOptionId }
@@ -2068,7 +2084,7 @@ export async function resolveDurableRuntimeInteraction(input: {
         threadId: input.threadId,
         userId: input.userId,
         runtimeApprovalId: interaction.runtimeApprovalId,
-        approved: input.approved === true,
+        approved: input.decision === "approve_once" || input.approved === true,
         required: true,
         now,
       });
@@ -2099,7 +2115,10 @@ export async function resolveDurableRuntimeInteraction(input: {
               interaction.requestId,
               "processing",
               {
-                decision: input.approved ? "approved" : "denied",
+                decision:
+                  input.decision === "approve_once" || input.approved === true
+                    ? "approved"
+                    : "denied",
                 authorizationState: "pending",
                 effectState: "not_started",
                 retryEligible: false,
@@ -2417,7 +2436,7 @@ export async function retryFailedDurableRuntimeInteraction(input: {
         );
       }
       if (
-        responseEnvelope?.approved !== true ||
+        !isApprovedResponseEnvelope(responseEnvelope) ||
         appApproval.decidedByUserId !== input.userId ||
         runnerBinding.approvalId !== interaction.runtimeApprovalId ||
         runnerBinding.threadId !== interaction.threadId ||
@@ -2577,7 +2596,39 @@ async function updateInteractionMessagePresentation(
 }
 
 function readApprovalDecision(value: unknown): "approved" | "denied" {
-  return readPlainRecord(value)?.approved === true ? "approved" : "denied";
+  return isApprovedResponseEnvelope(readPlainRecord(value))
+    ? "approved"
+    : "denied";
+}
+
+function isApprovedResponseEnvelope(
+  value: Record<string, unknown> | null,
+): boolean {
+  return value?.decision === "approve_once" || value?.approved === true;
+}
+
+function isHostedV2ApprovalInteraction(
+  interaction: typeof schema.threadInteractions.$inferSelect,
+): boolean {
+  if (interaction.kind !== "approval") return false;
+  if (readPlainRecord(interaction.requestEnvelope)?.version === "v1") {
+    return false;
+  }
+  try {
+    const parsed = parseRunnerHostedToolApprovalInteractionV2(
+      interaction.requestEnvelope,
+      interaction.eventType,
+    );
+    if (parsed.requestId !== interaction.requestId) {
+      throw new Error("request identity mismatch");
+    }
+    return true;
+  } catch {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The hosted V2 approval contract is invalid.",
+    );
+  }
 }
 
 function readPlainRecord(value: unknown): Record<string, unknown> | null {

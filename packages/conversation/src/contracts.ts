@@ -169,8 +169,11 @@ export interface ConversationLinkPresentation {
   label?: string | undefined;
 }
 
-export interface ConversationInteractionPresentation<Approval = unknown> {
-  version: "v1";
+export interface ConversationInteractionPresentation<
+  Approval = unknown,
+  Version extends string = "v1",
+> {
+  version: Version;
   requestId: string;
   kind: "user_input" | "approval" | "mcp_sampling" | "mcp_elicitation";
   eventType: string;

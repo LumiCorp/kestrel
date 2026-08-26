@@ -526,6 +526,7 @@ export interface RunnerTurnInput {
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
   recoveryOptionId?: string | undefined;
+  decision?: "decline" | "approve_once" | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: RunnerInteractionMode | undefined;
@@ -1259,6 +1260,7 @@ export type OrdinaryConversationTurn = Omit<
   | "resumeBlockedRun"
   | "resumeRequestId"
   | "recoveryOptionId"
+  | "decision"
   | "stepAgent"
 >;
 
@@ -2670,6 +2672,7 @@ function parseRunnerCommandPayloadV2(
         "resumeBlockedRun",
         "resumeRequestId",
         "recoveryOptionId",
+        "decision",
         "stepAgent",
       ]) {
         if (Object.hasOwn(turn, forbidden)) {
@@ -3563,6 +3566,7 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalBoolean(turn.resumeBlockedRun, `${label}.resumeBlockedRun`);
   validateOptionalNonEmptyString(turn.resumeRequestId, `${label}.resumeRequestId`);
   validateOptionalNonEmptyString(turn.recoveryOptionId, `${label}.recoveryOptionId`);
+  validateOptionalEnum(turn.decision, `${label}.decision`, ["decline", "approve_once"]);
   if (turn.resumeBlockedRun === true && turn.resumeRequestId === undefined) {
     throw new RunnerProtocolContractError(
       `${label}.resumeRequestId is required when resumeBlockedRun is true`,
@@ -3574,6 +3578,14 @@ function validateRunTurn(value: unknown, label: string): void {
   ) {
     throw new RunnerProtocolContractError(
       `${label}.recoveryOptionId requires resumeBlockedRun to be true`,
+    );
+  }
+  if (
+    turn.decision !== undefined &&
+    (turn.resumeRequestId === undefined || turn.eventType !== "user.approval")
+  ) {
+    throw new RunnerProtocolContractError(
+      `${label}.decision requires a user.approval resumeRequestId`,
     );
   }
   validateOptionalNonEmptyString(turn.stepAgent, `${label}.stepAgent`);

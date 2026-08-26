@@ -364,6 +364,7 @@ export type KestrelOneAgentResponseInput = {
         eventType: string;
         message: string;
         approved?: boolean | undefined;
+        decision?: "decline" | "approve_once" | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;
       }

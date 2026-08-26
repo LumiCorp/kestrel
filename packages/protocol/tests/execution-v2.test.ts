@@ -62,6 +62,41 @@ test("run.start accepts the autonomous turn marker", () => {
   }
 });
 
+test("run.start carries only strict hosted approval decisions", () => {
+  for (const decision of ["decline", "approve_once"] as const) {
+    const parsed = parseRunnerCommandV2({
+      id: `command-${decision}`,
+      type: "run.start",
+      payload: {
+        profileId: "kestrel",
+        turn: {
+          ...turn,
+          eventType: "user.approval",
+          resumeRequestId: "approval-request",
+          decision,
+        },
+      },
+    });
+    assert.equal(
+      parsed.type === "run.start" ? parsed.payload.turn.decision : undefined,
+      decision,
+    );
+  }
+  assert.throws(() => parseRunnerCommandV2({
+    id: "command-invalid-decision",
+    type: "run.start",
+    payload: {
+      profileId: "kestrel",
+      turn: {
+        ...turn,
+        eventType: "user.approval",
+        resumeRequestId: "approval-request",
+        decision: "approve",
+      },
+    },
+  }), /decision/u);
+});
+
 test("execution protocol v4 accepts canonical attachments and rejects v3 payloads", () => {
   const canonicalAttachment = {
     attachmentId: "attachment-1",

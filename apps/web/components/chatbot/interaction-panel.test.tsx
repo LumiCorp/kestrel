@@ -128,6 +128,29 @@ test("Kestrel One shows policy-owned approval choices and Environment guidance",
   assert.doesNotMatch(html, />Approve<\/button>/u);
 });
 
+test("strict V2 approval cards advertise exact decisions", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        prompt: "Approve test.tool?",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v2",
+          approval: { toolName: "test.tool" },
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />
+  );
+  assert.match(html, />Decline</u);
+  assert.match(html, />Approve Once</u);
+  assert.doesNotMatch(html, />Deny</u);
+});
+
 test("Always Approve always hands persistent policy changes to Environment Apps", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel

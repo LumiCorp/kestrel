@@ -29,6 +29,20 @@ test(
       }).success,
       true
     );
+    for (const decision of ["decline", "approve_once"] as const) {
+      assert.equal(
+        threadTurnBodySchema.safeParse({
+          interactionResponse: {
+            requestId: "request-v2",
+            eventType: "user.approval",
+            turnId: "turn-v2",
+            message: decision,
+            decision,
+          },
+        }).success,
+        true
+      );
+    }
     assert.equal(
       threadTurnBodySchema.safeParse({
         interactionResponse: {
@@ -69,6 +83,22 @@ test(
     );
   }
 );
+
+test("Thread turn boundary rejects mixed approval decision versions", () => {
+  assert.equal(
+    threadTurnBodySchema.safeParse({
+      interactionResponse: {
+        requestId: "request-v2",
+        eventType: "user.approval",
+        turnId: "turn-v2",
+        message: "Approve once",
+        approved: true,
+        decision: "approve_once",
+      },
+    }).success,
+    false
+  );
+});
 
 test("Approval turns use one server-owned idempotency key", () => {
   const route = fs.readFileSync(

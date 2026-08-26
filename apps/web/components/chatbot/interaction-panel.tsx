@@ -20,6 +20,7 @@ export type RuntimeInteractionResponse = {
   turnId: string;
   message: string;
   approved?: boolean | undefined;
+  decision?: "decline" | "approve_once" | undefined;
   reason?: string | undefined;
   recoveryOptionId?: string | undefined;
   presentation?: "control" | undefined;
@@ -49,7 +50,7 @@ export function InteractionPanel({
 
   async function resolveRuntime(
     interaction: ThreadInteractionView,
-    decision?: boolean,
+    decision?: "decline" | "approve_once",
     recoveryOptionId?: string
   ) {
     const answer = content[interaction.requestId]?.trim();
@@ -61,9 +62,9 @@ export function InteractionPanel({
             recoveryOptionId as RunnerStructuredReviewOptionId
           )
         : interaction.kind === "approval"
-        ? decision
-          ? "Approved"
-          : "Denied"
+        ? decision === "approve_once"
+          ? "Approve once"
+          : "Decline"
         : answer;
     if (!message) {
       setError("Enter a response before continuing.");
@@ -81,7 +82,11 @@ export function InteractionPanel({
         eventType: interaction.eventType,
         turnId: interaction.turnId,
         message,
-        ...(interaction.kind === "approval" ? { approved: decision } : {}),
+        ...(interaction.kind === "approval"
+          ? isHostedV2Approval(interaction)
+            ? { decision }
+            : { approved: decision === "approve_once" }
+          : {}),
         ...(recoveryOptionId !== undefined ? { recoveryOptionId } : {}),
       });
       await onResolved();
@@ -453,16 +458,16 @@ export function InteractionPanel({
                     <>
                       <Button
                         disabled={busy !== null}
-                        onClick={() => void resolveRuntime(interaction, false)}
+                        onClick={() => void resolveRuntime(interaction, "decline")}
                         size="sm"
                         variant="outline"
                       >
-                        Deny
+                        {isHostedV2Approval(interaction) ? "Decline" : "Deny"}
                       </Button>
                       <Button
                         autoFocus={index === 0}
                         disabled={busy !== null}
-                        onClick={() => void resolveRuntime(interaction, true)}
+                        onClick={() => void resolveRuntime(interaction, "approve_once")}
                         size="sm"
                         variant="outline"
                       >
@@ -606,6 +611,11 @@ function readRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function isHostedV2Approval(interaction: ThreadInteractionView): boolean {
+  return interaction.requestEnvelope.version ===
+    "runner_hosted_tool_approval_interaction_v2";
 }
 
 function approvalModeLabel(mode: "auto" | "ask" | "deny") {

@@ -35,9 +35,13 @@ export function projectSafeThreadInteraction(
   const approvalOutcome =
     interaction.kind === "approval" &&
     responseEnvelope &&
-    typeof responseEnvelope.approved === "boolean"
+    (typeof responseEnvelope.approved === "boolean" ||
+      responseEnvelope.decision === "decline" ||
+      responseEnvelope.decision === "approve_once")
       ? {
-          decision: responseEnvelope.approved
+          decision:
+            responseEnvelope.decision === "approve_once" ||
+            responseEnvelope.approved === true
             ? "approved" as const
             : "denied" as const,
           authorizationState:

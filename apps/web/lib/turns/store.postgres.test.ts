@@ -60,6 +60,7 @@ test(
     const resumedThreadId = `turn-resumed-${suffix}`;
     const interactionThreadId = `turn-interaction-${suffix}`;
     const structuredReviewThreadId = `turn-structured-review-${suffix}`;
+    const approvalThreadId = `turn-hosted-approval-${suffix}`;
     const now = new Date();
 
     context.after(async () => {
@@ -143,6 +144,10 @@ test(
           (
             ${structuredReviewThreadId}, 'Structured Review Turn', ${userId},
             ${organizationId}, 'mobile'
+          ),
+          (
+            ${approvalThreadId}, 'Hosted Approval Turn', ${userId},
+            ${organizationId}, 'web'
           )
       `;
     });
@@ -645,6 +650,99 @@ test(
       status: "completed",
     });
     assert.equal(resumedCompletion.nextTurnId, queuedWhileWaiting.turn.id);
+
+    const approvalTurn = await createTurn(
+      approvalThreadId,
+      "hosted-v2-approval",
+    );
+    assert.ok(await store.claimDurableThreadTurn(approvalTurn.turn.id));
+    const approvalRequestId = `hosted-v2-approval-${suffix}`;
+    const approvalInteraction = {
+      version: "runner_hosted_tool_approval_interaction_v2" as const,
+      requestId: approvalRequestId,
+      kind: "approval" as const,
+      eventType: "user.approval" as const,
+      prompt: "Approve test.tool? Reply with decision 'approve_once' or 'decline'.",
+      inputSchema: {
+        type: "object" as const,
+        additionalProperties: false as const,
+        required: ["decision"] as ["decision"],
+        properties: {
+          decision: {
+            type: "string" as const,
+            enum: ["decline", "approve_once"] as ["decline", "approve_once"],
+          },
+        },
+      },
+      approval: {
+        preparedInvocationId: `prepared-${suffix}`,
+        toolName: "test.tool",
+        stableToolIdentity: {
+          version: "stable_tool_approval_identity_v1" as const,
+          toolId: "test.tool",
+          descriptorContractRevision: "descriptor-v1",
+          approvalAuthorityRevision: "authority-v1",
+        },
+      },
+      source: "runtime" as const,
+      status: "pending" as const,
+    };
+    await store.persistDurableAssistantOutcome({
+      turnId: approvalTurn.turn.id,
+      messages: [{
+        id: `assistant-hosted-v2-${suffix}`,
+        parts: [{
+          type: "data-kestrel-interaction",
+          id: `interaction:${approvalRequestId}`,
+          data: approvalInteraction,
+        }],
+        model: "kestrel-one",
+        source: "web",
+        projectContextRevisionId: null,
+      }],
+      interaction: approvalInteraction,
+    });
+    await assert.rejects(
+      store.resolveDurableRuntimeInteraction({
+        threadId: approvalThreadId,
+        organizationId,
+        userId,
+        requestId: approvalRequestId,
+        eventType: "user.approval",
+        turnId: approvalTurn.turn.id,
+        message: "Legacy approve",
+        approved: true,
+        messageId: `legacy-approval-${suffix}`,
+        source: "web",
+      }),
+      /does not match its version/u,
+    );
+    await store.resolveDurableRuntimeInteraction({
+      threadId: approvalThreadId,
+      organizationId,
+      userId,
+      requestId: approvalRequestId,
+      eventType: "user.approval",
+      turnId: approvalTurn.turn.id,
+      message: "Approve once",
+      decision: "approve_once",
+      messageId: `v2-approval-${suffix}`,
+      source: "web",
+    });
+    assert.deepEqual(
+      (await store.claimDurableThreadTurn(approvalTurn.turn.id))
+        ?.interactionResponse,
+      {
+        requestId: approvalRequestId,
+        eventType: "user.approval",
+        message: "Approve once",
+        decision: "approve_once",
+      },
+    );
+    await store.completeDurableThreadTurn({
+      turnId: approvalTurn.turn.id,
+      status: "completed",
+    });
 
     const reviewTurn = await createTurn(
       structuredReviewThreadId,

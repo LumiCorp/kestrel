@@ -377,6 +377,47 @@ test("createKestrelOneAgentResponse preserves Build mode while resuming a blocke
   assert.equal(capturedInput?.eventType, "user.reply");
 });
 
+test("createKestrelOneAgentResponse carries strict hosted approval decisions", async () => {
+  for (const decision of ["decline", "approve_once"] as const) {
+    let capturedInput: KestrelOneAgentTurnInput | undefined;
+    const response = createKestrelOneAgentResponseFromAgent({
+      request: new Request("http://example.test/api/threads/thread-approval", {
+        method: "POST",
+      }),
+      agent: fakeAgent({
+        terminal: completedTerminal("Approval handled", undefined),
+        onStream(input) {
+          capturedInput = input;
+        },
+      }),
+      ownsAgent: false,
+      session,
+      organizationId: "org_123",
+      correlation: {
+        requestId: `req-${decision}`,
+        correlationId: `req-${decision}`,
+      },
+      threadId: "thread-approval",
+      interactionMode: "build",
+      interactionResponse: {
+        requestId: "approval-request",
+        eventType: "user.approval",
+        message: decision,
+        decision,
+      },
+      resolvedAttachments: [],
+      messages: [{
+        id: `message-${decision}`,
+        role: "user",
+        parts: [{ type: "text", text: decision }],
+      }],
+    });
+    await response.text();
+    assert.equal(capturedInput?.resumeRequestId, "approval-request");
+    assert.equal(capturedInput?.decision, decision);
+  }
+});
+
 test("createKestrelOneAgentResponse propagates autonomous turn policy", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
   const agent = fakeAgent({

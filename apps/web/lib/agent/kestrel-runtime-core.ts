@@ -58,6 +58,7 @@ export type KestrelOneAgentTurnInput = KestrelAgentTurnInput & {
   signal?: AbortSignal;
   abortBehavior?: "cancel" | "detach" | undefined;
   resumeRequestId?: string | undefined;
+  decision?: "decline" | "approve_once" | undefined;
 };
 
 export type KestrelOneRunnerStreamEvent = RunnerRunStreamEvent;
@@ -164,6 +165,7 @@ export type KestrelOneAgentResponseInput = {
         eventType: string;
         message: string;
         approved?: boolean | undefined;
+        decision?: "decline" | "approve_once" | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;
       }
@@ -289,8 +291,11 @@ export function createKestrelOneAgentResponseFromAgent(
                 ? { systemInstructions: [formatThreadFileInventory(fileInventory)] }
                 : {}),
               ...(interactionResponse !== undefined
-                ? {
+                  ? {
                     resumeRequestId: interactionResponse.requestId,
+                    ...(interactionResponse.decision !== undefined
+                      ? { decision: interactionResponse.decision }
+                      : {}),
                     ...(interactionResponse.recoveryOptionId !== undefined
                       ? { recoveryOptionId: interactionResponse.recoveryOptionId }
                       : {}),
