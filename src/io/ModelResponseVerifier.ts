@@ -200,7 +200,6 @@ function verifyToolCalls(
   }
   if (
     requirements.parallelism === "required" &&
-    intents.length > 0 &&
     intents.length < 2
   ) {
     throw proofFailure(

@@ -8,7 +8,12 @@ import {
 } from "../../src/kestrel/contracts/model-registration.js";
 import { verifyModelResponseV2 } from "../../src/io/ModelResponseVerifier.js";
 
-function request() {
+function request(
+  tools: { choice: "auto" | "required"; parallelism: "forbidden" | "required" } = {
+    choice: "required",
+    parallelism: "forbidden",
+  },
+) {
   return createModelRequestV2({
     version: "model_request_v2",
     input: "look this up",
@@ -28,9 +33,9 @@ function request() {
       runtimeRole: "test",
       output: { kind: "text", assurance: "none" },
       tools: {
-        choice: "required",
+        choice: tools.choice,
         strictArguments: true,
-        parallelism: "forbidden",
+        parallelism: tools.parallelism,
       },
       reasoning: { mode: "off", continuationKinds: [] },
       streaming: { required: false, terminalBehavior: "not_required" },
@@ -68,4 +73,16 @@ test("gateway rejects invalid tool arguments without retrying a V2 proof failure
     (error: unknown) => (error as { code?: unknown }).code === "MODEL_TOOL_ARGUMENTS_INVALID",
   );
   assert.equal(attempts, 1);
+});
+
+test("response verifier requires two calls when the V2 contract requires parallelism", () => {
+  assert.throws(
+    () =>
+      verifyModelResponseV2(
+        request({ choice: "auto", parallelism: "required" }),
+        { ...response({ query: "Kestrel" }), toolIntents: [] },
+      ),
+    (error: unknown) =>
+      (error as { code?: unknown }).code === "MODEL_TOOL_PARALLELISM_REQUIRED",
+  );
 });
