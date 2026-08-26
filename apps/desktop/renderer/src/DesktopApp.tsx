@@ -562,6 +562,8 @@ export function DesktopApp(props: {
             name: message.name,
             childSessionId: message.childSessionId,
             sender: message.sender,
+            dialogStatus: message.dialogStatus,
+            ...(message.dialogActivity !== undefined ? { dialogActivity: message.dialogActivity } : {}),
             ...(message.status !== undefined ? { status: message.status } : {}),
           },
         }));
@@ -853,6 +855,8 @@ export function DesktopApp(props: {
                       name: message.name,
                       childSessionId: message.childSessionId,
                       sender: message.sender,
+                      dialogStatus: dialog.status,
+                      ...(message.dialogActivity !== undefined ? { dialogActivity: message.dialogActivity } : { dialogActivity: dialog.activity }),
                       ...(message.status !== undefined
                         ? { status: message.status }
                         : {}),

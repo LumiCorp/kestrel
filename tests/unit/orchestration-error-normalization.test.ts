@@ -956,6 +956,8 @@ test("persistent dialogs support multi-turn exchange, lifetime name ownership, a
   await tick();
   assert.equal(updates[0]?.text, "reply:first");
   assert.equal(updates[0]?.parentRunId, "run-dialog-1");
+  assert.equal(emittedMessages.find((message) => message.sender === "kestrel")?.dialogActivity, "working");
+  assert.equal(updates[0]?.dialogActivity, "idle");
   await assert.rejects(
     () => supervisor.open({ parentSessionId: "root", name: "peregrine", message: "duplicate" }),
     { code: "DIALOG_NAME_IN_USE" },
@@ -978,6 +980,9 @@ test("persistent dialogs support multi-turn exchange, lifetime name ownership, a
 
   const closed = await supervisor.close({ parentSessionId: "root", dialogId: opened.dialogId });
   assert.equal(closed.status, "closed");
+  const closeMessage = emittedMessages.at(-1);
+  assert.equal(closeMessage?.dialogStatus, "closed");
+  assert.equal(closeMessage?.dialogActivity, "idle");
   await assert.rejects(
     () => supervisor.send({ parentSessionId: "root", dialogId: opened.dialogId, message: "late" }),
     { code: "DIALOG_CLOSED" },

@@ -303,7 +303,11 @@ export interface DesktopFollowUpQueueEntry {
   createdAt: string;
   state: "queued" | "starting";
   source?: "human" | "dialog" | undefined;
+  dialogId?: string | undefined;
+  dialogName?: string | undefined;
   sourceMessageId?: string | undefined;
+  dialogStatus?: "open" | "closed" | undefined;
+  dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
 }
 
 export interface DesktopConversationTurn {
@@ -673,6 +677,9 @@ export interface DesktopDialogView {
   dialogId: string;
   name: string;
   status: "open" | "closed";
+  activity: "idle" | "working" | "waiting" | "interrupted";
+  revision: number;
+  errorMessage?: string | undefined;
   childThreadId: string;
   messages: DesktopDialogMessage[];
 }
@@ -686,6 +693,7 @@ export interface DesktopDialogMessage {
   sender: "kestrel" | "collaborator" | "system";
   text: string;
   createdAt: string;
+  dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
   status?: "failed" | "cancelled" | undefined;
 }
 

@@ -716,6 +716,9 @@ export interface DialogView {
   dialogId: string;
   name: string;
   status: "open" | "closed";
+  activity: "idle" | "working" | "waiting" | "interrupted";
+  revision: number;
+  errorMessage?: string | undefined;
   childThreadId: string;
   messages: Array<{
     messageId: string;
@@ -726,6 +729,7 @@ export interface DialogView {
     sender: "kestrel" | "collaborator" | "system";
     text: string;
     createdAt: string;
+    dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
     status?: "failed" | "cancelled" | undefined;
   }>;
 }

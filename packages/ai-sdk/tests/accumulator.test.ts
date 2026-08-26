@@ -71,6 +71,31 @@ test("task dialog updates become durable presentation parts", () => {
   });
 });
 
+test("dialog activity is preserved when valid and ignored when an older producer sends an invalid optional value", () => {
+  const accumulator = createKestrelPresentationAccumulator({ assistantMessageId: "assistant-dialog-activity" });
+  const base = {
+    messageId: "dialog-message-activity",
+    dialogId: "dialog-activity",
+    name: "Reviewer",
+    childSessionId: "child-activity",
+    sender: "collaborator" as const,
+    text: "The review is ready.",
+    createdAt: "2026-07-21T12:00:00.000Z",
+    dialogStatus: "open" as const,
+  };
+  const valid = accumulator.append({
+    id: "event-dialog-working", type: "task.updated", ts: base.createdAt, sessionId: "thread-root",
+    payload: { task: {}, kind: "waiting", assistantText: null, dialogMessage: { ...base, dialogActivity: "working" } },
+  });
+  assert.equal(valid[0] && "data" in valid[0] ? valid[0].data.dialogActivity : undefined, "working");
+
+  const malformed = accumulator.append({
+    id: "event-dialog-invalid", type: "task.updated", ts: base.createdAt, sessionId: "thread-root",
+    payload: { task: {}, kind: "waiting", assistantText: null, dialogMessage: { ...base, messageId: "dialog-message-invalid", dialogActivity: "unknown" } },
+  });
+  assert.equal(malformed[0] && "data" in malformed[0] ? malformed[0].data.dialogActivity : undefined, undefined);
+});
+
 test("completed output becomes canonical assistant text", () => {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: "assistant-1",

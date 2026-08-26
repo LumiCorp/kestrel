@@ -1593,6 +1593,7 @@ function splitDialogPresentationMessages<
           sender: "kestrel" | "collaborator" | "system";
           createdAt: string;
           dialogStatus: "open" | "closed";
+          dialogActivity?: "idle" | "working" | "waiting" | "interrupted";
           status?: "failed" | "cancelled";
         };
       }

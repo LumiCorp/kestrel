@@ -893,6 +893,33 @@ test("Desktop renders a stopped transition when cancellation has no assistant re
   assert.match(html, /state-cancelled/u);
 });
 
+test("Desktop distinguishes collaborator history from human input and shows terminal status", () => {
+  const items = projectDesktopConversationTimeline([{
+    role: "assistant",
+    text: "The check failed.",
+    timestamp: "2026-08-20T12:00:00.000Z",
+    dialog: {
+      messageId: "dialog-message-status",
+      dialogId: "dialog-status",
+      name: "Reviewer",
+      childSessionId: "child-status",
+      sender: "collaborator",
+      dialogStatus: "closed",
+      dialogActivity: "idle",
+      status: "failed",
+    },
+  }], []);
+  const html = renderToStaticMarkup(React.createElement(ConversationTimeline, {
+    items,
+    active: false,
+    activity: "Ready",
+    endRef: { current: null },
+  }));
+  assert.match(html, /Collaborator: Reviewer/u);
+  assert.match(html, /Closed/u);
+  assert.match(html, /Needs attention/u);
+});
+
 test("Desktop does not render Completed before the agent finalizes an answer", () => {
   const items = projectDesktopConversationTimeline(
     [{
