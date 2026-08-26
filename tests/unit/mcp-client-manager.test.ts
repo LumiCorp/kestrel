@@ -133,6 +133,33 @@ function fakeMcpClient(version: string, closeFailures = 0) {
   };
 }
 
+function controlledMcpClient(version: string) {
+  let signalCloseStarted!: () => void;
+  let allowClose!: () => void;
+  const closeStarted = new Promise<void>((resolve) => {
+    signalCloseStarted = resolve;
+  });
+  const closeGate = new Promise<void>((resolve) => {
+    allowClose = resolve;
+  });
+  return {
+    closeCalls: 0,
+    closed: false,
+    closeStarted,
+    allowClose,
+    async callTool() {
+      if (this.closed) throw new Error(`called closed ${version} client`);
+      return version;
+    },
+    async close() {
+      this.closeCalls += 1;
+      signalCloseStarted();
+      await closeGate;
+      this.closed = true;
+    },
+  };
+}
+
 function toolHandle(client: object) {
   return {
     serverId: "docs",
@@ -206,6 +233,124 @@ test("McpClientManager retries a failed active-provider close and closes once su
   await manager.close();
   assert.equal(client.closeCalls, 2);
   await manager.close();
+  assert.equal(client.closeCalls, 2);
+});
+
+test("McpClientManager rejects retain racing a retired client's final close", async () => {
+  const manager = new McpClientManager({ servers: [] });
+  const oldClient = controlledMcpClient("retired-race");
+  const newClient = fakeMcpClient("active-after-race");
+  const internals = manager as unknown as {
+    activateCandidate(
+      snapshot: McpStatusSnapshot,
+      tools: Map<string, unknown>,
+      servers: Map<string, unknown>,
+    ): Promise<void>;
+  };
+  await internals.activateCandidate(
+    mcpSnapshot("retired-race"),
+    new Map([["mcp.docs.lookup", toolHandle(oldClient)]]),
+    new Map([["docs", { serverId: "docs", client: oldClient }]]),
+  );
+  const pinned = manager.pinTool("mcp.docs.lookup");
+  await internals.activateCandidate(
+    mcpSnapshot("active-after-race"),
+    new Map([["mcp.docs.lookup", toolHandle(newClient)]]),
+    new Map([["docs", { serverId: "docs", client: newClient }]]),
+  );
+
+  const finalRelease = pinned.release();
+  await oldClient.closeStarted;
+  assert.throws(
+    () => pinned.retain(),
+    (error: unknown) =>
+      error instanceof RuntimeFailure && error.code === "MCP_CLIENT_RETIRED",
+  );
+  assert.throws(
+    () => pinned.call({}),
+    (error: unknown) =>
+      error instanceof RuntimeFailure && error.code === "MCP_PIN_RELEASED",
+  );
+  oldClient.allowClose();
+  await finalRelease;
+
+  assert.equal(oldClient.closeCalls, 1);
+  assert.equal(oldClient.closed, true);
+  assert.throws(
+    () => pinned.retain(),
+    (error: unknown) =>
+      error instanceof RuntimeFailure && error.code === "MCP_PIN_RELEASED",
+  );
+  assert.throws(
+    () => pinned.call({}),
+    (error: unknown) =>
+      error instanceof RuntimeFailure && error.code === "MCP_PIN_RELEASED",
+  );
+  await manager.close();
+  assert.equal(oldClient.closeCalls, 1);
+});
+
+test("McpClientManager rejects retain racing manager close and closes exactly once", async () => {
+  const manager = new McpClientManager({ servers: [] });
+  const client = controlledMcpClient("manager-close-race");
+  const internals = manager as unknown as {
+    activateCandidate(
+      snapshot: McpStatusSnapshot,
+      tools: Map<string, unknown>,
+      servers: Map<string, unknown>,
+    ): Promise<void>;
+  };
+  await internals.activateCandidate(
+    mcpSnapshot("manager-close-race"),
+    new Map([["mcp.docs.lookup", toolHandle(client)]]),
+    new Map([["docs", { serverId: "docs", client }]]),
+  );
+  const pinned = manager.pinTool("mcp.docs.lookup");
+
+  const close = manager.close();
+  await client.closeStarted;
+  assert.throws(
+    () => pinned.retain(),
+    (error: unknown) =>
+      error instanceof RuntimeFailure && error.code === "MCP_CLIENT_RETIRED",
+  );
+  assert.throws(
+    () => pinned.call({}),
+    (error: unknown) =>
+      error instanceof RuntimeFailure && error.code === "MCP_PIN_RELEASED",
+  );
+  client.allowClose();
+  await close;
+  await manager.close();
+
+  assert.equal(client.closeCalls, 1);
+  assert.equal(client.closed, true);
+});
+
+test("McpClientManager retries failed retirement and closes exactly once successfully", async () => {
+  const manager = new McpClientManager({ servers: [] });
+  const client = fakeMcpClient("retire-retry", 1);
+  const internals = manager as unknown as {
+    activateCandidate(
+      snapshot: McpStatusSnapshot,
+      tools: Map<string, unknown>,
+      servers: Map<string, unknown>,
+    ): Promise<void>;
+  };
+  await internals.activateCandidate(
+    mcpSnapshot("retire-retry"),
+    new Map([["mcp.docs.lookup", toolHandle(client)]]),
+    new Map([["docs", { serverId: "docs", client }]]),
+  );
+
+  await assert.rejects(
+    () => manager.retire(),
+    /planned retire-retry close failure/u,
+  );
+  assert.equal(client.closeCalls, 1);
+  await manager.retire();
+  await manager.retire();
+
   assert.equal(client.closeCalls, 2);
 });
 

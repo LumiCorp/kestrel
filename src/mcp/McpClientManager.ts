@@ -85,6 +85,7 @@ export class McpClientManager {
   private readonly clientReleaseChains = new Map<unknown, Promise<void>>();
   private readonly clientCloseAttempts = new Map<unknown, Promise<void>>();
   private closeAttempt: Promise<void> | undefined;
+  private retireAttempt: Promise<void> | undefined;
   private closing = false;
   private closed = false;
 
@@ -296,7 +297,19 @@ export class McpClientManager {
     let releaseChain = Promise.resolve();
     this.retainClient(handle.client);
     return {
-      call: <T>(input: unknown) => callToolHandle<T>(handle, input),
+      call: <T>(input: unknown) => {
+        if (
+          references < 1 ||
+          this.closedClients.has(handle.client) ||
+          this.clientCloseAttempts.has(handle.client)
+        ) {
+          throw createRuntimeFailure(
+            "MCP_PIN_RELEASED",
+            `Pinned MCP tool '${namespacedToolName}' is no longer callable.`,
+          );
+        }
+        return callToolHandle<T>(handle, input);
+      },
       retain: () => {
         if (references < 1) {
           throw createRuntimeFailure(
@@ -304,8 +317,8 @@ export class McpClientManager {
             `Pinned MCP tool '${namespacedToolName}' was already released.`,
           );
         }
-        references += 1;
         this.retainClient(handle.client);
+        references += 1;
       },
       release: async () => {
         const release = releaseChain.then(async () => {
@@ -320,6 +333,17 @@ export class McpClientManager {
   }
 
   private retainClient(client: unknown): void {
+    if (
+      this.retiredClients.has(client) ||
+      this.closedClients.has(client) ||
+      this.clientReleaseChains.has(client) ||
+      this.clientCloseAttempts.has(client)
+    ) {
+      throw createRuntimeFailure(
+        "MCP_CLIENT_RETIRED",
+        "MCP client ownership cannot be retained after retirement or cleanup has started.",
+      );
+    }
     this.clientReferenceCounts.set(
       client,
       (this.clientReferenceCounts.get(client) ?? 0) + 1,
@@ -509,36 +533,42 @@ export class McpClientManager {
   }
 
   async retire(): Promise<void> {
-    if (this.closed || this.closing) return;
+    if (this.closed) return;
+    if (this.retireAttempt !== undefined) {
+      await this.retireAttempt;
+      return;
+    }
     this.closing = true;
-    const clients = new Set(
-      [...this.serverHandles.values()].map((handle) => handle.client),
-    );
-    await Promise.all(
-      [...clients].map(async (client) => {
-        this.retiredClients.add(client);
-        if ((this.clientReferenceCounts.get(client) ?? 0) > 0) {
+    const attempt = (async () => {
+      const clients = new Set([
+        ...[...this.serverHandles.values()].map((handle) => handle.client),
+        ...this.retiredClients,
+      ]);
+      await Promise.all(
+        [...clients].map(async (client) => {
+          this.retiredClients.add(client);
           for (const [serverId, handle] of this.serverHandles) {
             if (handle.client === client) this.serverHandles.delete(serverId);
           }
           for (const [toolName, handle] of this.toolHandles) {
             if (handle.client === client) this.toolHandles.delete(toolName);
           }
-        } else {
+          if ((this.clientReferenceCounts.get(client) ?? 0) > 0) return;
           await this.closeClient(client);
           this.retiredClients.delete(client);
-          for (const [serverId, handle] of this.serverHandles) {
-            if (handle.client === client) this.serverHandles.delete(serverId);
-          }
-          for (const [toolName, handle] of this.toolHandles) {
-            if (handle.client === client) this.toolHandles.delete(toolName);
-          }
-        }
-      }),
-    );
-    if (this.clientReferenceCounts.size === 0) {
-      this.closed = true;
-      this.closing = false;
+          this.clientReferenceCounts.delete(client);
+        }),
+      );
+      if (this.clientReferenceCounts.size === 0) {
+        this.closed = true;
+        this.closing = false;
+      }
+    })();
+    this.retireAttempt = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (this.retireAttempt === attempt) this.retireAttempt = undefined;
     }
   }
 
