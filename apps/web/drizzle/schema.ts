@@ -3462,10 +3462,21 @@ export const appOperationApprovals = pgTable(
       "external_approval_binding",
     ).$type<RunnerExternalApprovalBinding>(),
     authorityRevision: text("authority_revision"),
+    lifecycleVersion: text("lifecycle_version", {
+      enum: ["legacy_v1", "interaction_v2"],
+    })
+      .notNull()
+      .default("legacy_v1"),
+    interactionId: text("interaction_id").references(
+      () => threadInteractions.id,
+      { onDelete: "cascade" },
+    ),
+    availabilityStatus: text("availability_status", {
+      enum: ["available", "consumed", "expired"],
+    }),
     status: text("status", {
       enum: ["pending", "approved", "denied", "consumed", "expired"],
     })
-      .notNull()
       .default("pending"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     decidedByUserId: text("decided_by_user_id").references(() => users.id, {
@@ -3508,15 +3519,37 @@ export const appOperationApprovals = pgTable(
     ),
     check(
       "app_operation_approvals_status_check",
-      sql`${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`,
+      sql`${table.status} is null or ${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`,
+    ),
+    check(
+      "app_operation_approvals_lifecycle_version_check",
+      sql`${table.lifecycleVersion} in ('legacy_v1', 'interaction_v2')`,
+    ),
+    check(
+      "app_operation_approvals_availability_status_check",
+      sql`${table.availabilityStatus} is null or ${table.availabilityStatus} in ('available', 'consumed', 'expired')`,
+    ),
+    check(
+      "app_operation_approvals_ownership_check",
+      sql`(
+        (${table.lifecycleVersion} = 'legacy_v1' and ${table.status} is not null and ${table.interactionId} is null and ${table.availabilityStatus} is null)
+        or (${table.lifecycleVersion} = 'interaction_v2' and ${table.status} is null and ${table.decidedByUserId} is null and ${table.decidedAt} is null and ${table.availabilityStatus} is not null)
+      )`,
     ),
     check(
       "app_operation_approvals_lifecycle_check",
       sql`(
-        (${table.status} = 'pending' and ${table.decidedByUserId} is null and ${table.decidedAt} is null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
-        or (${table.status} in ('approved', 'denied') and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
-        or (${table.status} = 'consumed' and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
-        or (${table.status} = 'expired' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+        (${table.lifecycleVersion} = 'legacy_v1' and (
+          (${table.status} = 'pending' and ${table.decidedByUserId} is null and ${table.decidedAt} is null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+          or (${table.status} in ('approved', 'denied') and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+          or (${table.status} = 'consumed' and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
+          or (${table.status} = 'expired' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+        ))
+        or (${table.lifecycleVersion} = 'interaction_v2' and (
+          (${table.availabilityStatus} = 'available' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+          or (${table.availabilityStatus} = 'consumed' and ${table.interactionId} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
+          or (${table.availabilityStatus} = 'expired' and ${table.interactionId} is not null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+        ))
       )`,
     ),
   ],
@@ -4641,7 +4674,7 @@ export const threadInteractions = pgTable(
     responseFailureCode: text("response_failure_code"),
     responseFailureMessage: text("response_failure_message"),
     effectStatus: text("effect_status", {
-      enum: ["not_started", "started", "unknown"],
+      enum: ["not_started", "started", "committed", "unknown"],
     }),
     responseRetryable: boolean("response_retryable"),
     resolvedByUserId: text("resolved_by_user_id").references(() => users.id, {
