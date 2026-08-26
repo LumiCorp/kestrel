@@ -109,6 +109,10 @@ test("provider entry upgrades legacy requests and returns a strict V1 response",
     invoke({ version: "model_request_v2", input: "hello" } as never),
     /requirements must be an object/u,
   );
+  await assert.rejects(
+    invoke(createModelRequestV2(requestAuthoringV2())),
+    /requires an exact provider codec and response verifier/u,
+  );
   assert.throws(
     () =>
       normalizeModelResponseV1({
@@ -316,14 +320,24 @@ test("V2 registrations bind exact route, evidence, qualification, and each capab
   assert.equal(reordered.fingerprint, registration.fingerprint);
   for (const changed of [
     { route: { ...authoring.route, endpointCodec: "openai_chat_v2" } },
-    { adapterRevision: "adapter-revision-2" },
-    { credentialRevision: "credential-revision-2" },
   ]) {
     assert.notEqual(
       createModelRegistrationV2({ ...authoring, ...changed }).fingerprint,
       registration.fingerprint,
     );
   }
+  assert.notEqual(
+    createModelRegistrationV2(
+      registrationAuthoringV2("credential-revision-2"),
+    ).fingerprint,
+    registration.fingerprint,
+  );
+  assert.notEqual(
+    createModelRegistrationV2(
+      registrationAuthoringV2(undefined, "adapter-revision-2"),
+    ).fingerprint,
+    registration.fingerprint,
+  );
   assert.throws(
     () =>
       parseModelRegistrationV2({
@@ -367,6 +381,37 @@ test("V2 registrations bind exact route, evidence, qualification, and each capab
       }),
     /qualification revision is stale/u,
   );
+  assert.throws(
+    () =>
+      createModelRegistrationV2({
+        ...authoring,
+        qualification: { state: "pending" },
+      }),
+    /qualified registration reference/u,
+  );
+  assert.throws(
+    () =>
+      createModelRegistrationV2({
+        ...authoring,
+        capabilities: {
+          ...authoring.capabilities,
+          nativeTools: {
+            ...authoring.capabilities.nativeTools,
+            evidence: [
+              {
+                ...authoring.capabilities.nativeTools.evidence[0]!,
+                credentialRevision: "credential-revision-old",
+              },
+            ],
+          },
+        },
+      }),
+    /qualified model capability evidence is stale/u,
+  );
+  assert.throws(
+    () => createModelRegistrationV2(registrationAuthoringV2("Bearer secret")),
+    /safe revision identifier/u,
+  );
 });
 
 test("V2 provider-neutral requirements are canonical and reject conflicting legacy semantics", () => {
@@ -393,12 +438,27 @@ test("V2 provider-neutral requirements are canonical and reject conflicting lega
     () =>
       createModelRequestV2({
         ...requestAuthoringV2(),
-        requirements: {
-          ...requestAuthoringV2().requirements,
-          tools: { ...requestAuthoringV2().requirements.tools, choice: "auto" },
+        providerOptions: {
+          openai: { toolChoice: "required" },
         },
       }),
-    /conflicts with legacy provider tool choice/u,
+    /provider-specific contract semantics/u,
+  );
+  assert.throws(
+    () =>
+      createModelRequestV2({
+        ...requestAuthoringV2(),
+        providerOptions: { openai: { responseSchemaName: "wire-schema" } },
+      }),
+    /provider-specific contract semantics/u,
+  );
+  assert.throws(
+    () =>
+      createModelRequestV2({
+        ...requestAuthoringV2(),
+        providerOptions: { openai: { endpoint: "responses" } },
+      }),
+    /belongs in requirements.endpoint/u,
   );
   assert.throws(
     () =>
@@ -411,6 +471,49 @@ test("V2 provider-neutral requirements are canonical and reject conflicting lega
   assert.throws(
     () => parseModelRequestV2({ ...request, surprise: true }),
     /unknown field 'surprise'/u,
+  );
+  const continuationRequest = createModelRequestV2({
+    ...requestAuthoringV2(),
+    reasoning: {
+      mode: "provider_visible",
+      continuation: [
+        {
+          provider: "openai",
+          kind: "encrypted_content",
+          value: "opaque-continuation-a",
+        },
+      ],
+    },
+    requirements: {
+      ...requestAuthoringV2().requirements,
+      reasoning: {
+        mode: "provider_visible",
+        continuationKinds: ["encrypted_content"],
+      },
+    },
+  });
+  const { fingerprints: _fingerprints, ...continuationAuthoring } =
+    continuationRequest;
+  const changedContinuation = createModelRequestV2({
+    ...continuationAuthoring,
+    reasoning: {
+      ...continuationRequest.reasoning!,
+      continuation: [
+        {
+          provider: "openai",
+          kind: "encrypted_content",
+          value: "opaque-continuation-b",
+        },
+      ],
+    },
+  });
+  assert.equal(
+    changedContinuation.fingerprints.request,
+    continuationRequest.fingerprints.request,
+  );
+  assert.doesNotMatch(
+    canonicalModelRequestJsonV2(continuationRequest),
+    /opaque-continuation-a/u,
   );
 });
 
@@ -438,6 +541,32 @@ test("V1 compatibility is explicit and legacy registrations are plain-text-only"
   assert.equal(legacyRequest.requirements.output.assurance, "json_syntax");
   assert.equal(legacyRequest.requirements.tools.choice, "auto");
   assert.equal(legacyRequest.requirements.tools.parallelism, "forbidden");
+  const schemaNamedLegacyRequest = adaptModelRequestV1ToV2(
+    adaptModelRequestV0ToV1({
+      input: "hello",
+      responseFormat: "json",
+      providerOptions: {
+        openai: {
+          endpoint: "responses",
+          responseSchemaName: "wire-schema",
+          toolChoice: "required",
+          parallelToolCalls: false,
+        },
+      },
+      tools: [toolSpec()],
+    }),
+  );
+  assert.equal(
+    schemaNamedLegacyRequest.requirements.output.schemaName,
+    "wire-schema",
+  );
+  assert.equal(schemaNamedLegacyRequest.requirements.endpoint, "responses");
+  assert.equal(schemaNamedLegacyRequest.requirements.tools.choice, "required");
+  assert.equal(
+    schemaNamedLegacyRequest.requirements.tools.parallelism,
+    "forbidden",
+  );
+  assert.equal(schemaNamedLegacyRequest.providerOptions, undefined);
   assert.throws(
     () =>
       adaptModelRequestV1ToV2(
@@ -486,13 +615,22 @@ test("V2 response terminals carry validation proof without raw provider payloads
       }),
     /requires failed validation/u,
   );
-  assert.equal(
-    normalizeModelResponseV2({
+  assert.throws(
+    () =>
+      normalizeModelResponseV2({
       text: "legacy",
       toolIntents: [],
       provider: { name: "openai", model: "gpt-test", endpoint: "chat" },
-    }).version,
-    MODEL_RESPONSE_V2_VERSION,
+      }),
+    /cannot become V2 without terminal and validation proof/u,
+  );
+  assert.throws(
+    () =>
+      parseModelResponseV2({
+        ...response,
+        validation: { state: "passed" },
+      }),
+    /requires schema or tool-surface proof/u,
   );
   assert.equal(
     parseModelResponseV2({
@@ -685,14 +823,17 @@ function registrationAuthoring(): ModelRegistrationAuthoringV1 {
   };
 }
 
-function registrationAuthoringV2(): ModelRegistrationAuthoringV2 {
+function registrationAuthoringV2(
+  credentialRevision = "credential-revision-1",
+  adapterRevision = "adapter-revision-1",
+): ModelRegistrationAuthoringV2 {
   const providerEvidence = [
     {
       source: "provider" as const,
       observedRevision: "provider-revision-1",
       observedAt: "2026-08-26T12:00:00.000Z",
-      adapterRevision: "adapter-revision-1",
-      credentialRevision: "credential-revision-1",
+      adapterRevision,
+      credentialRevision,
       retainedPayloadHash: hash(),
     },
   ];
@@ -701,8 +842,8 @@ function registrationAuthoringV2(): ModelRegistrationAuthoringV2 {
       source: "qualification" as const,
       observedRevision: "provider-revision-1",
       observedAt: "2026-08-26T12:01:00.000Z",
-      adapterRevision: "adapter-revision-1",
-      credentialRevision: "credential-revision-1",
+      adapterRevision,
+      credentialRevision,
       qualificationRevision: "qualification-revision-1",
       retainedPayloadHash: hash("b"),
     },
@@ -729,8 +870,8 @@ function registrationAuthoringV2(): ModelRegistrationAuthoringV2 {
       },
     },
     revision: "provider-revision-1",
-    adapterRevision: "adapter-revision-1",
-    credentialRevision: "credential-revision-1",
+    adapterRevision,
+    credentialRevision,
     providerEvidence,
     qualification: {
       state: "qualified",
@@ -773,13 +914,6 @@ function requestAuthoringV2() {
       additionalProperties: false,
     },
     tools: [toolSpec()],
-    providerOptions: {
-      openai: {
-        endpoint: "responses" as const,
-        toolChoice: "required",
-        parallelToolCalls: false,
-      },
-    },
     requirements: {
       runtimeRole: "agent_action",
       output: {

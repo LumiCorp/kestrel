@@ -7,7 +7,6 @@ import {
   normalizeModelRequestV1,
   normalizeModelRequestV2,
   normalizeModelResponseV1,
-  normalizeModelResponseV2,
 } from "../src/kestrel/contracts/model-registration.js";
 
 export type VersionedProviderInvokerV1 = <TOutput>(
@@ -16,9 +15,9 @@ export type VersionedProviderInvokerV1 = <TOutput>(
 ) => Promise<ModelResponse<TOutput>>;
 
 /**
- * Provider entry preserves V1 behavior and carries V2 contracts intact. V2
- * callers receive a V2 terminal envelope; provider codecs remain responsible
- * for their own transport behavior until their dedicated slices land.
+ * Provider entry preserves V1 behavior. V2 calls must enter through an exact
+ * codec and verifier; the V1 adapters cannot truthfully satisfy V2
+ * requirements or produce its terminal proof.
  */
 export function createVersionedProviderInvokerV1(
   invoke: VersionedProviderInvokerV1,
@@ -28,11 +27,10 @@ export function createVersionedProviderInvokerV1(
     options?: ModelGatewayCallOptions,
   ): Promise<ModelResponse<TOutput>> => {
     if ((request as { version?: string }).version === "model_request_v2") {
-      const response = await invoke<TOutput>(
-        normalizeModelRequestV2(request),
-        options,
+      normalizeModelRequestV2(request);
+      throw new Error(
+        "model_request_v2 requires an exact provider codec and response verifier",
       );
-      return normalizeModelResponseV2(response);
     }
     const response = await invoke<TOutput>(
       normalizeModelRequestV1(request),

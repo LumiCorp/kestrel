@@ -1029,8 +1029,14 @@ export function normalizeModelRequestV2(value: ModelRequest): ModelRequestV2 {
 export function adaptModelRequestV1ToV2(value: ModelRequestV1): ModelRequestV2 {
   const request = parseModelRequestV1(value);
   const requirements = deriveLegacyRequirementsV2(request);
+  const providerOptions = stripLegacyProviderSemanticOptionsV2(
+    request.providerOptions,
+  );
   return createModelRequestV2({
     ...request,
+    ...(providerOptions !== undefined
+      ? { providerOptions }
+      : { providerOptions: undefined }),
     version: MODEL_REQUEST_V2_VERSION,
     requirements,
   });
@@ -1039,7 +1045,7 @@ export function adaptModelRequestV1ToV2(value: ModelRequestV1): ModelRequestV2 {
 export function fingerprintModelRequestV2(
   value: Omit<ModelRequestV2, "fingerprints">,
 ): string {
-  return hashCanonical(parseModelRequestV2Authoring(value));
+  return hashCanonical(projectModelRequestForCanonicalV2(value));
 }
 
 export function fingerprintModelSchemaV2(
@@ -1058,7 +1064,31 @@ export function fingerprintModelToolSurfaceV2(
 }
 
 export function canonicalModelRequestJsonV2(value: ModelRequestV2): string {
-  return canonicalJson(parseModelRequestV2(value));
+  return canonicalJson(projectModelRequestForCanonicalV2(value));
+}
+
+function projectModelRequestForCanonicalV2(
+  value: Omit<ModelRequestV2, "fingerprints"> | ModelRequestV2,
+): Record<string, unknown> {
+  const continuations = value.reasoning?.continuation;
+  return {
+    ...value,
+    ...(value.reasoning !== undefined
+      ? {
+          reasoning: {
+            ...value.reasoning,
+            ...(continuations !== undefined
+              ? {
+                  continuation: continuations.map(({ provider, kind }) => ({
+                    provider,
+                    kind,
+                  })),
+                }
+              : {}),
+          },
+        }
+      : {}),
+  };
 }
 
 export function createModelRegistrationV2(
@@ -1263,16 +1293,9 @@ export function normalizeModelResponseV2<TOutput>(
   if (record.version === MODEL_RESPONSE_V2_VERSION) {
     return parseModelResponseV2<TOutput>(value);
   }
-  const response = normalizeModelResponseV1(value);
-  return parseModelResponseV2<TOutput>({
-    ...response,
-    version: MODEL_RESPONSE_V2_VERSION,
-    terminal: {
-      state: "completed",
-      visibleOutputStarted: Boolean(response.text),
-    },
-    validation: { state: "not_requested" },
-  });
+  throw new Error(
+    "a V1 model response cannot become V2 without terminal and validation proof",
+  );
 }
 
 function parseModelRequestV2Authoring(
@@ -1299,6 +1322,10 @@ function parseModelRequestV2Authoring(
     ...coreRecord,
     version: MODEL_REQUEST_VERSION,
   });
+  assertV2ProviderOptionsAreTransportOnly(core.providerOptions);
+  const providerOptions = stripLegacyProviderSemanticOptionsV2(
+    core.providerOptions,
+  );
   if (core.metadata !== undefined) {
     assertSecretFreeMetadata(core.metadata, "model request V2.metadata");
   }
@@ -1308,6 +1335,9 @@ function parseModelRequestV2Authoring(
   );
   return deepFreeze({
     ...core,
+    ...(providerOptions !== undefined
+      ? { providerOptions }
+      : { providerOptions: undefined }),
     version: MODEL_REQUEST_V2_VERSION,
     requirements,
   });
@@ -1595,12 +1625,17 @@ function deriveLegacyRequirementsV2(
     "parallelToolCalls",
   );
   const optionEndpoints = legacyProviderOptionValues(request, "endpoint");
+  const optionSchemaNames = legacyProviderOptionValues(
+    request,
+    "responseSchemaName",
+  );
   const choiceValue = uniqueLegacyOption(optionToolChoices, "tool choice");
   const parallelValue = uniqueLegacyOption(
     optionParallelism,
     "parallel tool call",
   );
   const endpointValue = uniqueLegacyOption(optionEndpoints, "endpoint");
+  const schemaName = uniqueLegacyOption(optionSchemaNames, "response schema name");
   const toolNames = request.tools?.map((tool) => tool.name) ?? [];
   const choice =
     choiceValue === undefined
@@ -1618,9 +1653,14 @@ function deriveLegacyRequirementsV2(
       ? {
           kind: "json_schema" as const,
           assurance: "local_schema_validation" as const,
+          ...(schemaName !== undefined ? { schemaName } : {}),
         }
       : request.responseFormat === "json"
-        ? { kind: "json_object" as const, assurance: "json_syntax" as const }
+        ? {
+            kind: "json_object" as const,
+            assurance: "json_syntax" as const,
+            ...(schemaName !== undefined ? { schemaName } : {}),
+          }
         : { kind: "text" as const, assurance: "none" as const };
   return parseModelRequestRequirementsV2(
     {
@@ -1685,6 +1725,26 @@ function parseModelRegistrationAuthoringV2(
     "model registration V2.providerEvidence",
   );
   const capabilities = parseModelCapabilitySetV2(record.capabilities);
+  const revision = requireSafeRevision(
+    record.revision,
+    "model registration V2.revision",
+  );
+  const adapterRevision = requireSafeRevision(
+    record.adapterRevision,
+    "model registration V2.adapterRevision",
+  );
+  const credentialRevision = optionalSafeRevision(
+    record.credentialRevision,
+    "model registration V2.credentialRevision",
+  );
+  assertCurrentModelRegistrationEvidenceV2({
+    revision,
+    adapterRevision,
+    credentialRevision,
+    providerEvidence,
+    qualification,
+    capabilities,
+  });
   return deepFreeze({
     version: MODEL_REGISTRATION_V2_VERSION,
     registrationId: requireString(
@@ -1695,22 +1755,9 @@ function parseModelRegistrationAuthoringV2(
     modelId: requireString(record.modelId, "model registration V2.modelId"),
     providerConfiguration,
     route,
-    revision: requireString(record.revision, "model registration V2.revision"),
-    adapterRevision: requireString(
-      record.adapterRevision,
-      "model registration V2.adapterRevision",
-    ),
-    ...(optionalString(
-      record.credentialRevision,
-      "model registration V2.credentialRevision",
-    ) !== undefined
-      ? {
-          credentialRevision: optionalString(
-            record.credentialRevision,
-            "model registration V2.credentialRevision",
-          ),
-        }
-      : {}),
+    revision,
+    adapterRevision,
+    ...(credentialRevision !== undefined ? { credentialRevision } : {}),
     providerEvidence,
     qualification,
     capabilities,
@@ -1780,7 +1827,7 @@ function parseQualificationReferenceV2(
     ["pending", "qualified", "failed", "stale", "legacy_unqualified"] as const,
     "model qualification reference V2.state",
   );
-  const revision = optionalString(
+  const revision = optionalSafeRevision(
     record.revision,
     "model qualification reference V2.revision",
   );
@@ -1827,6 +1874,83 @@ function parseQualificationReferenceV2(
     ...(checkedAt !== undefined ? { checkedAt } : {}),
     ...(probeHash !== undefined ? { probeHash } : {}),
   };
+}
+
+function assertCurrentModelRegistrationEvidenceV2(value: {
+  revision: string;
+  adapterRevision: string;
+  credentialRevision: string | undefined;
+  providerEvidence: readonly ModelCapabilityEvidenceV2[];
+  qualification: ModelQualificationReferenceV2;
+  capabilities: ModelCapabilitySetV2;
+}): void {
+  for (const evidence of value.providerEvidence) {
+    if (!evidenceMatchesRegistrationV2(evidence, value)) {
+      throw new Error(
+        "model registration V2.providerEvidence is stale for its registration revision",
+      );
+    }
+  }
+  for (const evidence of value.capabilities.limits.evidence) {
+    if (!evidenceMatchesRegistrationV2(evidence, value)) {
+      throw new Error(
+        "model registration V2 limits evidence is stale for its registration revision",
+      );
+    }
+  }
+
+  const claims: readonly ModelCapabilityClaimV2[] = [
+    value.capabilities.jsonSyntax,
+    value.capabilities.localSchemaValidation,
+    value.capabilities.providerStrictSchema,
+    value.capabilities.nativeTools,
+    value.capabilities.requiredToolChoice,
+    value.capabilities.strictToolInputs,
+    value.capabilities.parallelToolCalls,
+    value.capabilities.reasoning,
+    value.capabilities.continuation,
+    value.capabilities.streaming,
+    value.capabilities.inputModalities.text,
+    value.capabilities.inputModalities.image,
+    value.capabilities.cache,
+  ];
+  for (const claim of claims) {
+    if (claim.state !== "qualified") continue;
+    if (value.qualification.state !== "qualified") {
+      throw new Error(
+        "qualified model capability requires a qualified registration reference",
+      );
+    }
+    const qualificationRevision = value.qualification.revision;
+    if (
+      qualificationRevision === undefined ||
+      !claim.evidence.some(
+        (evidence) =>
+          evidence.source === "qualification" &&
+          evidence.qualificationRevision === qualificationRevision &&
+          evidenceMatchesRegistrationV2(evidence, value),
+      )
+    ) {
+      throw new Error(
+        "qualified model capability evidence is stale for its registration",
+      );
+    }
+  }
+}
+
+function evidenceMatchesRegistrationV2(
+  evidence: ModelCapabilityEvidenceV2,
+  registration: {
+    revision: string;
+    adapterRevision: string;
+    credentialRevision: string | undefined;
+  },
+): boolean {
+  return (
+    evidence.observedRevision === registration.revision &&
+    evidence.adapterRevision === registration.adapterRevision &&
+    evidence.credentialRevision === registration.credentialRevision
+  );
 }
 
 function parseModelCapabilitySetV2(value: unknown): ModelCapabilitySetV2 {
@@ -2032,11 +2156,11 @@ function parseCapabilityEvidenceV2(
     record.observedAt === undefined
       ? undefined
       : requireIsoTimestamp(record.observedAt, `${label}.observedAt`);
-  const credentialRevision = optionalString(
+  const credentialRevision = optionalSafeRevision(
     record.credentialRevision,
     `${label}.credentialRevision`,
   );
-  const qualificationRevision = optionalString(
+  const qualificationRevision = optionalSafeRevision(
     record.qualificationRevision,
     `${label}.qualificationRevision`,
   );
@@ -2060,12 +2184,12 @@ function parseCapabilityEvidenceV2(
   }
   return {
     source,
-    observedRevision: requireString(
+    observedRevision: requireSafeRevision(
       record.observedRevision,
       `${label}.observedRevision`,
     ),
     ...(observedAt !== undefined ? { observedAt } : {}),
-    adapterRevision: requireString(
+    adapterRevision: requireSafeRevision(
       record.adapterRevision,
       `${label}.adapterRevision`,
     ),
@@ -2149,6 +2273,23 @@ function parseModelResponseValidationV2(
   if (state === "failed" && failureCode === undefined) {
     throw new Error("failed model response V2 validation requires failureCode");
   }
+  if (
+    state === "passed" &&
+    schemaHash === undefined &&
+    toolSurfaceHash === undefined
+  ) {
+    throw new Error(
+      "passed model response V2 validation requires schema or tool-surface proof",
+    );
+  }
+  if (
+    state === "not_requested" &&
+    (schemaHash !== undefined || toolSurfaceHash !== undefined)
+  ) {
+    throw new Error(
+      "not_requested model response V2 validation cannot include validation proof",
+    );
+  }
   if (state !== "failed" && failureCode !== undefined) {
     throw new Error(
       "only failed model response V2 validation may include failureCode",
@@ -2194,6 +2335,67 @@ function assertLegacyToolOptionsAgree(
   }
 }
 
+function assertV2ProviderOptionsAreTransportOnly(
+  options: ProviderOptions | undefined,
+): void {
+  const entries = [
+    ["openrouter", options?.openrouter],
+    ["openai", options?.openai],
+    ["anthropic", options?.anthropic],
+  ] as const;
+  for (const [provider, value] of entries) {
+    if (
+      value?.toolChoice !== undefined ||
+      value?.parallelToolCalls !== undefined ||
+      value?.responseSchemaName !== undefined
+    ) {
+      throw new Error(
+        `model request V2.providerOptions.${provider} contains provider-specific contract semantics`,
+      );
+    }
+  }
+  if (
+    options?.openrouter?.endpoint !== undefined ||
+    options?.openai?.endpoint !== undefined
+  ) {
+    throw new Error(
+      "model request V2.providerOptions endpoint belongs in requirements.endpoint",
+    );
+  }
+}
+
+function stripLegacyProviderSemanticOptionsV2(
+  options: ProviderOptions | undefined,
+): ProviderOptions | undefined {
+  if (options === undefined) return undefined;
+  const {
+    endpoint: _openRouterEndpoint,
+    toolChoice: _openRouterToolChoice,
+    parallelToolCalls: _openRouterParallelToolCalls,
+    responseSchemaName: _openRouterResponseSchemaName,
+    ...openrouter
+  } = options.openrouter ?? {};
+  const {
+    endpoint: _openAiEndpoint,
+    toolChoice: _openAiToolChoice,
+    parallelToolCalls: _openAiParallelToolCalls,
+    responseSchemaName: _openAiResponseSchemaName,
+    ...openai
+  } = options.openai ?? {};
+  const {
+    toolChoice: _anthropicToolChoice,
+    parallelToolCalls: _anthropicParallelToolCalls,
+    responseSchemaName: _anthropicResponseSchemaName,
+    ...anthropic
+  } = options.anthropic ?? {};
+  const sanitized: ProviderOptions = {
+    ...(Object.keys(openrouter).length > 0 ? { openrouter } : {}),
+    ...(Object.keys(openai).length > 0 ? { openai } : {}),
+    ...(Object.keys(anthropic).length > 0 ? { anthropic } : {}),
+  };
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
 function assertLegacyEndpointOptionsAgree(
   request: ModelRequestV1,
   endpoint: ModelRequestRequirementsV2["endpoint"],
@@ -2211,7 +2413,11 @@ function assertLegacyEndpointOptionsAgree(
 
 function legacyProviderOptionValues(
   request: ModelRequestV1,
-  field: "toolChoice" | "parallelToolCalls" | "endpoint",
+  field:
+    | "toolChoice"
+    | "parallelToolCalls"
+    | "endpoint"
+    | "responseSchemaName",
 ): Array<string | boolean> {
   const options = request.providerOptions;
   if (options === undefined) return [];
@@ -3055,6 +3261,21 @@ function optionalString(
   return value === undefined
     ? undefined
     : requireString(value, label, allowEmpty);
+}
+
+function requireSafeRevision(value: unknown, label: string): string {
+  const revision = requireString(value, label);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(revision)) {
+    throw new Error(`${label} must be a safe revision identifier`);
+  }
+  return revision;
+}
+
+function optionalSafeRevision(
+  value: unknown,
+  label: string,
+): string | undefined {
+  return value === undefined ? undefined : requireSafeRevision(value, label);
 }
 
 function requireBoolean(value: unknown, label: string): boolean {
