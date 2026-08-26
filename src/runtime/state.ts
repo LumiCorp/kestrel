@@ -3,7 +3,9 @@ import type {
   StateNodeRef,
 } from "../kestrel/contracts/base.js";
 import { parseRunnerHostedToolApprovalInteractionV2 } from "@kestrel-agents/protocol";
+import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
 import { parseDurablePreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
+import { projectHostedToolApprovalInteractionV2 } from "./assistantResponseContract.js";
 import {
   normalizeVisibleTodoState,
   validateVisibleTodoState,
@@ -430,6 +432,17 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
         ) {
           throw new Error(
             "hosted tool approval must use one canonical prepared invocation",
+          );
+        }
+        const projectedInteraction = projectHostedToolApprovalInteractionV2({
+          preparedToolCall: prepared,
+          requestId: parsedInteraction.requestId,
+        });
+        if (
+          canonicalJson(parsedInteraction) !== canonicalJson(projectedInteraction)
+        ) {
+          throw new Error(
+            "hosted tool approval card must match its canonical prepared invocation",
           );
         }
       } catch (error) {

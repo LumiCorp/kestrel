@@ -99,7 +99,12 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
   }
   const preparedApprovalInteraction =
     waitFor.kind === "approval"
-      ? buildPreparedApprovalInteractionV2(metadata, requestId)
+      ? metadata?.preparedToolCall === undefined
+        ? undefined
+        : projectHostedToolApprovalInteractionV2({
+            preparedToolCall: metadata.preparedToolCall,
+            requestId,
+          })
       : undefined;
   const interaction: RuntimeInteractionRequest =
     authoredStructuredReview?.kind === "structured_review"
@@ -313,12 +318,11 @@ function readApprovalPresentation(
   };
 }
 
-function buildPreparedApprovalInteractionV2(
-  metadata: Record<string, unknown> | undefined,
-  requestId: string | undefined,
-): RuntimeHostedToolApprovalInteractionV2 | undefined {
-  if (metadata?.preparedToolCall === undefined) return;
-  const prepared = parsePreparedToolCallV1(metadata.preparedToolCall);
+export function projectHostedToolApprovalInteractionV2(input: {
+  preparedToolCall: unknown;
+  requestId?: string | undefined;
+}): RuntimeHostedToolApprovalInteractionV2 {
+  const prepared = parsePreparedToolCallV1(input.preparedToolCall);
   if (
     prepared.stableAuthority === undefined ||
     prepared.stableToolIdentity === undefined ||
@@ -330,7 +334,7 @@ function buildPreparedApprovalInteractionV2(
     );
   }
   const effectiveRequestId =
-    requestId ?? prepared.approval?.approvalId ?? prepared.callId;
+    input.requestId ?? prepared.approval?.approvalId ?? prepared.callId;
   const reasonCode = readToolApprovalReasonCode(prepared.policy.reasonCode);
   const binding = prepared.approval?.externalApprovalBinding;
   const presentation = buildToolApprovalPresentation({

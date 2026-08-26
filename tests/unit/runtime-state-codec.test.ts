@@ -15,6 +15,7 @@ import {
   hashCanonical,
 } from "../../src/kestrel/contracts/tool-contract.js";
 import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import { projectHostedToolApprovalInteractionV2 } from "../../src/runtime/assistantResponseContract.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
 
 
@@ -297,30 +298,10 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
       },
     },
   });
-  const interaction = {
-    version: "runner_hosted_tool_approval_interaction_v2" as const,
+  const interaction = projectHostedToolApprovalInteractionV2({
+    preparedToolCall: prepared,
     requestId: "approval-restart-1",
-    kind: "approval" as const,
-    eventType: "user.approval" as const,
-    prompt: "Approve search?",
-    inputSchema: {
-      type: "object" as const,
-      additionalProperties: false as const,
-      required: ["decision"] as ["decision"],
-      properties: {
-        decision: {
-          type: "string" as const,
-          enum: ["decline", "approve_once"] as ["decline", "approve_once"],
-        },
-      },
-    },
-    approval: {
-      preparedInvocationId: prepared.callId,
-      toolName: descriptor.toolId,
-      stableToolIdentity: prepared.stableToolIdentity,
-      presentation: { title: "Approve search" },
-    },
-  };
+  });
   const persisted = normalizeRuntimeStateForPersist({
     runtime: { schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION },
     agent: {
@@ -376,6 +357,63 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
   const error = validateRuntimeSessionState(divergent);
   assert.equal(error?.code, "RUNTIME_STATE_INVALID");
   assert.equal(error?.details?.path, "state.agent.waitingFor.interaction");
+
+  const forgedCards = [
+    {
+      name: "prompt",
+      mutate(card: Record<string, unknown>) {
+        card.prompt = "Approve a harmless search?";
+      },
+    },
+    {
+      name: "coherent tool identity",
+      mutate(card: Record<string, unknown>) {
+        const approval = card.approval as Record<string, unknown>;
+        approval.toolName = "forged.tool";
+        approval.stableToolIdentity = {
+          ...(approval.stableToolIdentity as Record<string, unknown>),
+          toolId: "forged.tool",
+        };
+      },
+    },
+    {
+      name: "stable identity revision",
+      mutate(card: Record<string, unknown>) {
+        const approval = card.approval as Record<string, unknown>;
+        approval.stableToolIdentity = {
+          ...(approval.stableToolIdentity as Record<string, unknown>),
+          approvalAuthorityRevision: "forged-authority-revision",
+        };
+      },
+    },
+    {
+      name: "presentation",
+      mutate(card: Record<string, unknown>) {
+        const approval = card.approval as Record<string, unknown>;
+        approval.presentation = {
+          ...(approval.presentation as Record<string, unknown>),
+          title: "Approve a different operation",
+        };
+      },
+    },
+  ];
+  for (const forgedCard of forgedCards) {
+    const forged = structuredClone(restarted);
+    const card = (
+      (forged.agent as Record<string, unknown>).waitingFor as Record<
+        string,
+        unknown
+      >
+    ).interaction as Record<string, unknown>;
+    forgedCard.mutate(card);
+    const forgedError = validateRuntimeSessionState(forged);
+    assert.equal(forgedError?.code, "RUNTIME_STATE_INVALID", forgedCard.name);
+    assert.match(
+      String(forgedError?.details?.cause),
+      /canonical prepared invocation/u,
+      forgedCard.name,
+    );
+  }
 });
 
 test("runtime state rejects a mixed V2 interaction carrying legacy approval fields", () => {
