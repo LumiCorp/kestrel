@@ -43,18 +43,18 @@ V3. Neither version may be reconstructed or silently converted.
 
 Complete current provider state before changing anything.
 
-| Target | Current production state | Required action | Required proof | Status |
-| --- | --- | --- | --- | --- |
-| PostgreSQL | Record migration head | Apply additive migrations through the native `one` build | Migration and build succeeded | Pending |
-| Vercel `one` | Record deployment ID and commit | Promote compatibility commit, then activation commit | Exact deployment, health, approval API | Pending |
-| Vercel `docs` | Record deployment ID and commit | Native deployment collateral for both promotions | Exact build and production URL | Pending |
-| Workspace Runtime | Inventory every Environment image | Publish compatibility pair, then V3 pair | Local image E2E, disposable canary, live canary Environment | Pending |
-| Environment Router | Inventory every Environment image | Publish with Workspace Runtime under the same tag | Pair smoke, operation, Workspace and Preview canaries | Pending |
-| turn-worker | Inventory every started and stopped Machine | Publish compatibility image, then V3 image; update one Machine at a time | Worker check, durable turn, hosted approval proof | Pending |
-| Mobile API | Part of `one`; no separate binary here | Keep V2/V3 and boolean drain readers during rollout | Mobile contract tests and one V3 decision | Pending |
-| control-worker | Record health only | No image change | Healthy before Environment operations | Unaffected |
-| preview-edge | Record current image | No change | None beyond production health | Unaffected |
-| runpod-worker / managed RunPod | Record current state | No change and no spend | None | Unaffected |
+| Target                         | Current production state                    | Required action                                                          | Required proof                                              | Status     |
+| ------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------- | ---------- |
+| PostgreSQL                     | Record migration head                       | Apply additive migrations through the native `one` build                 | Migration and build succeeded                               | Pending    |
+| Vercel `one`                   | Record deployment ID and commit             | Promote compatibility commit, then activation commit                     | Exact deployment, health, approval API                      | Pending    |
+| Vercel `docs`                  | Record deployment ID and commit             | Native deployment collateral for both promotions                         | Exact build and production URL                              | Pending    |
+| Workspace Runtime              | Inventory every Environment image           | Publish compatibility pair, then V3 pair                                 | Local image E2E, disposable canary, live canary Environment | Pending    |
+| Environment Router             | Inventory every Environment image           | Publish with Workspace Runtime under the same tag                        | Pair smoke, operation, Workspace and Preview canaries       | Pending    |
+| turn-worker                    | Inventory every started and stopped Machine | Publish compatibility image, then V3 image; update one Machine at a time | Worker check, durable turn, hosted approval proof           | Pending    |
+| Mobile API                     | Part of `one`; no separate binary here      | Keep V2/V3 and boolean drain readers during rollout                      | Mobile contract tests and one V3 decision                   | Pending    |
+| control-worker                 | Record health only                          | No image change                                                          | Healthy before Environment operations                       | Unaffected |
+| preview-edge                   | Record current image                        | No change                                                                | None beyond production health                               | Unaffected |
+| runpod-worker / managed RunPod | Record current state                        | No change and no spend                                                   | None                                                        | Unaffected |
 
 Stop if the repository delta proves an “unaffected” target changed.
 
@@ -117,11 +117,23 @@ bash deploy/fly/kestrel-one-turn-worker/smoke.sh \
 ```
 
 The compatibility images must report V2 as their hosted approval producer.
-The activation Workspace Runtime and turn-worker images must report V3. Run a
-real approved model through the exact local images and retain the participating
-image IDs. If the repository cannot route that real-model path through these
-local images, stop here and repair that test seam; source tests, image health,
-or a later production canary do not replace it.
+The activation Workspace Runtime and turn-worker images must report V3. For
+each candidate, run a real approved model through the exact prebuilt Runtime
+pair and retain the participating image IDs:
+
+```bash
+pnpm --dir apps/workspace-runtime canary:images:local -- \
+  --workspace-image local/kestrel-workspace-runtime:<candidate-tag> \
+  --router-image local/kestrel-environment-router:<candidate-tag>
+```
+
+The result must report `imageSource: "prebuilt"` and the same image IDs recorded
+by `docker image inspect`. The turn-worker does not participate in this local
+Runtime-pair path and remains gated by its extraction/startup smoke above and
+the production durable-turn canary in Stage 2. If the repository cannot route
+the real-model path through the prebuilt Runtime pair, stop here and repair
+that test seam; source tests, image health, or a later production canary do not
+replace it.
 
 **Resume evidence:** both commit SHAs, four validation results, Web build,
 three image IDs and smokes for each commit, and exact local-image real-model

@@ -146,6 +146,21 @@ test("attachment-owning image smokes gate publication on exact-build canary evid
   assert.match(workspaceDockerfile, /KESTREL_BUILD_ID=\$KESTREL_BUILD_ID/u);
 });
 
+test("local real-model qualification accepts and preserves exact prebuilt runtime images", async () => {
+  const canary = await readFile(
+    "apps/workspace-runtime/scripts/local-image-pair-canary.ts",
+    "utf8",
+  );
+  assert.match(canary, /--workspace-image/u);
+  assert.match(canary, /--router-image/u);
+  assert.match(canary, /must be provided together/u);
+  assert.match(canary, /imageSource: selectedImages \? "prebuilt"/u);
+  assert.match(
+    canary,
+    /if \(!selectedImages\) \{[\s\S]*docker\("image", "rm"/u,
+  );
+});
+
 test("partial Docker build contexts include root pnpm patches before install", async () => {
   const dockerfiles = await Promise.all(
     [
