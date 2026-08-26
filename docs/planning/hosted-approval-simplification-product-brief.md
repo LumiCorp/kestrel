@@ -254,8 +254,12 @@ silently converts an old pending interaction into the new authority model.
 - `workspace_hosted` must use a dedicated `hosted_workspace` policy pack.
 - The hosted pack must permit `read_only`, `sandboxed_only`, and
   `external_side_effect` tool classes.
-- The hosted pack must permit only `workspace.read`, `workspace.write`,
-  `shell.exec`, and `code.execute` approval capabilities.
+- The hosted pack must permit the capabilities already required by the hosted
+  surface: `workspace.read`, `workspace.write`, `shell.exec`,
+  `mission_control.work_item.write`, `network.call`, `code.execute`,
+  `mcp.invoke`, and `external.confirm`. App, MCP, and command visibility remain
+  separately constrained by their existing Environment and Project grants;
+  the pack is only the runtime ceiling.
 - The hosted pack must not set runtime-strict approval for ordinary hosted
   turns. Environment and Project policy must own Automatic, Ask First, and
   Blocked.

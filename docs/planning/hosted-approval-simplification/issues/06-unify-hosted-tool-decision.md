@@ -17,9 +17,11 @@ reachable under the default hosted profile.
 Add the dedicated `hosted_workspace` policy pack and bind new
 `workspace_hosted` profile resolutions to it. The pack must allow
 `read_only`, `sandboxed_only`, and `external_side_effect` classes. It must
-allow only `workspace.read`, `workspace.write`, `shell.exec`, and
-`code.execute` approval capabilities. It must leave runtime-strict approval
-off. Keep `ci_bot` unchanged.
+allow the hosted surface's existing `workspace.read`, `workspace.write`,
+`shell.exec`, `mission_control.work_item.write`, `network.call`,
+`code.execute`, `mcp.invoke`, and `external.confirm` approval capabilities. It
+must leave runtime-strict approval off. App, MCP, and command policy still
+controls actual visibility below this ceiling. Keep `ci_bot` unchanged.
 
 Replace pack-name satisfiability assumptions with descriptor-level checks
 against the compiled policy. Every external-side-effect descriptor must name
@@ -85,9 +87,9 @@ authority in place.
 
 ## Done when
 
-- The default `workspace_hosted` profile uses `hosted_workspace`, exposes
-  `exec_command` to the model under Environment or Project Ask First, and keeps
-  `ci_bot` behavior unchanged.
+- The default `workspace_hosted` profile uses `hosted_workspace`; the inherited
+  Workspace App capability exposes `exec_command` under Environment or Project
+  Ask First and removes it under Blocked. `ci_bot` behavior remains unchanged.
 - Descriptor-level qualification rejects a required hosted tool denied by its
   compiled class or capability policy before any model request.
 - Catalog validation rejects an external-side-effect descriptor with no

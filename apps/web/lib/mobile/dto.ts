@@ -207,21 +207,17 @@ export function mobileInteractionDto(
     const approval = asRecord(interaction.requestEnvelope.approval);
     const presentation = asRecord(approval?.presentation);
     const policy = asRecord(presentation?.policy);
+    const currentApprovalActionable =
+      interaction.approvalPolicy !== undefined &&
+      interaction.approvalPolicy.environmentApprovalMode !== "deny" &&
+      interaction.approvalPolicy.projectApprovalMode !== "deny" &&
+      interaction.approvalPolicy.subjectApprovalMode !== "deny" &&
+      interaction.approvalPolicy.approvalResourceAvailable !== false;
     const rememberEligible =
       version === "runner_hosted_tool_approval_interaction_v3" &&
-      policy?.reasonCode === "environment_policy" &&
-      interaction.approvalPolicy?.reasonCode === "environment_policy" &&
-      interaction.approvalPolicy.environmentApprovalMode === "ask" &&
-      interaction.approvalPolicy.projectApprovalMode !== "deny" &&
-      interaction.approvalPolicy.minimumApprovalMode === "auto" &&
-      interaction.approvalPolicy.subjectApprovalMode == null &&
-      interaction.approvalPolicy.approvalResourceAvailable !== false;
-    const currentApprovalActionable = !(
-        interaction.approvalPolicy?.environmentApprovalMode === "deny" ||
-        interaction.approvalPolicy?.projectApprovalMode === "deny" ||
-        interaction.approvalPolicy?.subjectApprovalMode === "deny" ||
-        interaction.approvalPolicy?.approvalResourceAvailable === false
-    );
+      policy?.rememberApprovalEligible === true &&
+      interaction.approvalPolicy?.rememberApprovalEligible === true &&
+      currentApprovalActionable;
     return {
       id,
       kind: "approval" as const,

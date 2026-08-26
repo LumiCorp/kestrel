@@ -622,15 +622,12 @@ function isRememberApprovalEligible(
   interaction: ThreadInteractionView,
 ): boolean {
   if (!isHostedV3Approval(interaction)) return false;
-  const policy = interaction.approvalPolicy;
-  if (!policy || policy.minimumApprovalMode !== "auto") return false;
-  return (
-    policy.reasonCode === "environment_policy" &&
-    policy.environmentApprovalMode === "ask" &&
-    policy.projectApprovalMode !== "deny" &&
-    policy.subjectApprovalMode == null &&
-    policy.approvalResourceAvailable !== false
-  );
+  const approval = readRecord(interaction.requestEnvelope.approval);
+  const presentation = readRecord(approval?.presentation);
+  const presentationPolicy = readRecord(presentation?.policy);
+  return presentationPolicy?.rememberApprovalEligible === true &&
+    interaction.approvalPolicy?.rememberApprovalEligible === true &&
+    isCurrentHostedApprovalActionable(interaction);
 }
 
 function isCurrentHostedApprovalActionable(
@@ -638,12 +635,11 @@ function isCurrentHostedApprovalActionable(
 ): boolean {
   if (!isStrictHostedApproval(interaction)) return true;
   const policy = interaction.approvalPolicy;
-  return !(
-    policy?.environmentApprovalMode === "deny" ||
-    policy?.projectApprovalMode === "deny" ||
-    policy?.subjectApprovalMode === "deny" ||
-    policy?.approvalResourceAvailable === false
-  );
+  return policy !== undefined &&
+    policy.environmentApprovalMode !== "deny" &&
+    policy.projectApprovalMode !== "deny" &&
+    policy.subjectApprovalMode !== "deny" &&
+    policy.approvalResourceAvailable !== false;
 }
 
 function approvalModeLabel(mode: "auto" | "ask" | "deny") {

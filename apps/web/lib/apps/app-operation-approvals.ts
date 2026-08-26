@@ -2,7 +2,9 @@ import "server-only";
 
 import { and, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import {
+  isRememberApprovalEligibleV1,
   parseRunnerExternalApprovalBinding,
+  resolveToolApprovalDispositionV1,
   RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   serializeCanonicalApprovalPayload,
   type StableToolApprovalIdentityV1,
@@ -598,6 +600,23 @@ export async function validateAppApprovalDecisionEligibilityInTransaction(
   const subjectRequiresApproval = subjectRestrictions.some(
     (restriction) => restriction.approvalMode === "ask",
   );
+  const currentPolicy = {
+    environment: environmentGrant?.approvalMode ?? "deny",
+    project: projectPolicy?.approvalMode ?? environmentGrant?.approvalMode ?? "deny",
+    ...(subjectBlocked
+      ? { subject: "deny" as const }
+      : subjectRequiresApproval
+        ? { subject: "ask" as const }
+        : {}),
+    minimum: minimumApprovalMode,
+  };
+  const currentDisposition = resolveToolApprovalDispositionV1({
+    ...currentPolicy,
+    authority: {
+      kind: "hosted_app_policy",
+      revision: approval.authorityRevision,
+    },
+  });
   if (
     !(thread && resource) ||
     environmentGrant?.enabled !== true ||
@@ -609,10 +628,10 @@ export async function validateAppApprovalDecisionEligibilityInTransaction(
     capability.approvalMode === "deny" ||
     subjectBlocked ||
     (input.decision === "remember_approval" &&
-      (environmentGrant.approvalMode !== "ask" ||
-        minimumApprovalMode !== "auto" ||
-        capability.approvalMode !== "ask" ||
-        subjectRequiresApproval))
+      !isRememberApprovalEligibleV1({
+        disposition: currentDisposition,
+        currentPolicy,
+      }))
   ) {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_ACCESS_DENIED");
   }

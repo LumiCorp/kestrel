@@ -179,7 +179,11 @@ export interface ExecutionProfileResolveCommandPayload {
     | "workspace_hosted";
   managedConfiguration?: Record<string, unknown> | undefined;
   authoringProfileId?: string | undefined;
+  exactToolNames?: string[] | undefined;
 }
+
+export type EffectiveToolDecisionV1 =
+  import("../../src/mode/contracts.js").EffectiveToolDecisionV1;
 
 export interface RunCancelCommandPayload {
   sessionId: string;
@@ -875,6 +879,7 @@ export interface ExecutionProfileResolvedEventPayload {
     version: number;
   };
   resolvedProfile: TuiProfile;
+  exactToolDecisions?: Record<string, EffectiveToolDecisionV1> | undefined;
 }
 
 export interface TaskUpdatedEventPayload {

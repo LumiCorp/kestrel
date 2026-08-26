@@ -105,6 +105,197 @@ test("RunnerHost emits execution profile resolution from provider", async () => 
   await host.close();
 });
 
+test("RunnerHost resolves exact Build-mode tool decisions without model execution", async () => {
+  const events: Array<{ type: string; payload: unknown }> = [];
+  let runtimeCreations = 0;
+  const host = new RunnerHost(
+    {
+      emit(type, payload) {
+        events.push({ type, payload });
+      },
+    },
+    () => {
+      runtimeCreations += 1;
+      throw new Error("runtime must not be created");
+    },
+    {
+      async listProfiles() {
+        return [];
+      },
+      async getProfile() {
+        return undefined;
+      },
+      async resolveExecutionProfile(payload) {
+        assert.deepEqual(payload.exactToolNames, ["exec_command"]);
+        return {
+          version: 1,
+          profileId: `kestrel:workspace_hosted:${"b".repeat(64)}`,
+          fingerprint: "b".repeat(64),
+          policy: { id: "kestrel", version: 4 },
+          environmentPreset: { id: "workspace_hosted", version: 2 },
+          resolvedProfile: {
+            id: `kestrel:workspace_hosted:${"b".repeat(64)}`,
+            label: "Kestrel",
+            agent: "reference-react",
+            sessionPrefix: "kestrel",
+            agentProfileId: "kestrel",
+            modelProvider: "openrouter",
+            model: "openai/gpt-5.6-luna",
+            agentStageConfig: {
+              modelByStage: { "agent.loop": "openai/gpt-5.6-luna" },
+            },
+            harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
+            approvalPolicyPackId: "dev",
+            defaultInteractionMode: "chat",
+            defaultActSubmode: "safe",
+            toolAllowlist: ["exec_command"],
+            kestrelOneAppApprovalPolicies: {
+              exec_command: {
+                environment: "ask",
+                minimum: "auto",
+              },
+            },
+          },
+        };
+      },
+    },
+    { profileSourcePolicy: "registered-only" },
+  );
+
+  await host.executionProfileResolve("resolve-exact-tool", {
+    environmentPresetId: "workspace_hosted",
+    exactToolNames: ["exec_command"],
+  });
+
+  assert.equal(runtimeCreations, 0);
+  const decision = (events[0]?.payload as {
+    exactToolDecisions?: Record<string, {
+      available: boolean;
+      approvalDisposition: { mode: string };
+      evidence: { interactionMode: string; actorAccess: boolean };
+    }>;
+  }).exactToolDecisions?.exec_command;
+  assert.equal(decision?.available, true);
+  assert.equal(decision?.approvalDisposition.mode, "ask");
+  assert.equal(decision?.evidence.interactionMode, "build");
+  assert.equal(decision?.evidence.actorAccess, true);
+  await host.close();
+});
+
+test("RunnerHost exact-tool preflight fails closed without actor access", async () => {
+  const events: Array<{ type: string; payload: unknown }> = [];
+  const host = new RunnerHost(
+    { emit(type, payload) { events.push({ type, payload }); } },
+    () => { throw new Error("runtime must not be created"); },
+    {
+      async listProfiles() { return []; },
+      async getProfile() { return undefined; },
+      async resolveExecutionProfile() {
+        return {
+          version: 1,
+          profileId: `kestrel:workspace_hosted:${"c".repeat(64)}`,
+          fingerprint: "c".repeat(64),
+          policy: { id: "kestrel", version: 4 },
+          environmentPreset: { id: "workspace_hosted", version: 2 },
+          resolvedProfile: {
+            id: `kestrel:workspace_hosted:${"c".repeat(64)}`,
+            label: "Kestrel",
+            agent: "reference-react",
+            sessionPrefix: "kestrel",
+            agentProfileId: "kestrel",
+            modelProvider: "openrouter",
+            model: "openai/gpt-5.6-luna",
+            agentStageConfig: {
+              modelByStage: { "agent.loop": "openai/gpt-5.6-luna" },
+            },
+            harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
+            approvalPolicyPackId: "dev",
+            toolAllowlist: [],
+          },
+        };
+      },
+    },
+    { profileSourcePolicy: "registered-only" },
+  );
+
+  await host.executionProfileResolve("resolve-hidden-tool", {
+    environmentPresetId: "workspace_hosted",
+    exactToolNames: ["exec_command"],
+  });
+  const decision = (events[0]?.payload as {
+    exactToolDecisions?: Record<string, {
+      available: boolean;
+      availabilityReason: string;
+      evidence: { actorAccess: boolean };
+    }>;
+  }).exactToolDecisions?.exec_command;
+  assert.equal(decision?.available, false);
+  assert.equal(decision?.availabilityReason, "actor_access");
+  assert.equal(decision?.evidence.actorAccess, false);
+  await host.close();
+});
+
+test("RunnerHost exact-tool preflight preserves a denied approval disposition", async () => {
+  const events: Array<{ type: string; payload: unknown }> = [];
+  const host = new RunnerHost(
+    { emit(type, payload) { events.push({ type, payload }); } },
+    () => { throw new Error("runtime must not be created"); },
+    {
+      async listProfiles() { return []; },
+      async getProfile() { return undefined; },
+      async resolveExecutionProfile() {
+        return {
+          version: 1,
+          profileId: `kestrel:workspace_hosted:${"d".repeat(64)}`,
+          fingerprint: "d".repeat(64),
+          policy: { id: "kestrel", version: 4 },
+          environmentPreset: { id: "workspace_hosted", version: 2 },
+          resolvedProfile: {
+            id: `kestrel:workspace_hosted:${"d".repeat(64)}`,
+            label: "Kestrel",
+            agent: "reference-react",
+            sessionPrefix: "kestrel",
+            agentProfileId: "kestrel",
+            modelProvider: "openrouter",
+            model: "openai/gpt-5.6-luna",
+            agentStageConfig: {
+              modelByStage: { "agent.loop": "openai/gpt-5.6-luna" },
+            },
+            harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
+            approvalPolicyPackId: "dev",
+            toolAllowlist: ["exec_command"],
+            kestrelOneAppApprovalPolicies: {
+              exec_command: {
+                environment: "ask",
+                project: "deny",
+                minimum: "auto",
+              },
+            },
+          },
+        };
+      },
+    },
+    { profileSourcePolicy: "registered-only" },
+  );
+
+  await host.executionProfileResolve("resolve-denied-tool", {
+    environmentPresetId: "workspace_hosted",
+    exactToolNames: ["exec_command"],
+  });
+  const decision = (events[0]?.payload as {
+    exactToolDecisions?: Record<string, {
+      available: boolean;
+      availabilityReason: string;
+      approvalDisposition: { mode: string; reasonCode: string };
+    }>;
+  }).exactToolDecisions?.exec_command;
+  assert.equal(decision?.available, false);
+  assert.equal(decision?.availabilityReason, "approval_policy");
+  assert.equal(decision?.approvalDisposition.mode, "deny");
+  assert.equal(decision?.approvalDisposition.reasonCode, "project_restriction");
+  await host.close();
+});
+
 test("RunnerHost loads an exact persisted effect result without creating a runtime", async () => {
   const events: Array<{ type: string; payload: unknown }> = [];
   let runtimeCreations = 0;

@@ -141,6 +141,18 @@ import {
   type KestrelOneProfileOverlay,
 } from "../../src/profile/kestrelOnePolicy.js";
 import {
+  DEFAULT_ACT_SUBMODE,
+  resolveEffectiveToolDecisionV1,
+  resolveToolApprovalDispositionV1,
+  type EffectiveToolDecisionV1,
+} from "../../src/mode/contracts.js";
+import { buildExecutionPolicyFromPack } from "../../src/mode/approvalPolicyPacks.js";
+import {
+  hashCanonical,
+  toToolDescriptorRefV1,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
+import {
   type DelegationTaskUpdate,
   KestrelChatRuntime,
   type KestrelChatRuntimeOptions,
@@ -710,7 +722,20 @@ export class RunnerHost {
       profile: resolution.resolvedProfile,
       environmentPresetId: payload.environmentPresetId,
     });
-    this.writer.emit("execution-profile.resolved", resolution, { commandId });
+    const exactToolDecisions = payload.exactToolNames === undefined
+      ? undefined
+      : resolveExactToolPreflightDecisions(
+          resolution.resolvedProfile,
+          payload.exactToolNames,
+        );
+    this.writer.emit(
+      "execution-profile.resolved",
+      {
+        ...resolution,
+        ...(exactToolDecisions === undefined ? {} : { exactToolDecisions }),
+      },
+      { commandId },
+    );
   }
 
   runStart(
@@ -3990,4 +4015,96 @@ function buildDefaultExecutionProfileProvenance(
         }
       : {}),
   };
+}
+
+function resolveExactToolPreflightDecisions(
+  profile: TuiProfile,
+  exactToolNames: readonly string[],
+): Record<string, EffectiveToolDecisionV1> {
+  const decisions: Record<string, EffectiveToolDecisionV1> = {};
+  const actorToolAccess = new Set(profile.toolAllowlist ?? []);
+  const executionPolicy = buildExecutionPolicyFromPack(
+    profile.approvalPolicyPackId,
+  );
+
+  for (const toolName of exactToolNames) {
+    const descriptor = defaultToolCatalog.getDescriptor(toolName);
+    if (descriptor === undefined) {
+      throw Object.assign(
+        new Error(
+          `Exact-tool preflight cannot resolve canonical descriptor '${toolName}'.`,
+        ),
+        {
+          code: "EXACT_TOOL_DESCRIPTOR_NOT_FOUND",
+          details: { toolName },
+        },
+      );
+    }
+    const configuredApprovalMode =
+      profile.kestrelOneAppApprovalModes?.[toolName];
+    const approvalPolicyEvidence =
+      profile.kestrelOneAppApprovalPolicies?.[toolName];
+    const hasHostedAppPolicy =
+      configuredApprovalMode !== undefined ||
+      approvalPolicyEvidence !== undefined;
+    const upstreamAuthority = hasHostedAppPolicy
+      ? {
+          kind: "hosted_app_policy" as const,
+          revision: hashCanonical({
+            toolId: toolName,
+            configuredAppApprovalMode: configuredApprovalMode,
+            approvalPolicyEvidence,
+            minimumApprovalMode:
+              descriptor.capability.minimumApprovalMode ?? "auto",
+          }),
+        }
+      : {
+          kind: "runtime_policy" as const,
+          revision: hashCanonical({ toolId: toolName, policy: "runtime" }),
+        };
+    const approvalAuthority = {
+      kind: upstreamAuthority.kind,
+      revision: hashCanonical({
+        version: "tool-approval-authority-v1",
+        descriptor: toToolDescriptorRefV1(descriptor),
+        upstream: upstreamAuthority,
+      }),
+    };
+    const approvalDisposition = approvalPolicyEvidence !== undefined
+      ? resolveToolApprovalDispositionV1({
+          environment: approvalPolicyEvidence.environment,
+          project: approvalPolicyEvidence.project,
+          subject: approvalPolicyEvidence.subject,
+          minimum:
+            descriptor.capability.minimumApprovalMode ??
+            approvalPolicyEvidence.minimum,
+          authority: approvalAuthority,
+        })
+      : resolveToolApprovalDispositionV1({
+          environment: configuredApprovalMode ?? "auto",
+          minimum: descriptor.capability.minimumApprovalMode ?? "auto",
+          authority: approvalAuthority,
+        });
+    const requiredCapabilities = [
+      ...(descriptor.capability.approvalCapabilities ?? []).filter(
+        (capability) => capability !== "external.confirm",
+      ),
+      ...(approvalDisposition.mode === "ask"
+        ? (["external.confirm"] as const)
+        : []),
+    ];
+
+    decisions[toolName] = resolveEffectiveToolDecisionV1({
+      interactionMode: "build",
+      actSubmode: profile.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
+      toolClass: descriptor.capability.executionClass,
+      allowedInteractionModes: descriptor.capability.allowedInteractionModes,
+      executionPolicy,
+      requiredCapabilities: [...new Set(requiredCapabilities)],
+      approvalDisposition,
+      actorAccess: actorToolAccess.has(toolName),
+    });
+  }
+
+  return decisions;
 }

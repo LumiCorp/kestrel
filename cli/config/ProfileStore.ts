@@ -1357,11 +1357,17 @@ function parseApprovalPolicyPackId(
   if (value === undefined) {
     return;
   }
-  if (value === "dev" || value === "isolated_code" || value === "ci_bot" || value === "production") {
+  if (
+    value === "dev" ||
+    value === "isolated_code" ||
+    value === "ci_bot" ||
+    value === "hosted_workspace" ||
+    value === "production"
+  ) {
     return value;
   }
   throw new Error(
-    `Profile '${profileId}' field 'approvalPolicyPackId' must be dev, isolated_code, ci_bot, or production`,
+    `Profile '${profileId}' field 'approvalPolicyPackId' must be dev, isolated_code, ci_bot, hosted_workspace, or production`,
   );
 }
 

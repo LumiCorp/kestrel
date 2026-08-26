@@ -667,17 +667,22 @@ function validateCannotSatisfyActionPolicy(
       availableToolNamesNormalized.has(normalizeCapabilityToken(requestedTool)) === false
     ) {
       const normalizedRequestedTool = normalizeCapabilityToken(requestedTool);
+      if (
+        policyBlocksAnyTools({
+          toolNames: [normalizedRequestedTool],
+          capabilityManifest,
+          executionPolicy,
+        })
+      ) {
+        return;
+      }
       throw decisionPolicyError(
         "The requested tool is configured but unavailable in the current tool surface.",
         "DECISION_CAPABILITY_UNAVAILABLE",
         {
           reasonCode: action.reasonCode,
           availableToolHints: availableExecutionToolHints,
-          requiredAction: policyBlocksAnyTools({
-            toolNames: [normalizedRequestedTool],
-            capabilityManifest,
-            executionPolicy,
-          }) ? "request_policy_or_approval_change" : "request_mode_switch",
+          requiredAction: "request_mode_switch",
         },
       );
     }

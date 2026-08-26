@@ -2347,6 +2347,48 @@ test("CommandRouter rejects invalid execution profile managed configuration", as
   await host.close();
 });
 
+test("CommandRouter rejects duplicate exact-tool preflight names", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer);
+  const events: Array<{
+    type: string;
+    payload: { code?: string; message?: string };
+  }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as {
+      type: string;
+      payload: { code?: string; message?: string };
+    });
+  });
+
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-execution-profile-duplicate-exact-tools",
+    type: "execution-profile.resolve",
+    payload: {
+      environmentPresetId: "workspace_hosted",
+      exactToolNames: ["exec_command", "exec_command"],
+    },
+  }));
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.equal(events[0]?.payload.code, "INVALID_COMMAND");
+  assert.match(
+    events[0]?.payload.message ?? "",
+    /exactToolNames must not contain duplicates/u,
+  );
+  rl.close();
+  await host.close();
+});
+
 test("CommandRouter preserves hosted economics admission failure code and details", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);

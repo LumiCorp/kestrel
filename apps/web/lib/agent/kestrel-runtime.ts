@@ -719,6 +719,7 @@ export async function resolveHostedKestrelExecutionProfile(input: {
         ...EnvironmentRuntimeModelSelection[],
       ]
     | undefined;
+  exactToolName?: string | undefined;
 }) {
   const primaryRuntimeModel = input.runtimeModels?.[0];
   const environmentPresetId =
@@ -732,9 +733,13 @@ export async function resolveHostedKestrelExecutionProfile(input: {
     approvalPolicies: input.route.approvalPolicies,
   });
   try {
-    return await input.client.resolveExecutionProfile(
+    const resolution = await input.client.resolveExecutionProfile(
       {
         environmentPresetId,
+        ...(environmentPresetId === "workspace_hosted" &&
+        input.exactToolName !== undefined
+          ? { exactToolNames: [input.exactToolName] }
+          : {}),
         managedConfiguration: {
           label: "Kestrel One",
           additionalToolNames: toolConfiguration.additionalToolNames,
@@ -786,8 +791,44 @@ export async function resolveHostedKestrelExecutionProfile(input: {
       },
       input.context,
     );
+    if (input.exactToolName !== undefined) {
+      assertHostedWorkspaceExactToolPreflight(
+        resolution,
+        input.exactToolName,
+      );
+    }
+    return resolution;
   } catch (error) {
     throw mapHostedKestrelProfileResolutionError(error, primaryRuntimeModel);
+  }
+}
+
+export function assertHostedWorkspaceExactToolPreflight(
+  resolution: Awaited<ReturnType<HostedKestrelExecutionProfileResolver["resolveExecutionProfile"]>>,
+  requiredTool: string,
+): void {
+  if (resolution.environmentPreset.id !== "workspace_hosted") {
+    return;
+  }
+  if (
+    resolution.resolvedProfile.approvalPolicyPackId !== "hosted_workspace" ||
+    resolution.exactToolDecisions?.[requiredTool]?.available !== true
+  ) {
+    throw Object.assign(
+      new Error(
+        `Hosted no-spend preflight rejected required tool '${requiredTool}' before model execution.`,
+      ),
+      {
+        code: "HOSTED_REQUIRED_TOOL_UNAVAILABLE",
+        details: {
+          requiredTool,
+          approvalPolicyPackId:
+            resolution.resolvedProfile.approvalPolicyPackId ?? null,
+          exactToolDecision:
+            resolution.exactToolDecisions?.[requiredTool] ?? null,
+        },
+      },
+    );
   }
 }
 

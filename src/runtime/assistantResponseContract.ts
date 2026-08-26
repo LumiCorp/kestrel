@@ -395,7 +395,7 @@ export function projectHostedToolApprovalInteractionV2(input: {
 export function projectHostedToolApprovalInteractionV3(input: {
   preparedToolCall: unknown;
   requestId?: string | undefined;
-}): RuntimeHostedToolApprovalInteractionV3 {
+}): RuntimeHostedToolApprovalInteractionV2 | RuntimeHostedToolApprovalInteractionV3 {
   const prepared = parsePreparedToolCallV1(input.preparedToolCall);
   if (
     prepared.stableAuthority === undefined ||
@@ -431,6 +431,9 @@ export function projectHostedToolApprovalInteractionV3(input: {
       },
     },
   });
+  if (presentation.policy.rememberApprovalEligible !== true) {
+    return projectHostedToolApprovalInteractionV2(input);
+  }
   return parseRunnerHostedToolApprovalInteractionV3({
     version: "runner_hosted_tool_approval_interaction_v3",
     requestId: effectiveRequestId,
@@ -516,6 +519,7 @@ function readToolApprovalPresentation(
       authorityRevision:
         readNonEmptyString(policy?.authorityRevision) ??
         "legacy-external-confirm",
+      rememberApprovalEligible: policy?.rememberApprovalEligible === true,
     },
   };
 }

@@ -96,7 +96,7 @@ test("approval disposition never lets a lower layer widen its ceiling", () => {
   );
 });
 
-test("remembered evidence only changes eligible Environment Ask First", () => {
+test("remembered evidence changes only eligible Environment or Project Ask First", () => {
   const eligible = resolveToolApprovalDispositionV1({
     environment: "ask",
     authority,
@@ -118,8 +118,21 @@ test("remembered evidence only changes eligible Environment Ask First", () => {
     eligible,
   );
 
+  const eligibleProjectAsk = resolveToolApprovalDispositionV1({
+    environment: "auto",
+    project: "ask",
+    authority,
+  });
+  assert.deepEqual(
+    applyRememberedThreadApprovalV1({
+      disposition: eligibleProjectAsk,
+      exactEvidenceMatch: true,
+      currentPolicy: { environment: "auto", project: "ask", minimum: "auto" },
+    }),
+    { mode: "auto", reasonCode: "remembered_thread", authority },
+  );
+
   for (const currentPolicy of [
-    { environment: "auto" as const, project: "ask" as const, minimum: "auto" as const },
     { environment: "auto" as const, subject: "ask" as const, minimum: "auto" as const },
     { environment: "auto" as const, minimum: "ask" as const },
     { environment: "auto" as const, minimum: "auto" as const, strictApprovalPerCall: true },

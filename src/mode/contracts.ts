@@ -1,3 +1,27 @@
+import {
+  applyRememberedThreadApprovalV1,
+  isRememberApprovalEligibleV1,
+  resolveToolApprovalDispositionV1,
+  type ToolApprovalAuthorityKind,
+  type ToolApprovalDispositionV1,
+  type ToolApprovalMode,
+  type ToolApprovalPolicyEvidenceV1,
+  type ToolApprovalReasonCode,
+} from "@kestrel-agents/protocol";
+
+export {
+  applyRememberedThreadApprovalV1,
+  isRememberApprovalEligibleV1,
+  resolveToolApprovalDispositionV1,
+};
+export type {
+  ToolApprovalDispositionV1,
+  ToolApprovalAuthorityKind,
+  ToolApprovalMode,
+  ToolApprovalPolicyEvidenceV1,
+  ToolApprovalReasonCode,
+};
+
 export type InteractionMode = "chat" | "plan" | "build";
 export type LegacyBuildSubmode = "strict" | "safe" | "full_auto";
 export type ActSubmode = LegacyBuildSubmode;
@@ -13,110 +37,28 @@ export type ApprovalCapabilityClass =
   | "delegation.control"
   | "external.confirm";
 
-export type ToolApprovalMode = "auto" | "ask" | "deny";
-export type ToolApprovalReasonCode =
-  | "tool_minimum"
-  | "environment_policy"
-  | "project_restriction"
-  | "subject_restriction"
-  | "runtime_strict"
-  | "remembered_thread";
-export type ToolApprovalAuthorityKind =
-  | "runtime_policy"
-  | "hosted_mcp_grant"
-  | "hosted_app_policy";
+export type EffectiveToolAvailabilityReasonV1 =
+  | "available"
+  | "approval_policy"
+  | "interaction_mode"
+  | "tool_class_policy"
+  | "capability_policy"
+  | "actor_access";
 
-export interface ToolApprovalDispositionV1 {
-  mode: ToolApprovalMode;
-  reasonCode: ToolApprovalReasonCode;
-  authority: {
-    kind: ToolApprovalAuthorityKind;
-    revision: string;
+export interface EffectiveToolDecisionV1 {
+  version: "effective_tool_decision_v1";
+  available: boolean;
+  availabilityReason: EffectiveToolAvailabilityReasonV1;
+  approvalDisposition: ToolApprovalDispositionV1;
+  rememberApprovalEligible: boolean;
+  authorityRevision: string;
+  evidence: {
+    interactionMode: InteractionMode;
+    toolClass: ToolExecutionClass;
+    requiredCapabilities: string[];
+    blockedCapability?: ApprovalCapabilityClass | undefined;
+    actorAccess: boolean;
   };
-}
-
-export interface ToolApprovalPolicyEvidenceV1 {
-  environment: ToolApprovalMode;
-  project?: ToolApprovalMode | undefined;
-  subject?: ToolApprovalMode | undefined;
-  minimum: Exclude<ToolApprovalMode, "deny">;
-}
-
-export function resolveToolApprovalDispositionV1(input: {
-  environment: ToolApprovalMode;
-  project?: ToolApprovalMode | undefined;
-  subject?: ToolApprovalMode | undefined;
-  minimum?: Exclude<ToolApprovalMode, "deny"> | undefined;
-  strictApprovalPerCall?: boolean | undefined;
-  authority: ToolApprovalDispositionV1["authority"];
-}): ToolApprovalDispositionV1 {
-  let mode = input.environment;
-  let reasonCode: ToolApprovalReasonCode = "environment_policy";
-  if (isStricterApprovalMode(input.project, mode)) {
-    mode = input.project!;
-    reasonCode = "project_restriction";
-  }
-  if (isStricterApprovalMode(input.subject, mode)) {
-    mode = input.subject!;
-    reasonCode = "subject_restriction";
-  } else if (input.subject === "ask" && mode === "ask") {
-    reasonCode = "subject_restriction";
-  }
-  if (input.minimum === "ask" && mode !== "deny") {
-    if (mode === "auto") mode = "ask";
-    if (mode === "ask") reasonCode = "tool_minimum";
-  }
-  if (input.strictApprovalPerCall === true && mode !== "deny") {
-    if (mode === "auto") mode = "ask";
-    if (mode === "ask") reasonCode = "runtime_strict";
-  }
-  return { mode, reasonCode, authority: { ...input.authority } };
-}
-
-export function applyRememberedThreadApprovalV1(input: {
-  disposition: ToolApprovalDispositionV1;
-  exactEvidenceMatch: boolean;
-  currentPolicy: {
-    environment: ToolApprovalMode;
-    project?: ToolApprovalMode | undefined;
-    subject?: ToolApprovalMode | undefined;
-    minimum: Exclude<ToolApprovalMode, "deny">;
-    strictApprovalPerCall?: boolean | undefined;
-  };
-}): ToolApprovalDispositionV1 {
-  if (
-    input.exactEvidenceMatch !== true ||
-    input.disposition.mode !== "ask" ||
-    input.disposition.reasonCode !== "environment_policy" ||
-    input.currentPolicy.environment !== "ask" ||
-    input.currentPolicy.subject === "ask" ||
-    input.currentPolicy.subject === "deny" ||
-    input.currentPolicy.minimum !== "auto" ||
-    input.currentPolicy.strictApprovalPerCall === true
-  ) {
-    return {
-      ...input.disposition,
-      authority: { ...input.disposition.authority },
-    };
-  }
-  return {
-    mode: "auto",
-    reasonCode: "remembered_thread",
-    authority: { ...input.disposition.authority },
-  };
-}
-
-function isStricterApprovalMode(
-  candidate: ToolApprovalMode | undefined,
-  current: ToolApprovalMode,
-) {
-  if (candidate === undefined) return false;
-  const strictness: Record<ToolApprovalMode, number> = {
-    auto: 0,
-    ask: 1,
-    deny: 2,
-  };
-  return strictness[candidate] > strictness[current];
 }
 
 export interface ExecutionPolicyOverride {
@@ -373,6 +315,78 @@ export function isToolEligibleForInteractionMode(input: {
   return (input.interactionMode === "chat" || input.interactionMode === "plan") &&
     input.toolClass === "external_side_effect" &&
     input.allowedInteractionModes?.includes(input.interactionMode) === true;
+}
+
+/** Canonical model-surface, approval-presentation, and execution decision. */
+export function resolveEffectiveToolDecisionV1(input: {
+  interactionMode: InteractionMode;
+  actSubmode?: LegacyBuildSubmode | undefined;
+  toolClass: ToolExecutionClass;
+  allowedInteractionModes?: readonly InteractionMode[] | undefined;
+  executionPolicy?: ExecutionPolicyOverride | undefined;
+  requiredCapabilities?: readonly string[] | undefined;
+  approvalDisposition: ToolApprovalDispositionV1;
+  actorAccess?: boolean | undefined;
+}): EffectiveToolDecisionV1 {
+  const requiredCapabilities = [...(input.requiredCapabilities ?? [])];
+  const blockedCapability = readBlockedApprovalCapability({
+    executionPolicy: input.executionPolicy,
+    requiredCapabilities,
+  });
+  const eligible = isToolEligibleForInteractionMode({
+    interactionMode: input.interactionMode,
+    actSubmode: input.actSubmode,
+    toolClass: input.toolClass,
+    allowedInteractionModes: input.allowedInteractionModes,
+    executionPolicy: input.executionPolicy,
+    requiredCapabilities,
+  });
+  const availabilityReason: EffectiveToolAvailabilityReasonV1 =
+    input.actorAccess === false
+      ? "actor_access"
+      : input.approvalDisposition.mode === "deny"
+        ? "approval_policy"
+      : blockedCapability !== undefined
+        ? "capability_policy"
+        : input.executionPolicy?.toolClassPolicy?.[input.toolClass] === false
+          ? "tool_class_policy"
+          : eligible
+            ? "available"
+            : "interaction_mode";
+  const approvalDisposition =
+    needsPerCallApproval(input) && input.approvalDisposition.mode !== "deny"
+      ? {
+          mode: "ask" as const,
+          reasonCode: "runtime_strict" as const,
+          authority: {
+            kind: "runtime_policy" as const,
+            revision: "strict-approval-per-call:v1",
+          },
+        }
+      : {
+          ...input.approvalDisposition,
+          authority: { ...input.approvalDisposition.authority },
+        };
+  const available =
+    input.actorAccess !== false &&
+    input.approvalDisposition.mode !== "deny" &&
+    eligible;
+  return {
+    version: "effective_tool_decision_v1",
+    available,
+    availabilityReason,
+    approvalDisposition,
+    rememberApprovalEligible:
+      available && isRememberApprovalEligibleV1({ disposition: approvalDisposition }),
+    authorityRevision: approvalDisposition.authority.revision,
+    evidence: {
+      interactionMode: input.interactionMode,
+      toolClass: input.toolClass,
+      requiredCapabilities,
+      ...(blockedCapability === undefined ? {} : { blockedCapability }),
+      actorAccess: input.actorAccess !== false,
+    },
+  };
 }
 
 export function isToolClassAllowed(input: {

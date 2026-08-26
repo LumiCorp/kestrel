@@ -111,6 +111,25 @@ test("hosted V2 approval publishes its exact decision vocabulary", () => {
   assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
 });
 
+test("hosted approval with missing current authority publishes only Decline", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-missing-policy",
+    requestId: "approval-missing-policy",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "pending",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v3",
+      approval: { toolName: "exec_command" },
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, ["decline"]);
+});
+
 test("hosted V3 approval publishes the remembered decision vocabulary", () => {
   const dto = mobileInteractionDto(
     {
@@ -123,7 +142,12 @@ test("hosted V3 approval publishes the remembered decision vocabulary", () => {
       requestEnvelope: {
         version: "runner_hosted_tool_approval_interaction_v3",
         approval: {
-          presentation: { policy: { reasonCode: "environment_policy" } },
+          presentation: {
+            policy: {
+              reasonCode: "environment_policy",
+              rememberApprovalEligible: true,
+            },
+          },
         },
       },
       approvalPolicy: {
@@ -135,6 +159,7 @@ test("hosted V3 approval publishes the remembered decision vocabulary", () => {
         environmentApprovalMode: "ask",
         projectApprovalMode: "ask",
         minimumApprovalMode: "auto",
+        rememberApprovalEligible: true,
         reasonCode: "environment_policy",
         canEditProject: false,
       },
@@ -144,6 +169,49 @@ test("hosted V3 approval publishes the remembered decision vocabulary", () => {
   assert.equal(dto.kind, "approval");
   if (dto.kind !== "approval") assert.fail("expected approval DTO");
   assert.equal(dto.version, "runner_hosted_tool_approval_interaction_v3");
+  assert.deepEqual(dto.decisions, [
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ]);
+});
+
+test("hosted V3 Project Ask First publishes Remember Approval", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-project-ask",
+    requestId: "approval-project-ask",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "pending",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v3",
+      approval: {
+        presentation: {
+          policy: {
+            reasonCode: "project_restriction",
+            rememberApprovalEligible: true,
+          },
+        },
+      },
+    },
+    approvalPolicy: {
+      projectId: "project-1",
+      environmentId: "environment-1",
+      appKey: "google-workspace",
+      capabilityKey: "calendar.events.create",
+      capabilityDisplayName: "Create calendar events",
+      environmentApprovalMode: "auto",
+      projectApprovalMode: "ask",
+      minimumApprovalMode: "auto",
+      rememberApprovalEligible: true,
+      reasonCode: "project_restriction",
+      canEditProject: false,
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
   assert.deepEqual(dto.decisions, [
     "decline",
     "approve_once",
@@ -163,7 +231,12 @@ test("hosted V3 approval hides remember after current Project policy becomes str
       requestEnvelope: {
         version: "runner_hosted_tool_approval_interaction_v3",
         approval: {
-          presentation: { policy: { reasonCode: "environment_policy" } },
+          presentation: {
+            policy: {
+              reasonCode: "environment_policy",
+              rememberApprovalEligible: true,
+            },
+          },
         },
       },
       approvalPolicy: {
@@ -175,6 +248,7 @@ test("hosted V3 approval hides remember after current Project policy becomes str
         environmentApprovalMode: "ask",
         projectApprovalMode: "deny",
         minimumApprovalMode: "auto",
+        rememberApprovalEligible: false,
         reasonCode: "environment_policy",
         canEditProject: false,
       },
@@ -197,7 +271,12 @@ test("hosted V3 approval hides remember after current Subject policy becomes str
     requestEnvelope: {
       version: "runner_hosted_tool_approval_interaction_v3",
       approval: {
-        presentation: { policy: { reasonCode: "environment_policy" } },
+        presentation: {
+          policy: {
+            reasonCode: "environment_policy",
+            rememberApprovalEligible: true,
+          },
+        },
       },
     },
     approvalPolicy: {
@@ -210,6 +289,7 @@ test("hosted V3 approval hides remember after current Subject policy becomes str
       projectApprovalMode: "ask",
       minimumApprovalMode: "auto",
       subjectApprovalMode: "ask",
+      rememberApprovalEligible: false,
       reasonCode: "environment_policy",
       canEditProject: false,
     },

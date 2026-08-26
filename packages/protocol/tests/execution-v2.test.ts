@@ -429,6 +429,7 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "profile.get": { profileId: "kestrel" },
   "execution-profile.resolve": {
     environmentPresetId: "workspace_hosted",
+    exactToolNames: ["exec_command"],
     managedConfiguration: {
       modelProvider: "openrouter",
       model: "z-ai/glm-5.2",
@@ -704,6 +705,29 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
       id: `kestrel:workspace_hosted:${"a".repeat(64)}`,
       agentProfileId: "kestrel",
     },
+    exactToolDecisions: {
+      exec_command: {
+        version: "effective_tool_decision_v1",
+        available: true,
+        availabilityReason: "available",
+        approvalDisposition: {
+          mode: "ask",
+          reasonCode: "environment_policy",
+          authority: {
+            kind: "hosted_app_policy",
+            revision: "authority-v1",
+          },
+        },
+        rememberApprovalEligible: true,
+        authorityRevision: "authority-v1",
+        evidence: {
+          interactionMode: "build",
+          toolClass: "sandboxed_only",
+          requiredCapabilities: ["shell.exec", "external.confirm"],
+          actorAccess: true,
+        },
+      },
+    },
   },
   "job.started": {
     sessionId: "session-1",
@@ -949,6 +973,54 @@ test("canonical execution profile contracts accept isolated local presets", () =
       environmentPresetId,
     );
   }
+});
+
+test("canonical execution profile contracts validate exact-tool preflight fields", () => {
+  const command = parseRunnerCommandV2({
+    id: "command:exact-tools",
+    type: "execution-profile.resolve",
+    payload: {
+      environmentPresetId: "workspace_hosted",
+      exactToolNames: ["exec_command"],
+    },
+  });
+  assert.deepEqual(command.payload.exactToolNames, ["exec_command"]);
+
+  assert.throws(
+    () => parseRunnerCommandV2({
+      id: "command:duplicate-exact-tools",
+      type: "execution-profile.resolve",
+      payload: {
+        environmentPresetId: "workspace_hosted",
+        exactToolNames: ["exec_command", "exec_command"],
+      },
+    }),
+    /exactToolNames must not contain duplicates/u,
+  );
+
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event:invalid-exact-tool-decision",
+      type: "execution-profile.resolved",
+      ts: "2026-07-13T12:00:00.000Z",
+      payload: {
+        ...eventPayloads["execution-profile.resolved"],
+        exactToolDecisions: {
+          exec_command: {
+            ...(eventPayloads["execution-profile.resolved"]!
+              .exactToolDecisions as Record<string, Record<string, unknown>>)
+              .exec_command,
+            evidence: {
+              interactionMode: "build",
+              toolClass: "sandboxed_only",
+              requiredCapabilities: ["shell.exec"],
+            },
+          },
+        },
+      },
+    }),
+    /evidence\.actorAccess must be a boolean/u,
+  );
 });
 
 test("canonical command parser rejects unknown and malformed payloads", () => {

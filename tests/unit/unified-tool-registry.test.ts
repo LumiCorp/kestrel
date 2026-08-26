@@ -630,6 +630,38 @@ test("UnifiedToolRegistry turns Project App ask policy into a runtime approval g
   ]);
 });
 
+test("UnifiedToolRegistry carries hosted command policy into the canonical manifest", () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["exec_command"],
+    context: {
+      kestrelOne: {
+        appApprovalModes: { exec_command: "ask" },
+        appApprovalPolicies: {
+          exec_command: {
+            environment: "auto",
+            project: "ask",
+            minimum: "auto",
+          },
+        },
+      },
+    },
+  });
+  const capability = registry
+    .getCapabilityManifest()
+    .find((candidate) => candidate.name === "exec_command");
+
+  assert.deepEqual(capability?.approvalCapabilities, [
+    "shell.exec",
+    "external.confirm",
+  ]);
+  assert.equal(capability?.approvalDisposition?.mode, "ask");
+  assert.equal(
+    capability?.approvalDisposition?.reasonCode,
+    "project_restriction",
+  );
+  assert.equal(capability?.approvalAuthority?.kind, "hosted_app_policy");
+});
+
 test("UnifiedToolRegistry lets explicit Automatic App policy override a tool default", () => {
   const toolName = "kestrel_one.google_calendar_create_event";
   const registry = new UnifiedToolRegistry({

@@ -76,9 +76,10 @@ test("finalizeRuntimeAssistantResponse canonicalizes an approval wait over stale
         policy: {
           mode: "ask",
           reasonCode: "tool_minimum",
-          authorityKind: "runtime_policy",
-          authorityRevision: "legacy-external-confirm",
-          explanation: "This invocation requires approval.",
+            authorityKind: "runtime_policy",
+            authorityRevision: "legacy-external-confirm",
+            explanation: "This invocation requires approval.",
+            rememberApprovalEligible: false,
         },
       },
     },
@@ -241,6 +242,54 @@ test("new hosted approval card reloads its action from the persisted prepared ca
     /persisted exact query/u,
   );
   assert.doesNotMatch(JSON.stringify(interaction), /forged query|forged\.tool/u);
+
+  const projectAskPrepared = structuredClone(prepared);
+  projectAskPrepared.policy.reasonCode = "project_restriction";
+  const projectAskResult = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: projectAskPrepared,
+        },
+      },
+    }),
+    assistantText: "stale",
+    hostedApprovalProtocolVersion: "v3",
+  });
+  assert.equal(
+    projectAskResult.output.waitFor?.interaction?.version,
+    "runner_hosted_tool_approval_interaction_v3",
+  );
+
+  const stricterPrepared = structuredClone(prepared);
+  stricterPrepared.policy.reasonCode = "subject_restriction";
+  const stricterResult = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: stricterPrepared,
+        },
+      },
+    }),
+    assistantText: "stale",
+    hostedApprovalProtocolVersion: "v3",
+  });
+  const stricterInteraction = stricterResult.output.waitFor?.interaction;
+  assert.equal(
+    stricterInteraction?.version,
+    "runner_hosted_tool_approval_interaction_v2",
+  );
+  assert.deepEqual(
+    stricterInteraction?.inputSchema?.properties.decision.enum,
+    ["decline", "approve_once"],
+  );
+  assert.doesNotMatch(JSON.stringify(stricterInteraction), /remember_approval/u);
 });
 
 test("finalizeRuntimeAssistantResponse rejects a user-facing wait without a prompt", () => {

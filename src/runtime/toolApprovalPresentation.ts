@@ -2,6 +2,7 @@ import type {
   ToolApprovalDispositionV1,
   ToolApprovalReasonCode,
 } from "../mode/contracts.js";
+import { isRememberApprovalEligibleV1 } from "../mode/contracts.js";
 
 export interface ToolApprovalPresentationV1 {
   title: string;
@@ -14,6 +15,7 @@ export interface ToolApprovalPresentationV1 {
     explanation: string;
     authorityKind: ToolApprovalDispositionV1["authority"]["kind"];
     authorityRevision: string;
+    rememberApprovalEligible: boolean;
   };
 }
 
@@ -316,6 +318,7 @@ export function buildToolApprovalPresentation(input: {
       explanation: approvalReasonExplanation(disposition.reasonCode),
       authorityKind: disposition.authority.kind,
       authorityRevision: disposition.authority.revision,
+      rememberApprovalEligible: isRememberApprovalEligibleV1({ disposition }),
     },
   };
 }

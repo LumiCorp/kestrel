@@ -60,6 +60,7 @@ export function resolveDesktopKestrelOneProfile(input: {
     input.settings.approvalPolicyPackId === "dev" ||
     input.settings.approvalPolicyPackId === "isolated_code" ||
     input.settings.approvalPolicyPackId === "ci_bot" ||
+    input.settings.approvalPolicyPackId === "hosted_workspace" ||
     input.settings.approvalPolicyPackId === "production"
       ? input.settings.approvalPolicyPackId
       : undefined;

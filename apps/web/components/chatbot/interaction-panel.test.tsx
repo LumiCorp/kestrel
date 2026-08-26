@@ -96,6 +96,7 @@ test("legacy approval cards keep their explicit compatibility actions", () => {
             environmentApprovalMode: "ask",
             projectApprovalMode: "ask",
             minimumApprovalMode: "auto",
+            rememberApprovalEligible: true,
             reasonCode: "environment_policy",
             canEditProject: true,
           },
@@ -134,6 +135,18 @@ test("strict V2 approval cards advertise exact decisions", () => {
           version: "runner_hosted_tool_approval_interaction_v2",
           approval: { toolName: "test.tool" },
         },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "built-in",
+          capabilityKey: "test.tool",
+          capabilityDisplayName: "Test tool",
+          environmentApprovalMode: "ask",
+          projectApprovalMode: "ask",
+          minimumApprovalMode: "auto",
+          reasonCode: "environment_policy",
+          canEditProject: false,
+        },
       }]}
       onResolved={async () => {}}
       onRuntimeResponse={async () => {}}
@@ -144,6 +157,28 @@ test("strict V2 approval cards advertise exact decisions", () => {
   assert.match(html, />Approve Once</u);
   assert.doesNotMatch(html, />Remember Approval</u);
   assert.doesNotMatch(html, />Deny</u);
+});
+
+test("a strict hosted card with missing current authority exposes only Decline", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v3",
+          approval: { toolName: "exec_command" },
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Decline</u);
+  assert.doesNotMatch(html, />Approve Once</u);
+  assert.doesNotMatch(html, />Remember Approval</u);
 });
 
 test("eligible strict V3 cards advertise exactly the remembered decision set", () => {
@@ -171,6 +206,7 @@ test("eligible strict V3 cards advertise exactly the remembered decision set", (
                     "Environment Apps is configured to ask before this capability runs.",
                   authorityKind: "hosted_app_policy",
                   authorityRevision: "revision-2",
+                  rememberApprovalEligible: true,
                 },
               },
             },
@@ -184,6 +220,7 @@ test("eligible strict V3 cards advertise exactly the remembered decision set", (
             environmentApprovalMode: "ask",
             projectApprovalMode: "ask",
             minimumApprovalMode: "auto",
+            rememberApprovalEligible: true,
             reasonCode: "environment_policy",
             canEditProject: true,
           },
@@ -203,7 +240,7 @@ test("eligible strict V3 cards advertise exactly the remembered decision set", (
   assert.match(html, /Environment Apps is configured to ask/u);
 });
 
-test("Project-restricted V3 cards do not expose Remember Approval", () => {
+test("Project Ask First V3 cards expose Remember Approval", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[{
@@ -212,7 +249,15 @@ test("Project-restricted V3 cards do not expose Remember Approval", () => {
         eventType: "user.approval",
         requestEnvelope: {
           version: "runner_hosted_tool_approval_interaction_v3",
-          approval: { toolName: "internet.research" },
+          approval: {
+            toolName: "internet.research",
+            presentation: {
+              policy: {
+                reasonCode: "project_restriction",
+                rememberApprovalEligible: true,
+              },
+            },
+          },
         },
         approvalPolicy: {
           projectId: "project-1",
@@ -223,6 +268,7 @@ test("Project-restricted V3 cards do not expose Remember Approval", () => {
           environmentApprovalMode: "auto",
           projectApprovalMode: "ask",
           minimumApprovalMode: "auto",
+          rememberApprovalEligible: true,
           reasonCode: "project_restriction",
           canEditProject: true,
         },
@@ -234,7 +280,7 @@ test("Project-restricted V3 cards do not expose Remember Approval", () => {
   );
   assert.match(html, />Decline</u);
   assert.match(html, />Approve Once</u);
-  assert.doesNotMatch(html, />Remember Approval</u);
+  assert.match(html, />Remember Approval</u);
 });
 
 test("a refreshed V3 card hides Remember Approval after Project policy becomes Blocked", () => {
@@ -249,7 +295,10 @@ test("a refreshed V3 card hides Remember Approval after Project policy becomes B
           approval: {
             toolName: "internet.research",
             presentation: {
-              policy: { reasonCode: "environment_policy" },
+              policy: {
+                reasonCode: "environment_policy",
+                rememberApprovalEligible: true,
+              },
             },
           },
         },
@@ -262,6 +311,7 @@ test("a refreshed V3 card hides Remember Approval after Project policy becomes B
           environmentApprovalMode: "ask",
           projectApprovalMode: "deny",
           minimumApprovalMode: "auto",
+          rememberApprovalEligible: false,
           reasonCode: "environment_policy",
           canEditProject: true,
         },
@@ -288,7 +338,10 @@ test("a refreshed V3 card hides Remember Approval after Subject policy becomes A
           approval: {
             toolName: "internet.research",
             presentation: {
-              policy: { reasonCode: "environment_policy" },
+              policy: {
+                reasonCode: "environment_policy",
+                rememberApprovalEligible: true,
+              },
             },
           },
         },
@@ -302,6 +355,7 @@ test("a refreshed V3 card hides Remember Approval after Subject policy becomes A
           projectApprovalMode: "ask",
           minimumApprovalMode: "auto",
           subjectApprovalMode: "ask",
+          rememberApprovalEligible: false,
           reasonCode: "environment_policy",
           canEditProject: true,
         },

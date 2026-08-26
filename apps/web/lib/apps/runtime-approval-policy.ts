@@ -1,5 +1,10 @@
 import "server-only";
 
+import {
+  isRememberApprovalEligibleV1,
+  resolveToolApprovalDispositionV1,
+} from "@kestrel-agents/protocol";
+
 import { resolveKestrelOneToolCapability } from "@/lib/agent/kestrel-tool-profile";
 import type { RuntimeApprovalPolicyView } from "@/lib/turns/client-contract";
 import { knowledgeDb } from "@/lib/knowledge/db";
@@ -44,6 +49,8 @@ export async function resolveRuntimeApprovalPolicies(input: {
           interactionId: interaction.id,
           requestId: interaction.requestId,
           reasonCode,
+          presentedRememberApprovalEligible:
+            policy?.rememberApprovalEligible === true,
           ...binding,
         }];
   });
@@ -130,6 +137,16 @@ export async function resolveRuntimeApprovalPolicies(input: {
           )
         ? "ask"
         : null;
+    const currentDisposition = resolveToolApprovalDispositionV1({
+      environment: capability.environmentApprovalMode,
+      project: capability.approvalMode,
+      ...(subjectApprovalMode === null ? {} : { subject: subjectApprovalMode }),
+      minimum: capability.minimumApprovalMode,
+      authority: {
+        kind: "hosted_app_policy",
+        revision: "web-current-app-policy:v1",
+      },
+    });
 
     policies.set(binding.requestId, {
       projectId: input.projectId,
@@ -144,6 +161,20 @@ export async function resolveRuntimeApprovalPolicies(input: {
       ...(providerApproval
         ? { approvalResourceAvailable: Boolean(approvalResource) }
         : {}),
+      rememberApprovalEligible:
+        binding.presentedRememberApprovalEligible &&
+        isRememberApprovalEligibleV1({
+          disposition: currentDisposition,
+          currentPolicy: {
+            environment: capability.environmentApprovalMode,
+            project: capability.approvalMode,
+            ...(subjectApprovalMode === null
+              ? {}
+              : { subject: subjectApprovalMode }),
+            minimum: capability.minimumApprovalMode,
+          },
+        }) &&
+        (!providerApproval || approvalResource !== undefined),
       reasonCode: binding.reasonCode,
       canEditProject: input.canEditProject,
       approvalRequirementExplanation: approvalRequirementExplanation(

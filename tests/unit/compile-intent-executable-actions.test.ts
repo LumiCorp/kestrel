@@ -3634,3 +3634,32 @@ test("capability retry hints never expose mode-hidden tools", () => {
     },
   );
 });
+
+test("a truthfully policy-hidden requested tool is terminal when no policy control exists", () => {
+  const compiled = compileAgentAction({
+    phase: "deliberator",
+    interactionMode: "build",
+    action: {
+      kind: "cannot_satisfy",
+      reasonCode: "requested_tool_unavailable",
+      message: "The requested shell tool is blocked by current policy.",
+      details: { requestedTool: "exec_command" },
+    },
+    observedCapabilities: [],
+    capabilityManifest: [{
+      name: "exec_command",
+      description: "Run a workspace command.",
+      capabilityClasses: ["dev.shell"],
+      executionClass: "external_side_effect",
+      approvalCapabilities: ["shell.exec"],
+    }],
+    availableTools: [],
+    executionPolicy: {
+      toolClassPolicy: { external_side_effect: false },
+      capabilityPolicy: { "shell.exec": true },
+    },
+  });
+
+  assert.equal(compiled.action?.kind, "cannot_satisfy");
+  assert.equal(compiled.action?.reasonCode, "requested_tool_unavailable");
+});

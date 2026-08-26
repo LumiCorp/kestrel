@@ -17,6 +17,129 @@ export const REMEMBERED_TOOL_APPROVAL_EVIDENCE_VERSION =
 export type HostedToolApprovalDecision =
   (typeof HOSTED_TOOL_APPROVAL_DECISIONS)[number];
 
+export type ToolApprovalMode = "auto" | "ask" | "deny";
+export type ToolApprovalReasonCode =
+  | "tool_minimum"
+  | "environment_policy"
+  | "project_restriction"
+  | "subject_restriction"
+  | "runtime_strict"
+  | "remembered_thread";
+export type ToolApprovalAuthorityKind =
+  | "runtime_policy"
+  | "hosted_mcp_grant"
+  | "hosted_app_policy";
+
+export interface ToolApprovalDispositionV1 {
+  mode: ToolApprovalMode;
+  reasonCode: ToolApprovalReasonCode;
+  authority: {
+    kind: ToolApprovalAuthorityKind;
+    revision: string;
+  };
+}
+
+export interface ToolApprovalPolicyEvidenceV1 {
+  environment: ToolApprovalMode;
+  project?: ToolApprovalMode | undefined;
+  subject?: ToolApprovalMode | undefined;
+  minimum: Exclude<ToolApprovalMode, "deny">;
+  strictApprovalPerCall?: boolean | undefined;
+}
+
+export function resolveToolApprovalDispositionV1(input: {
+  environment: ToolApprovalMode;
+  project?: ToolApprovalMode | undefined;
+  subject?: ToolApprovalMode | undefined;
+  minimum?: Exclude<ToolApprovalMode, "deny"> | undefined;
+  strictApprovalPerCall?: boolean | undefined;
+  authority: ToolApprovalDispositionV1["authority"];
+}): ToolApprovalDispositionV1 {
+  let mode = input.environment;
+  let reasonCode: ToolApprovalReasonCode = "environment_policy";
+  if (isStricterApprovalMode(input.project, mode)) {
+    mode = input.project!;
+    reasonCode = "project_restriction";
+  }
+  if (isStricterApprovalMode(input.subject, mode)) {
+    mode = input.subject!;
+    reasonCode = "subject_restriction";
+  } else if (input.subject === "ask" && mode === "ask") {
+    reasonCode = "subject_restriction";
+  }
+  if (input.minimum === "ask" && mode !== "deny") {
+    if (mode === "auto") mode = "ask";
+    if (mode === "ask") reasonCode = "tool_minimum";
+  }
+  if (input.strictApprovalPerCall === true && mode !== "deny") {
+    if (mode === "auto") mode = "ask";
+    if (mode === "ask") reasonCode = "runtime_strict";
+  }
+  return { mode, reasonCode, authority: { ...input.authority } };
+}
+
+export function applyRememberedThreadApprovalV1(input: {
+  disposition: ToolApprovalDispositionV1;
+  exactEvidenceMatch: boolean;
+  currentPolicy: ToolApprovalPolicyEvidenceV1;
+}): ToolApprovalDispositionV1 {
+  if (
+    input.exactEvidenceMatch !== true ||
+    input.disposition.mode !== "ask" ||
+    isRememberApprovalEligibleV1({
+      disposition: input.disposition,
+      currentPolicy: input.currentPolicy,
+    }) === false
+  ) {
+    return {
+      ...input.disposition,
+      authority: { ...input.disposition.authority },
+    };
+  }
+  return {
+    mode: "auto",
+    reasonCode: "remembered_thread",
+    authority: { ...input.disposition.authority },
+  };
+}
+
+export function isRememberApprovalEligibleV1(input: {
+  disposition: ToolApprovalDispositionV1;
+  currentPolicy?: ToolApprovalPolicyEvidenceV1 | undefined;
+}): boolean {
+  if (
+    input.disposition.mode !== "ask" ||
+    (input.disposition.reasonCode !== "environment_policy" &&
+      input.disposition.reasonCode !== "project_restriction")
+  ) {
+    return false;
+  }
+  const policy = input.currentPolicy;
+  if (policy === undefined) return true;
+  return (
+    policy.environment !== "deny" &&
+    policy.project !== "deny" &&
+    (policy.environment === "ask" || policy.project === "ask") &&
+    policy.subject !== "ask" &&
+    policy.subject !== "deny" &&
+    policy.minimum === "auto" &&
+    policy.strictApprovalPerCall !== true
+  );
+}
+
+function isStricterApprovalMode(
+  candidate: ToolApprovalMode | undefined,
+  current: ToolApprovalMode,
+) {
+  if (candidate === undefined) return false;
+  const strictness: Record<ToolApprovalMode, number> = {
+    auto: 0,
+    ask: 1,
+    deny: 2,
+  };
+  return strictness[candidate] > strictness[current];
+}
+
 export interface StableToolApprovalIdentityV1 {
   version: typeof STABLE_TOOL_APPROVAL_IDENTITY_VERSION;
   toolId: string;

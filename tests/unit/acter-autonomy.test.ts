@@ -903,6 +903,16 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
     ...toolInput,
     title: toolInput.title.trim(),
   };
+  let currentApprovalDisposition:
+    | {
+        mode: "auto";
+        reasonCode: "environment_policy";
+        authority: {
+          kind: "hosted_app_policy";
+          revision: string;
+        };
+      }
+    | undefined;
   const config = {
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -913,6 +923,9 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
         approvalCapabilities: [
           ...(definition.capability.approvalCapabilities ?? []),
         ],
+        ...(currentApprovalDisposition === undefined
+          ? {}
+          : { approvalDisposition: currentApprovalDisposition }),
         approvalAuthority: {
           kind: "hosted_app_policy" as const,
           revision: "hosted-app-policy-revision",
@@ -1391,6 +1404,170 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
       error instanceof RuntimeFailure &&
       error.code === "HOSTED_PREPARED_APPROVAL_INVALID",
   );
+
+  await expectPersistedApprovalRejected(
+    structuredClone(waitingAgent),
+    {
+      ...modePayload,
+      executionPolicy: {
+        ...modePayload.executionPolicy,
+        approvalPolicy: { strictApprovalPerCall: true },
+      },
+      decision: "approve_once",
+    },
+    "stricter-current-policy",
+  );
+
+  await assert.rejects(
+    () => waitApprovalStep(
+      buildContext({
+        session: {
+          ...buildContext().session,
+          state: { agent: structuredClone(waitingAgent) },
+          currentStepAgent: "agent.exec.wait_approval",
+        },
+        event: {
+          id: "evt-github-wrong-actor-decline",
+          type: "user.approval",
+          sessionId: "session-1",
+          payload: {
+            ...modePayload,
+            actor: {
+              ...modePayload.actor,
+              actorId: "user-2",
+            },
+            decision: "decline",
+            approvalId: pendingApproval.approvalId,
+          },
+        },
+      }),
+      {
+        useModel: async () => {
+          throw new Error("not expected");
+        },
+        inspectTool,
+        releasePreparedToolCall,
+        useTool: async () => {
+          throw new Error("a different actor must not resolve the approval");
+        },
+      },
+    ),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "HOSTED_PREPARED_APPROVAL_INVALID",
+  );
+
+  const blockedAfterAsk = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: structuredClone(waitingAgent) },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-github-blocked-after-ask",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          executionPolicy: {
+            ...modePayload.executionPolicy,
+            capabilityPolicy: {
+              ...modePayload.executionPolicy.capabilityPolicy,
+              "external.confirm": false,
+            },
+          },
+          decision: "approve_once",
+          approvalId: pendingApproval.approvalId,
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      inspectTool,
+      releasePreparedToolCall,
+      useTool: async () => {
+        throw new Error("a newly blocked approval must not execute");
+      },
+    },
+  );
+  const blockedAgent = blockedAfterAsk.statePatch?.agent as Record<
+    string,
+    unknown
+  >;
+  const blockedExec = blockedAgent.exec as Record<string, unknown>;
+  const blockedResult = blockedAgent.lastActionResult as Record<string, unknown>;
+  assert.equal(blockedAfterAsk.status, "RUNNING");
+  assert.equal(blockedAfterAsk.waitFor, undefined);
+  assert.equal(blockedAgent.waitingFor, undefined);
+  assert.equal(blockedExec.pendingApproval, undefined);
+  assert.equal(blockedResult.kind, "approval_policy_change");
+  assert.equal(blockedResult.status, "denied");
+  assert.equal(blockedResult.reason, "policy_changed");
+  assert.equal(blockedResult.availabilityReason, "capability_policy");
+  assert.equal(blockedAfterAsk.effects?.length, 1);
+  assert.equal(
+    blockedAfterAsk.effects?.[0]?.type,
+    "release_prepared_tool_call",
+  );
+  assert.equal(
+    (
+      blockedAfterAsk.effects?.[0]?.payload.preparedToolCall as Record<
+        string,
+        unknown
+      >
+    ).callId,
+    "prepared-github-1",
+  );
+
+  currentApprovalDisposition = {
+    mode: "auto",
+    reasonCode: "environment_policy",
+    authority: {
+      kind: "hosted_app_policy",
+      revision: "hosted-app-policy-revision",
+    },
+  };
+  const declinedAfterAutomatic = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: structuredClone(waitingAgent) },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-github-decline-after-automatic",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          decision: "decline",
+          approvalId: pendingApproval.approvalId,
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      inspectTool,
+      releasePreparedToolCall,
+      useTool: async () => {
+        throw new Error("an explicit decline must never execute");
+      },
+    },
+  );
+  const declinedAgent = declinedAfterAutomatic.statePatch?.agent as Record<
+    string,
+    unknown
+  >;
+  assert.equal(
+    (declinedAgent.lastActionResult as { status?: unknown })?.status,
+    "denied",
+  );
+  currentApprovalDisposition = undefined;
 
   const originalDateNow = Date.now;
   Date.now = () => Date.parse(binding.expiresAt) + 1;

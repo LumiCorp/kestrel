@@ -12,6 +12,7 @@ export const runtimeApprovalPolicyViewSchema = z.object({
   minimumApprovalMode: z.enum(["auto", "ask"]),
   subjectApprovalMode: z.enum(["ask", "deny"]).nullable().optional(),
   approvalResourceAvailable: z.boolean().optional(),
+  rememberApprovalEligible: z.boolean().optional(),
   reasonCode: z.enum([
     "tool_minimum",
     "environment_policy",

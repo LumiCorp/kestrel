@@ -1722,6 +1722,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/threads/[id]/workspace/canary/exact-tool-preflight/route.ts",
+    "/api/threads/:id/workspace/canary/exact-tool-preflight",
+    "environments",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/threads/[id]/github/publications/route.ts",
     "/api/threads/:id/github/publications",
     "apps",

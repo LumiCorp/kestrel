@@ -140,7 +140,7 @@ test("V2 provider records never write an independent human decision", async () =
   );
 });
 
-test("remember eligibility revalidates exact identity, access, and current Environment Ask First", async () => {
+test("provider remember eligibility uses the canonical current-policy resolver", async () => {
   const approvals = await source("./app-operation-approvals.ts");
   const start = approvals.indexOf(
     "export async function validateAppApprovalDecisionEligibilityInTransaction",
@@ -153,11 +153,44 @@ test("remember eligibility revalidates exact identity, access, and current Envir
   assert.match(boundary, /\.for\("update"\)/u);
   assert.match(boundary, /runnerBinding\.stableToolIdentity/u);
   assert.match(boundary, /serializeCanonicalApprovalPayload\(input\.stableToolIdentity\)/u);
-  assert.match(boundary, /environmentGrant\.approvalMode !== "ask"/u);
-  assert.match(boundary, /minimumApprovalMode !== "auto"/u);
+  assert.match(boundary, /resolveToolApprovalDispositionV1/u);
+  assert.match(boundary, /isRememberApprovalEligibleV1/u);
+  assert.match(boundary, /projectPolicy\?\.approvalMode/u);
   assert.match(boundary, /environmentCapabilitySubjectRestrictions/u);
   assert.match(boundary, /subjectRequiresApproval/u);
   assert.match(boundary, /resolveEffectiveProjectAppAccess/u);
   assert.match(boundary, /currentAuthorityRevision !== approval\.authorityRevision/u);
   assert.match(boundary, /appConnectionResources\.enabled, true/u);
+});
+
+test("every V3 remember decision revalidates current authority before evidence insertion", async () => {
+  const store = await source("../turns/store.ts");
+  const helperStart = store.indexOf(
+    "async function validateRememberApprovalEligibilityInTransaction",
+  );
+  const helperEnd = store.indexOf(
+    "/** Persists thread-lifetime approval evidence",
+    helperStart,
+  );
+  const helper = store.slice(helperStart, helperEnd);
+  assert.match(helper, /resolveKestrelOneToolCapability/u);
+  assert.match(helper, /stableToolIdentity\.toolId !== input\.toolName/u);
+  assert.match(helper, /environmentAppCapabilityGrants/u);
+  assert.match(helper, /projectAppCapabilityPolicies/u);
+  assert.match(helper, /environmentCapabilitySubjectRestrictions/u);
+  assert.match(helper, /resolveToolApprovalDispositionV1/u);
+  assert.match(helper, /isRememberApprovalEligibleV1/u);
+  const boundaryStart = store.indexOf(
+    "export async function resolveDurableRuntimeInteraction",
+  );
+  const boundaryEnd = store.indexOf(
+    "export async function recordDurableRuntimeStarted",
+    boundaryStart,
+  );
+  const boundary = store.slice(boundaryStart, boundaryEnd);
+  assert.ok(
+    boundary.indexOf("await validateRememberApprovalEligibilityInTransaction") <
+      boundary.indexOf("await insertRememberedToolApprovalInTransaction"),
+  );
+  assert.match(boundary, /hostedMutation \|\| decision === "remember_approval"/u);
 });

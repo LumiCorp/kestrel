@@ -11,12 +11,11 @@ work; this queue does not reopen them.
 
 ## Ready
 
-- [Make hosted tool availability and approval one truthful decision](06-unify-hosted-tool-decision.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
 
-None.
+- [Make hosted tool availability and approval one truthful decision](06-unify-hosted-tool-decision.md)
 
 ## Blocked
 

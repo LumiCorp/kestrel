@@ -6,6 +6,7 @@ import {
   CONVERSATION_ATTACHMENT_MAX_TURN_BYTES,
 } from "@kestrel-agents/conversation";
 import {
+  isRememberApprovalEligibleV1,
   parseRunnerExternalApprovalBinding,
   RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   parseRememberedToolApprovalEvidenceSetV1,
@@ -13,9 +14,11 @@ import {
   parseRunnerHostedToolApprovalInteractionV2,
   parseRunnerHostedToolApprovalInteractionV3,
   parseRunnerStructuredReviewInteractionV1,
+  resolveToolApprovalDispositionV1,
   serializeCanonicalApprovalPayload,
   type RememberedToolApprovalEvidenceV1,
   type RememberedToolApprovalV1,
+  type StableToolApprovalIdentityV1,
 } from "@kestrel-agents/protocol";
 import {
   and,
@@ -36,6 +39,7 @@ import {
 import { shouldInvalidateGatewayCredential } from "@/lib/ai/gateway-credential-health";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { isHostedMutationToolName } from "@/lib/apps/hosted-app-operation-contract";
+import { getCoreAppDefinition } from "@/lib/apps/catalog";
 import {
   AppOperationApprovalError,
   decideAppOperationApprovalInTransaction,
@@ -44,6 +48,7 @@ import {
 } from "@/lib/apps/app-operation-approvals";
 import { hashAppApprovalAuthority } from "@/lib/apps/app-operation-approval-contract";
 import { resolveEffectiveProjectAppAccess } from "@/lib/apps/project-service";
+import { resolveKestrelOneToolCapability } from "@/lib/agent/kestrel-tool-profile";
 import { meterPersistedModelMessages } from "@/lib/costs/metering";
 import type { DbThreadTurn, DbThreadTurnEvent } from "@/lib/knowledge/db-types";
 import {
@@ -277,6 +282,142 @@ async function lockAccessibleThread(
     throw new DurableTurnError("TURN_NOT_FOUND", "Thread not found.");
   }
   return thread;
+}
+
+async function validateRememberApprovalEligibilityInTransaction(
+  tx: TurnTransaction,
+  input: {
+    organizationId: string;
+    projectId: string;
+    environmentId: string | null;
+    userId: string;
+    toolName: string;
+    stableToolIdentity: StableToolApprovalIdentityV1;
+    presentedReasonCode: string | undefined;
+    presentedRememberApprovalEligible: boolean;
+  },
+) {
+  const binding = resolveKestrelOneToolCapability(input.toolName);
+  if (
+    binding === null ||
+    input.stableToolIdentity.toolId !== input.toolName ||
+    input.presentedRememberApprovalEligible !== true
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_ACCESS_DENIED");
+  }
+  const hostedAgentId =
+    process.env.KESTREL_ONE_HOSTED_AGENT_ID?.trim() || "kestrel-one";
+  const [project, definition, capability, projectApp, environmentGrant, projectPolicy] =
+    await Promise.all([
+      tx.query.projects.findFirst({
+        where: and(
+          eq(schema.projects.id, input.projectId),
+          eq(schema.projects.organizationId, input.organizationId),
+        ),
+        columns: { id: true, environmentId: true },
+      }),
+      tx.query.appDefinitions.findFirst({
+        where: and(
+          eq(schema.appDefinitions.key, binding.appKey),
+          eq(schema.appDefinitions.published, true),
+        ),
+        columns: { installMode: true },
+      }),
+      tx.query.appCapabilities.findFirst({
+        where: and(
+          eq(schema.appCapabilities.appKey, binding.appKey),
+          eq(schema.appCapabilities.key, binding.capabilityKey),
+        ),
+        columns: { active: true, runtimeName: true },
+      }),
+      tx.query.projectApps.findFirst({
+        where: and(
+          eq(schema.projectApps.projectId, input.projectId),
+          eq(schema.projectApps.appKey, binding.appKey),
+        ),
+        columns: { enabled: true },
+      }),
+      input.environmentId === null
+        ? undefined
+        : tx.query.environmentAppCapabilityGrants.findFirst({
+            where: and(
+              eq(schema.environmentAppCapabilityGrants.environmentId, input.environmentId),
+              eq(schema.environmentAppCapabilityGrants.appKey, binding.appKey),
+              eq(schema.environmentAppCapabilityGrants.capabilityKey, binding.capabilityKey),
+            ),
+          }),
+      tx.query.projectAppCapabilityPolicies.findFirst({
+        where: and(
+          eq(schema.projectAppCapabilityPolicies.projectId, input.projectId),
+          eq(schema.projectAppCapabilityPolicies.appKey, binding.appKey),
+          eq(schema.projectAppCapabilityPolicies.capabilityKey, binding.capabilityKey),
+        ),
+      }),
+    ]);
+  if (
+    !project ||
+    input.environmentId !== project.environmentId ||
+    !definition ||
+    (projectApp?.enabled ?? definition.installMode === "inherited") !== true ||
+    capability?.active !== true ||
+    capability.runtimeName !== input.toolName ||
+    environmentGrant?.enabled !== true ||
+    environmentGrant.approvalMode === "deny" ||
+    (projectPolicy !== undefined &&
+      (projectPolicy.enabled !== true || projectPolicy.approvalMode === "deny"))
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_ACCESS_DENIED");
+  }
+  const subjectRestrictions =
+    await tx.query.environmentCapabilitySubjectRestrictions.findMany({
+      where: and(
+        eq(schema.environmentCapabilitySubjectRestrictions.organizationId, input.organizationId),
+        eq(schema.environmentCapabilitySubjectRestrictions.environmentId, project.environmentId),
+        eq(schema.environmentCapabilitySubjectRestrictions.providerKey, binding.appKey),
+        eq(schema.environmentCapabilitySubjectRestrictions.capabilityKey, binding.capabilityKey),
+        isNull(schema.environmentCapabilitySubjectRestrictions.resourceId),
+        or(
+          and(
+            eq(schema.environmentCapabilitySubjectRestrictions.subjectType, "actor"),
+            eq(schema.environmentCapabilitySubjectRestrictions.subjectId, input.userId),
+          ),
+          and(
+            eq(schema.environmentCapabilitySubjectRestrictions.subjectType, "agent"),
+            eq(schema.environmentCapabilitySubjectRestrictions.subjectId, hostedAgentId),
+          ),
+        ),
+      ),
+    });
+  const subjectMode = subjectRestrictions.some(
+    (restriction) => !restriction.enabled || restriction.approvalMode === "deny",
+  )
+    ? "deny" as const
+    : subjectRestrictions.some((restriction) => restriction.approvalMode === "ask")
+      ? "ask" as const
+      : undefined;
+  const minimum =
+    getCoreAppDefinition(binding.appKey)?.capabilities.find(
+      (candidate) => candidate.key === binding.capabilityKey,
+    )?.minimumApprovalMode ?? "auto";
+  const currentPolicy = {
+    environment: environmentGrant.approvalMode,
+    project: projectPolicy?.approvalMode ?? environmentGrant.approvalMode,
+    ...(subjectMode === undefined ? {} : { subject: subjectMode }),
+    minimum,
+  };
+  const disposition = resolveToolApprovalDispositionV1({
+    ...currentPolicy,
+    authority: {
+      kind: "hosted_app_policy",
+      revision: input.stableToolIdentity.approvalAuthorityRevision,
+    },
+  });
+  if (
+    disposition.reasonCode !== input.presentedReasonCode ||
+    !isRememberApprovalEligibleV1({ disposition, currentPolicy })
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_ACCESS_DENIED");
+  }
 }
 
 /** Persists thread-lifetime approval evidence from the exact V3 interaction. */
@@ -2155,56 +2296,75 @@ export async function resolveDurableRuntimeInteraction(input: {
     const presentationPolicy = readPlainRecord(presentation?.policy);
     const approvesCurrentInvocation =
       decision === "approve_once" || decision === "remember_approval";
-    if (hostedMutation) {
+    if (hostedMutation || decision === "remember_approval") {
       try {
-        if (!interaction.runtimeApprovalId) {
-          throw new AppOperationApprovalError(
-            "APP_OPERATION_APPROVAL_REQUIRED",
-          );
-        }
         if (
           decision === "remember_approval" &&
           (hostedApproval?.version !==
             "runner_hosted_tool_approval_interaction_v3" ||
             !accessibleThread.projectId ||
-            presentationPolicy?.reasonCode !== "environment_policy")
+            (presentationPolicy?.reasonCode !== "environment_policy" &&
+              presentationPolicy?.reasonCode !== "project_restriction"))
         ) {
           throw new AppOperationApprovalError(
             "APP_OPERATION_APPROVAL_ACCESS_DENIED",
           );
         }
-        if (
-          approvesCurrentInvocation &&
-          !(hostedApproval && accessibleThread.projectId)
-        ) {
-          throw new AppOperationApprovalError(
-            "APP_OPERATION_APPROVAL_BINDING_MISMATCH",
-          );
-        }
-        if (approvesCurrentInvocation && hostedApproval && accessibleThread.projectId) {
-          await validateAppApprovalDecisionEligibilityInTransaction(tx, {
+        if (decision === "remember_approval" && hostedApproval && accessibleThread.projectId) {
+          await validateRememberApprovalEligibilityInTransaction(tx, {
             organizationId: input.organizationId,
             projectId: accessibleThread.projectId,
+            environmentId: turn.requestedEnvironmentId,
+            userId: input.userId,
+            toolName: hostedApproval.approval.toolName,
+            stableToolIdentity: hostedApproval.approval.stableToolIdentity,
+            presentedReasonCode:
+              typeof presentationPolicy?.reasonCode === "string"
+                ? presentationPolicy.reasonCode
+                : undefined,
+            presentedRememberApprovalEligible:
+              presentationPolicy?.rememberApprovalEligible === true,
+          });
+        }
+        if (hostedMutation) {
+          if (!interaction.runtimeApprovalId) {
+            throw new AppOperationApprovalError(
+              "APP_OPERATION_APPROVAL_REQUIRED",
+            );
+          }
+          if (
+            approvesCurrentInvocation &&
+            !(hostedApproval && accessibleThread.projectId)
+          ) {
+            throw new AppOperationApprovalError(
+              "APP_OPERATION_APPROVAL_BINDING_MISMATCH",
+            );
+          }
+          if (approvesCurrentInvocation && hostedApproval && accessibleThread.projectId) {
+            await validateAppApprovalDecisionEligibilityInTransaction(tx, {
+              organizationId: input.organizationId,
+              projectId: accessibleThread.projectId,
+              threadId: input.threadId,
+              userId: input.userId,
+              runtimeApprovalId: interaction.runtimeApprovalId,
+              interactionId: interaction.id,
+              toolName: hostedApproval.approval.toolName,
+              stableToolIdentity: hostedApproval.approval.stableToolIdentity,
+              decision,
+              now,
+            });
+          }
+          await decideAppOperationApprovalInTransaction(tx, {
+            organizationId: input.organizationId,
             threadId: input.threadId,
             userId: input.userId,
             runtimeApprovalId: interaction.runtimeApprovalId,
             interactionId: interaction.id,
-            toolName: hostedApproval.approval.toolName,
-            stableToolIdentity: hostedApproval.approval.stableToolIdentity,
-            decision,
+            approved: approvesCurrentInvocation || approved === true,
+            required: true,
             now,
           });
         }
-        await decideAppOperationApprovalInTransaction(tx, {
-          organizationId: input.organizationId,
-          threadId: input.threadId,
-          userId: input.userId,
-          runtimeApprovalId: interaction.runtimeApprovalId,
-          interactionId: interaction.id,
-          approved: approvesCurrentInvocation || approved === true,
-          required: true,
-          now,
-        });
       } catch (error) {
         if (!(error instanceof AppOperationApprovalError)) throw error;
         const failureCode =

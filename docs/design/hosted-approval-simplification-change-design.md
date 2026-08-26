@@ -156,6 +156,14 @@ Once, and Remember Approval. Subject restrictions, tool-minimum Ask, explicit
 runtime strictness, disabled capabilities, and lost actor access remain
 ineligible and cannot be weakened by remembered evidence.
 
+Treat hosted `exec_command` as the inherited `built_in.workspace` App
+capability instead of an unconditional preset tool. The hosted preset retains
+the dev-shell runtime support needed to execute it, while the existing
+Environment and Project capability intersection adds it to the resolved tool
+surface as Automatic or Ask First and omits it when Blocked. This reuses the
+same policy owner as every other hosted capability and requires no new grant
+store or schema migration.
+
 The approval gate prepares and normalizes the call before it waits. It persists
 the resulting `PreparedToolCallV1` with a stable invocation identity.
 
@@ -361,8 +369,12 @@ Changing `ci_bot` in place is rejected. It would alter explicit CI, Desktop,
 and job consumers whose desired approval semantics are not established by the
 hosted incident.
 
-Binding hosted workspaces to the broad developer pack is rejected. It exposes
-network, MCP, and confirmation capabilities beyond the hosted preset's needs.
+Binding hosted workspaces to the developer pack is rejected. Although hosted
+Apps and MCP already require network, MCP, and confirmation capabilities, the
+developer pack does not identify the hosted contract and cannot evolve without
+also changing local developer consumers. The dedicated pack is the hosted
+runtime ceiling; Environment and Project grants still decide which App, MCP,
+and Workspace capabilities are actually visible.
 
 Permitting the external-effect class without requiring every external-effect
 descriptor to declare an approval capability is rejected. Class permission

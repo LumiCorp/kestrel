@@ -9,8 +9,33 @@ import type {
 } from "@kestrel-agents/sdk/runner";
 import {
   getKestrelOneHostedAgentId,
+  assertHostedWorkspaceExactToolPreflight,
   resolveHostedKestrelExecutionProfile,
 } from "./kestrel-runtime";
+
+const ASK_EXEC_COMMAND_DECISION: NonNullable<
+  ExecutionProfileResolvedEventPayload["exactToolDecisions"]
+>[string] = {
+  version: "effective_tool_decision_v1",
+  available: true,
+  availabilityReason: "available",
+  approvalDisposition: {
+    mode: "ask",
+    reasonCode: "environment_policy",
+    authority: {
+      kind: "hosted_app_policy",
+      revision: "workspace-command-policy:1",
+    },
+  },
+  rememberApprovalEligible: true,
+  authorityRevision: "workspace-command-policy:1",
+  evidence: {
+    interactionMode: "build",
+    toolClass: "external_side_effect",
+    requiredCapabilities: ["shell.exec", "external.confirm"],
+    actorAccess: true,
+  },
+};
 
 test(
   "hosted Kestrel keeps product agent identity separate from policy profile id",
@@ -55,13 +80,15 @@ test(
             profileId: `kestrel:workspace_hosted:${"a".repeat(64)}`,
             fingerprint: "a".repeat(64),
             policy: { id: "kestrel", version: 3 },
-            environmentPreset: { id: "workspace_hosted", version: 1 },
+            environmentPreset: { id: "workspace_hosted", version: 2 },
             resolvedProfile: {
               id: `kestrel:workspace_hosted:${"a".repeat(64)}`,
               label: "Kestrel One",
               agent: "reference-react",
               sessionPrefix: "kestrel",
               agentProfileId: "kestrel",
+              approvalPolicyPackId: "hosted_workspace",
+              toolAllowlist: ["exec_command"],
             },
           } satisfies ExecutionProfileResolvedEventPayload;
         },
@@ -86,6 +113,7 @@ test(
           sourceInteractionId: "interaction_123",
         }],
         effectiveCapabilities: [
+          "app:built_in.workspace.executeCommand:ask",
           "app:built_in.knowledge_search.searchKnowledgeDocuments:auto",
           "app:google_workspace.calendar.events.read:ask",
         ],
@@ -93,6 +121,14 @@ test(
           request: { mode: "summary", effort: "high" },
           retention: { mode: "provider_visible", days: 7 },
         },
+        approvalPolicies: [
+          {
+            appKey: "built_in.workspace",
+            capabilityKey: "executeCommand",
+            environment: "ask",
+            minimum: "auto",
+          },
+        ],
       },
       runtimeModels: [
         {
@@ -123,17 +159,24 @@ test(
         label: "Kestrel One",
         additionalToolNames: [
           "kestrel_one.google_calendar_list_events",
+          "exec_command",
           "kestrel_one.search_knowledge_documents",
           "kestrel.files.search",
           "kestrel.files.open",
         ],
         kestrelOneAppApprovalModes: {
+          exec_command: "ask",
           "kestrel_one.google_calendar_list_events": "ask",
           "kestrel_one.search_knowledge_documents": "auto",
           "kestrel.files.search": "auto",
           "kestrel.files.open": "auto",
         },
-        kestrelOneAppApprovalPolicies: {},
+        kestrelOneAppApprovalPolicies: {
+          exec_command: {
+            environment: "ask",
+            minimum: "auto",
+          },
+        },
         rememberedToolApprovalEvidence: [{
           version: "remembered_tool_approval_evidence_v1",
           organizationId: "org_123",
@@ -175,6 +218,133 @@ test(
     assert.equal("profile" in calls[0]!.input, false);
   },
 );
+
+test("hosted exact-tool preflight rejects a V2 profile before model execution", () => {
+  assert.throws(
+    () => assertHostedWorkspaceExactToolPreflight({
+      version: 1,
+      profileId: `kestrel:workspace_hosted:${"f".repeat(64)}`,
+      fingerprint: "f".repeat(64),
+      policy: { id: "kestrel", version: 4 },
+      environmentPreset: { id: "workspace_hosted", version: 2 },
+      exactToolDecisions: {
+        exec_command: {
+          ...ASK_EXEC_COMMAND_DECISION,
+          available: false,
+          availabilityReason: "actor_access",
+          rememberApprovalEligible: false,
+          evidence: {
+            ...ASK_EXEC_COMMAND_DECISION.evidence,
+            actorAccess: false,
+          },
+        },
+      },
+      resolvedProfile: {
+        id: `kestrel:workspace_hosted:${"f".repeat(64)}`,
+        label: "Kestrel",
+        agent: "reference-react",
+        sessionPrefix: "kestrel",
+        approvalPolicyPackId: "hosted_workspace",
+        toolAllowlist: ["exec_command"],
+      },
+    }, "exec_command"),
+    (error: unknown) =>
+      (error as { code?: unknown }).code === "HOSTED_REQUIRED_TOOL_UNAVAILABLE",
+  );
+});
+
+test("ordinary hosted turns remain rolling-compatible without exact shell preflight", async () => {
+  const calls: ExecutionProfileResolveCommandPayload[] = [];
+  await resolveHostedKestrelExecutionProfile({
+    client: {
+      async resolveExecutionProfile(input) {
+        calls.push(input);
+        return {
+          version: 1,
+          profileId: `kestrel:workspace_hosted:${"e".repeat(64)}`,
+          fingerprint: "e".repeat(64),
+          policy: { id: "kestrel", version: 3 },
+          environmentPreset: { id: "workspace_hosted", version: 2 },
+          resolvedProfile: {
+            id: `kestrel:workspace_hosted:${"e".repeat(64)}`,
+            label: "Kestrel One",
+            agent: "reference-react",
+            sessionPrefix: "kestrel",
+            approvalPolicyPackId: "hosted_workspace",
+            toolAllowlist: ["kestrel_one.search_knowledge_documents"],
+          },
+        } satisfies ExecutionProfileResolvedEventPayload;
+      },
+    },
+    context: {
+      tenantId: "org_123",
+      actor: {
+        actorId: "user_123",
+        actorType: "end_user",
+        tenantId: "org_123",
+      },
+    },
+    route: {
+      runId: "exec_ordinary",
+      environmentId: "env_123",
+      effectiveCapabilities: [
+        "app:built_in.knowledge_search.searchKnowledgeDocuments:auto",
+      ],
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.exactToolNames, undefined);
+});
+
+test("the command canary requests and validates exact shell availability without model execution", async () => {
+  const calls: ExecutionProfileResolveCommandPayload[] = [];
+  await resolveHostedKestrelExecutionProfile({
+    client: {
+      async resolveExecutionProfile(input) {
+        calls.push(input);
+        return {
+          version: 1,
+          profileId: `kestrel:workspace_hosted:${"d".repeat(64)}`,
+          fingerprint: "d".repeat(64),
+          policy: { id: "kestrel", version: 4 },
+          environmentPreset: { id: "workspace_hosted", version: 2 },
+          exactToolDecisions: { exec_command: ASK_EXEC_COMMAND_DECISION },
+          resolvedProfile: {
+            id: `kestrel:workspace_hosted:${"d".repeat(64)}`,
+            label: "Kestrel One",
+            agent: "reference-react",
+            sessionPrefix: "kestrel",
+            approvalPolicyPackId: "hosted_workspace",
+            toolAllowlist: ["exec_command"],
+          },
+        } satisfies ExecutionProfileResolvedEventPayload;
+      },
+    },
+    context: {
+      tenantId: "org_123",
+      actor: {
+        actorId: "user_123",
+        actorType: "end_user",
+        tenantId: "org_123",
+      },
+    },
+    route: {
+      runId: "exec_canary",
+      environmentId: "env_123",
+      effectiveCapabilities: ["app:built_in.workspace.executeCommand:ask"],
+      approvalPolicies: [{
+        appKey: "built_in.workspace",
+        capabilityKey: "executeCommand",
+        environment: "ask",
+        minimum: "auto",
+      }],
+    },
+    exactToolName: "exec_command",
+  });
+
+  assert.deepEqual(calls[0]?.exactToolNames, ["exec_command"]);
+});
 
 test(
   "hosted Kestrel resolves desktop-local model profiles without hosted credentials",

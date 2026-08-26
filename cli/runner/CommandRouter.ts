@@ -1981,6 +1981,20 @@ function validateExecutionProfileResolvePayload(
       "execution-profile.resolve payload.authoringProfileId must be a non-empty string when present",
     );
   }
+  if (
+    record.exactToolNames !== undefined &&
+    (!Array.isArray(record.exactToolNames) ||
+      record.exactToolNames.length === 0 ||
+      record.exactToolNames.some(
+        (toolName) =>
+          typeof toolName !== "string" || toolName.trim().length === 0,
+      ) ||
+      new Set(record.exactToolNames).size !== record.exactToolNames.length)
+  ) {
+    throw new Error(
+      "execution-profile.resolve payload.exactToolNames must be a non-empty array of unique non-empty strings when present",
+    );
+  }
   return {
     environmentPresetId: record.environmentPresetId,
     ...(managedConfiguration !== undefined
@@ -1993,6 +2007,9 @@ function validateExecutionProfileResolvePayload(
       : {}),
     ...(record.authoringProfileId !== undefined
       ? { authoringProfileId: record.authoringProfileId }
+      : {}),
+    ...(record.exactToolNames !== undefined
+      ? { exactToolNames: [...record.exactToolNames] as string[] }
       : {}),
   };
 }

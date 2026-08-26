@@ -1106,7 +1106,12 @@ export interface RunnerResultV2<TOutput = unknown> {
 }
 
 export type RunnerJobStoreDriver = "auto" | "postgres" | "sqlite";
-export type RunnerApprovalPolicyPackId = "dev" | "isolated_code" | "ci_bot" | "production";
+export type RunnerApprovalPolicyPackId =
+  | "dev"
+  | "isolated_code"
+  | "ci_bot"
+  | "hosted_workspace"
+  | "production";
 
 export type RunnerJobTurnInput = Omit<RunnerTurnInput, "eventType"> & {
   eventType?: string | undefined;
@@ -1267,6 +1272,54 @@ export interface ExecutionProfileResolveCommandPayload {
     | "workspace_hosted";
   managedConfiguration?: Record<string, unknown> | undefined;
   authoringProfileId?: string | undefined;
+  /** Exact tools to evaluate in Build mode before any provider or model spend. */
+  exactToolNames?: string[] | undefined;
+}
+
+export interface EffectiveToolDecisionV1 {
+  version: "effective_tool_decision_v1";
+  available: boolean;
+  availabilityReason:
+    | "available"
+    | "approval_policy"
+    | "interaction_mode"
+    | "tool_class_policy"
+    | "capability_policy"
+    | "approval_policy"
+    | "actor_access";
+  approvalDisposition: {
+    mode: "auto" | "ask" | "deny";
+    reasonCode:
+      | "tool_minimum"
+      | "environment_policy"
+      | "project_restriction"
+      | "subject_restriction"
+      | "runtime_strict"
+      | "remembered_thread";
+    authority: {
+      kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
+      revision: string;
+    };
+  };
+  rememberApprovalEligible: boolean;
+  authorityRevision: string;
+  evidence: {
+    interactionMode: "chat" | "plan" | "build";
+    toolClass: "read_only" | "planning_write" | "sandboxed_only" | "external_side_effect";
+    requiredCapabilities: string[];
+    blockedCapability?:
+      | "workspace.read"
+      | "workspace.write"
+      | "shell.exec"
+      | "mission_control.work_item.write"
+      | "network.call"
+      | "code.execute"
+      | "mcp.invoke"
+      | "delegation.control"
+      | "external.confirm"
+      | undefined;
+    actorAccess: boolean;
+  };
 }
 
 export type RunnerProfileReference =
@@ -1792,6 +1845,7 @@ export interface ExecutionProfileResolvedEventPayload {
     version: number;
   };
   resolvedProfile: RunnerProfile;
+  exactToolDecisions?: Record<string, EffectiveToolDecisionV1> | undefined;
 }
 
 export interface JobStartedEventPayload {
@@ -2691,6 +2745,9 @@ function parseRunnerCommandPayloadV2(
         requireRecord(payload.managedConfiguration, `${label}.managedConfiguration`);
       }
       validateOptionalNonEmptyString(payload.authoringProfileId, `${label}.authoringProfileId`);
+      if (payload.exactToolNames !== undefined) {
+        validateUniqueNonEmptyStringArray(payload.exactToolNames, `${label}.exactToolNames`);
+      }
       break;
     case "job.run": {
       validateOptionalProfile(payload.profile, `${label}.profile`);
@@ -3189,6 +3246,16 @@ function parseRunnerEventPayloadV2(
         requireRecord(payload.resolvedProfile, `${label}.resolvedProfile`),
         `${label}.resolvedProfile`,
       );
+      if (payload.exactToolDecisions !== undefined) {
+        const decisions = requireRecord(payload.exactToolDecisions, `${label}.exactToolDecisions`);
+        for (const [toolName, decision] of Object.entries(decisions)) {
+          requireNonEmptyString(toolName, `${label}.exactToolDecisions tool name`);
+          validateEffectiveToolDecisionV1(
+            requireRecord(decision, `${label}.exactToolDecisions.${toolName}`),
+            `${label}.exactToolDecisions.${toolName}`,
+          );
+        }
+      }
       break;
     case "job.started":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
@@ -3760,6 +3827,7 @@ function parseJobInput(value: unknown, label: string): RunnerJobInput {
     "dev",
     "isolated_code",
     "ci_bot",
+    "hosted_workspace",
     "production",
   ]);
   const environmentPresetId = input.version === "job_input_v2"
@@ -5331,6 +5399,105 @@ function validateNonEmptyStringArray(value: unknown, label: string): void {
   if (!Array.isArray(value) || value.length === 0) {
     throw new RunnerProtocolContractError(`${label} must contain at least one entry`);
   }
+}
+
+function validateUniqueNonEmptyStringArray(value: unknown, label: string): void {
+  validateNonEmptyStringArray(value, label);
+  if (new Set(value as string[]).size !== (value as string[]).length) {
+    throw new RunnerProtocolContractError(`${label} must not contain duplicates`);
+  }
+}
+
+function validateEffectiveToolDecisionV1(
+  value: Record<string, unknown>,
+  label: string,
+): void {
+  if (value.version !== "effective_tool_decision_v1") {
+    throw new RunnerProtocolContractError(
+      `${label}.version must be effective_tool_decision_v1`,
+    );
+  }
+  requireBoolean(value.available, `${label}.available`);
+  validateEnum(value.availabilityReason, `${label}.availabilityReason`, [
+    "available",
+    "approval_policy",
+    "interaction_mode",
+    "tool_class_policy",
+    "capability_policy",
+    "approval_policy",
+    "actor_access",
+  ]);
+  const disposition = requireRecord(
+    value.approvalDisposition,
+    `${label}.approvalDisposition`,
+  );
+  validateEnum(disposition.mode, `${label}.approvalDisposition.mode`, [
+    "auto",
+    "ask",
+    "deny",
+  ]);
+  validateEnum(
+    disposition.reasonCode,
+    `${label}.approvalDisposition.reasonCode`,
+    [
+      "tool_minimum",
+      "environment_policy",
+      "project_restriction",
+      "subject_restriction",
+      "runtime_strict",
+      "remembered_thread",
+    ],
+  );
+  const authority = requireRecord(
+    disposition.authority,
+    `${label}.approvalDisposition.authority`,
+  );
+  validateEnum(authority.kind, `${label}.approvalDisposition.authority.kind`, [
+    "runtime_policy",
+    "hosted_mcp_grant",
+    "hosted_app_policy",
+  ]);
+  requireNonEmptyString(
+    authority.revision,
+    `${label}.approvalDisposition.authority.revision`,
+  );
+  requireBoolean(
+    value.rememberApprovalEligible,
+    `${label}.rememberApprovalEligible`,
+  );
+  requireNonEmptyString(value.authorityRevision, `${label}.authorityRevision`);
+  const evidence = requireRecord(value.evidence, `${label}.evidence`);
+  validateEnum(evidence.interactionMode, `${label}.evidence.interactionMode`, [
+    "chat",
+    "plan",
+    "build",
+  ]);
+  validateEnum(evidence.toolClass, `${label}.evidence.toolClass`, [
+    "read_only",
+    "planning_write",
+    "sandboxed_only",
+    "external_side_effect",
+  ]);
+  validateStringArray(
+    evidence.requiredCapabilities,
+    `${label}.evidence.requiredCapabilities`,
+  );
+  validateOptionalEnum(
+    evidence.blockedCapability,
+    `${label}.evidence.blockedCapability`,
+    [
+      "workspace.read",
+      "workspace.write",
+      "shell.exec",
+      "mission_control.work_item.write",
+      "network.call",
+      "code.execute",
+      "mcp.invoke",
+      "delegation.control",
+      "external.confirm",
+    ],
+  );
+  requireBoolean(evidence.actorAccess, `${label}.evidence.actorAccess`);
 }
 
 function validateOptionalEnumArray<const T extends string>(

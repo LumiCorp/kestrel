@@ -11,6 +11,7 @@ import {
   KESTREL_HARNESS_ECONOMICS,
   KESTREL_ONE_POLICY,
   KESTREL_POLICY_VERSION,
+  defaultApprovalPolicyPackForPreset,
 } from "../../src/profile/kestrelOnePolicy.js";
 
 const LUNA_ROUTE = {
@@ -100,6 +101,8 @@ test("canonical Kestrel policy composes parity across product environments", () 
   assert.deepEqual(cliDev.profile.devShell, hosted.profile.devShell);
   assert.equal(cliDev.profile.codeMode?.enabled, false);
   assert.equal(hosted.profile.codeMode?.enabled, true);
+  assert.equal(hosted.profile.approvalPolicyPackId, "hosted_workspace");
+  assert.equal(defaultApprovalPolicyPackForPreset("workspace_hosted"), "hosted_workspace");
   assert.equal(cliDev.profile.toolAllowlist?.includes("code.execute"), false);
   assert.equal(hosted.profile.toolAllowlist?.includes("code.execute"), true);
 
@@ -129,6 +132,20 @@ test("canonical Kestrel policy composes parity across product environments", () 
       "kestrel_one.search_knowledge_documents",
     ),
     false,
+  );
+});
+
+test("hosted composition rejects a policy pack that denies required shell descriptors", () => {
+  assert.throws(
+    () => composeKestrelOneProfile({
+      environmentPresetId: "workspace_hosted",
+      overlay: {
+        ...LUNA_ROUTE,
+        approvalPolicyPackId: "ci_bot",
+        additionalToolNames: ["exec_command"],
+      },
+    }),
+    /does not authorize advertised tool 'exec_command' class 'external_side_effect'/u,
   );
 });
 
@@ -449,13 +466,22 @@ test("canonical Kestrel policy accepts explicit hosted capability tools", () => 
     environmentPresetId: "workspace_hosted",
     overlay: {
       ...LUNA_ROUTE,
-      additionalToolNames: ["kestrel_one.search_knowledge_documents"],
+      additionalToolNames: [
+        "kestrel_one.search_knowledge_documents",
+        "kestrel_one.google_calendar_create_event",
+      ],
     },
   });
 
   assert.equal(
     hosted.profile.toolAllowlist?.includes(
       "kestrel_one.search_knowledge_documents",
+    ),
+    true,
+  );
+  assert.equal(
+    hosted.profile.toolAllowlist?.includes(
+      "kestrel_one.google_calendar_create_event",
     ),
     true,
   );

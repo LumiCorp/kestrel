@@ -154,6 +154,19 @@ test("descriptor parsing rejects unknown fields, secrets, and stale hashes", () 
   );
 });
 
+test("external-side-effect descriptors must declare approval capabilities", () => {
+  assert.throws(
+    () => createToolDescriptorV1(validAuthoring({
+      capability: {
+        ...validAuthoring().capability,
+        executionClass: "external_side_effect",
+        approvalCapabilities: undefined,
+      },
+    })),
+    /approvalCapabilities is required for external_side_effect tools/u,
+  );
+});
+
 test("activation and ordered tool-surface snapshots are canonical and fail closed", () => {
   const descriptor = createToolDescriptorV1(validAuthoring());
   const scopeFingerprint = fingerprintToolScopeV1({

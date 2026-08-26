@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyRememberedThreadApprovalV1,
+  isRememberApprovalEligibleV1,
   parseHostedToolApprovalDecision,
   parseRememberedToolApprovalEvidenceSetV1,
   parseRunnerExternalApprovalBindingV1,
   parseRunnerExternalApprovalBindingV2,
   parseStableToolApprovalIdentityV1,
+  resolveToolApprovalDispositionV1,
   serializeCanonicalApprovalPayload,
 } from "../src/index.js";
 
@@ -24,6 +27,65 @@ const binding = {
   requestedAt: "2026-08-03T12:00:00.000Z",
   expiresAt: "2026-08-03T12:05:00.000Z",
 } as const;
+
+const policyAuthority = {
+  kind: "hosted_app_policy",
+  revision: "project-policy-v1",
+} as const;
+
+test("shared approval policy helpers preserve only Environment or Project Ask First", () => {
+  const environmentAsk = resolveToolApprovalDispositionV1({
+    environment: "ask",
+    authority: policyAuthority,
+  });
+  assert.equal(
+    isRememberApprovalEligibleV1({
+      disposition: environmentAsk,
+      currentPolicy: { environment: "ask", minimum: "auto" },
+    }),
+    true,
+  );
+
+  const projectAsk = resolveToolApprovalDispositionV1({
+    environment: "auto",
+    project: "ask",
+    authority: policyAuthority,
+  });
+  assert.equal(projectAsk.reasonCode, "project_restriction");
+  assert.deepEqual(
+    applyRememberedThreadApprovalV1({
+      disposition: projectAsk,
+      exactEvidenceMatch: true,
+      currentPolicy: {
+        environment: "auto",
+        project: "ask",
+        minimum: "auto",
+      },
+    }),
+    {
+      mode: "auto",
+      reasonCode: "remembered_thread",
+      authority: policyAuthority,
+    },
+  );
+
+  const subjectAsk = resolveToolApprovalDispositionV1({
+    environment: "ask",
+    subject: "ask",
+    authority: policyAuthority,
+  });
+  assert.equal(
+    isRememberApprovalEligibleV1({
+      disposition: subjectAsk,
+      currentPolicy: {
+        environment: "ask",
+        subject: "ask",
+        minimum: "auto",
+      },
+    }),
+    false,
+  );
+});
 
 test("external approval binding parser accepts the strict canonical contract", () => {
   assert.deepEqual(parseRunnerExternalApprovalBindingV1(binding), binding);
