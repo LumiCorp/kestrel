@@ -489,6 +489,7 @@ function mapChatResponse<TOutput>(
   context: Parameters<typeof mapOpenRouterResponseV2>[1],
 ): ModelResponseV2<TOutput> {
   const root = record(payload);
+  assertExactResponseModel(root, context);
   const choice = record(array(root?.choices)[0]);
   const message = record(choice?.message);
   const terminal = chatTerminal(choice, root);
@@ -520,6 +521,7 @@ function mapResponsesResponse<TOutput>(
   context: Parameters<typeof mapOpenRouterResponseV2>[1],
 ): ModelResponseV2<TOutput> {
   const root = record(payload);
+  assertExactResponseModel(root, context);
   const outputItems = array(root?.output);
   const text =
     string(root?.output_text) ??
@@ -534,6 +536,21 @@ function mapResponsesResponse<TOutput>(
     provider: provider(context, root, "responses", "none"),
     terminal,
   });
+}
+
+function assertExactResponseModel(
+  root: Record<string, unknown> | undefined,
+  context: Parameters<typeof mapOpenRouterResponseV2>[1],
+): void {
+  const returnedModel = string(root?.model);
+  if (
+    returnedModel !== undefined &&
+    returnedModel !== context.requestedModel
+  ) {
+    throw createOpenRouterBadResponseError(
+      "OpenRouter response model did not match the requested exact route.",
+    );
+  }
 }
 
 function responseV2<TOutput>(

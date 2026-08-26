@@ -108,6 +108,36 @@ test("OpenAI V2 strict tool inputs fail before the provider call when a schema i
   assert.equal(providerCalls, 0);
 });
 
+test("OpenAI V2 strict tool inputs do not erase root schema constraints", () => {
+  const composedSchema = {
+    type: "object",
+    properties: { query: { type: "string" } },
+    required: ["query"],
+    additionalProperties: false,
+    oneOf: [{ required: ["query"] }],
+  };
+  for (const endpoint of ["chat", "responses"] as const) {
+    const strictRequest = createModelRequestV2({
+      ...requestAuthoring(endpoint),
+      tools: [
+        {
+          name: "lookup",
+          description: "Find a record.",
+          inputSchema: composedSchema,
+        },
+      ],
+    });
+    const mapped = buildOpenAiHttpRequest(strictRequest, env);
+    const tool =
+      endpoint === "chat"
+        ? ((mapped.body.tools as Array<Record<string, unknown>>)[0]!
+            .function as Record<string, unknown>)
+        : (mapped.body.tools as Array<Record<string, unknown>>)[0]!;
+    assert.deepEqual(tool.parameters, composedSchema);
+    assert.equal(tool.strict, true);
+  }
+});
+
 test("OpenAI Responses replay preserves interleaved reasoning and function-call output order", () => {
   const previous = mapOpenAiResponseV2(
     {

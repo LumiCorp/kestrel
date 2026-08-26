@@ -789,16 +789,10 @@ function toOpenAiFunctionParameters(value: unknown): Record<string, unknown> {
   if (schema === undefined) {
     return { type: "object", properties: {} };
   }
-  const {
-    allOf: _allOf,
-    anyOf: _anyOf,
-    const: _const,
-    enum: _enum,
-    not: _not,
-    oneOf: _oneOf,
-    ...parameters
-  } = schema;
-  return { ...parameters, type: "object" };
+  // A strict tool declaration is only truthful when the schema sent to the
+  // provider is the schema evaluated for strict compatibility. Do not erase
+  // root constraints while preparing the provider payload.
+  return { ...schema };
 }
 
 function isOpenAiStrictSchema(value: unknown): boolean {

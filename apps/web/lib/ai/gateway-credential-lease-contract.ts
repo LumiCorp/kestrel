@@ -156,6 +156,16 @@ export function buildGatewayCredentialLease(input: {
   now: Date;
 }): GatewayCredentialLease {
   const provider = input.gateway.provider;
+  if (
+    input.routeBinding !== undefined &&
+    input.routeBinding.provider !== provider
+  ) {
+    throw new GatewayCredentialLeaseError(
+      "GATEWAY_CREDENTIAL_ROUTE_MISMATCH",
+      "The requested credential lease does not match its bound model provider.",
+      409,
+    );
+  }
   if (!input.apiKey && provider !== "ollama") {
     throw new GatewayCredentialLeaseError(
       "GATEWAY_CREDENTIAL_MISSING",

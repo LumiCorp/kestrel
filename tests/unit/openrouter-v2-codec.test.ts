@@ -391,3 +391,26 @@ test("OpenRouter V2 Responses accepts direct function calls and refuses argument
   );
   assert.equal(fenced.output, undefined);
 });
+
+test("OpenRouter V2 rejects a response from another exact model", () => {
+  for (const [endpoint, payload] of [
+    [
+      "chat",
+      {
+        model: "another/model",
+        choices: [{ finish_reason: "stop", message: { content: "ok" } }],
+      },
+    ],
+    [
+      "responses",
+      { model: "another/model", status: "completed", output_text: "ok" },
+    ],
+  ] as const) {
+    const mapped = mapOpenRouterResponseV2(payload, {
+      endpoint,
+      requestedModel: "z-ai/glm-5.2:free",
+    });
+    assert.equal(mapped.terminal.state, "malformed");
+    assert.equal(mapped.validation.failureCode, "MODEL_BAD_RESPONSE");
+  }
+});
