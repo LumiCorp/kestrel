@@ -12,6 +12,7 @@ import { issueGatewayCredentialLease } from "@/lib/ai/gateway-credential-lease";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { verifyEnvironmentServiceToken } from "./service-tokens";
 import { ENVIRONMENT_EXECUTION_ROUTE_CAPABILITIES } from "./execution-route";
+import { modelGrantRouteBinding } from "./model-grant-route-binding";
 
 export class EnvironmentGatewayConfigError extends Error {
   constructor(
@@ -140,12 +141,14 @@ export async function resolveEnvironmentGatewayConfig(input: {
   });
   const resolvedModelGrants = await Promise.all(
     modelGrants.map(async ({ grant }) => {
+      const routeBinding = modelGrantRouteBinding(grant);
       const lease = await issueGatewayCredentialLease({
         version: "gateway-credential-lease-v3",
         gatewayId: grant.gatewayId,
         organizationId: grant.organizationId,
         environmentId: grant.environmentId,
         rawModelId: grant.rawModelId,
+        ...(routeBinding !== undefined ? { routeBinding } : {}),
       });
       return {
         runId: grant.runId,

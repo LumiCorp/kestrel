@@ -27,10 +27,6 @@ import {
 import { z } from "zod";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { issueGatewayCredentialLease } from "@/lib/ai/gateway-credential-lease";
-import {
-  parseModelCredentialRouteBindingV2,
-  type ModelCredentialRouteBindingV2,
-} from "../../../../src/kestrel/contracts/model-route";
 import { resolveKestrelAppUrl } from "@/lib/app-url";
 import type { ProjectRole } from "@/lib/projects/access";
 import { toEnvironmentSlug } from "./contracts";
@@ -38,6 +34,7 @@ import {
   organizationEnvironmentCreateLockKey,
   organizationEnvironmentDefaultLockKey,
 } from "./lifecycle-lock";
+import { modelGrantRouteBinding } from "./model-grant-route-binding";
 import {
   createExecutionAuthorizationRenewalToken,
   EXECUTION_AUTHORIZATION_RENEWAL_VERSION,
@@ -1222,35 +1219,6 @@ async function issueEncryptedDesktopModelGrant(input: {
       connectionId: input.authorization.connection.id,
       runId: modelGrant.runId,
     }),
-  });
-}
-
-function modelGrantRouteBinding(
-  grant: typeof schema.environmentModelGrants.$inferSelect,
-): ModelCredentialRouteBindingV2 | undefined {
-  if (grant.routeBindingStatus === null) return;
-  if (grant.routeBindingStatus === "legacy_unqualified") {
-    return parseModelCredentialRouteBindingV2({
-      version: "model_credential_route_binding_v2",
-      status: "legacy_unqualified",
-      provider: grant.routeProvider,
-      rawModelId: grant.rawModelId,
-    });
-  }
-  return parseModelCredentialRouteBindingV2({
-    version: "model_credential_route_binding_v2",
-    status: "qualified",
-    provider: grant.routeProvider,
-    rawModelId: grant.rawModelId,
-    registrationId: grant.modelRegistrationId,
-    registrationRevision: grant.modelRegistrationRevision,
-    registrationFingerprint: grant.modelRegistrationFingerprint,
-    qualificationRevision: grant.modelQualificationRevision,
-    apiEndpoint: grant.modelApiEndpoint,
-    endpointCodec: grant.modelEndpointCodec,
-    routingPolicyFingerprint: grant.modelRoutingPolicyFingerprint,
-    requiredRole: grant.modelRequiredRole,
-    credentialRevision: grant.gatewayCredentialRevision,
   });
 }
 
