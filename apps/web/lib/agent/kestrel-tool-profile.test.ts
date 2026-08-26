@@ -237,9 +237,7 @@ test("built-in agent tools are governed by their effective App capabilities", ()
         "free.geocode.lookup",
         "free.exchange.rate",
         "kestrel_one.search_knowledge_documents",
-        "createDocument",
-        "updateDocument",
-        "requestSuggestions",
+        "kestrel_one.word_document_create",
       ],
     },
     effectiveCapabilities: [
@@ -251,6 +249,7 @@ test("built-in agent tools are governed by their effective App capabilities", ()
       "app:built_in.knowledge_search.searchKnowledgeDocuments:ask",
       "app:built_in.artifacts.createDocument:ask",
       "app:built_in.artifacts.requestSuggestions:auto",
+      "app:built_in.artifacts.createWordDocument:ask",
     ],
   });
 
@@ -263,8 +262,7 @@ test("built-in agent tools are governed by their effective App capabilities", ()
     "kestrel_one.search_knowledge_documents",
     "kestrel.files.search",
     "kestrel.files.open",
-    "createDocument",
-    "requestSuggestions",
+    "kestrel_one.word_document_create",
   ]);
   assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
     "free.weather.current": "auto",
@@ -275,7 +273,6 @@ test("built-in agent tools are governed by their effective App capabilities", ()
     "kestrel_one.search_knowledge_documents": "ask",
     "kestrel.files.search": "ask",
     "kestrel.files.open": "ask",
-    createDocument: "ask",
-    requestSuggestions: "auto",
+    "kestrel_one.word_document_create": "ask",
   });
 });

@@ -25,6 +25,23 @@ export type TrustedTerminalApproval = {
   externalBinding: RunnerExternalApprovalBindingV1;
 };
 
+export function readTrustedTerminalApprovalToolName(
+  event: RunnerRunTerminalEvent,
+): string | null {
+  if (
+    event.type !== "run.completed" ||
+    event.payload.result.output.status !== "WAITING"
+  ) {
+    return null;
+  }
+  const waitFor = asRecord(event.payload.result.output.waitFor);
+  if (waitFor?.kind !== "approval") return null;
+  const interaction = asRecord(waitFor.interaction);
+  const approval = asRecord(interaction?.approval);
+  const metadata = asRecord(waitFor.metadata);
+  return readString(metadata?.toolName) ?? readString(approval?.toolName);
+}
+
 export function parseTrustedTerminalApproval(input: {
   event: RunnerRunTerminalEvent;
   threadId: string;

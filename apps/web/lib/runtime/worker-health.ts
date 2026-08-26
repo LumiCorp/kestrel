@@ -23,6 +23,7 @@ export async function startWorkerHealthServer(input: {
   role: WorkerRole;
   buildId: string;
   port?: number;
+  host?: string;
 }) {
   let ready = false;
   let closing = false;
@@ -51,7 +52,7 @@ export async function startWorkerHealthServer(input: {
   }
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, "0.0.0.0", () => {
+    server.listen(port, input.host ?? "0.0.0.0", () => {
       server.off("error", reject);
       resolve();
     });

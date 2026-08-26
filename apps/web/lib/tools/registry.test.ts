@@ -91,7 +91,8 @@ test("runtime names expose current chat tools", () => {
   assert.ok(runtimeNames.includes("free.geocode.lookup"));
   assert.ok(runtimeNames.includes("free.exchange.rate"));
   assert.ok(runtimeNames.includes("kestrel_one.search_knowledge_documents"));
-  assert.ok(runtimeNames.includes("createDocument"));
+  assert.ok(runtimeNames.includes("kestrel_one.word_document_create"));
+  assert.equal(runtimeNames.includes("createDocument"), false);
 });
 
 test("every provider declares a coherent App connection contract", () => {

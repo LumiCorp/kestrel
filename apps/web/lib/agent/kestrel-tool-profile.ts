@@ -126,16 +126,8 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
     { appKey: "built_in.previews", capabilityKey: "close" },
   ],
   [
-    "createDocument",
-    { appKey: "built_in.artifacts", capabilityKey: "createDocument" },
-  ],
-  [
-    "updateDocument",
-    { appKey: "built_in.artifacts", capabilityKey: "updateDocument" },
-  ],
-  [
-    "requestSuggestions",
-    { appKey: "built_in.artifacts", capabilityKey: "requestSuggestions" },
+    "kestrel_one.word_document_create",
+    { appKey: "built_in.artifacts", capabilityKey: "createWordDocument" },
   ],
 ]);
 

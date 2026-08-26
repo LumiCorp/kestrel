@@ -383,6 +383,7 @@
         "tests/unit/weather-provider-resolver.test.ts",
         "tests/unit/web-extraction.test.ts",
         "tests/unit/web-tool-provider-registry-parity.test.ts",
+        "tests/unit/word-document-tool.test.ts",
         "tests/unit/workspace-preview-tools.test.ts",
         "tools/internet/kestrel-one-provider.test.ts"
       ]

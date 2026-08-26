@@ -88,6 +88,7 @@ import {
 import { kestrelOneGitHubPushAgentBranchTool } from "./kestrelOne/githubPushAgentBranch.js";
 import { workspacePreviewTools } from "./kestrelOne/workspacePreviews.js";
 import { workspaceFilesShareTool } from "./kestrelOne/workspaceFileShare.js";
+import { kestrelOneWordDocumentCreateTool } from "./kestrelOne/wordDocument.js";
 import {
   kestrelOneGoogleCalendarCheckAvailabilityTool,
   kestrelOneGoogleCalendarCreateEventTool,
@@ -182,6 +183,7 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   kestrelOneGitHubRepositoryReadTool,
   kestrelOneGitHubPushAgentBranchTool,
   workspaceFilesShareTool,
+  kestrelOneWordDocumentCreateTool,
   ...workspacePreviewTools,
   kestrelOneGitHubIssueCreateTool,
   kestrelOneGitHubPullRequestCreateTool,

@@ -5,9 +5,15 @@ import { and, eq } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { authorizeGitHubCapability, type GitHubCapability } from "@/lib/integrations/github-policy";
 import { recordAppOperationApprovalRequest } from "./app-operation-approvals";
-import { parseHostedMutation } from "./hosted-app-operation-contract";
+import {
+  isHostedMutationToolName,
+  parseHostedMutation,
+} from "./hosted-app-operation-contract";
 import { resolveEffectiveProjectAppAccess } from "./project-service";
-import { parseTrustedTerminalApproval } from "./trusted-terminal-approval";
+import {
+  parseTrustedTerminalApproval,
+  readTrustedTerminalApprovalToolName,
+} from "./trusted-terminal-approval";
 
 const APPROVAL_TTL_MS = 5 * 60_000;
 
@@ -21,6 +27,8 @@ export async function recordHostedAppApprovalRequest(input: {
   requestedExecutionId: string;
   event: RunnerRunTerminalEvent;
 }) {
+  const toolName = readTrustedTerminalApprovalToolName(input.event);
+  if (!isHostedMutationToolName(toolName)) return null;
   const terminal = parseTrustedTerminalApproval({
     event: input.event,
     threadId: input.threadId,

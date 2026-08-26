@@ -1,0 +1,99 @@
+{
+  "schemaVersion": "1.0",
+  "generatedAt": "2026-08-25",
+  "change": {
+    "intent": "Deploy the hosted approval and Word document export repair to the production surfaces that execute the changed code.",
+    "inScope": [
+      "Kestrel One Web approval classification, retry handling, profile, registry, and durable turn changes",
+      "Kestrel One turn-worker shared tool catalog and Word document export",
+      "Existing workspace preview publication lifecycle used by Word export"
+    ],
+    "protected": [
+      "Existing database schema and durable interaction fields",
+      "Existing Preview Edge routing and publication authority",
+      "Existing worker production defaults and secrets",
+      "Manual, exact-target production delivery policy"
+    ]
+  },
+  "workspaceRevision": "06c9fab835935e7add851003994c882b52d91bab + uncommitted repair changes",
+  "readiness": "ready",
+  "readinessReason": "Current validation passes and the changed code maps to two production delivery targets: Vercel one and the Fly turn-worker image. No schema, configuration, Preview Edge, control-worker, RunPod, or tenant-runtime change is present.",
+  "directImpacts": [
+    {
+      "surface": "Kestrel One Web on Vercel",
+      "effect": "Deploy approval recording, approval retry semantics, hosted tool profile/registry, and durable turn failure handling.",
+      "evidenceIds": ["E1", "E2"]
+    },
+    {
+      "surface": "Kestrel One turn-worker on Fly",
+      "effect": "Publish and roll out the worker image because it executes the changed durable turn processor and shared tool catalog, including Word export.",
+      "evidenceIds": ["E1", "E3", "E4", "E5"]
+    },
+    {
+      "surface": "Existing workspace preview publication",
+      "effect": "Reuse the existing Preview Edge route and lifecycle; no Preview Edge deployment is required.",
+      "evidenceIds": ["E1", "E5"]
+    }
+  ],
+  "indirectImpacts": [
+    {
+      "surface": "Production migration step",
+      "effect": "The normal Web deployment runs its existing ordered migration command, but this repair introduces no migration or backfill.",
+      "evidenceIds": ["E2"]
+    },
+    {
+      "surface": "Other worker roles",
+      "effect": "The worker-health API remains backward-compatible and retains its production default, so control-worker and RunPod-worker rollouts are not required.",
+      "evidenceIds": ["E1"]
+    }
+  ],
+  "unknowns": [
+    "The production Vercel deployment ID is not known locally.",
+    "The exact in-scope turn-worker Machine IDs and current provider image records require operator inspection.",
+    "Live provider, Fly, and production configuration readiness has not been verified in this analysis."
+  ],
+  "requiredValidation": [
+    "pnpm validate",
+    "Promote the protected production branch and verify the one Vercel build and migration",
+    "Publish the turn-worker image with the existing production image smoke",
+    "Run the turn-worker disposable canary required by its rollout procedure",
+    "Update and verify each exact turn-worker Fly Machine",
+    "Run a hosted approval retry/resume smoke and a Build-mode .docx download smoke"
+  ],
+  "contextPack": {
+    "objective": "Release the repair to Web and durable turn execution while preserving existing preview, storage, and production delivery boundaries.",
+    "evidenceIds": ["E1", "E2", "E3", "E4", "E5", "E6"],
+    "relevantPaths": [
+      "apps/web/lib/apps/hosted-app-approval-recorder.ts",
+      "apps/web/lib/turns/process-runtime.ts",
+      "apps/web/lib/turns/store.ts",
+      "apps/web/lib/tools/registry.ts",
+      "apps/web/scripts/turn-worker.ts",
+      "tools/catalog.ts",
+      "tools/kestrelOne/wordDocument.ts",
+      "docs/production-delivery-channels.md",
+      "deploy/fly/kestrel-one-turn-worker/ROLLOUT.md"
+    ],
+    "interfaces": [
+      "Vercel one production branch deployment",
+      "Fly turn-worker image and exact Machine update",
+      "Existing workspace.preview.publish lifecycle"
+    ],
+    "runtimeConstraints": [
+      "Deploy Web before the turn-worker image when shared durable-turn behavior changes.",
+      "Update one exact Fly Machine at a time and preserve its prior started/stopped state.",
+      "Do not activate staged secrets or change provider configuration as part of this release.",
+      "No database migration is expected from this diff."
+    ],
+    "allowedActions": [
+      "Promote the reviewed code through the protected production branch.",
+      "Publish and manually roll out the turn-worker image using the existing runbook.",
+      "Run the required hosted approval and Word export smoke checks."
+    ],
+    "prohibitedActions": [
+      "Do not deploy Preview Edge, control-worker, managed RunPod-worker, or tenant runtime without separate evidence.",
+      "Do not add a production-push workflow or web-triggered deployment path.",
+      "Do not perform schema changes, secret rotation, or broad fleet updates under this repair."
+    ]
+  }
+}

@@ -9,8 +9,17 @@ import type { RunnerRunTerminalEvent } from "@kestrel-agents/sdk";
 import { parseHostedMutation } from "./hosted-app-operation-contract";
 import {
   parseTrustedTerminalApproval,
+  readTrustedTerminalApprovalToolName,
   TrustedTerminalApprovalError,
 } from "./trusted-terminal-approval";
+
+test("approval tool-name classification is available before strict hosted parsing", () => {
+  const event = waitingEvent();
+  assert.equal(
+    readTrustedTerminalApprovalToolName(event),
+    "kestrel_one.email_send",
+  );
+});
 
 test("trusted terminal approval preserves request, runtime approval, and runner run identities", () => {
   const event = waitingEvent();

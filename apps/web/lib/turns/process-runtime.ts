@@ -939,6 +939,16 @@ export async function processDurableThreadTurn(
       typeof error.code === "string"
         ? error.code
         : null;
+    const retryableHostedApprovalFailure =
+      errorCode === "HOSTED_APPROVAL_EXTERNAL_BINDING_INVALID" ||
+      errorCode === "HOSTED_APPROVAL_TERMINAL_METADATA_INVALID" ||
+      errorCode === "HOSTED_APPROVAL_TERMINAL_BINDING_MISMATCH";
+    const publicFailureMessage =
+      errorCode?.startsWith("HOSTED_APPROVAL_") === true
+        ? retryableHostedApprovalFailure
+          ? "The approval step could not be completed. Retry the operation."
+          : "The approval step could not be completed. Request fresh approval."
+        : null;
     const attachmentCode =
       error instanceof HostedAttachmentResolutionError ? error.code : null;
     const attachmentFileIds =
@@ -962,7 +972,7 @@ export async function processDurableThreadTurn(
     const failurePresentation = buildFailurePresentation({
       errorMessage: attachmentCode
         ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
-        : message,
+        : publicFailureMessage ?? message,
       status: stopped ? "cancelled" : "failed",
       turn,
       assistantMessageId: terminal.assistantMessageId,
@@ -991,16 +1001,21 @@ export async function processDurableThreadTurn(
         ? null
         : attachmentCode
           ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
-          : message,
-      interactionFailure: runnerRunStartedObserved
+          : publicFailureMessage ?? message,
+      interactionFailure: runnerRunStartedObserved && publicFailureMessage === null
         ? undefined
         : {
             failureCode: stopped
               ? "TURN_STOPPED"
               : attachmentCode ?? errorCode ?? "TURN_WORKER_FAILED",
-            failureMessage: stopped ? "Turn stopped." : message,
-            effectStatus: runnerInvocationBegan ? "unknown" : "not_started",
-            retryable: false,
+            failureMessage: stopped ? "Turn stopped." : publicFailureMessage ?? message,
+            effectStatus:
+              retryableHostedApprovalFailure
+                ? "not_started"
+                : runnerInvocationBegan
+                  ? "unknown"
+                  : "not_started",
+            retryable: retryableHostedApprovalFailure,
           },
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
