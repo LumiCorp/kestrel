@@ -131,8 +131,8 @@ export class ModelQualificationService {
       credentialRevision: input.credentialRevision,
       probeRevision: input.probeRevision,
     });
-    const probes = validateProbes(input.probes);
-    const key = bindingKey(binding);
+    const probes = validateProbes(input.probes, binding);
+    const key = qualificationRunKey(binding, probes);
     const current = this.currentRun(key);
     if (current !== undefined && this.isFresh(current)) return current;
     const active = this.refreshes.get(key);
@@ -157,10 +157,8 @@ export class ModelQualificationService {
     capability: ModelQualificationCapability;
   }): ModelQualificationRead {
     const binding = createModelQualificationBinding(input);
-    const run = this.currentRun(bindingKey(binding));
-    const result = run?.results.find(
-      (entry) => entry.capability === input.capability,
-    );
+    const run = this.currentCapabilityRun(binding, input.capability);
+    const result = run?.results.find((entry) => entry.capability === input.capability);
     if (result === undefined) {
       return { capability: input.capability, outcome: "stale" };
     }
@@ -185,6 +183,23 @@ export class ModelQualificationService {
   private currentRun(key: string): ModelQualificationRun | undefined {
     const history = this.runs.get(key);
     return history?.at(-1);
+  }
+
+  private currentCapabilityRun(
+    binding: ModelQualificationBinding,
+    capability: ModelQualificationCapability,
+  ): ModelQualificationRun | undefined {
+    const identity = bindingKey(binding);
+    return [...this.runs.values()]
+      .flat()
+      .filter(
+        (run) =>
+          bindingKey(run.binding) === identity &&
+          run.results.some((result) => result.capability === capability),
+      )
+      .sort((left, right) =>
+        Date.parse(right.checkedAt) - Date.parse(left.checkedAt),
+      )[0];
   }
 
   private isFresh(run: ModelQualificationRun): boolean {
@@ -262,10 +277,18 @@ async function executeProbe(input: {
   }
   const requestHash = hashCanonical(input.probe.request);
   try {
+    assertProbeMatchesBinding(input.probe.request, input.binding);
     const response = parseModelResponseV2(
       await input.gateway.call<ModelResponseV2>(input.probe.request),
     );
-    const outcome = responseIsQualified(response) ? "qualified" : "failed";
+    const outcome = responseProvesCapability(
+      input.probe.capability,
+      input.probe.request,
+      response,
+      input.binding,
+    )
+      ? "qualified"
+      : "failed";
     return Object.freeze({
       capability: input.probe.capability,
       outcome,
@@ -292,11 +315,61 @@ async function executeProbe(input: {
   }
 }
 
-function responseIsQualified(response: ModelResponseV2): boolean {
-  return (
-    response.terminal.state === "completed" &&
-    response.validation.state !== "failed"
+function responseProvesCapability(
+  capability: ModelQualificationCapability,
+  request: ModelRequestV2,
+  response: ModelResponseV2,
+  binding: ModelQualificationBinding,
+): boolean {
+  if (
+    response.terminal.state !== "completed" ||
+    response.validation.state === "failed" ||
+    response.provider.name !== binding.providerId ||
+    response.provider.model !== binding.modelId ||
+    (request.requirements.endpoint !== "any" &&
+      response.provider.endpoint !== request.requirements.endpoint)
+  ) {
+    return false;
+  }
+  const continuationKinds = new Set(
+    response.reasoning?.continuation?.map((entry) => entry.kind) ?? [],
   );
+  const visibleFormats = new Set(
+    response.reasoning?.visible?.map((entry) => entry.format) ?? [],
+  );
+  switch (capability) {
+    case "native_tools":
+    case "required_tool_choice":
+    case "strict_tool_inputs":
+    case "parallel_tool_calls":
+      return response.toolIntents.length > 0;
+    case "reasoning_summary":
+      return visibleFormats.has("summary");
+    case "reasoning_provider_visible":
+      return (
+        visibleFormats.has("provider_thinking") ||
+        visibleFormats.has("provider_reasoning_text")
+      );
+    case "continuation_encrypted_content":
+      return continuationKinds.has("encrypted_content");
+    case "continuation_signature":
+      return continuationKinds.has("signature");
+    case "continuation_reasoning_details":
+      return continuationKinds.has("reasoning_details");
+    case "streaming_terminal":
+      return response.terminal.providerTerminalEvent !== undefined;
+    default:
+      return true;
+  }
+}
+
+function assertProbeMatchesBinding(
+  request: ModelRequestV2,
+  binding: ModelQualificationBinding,
+): void {
+  if (request.model !== binding.modelId) {
+    throw new Error("model qualification probe model does not match its registration");
+  }
 }
 
 function secretFreeResponse(response: ModelResponseV2): Record<string, unknown> {
@@ -325,6 +398,7 @@ function qualificationFailureCode(error: unknown): string {
 
 function validateProbes(
   probes: readonly ModelQualificationProbe[],
+  binding: ModelQualificationBinding,
 ): readonly ModelQualificationProbe[] {
   const seen = new Set<ModelQualificationCapability>();
   return probes.map((probe) => {
@@ -341,6 +415,7 @@ function validateProbes(
       }
     } else {
       assertProbeCarriesCapability(probe);
+      assertProbeMatchesBinding(probe.request, binding);
     }
     return Object.freeze({ ...probe });
   });
@@ -403,4 +478,14 @@ function uniqueCapabilities(
 
 function bindingKey(binding: ModelQualificationBinding): string {
   return hashCanonical(binding);
+}
+
+function qualificationRunKey(
+  binding: ModelQualificationBinding,
+  probes: readonly ModelQualificationProbe[],
+): string {
+  return hashCanonical({
+    binding,
+    capabilities: probes.map((probe) => probe.capability).sort(),
+  });
 }

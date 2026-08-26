@@ -153,6 +153,52 @@ test("qualification refuses a mislabeled bounded probe before transport", async 
   assert.equal(calls, 0);
 });
 
+test("qualification requires the exact response route and capability-specific proof", async () => {
+  const service = new ModelQualificationService({ freshnessMs: 60_000 });
+  const run = await service.refresh({
+    registration: registration(),
+    credentialRevision: "credential-1",
+    probeRevision: "probe-1",
+    probes: [probe("reasoning_summary"), probe("json_syntax")],
+    gateway: fakeGateway(async (request) =>
+      capabilityFor(request as ModelRequestV2) === "json_syntax"
+        ? { ...completedResponse(), provider: { name: "openrouter", model: "another-model", endpoint: "chat" } }
+        : completedResponse(),
+    ),
+  });
+  assert.deepEqual(
+    run.results.map(({ capability, outcome }) => [capability, outcome]),
+    [
+      ["reasoning_summary", "failed"],
+      ["json_syntax", "failed"],
+    ],
+  );
+});
+
+test("fresh qualification runs never suppress an independently requested capability", async () => {
+  let calls = 0;
+  const service = new ModelQualificationService({ freshnessMs: 60_000 });
+  const gateway = fakeGateway(async (request) => {
+    calls += 1;
+    return capabilityFor(request as ModelRequestV2) === "required_tool_choice"
+      ? toolResponse()
+      : completedResponse();
+  });
+  const shared = {
+    registration: registration(),
+    credentialRevision: "credential-1",
+    probeRevision: "probe-1",
+    gateway,
+  };
+  await service.refresh({ ...shared, probes: [probe("json_syntax")] });
+  await service.refresh({ ...shared, probes: [probe("required_tool_choice")] });
+  assert.equal(calls, 2);
+  assert.equal(
+    service.read({ ...shared, capability: "required_tool_choice" }).outcome,
+    "qualified",
+  );
+});
+
 function probe(capability: ModelQualificationCapability): ModelQualificationProbe {
   const requirements: ModelRequestV2["requirements"] = {
     runtimeRole: `qualification.${capability}`,
@@ -253,6 +299,13 @@ function failedResponse() {
     ...completedResponse(),
     terminal: { state: "malformed", visibleOutputStarted: false },
     validation: { state: "failed", failureCode: "MODEL_QUALIFICATION_FAILED" },
+  } as const;
+}
+
+function toolResponse() {
+  return {
+    ...completedResponse(),
+    toolIntents: [{ id: "call-1", name: "probe_tool", input: {} }],
   } as const;
 }
 
