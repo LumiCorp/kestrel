@@ -9,7 +9,7 @@ Implementation must start from deployed-source revision
 
 ## Ready
 
-None.
+- [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md)
 
 ## In progress
 
@@ -17,14 +17,15 @@ None.
 
 ## Blocked
 
-- [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md) — blocked by [Remember Ask First approval for the thread](03-remember-thread-tool-approval.md)
+None.
 
 ## Implemented
 
-- [Remember Ask First approval for the thread](03-remember-thread-tool-approval.md)
+None.
 
 ## Done
 
+- [Remember Ask First approval for the thread](03-remember-thread-tool-approval.md)
 - [Make the thread interaction the approval decision owner](04-canonicalize-approval-lifecycle.md)
 - [Resume the exact prepared invocation after approval](02-resume-prepared-invocation.md)
 - [Persist the exact tool invocation before approval](01-persist-prepared-invocation.md)
