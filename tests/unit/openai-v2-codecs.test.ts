@@ -55,11 +55,91 @@ test("OpenAI V2 codecs keep Chat response_format separate from Responses text.fo
   assert.equal(responses.body.parallel_tool_calls, false);
 });
 
-test("OpenAI Responses replays encrypted reasoning before the previous function call", () => {
-  const continuation = {
-    type: "reasoning",
-    encrypted_content: "opaque",
-  };
+test("OpenAI V2 strict tool inputs fail before the provider call when a schema is incompatible", async () => {
+  const strictRequest = createModelRequestV2({
+    ...requestAuthoring("chat"),
+    tools: [
+      {
+        name: "lookup",
+        description: "Find a record.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+            limit: { type: "number" },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+      },
+    ],
+  });
+  assert.throws(
+    () => buildOpenAiHttpRequest(strictRequest, env),
+    (error: unknown) =>
+      (error as { code?: string }).code === "MODEL_PROVIDER_SCHEMA",
+  );
+  assert.throws(
+    () =>
+      buildOpenAiHttpRequest(
+        createModelRequestV2({
+          ...requestAuthoring("responses"),
+          tools: strictRequest.tools,
+        }),
+        env,
+      ),
+    (error: unknown) =>
+      (error as { code?: string }).code === "MODEL_PROVIDER_SCHEMA",
+  );
+
+  let providerCalls = 0;
+  const invoker = createOpenAiInvoker({
+    env,
+    fetchImpl: (async () => {
+      providerCalls += 1;
+      return new Response();
+    }) as typeof fetch,
+  });
+  await assert.rejects(
+    invoker(strictRequest),
+    (error: unknown) =>
+      (error as { code?: string }).code === "MODEL_PROVIDER_SCHEMA",
+  );
+  assert.equal(providerCalls, 0);
+});
+
+test("OpenAI Responses replay preserves interleaved reasoning and function-call output order", () => {
+  const previous = mapOpenAiResponseV2(
+    {
+      model: "gpt-4.1-mini",
+      status: "completed",
+      output: [
+        {
+          type: "function_call",
+          call_id: "call_1",
+          name: "lookup",
+          arguments: '{"query":"Kestrel"}',
+        },
+        { type: "reasoning", encrypted_content: "opaque" },
+        {
+          type: "function_call",
+          call_id: "call_2",
+          name: "lookup",
+          arguments: '{"query":"harness"}',
+        },
+      ],
+    },
+    responseContext("responses"),
+  );
+  assert.ok(previous.reasoning);
+  const replayToolCalls = previous.toolIntents.map((toolIntent) => {
+    if (toolIntent.id === undefined) {
+      throw new Error(
+        "fixture function calls must retain their provider call IDs",
+      );
+    }
+    return { ...toolIntent, id: toolIntent.id };
+  });
   const mapped = buildOpenAiHttpRequest(
     createModelRequestV2({
       ...requestAuthoring("responses"),
@@ -83,22 +163,15 @@ test("OpenAI Responses replays encrypted reasoning before the previous function 
         {
           role: "assistant",
           content: "",
-          toolCalls: [
-            { id: "call_1", name: "lookup", input: { query: "Kestrel" } },
-          ],
+          toolCalls: replayToolCalls,
         },
         { role: "tool", toolCallId: "call_1", content: "result" },
+        { role: "tool", toolCallId: "call_2", content: "result" },
         { role: "user", content: "continue" },
       ],
       reasoning: {
         mode: "summary",
-        continuation: [
-          {
-            provider: "openai",
-            kind: "encrypted_content",
-            value: continuation,
-          },
-        ],
+        continuation: previous.reasoning.continuation,
       },
     }),
     env,
@@ -106,8 +179,20 @@ test("OpenAI Responses replays encrypted reasoning before the previous function 
   const input = mapped.body.input as Array<Record<string, unknown>>;
   assert.deepEqual(
     input.map((item) => item.type ?? item.role),
-    ["assistant", "reasoning", "function_call", "function_call_output", "user"],
+    [
+      "assistant",
+      "function_call",
+      "reasoning",
+      "function_call",
+      "function_call_output",
+      "function_call_output",
+      "user",
+    ],
   );
+  assert.deepEqual(input[2], {
+    type: "reasoning",
+    encrypted_content: "opaque",
+  });
 });
 
 test("OpenAI V2 decoder does not heal prose JSON or malformed function arguments", () => {
@@ -174,6 +259,25 @@ test("OpenAI stream requires its endpoint terminal event and normalizes Response
     responseContext("responses"),
   );
   assert.equal(incomplete.terminal.state, "truncated");
+});
+
+test("OpenAI Chat stream rejects [DONE] without a final finish_reason", async () => {
+  const invoker = createOpenAiInvoker({
+    env,
+    fetchImpl: (async () =>
+      new Response(
+        `data: ${JSON.stringify({
+          model: "gpt-4.1-mini",
+          choices: [{ delta: { content: "partial" } }],
+        })}\n\ndata: [DONE]\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      )) as typeof fetch,
+  });
+  await assert.rejects(
+    invoker(request("chat"), { onEvent: () => undefined }),
+    (error: unknown) =>
+      (error as { code?: string }).code === "MODEL_INCOMPLETE_RESPONSE",
+  );
 });
 
 test("OpenAI exact-model manifest is fingerprinted declaration, never qualification", () => {

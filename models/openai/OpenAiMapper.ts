@@ -15,6 +15,8 @@ import type { OpenAiEnvConfig } from "../contracts.js";
 import { compileOpenRouterResponseSchema } from "../openrouter/OpenRouterSchemaCompiler.js";
 import { createOpenAiBadResponseError } from "./OpenAiErrors.js";
 
+const OPENAI_REPLAY_AFTER_CALL_ID = "__kestrelReplayAfterCallId";
+
 export function buildOpenAiHttpRequest(
   request: ModelRequest,
   env: OpenAiEnvConfig,
@@ -39,6 +41,7 @@ export function buildOpenAiHttpRequest(
       ? requiredEndpoint
       : (openai?.endpoint ??
         (env.providerName === "openai" ? "responses" : "chat"));
+  assertOpenAiStrictToolInputCompatibility(request);
   if (endpoint === "responses") {
     return buildOpenAiResponsesRequest(request, env, model);
   }
@@ -321,27 +324,26 @@ function toResponsesInput(request: ModelRequest): unknown {
                     ),
             },
           ];
-          if (
+          const isContinuationTurn =
             continuation.length > 0 &&
             message.role === "assistant" &&
-            isLastAssistantMessage(messages, index)
-          ) {
+            isLastAssistantMessage(messages, index);
+          if (isContinuationTurn) {
             // A Responses continuation is an output item from the prior turn.
-            // It belongs before that turn's function calls and tool outputs.
-            items.push(...continuation);
-          }
-          for (const toolCall of message.toolCalls ?? []) {
-            items.push({
-              type: "function_call",
-              call_id: toolCall.id,
-              name: toProviderToolName(toolCall.name),
-              arguments: safeJsonStringify(toolCall.input),
-            });
+            // Its order relative to the prior function calls is provider state.
+            items.push(
+              ...replayResponsesAssistantOutput(
+                message.toolCalls ?? [],
+                continuation,
+              ),
+            );
+          } else {
+            items.push(...toResponsesFunctionCalls(message.toolCalls ?? []));
           }
           return items;
         })
       : [
-          ...continuation,
+          ...continuation.map(({ providerItem }) => providerItem),
           typeof request.input === "string"
             ? { role: "user", content: request.input }
             : { role: "user", content: safeJsonStringify(request.input) },
@@ -369,6 +371,26 @@ function toResponsesTools(
     parameters: toOpenAiFunctionParameters(tool.inputSchema),
     strict: isOpenAiStrictSchema(toOpenAiFunctionParameters(tool.inputSchema)),
   }));
+}
+
+function assertOpenAiStrictToolInputCompatibility(request: ModelRequest): void {
+  const requirements = v2Requirements(request);
+  if (
+    requirements?.tools.strictArguments !== true ||
+    requirements.tools.choice === "none"
+  ) {
+    return;
+  }
+  const unsupported = (request.tools ?? []).find(
+    (tool) =>
+      !isOpenAiStrictSchema(toOpenAiFunctionParameters(tool.inputSchema)),
+  );
+  if (unsupported !== undefined) {
+    throw createOpenAiBadResponseError(
+      `OpenAI cannot encode tool '${unsupported.name}' with strict: true.`,
+      "MODEL_PROVIDER_SCHEMA",
+    );
+  }
 }
 
 function applyChatTools(
@@ -456,7 +478,7 @@ function requestedReasoningMode(
 
 function responseContinuationItems(
   request: ModelRequest,
-): Array<Record<string, unknown>> {
+): OpenAiContinuationItem[] {
   return (request.reasoning?.continuation ?? []).map((continuation) => {
     if (
       continuation.provider !== "openai" ||
@@ -474,8 +496,88 @@ function responseContinuationItems(
         "MODEL_CONTINUATION_ORDER_INVALID",
       );
     }
-    return value;
+    const replayPositionPresent = Object.hasOwn(
+      value,
+      OPENAI_REPLAY_AFTER_CALL_ID,
+    );
+    const replayPosition = value[OPENAI_REPLAY_AFTER_CALL_ID];
+    if (
+      replayPositionPresent &&
+      replayPosition !== null &&
+      typeof replayPosition !== "string"
+    ) {
+      throw createOpenAiBadResponseError(
+        "OpenAI Responses continuation has an invalid provider output position.",
+        "MODEL_CONTINUATION_ORDER_INVALID",
+      );
+    }
+    const replayAfterCallId = asString(replayPosition);
+    const { [OPENAI_REPLAY_AFTER_CALL_ID]: _replayPosition, ...providerItem } =
+      value;
+    return { providerItem, replayPositionPresent, replayAfterCallId };
   });
+}
+
+interface OpenAiContinuationItem {
+  providerItem: Record<string, unknown>;
+  replayPositionPresent: boolean;
+  replayAfterCallId?: string | undefined;
+}
+
+function replayResponsesAssistantOutput(
+  toolCalls: NonNullable<ModelMessage["toolCalls"]>,
+  continuation: OpenAiContinuationItem[],
+): Array<Record<string, unknown>> {
+  if (toolCalls.length === 0) {
+    return continuation.map(({ providerItem }) => providerItem);
+  }
+  if (continuation.some((item) => !item.replayPositionPresent)) {
+    throw createOpenAiBadResponseError(
+      "OpenAI Responses continuation lacks the provider output position required for ordered replay.",
+      "MODEL_CONTINUATION_ORDER_INVALID",
+    );
+  }
+  const replayed: Array<Record<string, unknown>> = [];
+  const remaining = [...continuation];
+  const beforeFirstCall = takeReplayItems(remaining, undefined);
+  replayed.push(...beforeFirstCall.map(({ providerItem }) => providerItem));
+  for (const toolCall of toolCalls) {
+    replayed.push(...toResponsesFunctionCalls([toolCall]));
+    const afterCall = takeReplayItems(remaining, toolCall.id);
+    replayed.push(...afterCall.map(({ providerItem }) => providerItem));
+  }
+  if (remaining.length > 0) {
+    throw createOpenAiBadResponseError(
+      "OpenAI Responses continuation refers to a function call that is absent from the replay turn.",
+      "MODEL_CONTINUATION_ORDER_INVALID",
+    );
+  }
+  return replayed;
+}
+
+function takeReplayItems(
+  items: OpenAiContinuationItem[],
+  replayAfterCallId: string | undefined,
+): OpenAiContinuationItem[] {
+  const matched: OpenAiContinuationItem[] = [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (items[index]?.replayAfterCallId === replayAfterCallId) {
+      matched.unshift(items[index]!);
+      items.splice(index, 1);
+    }
+  }
+  return matched;
+}
+
+function toResponsesFunctionCalls(
+  toolCalls: NonNullable<ModelMessage["toolCalls"]>,
+): Array<Record<string, unknown>> {
+  return toolCalls.map((toolCall) => ({
+    type: "function_call",
+    call_id: toolCall.id,
+    name: toProviderToolName(toolCall.name),
+    arguments: safeJsonStringify(toolCall.input),
+  }));
 }
 
 function isLastAssistantMessage(
@@ -498,6 +600,7 @@ function mapOpenAiResponsesPayload<TOutput>(
   const visible: NonNullable<ModelResponse["reasoning"]>["visible"] = [];
   const continuation: NonNullable<ModelResponse["reasoning"]>["continuation"] =
     [];
+  let replayAfterCallId: string | undefined;
   for (const item of outputItems) {
     const record = asRecord(item);
     const type = asString(record?.type);
@@ -514,13 +617,13 @@ function mapOpenAiResponsesPayload<TOutput>(
     } else if (type === "function_call") {
       const name = asString(record?.name);
       if (name !== undefined) {
+        const callId = asString(record?.call_id);
         toolIntents.push({
           name,
           input: parseToolArguments(asString(record?.arguments)),
-          ...(asString(record?.call_id) !== undefined
-            ? { id: asString(record?.call_id) }
-            : {}),
+          ...(callId !== undefined ? { id: callId } : {}),
         });
+        replayAfterCallId = callId;
       }
     } else if (type === "reasoning") {
       const summaryText = asArray(record?.summary)
@@ -534,7 +637,10 @@ function mapOpenAiResponsesPayload<TOutput>(
         continuation.push({
           provider: "openai",
           kind: "encrypted_content",
-          value: record,
+          value: {
+            ...record,
+            [OPENAI_REPLAY_AFTER_CALL_ID]: replayAfterCallId ?? null,
+          },
         });
       }
     }

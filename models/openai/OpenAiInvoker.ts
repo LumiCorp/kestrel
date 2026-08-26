@@ -255,7 +255,10 @@ async function readOpenAiChatStream(
   }
   const finalChoice = (root.choices as Array<Record<string, unknown>>)[0]!;
   if (typeof finalChoice.finish_reason !== "string") {
-    finalChoice.finish_reason = "stop";
+    throw createOpenAiBadResponseError(
+      "OpenAI Chat stream ended after [DONE] without a final finish_reason.",
+      "MODEL_INCOMPLETE_RESPONSE",
+    );
   }
   return {
     payload: root,
