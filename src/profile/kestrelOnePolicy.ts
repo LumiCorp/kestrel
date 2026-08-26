@@ -61,6 +61,8 @@ export type KestrelPolicyDefinition = KestrelOnePolicyDefinition;
 export const KESTREL_ONE_DIALOG_TOOL_NAMES = Object.freeze([
   "dialog.open",
   "dialog.send",
+  "dialog.read",
+  "dialog.list",
   "dialog.close",
 ] as const);
 

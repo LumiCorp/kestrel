@@ -1061,6 +1061,57 @@ test("restart reconciliation marks only open working dialogs interrupted", async
   assert.equal(record?.status, "WAITING");
 });
 
+test("dialog read and list return only saved local state with scoped cursors", async () => {
+  const store = new InMemorySessionStore();
+  const supervisor = createDialogSupervisor({
+    store,
+    submitChildTurn: async (input) => ({
+      assistantText: `reply:${input.message}`,
+      thread: (await store.getThread(input.threadId))!,
+      output: buildOutput({ runId: `read-${input.message}`, status: "COMPLETED" }),
+    }),
+  });
+  const first = await supervisor.open({ parentSessionId: "root", name: "Scout", message: "first" });
+  await tick();
+  await supervisor.send({ parentSessionId: "root", dialogId: first.dialogId, message: "second" });
+  await tick();
+  const second = await supervisor.open({ parentSessionId: "root", name: "Reviewer", message: "review" });
+  await tick();
+  await supervisor.close({ parentSessionId: "root", dialogId: second.dialogId });
+
+  const recent = await supervisor.read({ parentSessionId: "root", dialogId: first.dialogId, limit: 2 });
+  assert.equal(recent.messages.length, 2);
+  assert.equal(recent.messages[0]?.text, "second");
+  assert.equal(recent.messages[1]?.text, "reply:second");
+  const empty = await supervisor.read({ parentSessionId: "root", dialogId: first.dialogId, afterCursor: recent.nextCursor });
+  assert.deepEqual(empty.messages, []);
+  assert.equal(empty.nextCursor, recent.nextCursor);
+  await assert.rejects(
+    () => supervisor.read({ parentSessionId: "other", dialogId: first.dialogId, afterCursor: recent.nextCursor }),
+    { code: "DIALOG_NOT_FOUND" },
+  );
+  await assert.rejects(
+    () => supervisor.read({ parentSessionId: "root", dialogId: second.dialogId, afterCursor: recent.nextCursor }),
+    { code: "DIALOG_CURSOR_INVALID" },
+  );
+  await assert.rejects(
+    () => supervisor.read({ parentSessionId: "root", dialogId: first.dialogId, limit: 101 }),
+    { code: "TOOL_INPUT_INVALID" },
+  );
+
+  const pageOne = await supervisor.list({ parentSessionId: "root", limit: 1 });
+  assert.equal(pageOne.dialogs.length, 1);
+  assert.equal(pageOne.hasMore, true);
+  const pageTwo = await supervisor.list({ parentSessionId: "root", cursor: pageOne.nextCursor, limit: 1 });
+  assert.equal(pageTwo.dialogs.length, 1);
+  assert.notEqual(pageOne.dialogs[0]?.dialogId, pageTwo.dialogs[0]?.dialogId);
+  assert.equal((await supervisor.list({ parentSessionId: "root", status: "closed" })).dialogs[0]?.dialogId, second.dialogId);
+  await assert.rejects(
+    () => supervisor.list({ parentSessionId: "root", status: "closed", cursor: pageOne.nextCursor }),
+    { code: "DIALOG_CURSOR_INVALID" },
+  );
+});
+
 function createDialogSupervisor(input: {
   store: InMemorySessionStore;
   submitChildTurn: (input: SubmitTurnInput) => Promise<SubmitTurnResult>;

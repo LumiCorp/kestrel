@@ -19,6 +19,8 @@ import {
 import type {
   DelegationServicePort,
   DialogServicePort,
+  DialogListResult,
+  DialogReadResult,
   DialogSnapshot,
   DelegationTaskResult,
   DelegationTaskSnapshot,
@@ -180,6 +182,65 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
     this.emit({ task: toTaskSnapshot(updated, this.profile), kind: "spawned", assistantText: null, dialogMessage: message });
     void this.runDelegation(updated);
     return toDialogSnapshot(updated);
+  }
+
+  async read(input: {
+    parentSessionId: string;
+    dialogId: string;
+    afterCursor?: string | undefined;
+    limit?: number | undefined;
+  }): Promise<DialogReadResult> {
+    const record = await this.requireDialog(input.dialogId, input.parentSessionId);
+    const dialog = readDialogState(record)!;
+    const limit = normalizeDialogPageLimit(input.limit, 20);
+    const messages = dialog.messages;
+    if (input.afterCursor === undefined) {
+      const start = Math.max(0, messages.length - limit);
+      const page = messages.slice(start);
+      return {
+        ...toDialogSnapshot(record),
+        messages: page.map(toDialogReadMessage),
+        ...(page.at(-1) === undefined ? {} : { nextCursor: createDialogMessageCursor(record, page.at(-1)!) }),
+        hasEarlier: start > 0,
+        hasMore: false,
+      };
+    }
+    const cursor = parseDialogCursor(input.afterCursor, input.parentSessionId, input.dialogId);
+    const index = messages.findIndex((message) => message.messageId === cursor.messageId);
+    if (index < 0) throw dialogCursorFailure();
+    const available = messages.slice(index + 1);
+    const page = available.slice(0, limit);
+    return {
+      ...toDialogSnapshot(record),
+      messages: page.map(toDialogReadMessage),
+      nextCursor: page.length > 0 ? createDialogMessageCursor(record, page.at(-1)!) : input.afterCursor,
+      hasEarlier: index >= 0,
+      hasMore: available.length > page.length,
+    };
+  }
+
+  async list(input: {
+    parentSessionId: string;
+    status?: "open" | "closed" | "all" | undefined;
+    cursor?: string | undefined;
+    limit?: number | undefined;
+  }): Promise<DialogListResult> {
+    const status = input.status ?? "all";
+    const limit = normalizeDialogPageLimit(input.limit, 50);
+    const cursor = input.cursor === undefined ? undefined : parseDialogListCursor(input.cursor, input.parentSessionId, status);
+    const records = (await this.store.listDelegations({ parentThreadId: input.parentSessionId }))
+      .filter((record) => {
+        const dialog = readDialogState(record);
+        return dialog !== undefined && (status === "all" || dialog.status === status);
+      })
+      .filter((record) => cursor === undefined || record.updatedAt < cursor.updatedAt || (record.updatedAt === cursor.updatedAt && record.delegationId < cursor.dialogId));
+    const page = records.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      dialogs: page.map(toDialogSnapshot),
+      ...(last === undefined ? {} : { nextCursor: createDialogListCursor(input.parentSessionId, status, last) }),
+      hasMore: records.length > page.length,
+    };
   }
 
   async close(input: { parentSessionId: string; parentRunId?: string | undefined; dialogId: string }): Promise<DialogSnapshot> {
@@ -904,10 +965,65 @@ function toDialogSnapshot(record: DelegationRecord): DialogSnapshot {
     parentSessionId: record.parentThreadId,
     childSessionId: record.childThreadId,
     status: dialog.status,
+    activity: dialog.activity,
     active: dialog.status === "open" && dialog.activity === "working",
+    ...(lastDialogMessage(record) === undefined ? {} : { cursor: createDialogMessageCursor(record, lastDialogMessage(record)!) }),
+    ...(record.errorMessage === undefined ? {} : { errorMessage: record.errorMessage }),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
+}
+
+function toDialogReadMessage(message: DialogMessageRecord): DialogReadResult["messages"][number] {
+  return {
+    messageId: message.messageId,
+    sender: message.sender,
+    text: message.text,
+    createdAt: message.createdAt,
+    ...(message.status === undefined ? {} : { status: message.status }),
+  };
+}
+
+function normalizeDialogPageLimit(value: number | undefined, defaultValue: number): number {
+  if (value === undefined) return defaultValue;
+  if (!Number.isInteger(value) || value < 1 || value > 100) throw createRuntimeFailure("TOOL_INPUT_INVALID", "Dialog limits must be whole numbers from 1 through 100.");
+  return value;
+}
+
+function createDialogMessageCursor(record: DelegationRecord, message: DialogMessageRecord): string {
+  return Buffer.from(JSON.stringify({ v: 1, kind: "message", parentThreadId: record.parentThreadId, dialogId: record.delegationId, messageId: message.messageId })).toString("base64url");
+}
+
+function createDialogListCursor(parentThreadId: string, status: "open" | "closed" | "all", record: DelegationRecord): string {
+  return Buffer.from(JSON.stringify({ v: 1, kind: "list", parentThreadId, status, updatedAt: record.updatedAt, dialogId: record.delegationId })).toString("base64url");
+}
+
+function parseDialogCursor(value: string, parentThreadId: string, dialogId: string): { messageId: string } {
+  const parsed = parseDialogCursorValue(value);
+  if (parsed.kind !== "message" || parsed.parentThreadId !== parentThreadId || parsed.dialogId !== dialogId || typeof parsed.messageId !== "string" || parsed.messageId.length === 0) throw dialogCursorFailure();
+  return { messageId: parsed.messageId };
+}
+
+function parseDialogListCursor(value: string, parentThreadId: string, status: "open" | "closed" | "all"): { updatedAt: string; dialogId: string } {
+  const parsed = parseDialogCursorValue(value);
+  if (parsed.kind !== "list" || parsed.parentThreadId !== parentThreadId || parsed.status !== status || typeof parsed.updatedAt !== "string" || typeof parsed.dialogId !== "string" || parsed.updatedAt.length === 0 || parsed.dialogId.length === 0) throw dialogCursorFailure();
+  return { updatedAt: parsed.updatedAt, dialogId: parsed.dialogId };
+}
+
+function parseDialogCursorValue(value: string): Record<string, unknown> {
+  if (value.trim().length === 0) throw dialogCursorFailure();
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || (parsed as Record<string, unknown>).v !== 1) throw dialogCursorFailure();
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    if (asRuntimeError(error).code === "DIALOG_CURSOR_INVALID") throw error;
+    throw dialogCursorFailure();
+  }
+}
+
+function dialogCursorFailure() {
+  return createRuntimeFailure("DIALOG_CURSOR_INVALID", "This cursor does not belong to this collaborator or list. Start a new read or list without the cursor.");
 }
 
 function dialogBusyFailure(name: string, dialogId: string) {

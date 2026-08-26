@@ -5,10 +5,10 @@ import { parseObjectInput, requireStringField } from "../helpers.js";
 export const dialogOpenTool: SharedToolModule = {
   definition: {
     name: "dialog.open",
-    description: "Open a persistent private dialog with a collaborator. Choose a bird-species name and send the first message. The collaborator replies asynchronously in the thread.",
+    description: "Start a private conversation with a new named collaborator and send the first message. Use this when another collaborator can research, review, investigate, compare choices, or work on a different part of the task while you continue. Their reply will come back to you later. The name cannot be changed or reused in this task, even after you close the collaborator.",
     inputSchema: {
       type: "object",
-      properties: { name: { type: "string", maxLength: 40 }, message: { type: "string" } },
+      properties: { name: { type: "string", maxLength: 40, description: "A short, memorable, immutable, unique name." }, message: { type: "string", description: "The work or question, with needed context." } },
       required: ["name", "message"],
       additionalProperties: false,
     },
@@ -23,7 +23,7 @@ export const dialogOpenTool: SharedToolModule = {
       const body = parseObjectInput("dialog.open", input);
       const runtime = context.runtime!;
       if (runtime.delegationId !== undefined || (runtime.delegationDepth ?? 0) > 0) {
-        throw createRuntimeFailure("DIALOG_NESTING_FORBIDDEN", "Only Kestrel can open collaborator dialogs.", { dialogId: runtime.delegationId });
+        throw createRuntimeFailure("DIALOG_NESTING_FORBIDDEN", "Only Kestrel in the main conversation can open collaborators. Continue without opening another collaborator.", { dialogId: runtime.delegationId });
       }
       return context.dialogService!.open({
         parentSessionId: runtime.threadId ?? runtime.sessionId,

@@ -131,6 +131,26 @@ class RunForeignKeyEnforcingStore extends InMemorySessionStore {
   }
 }
 
+test("ThreadRuntime gives only fully equipped root turns the named collaborator instructions", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    { output: buildOutput({ runId: "dialog-parent", status: "COMPLETED" }) },
+    { output: buildOutput({ runId: "dialog-child", status: "COMPLETED" }) },
+  ]);
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor,
+    profile: buildProfile({ toolAllowlist: ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"] }),
+  });
+  await runtime.startThread({ threadId: "dialog-root", title: "Root" });
+  await runtime.startThread({ threadId: "dialog-child", title: "Child", parentThreadId: "dialog-root" });
+  await runtime.submitTurn({ threadId: "dialog-root", message: "work", eventType: "user.message" });
+  await runtime.submitTurn({ threadId: "dialog-child", message: "work", eventType: "user.message" });
+
+  assert.match(executor.inputs[0]?.runtimeTurn?.systemInstructions?.join("\n") ?? "", /You can ask named collaborators to help with the current task\./);
+  assert.equal(executor.inputs[1]?.runtimeTurn?.systemInstructions, undefined);
+});
+
 test("ThreadRuntime applies one boundary runtime to submitted content and durable output", async () => {
   const sessionStore = new InMemorySessionStore();
   const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();

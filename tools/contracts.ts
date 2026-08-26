@@ -179,9 +179,31 @@ export interface DialogSnapshot {
   parentSessionId: string;
   childSessionId: string;
   status: "open" | "closed";
+  activity: "idle" | "working" | "waiting" | "interrupted";
   active: boolean;
+  cursor?: string | undefined;
+  errorMessage?: string | undefined;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DialogReadResult extends DialogSnapshot {
+  messages: Array<{
+    messageId: string;
+    sender: "kestrel" | "collaborator" | "system";
+    text: string;
+    createdAt: string;
+    status?: "failed" | "cancelled" | undefined;
+  }>;
+  nextCursor?: string | undefined;
+  hasEarlier: boolean;
+  hasMore: boolean;
+}
+
+export interface DialogListResult {
+  dialogs: DialogSnapshot[];
+  nextCursor?: string | undefined;
+  hasMore: boolean;
 }
 
 export interface DialogServicePort {
@@ -197,6 +219,18 @@ export interface DialogServicePort {
     dialogId: string;
     message: string;
   }): Promise<DialogSnapshot>;
+  read(input: {
+    parentSessionId: string;
+    dialogId: string;
+    afterCursor?: string | undefined;
+    limit?: number | undefined;
+  }): Promise<DialogReadResult>;
+  list(input: {
+    parentSessionId: string;
+    status?: "open" | "closed" | "all" | undefined;
+    cursor?: string | undefined;
+    limit?: number | undefined;
+  }): Promise<DialogListResult>;
   close(input: {
     parentSessionId: string;
     parentRunId?: string | undefined;

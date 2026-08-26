@@ -96,6 +96,24 @@ import type {
   ThreadStatusSnapshot,
   TurnExecutor,
 } from "./contracts.js";
+
+const PARENT_DIALOG_INSTRUCTIONS = `You can ask named collaborators to help with the current task. Each collaborator has a private conversation with you.
+
+Open a collaborator when another teammate could help by researching a question, inspecting a different part of the work, reviewing your work, comparing choices, or working alongside you while you continue.
+
+Do not open a collaborator only to repeat work you can finish now. Do not open one when nobody can continue until the user answers a question.
+
+Give each collaborator a short, memorable name and a clear first message. Include the context they need. A collaborator's name cannot be changed or reused in this task.
+
+After you open or message a collaborator, keep working. Kestrel will bring their reply back to you. Do not repeatedly check for a reply.
+
+Use dialog.send when an existing collaborator needs another instruction, an answer, a correction, or more work. Use dialog.read when you want to see their status, messages, or results without asking them to do more. Use dialog.list when you need to see who is available or recover a dialog ID.
+
+Close a collaborator only when you are sure you will not need them again. Closing stops their work and cannot be undone. You can still read the conversation after closing it.
+
+Collaborators cannot open other collaborators. Do not ask a collaborator to do anything outside the user's current permissions.`;
+
+const PARENT_DIALOG_TOOL_NAMES = ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"] as const;
 import { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 
 export interface ThreadRuntimeOptions {
@@ -738,6 +756,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
       thread: activeThread,
       cause: "turn_start",
     });
+    const includeParentDialogInstructions =
+      activeThread.parentThreadId === undefined &&
+      PARENT_DIALOG_TOOL_NAMES.every((toolName) => assembly.bundle?.toolAllowlist?.includes(toolName) === true);
     const contextPolicyId = assembly.bundle?.contextPolicyId;
     const contextPolicy = contextPolicyId === undefined
       ? undefined
@@ -835,6 +856,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
           eventId,
           message: input.message,
           eventType: input.eventType,
+          ...(includeParentDialogInstructions
+            ? { systemInstructions: [...(input.runtimeTurn?.systemInstructions ?? []), PARENT_DIALOG_INSTRUCTIONS] }
+            : {}),
         },
         metadata: {
           ...mergedMetadata,

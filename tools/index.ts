@@ -166,6 +166,8 @@ export { finalizeAnswerTool } from "./runtime/finalizeAnswer.js";
 export { agentSpawnTool } from "./runtime/agentSpawn.js";
 export { dialogOpenTool } from "./runtime/dialogOpen.js";
 export { dialogSendTool } from "./runtime/dialogSend.js";
+export { dialogReadTool } from "./runtime/dialogRead.js";
+export { dialogListTool } from "./runtime/dialogList.js";
 export { dialogCloseTool } from "./runtime/dialogClose.js";
 export { delegateSpawnChildTool } from "./runtime/delegateSpawnChild.js";
 export { delegateListChildrenTool } from "./runtime/delegateListChildren.js";
