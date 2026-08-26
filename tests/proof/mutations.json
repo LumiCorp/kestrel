@@ -788,6 +788,24 @@
       "command": "pnpm",
       "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=turn worker uses configured durable capacity", "lib/turns/worker-boundary.test.ts"],
       "testFiles": ["apps/web/lib/turns/worker-boundary.test.ts"]
+    },
+    {
+      "id": "hosted-approval-v2-restart-interaction-omission",
+      "target": "src/runtime/state.ts",
+      "find": "    ...(waitingFor.interaction !== undefined\n      ? {",
+      "replace": "    ...(false\n      ? {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=runtime state restart preserves", "tests/unit/runtime-state-codec.test.ts"],
+      "testFiles": ["tests/unit/runtime-state-codec.test.ts"]
+    },
+    {
+      "id": "hosted-approval-card-prepared-invocation-bypass",
+      "target": "src/runtime/assistantResponseContract.ts",
+      "find": "      preparedInvocationId: prepared.callId,",
+      "replace": "      preparedInvocationId: \"mutated-prepared-call\",",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=new hosted approval card reloads", "tests/unit/assistant-response-contract.test.ts"],
+      "testFiles": ["tests/unit/assistant-response-contract.test.ts"]
     }
   ]
 }

@@ -1600,6 +1600,89 @@ export class RuntimeIO {
     }
   }
 
+  async prepareToolForApproval(
+    name: string,
+    input: unknown,
+    approval: {
+      policyRevision: string;
+      authorityRevision: string;
+      capabilities: readonly string[];
+    },
+    intent?: {
+      modelToolCallId?: string | undefined;
+      toolSurfaceSnapshot?: import("../kestrel/contracts/tool-contract.js").ToolSurfaceSnapshotV1 | undefined;
+    },
+  ): Promise<import("../kestrel/contracts/tool-invocation.js").PreparedToolCallV1> {
+    const { progress } = this.options;
+    throwIfRuntimeIOAborted(progress.signal);
+    const sessionState = this.options.getSessionState();
+    const runContext = {
+      runId: progress.runId,
+      sessionId: progress.sessionId,
+      payload: this.options.runtimePayload ?? {},
+      sessionState,
+    };
+    const snapshot = intent?.toolSurfaceSnapshot ??
+      await this.options.deps.toolGateway.createToolSurfaceSnapshot({
+        runContext,
+        toolNames: [name],
+      });
+    const activation = snapshot.tools.find(
+      (candidate) => candidate.descriptor.toolId === name,
+    );
+    if (activation === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_SNAPSHOT_LOOKUP_FAILED",
+        `Tool '${name}' was not exposed in snapshot '${snapshot.snapshotId}'.`,
+        { recoverable: false, toolName: name },
+      );
+    }
+    const rawInput = asPlainRecord(input);
+    if (rawInput === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_INPUT_SCHEMA_FAILED",
+        `Tool '${name}' input must be an object.`,
+        { recoverable: true, toolName: name },
+      );
+    }
+    const callId = `approval:${progress.runId}:${randomUUID()}`;
+    return await this.options.deps.toolGateway.prepareToolCall(
+      {
+        runId: progress.runId,
+        sessionId: progress.sessionId,
+        callId,
+        activation,
+        origin:
+          intent?.modelToolCallId === undefined
+            ? {
+                kind: "trusted_runtime",
+                producerId: "runtime.hosted-approval:v2",
+                adapterId: "runtime.hosted-approval:v2",
+              }
+            : {
+                kind: "model",
+                snapshotId: snapshot.snapshotId,
+                modelToolCallId: intent.modelToolCallId,
+              },
+        rawInput,
+        policy: {
+          decision: "approval_required",
+          policyRevision: approval.policyRevision,
+        },
+        approval: {
+          approvalId: callId,
+          authorityRevision: approval.authorityRevision,
+        },
+        approvalCapabilities: approval.capabilities,
+      },
+      {
+        runContext,
+        runtimeBudgetRemainingMs:
+          this.options.guardrails.budgetSnapshot().remainingMs,
+      },
+    );
+  }
+
   private async emitToolUpdate(input: {
     phase: RunToolPhase;
     toolCallId: string;

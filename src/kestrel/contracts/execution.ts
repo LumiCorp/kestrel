@@ -34,6 +34,7 @@ import type {
   ToolGateway,
 } from "./model-io.js";
 import type { ToolSurfaceSnapshotV1 } from "./tool-contract.js";
+import type { PreparedToolCallV1 } from "./tool-invocation.js";
 import type {
   PersistedEffect,
   RuntimeStore,
@@ -67,12 +68,42 @@ export interface RuntimeInteractionRequestV1 extends Record<string, unknown> {
     | undefined;
 }
 
+export interface RuntimeHostedToolApprovalInteractionV2
+  extends Record<string, unknown> {
+  version: "runner_hosted_tool_approval_interaction_v2";
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: {
+    type: "object";
+    additionalProperties: false;
+    required: ["decision"];
+    properties: {
+      decision: {
+        type: "string";
+        enum: Array<"decline" | "approve_once">;
+      };
+    };
+  };
+  metadata?: Record<string, unknown> | undefined;
+  approval: {
+    preparedInvocationId: string;
+    toolName: string;
+    presentation?: unknown;
+  };
+}
+
+export type RuntimeInteractionRequest =
+  | RuntimeInteractionRequestV1
+  | RuntimeHostedToolApprovalInteractionV2;
+
 export interface UserWaitForMatcher {
   kind: "user";
   eventType: string;
   timeoutMs?: number | undefined;
   metadata?: UserReplyWaitMetadata | undefined;
-  interaction?: RuntimeInteractionRequestV1 | undefined;
+  interaction?: RuntimeInteractionRequest | undefined;
 }
 
 export interface NonUserWaitForMatcher {
@@ -80,7 +111,7 @@ export interface NonUserWaitForMatcher {
   eventType: string;
   timeoutMs?: number | undefined;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: RuntimeInteractionRequestV1 | undefined;
+  interaction?: RuntimeInteractionRequest | undefined;
 }
 
 export interface RuntimeWaitForMatcher {
@@ -88,7 +119,7 @@ export interface RuntimeWaitForMatcher {
   eventType: string;
   timeoutMs?: number | undefined;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: RuntimeInteractionRequestV1 | undefined;
+  interaction?: RuntimeInteractionRequest | undefined;
 }
 
 export interface LegacyWaitForMatcher {
@@ -97,7 +128,7 @@ export interface LegacyWaitForMatcher {
   reason?: string | undefined;
   timeoutMs?: number;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: RuntimeInteractionRequestV1 | undefined;
+  interaction?: RuntimeInteractionRequest | undefined;
 }
 
 export type WaitForMatcher = UserWaitForMatcher | NonUserWaitForMatcher | RuntimeWaitForMatcher | LegacyWaitForMatcher;
@@ -222,6 +253,19 @@ export interface StepIO {
       toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
     },
   ): Promise<{ effectiveInput: Record<string, unknown> }>;
+  prepareToolForApproval?(
+    name: string,
+    input: unknown,
+    approval: {
+      policyRevision: string;
+      authorityRevision: string;
+      capabilities: readonly string[];
+    },
+    intent?: {
+      modelToolCallId?: string | undefined;
+      toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
+    },
+  ): Promise<PreparedToolCallV1>;
   useTool?(
     name: string,
     input: unknown,

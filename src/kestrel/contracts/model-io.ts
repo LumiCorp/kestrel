@@ -366,6 +366,7 @@ export interface ToolGateway {
       rawInput: Record<string, unknown>;
       policy: PreparedToolPolicyDispositionV1;
       approval?: PreparedToolApprovalAuthorityV1 | undefined;
+      approvalCapabilities?: readonly string[] | undefined;
     },
     options?: ToolGatewayCallOptions,
   ): Promise<PreparedToolCallV1>;

@@ -5,9 +5,17 @@ import {
   CURRENT_RUNTIME_STATE_SCHEMA_VERSION,
   decodeRuntimeSessionState,
   normalizeRuntimeStateForPersist,
+  readExecState,
   readWaitState,
   validateRuntimeSessionState,
 } from "../../src/runtime/state.js";
+import {
+  createToolActivationRefV1,
+  fingerprintToolScopeV1,
+  hashCanonical,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
 
 
 test("runtime state codec normalizes agent pending fields into exec", () => {
@@ -147,6 +155,18 @@ test("readWaitState reflects canonical waitingFor state", () => {
         metadata: {
           requestId: "approval-1",
         },
+        interaction: {
+          version: "v1",
+          requestId: "approval-1",
+          kind: "approval",
+          eventType: "user.approval",
+          prompt: "Approve the pending action.",
+          approval: {
+            toolCallId: "legacy-call-1",
+            toolName: "legacy.tool",
+            input: { value: 1 },
+          },
+        },
       },
     },
   });
@@ -159,7 +179,185 @@ test("readWaitState reflects canonical waitingFor state", () => {
     metadata: {
       requestId: "approval-1",
     },
+    interaction: {
+      version: "v1",
+      requestId: "approval-1",
+      kind: "approval",
+      eventType: "user.approval",
+      prompt: "Approve the pending action.",
+      approval: {
+        toolCallId: "legacy-call-1",
+        toolName: "legacy.tool",
+        input: { value: 1 },
+      },
+    },
   });
+});
+
+test("runtime state restart preserves the exact prepared hosted approval and V2 card", () => {
+  const descriptor = defaultToolCatalog.getDescriptorRef("internet.search");
+  assert.ok(descriptor);
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-restart",
+    scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
+  });
+  const prepared = parsePreparedToolCallV1({
+    version: "v1",
+    runId: "run-before-restart",
+    sessionId: "thread-restart",
+    callId: "prepared-restart-1",
+    activation,
+    origin: {
+      kind: "model",
+      snapshotId: hashCanonical({ snapshot: "restart" }),
+      modelToolCallId: "model-call-restart",
+    },
+    effectiveInput: { query: "persist exactly" },
+    inputAdapters: [],
+    policy: {
+      decision: "approval_required",
+      policyRevision: hashCanonical({ policy: "ask" }),
+      reasonCode: "environment_policy",
+    },
+    approval: {
+      approvalId: "approval-restart-1",
+      authorityRevision: hashCanonical({ approval: "restart" }),
+    },
+    stableAuthority: {
+      version: "prepared_tool_stable_authority_v1",
+      fingerprint: hashCanonical({ stable: "restart" }),
+      actor: {
+        actorType: "end_user",
+        actorId: "user-1",
+        tenantId: "org-1",
+      },
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      threadId: "thread-restart",
+      resourceAuthority: { toolSourceId: descriptor.sourceId },
+      policyRevision: hashCanonical({ policy: "ask" }),
+      capabilities: ["network.call"],
+      descriptorContractRevision: descriptor.contractRevision,
+      approvalAuthorityRevision: "approval-authority-v1",
+      normalizedActionHash: hashCanonical({ query: "persist exactly" }),
+    },
+    stableToolIdentity: {
+      version: "stable_tool_approval_identity_v1",
+      toolId: descriptor.toolId,
+      descriptorContractRevision: descriptor.contractRevision,
+      approvalAuthorityRevision: "approval-authority-v1",
+    },
+    executionRequirements: {
+      version: "prepared_tool_execution_requirements_v1",
+      credentials: ["continuation_run_segment", "live_handler_capability"],
+    },
+    preparedAt: "2026-08-26T12:00:00.000Z",
+  });
+  const interaction = {
+    version: "runner_hosted_tool_approval_interaction_v2" as const,
+    requestId: "approval-restart-1",
+    kind: "approval" as const,
+    eventType: "user.approval" as const,
+    prompt: "Approve search?",
+    inputSchema: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      required: ["decision"] as ["decision"],
+      properties: {
+        decision: {
+          type: "string" as const,
+          enum: ["decline", "approve_once"] as ["decline", "approve_once"],
+        },
+      },
+    },
+    approval: {
+      preparedInvocationId: prepared.callId,
+      toolName: descriptor.toolId,
+      presentation: { title: "Approve search" },
+    },
+  };
+  const persisted = normalizeRuntimeStateForPersist({
+    runtime: { schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION },
+    agent: {
+      observations: [],
+      exec: {
+        substate: "wait_approval",
+        pendingApproval: {
+          version: "hosted_tool_approval_v2",
+          preparedToolCall: prepared,
+        },
+      },
+      assistantText: interaction.prompt,
+      waitingFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        reason: "Approval required",
+        resumeInstruction: "Choose an approval decision.",
+        metadata: { preparedToolCall: prepared },
+        interaction,
+      },
+    },
+  });
+  const restarted = JSON.parse(JSON.stringify(persisted)) as Record<string, unknown>;
+
+  assert.equal(validateRuntimeSessionState(restarted), undefined);
+  assert.deepEqual(readWaitState(restarted)?.interaction, interaction);
+  assert.deepEqual(
+    parsePreparedToolCallV1(readWaitState(restarted)?.metadata?.preparedToolCall),
+    prepared,
+  );
+  assert.deepEqual(
+    parsePreparedToolCallV1(
+      (readExecState(restarted).pendingApproval as Record<string, unknown>)
+        .preparedToolCall,
+    ),
+    prepared,
+  );
+});
+
+test("runtime state rejects a mixed V2 interaction carrying legacy approval fields", () => {
+  const error = validateRuntimeSessionState({
+    runtime: { schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION },
+    agent: {
+      observations: [],
+      exec: {},
+      assistantText: "Approve?",
+      waitingFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        reason: "Approval required",
+        resumeInstruction: "Choose a decision.",
+        interaction: {
+          version: "runner_hosted_tool_approval_interaction_v2",
+          requestId: "mixed-1",
+          kind: "approval",
+          eventType: "user.approval",
+          prompt: "Approve?",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["decision"],
+            properties: {
+              decision: {
+                type: "string",
+                enum: ["decline", "approve_once"],
+              },
+            },
+          },
+          approval: {
+            toolCallId: "legacy-call",
+            toolName: "legacy.tool",
+            input: {},
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(error?.code, "RUNTIME_STATE_INVALID");
+  assert.equal(error?.details?.path, "state.agent.waitingFor.interaction");
 });
 
 test("runtime state validation rejects legacy execution ledger", () => {

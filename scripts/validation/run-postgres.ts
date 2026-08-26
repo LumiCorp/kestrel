@@ -23,6 +23,7 @@ const files = execFileSync(
     "apps/web/lib/files/service.postgres.test.ts",
     "apps/web/lib/files/availability.postgres.test.ts",
     "apps/web/lib/files/blob-repair-atomicity.postgres.test.ts",
+    "apps/web/lib/turns/remembered-tool-approvals.postgres.test.ts",
   )
   .filter((file, index, all) => all.indexOf(file) === index)
   .sort()
@@ -107,6 +108,7 @@ const groups = [
       "lib/mobile/v2/snapshot.postgres.test.ts",
       "lib/turns/conversation-snapshot.postgres.test.ts",
       "lib/turns/mobile-store.postgres.test.ts",
+      "lib/turns/remembered-tool-approvals.postgres.test.ts",
       "lib/turns/store.postgres.test.ts",
     ],
   },

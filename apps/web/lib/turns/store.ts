@@ -7,7 +7,11 @@ import {
 } from "@kestrel-agents/conversation";
 import {
   parseRunnerExternalApprovalBindingV1,
+  parseRememberedToolApprovalEvidenceSetV1,
+  parseRememberedToolApprovalV1,
   parseRunnerStructuredReviewInteractionV1,
+  type RememberedToolApprovalEvidenceV1,
+  type RememberedToolApprovalV1,
 } from "@kestrel-agents/protocol";
 import {
   and,
@@ -260,6 +264,149 @@ async function lockAccessibleThread(
     throw new DurableTurnError("TURN_NOT_FOUND", "Thread not found.");
   }
   return thread;
+}
+
+/**
+ * Dormant issue-01 writer seam. Approval response handling intentionally does
+ * not call this until remembered decisions become a product behavior.
+ */
+export async function insertRememberedToolApprovalInTransaction(
+  tx: TurnTransaction,
+  value: RememberedToolApprovalV1,
+): Promise<RememberedToolApprovalV1> {
+  const approval = parseRememberedToolApprovalV1(value);
+  const [thread] = await tx
+    .select({
+      id: schema.threads.id,
+      organizationId: schema.threads.organizationId,
+      projectId: schema.threads.projectId,
+    })
+    .from(schema.threads)
+    .where(
+      and(
+        eq(schema.threads.id, approval.threadId),
+        eq(schema.threads.organizationId, approval.organizationId),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  if (!thread?.projectId) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "Remembered approval requires the owning Project thread.",
+    );
+  }
+  const source = await tx.query.threadInteractions.findFirst({
+    where: and(
+      eq(schema.threadInteractions.id, approval.sourceInteractionId),
+      eq(schema.threadInteractions.organizationId, approval.organizationId),
+      eq(schema.threadInteractions.threadId, approval.threadId),
+      eq(schema.threadInteractions.kind, "approval"),
+      eq(schema.threadInteractions.status, "resolved"),
+      eq(schema.threadInteractions.resolvedByUserId, approval.actorUserId),
+    ),
+    columns: { id: true },
+  });
+  if (source === undefined) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "Remembered approval source interaction is not an exact resolved decision by this actor.",
+    );
+  }
+  const [stored] = await tx
+    .insert(schema.rememberedToolApprovals)
+    .values({
+      id: approval.id,
+      version: approval.version,
+      organizationId: approval.organizationId,
+      threadId: approval.threadId,
+      actorUserId: approval.actorUserId,
+      toolId: approval.toolIdentity.toolId,
+      descriptorContractRevision:
+        approval.toolIdentity.descriptorContractRevision,
+      approvalAuthorityRevision:
+        approval.toolIdentity.approvalAuthorityRevision,
+      sourceInteractionId: approval.sourceInteractionId,
+      createdAt: new Date(approval.createdAt),
+    })
+    .returning();
+  if (stored === undefined) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "Remembered approval was not persisted.",
+    );
+  }
+  return parseRememberedToolApprovalV1({
+    version: stored.version,
+    id: stored.id,
+    organizationId: stored.organizationId,
+    threadId: stored.threadId,
+    actorUserId: stored.actorUserId,
+    toolIdentity: {
+      version: "stable_tool_approval_identity_v1",
+      toolId: stored.toolId,
+      descriptorContractRevision: stored.descriptorContractRevision,
+      approvalAuthorityRevision: stored.approvalAuthorityRevision,
+    },
+    sourceInteractionId: stored.sourceInteractionId,
+    createdAt: stored.createdAt.toISOString(),
+  });
+}
+
+export async function listRememberedToolApprovalEvidenceForRuntime(input: {
+  threadId: string;
+  organizationId: string;
+  userId: string;
+}): Promise<RememberedToolApprovalEvidenceV1[]> {
+  return knowledgeDb.transaction(async (tx) => {
+    const thread = await lockAccessibleThread(tx, input);
+    if (!thread.projectId) return [];
+    const project = await tx.query.projects.findFirst({
+      where: and(
+        eq(schema.projects.id, thread.projectId),
+        eq(schema.projects.organizationId, input.organizationId),
+      ),
+      columns: { id: true, environmentId: true },
+    });
+    if (project === undefined) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "Remembered approval Project authority is unavailable.",
+      );
+    }
+    const rows = await tx.query.rememberedToolApprovals.findMany({
+      where: and(
+        eq(
+          schema.rememberedToolApprovals.organizationId,
+          input.organizationId,
+        ),
+        eq(schema.rememberedToolApprovals.threadId, input.threadId),
+        eq(schema.rememberedToolApprovals.actorUserId, input.userId),
+      ),
+      orderBy: (table, { asc }) => [
+        asc(table.toolId),
+        asc(table.descriptorContractRevision),
+        asc(table.approvalAuthorityRevision),
+      ],
+    });
+    return parseRememberedToolApprovalEvidenceSetV1(
+      rows.map((row) => ({
+        version: "remembered_tool_approval_evidence_v1",
+        organizationId: row.organizationId,
+        projectId: project.id,
+        environmentId: project.environmentId,
+        threadId: row.threadId,
+        actorUserId: row.actorUserId,
+        toolIdentity: {
+          version: "stable_tool_approval_identity_v1",
+          toolId: row.toolId,
+          descriptorContractRevision: row.descriptorContractRevision,
+          approvalAuthorityRevision: row.approvalAuthorityRevision,
+        },
+        sourceInteractionId: row.sourceInteractionId,
+      })),
+    );
+  });
 }
 
 function extractSearchText(value: unknown): string {

@@ -30,6 +30,7 @@ import type {
 } from "../../src/kestrel/contracts/tool-invocation.js";
 import {
   createPreparedToolCallV1,
+  createPreparedToolApprovalAuthorityV1,
   createToolSurfaceForDescriptorsV1,
   executePinnedToolCallV1,
   fingerprintToolRunScopeV1,
@@ -656,9 +657,29 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               budgeted.shortCircuitResult,
         };
       }
+      const stableApproval =
+        input.policy.decision === "approval_required" &&
+        input.approval !== undefined &&
+        options.runContext !== undefined
+          ? createPreparedToolApprovalAuthorityV1({
+              activation: input.activation,
+              effectiveInput: asRecord(effectiveInput) ?? {},
+              policyRevision: input.policy.policyRevision,
+              approvalAuthorityRevision: input.approval.authorityRevision,
+              capabilities: input.approvalCapabilities ?? [],
+              runContext: options.runContext,
+            })
+          : undefined;
       const prepared = createPreparedToolCallV1({
-        ...input,
+        runId: input.runId,
+        sessionId: input.sessionId,
+        callId: input.callId,
+        activation: input.activation,
+        origin: input.origin,
         effectiveInput: asRecord(effectiveInput) ?? {},
+        policy: input.policy,
+        ...(input.approval === undefined ? {} : { approval: input.approval }),
+        ...(stableApproval ?? {}),
         inputAdapters: [
           ...(source.inputAdapterId === undefined
             ? []

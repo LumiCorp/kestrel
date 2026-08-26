@@ -48,6 +48,7 @@ import {
   persistRuntimeDialogMessage,
   readRuntimeDialogMessage,
 } from "@/lib/turns/dialog-messages";
+import { listRememberedToolApprovalEvidenceForRuntime } from "@/lib/turns/store";
 import {
   activateEnvironmentModelGrant,
   resolveEnvironmentExecutionRoute,
@@ -522,6 +523,12 @@ function createModelAwareKestrelOneAgent(input: {
           }
           const { signal, abortBehavior, resumeRequestId, ...turn } = turnInput;
           const eventType = turn.eventType || "user.message";
+          const rememberedToolApprovalEvidence =
+            await listRememberedToolApprovalEvidenceForRuntime({
+              organizationId: input.organizationId,
+              threadId: input.threadId,
+              userId: input.actorUserId,
+            });
           const resolvedProfile = await resolveHostedKestrelExecutionProfile({
             client,
             context,
@@ -532,6 +539,7 @@ function createModelAwareKestrelOneAgent(input: {
               approvalPolicies: route.approvalPolicies,
               reasoningPolicy: route.reasoningPolicy,
               ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
+              rememberedToolApprovalEvidence,
             },
             ...(runtimeModel !== undefined
               ? { runtimeModels: [runtimeModel] }
@@ -554,6 +562,17 @@ function createModelAwareKestrelOneAgent(input: {
           const normalizedTurn = {
             ...turn,
             eventType,
+            ...(route.projectId
+              ? {
+                  hostedApprovalAuthority: {
+                    version: "runner_hosted_approval_authority_v1" as const,
+                    organizationId: input.organizationId,
+                    environmentId: route.environmentId,
+                    projectId: route.projectId,
+                    threadId: input.threadId,
+                  },
+                }
+              : {}),
             ...(runtimeWorkspace ? { workspace: runtimeWorkspace } : {}),
             ...(projectSkills
               ? { workspaceSkills: projectSkills.catalog }
@@ -689,6 +708,9 @@ export async function resolveHostedKestrelExecutionProfile(input: {
       | undefined;
     reasoningPolicy?: RunnerProfile["reasoning"] | undefined;
     ociMcpEgressBindings?: ResolvedOciMcpEgressBindingV1[] | undefined;
+    rememberedToolApprovalEvidence?:
+      | import("@kestrel-agents/protocol").RememberedToolApprovalEvidenceV1[]
+      | undefined;
   };
   runtimeModels?:
     | readonly [
@@ -719,6 +741,8 @@ export async function resolveHostedKestrelExecutionProfile(input: {
             toolConfiguration.kestrelOneAppApprovalModes,
           kestrelOneAppApprovalPolicies:
             toolConfiguration.kestrelOneAppApprovalPolicies,
+          rememberedToolApprovalEvidence:
+            input.route.rememberedToolApprovalEvidence ?? [],
           ...(input.route.reasoningPolicy !== undefined
             ? { reasoning: input.route.reasoningPolicy }
             : {}),
@@ -938,6 +962,12 @@ export async function generateKestrelOneExternalReply(input: {
       gatewayId: runtimeModel.gatewayId,
       rawModelId: runtimeModel.model,
     });
+    const rememberedToolApprovalEvidence =
+      await listRememberedToolApprovalEvidenceForRuntime({
+        organizationId: input.organizationId,
+        threadId: input.sessionId,
+        userId: input.actor.actorId,
+      });
     const resolvedProfile = await resolveHostedKestrelExecutionProfile({
       client,
       context,
@@ -948,6 +978,7 @@ export async function generateKestrelOneExternalReply(input: {
         approvalPolicies: route.approvalPolicies,
         reasoningPolicy: route.reasoningPolicy,
         ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
+        rememberedToolApprovalEvidence,
       },
       runtimeModels: [runtimeModel],
     });
@@ -974,6 +1005,17 @@ export async function generateKestrelOneExternalReply(input: {
               turn: {
                 ...turn,
                 eventType: turn.eventType || "user.message",
+                ...(route.projectId
+                  ? {
+                      hostedApprovalAuthority: {
+                        version: "runner_hosted_approval_authority_v1" as const,
+                        organizationId: input.organizationId,
+                        environmentId: route.environmentId,
+                        projectId: route.projectId,
+                        threadId: input.sessionId,
+                      },
+                    }
+                  : {}),
                 ...(runtimeWorkspace ? { workspace: runtimeWorkspace } : {}),
               },
             },

@@ -4683,6 +4683,51 @@ export const threadInteractions = pgTable(
   ],
 );
 
+/** Dormant thread-lifetime approval evidence. No response path writes it yet. */
+export const rememberedToolApprovals = pgTable(
+  "remembered_tool_approvals",
+  {
+    id: text("id").primaryKey(),
+    version: text("version").notNull(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    toolId: text("tool_id").notNull(),
+    descriptorContractRevision: text("descriptor_contract_revision").notNull(),
+    approvalAuthorityRevision: text("approval_authority_revision").notNull(),
+    sourceInteractionId: text("source_interaction_id")
+      .notNull()
+      .references(() => threadInteractions.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("remembered_tool_approvals_identity_idx").on(
+      table.organizationId,
+      table.threadId,
+      table.actorUserId,
+      table.toolId,
+      table.descriptorContractRevision,
+      table.approvalAuthorityRevision,
+    ),
+    index("remembered_tool_approvals_thread_actor_idx").on(
+      table.threadId,
+      table.actorUserId,
+    ),
+    check(
+      "remembered_tool_approvals_version_check",
+      sql`${table.version} = 'remembered_tool_approval_v1'`,
+    ),
+  ],
+);
+
 export const environmentCapabilitySubjectRestrictions = pgTable(
   "environment_capability_subject_restrictions",
   {

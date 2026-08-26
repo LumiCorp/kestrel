@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   parseRunnerStructuredReviewInteractionV1,
   parseRunnerExternalApprovalBindingV1,
+  parseRunnerInteractionRequest,
   serializeCanonicalApprovalPayload,
 } from "@kestrel-agents/protocol";
 import {
@@ -13,6 +14,7 @@ import {
 } from "../runtime/RuntimeFailure.js";
 import { parseEvaluationReviewBindingV1 } from "../kestrel/contracts/evaluation.js";
 import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
+import type { RuntimeInteractionRequest } from "../kestrel/contracts/execution.js";
 import type { HostedMcpContext } from "../mcp/hosted-contracts.js";
 import type {
   ApprovalGrantRecord,
@@ -41,23 +43,7 @@ export class InteractionManager {
           eventType?: string | undefined;
           metadata?: Record<string, unknown> | undefined;
           interaction?:
-            | {
-                version?: string | undefined;
-                requestId?: string | undefined;
-                kind?: string | undefined;
-                eventType?: string | undefined;
-                prompt?: string | undefined;
-                inputSchema?: Record<string, unknown> | undefined;
-                metadata?: Record<string, unknown> | undefined;
-                approval?:
-                  | {
-                      toolCallId: string;
-                      toolName: string;
-                      input?: unknown;
-                      presentation?: unknown;
-                    }
-                  | undefined;
-              }
+            | RuntimeInteractionRequest
             | undefined;
         }
       | undefined;
@@ -131,17 +117,18 @@ export class InteractionManager {
         : typeof metadata.prompt === "string"
           ? { prompt: metadata.prompt }
           : {}),
-      ...(interaction !== undefined &&
-        interaction.version === "v1" &&
-        typeof interaction.requestId === "string" &&
-        interaction.requestId.trim().length > 0 &&
-        interaction.kind === requestKind &&
-        interaction.eventType === eventType &&
-        typeof interaction.prompt === "string"
-        ? {
-            interaction: structuredClone(interaction) as InteractionRequestRecord["interaction"],
-          }
-        : {}),
+      ...(interaction === undefined ||
+        typeof interaction.requestId !== "string" ||
+        interaction.requestId.trim().length === 0 ||
+        interaction.kind !== requestKind ||
+        interaction.eventType !== eventType
+        ? {}
+        : {
+            interaction: parseRunnerInteractionRequest(
+              interaction,
+              eventType,
+            ) as InteractionRequestRecord["interaction"],
+          }),
       metadata: {
         ...metadata,
         ...(blockedToolScope === undefined ? {} : { blockedToolScope }),

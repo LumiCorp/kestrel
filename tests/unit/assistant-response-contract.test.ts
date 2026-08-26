@@ -8,6 +8,13 @@ import type {
 import { enforceRuntimeAssistantResponseBoundary, finalizeRuntimeAssistantResponse } from "../../src/runtime/assistantResponseContract.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { evaluationReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
+import {
+  createToolActivationRefV1,
+  fingerprintToolScopeV1,
+  hashCanonical,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
 
 test("finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stale assistant text", () => {
   const result = finalizeRuntimeAssistantResponse({
@@ -76,6 +83,98 @@ test("finalizeRuntimeAssistantResponse canonicalizes an approval wait over stale
       },
     },
   });
+});
+
+test("new hosted approval card reloads its action from the persisted prepared call", () => {
+  const descriptor = defaultToolCatalog.getDescriptorRef("internet.search");
+  assert.ok(descriptor);
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-hosted",
+    scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
+  });
+  const prepared = parsePreparedToolCallV1({
+    version: "v1",
+    runId: "original-run",
+    sessionId: "thread-1",
+    callId: "prepared-search-1",
+    activation,
+    origin: {
+      kind: "model",
+      snapshotId: hashCanonical({ snapshot: 1 }),
+      modelToolCallId: "model-call-1",
+    },
+    effectiveInput: { query: "persisted exact query" },
+    policy: {
+      decision: "approval_required",
+      policyRevision: hashCanonical({ policy: "ask" }),
+      reasonCode: "environment_policy",
+    },
+    approval: {
+      approvalId: "prepared-search-1",
+      authorityRevision: hashCanonical({ approval: 1 }),
+    },
+    stableAuthority: {
+      version: "prepared_tool_stable_authority_v1",
+      fingerprint: hashCanonical({ stable: 1 }),
+      actor: {
+        actorType: "end_user",
+        actorId: "user-1",
+        tenantId: "org-1",
+      },
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      threadId: "thread-1",
+      resourceAuthority: {},
+      policyRevision: hashCanonical({ policy: "ask" }),
+      capabilities: ["network.call"],
+      descriptorContractRevision: descriptor.contractRevision,
+      approvalAuthorityRevision: "approval-authority-v1",
+      normalizedActionHash: hashCanonical({ query: "persisted exact query" }),
+    },
+    stableToolIdentity: {
+      version: "stable_tool_approval_identity_v1",
+      toolId: "internet.search",
+      descriptorContractRevision: descriptor.contractRevision,
+      approvalAuthorityRevision: "approval-authority-v1",
+    },
+    executionRequirements: {
+      version: "prepared_tool_execution_requirements_v1",
+      credentials: ["continuation_run_segment", "live_handler_capability"],
+    },
+    preparedAt: "2026-08-26T12:00:00.000Z",
+  });
+  const restartedPrepared = JSON.parse(JSON.stringify(prepared)) as unknown;
+  const result = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: restartedPrepared,
+          toolName: "forged.tool",
+          toolInput: { query: "forged query" },
+        },
+      },
+    }),
+    assistantText: "stale",
+  });
+  const interaction = result.output.waitFor?.interaction;
+  assert.equal(interaction?.version, "runner_hosted_tool_approval_interaction_v2");
+  assert.equal(interaction?.approval?.toolName, "internet.search");
+  assert.equal(
+    "preparedInvocationId" in (interaction?.approval ?? {})
+      ? interaction?.approval.preparedInvocationId
+      : undefined,
+    "prepared-search-1",
+  );
+  assert.match(
+    JSON.stringify(interaction?.approval?.presentation),
+    /persisted exact query/u,
+  );
+  assert.doesNotMatch(JSON.stringify(interaction), /forged query|forged\.tool/u);
 });
 
 test("finalizeRuntimeAssistantResponse rejects a user-facing wait without a prompt", () => {

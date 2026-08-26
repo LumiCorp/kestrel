@@ -269,6 +269,9 @@ export interface SharedToolContext {
         appApprovalPolicies?:
           | Record<string, ToolApprovalPolicyEvidenceV1>
           | undefined;
+        rememberedToolApprovalEvidence?:
+          | import("@kestrel-agents/protocol").RememberedToolApprovalEvidenceV1[]
+          | undefined;
       }
     | undefined;
 }

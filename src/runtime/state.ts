@@ -2,6 +2,7 @@ import type {
   RuntimeError,
   StateNodeRef,
 } from "../kestrel/contracts/base.js";
+import { parseRunnerHostedToolApprovalInteractionV2 } from "@kestrel-agents/protocol";
 import {
   normalizeVisibleTodoState,
   validateVisibleTodoState,
@@ -48,7 +49,7 @@ export interface RuntimeWaitState {
   resumeStepAgent?: string | undefined;
   resumeToken?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined;
+  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequest | undefined;
 }
 
 export interface RuntimeCanonicalWaitingForState {
@@ -60,7 +61,7 @@ export interface RuntimeCanonicalWaitingForState {
   resumeStepAgent?: string | undefined;
   resumeToken?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined;
+  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequest | undefined;
   blockedAction?: unknown | undefined;
 }
 
@@ -382,6 +383,29 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
         },
       };
     }
+    const interaction = asRecord(waitingFor.interaction);
+    if (interaction?.version === "runner_hosted_tool_approval_interaction_v2") {
+      try {
+        if (waitingFor.kind !== "approval") {
+          throw new Error(
+            "hosted tool approval interaction requires an approval wait",
+          );
+        }
+        parseRunnerHostedToolApprovalInteractionV2(
+          interaction,
+          waitingFor.eventType,
+        );
+      } catch (error) {
+        return {
+          code: "RUNTIME_STATE_INVALID",
+          message: "state.agent.waitingFor.interaction is invalid",
+          details: {
+            path: "state.agent.waitingFor.interaction",
+            cause: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+    }
   }
 
   const terminal = asRecord(agent.terminal);
@@ -525,6 +549,18 @@ export function readWaitState(state: Record<string, unknown>): RuntimeWaitState 
       : {}),
     ...(waitingFor.resumeToken !== undefined ? { resumeToken: waitingFor.resumeToken } : {}),
     ...(waitingFor.metadata !== undefined ? { metadata: waitingFor.metadata } : {}),
+    ...(waitingFor.interaction !== undefined
+      ? {
+          interaction:
+            waitingFor.interaction.version ===
+            "runner_hosted_tool_approval_interaction_v2"
+              ? parseRunnerHostedToolApprovalInteractionV2(
+                  waitingFor.interaction,
+                  waitingFor.eventType,
+                )
+              : waitingFor.interaction,
+        }
+      : {}),
   };
 }
 

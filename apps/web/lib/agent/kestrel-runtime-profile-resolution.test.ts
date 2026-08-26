@@ -70,6 +70,21 @@ test(
       route: {
         runId: "exec_123",
         environmentId: "env_123",
+        rememberedToolApprovalEvidence: [{
+          version: "remembered_tool_approval_evidence_v1",
+          organizationId: "org_123",
+          projectId: "project_123",
+          environmentId: "env_123",
+          threadId: "thread_123",
+          actorUserId: "user_123",
+          toolIdentity: {
+            version: "stable_tool_approval_identity_v1",
+            toolId: "internet.search",
+            descriptorContractRevision: `sha256:${"d".repeat(64)}`,
+            approvalAuthorityRevision: "authority-v1",
+          },
+          sourceInteractionId: "interaction_123",
+        }],
         effectiveCapabilities: [
           "app:built_in.knowledge_search.searchKnowledgeDocuments:auto",
           "app:google_workspace.calendar.events.read:ask",
@@ -119,6 +134,21 @@ test(
           "kestrel.files.open": "auto",
         },
         kestrelOneAppApprovalPolicies: {},
+        rememberedToolApprovalEvidence: [{
+          version: "remembered_tool_approval_evidence_v1",
+          organizationId: "org_123",
+          projectId: "project_123",
+          environmentId: "env_123",
+          threadId: "thread_123",
+          actorUserId: "user_123",
+          toolIdentity: {
+            version: "stable_tool_approval_identity_v1",
+            toolId: "internet.search",
+            descriptorContractRevision: `sha256:${"d".repeat(64)}`,
+            approvalAuthorityRevision: "authority-v1",
+          },
+          sourceInteractionId: "interaction_123",
+        }],
         reasoning: {
           request: { mode: "summary", effort: "high" },
           retention: { mode: "provider_visible", days: 7 },
@@ -207,6 +237,7 @@ test(
       additionalToolNames: [],
       kestrelOneAppApprovalModes: {},
       kestrelOneAppApprovalPolicies: {},
+      rememberedToolApprovalEvidence: [],
       modelProvider: "ollama",
       model: "llama3.2",
       agentStageConfig: {

@@ -1,10 +1,16 @@
 import type {
   NormalizedOutput,
+  RuntimeInteractionRequest,
   RuntimeInteractionRequestV1,
+  RuntimeHostedToolApprovalInteractionV2,
   WaitForMatcher,
 } from "../kestrel/contracts/execution.js";
 import type { InteractionRequestRecord } from "../kestrel/contracts/orchestration.js";
-import { parseRunnerStructuredReviewInteractionV1 } from "@kestrel-agents/protocol";
+import {
+  parseRunnerHostedToolApprovalInteractionV2,
+  parseRunnerStructuredReviewInteractionV1,
+} from "@kestrel-agents/protocol";
+import { parsePreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
 import {
   digestCanonicalValue,
   parseExecutionBoundaryDecisionV1,
@@ -21,6 +27,7 @@ import {
   extractWaitPrompt,
 } from "./waitForPrompt.js";
 import type { ToolApprovalPresentationV1 } from "./toolApprovalPresentation.js";
+import { buildToolApprovalPresentation } from "./toolApprovalPresentation.js";
 
 export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
   waitFor: T,
@@ -90,11 +97,19 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
       { eventType: waitFor.eventType, reason: authoredStructuredReview.reason },
     );
   }
-  const interaction: RuntimeInteractionRequestV1 =
+  const preparedApprovalInteraction =
+    waitFor.kind === "approval"
+      ? buildPreparedApprovalInteractionV2(metadata, requestId, prompt)
+      : undefined;
+  const interaction: RuntimeInteractionRequest =
     authoredStructuredReview?.kind === "structured_review"
       ? structuredClone(waitFor.interaction as RuntimeInteractionRequestV1)
+      : preparedApprovalInteraction !== undefined
+        ? preparedApprovalInteraction
       : {
-          ...(waitFor.interaction ?? {}),
+          ...(waitFor.interaction?.version === "v1"
+            ? waitFor.interaction
+            : {}),
           version: "v1",
           ...(requestId !== undefined ? { requestId } : {}),
           kind: waitFor.kind === "approval" ? "approval" : "user_input",
@@ -296,6 +311,77 @@ function readApprovalPresentation(
       ),
     },
   };
+}
+
+function buildPreparedApprovalInteractionV2(
+  metadata: Record<string, unknown> | undefined,
+  requestId: string | undefined,
+  prompt: string,
+): RuntimeHostedToolApprovalInteractionV2 | undefined {
+  if (metadata?.preparedToolCall === undefined) return;
+  const prepared = parsePreparedToolCallV1(metadata.preparedToolCall);
+  if (
+    prepared.stableAuthority === undefined ||
+    prepared.stableToolIdentity === undefined ||
+    prepared.executionRequirements === undefined
+  ) {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      "A new-version hosted approval must contain complete prepared authority.",
+    );
+  }
+  const effectiveRequestId =
+    requestId ?? prepared.approval?.approvalId ?? prepared.callId;
+  const reasonCode = readToolApprovalReasonCode(prepared.policy.reasonCode);
+  const binding = prepared.approval?.externalApprovalBinding;
+  const presentation = buildToolApprovalPresentation({
+    toolName: prepared.activation.descriptor.toolId,
+    effectiveInput: prepared.effectiveInput,
+    disposition: {
+      mode: "ask",
+      reasonCode,
+      authority: {
+        kind: binding?.authorityKind ?? "runtime_policy",
+        revision:
+          binding?.authorityRevision ??
+          prepared.stableToolIdentity.approvalAuthorityRevision,
+      },
+    },
+  });
+  return parseRunnerHostedToolApprovalInteractionV2({
+    version: "runner_hosted_tool_approval_interaction_v2",
+    requestId: effectiveRequestId,
+    kind: "approval",
+    eventType: "user.approval",
+    prompt,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["decision"],
+      properties: {
+        decision: {
+          type: "string",
+          enum: ["decline", "approve_once"],
+        },
+      },
+    },
+    approval: {
+      preparedInvocationId: prepared.callId,
+      toolName: prepared.activation.descriptor.toolId,
+      presentation,
+    },
+  }) as RuntimeHostedToolApprovalInteractionV2;
+}
+
+function readToolApprovalReasonCode(
+  value: string | undefined,
+): import("../mode/contracts.js").ToolApprovalReasonCode {
+  return value === "environment_policy" ||
+      value === "project_restriction" ||
+      value === "subject_restriction" ||
+      value === "runtime_strict"
+    ? value
+    : "tool_minimum";
 }
 
 function readToolApprovalPresentation(

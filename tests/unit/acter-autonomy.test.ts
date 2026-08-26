@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseRunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
+import {
+  parseRunnerExternalApprovalBindingV1,
+  parseRunnerExternalApprovalBindingV2,
+} from "@kestrel-agents/protocol";
 
 import type { StepContext, StepContractRegistry, StepIO, Transition } from "../../src/kestrel/contracts/execution.js";
 
@@ -32,6 +35,13 @@ import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 import { kestrelOneGitHubIssueCreateTool } from "../../tools/kestrelOne/githubActions.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
+import {
+  createToolActivationRefV1,
+  fingerprintToolScopeV1,
+  hashCanonical,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
 
 function buildExecConfig() {
   return {
@@ -921,6 +931,18 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         "external.confirm": true,
       },
     },
+    actor: {
+      actorType: "end_user",
+      actorId: "user-1",
+      tenantId: "org-1",
+    },
+    hostedApprovalAuthority: {
+      version: "runner_hosted_approval_authority_v1",
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      threadId: "session-1",
+    },
   };
   let inlineToolCalls = 0;
   let approvalInspections = 0;
@@ -928,6 +950,73 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     approvalInspections += 1;
     return { effectiveInput: normalizedToolInput };
   };
+  let approvalPreparations = 0;
+  const descriptor = defaultToolCatalog.getDescriptorRef(definition.name);
+  assert.ok(descriptor);
+  const prepareToolForApproval: NonNullable<StepIO["prepareToolForApproval"]> =
+    async (_name, _input, approval) => {
+      approvalPreparations += 1;
+      const activation = createToolActivationRefV1({
+        descriptor,
+        registryGeneration: "hosted-generation",
+        scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
+      });
+      return parsePreparedToolCallV1({
+        version: "v1",
+        runId: "run-1",
+        sessionId: "session-1",
+        callId: "prepared-github-1",
+        activation,
+        origin: {
+          kind: "trusted_runtime",
+          producerId: "test.hosted-approval:v2",
+          adapterId: "test.hosted-approval:v2",
+        },
+        effectiveInput: normalizedToolInput,
+        policy: {
+          decision: "approval_required",
+          policyRevision: approval.policyRevision,
+          reasonCode: "environment_policy",
+        },
+        approval: {
+          approvalId: "prepared-github-1",
+          authorityRevision: hashCanonical({ approval: approval.authorityRevision }),
+        },
+        stableAuthority: {
+          version: "prepared_tool_stable_authority_v1",
+          fingerprint: hashCanonical({ stable: "github-1" }),
+          actor: {
+            actorType: "end_user",
+            actorId: "user-1",
+            tenantId: "org-1",
+          },
+          organizationId: "org-1",
+          environmentId: "env-1",
+          projectId: "project-1",
+          threadId: "session-1",
+          resourceAuthority: {},
+          policyRevision: approval.policyRevision,
+          capabilities: [...approval.capabilities].sort(),
+          descriptorContractRevision: descriptor.contractRevision,
+          approvalAuthorityRevision: approval.authorityRevision,
+          normalizedActionHash: hashCanonical(normalizedToolInput),
+        },
+        stableToolIdentity: {
+          version: "stable_tool_approval_identity_v1",
+          toolId: definition.name,
+          descriptorContractRevision: descriptor.contractRevision,
+          approvalAuthorityRevision: approval.authorityRevision,
+        },
+        executionRequirements: {
+          version: "prepared_tool_execution_requirements_v1",
+          credentials: [
+            "continuation_run_segment",
+            "live_handler_capability",
+          ],
+        },
+        preparedAt: "2026-08-26T12:00:00.000Z",
+      });
+    };
 
   const approvalWait = await dispatchStep(
     buildContext({
@@ -953,6 +1042,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         throw new Error("not expected");
       },
       inspectTool,
+      prepareToolForApproval,
       useTool: async () => {
         inlineToolCalls += 1;
         throw new Error("GitHub mutation must not run before approval");
@@ -982,11 +1072,11 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     pendingApproval.approvalId,
     approvalWait.waitFor?.metadata?.approvalId
   );
-  const binding = parseRunnerExternalApprovalBindingV1(
+  const binding = parseRunnerExternalApprovalBindingV2(
     approvalWait.waitFor?.metadata?.externalApprovalBinding,
   );
   assert.equal(binding.actionKey, definition.name);
-  assert.equal(binding.runId, "run-1");
+  assert.equal(binding.preparedInvocationId, "prepared-github-1");
   assert.equal(binding.threadId, "session-1");
   assert.equal(binding.authorityKind, "runtime_policy");
   assert.deepEqual(
@@ -995,14 +1085,21 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
   );
   assert.match(binding.payloadHash, /^sha256:[0-9a-f]{64}$/u);
   assert.deepEqual(pendingApproval.externalApprovalBinding, binding);
+  assert.equal(pendingApproval.version, "hosted_tool_approval_v2");
+  assert.equal(approvalPreparations, 1);
 
   const staleAgent = structuredClone(waitingAgent);
   const staleExec = staleAgent.exec as Record<string, unknown>;
   const stalePending = staleExec.pendingApproval as Record<string, unknown>;
-  stalePending.externalApprovalBinding = {
+  const stalePrepared = structuredClone(
+    stalePending.preparedToolCall,
+  ) as Record<string, unknown>;
+  const stalePreparedApproval = stalePrepared.approval as Record<string, unknown>;
+  stalePreparedApproval.externalApprovalBinding = {
     ...binding,
-    authorityRevision: `sha256:${"a".repeat(64)}`,
+    authorityRevision: "changed-authority",
   };
+  stalePending.preparedToolCall = stalePrepared;
   const staleResume = await waitApprovalStep(
     buildContext({
       session: {
@@ -1026,6 +1123,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         throw new Error("not expected");
       },
       inspectTool,
+      prepareToolForApproval,
       useTool: async () => {
         throw new Error("stale approval must not execute the mutation");
       },
@@ -1057,6 +1155,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         throw new Error("not expected");
       },
       inspectTool,
+      prepareToolForApproval,
       useTool: async () => {
         inlineToolCalls += 1;
         throw new Error("durable GitHub mutation must not run inline");
@@ -1075,13 +1174,14 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
   const resumedAgent = resumed.statePatch?.agent as Record<string, unknown>;
   const resumedExec = resumedAgent.exec as Record<string, unknown>;
   assert.equal(resumedExec.pendingApproval, undefined);
+  assert.equal(approvalPreparations, 1);
   assert.deepEqual(resumedExec.pendingToolCall, {
     name: definition.name,
     input: toolInput,
     idempotencyKey: resumed.effects?.[0]?.idempotencyKey,
   });
   assert.equal(inlineToolCalls, 0);
-  assert.equal(approvalInspections, 3);
+  assert.equal(approvalInspections, 0);
 });
 
 test("exec.wait_effect records processor-owned effect waits when result is unavailable", async () => {

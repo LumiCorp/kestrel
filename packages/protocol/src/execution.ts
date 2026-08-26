@@ -1,5 +1,11 @@
 import { RunnerProtocolContractError } from "./errors.js";
 import {
+  parseHostedToolApprovalDecision,
+  parseRememberedToolApprovalEvidenceSetV1,
+  type HostedToolApprovalDecision,
+  type RememberedToolApprovalEvidenceV1,
+} from "./approvals.js";
+import {
   parseRunnerProjectAction,
   type RunnerProjectAction,
 } from "./projectActions.js";
@@ -353,6 +359,7 @@ export interface RunnerProfile {
     subject?: "auto" | "ask" | "deny" | undefined;
     minimum: "auto" | "ask";
   }> | undefined;
+  rememberedToolApprovalEvidence?: RememberedToolApprovalEvidenceV1[] | undefined;
   mcpServers?: RunnerMcpServerConfig[] | undefined;
   toolQueue?: RunnerToolQueueProfileConfig | undefined;
   guardrails?: RunnerGuardrailConfig | undefined;
@@ -498,6 +505,14 @@ export interface RunnerWorkspaceSkillCatalogEntry {
   skillFile: string;
 }
 
+export interface RunnerHostedApprovalAuthorityV1 {
+  version: "runner_hosted_approval_authority_v1";
+  organizationId: string;
+  environmentId: string;
+  projectId: string;
+  threadId: string;
+}
+
 export interface RunnerTurnInput {
   sessionId: string;
   runId?: string | undefined;
@@ -527,6 +542,7 @@ export interface RunnerTurnInput {
   autoCompaction?: RunnerAutoCompaction | undefined;
   workspace?: Record<string, unknown> | undefined;
   workspaceSkills?: RunnerWorkspaceSkillCatalogEntry[] | undefined;
+  hostedApprovalAuthority?: RunnerHostedApprovalAuthorityV1 | undefined;
 }
 
 export interface RunnerRunError {
@@ -590,6 +606,39 @@ export interface RunnerInteractionRequestV1 extends Record<string, unknown> {
   } | undefined;
 }
 
+export const RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2 =
+  "runner_hosted_tool_approval_interaction_v2" as const;
+
+export interface RunnerHostedToolApprovalInteractionV2
+  extends Record<string, unknown> {
+  version: typeof RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2;
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: {
+    type: "object";
+    additionalProperties: false;
+    required: ["decision"];
+    properties: {
+      decision: {
+        type: "string";
+        enum: Array<Exclude<HostedToolApprovalDecision, "remember_approval">>;
+      };
+    };
+  };
+  metadata?: Record<string, unknown> | undefined;
+  approval: {
+    preparedInvocationId: string;
+    toolName: string;
+    presentation?: unknown;
+  };
+}
+
+export type RunnerInteractionRequest =
+  | RunnerInteractionRequestV1
+  | RunnerHostedToolApprovalInteractionV2;
+
 export type RunnerStructuredReviewReason =
   | "recovery_review"
   | "evaluation_review";
@@ -634,12 +683,44 @@ export function parseRunnerInteractionRequestV1(
   expectedEventType?: string | undefined,
 ): RunnerInteractionRequestV1 {
   const interaction = requireRecord(value, "runner interaction");
+  if (interaction.version !== "v1") {
+    throw new RunnerProtocolContractError(
+      "runner interaction.version must be 'v1'",
+    );
+  }
   const eventType = expectedEventType ?? requireNonEmptyString(
     interaction.eventType,
     "runner interaction.eventType",
   );
   validateRunnerInteractionRequest(interaction, "runner interaction", eventType);
   return structuredClone(interaction) as RunnerInteractionRequestV1;
+}
+
+export function parseRunnerHostedToolApprovalInteractionV2(
+  value: unknown,
+  expectedEventType = "user.approval",
+): RunnerHostedToolApprovalInteractionV2 {
+  const interaction = requireRecord(value, "hosted tool approval interaction");
+  validateRunnerHostedToolApprovalInteractionV2(
+    interaction,
+    "hosted tool approval interaction",
+    expectedEventType,
+  );
+  return structuredClone(interaction) as RunnerHostedToolApprovalInteractionV2;
+}
+
+export function parseRunnerInteractionRequest(
+  value: unknown,
+  expectedEventType?: string | undefined,
+): RunnerInteractionRequest {
+  const interaction = requireRecord(value, "runner interaction");
+  if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2) {
+    return parseRunnerHostedToolApprovalInteractionV2(
+      interaction,
+      expectedEventType,
+    );
+  }
+  return parseRunnerInteractionRequestV1(interaction, expectedEventType);
 }
 
 const RECOVERY_REVIEW_OPTION_IDS = new Set<RunnerStructuredReviewOptionId>([
@@ -951,7 +1032,7 @@ function validateEvaluationTechnicalDisclosure(
 export interface RunnerWaitFor extends Record<string, unknown> {
   kind?: "user" | "approval" | "effect" | "tool" | "region_merge" | undefined;
   eventType: string;
-  interaction?: RunnerInteractionRequestV1 | undefined;
+  interaction?: RunnerInteractionRequest | undefined;
 }
 
 export interface RunnerRunOutput {
@@ -3522,6 +3603,48 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalAutoCompaction(turn.autoCompaction, `${label}.autoCompaction`);
   validateOptionalRecord(turn.workspace, `${label}.workspace`);
   validateOptionalWorkspaceSkills(turn.workspaceSkills, `${label}.workspaceSkills`);
+  if (turn.hostedApprovalAuthority !== undefined) {
+    const authority = requireRecord(
+      turn.hostedApprovalAuthority,
+      `${label}.hostedApprovalAuthority`,
+    );
+    const allowedKeys = new Set([
+      "version",
+      "organizationId",
+      "environmentId",
+      "projectId",
+      "threadId",
+    ]);
+    const unknownKey = Object.keys(authority).find(
+      (key) => !allowedKeys.has(key),
+    );
+    if (unknownKey !== undefined) {
+      throw new RunnerProtocolContractError(
+        `${label}.hostedApprovalAuthority contains unknown field '${unknownKey}'`,
+      );
+    }
+    if (authority.version !== "runner_hosted_approval_authority_v1") {
+      throw new RunnerProtocolContractError(
+        `${label}.hostedApprovalAuthority.version must be 'runner_hosted_approval_authority_v1'`,
+      );
+    }
+    requireNonEmptyString(
+      authority.organizationId,
+      `${label}.hostedApprovalAuthority.organizationId`,
+    );
+    requireNonEmptyString(
+      authority.environmentId,
+      `${label}.hostedApprovalAuthority.environmentId`,
+    );
+    requireNonEmptyString(
+      authority.projectId,
+      `${label}.hostedApprovalAuthority.projectId`,
+    );
+    requireNonEmptyString(
+      authority.threadId,
+      `${label}.hostedApprovalAuthority.threadId`,
+    );
+  }
 }
 
 function parseJobInput(value: unknown, label: string): RunnerJobInput {
@@ -3850,6 +3973,14 @@ function validateRunnerInteractionRequest(
   waitEventType: string,
 ): void {
   const interaction = requireRecord(value, label);
+  if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2) {
+    validateRunnerHostedToolApprovalInteractionV2(
+      interaction,
+      label,
+      waitEventType,
+    );
+    return;
+  }
   if (interaction.version !== "v1") {
     throw new RunnerProtocolContractError(`${label}.version must be 'v1'`);
   }
@@ -3888,6 +4019,87 @@ function validateRunnerInteractionRequest(
     if (approval.presentation !== undefined) {
       requireRecord(approval.presentation, `${label}.approval.presentation`);
     }
+  }
+}
+
+function validateRunnerHostedToolApprovalInteractionV2(
+  interaction: Record<string, unknown>,
+  label: string,
+  waitEventType: string,
+): void {
+  rejectUnknownFields(interaction, label, [
+    "version",
+    "requestId",
+    "kind",
+    "eventType",
+    "prompt",
+    "inputSchema",
+    "metadata",
+    "approval",
+  ]);
+  if (interaction.version !== RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2) {
+    throw new RunnerProtocolContractError(
+      `${label}.version must be '${RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2}'`,
+    );
+  }
+  requireNonEmptyString(interaction.requestId, `${label}.requestId`);
+  if (interaction.kind !== "approval") {
+    throw new RunnerProtocolContractError(`${label}.kind must be 'approval'`);
+  }
+  if (interaction.eventType !== "user.approval" || waitEventType !== "user.approval") {
+    throw new RunnerProtocolContractError(`${label}.eventType must be 'user.approval'`);
+  }
+  requireNonEmptyString(interaction.prompt, `${label}.prompt`);
+  validateOptionalRecord(interaction.metadata, `${label}.metadata`);
+  const schema = requireRecord(interaction.inputSchema, `${label}.inputSchema`);
+  rejectUnknownFields(schema, `${label}.inputSchema`, [
+    "type",
+    "additionalProperties",
+    "required",
+    "properties",
+  ]);
+  const properties = requireRecord(schema.properties, `${label}.inputSchema.properties`);
+  rejectUnknownFields(properties, `${label}.inputSchema.properties`, ["decision"]);
+  const decision = requireRecord(properties.decision, `${label}.inputSchema.properties.decision`);
+  rejectUnknownFields(decision, `${label}.inputSchema.properties.decision`, [
+    "type",
+    "enum",
+  ]);
+  if (
+    schema.type !== "object" ||
+    schema.additionalProperties !== false ||
+    Array.isArray(schema.required) === false ||
+    schema.required.length !== 1 ||
+    schema.required[0] !== "decision" ||
+    decision.type !== "string" ||
+    Array.isArray(decision.enum) === false ||
+    decision.enum.length !== 2 ||
+    decision.enum[0] !== "decline" ||
+    decision.enum[1] !== "approve_once" ||
+    decision.enum.some((entry) => {
+      try {
+        parseHostedToolApprovalDecision(entry);
+        return false;
+      } catch {
+        return true;
+      }
+    })
+  ) {
+    throw new RunnerProtocolContractError(`${label}.inputSchema is invalid`);
+  }
+  const approval = requireRecord(interaction.approval, `${label}.approval`);
+  rejectUnknownFields(
+    approval,
+    `${label}.approval`,
+    ["preparedInvocationId", "toolName", "presentation"],
+  );
+  requireNonEmptyString(
+    approval.preparedInvocationId,
+    `${label}.approval.preparedInvocationId`,
+  );
+  requireNonEmptyString(approval.toolName, `${label}.approval.toolName`);
+  if (approval.presentation !== undefined) {
+    requireRecord(approval.presentation, `${label}.approval.presentation`);
   }
 }
 
@@ -4009,6 +4221,9 @@ function validateRunnerProfile(
   validateOptionalAppApprovalPolicyRecord(
     profile.kestrelOneAppApprovalPolicies,
     `${label}.kestrelOneAppApprovalPolicies`,
+  );
+  parseRememberedToolApprovalEvidenceSetV1(
+    profile.rememberedToolApprovalEvidence,
   );
   validateOptionalRecordArray(profile.mcpServers, `${label}.mcpServers`);
   validateOptionalRecord(profile.toolQueue, `${label}.toolQueue`);

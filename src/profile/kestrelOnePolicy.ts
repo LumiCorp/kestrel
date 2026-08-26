@@ -327,6 +327,9 @@ export interface KestrelOneProfileOverlay {
   kestrelOneAppApprovalPolicies?:
     | TuiProfile["kestrelOneAppApprovalPolicies"]
     | undefined;
+  rememberedToolApprovalEvidence?:
+    | TuiProfile["rememberedToolApprovalEvidence"]
+    | undefined;
   additionalToolNames?: string[] | undefined;
   mcpServers?: TuiProfile["mcpServers"] | undefined;
   ociMcpEgressBindings?: TuiProfile["ociMcpEgressBindings"] | undefined;
@@ -476,6 +479,13 @@ function composeLegacyKestrelOneProfile(
             input.overlay.kestrelOneAppApprovalPolicies,
         }
       : {}),
+    ...(input.overlay?.rememberedToolApprovalEvidence === undefined
+      ? {}
+      : {
+          rememberedToolApprovalEvidence: structuredClone(
+            input.overlay.rememberedToolApprovalEvidence,
+          ),
+        }),
     mcpServers: input.overlay?.mcpServers ?? [],
     ...(input.overlay?.ociMcpEgressBindings !== undefined
       ? {

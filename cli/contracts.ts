@@ -260,6 +260,9 @@ export interface TuiProfile {
         import("../src/mode/contracts.js").ToolApprovalPolicyEvidenceV1
       >
     | undefined;
+  rememberedToolApprovalEvidence?:
+    | import("@kestrel-agents/protocol").RememberedToolApprovalEvidenceV1[]
+    | undefined;
   mcpServers?: McpServerConfig[] | undefined;
   ociMcpEgressBindings?: ResolvedOciMcpEgressBindingV1[] | undefined;
   toolQueue?: ToolQueueProfileConfig | undefined;
