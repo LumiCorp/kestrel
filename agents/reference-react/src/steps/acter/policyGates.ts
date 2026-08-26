@@ -580,12 +580,36 @@ async function maybeRequireToolApproval(input: {
   const currentPendingApproval = asRecord(
     asRecord(input.reactState.exec)?.pendingApproval,
   );
+  const currentWaitMetadata = asRecord(
+    asRecord(input.reactState.waitingFor)?.metadata,
+  );
   let persistedPreparedToolCall;
-  if (currentPendingApproval?.version === "hosted_tool_approval_v2") {
+  const hasPersistedV2Evidence =
+    currentPendingApproval?.version === "hosted_tool_approval_v2" ||
+    currentPendingApproval?.preparedInvocationId !== undefined ||
+    currentPendingApproval?.preparedToolCall !== undefined ||
+    currentWaitMetadata?.preparedToolCall !== undefined ||
+    asRecord(currentPendingApproval?.externalApprovalBinding)?.version ===
+      RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION;
+  if (hasPersistedV2Evidence) {
     try {
+      if (currentPendingApproval?.version !== "hosted_tool_approval_v2") {
+        throw new Error("persisted hosted approval is missing its V2 discriminator");
+      }
+      if (currentPendingApproval.preparedToolCall !== undefined) {
+        throw new Error("persisted hosted approval contains a duplicate prepared invocation");
+      }
       persistedPreparedToolCall = parseDurablePreparedToolCallV1(
-        currentPendingApproval.preparedToolCall,
+        currentWaitMetadata?.preparedToolCall,
       );
+      if (
+        asString(currentPendingApproval.preparedInvocationId) !==
+        persistedPreparedToolCall.callId
+      ) {
+        throw new Error(
+          "persisted hosted approval does not reference its canonical prepared invocation",
+        );
+      }
       assertPreparedApprovalMatchesCurrentHostedAuthority({
         preparedToolCall: persistedPreparedToolCall,
         eventPayload: input.eventPayload,
@@ -712,6 +736,7 @@ async function maybeRequireToolApproval(input: {
   const decision = await resolveApprovalDecision({
     eventType: input.eventType,
     eventPayload: input.eventPayload,
+    strictV2: durablePreparedToolCall !== undefined,
     model: input.model,
     io: input.io,
     waitFor: {
@@ -753,6 +778,7 @@ async function maybeRequireToolApproval(input: {
       try {
         validatePendingExternalApprovalV2({
           currentPendingApproval,
+          preparedToolCall: parseDurablePreparedToolCallV1(durablePreparedToolCall),
           expected: binding,
         });
       } catch (error) {
@@ -815,7 +841,9 @@ async function maybeRequireToolApproval(input: {
     });
   }
 
-  const prompt = `Approve ${input.toolName}? Reply 'approve' or 'deny'.`;
+  const prompt = durablePreparedToolCall === undefined
+    ? `Approve ${input.toolName}? Reply 'approve' or 'deny'.`
+    : `Approve ${input.toolName}? Reply with decision 'approve_once' or 'decline'.`;
   const waitFor: WaitForMatcher = {
     kind: "approval",
     eventType: "user.approval",
@@ -874,7 +902,7 @@ async function maybeRequireToolApproval(input: {
           ? {}
           : {
               version: "hosted_tool_approval_v2",
-              preparedToolCall: durablePreparedToolCall,
+              preparedInvocationId: durablePreparedToolCall.callId,
             }),
         approvalId,
         toolName: input.toolName,
@@ -889,7 +917,7 @@ async function maybeRequireToolApproval(input: {
           ? {}
           : {
               version: "hosted_tool_approval_v2",
-              preparedToolCall: durablePreparedToolCall,
+              preparedInvocationId: durablePreparedToolCall.callId,
             }),
         approvalId,
         toolName: input.toolName,
@@ -1452,16 +1480,13 @@ function validatePendingExternalApproval(input: {
 
 function validatePendingExternalApprovalV2(input: {
   currentPendingApproval: Record<string, unknown> | undefined;
+  preparedToolCall: PreparedToolCallV1;
   expected: RunnerExternalApprovalBindingV2;
 }): void {
   let pending: RunnerExternalApprovalBindingV2;
-  let prepared: PreparedToolCallV1;
   try {
-    prepared = parseDurablePreparedToolCallV1(
-      input.currentPendingApproval?.preparedToolCall,
-    );
     pending = parseRunnerExternalApprovalBindingV2(
-      prepared.approval?.externalApprovalBinding,
+      input.preparedToolCall.approval?.externalApprovalBinding,
     );
   } catch (error) {
     throw createRuntimeFailure(
@@ -1488,14 +1513,18 @@ function validatePendingExternalApprovalV2(input: {
   if (
     serializeCanonicalApprovalPayload(pendingIdentity) !==
       serializeCanonicalApprovalPayload(expectedIdentity) ||
-    prepared.callId !== pending.preparedInvocationId ||
-    prepared.stableAuthority?.fingerprint !==
+    input.currentPendingApproval?.version !== "hosted_tool_approval_v2" ||
+    input.currentPendingApproval.preparedToolCall !== undefined ||
+    asString(input.currentPendingApproval.preparedInvocationId) !==
+      input.preparedToolCall.callId ||
+    input.preparedToolCall.callId !== pending.preparedInvocationId ||
+    input.preparedToolCall.stableAuthority?.fingerprint !==
       pending.stableAuthorityFingerprint ||
-    prepared.stableToolIdentity?.approvalAuthorityRevision !==
+    input.preparedToolCall.stableToolIdentity?.approvalAuthorityRevision !==
       pending.authorityRevision ||
-    serializeCanonicalApprovalPayload(prepared.stableToolIdentity) !==
+    serializeCanonicalApprovalPayload(input.preparedToolCall.stableToolIdentity) !==
       serializeCanonicalApprovalPayload(pending.stableToolIdentity) ||
-    digestApprovalPayload(prepared.effectiveInput) !== pending.payloadHash
+    digestApprovalPayload(input.preparedToolCall.effectiveInput) !== pending.payloadHash
   ) {
     throw createRuntimeFailure(
       "EXTERNAL_APPROVAL_BINDING_CHANGED",
@@ -1620,11 +1649,17 @@ function assertPreparedApprovalMatchesCurrentHostedAuthority(input: {
 async function resolveApprovalDecision(input: {
   eventType: string;
   eventPayload: Record<string, unknown> | undefined;
+  strictV2?: boolean | undefined;
   waitFor: { eventType: "user.approval"; metadata: Record<string, unknown> };
   model?: string | undefined;
   io?: StepIO | undefined;
 }): Promise<"approve" | "deny" | undefined> {
   if (input.eventType !== "user.approval") {
+    return ;
+  }
+  if (input.strictV2 === true) {
+    if (input.eventPayload?.decision === "approve_once") return "approve";
+    if (input.eventPayload?.decision === "decline") return "deny";
     return ;
   }
   const existing = readHighConfidenceApprovalDecision(readUserReplyIntent(input.eventPayload?.userReplyIntent));

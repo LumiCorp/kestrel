@@ -24,6 +24,8 @@ import {
 } from "../../src/kestrel/contracts/tool-invocation.js";
 import { createPreparedToolCallV1 } from "../../src/io/ToolInvocationSupport.js";
 import type { McpStatusSnapshot } from "../../src/mcp/contracts.js";
+import { McpClientManager } from "../../src/mcp/McpClientManager.js";
+import { compileMcpStatusSnapshotV1 } from "../../src/mcp/toolDescriptor.js";
 import {
   RuntimeFailure,
   createRuntimeFailure,
@@ -49,8 +51,12 @@ class VersionedMcpProvider implements McpToolProvider {
   closedDuringPinnedCall = false;
   onPinnedCallStart: (() => void) | undefined;
   pinnedCallBarrier: Promise<void> | undefined;
+  onRefreshStart: (() => void) | undefined;
+  refreshBarrier: Promise<void> | undefined;
 
   async refresh(): Promise<McpStatusSnapshot> {
+    this.onRefreshStart?.();
+    await this.refreshBarrier;
     return {
       healthy: true,
       checkedAt: new Date().toISOString(),
@@ -154,6 +160,65 @@ function executionTicket(nonce: string): string {
     ).toString("base64url"),
     "signature",
   ].join(".");
+}
+
+function retryableProductionMcpClient(version: string, closeFailures = 0) {
+  return {
+    closeCalls: 0,
+    closeFailures,
+    async callTool() {
+      return { content: [{ type: "text", text: version }] };
+    },
+    async close() {
+      this.closeCalls += 1;
+      if (this.closeFailures > 0) {
+        this.closeFailures -= 1;
+        throw new Error(`planned ${version} production close failure`);
+      }
+    },
+  };
+}
+
+function productionMcpStatus(version: string): McpStatusSnapshot {
+  return {
+    healthy: true,
+    checkedAt: new Date().toISOString(),
+    servers: [],
+    tools: [
+      {
+        serverId: "test",
+        toolName: "lookup",
+        namespacedToolName: TOOL_ID,
+        description: `Lookup ${version}`,
+        inputSchema: {
+          type: "object",
+          properties: { query: { type: "string" } },
+          required: ["query"],
+          additionalProperties: false,
+        },
+        presentation: {
+          displayName: "Lookup",
+          aliases: [TOOL_ID],
+          keywords: ["lookup"],
+          provider: "test",
+          toolFamily: "test",
+          capabilityClasses: ["test.lookup"],
+          approvalMode: "auto",
+        },
+      },
+    ],
+  };
+}
+
+function productionMcpHandle(client: object) {
+  return {
+    serverId: "test",
+    toolName: "lookup",
+    namespacedToolName: TOOL_ID,
+    client,
+    protocolKind: "tool",
+    protocolTarget: "lookup",
+  };
 }
 
 test("explicit runtime-only tools receive activations without entering the model surface", async () => {
@@ -335,8 +400,18 @@ test("run release bounds terminal keys without reopening stale static replay", a
 
   await registry.releaseToolRun("completed-run", sessionId);
 
+  const completedRunContext: ToolRunContext = {
+    runId: "completed-run",
+    sessionId,
+    payload: {},
+    sessionState: {},
+  };
+
   await assert.rejects(
-    () => registry.executePreparedToolCall(completed[0]!),
+    () =>
+      registry.executePreparedToolCall(completed[0]!, {
+        runContext: completedRunContext,
+      }),
     (error) =>
       error instanceof RuntimeFailure &&
       error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
@@ -357,8 +432,15 @@ test("run release bounds terminal keys without reopening stale static replay", a
     }
   ).terminalPreparedExecutionKeysByOwner;
   assert.equal(terminalOwners.size, 1);
+  const releasedOwners = (
+    registry as unknown as {
+      releasedPreparedExecutionOwners: Set<string>;
+    }
+  ).releasedPreparedExecutionOwners;
+  assert.equal(releasedOwners.size, 1);
   await registry.close();
   assert.equal(terminalOwners.size, 0);
+  assert.equal(releasedOwners.size, 0);
   await registry.releasePreparedToolCall(completed[0]!);
   assert.equal(terminalOwners.size, 0);
 });
@@ -457,6 +539,120 @@ test("run release retains failed snapshot ownership for retry", async () => {
   await registry.releaseToolRun(runContext.runId, runContext.sessionId);
   assert.equal(provider.references, 0);
   await registry.close();
+});
+
+test("registry retains snapshot ownership until production MCP release succeeds", async () => {
+  const manager = new McpClientManager({ servers: [] });
+  const oldClient = retryableProductionMcpClient("retired", 1);
+  const newClient = retryableProductionMcpClient("active");
+  const managerInternals = manager as unknown as {
+    activateCandidate(
+      snapshot: McpStatusSnapshot,
+      tools: Map<string, unknown>,
+      servers: Map<string, unknown>,
+    ): Promise<void>;
+  };
+  const oldStatus = productionMcpStatus("retired");
+  await managerInternals.activateCandidate(
+    oldStatus,
+    new Map([[TOOL_ID, productionMcpHandle(oldClient)]]),
+    new Map([["test", { serverId: "test", client: oldClient }]]),
+  );
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: manager,
+  });
+  const registryInternals = registry as unknown as {
+    mcpStatus: McpStatusSnapshot;
+    initialized: boolean;
+    activateRegistryGeneration(): void;
+    toolSurfaceExecutions: Map<string, unknown>;
+  };
+  registryInternals.mcpStatus = compileMcpStatusSnapshotV1(oldStatus);
+  registryInternals.initialized = true;
+  registryInternals.activateRegistryGeneration();
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    toolNames: [TOOL_ID],
+  });
+  await managerInternals.activateCandidate(
+    productionMcpStatus("active"),
+    new Map([[TOOL_ID, productionMcpHandle(newClient)]]),
+    new Map([["test", { serverId: "test", client: newClient }]]),
+  );
+
+  await assert.rejects(
+    () => registry.releaseToolSurfaceSnapshot(snapshot.snapshotId),
+    /planned retired production close failure/u,
+  );
+  assert.equal(oldClient.closeCalls, 1);
+  assert.equal(registryInternals.toolSurfaceExecutions.size, 1);
+
+  await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
+  assert.equal(oldClient.closeCalls, 2);
+  assert.equal(registryInternals.toolSurfaceExecutions.size, 0);
+  await registry.close();
+  assert.equal(newClient.closeCalls, 1);
+});
+
+test("snapshot creation after close fails without retaining ownership", async () => {
+  const provider = new VersionedMcpProvider();
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+  await registry.refresh();
+  await registry.close();
+
+  await assert.rejects(
+    () => registry.createToolSurfaceSnapshot({ toolNames: [TOOL_ID] }),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
+  assert.equal(provider.references, 0);
+  assert.equal(
+    (
+      registry as unknown as {
+        toolSurfaceExecutions: Map<string, unknown>;
+      }
+    ).toolSurfaceExecutions.size,
+    0,
+  );
+});
+
+test("close waits for racing snapshot creation and collects no late ownership", async () => {
+  const provider = new VersionedMcpProvider();
+  const refreshStarted = deferred();
+  const permitRefresh = deferred();
+  provider.onRefreshStart = refreshStarted.resolve;
+  provider.refreshBarrier = permitRefresh.promise;
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+
+  const creation = registry.createToolSurfaceSnapshot({ toolNames: [TOOL_ID] });
+  await refreshStarted.promise;
+  const closing = registry.close();
+  permitRefresh.resolve();
+
+  await assert.rejects(
+    () => creation,
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
+  await closing;
+  assert.equal(provider.references, 0);
+  assert.equal(provider.closeCalls, 1);
+  const internals = registry as unknown as {
+    toolSurfaceSnapshots: Map<string, unknown>;
+    toolSurfaceExecutions: Map<string, unknown>;
+    activeToolSurfaceSnapshotCreations: Set<Promise<void>>;
+  };
+  assert.equal(internals.toolSurfaceSnapshots.size, 0);
+  assert.equal(internals.toolSurfaceExecutions.size, 0);
+  assert.equal(internals.activeToolSurfaceSnapshotCreations.size, 0);
 });
 
 test("failed prepared execution releases its retained source", async () => {

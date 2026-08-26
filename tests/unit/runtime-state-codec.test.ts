@@ -202,7 +202,7 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
     registryGeneration: "generation-restart",
     scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
   });
-  const prepared = parsePreparedToolCallV1({
+  const unboundPrepared = parsePreparedToolCallV1({
     version: "v1",
     runId: "run-before-restart",
     sessionId: "thread-restart",
@@ -236,7 +236,10 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
       environmentId: "env-1",
       projectId: "project-1",
       threadId: "thread-restart",
-      resourceAuthority: { toolSourceId: descriptor.sourceId },
+      resourceAuthority: {
+        toolSourceKind: descriptor.sourceKind,
+        toolSourceId: descriptor.sourceId,
+      },
       policyRevision: hashCanonical({ policy: "ask" }),
       capabilities: ["network.call"],
       descriptorContractRevision: descriptor.contractRevision,
@@ -254,6 +257,45 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
       credentials: ["continuation_run_segment", "live_handler_capability"],
     },
     preparedAt: "2026-08-26T12:00:00.000Z",
+  });
+  const {
+    fingerprint: _staleFingerprint,
+    ...stableAuthorityPayload
+  } = unboundPrepared.stableAuthority!;
+  const canonicalStableAuthorityPayload = {
+    ...stableAuthorityPayload,
+    normalizedActionHash: hashCanonical({
+      toolId: descriptor.toolId,
+      effectiveInput: unboundPrepared.effectiveInput,
+    }),
+  };
+  const stableAuthority = {
+    ...canonicalStableAuthorityPayload,
+    fingerprint: hashCanonical(canonicalStableAuthorityPayload),
+  };
+  const prepared = parsePreparedToolCallV1({
+    ...unboundPrepared,
+    stableAuthority,
+    approval: {
+      ...unboundPrepared.approval,
+      externalApprovalBinding: {
+        version: "runner_external_approval_binding_v2",
+        approvalId: "approval-restart-1",
+        preparedInvocationId: unboundPrepared.callId,
+        threadId: "thread-restart",
+        actionKey: descriptor.toolId,
+        payloadHash: hashCanonical(unboundPrepared.effectiveInput),
+        stableAuthorityFingerprint: stableAuthority.fingerprint,
+        stableToolIdentity: unboundPrepared.stableToolIdentity,
+        requestingActor: stableAuthority.actor,
+        toolClass: "external_side_effect",
+        capabilities: ["network.call"],
+        authorityKind: "runtime_policy",
+        authorityRevision: "approval-authority-v1",
+        requestedAt: "2026-08-26T12:00:00.000Z",
+        expiresAt: "2026-08-26T12:05:00.000Z",
+      },
+    },
   });
   const interaction = {
     version: "runner_hosted_tool_approval_interaction_v2" as const,
@@ -287,7 +329,7 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
         substate: "wait_approval",
         pendingApproval: {
           version: "hosted_tool_approval_v2",
-          preparedToolCall: prepared,
+          preparedInvocationId: prepared.callId,
         },
       },
       assistantText: interaction.prompt,
@@ -309,13 +351,31 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
     parsePreparedToolCallV1(readWaitState(restarted)?.metadata?.preparedToolCall),
     prepared,
   );
-  assert.deepEqual(
-    parsePreparedToolCallV1(
-      (readExecState(restarted).pendingApproval as Record<string, unknown>)
-        .preparedToolCall,
-    ),
-    prepared,
+  assert.deepEqual(readExecState(restarted).pendingApproval, {
+    version: "hosted_tool_approval_v2",
+    preparedInvocationId: prepared.callId,
+  });
+  const downgraded = structuredClone(restarted);
+  const downgradedPending = (
+    (downgraded.agent as Record<string, unknown>).exec as Record<
+      string,
+      unknown
+    >
+  ).pendingApproval as Record<string, unknown>;
+  delete downgradedPending.version;
+  assert.equal(
+    validateRuntimeSessionState(downgraded)?.code,
+    "RUNTIME_STATE_INVALID",
   );
+  const divergent = structuredClone(restarted);
+  const divergentPending = readExecState(divergent).pendingApproval as Record<
+    string,
+    unknown
+  >;
+  divergentPending.preparedToolCall = structuredClone(prepared);
+  const error = validateRuntimeSessionState(divergent);
+  assert.equal(error?.code, "RUNTIME_STATE_INVALID");
+  assert.equal(error?.details?.path, "state.agent.waitingFor.interaction");
 });
 
 test("runtime state rejects a mixed V2 interaction carrying legacy approval fields", () => {

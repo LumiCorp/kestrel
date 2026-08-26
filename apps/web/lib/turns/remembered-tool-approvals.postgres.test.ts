@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { eq } from "drizzle-orm";
+import { eq, sql as drizzleSql } from "drizzle-orm";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
 
@@ -16,7 +16,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
     listRememberedToolApprovalEvidenceForRuntime,
   } = await import("./store");
   const { knowledgeDb, schema } = await import("@/lib/knowledge/db");
-  const sql = postgres(databaseUrl, { max: 1 });
+  const sql = postgres(databaseUrl, { max: 2 });
   const suffix = crypto.randomUUID();
   const userId = `remember-user-${suffix}`;
   const organizationId = `remember-org-${suffix}`;
@@ -155,11 +155,13 @@ test("remembered approval storage enforces identity, authority, and thread casca
         ${malformedIdentityInteractionId}, ${`malformed-request-${suffix}`},
         ${organizationId}, ${threadId}, ${turnId}, 'runtime', 'approval',
         'user.approval', 'Malformed identity?', 'pending',
-        ${transaction.json(hostedApprovalRequest(
-          `malformed-request-${suffix}`,
-          { ...toolIdentity, toolId: "hosted.arbitrary-tool" },
-          "hosted.tool",
-        ))}
+        ${transaction.json(
+          hostedApprovalRequest(
+            `malformed-request-${suffix}`,
+            { ...toolIdentity, toolId: "hosted.arbitrary-tool" },
+            "hosted.tool",
+          ),
+        )}
       )
     `;
   });
@@ -178,101 +180,225 @@ test("remembered approval storage enforces identity, authority, and thread casca
     sourceInteractionId: string,
     decision: "decline" | "approve_once" | "remember_approval",
     approval = { ...record, sourceInteractionId },
-  ) => knowledgeDb.transaction(async (tx) => {
-    await tx
-      .update(schema.threadInteractions)
-      .set({
-        status: "processing",
-        responseEnvelope: { decision },
-        resolvedByUserId: userId,
-        resolvedAt: now,
-      })
-      .where(eq(schema.threadInteractions.id, sourceInteractionId));
-    return insertRememberedToolApprovalInTransaction(tx, {
-      approval,
+  ) =>
+    knowledgeDb.transaction(async (tx) => {
+      await tx
+        .update(schema.threadInteractions)
+        .set({
+          status: "processing",
+          responseEnvelope: { decision },
+          resolvedByUserId: userId,
+          resolvedAt: now,
+        })
+        .where(eq(schema.threadInteractions.id, sourceInteractionId));
+      return insertRememberedToolApprovalInTransaction(tx, {
+        approval,
+      });
     });
-  });
+
+  const waitUntilBlockedBy = async (blockingPid: number) => {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const [blocked] = await sql<{ blocked: boolean }[]>`
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_stat_activity
+          WHERE ${blockingPid} = ANY(pg_blocking_pids(pid))
+        ) AS blocked
+      `;
+      if (blocked?.blocked) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(
+      "Remembered approval writer did not wait on the canonical Thread lock.",
+    );
+  };
 
   await assert.rejects(
-    () => decideAndInsert(declineInteractionId, "decline", {
-      ...record,
-      id: `decline-${suffix}`,
-      sourceInteractionId: declineInteractionId,
-    }),
+    () =>
+      decideAndInsert(declineInteractionId, "decline", {
+        ...record,
+        id: `decline-${suffix}`,
+        sourceInteractionId: declineInteractionId,
+      }),
     /exact remember decision/u,
   );
   await assert.rejects(
-    () => decideAndInsert(approveOnceInteractionId, "approve_once", {
-      ...record,
-      id: `approve-once-${suffix}`,
-      sourceInteractionId: approveOnceInteractionId,
-    }),
+    () =>
+      decideAndInsert(approveOnceInteractionId, "approve_once", {
+        ...record,
+        id: `approve-once-${suffix}`,
+        sourceInteractionId: approveOnceInteractionId,
+      }),
     /exact remember decision/u,
   );
   await assert.rejects(
-    () => decideAndInsert(interactionId, "remember_approval", {
-      ...record,
-      id: `wrong-actor-${suffix}`,
-      actorUserId: `other-user-${suffix}`,
-    }),
+    () =>
+      decideAndInsert(interactionId, "remember_approval", {
+        ...record,
+        id: `wrong-actor-${suffix}`,
+        actorUserId: `other-user-${suffix}`,
+      }),
     /locked source interaction authority/u,
   );
   await assert.rejects(
-    () => decideAndInsert(interactionId, "remember_approval", {
-      ...record,
-      id: `wrong-thread-${suffix}`,
-      threadId: otherThreadId,
-    }),
+    () =>
+      decideAndInsert(interactionId, "remember_approval", {
+        ...record,
+        id: `wrong-thread-${suffix}`,
+        threadId: otherThreadId,
+      }),
     /locked source interaction authority/u,
   );
   await assert.rejects(
-    () => decideAndInsert(emptySourceInteractionId, "remember_approval", {
-      ...record,
-      id: `empty-source-${suffix}`,
-      sourceInteractionId: emptySourceInteractionId,
-    }),
+    () =>
+      decideAndInsert(emptySourceInteractionId, "remember_approval", {
+        ...record,
+        id: `empty-source-${suffix}`,
+        sourceInteractionId: emptySourceInteractionId,
+      }),
     /does not contain exact prepared tool identity/u,
   );
   await assert.rejects(
-    () => decideAndInsert(malformedIdentityInteractionId, "remember_approval", {
-      ...record,
-      id: `arbitrary-source-${suffix}`,
-      sourceInteractionId: malformedIdentityInteractionId,
-      toolIdentity: {
-        ...record.toolIdentity,
-        toolId: "hosted.arbitrary-tool",
-      },
-    }),
+    () =>
+      decideAndInsert(malformedIdentityInteractionId, "remember_approval", {
+        ...record,
+        id: `arbitrary-source-${suffix}`,
+        sourceInteractionId: malformedIdentityInteractionId,
+        toolIdentity: {
+          ...record.toolIdentity,
+          toolId: "hosted.arbitrary-tool",
+        },
+      }),
     /does not contain exact prepared tool identity/u,
   );
   await assert.rejects(
-    () => decideAndInsert(interactionId, "remember_approval", {
-      ...record,
-      id: `wrong-identity-${suffix}`,
-      toolIdentity: {
-        ...record.toolIdentity,
-        toolId: "hosted.other-tool",
-      },
-    }),
+    () =>
+      decideAndInsert(interactionId, "remember_approval", {
+        ...record,
+        id: `wrong-identity-${suffix}`,
+        toolIdentity: {
+          ...record.toolIdentity,
+          toolId: "hosted.other-tool",
+        },
+      }),
     /does not match the locked source interaction authority/u,
   );
-  await decideAndInsert(interactionId, "remember_approval");
+  await sql`
+    UPDATE "thread_interactions"
+    SET
+      "status" = 'processing',
+      "response_envelope" = ${sql.json({ decision: "remember_approval" })},
+      "resolved_by_user_id" = ${userId},
+      "resolved_at" = ${now}
+    WHERE "id" = ${interactionId}
+  `;
+  let releaseCanonicalTransaction = () => {};
+  const canonicalTransactionMayContinue = new Promise<void>((resolve) => {
+    releaseCanonicalTransaction = resolve;
+  });
+  let canonicalThreadLocked = () => {};
+  const canonicalThreadLockReady = new Promise<void>((resolve) => {
+    canonicalThreadLocked = resolve;
+  });
+  let blockingConnectionPid: number | undefined;
+  const canonicalResponseTransaction = sql.begin(async (transaction) => {
+    await transaction`SET LOCAL lock_timeout = '5s'`;
+    const [connection] = await transaction<{ pid: number }[]>`
+      SELECT pg_backend_pid() AS pid
+    `;
+    assert.ok(connection);
+    blockingConnectionPid = connection.pid;
+    await transaction`
+      SELECT "id" FROM "threads" WHERE "id" = ${threadId} FOR UPDATE
+    `;
+    canonicalThreadLocked();
+    await canonicalTransactionMayContinue;
+    await transaction`
+      SELECT "id" FROM "thread_interactions"
+      WHERE "id" = ${interactionId}
+      FOR UPDATE
+    `;
+    return connection.pid;
+  });
+  await canonicalThreadLockReady;
+  const rememberedInsert = knowledgeDb.transaction(async (tx) => {
+    await tx.execute(drizzleSql.raw("SET LOCAL lock_timeout = '5s'"));
+    return insertRememberedToolApprovalInTransaction(tx, { approval: record });
+  });
+  assert.ok(blockingConnectionPid !== undefined);
+  try {
+    await waitUntilBlockedBy(blockingConnectionPid);
+  } finally {
+    releaseCanonicalTransaction();
+  }
+  const [, inserted] = await Promise.all([
+    canonicalResponseTransaction,
+    rememberedInsert,
+  ]);
+  assert.deepEqual(inserted, record);
+  const rememberedRows = await sql<
+    {
+      id: string;
+      organizationId: string;
+      threadId: string;
+      actorUserId: string;
+      toolId: string;
+      descriptorContractRevision: string;
+      approvalAuthorityRevision: string;
+      sourceInteractionId: string;
+    }[]
+  >`
+    SELECT
+      "id",
+      "organization_id" AS "organizationId",
+      "thread_id" AS "threadId",
+      "actor_user_id" AS "actorUserId",
+      "tool_id" AS "toolId",
+      "descriptor_contract_revision" AS "descriptorContractRevision",
+      "approval_authority_revision" AS "approvalAuthorityRevision",
+      "source_interaction_id" AS "sourceInteractionId"
+    FROM "remembered_tool_approvals"
+    WHERE
+      "organization_id" = ${organizationId}
+      AND "thread_id" = ${threadId}
+      AND "actor_user_id" = ${userId}
+  `;
+  assert.deepEqual(
+    [...rememberedRows],
+    [
+      {
+        id: record.id,
+        organizationId,
+        threadId,
+        actorUserId: userId,
+        toolId: toolIdentity.toolId,
+        descriptorContractRevision: toolIdentity.descriptorContractRevision,
+        approvalAuthorityRevision: toolIdentity.approvalAuthorityRevision,
+        sourceInteractionId: interactionId,
+      },
+    ],
+  );
   const [sourceAfterInsert] = await sql<{ status: string }[]>`
     SELECT "status" FROM "thread_interactions" WHERE "id" = ${interactionId}
   `;
   assert.equal(sourceAfterInsert?.status, "processing");
   await assert.rejects(
-    () => knowledgeDb.transaction((tx) =>
-      insertRememberedToolApprovalInTransaction(tx, {
-        approval: {
-          ...record,
-          id: `duplicate-${suffix}`,
-        },
-      })),
+    () =>
+      knowledgeDb.transaction((tx) =>
+        insertRememberedToolApprovalInTransaction(tx, {
+          approval: {
+            ...record,
+            id: `duplicate-${suffix}`,
+          },
+        }),
+      ),
     (error: unknown) => {
       const cause = error instanceof Error ? error.cause : undefined;
-      return cause instanceof Error
-        && /remembered_tool_approvals_identity_idx/u.test(cause.message);
+      return (
+        cause instanceof Error &&
+        /remembered_tool_approvals_identity_idx/u.test(cause.message)
+      );
     },
   );
   assert.deepEqual(
@@ -281,31 +407,35 @@ test("remembered approval storage enforces identity, authority, and thread casca
       threadId,
       userId,
     }),
-    [{
-      version: "remembered_tool_approval_evidence_v1",
-      organizationId,
-      projectId,
-      environmentId,
-      threadId,
-      actorUserId: userId,
-      toolIdentity: record.toolIdentity,
-      sourceInteractionId: interactionId,
-    }],
+    [
+      {
+        version: "remembered_tool_approval_evidence_v1",
+        organizationId,
+        projectId,
+        environmentId,
+        threadId,
+        actorUserId: userId,
+        toolIdentity: record.toolIdentity,
+        sourceInteractionId: interactionId,
+      },
+    ],
   );
   await assert.rejects(
-    () => listRememberedToolApprovalEvidenceForRuntime({
-      organizationId,
-      threadId,
-      userId: `outsider-${suffix}`,
-    }),
+    () =>
+      listRememberedToolApprovalEvidenceForRuntime({
+        organizationId,
+        threadId,
+        userId: `outsider-${suffix}`,
+      }),
     /Thread not found/u,
   );
   await assert.rejects(
-    () => listRememberedToolApprovalEvidenceForRuntime({
-      organizationId: `other-org-${suffix}`,
-      threadId,
-      userId,
-    }),
+    () =>
+      listRememberedToolApprovalEvidenceForRuntime({
+        organizationId: `other-org-${suffix}`,
+        threadId,
+        userId,
+      }),
     /Thread not found/u,
   );
   await sql`DELETE FROM "threads" WHERE "id" = ${threadId}`;

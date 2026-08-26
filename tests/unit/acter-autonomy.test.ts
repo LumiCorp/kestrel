@@ -1028,6 +1028,72 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
       });
     };
 
+  const legacyWait = await dispatchStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: {
+          agent: {
+            nextAction: {
+              kind: "tool",
+              name: definition.name,
+              input: toolInput,
+            },
+          },
+        },
+      },
+      event: {
+        ...buildContext().event,
+        payload: modePayload,
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      inspectTool,
+      useTool: async () => {
+        throw new Error("legacy approval must not execute inline");
+      },
+    },
+  );
+  const legacyAgent = legacyWait.statePatch?.agent as Record<string, unknown>;
+  const legacyPending = (
+    legacyAgent.exec as Record<string, unknown>
+  ).pendingApproval as Record<string, unknown>;
+  legacyPending.version = "hosted_tool_approval_v1";
+  const legacyResumed = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: legacyAgent },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-github-legacy-approval",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          message: "approve",
+          approvalId: legacyPending.approvalId,
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      inspectTool,
+      useTool: async () => {
+        throw new Error("legacy durable mutation must not execute inline");
+      },
+    },
+  );
+  assert.equal(legacyResumed.status, "RUNNING");
+  assert.equal(legacyResumed.effects?.length, 1);
+  approvalInspections = 0;
+
   const approvalWait = await dispatchStep(
     buildContext({
       session: {
@@ -1062,6 +1128,22 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
 
   assert.equal(approvalWait.status, "WAITING");
   assert.equal(approvalWait.waitFor?.eventType, "user.approval");
+  assert.match(
+    approvalWait.waitFor?.metadata?.prompt as string,
+    /'approve_once'.*'decline'/u,
+  );
+  assert.doesNotMatch(
+    approvalWait.waitFor?.metadata?.prompt as string,
+    /remember_approval|'approve' or 'deny'/u,
+  );
+  assert.deepEqual(
+    (
+      approvalWait.waitFor?.interaction?.inputSchema as {
+        properties?: { decision?: { enum?: unknown } };
+      }
+    ).properties?.decision?.enum,
+    ["decline", "approve_once"],
+  );
   assert.equal(approvalWait.waitFor?.metadata?.toolName, definition.name);
   assert.deepEqual(
     approvalWait.waitFor?.metadata?.toolInput,
@@ -1096,6 +1178,8 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
   assert.match(binding.payloadHash, /^sha256:[0-9a-f]{64}$/u);
   assert.deepEqual(pendingApproval.externalApprovalBinding, binding);
   assert.equal(pendingApproval.version, "hosted_tool_approval_v2");
+  assert.equal(pendingApproval.preparedInvocationId, "prepared-github-1");
+  assert.equal(pendingApproval.preparedToolCall, undefined);
   assert.equal(approvalPreparations, 1);
 
   const expectPersistedApprovalRejected = async (
@@ -1147,10 +1231,10 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     string,
     unknown
   >;
-  const missingBindingPrepared = missingBindingPending.preparedToolCall as Record<
-    string,
-    unknown
-  >;
+  const missingBindingPrepared = (
+    (missingBindingAgent.waitingFor as Record<string, unknown>)
+      .metadata as Record<string, unknown>
+  ).preparedToolCall as Record<string, unknown>;
   delete (missingBindingPrepared.approval as Record<string, unknown>)
     .externalApprovalBinding;
   delete missingBindingPending.externalApprovalBinding;
@@ -1158,6 +1242,42 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     missingBindingAgent,
     modePayload,
     "missing-v2-binding",
+  );
+
+  for (const [label, version] of [
+    ["missing-v2-discriminator", undefined],
+    ["altered-v2-discriminator", "hosted_tool_approval_v1"],
+  ] as const) {
+    const downgradedAgent = structuredClone(waitingAgent);
+    const downgradedPending = (
+      downgradedAgent.exec as Record<string, unknown>
+    ).pendingApproval as Record<string, unknown>;
+    if (version === undefined) delete downgradedPending.version;
+    else downgradedPending.version = version;
+    await expectPersistedApprovalRejected(
+      downgradedAgent,
+      { ...modePayload, decision: "approve_once" },
+      label,
+    );
+    assert.equal(
+      approvalPreparations,
+      1,
+      "malformed durable state must not prepare replacement authority",
+    );
+  }
+
+  const duplicatePreparedAgent = structuredClone(waitingAgent);
+  const duplicatePreparedPending = (
+    duplicatePreparedAgent.exec as Record<string, unknown>
+  ).pendingApproval as Record<string, unknown>;
+  duplicatePreparedPending.preparedToolCall = structuredClone(
+    ((duplicatePreparedAgent.waitingFor as Record<string, unknown>)
+      .metadata as Record<string, unknown>).preparedToolCall,
+  );
+  await expectPersistedApprovalRejected(
+    duplicatePreparedAgent,
+    { ...modePayload, decision: "approve_once" },
+    "duplicate-prepared-authority",
   );
 
   const authoritySubstitutions: Array<
@@ -1190,10 +1310,10 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     const substitutedPending = (
       substitutedAgent.exec as Record<string, unknown>
     ).pendingApproval as Record<string, any>;
-    const substitutedPrepared = substitutedPending.preparedToolCall as Record<
-      string,
-      any
-    >;
+    const substitutedPrepared = (
+      (substitutedAgent.waitingFor as Record<string, unknown>)
+        .metadata as Record<string, unknown>
+    ).preparedToolCall as Record<string, any>;
     const substitutedAuthority = substitutedPrepared.stableAuthority as Record<
       string,
       any
@@ -1215,17 +1335,21 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
   }
 
   const staleAgent = structuredClone(waitingAgent);
-  const staleExec = staleAgent.exec as Record<string, unknown>;
-  const stalePending = staleExec.pendingApproval as Record<string, unknown>;
   const stalePrepared = structuredClone(
-    stalePending.preparedToolCall,
+    ((staleAgent.waitingFor as Record<string, unknown>).metadata as Record<
+      string,
+      unknown
+    >).preparedToolCall,
   ) as Record<string, unknown>;
   const stalePreparedApproval = stalePrepared.approval as Record<string, unknown>;
   stalePreparedApproval.externalApprovalBinding = {
     ...binding,
     authorityRevision: "changed-authority",
   };
-  stalePending.preparedToolCall = stalePrepared;
+  ((staleAgent.waitingFor as Record<string, unknown>).metadata as Record<
+    string,
+    unknown
+  >).preparedToolCall = stalePrepared;
   await assert.rejects(
     () => waitApprovalStep(
       buildContext({
@@ -1261,6 +1385,45 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
       error.code === "HOSTED_PREPARED_APPROVAL_INVALID",
   );
 
+  const declined = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: structuredClone(waitingAgent) },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-github-decline",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          decision: "decline",
+          approvalId: pendingApproval.approvalId,
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      inspectTool,
+      prepareToolForApproval,
+      useTool: async () => {
+        throw new Error("declined approval must not execute");
+      },
+    },
+  );
+  assert.equal(declined.effects, undefined);
+  assert.equal(
+    (
+      (declined.statePatch?.agent as Record<string, unknown>)
+        .lastActionResult as Record<string, unknown>
+    ).status,
+    "denied",
+  );
+  assert.equal(approvalPreparations, 1);
+
   const resumed = await waitApprovalStep(
     buildContext({
       session: {
@@ -1291,7 +1454,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
             workspaceRoot: "/workspace/project",
             leaseId: "rotated-workspace-lease",
           },
-          message: "approve",
+          decision: "approve_once",
           approvalId: pendingApproval.approvalId,
         },
       },

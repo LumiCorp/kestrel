@@ -205,6 +205,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     string,
     Set<string>
   >();
+  private readonly releasedPreparedExecutionOwners = new Set<string>();
   private readonly executingPreparedExecutionKeys = new Set<string>();
   private readonly activePreparedExecutionCompletions = new Map<
     string,
@@ -216,6 +217,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   >();
   private readonly releasingToolSurfaceSnapshots = new Map<
     string,
+    Promise<void>
+  >();
+  private readonly activeToolSurfaceSnapshotCreations = new Set<
     Promise<void>
   >();
   private closed = false;
@@ -511,58 +515,85 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   async createToolSurfaceSnapshot(
     options: ToolGatewayCallOptions = {},
   ): Promise<ToolSurfaceSnapshotV1> {
-    await this.ensureExecutionAuthorization(options.runContext);
-    if (this.initialized === false) {
-      await this.refreshRuntime();
-    }
-    const requestedNames =
-      options.toolNames === undefined ? undefined : new Set(options.toolNames);
-    const descriptors = (
-      requestedNames === undefined
-        ? this.listExposedDescriptors(options.runContext)
-        : this.listActivatableDescriptors(options.runContext)
-    ).filter((descriptor) => requestedNames?.has(descriptor.toolId) ?? true);
-    const snapshotGeneration = hashCanonical({
-      version: "tool-snapshot-generation-v1",
-      activeGeneration: this.registryGeneration,
-      scopeFingerprint: fingerprintToolRunScopeV1(options.runContext),
-      descriptors: descriptors.map(toToolDescriptorRefV1),
+    if (this.closed) throw this.toolSurfaceCreationUnavailable();
+    let completeCreation!: () => void;
+    const creation = new Promise<void>((resolve) => {
+      completeCreation = resolve;
     });
-    const snapshot = createToolSurfaceForDescriptorsV1({
-      descriptors,
-      registryGeneration: snapshotGeneration,
-      runContext: options.runContext,
-    });
-    const executions = new Map<string, PinnedExecutionSource>();
+    this.activeToolSurfaceSnapshotCreations.add(creation);
     try {
-      for (const descriptor of descriptors) {
-        executions.set(
-          descriptor.toolId,
-          this.createPinnedExecutionSource(
-            descriptor,
-            snapshot.tools.find(
-              (activation) =>
-                activation.descriptor.toolId === descriptor.toolId,
-            )!,
-            options.runContext,
-          ),
-        );
+      await this.ensureExecutionAuthorization(options.runContext);
+      if (this.closed) throw this.toolSurfaceCreationUnavailable();
+      if (this.initialized === false) {
+        await this.refreshRuntime();
       }
-    } catch (error) {
-      await Promise.all(
-        [...executions.values()].map((source) => source.release?.()),
-      );
-      throw error;
-    }
-    this.toolSurfaceSnapshots.set(snapshot.snapshotId, snapshot);
-    this.toolSurfaceExecutions.set(snapshot.snapshotId, executions);
-    if (options.runContext !== undefined) {
-      this.toolSurfaceRunIds.set(snapshot.snapshotId, {
-        runId: options.runContext.runId,
-        sessionId: options.runContext.sessionId,
+      if (this.closed) throw this.toolSurfaceCreationUnavailable();
+      const requestedNames =
+        options.toolNames === undefined
+          ? undefined
+          : new Set(options.toolNames);
+      const descriptors = (
+        requestedNames === undefined
+          ? this.listExposedDescriptors(options.runContext)
+          : this.listActivatableDescriptors(options.runContext)
+      ).filter((descriptor) => requestedNames?.has(descriptor.toolId) ?? true);
+      const snapshotGeneration = hashCanonical({
+        version: "tool-snapshot-generation-v1",
+        activeGeneration: this.registryGeneration,
+        scopeFingerprint: fingerprintToolRunScopeV1(options.runContext),
+        descriptors: descriptors.map(toToolDescriptorRefV1),
       });
+      const snapshot = createToolSurfaceForDescriptorsV1({
+        descriptors,
+        registryGeneration: snapshotGeneration,
+        runContext: options.runContext,
+      });
+      const executions = new Map<string, PinnedExecutionSource>();
+      try {
+        for (const descriptor of descriptors) {
+          executions.set(
+            descriptor.toolId,
+            this.createPinnedExecutionSource(
+              descriptor,
+              snapshot.tools.find(
+                (activation) =>
+                  activation.descriptor.toolId === descriptor.toolId,
+              )!,
+              options.runContext,
+            ),
+          );
+        }
+      } catch (error) {
+        await Promise.all(
+          [...executions.values()].map((source) => source.release?.()),
+        );
+        throw error;
+      }
+      this.toolSurfaceSnapshots.set(snapshot.snapshotId, snapshot);
+      this.toolSurfaceExecutions.set(snapshot.snapshotId, executions);
+      if (options.runContext !== undefined) {
+        this.toolSurfaceRunIds.set(snapshot.snapshotId, {
+          runId: options.runContext.runId,
+          sessionId: options.runContext.sessionId,
+        });
+      }
+      return snapshot;
+    } finally {
+      completeCreation();
+      this.activeToolSurfaceSnapshotCreations.delete(creation);
     }
-    return snapshot;
+  }
+
+  private toolSurfaceCreationUnavailable(): RuntimeFailure {
+    return createRuntimeFailure(
+      "TOOL_PINNED_HANDLER_UNAVAILABLE",
+      "Tool registry is closed and cannot create a tool surface snapshot.",
+      {
+        subsystem: "tooling",
+        classification: "configuration",
+        recoverable: false,
+      },
+    );
   }
 
   resolveModelToolIntent(input: {
@@ -1047,6 +1078,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     key: string,
   ): boolean {
     return (
+      this.releasedPreparedExecutionOwners.has(
+        preparedExecutionOwnerKey(prepared.runId, prepared.sessionId),
+      ) ||
       this.terminalPreparedExecutionKeysByOwner
         .get(preparedExecutionOwnerKey(prepared.runId, prepared.sessionId))
         ?.has(key) === true
@@ -1061,6 +1095,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       prepared.runId,
       prepared.sessionId,
     );
+    if (this.releasedPreparedExecutionOwners.has(ownerKey)) return;
     const ownedKeys =
       this.terminalPreparedExecutionKeysByOwner.get(ownerKey) ??
       new Set<string>();
@@ -1164,9 +1199,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     for (const snapshotId of snapshotIds) {
       await this.releaseToolSurfaceSnapshot(snapshotId);
     }
-    this.terminalPreparedExecutionKeysByOwner.delete(
-      preparedExecutionOwnerKey(runId, sessionId),
-    );
+    const ownerKey = preparedExecutionOwnerKey(runId, sessionId);
+    this.terminalPreparedExecutionKeysByOwner.delete(ownerKey);
+    this.releasedPreparedExecutionOwners.add(ownerKey);
   }
 
   getDescriptor(
@@ -1414,6 +1449,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     // executions are already rejected because closed was set synchronously.
     await Promise.allSettled([
       ...this.activePreparedExecutionCompletions.values(),
+      ...this.activeToolSurfaceSnapshotCreations,
     ]);
     await Promise.allSettled([
       ...this.releasingPreparedExecutions.values(),
@@ -1423,6 +1459,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     this.toolSurfaceSnapshots.clear();
     this.toolSurfaceRunIds.clear();
     this.terminalPreparedExecutionKeysByOwner.clear();
+    this.releasedPreparedExecutionOwners.clear();
 
     const ownershipReleaseResults = await Promise.allSettled([
       ...[...this.toolSurfaceExecutions.entries()].map(

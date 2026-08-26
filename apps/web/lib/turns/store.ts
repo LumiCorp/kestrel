@@ -276,6 +276,27 @@ export async function insertRememberedToolApprovalInTransaction(
   input: { approval: RememberedToolApprovalV1 },
 ): Promise<RememberedToolApprovalV1> {
   const approval = parseRememberedToolApprovalV1(input.approval);
+  const [thread] = await tx
+    .select({
+      id: schema.threads.id,
+      organizationId: schema.threads.organizationId,
+      projectId: schema.threads.projectId,
+    })
+    .from(schema.threads)
+    .where(
+      and(
+        eq(schema.threads.id, approval.threadId),
+        eq(schema.threads.organizationId, approval.organizationId),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  if (!thread?.projectId) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "Remembered approval requires the owning Project thread.",
+    );
+  }
   const [source] = await tx
     .select({
       id: schema.threadInteractions.id,
@@ -334,27 +355,6 @@ export async function insertRememberedToolApprovalInTransaction(
       "Remembered approval does not match the locked source interaction authority.",
     );
   }
-  const [thread] = await tx
-    .select({
-      id: schema.threads.id,
-      organizationId: schema.threads.organizationId,
-      projectId: schema.threads.projectId,
-    })
-    .from(schema.threads)
-    .where(
-      and(
-        eq(schema.threads.id, source.threadId),
-        eq(schema.threads.organizationId, source.organizationId),
-      ),
-    )
-    .limit(1)
-    .for("update");
-  if (!thread?.projectId) {
-    throw new DurableTurnError(
-      "TURN_CONFLICT",
-      "Remembered approval requires the owning Project thread.",
-    );
-  }
   const [stored] = await tx
     .insert(schema.rememberedToolApprovals)
     .values({
@@ -364,10 +364,8 @@ export async function insertRememberedToolApprovalInTransaction(
       threadId: source.threadId,
       actorUserId: source.resolvedByUserId,
       toolId: sourceToolIdentity.toolId,
-      descriptorContractRevision:
-        sourceToolIdentity.descriptorContractRevision,
-      approvalAuthorityRevision:
-        sourceToolIdentity.approvalAuthorityRevision,
+      descriptorContractRevision: sourceToolIdentity.descriptorContractRevision,
+      approvalAuthorityRevision: sourceToolIdentity.approvalAuthorityRevision,
       sourceInteractionId: source.id,
       createdAt: new Date(approval.createdAt),
     })
@@ -418,10 +416,7 @@ export async function listRememberedToolApprovalEvidenceForRuntime(input: {
     }
     const rows = await tx.query.rememberedToolApprovals.findMany({
       where: and(
-        eq(
-          schema.rememberedToolApprovals.organizationId,
-          input.organizationId,
-        ),
+        eq(schema.rememberedToolApprovals.organizationId, input.organizationId),
         eq(schema.rememberedToolApprovals.threadId, input.threadId),
         eq(schema.rememberedToolApprovals.actorUserId, input.userId),
       ),
@@ -751,42 +746,75 @@ export async function createDurableThreadTurnInTransaction(
   if (input.messageId) {
     const attachmentIds = input.attachmentIds ?? [];
     if (attachmentIds.length > CONVERSATION_ATTACHMENT_MAX_COUNT) {
-      throw new DurableTurnError("TURN_CONFLICT", "A message can include at most 20 attachments.");
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "A message can include at most 20 attachments.",
+      );
     }
     if (new Set(attachmentIds).size !== attachmentIds.length) {
-      throw new DurableTurnError("TURN_CONFLICT", "Attachment IDs must be unique.");
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "Attachment IDs must be unique.",
+      );
     }
-    const attachments = attachmentIds.length === 0
-      ? []
-      : await tx.select({
-          id: schema.kestrelFiles.id,
-          sizeBytes: schema.kestrelFiles.sizeBytes,
-          sha256: schema.kestrelFiles.sha256,
-          detectedMediaType: schema.kestrelFiles.detectedMediaType,
-          lifecycleState: schema.kestrelFiles.lifecycleState,
-        }).from(schema.kestrelFiles)
-          .innerJoin(schema.fileScopeGrants, and(
-            eq(schema.fileScopeGrants.fileId, schema.kestrelFiles.id),
-            eq(schema.fileScopeGrants.scopeType, "thread"),
-            eq(schema.fileScopeGrants.threadId, input.threadId),
-            isNull(schema.fileScopeGrants.revokedAt),
-          ))
-          .where(and(
-            eq(schema.kestrelFiles.organizationId, input.organizationId),
-            inArray(schema.kestrelFiles.id, attachmentIds),
-          )).for("update");
-    const attachmentsById = new Map(attachments.map((attachment) => [attachment.id, attachment]));
-    const orderedAttachments = attachmentIds.map((attachmentId) => attachmentsById.get(attachmentId));
-    if (orderedAttachments.some((attachment) =>
-      !attachment
-      || attachment.lifecycleState !== "ready"
-      || !attachment.sha256
-      || !attachment.detectedMediaType
-    )) {
-      throw new DurableTurnError("TURN_CONFLICT", "One or more attachments are unavailable, incomplete, or quarantined.");
+    const attachments =
+      attachmentIds.length === 0
+        ? []
+        : await tx
+            .select({
+              id: schema.kestrelFiles.id,
+              sizeBytes: schema.kestrelFiles.sizeBytes,
+              sha256: schema.kestrelFiles.sha256,
+              detectedMediaType: schema.kestrelFiles.detectedMediaType,
+              lifecycleState: schema.kestrelFiles.lifecycleState,
+            })
+            .from(schema.kestrelFiles)
+            .innerJoin(
+              schema.fileScopeGrants,
+              and(
+                eq(schema.fileScopeGrants.fileId, schema.kestrelFiles.id),
+                eq(schema.fileScopeGrants.scopeType, "thread"),
+                eq(schema.fileScopeGrants.threadId, input.threadId),
+                isNull(schema.fileScopeGrants.revokedAt),
+              ),
+            )
+            .where(
+              and(
+                eq(schema.kestrelFiles.organizationId, input.organizationId),
+                inArray(schema.kestrelFiles.id, attachmentIds),
+              ),
+            )
+            .for("update");
+    const attachmentsById = new Map(
+      attachments.map((attachment) => [attachment.id, attachment]),
+    );
+    const orderedAttachments = attachmentIds.map((attachmentId) =>
+      attachmentsById.get(attachmentId),
+    );
+    if (
+      orderedAttachments.some(
+        (attachment) =>
+          !attachment ||
+          attachment.lifecycleState !== "ready" ||
+          !attachment.sha256 ||
+          !attachment.detectedMediaType,
+      )
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "One or more attachments are unavailable, incomplete, or quarantined.",
+      );
     }
-    if (orderedAttachments.reduce((sum, attachment) => sum + (attachment?.sizeBytes ?? 0), 0) > CONVERSATION_ATTACHMENT_MAX_TURN_BYTES) {
-      throw new DurableTurnError("TURN_CONFLICT", "Attachments exceed the 500 MiB per-message limit.");
+    if (
+      orderedAttachments.reduce(
+        (sum, attachment) => sum + (attachment?.sizeBytes ?? 0),
+        0,
+      ) > CONVERSATION_ATTACHMENT_MAX_TURN_BYTES
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "Attachments exceed the 500 MiB per-message limit.",
+      );
     }
     const [insertedMessage] = await tx
       .insert(schema.threadMessages)
@@ -811,11 +839,13 @@ export async function createDurableThreadTurnInTransaction(
       );
     }
     if (attachmentIds.length > 0) {
-      await tx.insert(schema.threadMessageFiles).values(attachmentIds.map((attachmentId, ordinal) => ({
-        messageId: input.messageId,
-        fileId: attachmentId,
-        ordinal,
-      })));
+      await tx.insert(schema.threadMessageFiles).values(
+        attachmentIds.map((attachmentId, ordinal) => ({
+          messageId: input.messageId,
+          fileId: attachmentId,
+          ordinal,
+        })),
+      );
     }
   }
   const [turn] = await tx
@@ -1525,17 +1555,16 @@ async function persistDurableAssistantMessages(
 async function meterDurableAssistantMessages(
   messages: DurableAssistantOutcomeMessage[],
 ) {
-  await meterPersistedModelMessages(messages.map((message) => message.id)).catch(
-    (error) => {
-      console.error(
-        "Model usage metering will retry from the durable message ledger.",
-        {
-          message:
-            error instanceof Error ? error.message : "Unknown error",
-        },
-      );
-    },
-  );
+  await meterPersistedModelMessages(
+    messages.map((message) => message.id),
+  ).catch((error) => {
+    console.error(
+      "Model usage metering will retry from the durable message ledger.",
+      {
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
+    );
+  });
 }
 
 export async function persistDurableAssistantOutcome(input: {
@@ -1949,14 +1978,19 @@ export async function resolveDurableRuntimeInteraction(input: {
         "The interaction response must select one exact allowed recovery option.",
       );
     }
-    const inputSchema = readPlainRecord(interaction.requestEnvelope)?.inputSchema;
+    const inputSchema = readPlainRecord(
+      interaction.requestEnvelope,
+    )?.inputSchema;
     const inputContract = readPlainRecord(inputSchema);
     const properties = readPlainRecord(inputContract?.properties);
     const optionSchema = readPlainRecord(properties?.recoveryOptionId);
     const allowedOptionIds = Array.isArray(optionSchema?.enum)
-      ? optionSchema.enum.filter((value): value is string => typeof value === "string")
+      ? optionSchema.enum.filter(
+          (value): value is string => typeof value === "string",
+        )
       : [];
-    const requiresRecoveryOption = Array.isArray(inputContract?.required) &&
+    const requiresRecoveryOption =
+      Array.isArray(inputContract?.required) &&
       inputContract.required.includes("recoveryOptionId");
     if (
       (structuredReview.kind === "ordinary" &&
@@ -2242,8 +2276,14 @@ async function failDurableRuntimeInteractionInTransaction(
       })
       .where(
         and(
-          eq(schema.appOperationApprovals.organizationId, interaction.organizationId),
-          eq(schema.appOperationApprovals.runtimeApprovalId, interaction.runtimeApprovalId),
+          eq(
+            schema.appOperationApprovals.organizationId,
+            interaction.organizationId,
+          ),
+          eq(
+            schema.appOperationApprovals.runtimeApprovalId,
+            interaction.runtimeApprovalId,
+          ),
           inArray(schema.appOperationApprovals.status, ["pending", "approved"]),
         ),
       );
@@ -2356,7 +2396,9 @@ export async function retryFailedDurableRuntimeInteraction(input: {
           gt(schema.appOperationApprovals.expiresAt, new Date()),
         ),
       });
-      if (!(appApproval?.externalApprovalBinding && appApproval.authorityRevision)) {
+      if (
+        !(appApproval?.externalApprovalBinding && appApproval.authorityRevision)
+      ) {
         throw new DurableTurnError(
           "TURN_CONFLICT",
           "The hosted App approval is no longer reusable; request fresh approval.",
@@ -2404,8 +2446,14 @@ export async function retryFailedDurableRuntimeInteraction(input: {
         tx.query.appConnectionResources.findFirst({
           where: and(
             eq(schema.appConnectionResources.id, appApproval.resourceId),
-            eq(schema.appConnectionResources.connectionId, appApproval.connectionId),
-            eq(schema.appConnectionResources.resourceType, appApproval.resourceType),
+            eq(
+              schema.appConnectionResources.connectionId,
+              appApproval.connectionId,
+            ),
+            eq(
+              schema.appConnectionResources.resourceType,
+              appApproval.resourceType,
+            ),
             eq(schema.appConnectionResources.enabled, true),
           ),
           columns: { id: true },
@@ -2453,7 +2501,10 @@ export async function retryFailedDurableRuntimeInteraction(input: {
       where: eq(schema.threadTurns.id, interaction.turnId),
     });
     if (!originalTurn?.requestedEnvironmentId) {
-      throw new DurableTurnError("TURN_CONFLICT", "The original execution route is unavailable.");
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The original execution route is unavailable.",
+      );
     }
     const now = new Date();
     await tx
@@ -2658,7 +2709,10 @@ export async function listThreadInteractionsForUser(input: {
             .where(
               and(
                 inArray(schema.threadTurnEvents.turnId, turnIds),
-                eq(schema.threadTurnEvents.type, "interaction.decision_recorded"),
+                eq(
+                  schema.threadTurnEvents.type,
+                  "interaction.decision_recorded",
+                ),
               ),
             );
     const responseMessageIds = new Map<string, string>();
@@ -2713,11 +2767,11 @@ async function terminalizeTurnEnvironmentExecution(
       status: executionStatus,
       failureCode:
         executionStatus === "failed"
-          ? failure?.code ?? turn.failureCode ?? null
+          ? (failure?.code ?? turn.failureCode ?? null)
           : null,
       failureMessage:
         executionStatus === "failed"
-          ? failure?.message ?? turn.failureMessage ?? null
+          ? (failure?.message ?? turn.failureMessage ?? null)
           : null,
       completedAt: now,
       updatedAt: now,
@@ -2758,7 +2812,7 @@ async function invalidateTurnGatewayCredentialForAuthFailure(
     organizationId: string;
   },
   failureCode: string | null | undefined,
-  now: Date
+  now: Date,
 ) {
   if (!(turn.environmentExecutionId && failureCode === "MODEL_AUTH_ERROR")) {
     return;
@@ -2773,20 +2827,14 @@ async function invalidateTurnGatewayCredentialForAuthFailure(
     .from(schema.environmentModelGrants)
     .innerJoin(
       schema.aiGateways,
-      eq(schema.aiGateways.id, schema.environmentModelGrants.gatewayId)
+      eq(schema.aiGateways.id, schema.environmentModelGrants.gatewayId),
     )
     .where(
       and(
-        eq(
-          schema.environmentModelGrants.runId,
-          turn.environmentExecutionId
-        ),
-        eq(
-          schema.environmentModelGrants.organizationId,
-          turn.organizationId
-        ),
-        eq(schema.environmentModelGrants.status, "active")
-      )
+        eq(schema.environmentModelGrants.runId, turn.environmentExecutionId),
+        eq(schema.environmentModelGrants.organizationId, turn.organizationId),
+        eq(schema.environmentModelGrants.status, "active"),
+      ),
     )
     .limit(1);
   if (
@@ -2814,9 +2862,9 @@ async function invalidateTurnGatewayCredentialForAuthFailure(
         eq(schema.aiGateways.organizationId, turn.organizationId),
         eq(
           schema.aiGateways.credentialRevision,
-          leased.grantCredentialRevision!
-        )
-      )
+          leased.grantCredentialRevision!,
+        ),
+      ),
     )
     .returning({ id: schema.aiGateways.id });
   if (invalidated) {
@@ -2829,7 +2877,8 @@ async function invalidateTurnGatewayCredentialForAuthFailure(
       action: "gateway.credential.invalidated",
       targetType: "ai_gateway",
       targetId: invalidated.id,
-      message: "Invalidated an AI gateway credential after a model authentication failure.",
+      message:
+        "Invalidated an AI gateway credential after a model authentication failure.",
       metadata: {
         failureCode: "MODEL_AUTH_ERROR",
         credentialRevision: leased.grantCredentialRevision,
@@ -2907,7 +2956,7 @@ export async function completeDurableThreadTurn(input: {
         tx,
         turn,
         input.failureCode,
-        now
+        now,
       );
     }
     if (input.interactionFailure) {

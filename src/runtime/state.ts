@@ -3,6 +3,7 @@ import type {
   StateNodeRef,
 } from "../kestrel/contracts/base.js";
 import { parseRunnerHostedToolApprovalInteractionV2 } from "@kestrel-agents/protocol";
+import { parseDurablePreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
 import {
   normalizeVisibleTodoState,
   validateVisibleTodoState,
@@ -384,6 +385,29 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
       };
     }
     const interaction = asRecord(waitingFor.interaction);
+    const waitMetadata = asRecord(waitingFor.metadata);
+    const pendingApproval = asRecord(exec.pendingApproval);
+    const hasHostedApprovalV2Evidence =
+      pendingApproval?.version === "hosted_tool_approval_v2" ||
+      pendingApproval?.preparedInvocationId !== undefined ||
+      pendingApproval?.preparedToolCall !== undefined ||
+      waitMetadata?.preparedToolCall !== undefined ||
+      asRecord(pendingApproval?.externalApprovalBinding)?.version ===
+        "runner_external_approval_binding_v2" ||
+      asRecord(waitMetadata?.externalApprovalBinding)?.version ===
+        "runner_external_approval_binding_v2";
+    if (
+      hasHostedApprovalV2Evidence &&
+      interaction?.version !== "runner_hosted_tool_approval_interaction_v2"
+    ) {
+      return {
+        code: "RUNTIME_STATE_INVALID",
+        message: "state.agent.waitingFor hosted approval state is incomplete",
+        details: {
+          path: "state.agent.waitingFor.interaction",
+        },
+      };
+    }
     if (interaction?.version === "runner_hosted_tool_approval_interaction_v2") {
       try {
         if (waitingFor.kind !== "approval") {
@@ -391,10 +415,23 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
             "hosted tool approval interaction requires an approval wait",
           );
         }
-        parseRunnerHostedToolApprovalInteractionV2(
+        const parsedInteraction = parseRunnerHostedToolApprovalInteractionV2(
           interaction,
           waitingFor.eventType,
         );
+        const prepared = parseDurablePreparedToolCallV1(
+          waitMetadata?.preparedToolCall,
+        );
+        if (
+          pendingApproval?.version !== "hosted_tool_approval_v2" ||
+          pendingApproval.preparedToolCall !== undefined ||
+          pendingApproval.preparedInvocationId !== prepared.callId ||
+          parsedInteraction.approval.preparedInvocationId !== prepared.callId
+        ) {
+          throw new Error(
+            "hosted tool approval must use one canonical prepared invocation",
+          );
+        }
       } catch (error) {
         return {
           code: "RUNTIME_STATE_INVALID",

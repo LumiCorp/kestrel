@@ -11,7 +11,7 @@ const interaction = {
   requestId: "approval-1",
   kind: "approval",
   eventType: "user.approval",
-  prompt: "Approve hosted.tool?",
+  prompt: "Approve hosted.tool? Reply with decision 'approve_once' or 'decline'.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -127,4 +127,16 @@ test("hosted approval interaction V2 is separate from strict V1", () => {
       }),
     /stableToolIdentity\.toolId must match/u,
   );
+});
+
+test("hosted approval interaction V2 advertises exactly its schema decisions", () => {
+  const parsed = parseRunnerHostedToolApprovalInteractionV2(interaction);
+  const advertised = [...parsed.prompt.matchAll(/'(approve_once|decline)'/gu)]
+    .map((match) => match[1])
+    .sort();
+  const accepted = [...parsed.inputSchema.properties.decision.enum].sort();
+
+  assert.deepEqual(advertised, accepted);
+  assert.deepEqual(accepted, ["approve_once", "decline"]);
+  assert.doesNotMatch(parsed.prompt, /remember_approval|'approve'|'deny'/u);
 });

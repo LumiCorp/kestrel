@@ -9,12 +9,7 @@ Implementation must start from deployed-source revision
 
 ## Ready
 
-- [Use one canonical persisted invocation for card and approval](01b-canonical-prepared-invocation-state.md)
-- [Align the V2 approval prompt with its strict decisions](01e-align-v2-prompt-decisions.md)
-- [Reject downgraded V2 pending approval state](01a2-reject-downgraded-v2-pending-state.md)
-- [Close replay and snapshot-creation races](01c2-close-replay-and-snapshot-races.md)
-- [Make production MCP cleanup retryable](01c3-make-mcp-cleanup-retryable.md)
-- [Preserve canonical turn lock order for remembered approval](01f2-preserve-turn-lock-order.md)
+None.
 
 ## In progress
 
@@ -44,6 +39,12 @@ None.
   — review blocked by [Close replay and snapshot-creation races](01c2-close-replay-and-snapshot-races.md) and [Make production MCP cleanup retryable](01c3-make-mcp-cleanup-retryable.md)
 - [Derive remembered identity from the locked source interaction](01f1-derive-remembered-identity-from-source.md)
   — review blocked by [Preserve canonical turn lock order for remembered approval](01f2-preserve-turn-lock-order.md)
+- [Use one canonical persisted invocation for card and approval](01b-canonical-prepared-invocation-state.md)
+- [Align the V2 approval prompt with its strict decisions](01e-align-v2-prompt-decisions.md)
+- [Reject downgraded V2 pending approval state](01a2-reject-downgraded-v2-pending-state.md)
+- [Close replay and snapshot-creation races](01c2-close-replay-and-snapshot-races.md)
+- [Make production MCP cleanup retryable](01c3-make-mcp-cleanup-retryable.md)
+- [Preserve canonical turn lock order for remembered approval](01f2-preserve-turn-lock-order.md)
 
 ## Done
 

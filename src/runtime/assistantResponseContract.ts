@@ -99,7 +99,7 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
   }
   const preparedApprovalInteraction =
     waitFor.kind === "approval"
-      ? buildPreparedApprovalInteractionV2(metadata, requestId, prompt)
+      ? buildPreparedApprovalInteractionV2(metadata, requestId)
       : undefined;
   const interaction: RuntimeInteractionRequest =
     authoredStructuredReview?.kind === "structured_review"
@@ -316,7 +316,6 @@ function readApprovalPresentation(
 function buildPreparedApprovalInteractionV2(
   metadata: Record<string, unknown> | undefined,
   requestId: string | undefined,
-  prompt: string,
 ): RuntimeHostedToolApprovalInteractionV2 | undefined {
   if (metadata?.preparedToolCall === undefined) return;
   const prepared = parsePreparedToolCallV1(metadata.preparedToolCall);
@@ -353,7 +352,7 @@ function buildPreparedApprovalInteractionV2(
     requestId: effectiveRequestId,
     kind: "approval",
     eventType: "user.approval",
-    prompt,
+    prompt: `Approve ${prepared.activation.descriptor.toolId}? Reply with decision 'approve_once' or 'decline'.`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
