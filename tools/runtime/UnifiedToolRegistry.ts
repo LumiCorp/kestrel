@@ -644,7 +644,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         : this.findPinnedExecutionSource(input.activation);
     let source =
       snapshotSource ??
-      this.rehydrateStaticBuiltInExecution(input, options.runContext);
+      this.rehydratePreparedExecution(input, options.runContext);
     let sourceOwnsPreparedReference = false;
     if (source === undefined) {
       throw createRuntimeFailure(
@@ -816,7 +816,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         : this.findPinnedExecutionSource(input.activation);
     let source =
       snapshotSource ??
-      this.rehydrateStaticBuiltInExecution(input, options.runContext);
+      this.rehydratePreparedExecution(input, options.runContext);
     if (source === undefined) {
       throw createRuntimeFailure(
         "TOOL_PINNED_HANDLER_UNAVAILABLE",
@@ -919,7 +919,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       retainedSource ??
       (options.runContext === undefined
         ? undefined
-        : this.rehydrateStaticBuiltInExecution(prepared, options.runContext));
+        : this.rehydratePreparedExecution(prepared, options.runContext));
     if (preparedSource === undefined) {
       throw this.preparedExecutionUnavailable(prepared);
     }
@@ -1795,13 +1795,16 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     };
   }
 
-  private rehydrateStaticBuiltInExecution(
+  private rehydratePreparedExecution(
     input: { activation: PreparedToolCallV1["activation"] },
     runContext: ToolRunContext | undefined,
   ): PinnedExecutionSource | undefined {
-    const descriptor = this.builtInDescriptors.get(
-      input.activation.descriptor.toolId,
-    );
+    const descriptor =
+      this.builtInDescriptors.get(input.activation.descriptor.toolId) ??
+      this.resolveExposedMcpTool(
+        input.activation.descriptor.toolId,
+        runContext,
+      )?.descriptor;
     const blockedResumeScope = resolveBlockedResumeScope(runContext);
     const scopeMatches =
       input.activation.scopeFingerprint ===

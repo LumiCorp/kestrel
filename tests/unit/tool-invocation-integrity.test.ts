@@ -965,6 +965,80 @@ test("restart without the prepared dynamic handler fails closed", async () => {
   );
 });
 
+test("approval resume rebinds an exact dynamic invocation to the current handler", async () => {
+  const blockedRunContext: ToolRunContext = {
+    runId: "run-dynamic-approval-blocked",
+    sessionId: "session-dynamic-approval",
+    payload: {},
+    sessionState: {},
+  };
+  const originalProvider = new VersionedMcpProvider();
+  const original = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: originalProvider,
+  });
+  await original.refresh();
+  const snapshot = await original.createToolSurfaceSnapshot({
+    runContext: blockedRunContext,
+    toolNames: [TOOL_ID],
+  });
+  const intent = original.resolveModelToolIntent({
+    snapshot,
+    toolCall: {
+      id: "call-dynamic-approval-resume",
+      name: TOOL_ID,
+      input: { query: "approved-exactly-once" },
+    },
+  });
+  const prepared = await prepareModelIntent(
+    original,
+    intent,
+    blockedRunContext,
+  );
+  await original.close();
+
+  const continuationRunContext: ToolRunContext = {
+    ...blockedRunContext,
+    runId: "run-dynamic-approval-continuation",
+    payload: {
+      resumeBlockedRun: true,
+      metadata: { blockedRunId: blockedRunContext.runId },
+    },
+  };
+  const currentProvider = new VersionedMcpProvider();
+  const restarted = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: currentProvider,
+  });
+  await restarted.refresh();
+  const result = await restarted.executePreparedToolCall(prepared, {
+    runContext: continuationRunContext,
+  });
+  assert.equal(result.status, "OK");
+  assert.match(JSON.stringify(result.auditRecord.output), /v1/u);
+  assert.equal(currentProvider.references, 0);
+
+  const changedProvider = new VersionedMcpProvider();
+  changedProvider.version = "v2";
+  const changedRestart = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: changedProvider,
+  });
+  await changedRestart.refresh();
+  await assert.rejects(
+    () =>
+      changedRestart.executePreparedToolCall(prepared, {
+        runContext: continuationRunContext,
+      }),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
+  assert.equal(changedProvider.references, 0);
+  await restarted.close();
+  await changedRestart.close();
+});
+
 test("dynamic tools without exact generation pinning fail closed before exposure", async () => {
   const provider: McpToolProvider = {
     refresh: async () => ({
