@@ -4,9 +4,12 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
+- [Use native Anthropic Messages contracts](05-correct-anthropic-codec.md)
+
+## In progress
+
 - [Correct OpenAI Chat and Responses codecs](03-correct-openai-codecs.md)
 - [Make OpenRouter codecs and routing contract-safe](04-correct-openrouter-codecs-and-routing.md)
-- [Use native Anthropic Messages contracts](05-correct-anthropic-codec.md)
 - [Bind runtime routes to exact model evidence](07-bind-exact-runtime-routes.md)
 
 ## Blocked
