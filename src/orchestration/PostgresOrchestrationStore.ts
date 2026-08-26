@@ -213,6 +213,97 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
     );
   }
 
+  async createDialog(record: DelegationRecord): Promise<boolean> {
+    await this.ensureSchema();
+    const dialog = readDialogReservation(record);
+    if (dialog === undefined) {
+      throw new Error("createDialog requires a dialog delegation record.");
+    }
+    const result = await this.db.query<{ delegation_id: string }>(
+      `WITH name_lock AS (
+         SELECT pg_advisory_xact_lock(hashtext($2), hashtext($3))
+       )
+       INSERT INTO orchestration_delegations
+        (delegation_id, parent_thread_id, child_thread_id, parent_run_id, title, prompt, status, profile_id, provider, model, skill_pack_id, launched_by, wait_event_type, result_summary, error_message, result_contract, policy_json, created_at, updated_at)
+       SELECT $1, $2, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13, $14, $15, $16, $17::jsonb, $18::timestamptz, $19::timestamptz
+         FROM name_lock
+        WHERE NOT EXISTS (
+          SELECT 1
+            FROM orchestration_delegations
+           WHERE parent_thread_id = $2
+             AND lower(COALESCE(policy_json -> 'dialog' ->> 'normalizedName', policy_json -> 'dialog' ->> 'name', '')) = $3
+        )
+       RETURNING delegation_id`,
+      [
+        record.delegationId,
+        record.parentThreadId,
+        dialog.normalizedName,
+        record.childThreadId,
+        record.parentRunId ?? null,
+        record.title,
+        record.prompt,
+        record.status,
+        record.profileId ?? null,
+        record.provider ?? null,
+        record.model ?? null,
+        record.launchedBy ?? null,
+        record.waitEventType ?? null,
+        record.resultSummary ?? null,
+        record.errorMessage ?? null,
+        record.resultContract ?? null,
+        stringifySanitizedJson(buildDelegationPolicyJson(record)),
+        normalizeTimestampString(record.createdAt),
+        normalizeTimestampString(record.updatedAt),
+      ],
+    );
+    return result.rows.length === 1;
+  }
+
+  async compareAndSetDialog(record: DelegationRecord, expectedRevision: number): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.db.query<{ delegation_id: string }>(
+      `UPDATE orchestration_delegations
+          SET child_thread_id = $2,
+              parent_run_id = $3,
+              title = $4,
+              prompt = $5,
+              status = $6,
+              profile_id = $7,
+              provider = $8,
+              model = $9,
+              launched_by = $10,
+              wait_event_type = $11,
+              result_summary = $12,
+              error_message = $13,
+              result_contract = $14,
+              policy_json = $15::jsonb,
+              updated_at = $16::timestamptz
+        WHERE delegation_id = $1
+          AND COALESCE(NULLIF(policy_json -> 'dialog' ->> 'revision', '')::bigint, 0) = $17
+       RETURNING delegation_id`,
+      [
+        record.delegationId,
+        record.childThreadId,
+        record.parentRunId ?? null,
+        record.title,
+        record.prompt,
+        record.status,
+        record.profileId ?? null,
+        record.provider ?? null,
+        record.model ?? null,
+        record.launchedBy ?? null,
+        record.waitEventType ?? null,
+        record.resultSummary ?? null,
+        record.errorMessage ?? null,
+        record.resultContract ?? null,
+        stringifySanitizedJson(buildDelegationPolicyJson(record)),
+        normalizeTimestampString(record.updatedAt),
+        expectedRevision,
+      ],
+    );
+    return result.rows.length === 1;
+  }
+
   async getDelegation(delegationId: string): Promise<DelegationRecord | null> {
     await this.ensureSchema();
     const result = await this.db.query<Record<string, unknown>>(
@@ -1066,6 +1157,15 @@ function buildDelegationPolicyJson(record: DelegationRecord): Record<string, unk
     ...(policy ?? {}),
     subAgentResult: record.result,
   };
+}
+
+function readDialogReservation(record: DelegationRecord): { normalizedName: string } | undefined {
+  const dialog = isRecord(record.policy?.dialog) ? record.policy?.dialog : undefined;
+  if (dialog?.version !== "v1" || typeof dialog.name !== "string") return undefined;
+  const normalizedName = typeof dialog.normalizedName === "string"
+    ? dialog.normalizedName
+    : dialog.name.trim().toLocaleLowerCase();
+  return normalizedName.length > 0 ? { normalizedName } : undefined;
 }
 
 function stripSubAgentResultFromPolicy(policy: Record<string, unknown> | undefined): Record<string, unknown> | undefined {

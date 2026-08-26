@@ -17,6 +17,7 @@ import {
   InteractionManager,
   ThreadRuntime,
   type SubmitTurnInput,
+  type SubmitTurnResult,
   type TurnExecutionInput,
   type TurnExecutionResult,
   type TurnExecutor,
@@ -903,7 +904,7 @@ test("Delegation failure persistence retains normalized message and event code",
   assert.equal(failedEvent?.metadata?.errorMessage, "Child execution failed.");
 });
 
-test("persistent dialogs support multi-turn exchange, name ownership, and explicit close", async () => {
+test("persistent dialogs support multi-turn exchange, lifetime name ownership, and explicit close", async () => {
   const store = new InMemorySessionStore();
   const updates: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord[] = [];
   const emittedMessages: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord[] = [];
@@ -981,9 +982,123 @@ test("persistent dialogs support multi-turn exchange, name ownership, and explic
     () => supervisor.send({ parentSessionId: "root", dialogId: opened.dialogId, message: "late" }),
     { code: "DIALOG_CLOSED" },
   );
-  const reused = await supervisor.open({ parentSessionId: "root", name: "Peregrine", message: "new" });
-  assert.notEqual(reused.dialogId, opened.dialogId);
+  await assert.rejects(
+    () => supervisor.open({ parentSessionId: "root", name: "Peregrine", message: "new" }),
+    { code: "DIALOG_NAME_IN_USE" },
+  );
 });
+
+test("dialog close wins over a late child completion", async () => {
+  const store = new InMemorySessionStore();
+  const replies: string[] = [];
+  let resolveTurn: ((value: SubmitTurnResult) => void) | undefined;
+  const supervisor = createDialogSupervisor({
+    store,
+    submitChildTurn: async () => new Promise<SubmitTurnResult>((resolve) => { resolveTurn = resolve; }),
+    onDialogReply: ({ message }) => { replies.push(message.text); },
+  });
+
+  const opened = await supervisor.open({ parentSessionId: "root", name: "Scout", message: "investigate" });
+  await tick();
+  const closed = await supervisor.close({ parentSessionId: "root", dialogId: opened.dialogId });
+  assert.equal(closed.status, "closed");
+  resolveTurn?.({
+    assistantText: "late reply",
+    thread: (await store.getThread(opened.childSessionId))!,
+    output: buildOutput({ runId: "late-run", status: "COMPLETED" }),
+  });
+  await tick();
+  await tick();
+
+  const record = await store.getDelegation(opened.dialogId);
+  const messages = ((record?.policy?.dialog as { messages?: Array<{ sender: string; text: string }> } | undefined)?.messages ?? []);
+  assert.equal(messages.some((message) => message.sender === "collaborator" && message.text === "late reply"), false);
+  assert.deepEqual(replies, []);
+});
+
+test("dialog reply saved before close remains available", async () => {
+  const store = new InMemorySessionStore();
+  const replies: string[] = [];
+  let resolveTurn: ((value: SubmitTurnResult) => void) | undefined;
+  const supervisor = createDialogSupervisor({
+    store,
+    submitChildTurn: async () => new Promise<SubmitTurnResult>((resolve) => { resolveTurn = resolve; }),
+    onDialogReply: ({ message }) => { replies.push(message.text); },
+  });
+
+  const opened = await supervisor.open({ parentSessionId: "root", name: "Reviewer", message: "review" });
+  await tick();
+  resolveTurn?.({
+    assistantText: "saved reply",
+    thread: (await store.getThread(opened.childSessionId))!,
+    output: buildOutput({ runId: "saved-run", status: "COMPLETED" }),
+  });
+  await tick();
+  await tick();
+  await supervisor.close({ parentSessionId: "root", dialogId: opened.dialogId });
+
+  const record = await store.getDelegation(opened.dialogId);
+  const messages = ((record?.policy?.dialog as { messages?: Array<{ sender: string; text: string }> } | undefined)?.messages ?? []);
+  assert.equal(messages.some((message) => message.sender === "collaborator" && message.text === "saved reply"), true);
+  assert.deepEqual(replies, ["saved reply"]);
+});
+
+test("restart reconciliation marks only open working dialogs interrupted", async () => {
+  const store = new InMemorySessionStore();
+  const supervisor = createDialogSupervisor({
+    store,
+    submitChildTurn: async () => new Promise<SubmitTurnResult>(() => {}),
+  });
+  const opened = await supervisor.open({ parentSessionId: "root", name: "Indexer", message: "index" });
+  await tick();
+  await supervisor.reconcileInterruptedDialogs("root");
+
+  const record = await store.getDelegation(opened.dialogId);
+  const dialog = record?.policy?.dialog as { status?: string; activity?: string } | undefined;
+  assert.equal(dialog?.status, "open");
+  assert.equal(dialog?.activity, "interrupted");
+  assert.equal(record?.status, "WAITING");
+});
+
+function createDialogSupervisor(input: {
+  store: InMemorySessionStore;
+  submitChildTurn: (input: SubmitTurnInput) => Promise<SubmitTurnResult>;
+  onDialogReply?: ((input: { message: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord }) => void) | undefined;
+}): DelegationSupervisor {
+  let childCount = 0;
+  return new DelegationSupervisor({
+    profile: {
+      id: "reference",
+      label: "Reference",
+      agent: "reference-react",
+      sessionPrefix: "session",
+      modelProvider: "openrouter",
+      model: "model-a",
+      delegation: { allowAgentSpawn: true, maxConcurrentChildSessions: 4 },
+    },
+    runtimeStore: input.store,
+    orchestrationStore: input.store,
+    submitChildTurn: input.submitChildTurn,
+    startChildThread: async (child) => {
+      childCount += 1;
+      const thread: ThreadRecord = {
+        threadId: `race-child-${childCount}`,
+        sessionId: `race-child-${childCount}`,
+        title: child.title,
+        parentThreadId: child.parentThreadId,
+        status: "IDLE",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await input.store.ensureSession(thread.sessionId);
+      await input.store.upsertThread(thread);
+      return thread;
+    },
+    ...(input.onDialogReply === undefined
+      ? {}
+      : { onDialogReply: ({ message }) => input.onDialogReply?.({ message }) }),
+  });
+}
 
 function buildOutput(input: {
   runId: string;

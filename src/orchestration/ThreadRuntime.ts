@@ -386,6 +386,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
       updatedAt: now,
     };
     await this.store.upsertThread(thread);
+    if (existing !== null && input.parentThreadId === undefined) {
+      await this.delegationSupervisor?.reconcileInterruptedDialogs(thread.threadId);
+    }
     const composedAssembly = await this.runtimeComposer.composeThreadAssembly({
       thread,
       cause: "thread_start",

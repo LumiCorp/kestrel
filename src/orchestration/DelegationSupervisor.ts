@@ -124,13 +124,6 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
 
   async open(input: { parentSessionId: string; parentRunId?: string | undefined; name: string; message: string }): Promise<DialogSnapshot> {
     const name = normalizeDialogName(input.name);
-    const existing = await this.store.listDelegations({ parentThreadId: input.parentSessionId });
-    if (existing.some((record) => {
-      const dialog = readDialogState(record);
-      return dialog?.status === "open" && dialog.name.toLocaleLowerCase() === name.toLocaleLowerCase();
-    })) {
-      throw createRuntimeFailure("DIALOG_NAME_IN_USE", `An open dialog is already named '${name}'.`, { dialogName: name });
-    }
     const handle = await this.spawnDelegation({
       parentThreadId: input.parentSessionId,
       ...(input.parentRunId !== undefined ? { parentRunId: input.parentRunId } : {}),
@@ -141,7 +134,11 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       policy: {
         depth: 1,
         maxDepth: 1,
-        dialog: { version: "v1", name, status: "open", messages: [] },
+        dialog: createStoredDialogState({
+          name,
+          activity: "working",
+          profileId: this.profile.id,
+        }),
       },
     });
     const record = await this.requireDialog(handle.delegationId, input.parentSessionId);
@@ -151,8 +148,8 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
   async send(input: { parentSessionId: string; parentRunId?: string | undefined; dialogId: string; message: string }): Promise<DialogSnapshot> {
     const record = await this.requireDialog(input.dialogId, input.parentSessionId);
     const dialog = readDialogState(record)!;
-    if (dialog.status !== "open") throw createRuntimeFailure("DIALOG_CLOSED", `Dialog '${input.dialogId}' is closed.`, { dialogId: input.dialogId });
-    if (record.status === "RUNNING") throw createRuntimeFailure("DIALOG_BUSY", `Dialog '${input.dialogId}' is already processing a message.`, { dialogId: input.dialogId });
+    if (dialog.status !== "open") throw dialogClosedFailure(dialog.name, input.dialogId);
+    if (dialog.activity === "working") throw dialogBusyFailure(dialog.name, input.dialogId);
     const activeRecord = {
       ...record,
       prompt: input.message,
@@ -161,10 +158,15 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       updatedAt: new Date().toISOString(),
     };
     const updated = appendDialogMessage(
-      activeRecord,
+      writeDialogState(activeRecord, { ...dialog, activity: "working", revision: dialog.revision + 1 }),
       createDialogMessage(activeRecord, "kestrel", input.message),
     );
-    await this.store.upsertDelegation(updated);
+    if (!await this.store.compareAndSetDialog(updated, dialog.revision)) {
+      const latest = await this.requireDialog(input.dialogId, input.parentSessionId);
+      const latestDialog = readDialogState(latest)!;
+      if (latestDialog.status !== "open") throw dialogClosedFailure(latestDialog.name, input.dialogId);
+      throw dialogBusyFailure(latestDialog.name, input.dialogId);
+    }
     const message = lastDialogMessage(updated)!;
     await this.appendDialogEvent("dialog.message", updated, message);
     this.emit({ task: toTaskSnapshot(updated, this.profile), kind: "spawned", assistantText: null, dialogMessage: message });
@@ -173,17 +175,23 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
   }
 
   async close(input: { parentSessionId: string; parentRunId?: string | undefined; dialogId: string }): Promise<DialogSnapshot> {
-    const record = await this.requireDialog(input.dialogId, input.parentSessionId);
-    const dialog = readDialogState(record)!;
-    if (dialog.status === "closed") return toDialogSnapshot(record);
-    this.activeDialogRuns.get(record.delegationId)?.abort(new Error("Dialog closed."));
-    const updated = writeDialogState({ ...record, status: "CANCELLED", ...(input.parentRunId !== undefined ? { parentRunId: input.parentRunId } : {}), updatedAt: new Date().toISOString() }, { ...dialog, status: "closed" });
-    const closeMessage = { ...createDialogMessage(updated, "system", "Dialog closed."), status: "cancelled" as const };
-    const persisted = appendDialogMessage(updated, closeMessage);
-    await this.store.upsertDelegation(persisted);
-    await this.appendDialogEvent("dialog.closed", persisted, closeMessage);
-    this.emit({ task: toTaskSnapshot(persisted, this.profile), kind: "completed", assistantText: null, dialogMessage: closeMessage });
-    return toDialogSnapshot(persisted);
+    for (;;) {
+      const record = await this.requireDialog(input.dialogId, input.parentSessionId);
+      const dialog = readDialogState(record)!;
+      if (dialog.status === "closed") return toDialogSnapshot(record);
+      const closedAt = new Date().toISOString();
+      const closedRecord = writeDialogState(
+        { ...record, status: "CANCELLED", ...(input.parentRunId !== undefined ? { parentRunId: input.parentRunId } : {}), updatedAt: closedAt },
+        { ...dialog, status: "closed", activity: "idle", closedAt, revision: dialog.revision + 1 },
+      );
+      const closeMessage = { ...createDialogMessage(closedRecord, "system", "Dialog closed."), status: "cancelled" as const };
+      const persisted = appendDialogMessage(closedRecord, closeMessage);
+      if (!await this.store.compareAndSetDialog(persisted, dialog.revision)) continue;
+      this.activeDialogRuns.get(record.delegationId)?.abort(new Error("Dialog closed."));
+      await this.appendDialogEvent("dialog.closed", persisted, closeMessage);
+      this.emit({ task: toTaskSnapshot(persisted, this.profile), kind: "completed", assistantText: null, dialogMessage: closeMessage });
+      return toDialogSnapshot(persisted);
+    }
   }
 
   cancelActiveDialogs(parentSessionId: string): void {
@@ -191,6 +199,20 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       void this.store.getDelegation(dialogId).then((record) => {
         if (record?.parentThreadId === parentSessionId) controller.abort(new Error("Kestrel run stopped."));
       });
+    }
+  }
+
+  /** Records work that disappeared with a runtime restart without replaying it. */
+  async reconcileInterruptedDialogs(parentSessionId: string): Promise<void> {
+    const records = await this.store.listDelegations({ parentThreadId: parentSessionId });
+    for (const record of records) {
+      const dialog = readDialogState(record);
+      if (dialog === undefined || dialog.status !== "open" || dialog.activity !== "working") continue;
+      const updated = writeDialogState(
+        { ...record, status: "WAITING", errorMessage: "Collaborator work was interrupted by restart.", updatedAt: new Date().toISOString() },
+        { ...dialog, activity: "interrupted", revision: dialog.revision + 1 },
+      );
+      await this.store.compareAndSetDialog(updated, dialog.revision);
     }
   }
 
@@ -309,7 +331,9 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       ...(input.parentTaskId !== undefined ? { parentTaskId: input.parentTaskId } : {}),
       delegationDepth: policy.depth,
       rootDelegationId: policy.rootDelegationId,
-      ...(input.profileId !== undefined ? { profileId: input.profileId } : {}),
+      ...(input.profileId !== undefined || input.policy?.dialog !== undefined
+        ? { profileId: input.profileId ?? this.profile.id }
+        : {}),
       provider: input.provider ?? this.profile.modelProvider ?? "openrouter",
       model: input.model ?? this.profile.model ?? "(env default)",
       ...(input.launchedBy !== undefined ? { launchedBy: input.launchedBy } : {}),
@@ -329,7 +353,18 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
     if (dialog !== undefined) {
       record = appendDialogMessage(record, createDialogMessage(record, "kestrel", input.prompt));
     }
-    await this.store.upsertDelegation(record);
+    if (dialog !== undefined) {
+      const created = await this.store.createDialog(record);
+      if (!created) {
+        throw createRuntimeFailure(
+          "DIALOG_NAME_IN_USE",
+          `A collaborator named '${dialog.name}' already exists in this task. Use dialog.list to find it. Names cannot be reused after close.`,
+          { dialogName: dialog.name },
+        );
+      }
+    } else {
+      await this.store.upsertDelegation(record);
+    }
     await this.appendDelegationEvent("delegation.requested", record);
     await this.appendDelegationEvent("delegation.spawned", record);
     if (dialog !== undefined) {
@@ -501,6 +536,9 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
   }
 
   private async runDialogTurn(record: DelegationRecord): Promise<void> {
+    const startingDialog = readDialogState(record);
+    if (startingDialog === undefined || startingDialog.status !== "open") return;
+    const expectedRevision = startingDialog.revision;
     const controller = new AbortController();
     this.activeDialogRuns.set(record.delegationId, controller);
     try {
@@ -525,8 +563,14 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       const text = result.assistantText?.trim();
       if (result.output.status === "COMPLETED" && text !== undefined && text.length > 0) {
         const reply = createDialogMessage(record, "collaborator", text);
-        const updated = appendDialogMessage({ ...record, status: "WAITING", childRunId: result.output.runId, waitEventType: undefined, resultSummary: text, updatedAt: new Date().toISOString() }, reply);
-        await this.store.upsertDelegation(updated);
+        const updated = appendDialogMessage(
+          writeDialogState(
+            { ...record, status: "WAITING", childRunId: result.output.runId, waitEventType: undefined, resultSummary: text, updatedAt: new Date().toISOString() },
+            { ...startingDialog, activity: "idle", revision: expectedRevision + 1 },
+          ),
+          reply,
+        );
+        if (!await this.store.compareAndSetDialog(updated, expectedRevision)) return;
         await this.appendDialogEvent("dialog.message", updated, reply);
         this.emit({ task: toTaskSnapshot(updated, this.profile), kind: "waiting", assistantText: null, dialogMessage: reply });
         await this.onDialogReply?.({ record: updated, message: reply });
@@ -536,8 +580,14 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
         ? `Waiting for ${result.output.waitFor?.eventType ?? "a response"}.`
         : result.output.errors[0]?.message ?? "The collaborator did not return a message.";
       const failure = { ...createDialogMessage(record, "system", failureText), status: "failed" as const };
-      const updated = appendDialogMessage({ ...record, status: "WAITING", childRunId: result.output.runId, waitEventType: result.output.waitFor?.eventType, errorMessage: failureText, updatedAt: new Date().toISOString() }, failure);
-      await this.store.upsertDelegation(updated);
+      const updated = appendDialogMessage(
+        writeDialogState(
+          { ...record, status: "WAITING", childRunId: result.output.runId, waitEventType: result.output.waitFor?.eventType, errorMessage: failureText, updatedAt: new Date().toISOString() },
+          { ...startingDialog, activity: result.output.status === "WAITING" ? "waiting" : "idle", revision: expectedRevision + 1 },
+        ),
+        failure,
+      );
+      if (!await this.store.compareAndSetDialog(updated, expectedRevision)) return;
       await this.appendDialogEvent("dialog.execution_failed", updated, failure);
       this.emit({ task: toTaskSnapshot(updated, this.profile), kind: "failed", assistantText: null, dialogMessage: failure });
     } catch (error) {
@@ -546,8 +596,14 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       const runtimeError = asRuntimeError(error);
       const cancelled = controller.signal.aborted;
       const failure = { ...createDialogMessage(record, "system", cancelled ? "Collaborator work stopped; the dialog remains open." : runtimeError.message), status: cancelled ? "cancelled" as const : "failed" as const };
-      const updated = appendDialogMessage({ ...record, status: "WAITING", errorMessage: runtimeError.message, updatedAt: new Date().toISOString() }, failure);
-      await this.store.upsertDelegation(updated);
+      const updated = appendDialogMessage(
+        writeDialogState(
+          { ...record, status: "WAITING", errorMessage: runtimeError.message, updatedAt: new Date().toISOString() },
+          { ...startingDialog, activity: cancelled ? "interrupted" : "idle", revision: expectedRevision + 1 },
+        ),
+        failure,
+      );
+      if (!await this.store.compareAndSetDialog(updated, expectedRevision)) return;
       await this.appendDialogEvent(cancelled ? "dialog.execution_cancelled" : "dialog.execution_failed", updated, failure);
       this.emit({ task: toTaskSnapshot(updated, this.profile), kind: "failed", assistantText: null, dialogMessage: failure });
     } finally {
@@ -695,20 +751,29 @@ function toTaskSnapshot(record: DelegationRecord, profile: TuiProfile): Delegati
   };
 }
 
-interface StoredDialogState {
+interface StoredDialogState extends Record<string, unknown> {
   version: "v1";
   name: string;
+  normalizedName: string;
   status: "open" | "closed";
+  activity: "idle" | "working" | "waiting" | "interrupted";
+  revision: number;
+  closedAt?: string | undefined;
+  profileId?: string | undefined;
+  capabilityCeiling?: {
+    allowedToolClasses: string[];
+    allowedCapabilities: string[];
+  } | undefined;
   messages: DialogMessageRecord[];
 }
 
 function normalizeDialogName(value: string): string {
   const name = value.trim();
   if (name.length === 0 || name.length > 40) {
-    throw createRuntimeFailure("DIALOG_NAME_INVALID", "A dialog name must contain 1 to 40 characters.", { name });
+    throw createRuntimeFailure("DIALOG_NAME_INVALID", "A collaborator name must contain 1 to 40 characters. Choose a short, memorable name.", { name });
   }
   if (name.toLocaleLowerCase() === "kestrel") {
-    throw createRuntimeFailure("DIALOG_NAME_RESERVED", "'Kestrel' is reserved for the primary participant.", { name });
+    throw createRuntimeFailure("DIALOG_NAME_RESERVED", "'Kestrel' is the name of the primary participant. Choose another collaborator name.", { name });
   }
   return name;
 }
@@ -725,7 +790,60 @@ function readDialogState(record: DelegationRecord): StoredDialogState | undefine
         return typeof item.messageId === "string" && typeof item.dialogId === "string" && typeof item.name === "string" && typeof item.childSessionId === "string" && (item.sender === "kestrel" || item.sender === "collaborator" || item.sender === "system") && typeof item.text === "string" && typeof item.createdAt === "string" && (item.dialogStatus === "open" || item.dialogStatus === "closed");
       })
     : [];
-  return { version: "v1", name: dialog.name, status: dialog.status === "closed" ? "closed" : "open", messages };
+  const status = dialog.status === "closed" ? "closed" : "open";
+  const activity = dialog.activity === "idle" || dialog.activity === "working" || dialog.activity === "waiting" || dialog.activity === "interrupted"
+    ? dialog.activity
+    : status === "closed" ? "idle" : record.status === "RUNNING" ? "working" : "idle";
+  return {
+    version: "v1",
+    name: dialog.name,
+    normalizedName: typeof dialog.normalizedName === "string" && dialog.normalizedName.length > 0
+      ? dialog.normalizedName
+      : dialog.name.trim().toLocaleLowerCase(),
+    status,
+    activity,
+    revision: typeof dialog.revision === "number" && Number.isInteger(dialog.revision) && dialog.revision >= 0
+      ? dialog.revision
+      : 0,
+    ...(typeof dialog.closedAt === "string" ? { closedAt: dialog.closedAt } : {}),
+    ...(typeof dialog.profileId === "string" ? { profileId: dialog.profileId } : {}),
+    ...(readCapabilityCeiling(dialog.capabilityCeiling) !== undefined ? { capabilityCeiling: readCapabilityCeiling(dialog.capabilityCeiling) } : {}),
+    messages,
+  };
+}
+
+function createStoredDialogState(input: {
+  name: string;
+  activity: StoredDialogState["activity"];
+  profileId: string;
+  allowedToolClasses?: string[] | undefined;
+  allowedCapabilities?: string[] | undefined;
+}): StoredDialogState {
+  return {
+    version: "v1",
+    name: input.name,
+    normalizedName: input.name.toLocaleLowerCase(),
+    status: "open",
+    activity: input.activity,
+    revision: 0,
+    profileId: input.profileId,
+    capabilityCeiling: {
+      allowedToolClasses: [...(input.allowedToolClasses ?? [])],
+      allowedCapabilities: [...(input.allowedCapabilities ?? [])],
+    },
+    messages: [],
+  };
+}
+
+function readCapabilityCeiling(value: unknown): StoredDialogState["capabilityCeiling"] | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const ceiling = value as Record<string, unknown>;
+  if (!Array.isArray(ceiling.allowedToolClasses) || !Array.isArray(ceiling.allowedCapabilities)) return undefined;
+  if (!ceiling.allowedToolClasses.every((item) => typeof item === "string") || !ceiling.allowedCapabilities.every((item) => typeof item === "string")) return undefined;
+  return {
+    allowedToolClasses: [...ceiling.allowedToolClasses],
+    allowedCapabilities: [...ceiling.allowedCapabilities],
+  };
 }
 
 export function readDialogView(record: DelegationRecord): DialogView | undefined {
@@ -778,10 +896,18 @@ function toDialogSnapshot(record: DelegationRecord): DialogSnapshot {
     parentSessionId: record.parentThreadId,
     childSessionId: record.childThreadId,
     status: dialog.status,
-    active: record.status === "RUNNING",
+    active: dialog.status === "open" && dialog.activity === "working",
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
+}
+
+function dialogBusyFailure(name: string, dialogId: string) {
+  return createRuntimeFailure("DIALOG_BUSY", `'${name}' is still working. Wait for the reply or use dialog.read to check the saved status.`, { dialogId });
+}
+
+function dialogClosedFailure(name: string, dialogId: string) {
+  return createRuntimeFailure("DIALOG_CLOSED", `'${name}' is closed. You can read its history, but you cannot send another message or reopen it.`, { dialogId });
 }
 
 function resolveLaunchPolicy(input: {
