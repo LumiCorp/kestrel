@@ -8,6 +8,10 @@ import {
 } from "./contracts/model-registration.js";
 import { hashCanonical } from "./contracts/tool-contract.js";
 import { verifyModelResponseV2 } from "../io/ModelResponseVerifier.js";
+import {
+  assertExactModelQualificationGateway,
+  type ExactModelQualificationGateway,
+} from "../../models/ExactModelQualificationGateway.js";
 
 /** Each probe is intentionally independent; success never implies another role. */
 export const MODEL_QUALIFICATION_CAPABILITIES = [
@@ -101,22 +105,15 @@ export interface ModelQualificationServiceOptions {
 }
 
 /**
- * The route-owning provider factory receives the immutable registration and
- * derived binding. A generic gateway is deliberately not accepted at the
- * qualification boundary, so callers cannot label an arbitrary transport as
- * an exact route after it has been constructed.
+ * Hermetic tests use a factory supplied with the immutable registration and
+ * binding. Live qualification instead requires the registry-owned exact
+ * transport in runLiveModelQualification below.
  */
 export interface ModelQualificationGatewayFactory {
   createGateway(input: {
     registration: ModelRegistrationV2;
     binding: ModelQualificationBinding;
-    /** Issues an opaque receipt only for this exact registration binding. */
-    attestGateway(gateway: ModelGateway): AttestedModelQualificationGateway;
-  }): Promise<AttestedModelQualificationGateway> | AttestedModelQualificationGateway;
-}
-
-export interface AttestedModelQualificationGateway {
-  call<T>(request: ModelRequestV2): Promise<T>;
+  }): Promise<ModelGateway> | ModelGateway;
 }
 
 /**
@@ -249,21 +246,10 @@ export class ModelQualificationService {
     gatewayFactory: ModelQualificationGatewayFactory;
   }): Promise<ModelQualificationRun> {
     const checkedAt = this.now().toISOString();
-    const issuedGateways = new WeakSet<object>();
     const gateway = await input.gatewayFactory.createGateway({
       registration: input.registration,
       binding: input.binding,
-      attestGateway: (candidate) => {
-        const attested = Object.freeze({
-          call: <T>(request: ModelRequestV2) => candidate.call<T>(request),
-        });
-        issuedGateways.add(attested);
-        return attested;
-      },
     });
-    if (!issuedGateways.has(gateway)) {
-      throw new Error("model qualification gateway lacks an exact route attestation");
-    }
     const results = await Promise.all(
       input.probes.map(async (probe) =>
         executeProbe({ ...input, gateway, checkedAt, probe }),
@@ -378,17 +364,35 @@ export async function runLiveModelQualification(input: {
   credentialRevision?: string | undefined;
   probeRevision: string;
   probes: readonly ModelQualificationProbe[];
-  gatewayFactory: ModelQualificationGatewayFactory;
+  gateway: ExactModelQualificationGateway;
   maxProbes: number;
   force?: boolean | undefined;
 }): Promise<ModelQualificationRun> {
+  const registration = parseModelRegistrationV2(input.registration);
+  const binding = createModelQualificationBinding({
+    registration,
+    credentialRevision: input.credentialRevision,
+    probeRevision: input.probeRevision,
+  });
+  assertExactModelQualificationGateway({ gateway: input.gateway, binding });
   if (!Number.isSafeInteger(input.maxProbes) || input.maxProbes <= 0) {
     throw new Error("model live qualification maxProbes must be a positive safe integer");
   }
   if (input.probes.length > input.maxProbes) {
     throw new Error("model live qualification probe limit exceeded");
   }
-  return input.service.refresh(input);
+  return input.service.refresh({
+    registration,
+    ...(input.credentialRevision !== undefined
+      ? { credentialRevision: input.credentialRevision }
+      : {}),
+    probeRevision: input.probeRevision,
+    probes: input.probes,
+    force: input.force,
+    gatewayFactory: {
+      createGateway: () => input.gateway,
+    },
+  });
 }
 
 function responseProvesCapability(
@@ -459,9 +463,8 @@ function secretFreeResponse(response: ModelResponseV2): Record<string, unknown> 
     terminal: {
       state: response.terminal.state,
       visibleOutputStarted: response.terminal.visibleOutputStarted,
-      ...(response.terminal.providerTerminalEvent !== undefined
-        ? { providerTerminalEvent: response.terminal.providerTerminalEvent }
-        : {}),
+      hasProviderTerminalEvent:
+        response.terminal.providerTerminalEvent !== undefined,
     },
     validation: response.validation,
     toolIntents: response.toolIntents.map(({ name }) => ({ name })),

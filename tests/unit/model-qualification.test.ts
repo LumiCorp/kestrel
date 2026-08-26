@@ -9,6 +9,7 @@ import {
   type ModelRequestV2,
 } from "../../src/kestrel/contracts/model-registration.js";
 import type { ModelGateway, ModelRequest } from "../../src/kestrel/contracts/model-io.js";
+import { createExactModelQualificationGateway } from "../../models/ExactModelQualificationGateway.js";
 import {
   ModelQualificationService,
   runLiveModelQualification,
@@ -155,17 +156,17 @@ test("qualification refuses a mislabeled bounded probe before transport", async 
   assert.equal(calls, 0);
 });
 
-test("qualification dispatch is constructed by a route-owning factory", async () => {
+test("hermetic qualification supplies the exact registration binding to its factory", async () => {
   const service = new ModelQualificationService({ freshnessMs: 60_000 });
   let calls = 0;
   let factoryBinding: unknown;
   const gatewayFactory: ModelQualificationGatewayFactory = {
     createGateway(input) {
       factoryBinding = input.binding;
-      return input.attestGateway(fakeGateway(async () => {
+      return fakeGateway(async () => {
         calls += 1;
         return completedResponse();
-      }));
+      });
     },
   };
   const run = await service.refresh({
@@ -178,29 +179,6 @@ test("qualification dispatch is constructed by a route-owning factory", async ()
   assert.equal(calls, 1);
   assert.equal(run.results[0]?.outcome, "qualified");
   assert.deepEqual(factoryBinding, run.binding);
-});
-
-test("qualification refuses an unattested factory gateway before provider dispatch", async () => {
-  const service = new ModelQualificationService({ freshnessMs: 60_000 });
-  let calls = 0;
-  await assert.rejects(
-    service.refresh({
-      registration: registration(),
-      credentialRevision: "credential-1",
-      probeRevision: "probe-1",
-      probes: [probe("json_syntax")],
-      gatewayFactory: {
-        createGateway() {
-          return fakeGateway(async () => {
-            calls += 1;
-            return completedResponse();
-          }) as never;
-        },
-      },
-    }),
-    /lacks an exact route attestation/u,
-  );
-  assert.equal(calls, 0);
 });
 
 test("qualification stores the V2 secret-safe request fingerprint, not request data", async () => {
@@ -345,10 +323,19 @@ test("a failed forced refresh retains prior observed proof and live runs stay bo
     runLiveModelQualification({
       service,
       ...shared,
-      gatewayFactory: fakeGatewayFactory(async () => completedResponse()),
+      gateway: liveGateway(),
       maxProbes: 0,
     }),
     /maxProbes/u,
+  );
+  await assert.rejects(
+    runLiveModelQualification({
+      service,
+      ...shared,
+      gateway: fakeGateway(async () => completedResponse()),
+      maxProbes: 1,
+    }),
+    /not minted by the adapter registry/u,
   );
 });
 
@@ -477,10 +464,28 @@ function fakeGatewayFactory(
   call: (request: ModelRequest) => Promise<unknown>,
 ): ModelQualificationGatewayFactory {
   return {
-    createGateway(input) {
-      return input.attestGateway(fakeGateway(call));
+    createGateway() {
+      return fakeGateway(call);
     },
   };
+}
+
+function liveGateway() {
+  return createExactModelQualificationGateway({
+    registration: registration(),
+    credential: { revision: "credential-1", apiKey: "test-key" },
+    openRouterRouteEvidence: {
+      modelId: "z-ai/glm-test",
+      endpoint: "chat",
+      supportedParameters: [],
+      endpoints: [{ id: "provider-1", supportedParameters: [] }],
+      routing: { kind: "fixed", policyId: "exact", allowedEndpointIds: ["provider-1"] },
+      sourceHash: `sha256:${"b".repeat(64)}`,
+    },
+    fetchImpl: async () => {
+      throw new Error("live qualification test must not dispatch provider transport");
+    },
+  });
 }
 
 function registration(credentialRevision = "credential-1") {

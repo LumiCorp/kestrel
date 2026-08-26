@@ -6,7 +6,6 @@ export {
   runLiveModelQualification,
 } from "./model-qualification.js";
 export type {
-  AttestedModelQualificationGateway,
   ModelCapabilityQualification,
   ModelQualificationGatewayFactory,
   ModelQualificationBinding,

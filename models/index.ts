@@ -97,6 +97,11 @@ export {
   type OpenRouterGatewayFactoryOptions,
 } from "./openrouter/createOpenRouterModelGateway.js";
 export {
+  assertExactModelQualificationGateway,
+  createExactModelQualificationGateway,
+  type ExactModelQualificationGateway,
+} from "./ExactModelQualificationGateway.js";
+export {
   MODEL_PROVIDER_ADAPTERS_V1,
   MODEL_PROVIDER_IDENTITIES_V1,
   getModelProviderAdapterV1,
