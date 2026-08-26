@@ -185,3 +185,89 @@ test("hosted V3 approval hides remember after current Project policy becomes str
   if (dto.kind !== "approval") assert.fail("expected approval DTO");
   assert.deepEqual(dto.decisions, ["decline"]);
 });
+
+test("hosted V3 approval hides remember after current Subject policy becomes stricter", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-3",
+    requestId: "approval-3",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "pending",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v3",
+      approval: {
+        presentation: { policy: { reasonCode: "environment_policy" } },
+      },
+    },
+    approvalPolicy: {
+      projectId: "project-1",
+      environmentId: "environment-1",
+      appKey: "google-workspace",
+      capabilityKey: "calendar.events.create",
+      capabilityDisplayName: "Create calendar events",
+      environmentApprovalMode: "ask",
+      projectApprovalMode: "ask",
+      minimumApprovalMode: "auto",
+      subjectApprovalMode: "ask",
+      reasonCode: "environment_policy",
+      canEditProject: false,
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
+});
+
+test("closed hosted approvals advertise no Mobile decisions", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-4",
+    requestId: "approval-4",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "failed",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v3",
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, []);
+});
+
+test("hosted approvals bound to a closed resource expose only Decline", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-5",
+    requestId: "approval-5",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "pending",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v3",
+      approval: {
+        presentation: { policy: { reasonCode: "environment_policy" } },
+      },
+    },
+    approvalPolicy: {
+      projectId: "project-1",
+      environmentId: "environment-1",
+      appKey: "google-workspace",
+      capabilityKey: "calendar.events.create",
+      capabilityDisplayName: "Create calendar events",
+      environmentApprovalMode: "ask",
+      projectApprovalMode: "ask",
+      minimumApprovalMode: "auto",
+      approvalResourceAvailable: false,
+      reasonCode: "environment_policy",
+      canEditProject: false,
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, ["decline"]);
+});

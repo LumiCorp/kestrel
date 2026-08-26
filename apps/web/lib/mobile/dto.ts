@@ -213,17 +213,23 @@ export function mobileInteractionDto(
       interaction.approvalPolicy?.reasonCode === "environment_policy" &&
       interaction.approvalPolicy.environmentApprovalMode === "ask" &&
       interaction.approvalPolicy.projectApprovalMode !== "deny" &&
-      interaction.approvalPolicy.minimumApprovalMode === "auto";
+      interaction.approvalPolicy.minimumApprovalMode === "auto" &&
+      interaction.approvalPolicy.subjectApprovalMode == null &&
+      interaction.approvalPolicy.approvalResourceAvailable !== false;
     const currentApprovalActionable = !(
-      interaction.approvalPolicy?.environmentApprovalMode === "deny" ||
-      interaction.approvalPolicy?.projectApprovalMode === "deny"
+        interaction.approvalPolicy?.environmentApprovalMode === "deny" ||
+        interaction.approvalPolicy?.projectApprovalMode === "deny" ||
+        interaction.approvalPolicy?.subjectApprovalMode === "deny" ||
+        interaction.approvalPolicy?.approvalResourceAvailable === false
     );
     return {
       id,
       kind: "approval" as const,
       version,
       decisions:
-        rememberEligible
+        ["failed", "resolved", "cancelled"].includes(interaction.status)
+          ? ([] as const)
+          : rememberEligible
           ? (["decline", "approve_once", "remember_approval"] as const)
           : version === "runner_hosted_tool_approval_interaction_v2" ||
               version === "runner_hosted_tool_approval_interaction_v3"

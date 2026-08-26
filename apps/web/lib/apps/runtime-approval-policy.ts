@@ -2,6 +2,7 @@ import "server-only";
 
 import { resolveKestrelOneToolCapability } from "@/lib/agent/kestrel-tool-profile";
 import type { RuntimeApprovalPolicyView } from "@/lib/turns/client-contract";
+import { knowledgeDb } from "@/lib/knowledge/db";
 import { listProjectAppConfigurations } from "./project-service";
 
 type ApprovalInteraction = {
@@ -62,6 +63,67 @@ export async function resolveRuntimeApprovalPolicies(input: {
       (candidate) => candidate.key === binding.capabilityKey,
     );
     if (!(configuration && capability)) continue;
+    const providerApproval = await knowledgeDb.query.appOperationApprovals.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.threadId, input.threadId),
+          eq(table.runtimeApprovalId, binding.requestId),
+        ),
+      columns: {
+        actorUserId: true,
+        agentId: true,
+        environmentId: true,
+        appKey: true,
+        capabilityKey: true,
+        connectionId: true,
+        resourceId: true,
+        resourceType: true,
+      },
+    });
+    const [subjectRestrictions, approvalResource] = providerApproval
+      ? await Promise.all([
+          knowledgeDb.query.environmentCapabilitySubjectRestrictions.findMany({
+          where: (table, { and, eq, isNull, or }) =>
+            and(
+              eq(table.organizationId, input.organizationId),
+              eq(table.environmentId, providerApproval.environmentId),
+              eq(table.providerKey, providerApproval.appKey),
+              eq(table.capabilityKey, providerApproval.capabilityKey),
+              isNull(table.resourceId),
+              or(
+                and(
+                  eq(table.subjectType, "actor"),
+                  eq(table.subjectId, providerApproval.actorUserId),
+                ),
+                and(
+                  eq(table.subjectType, "agent"),
+                  eq(table.subjectId, providerApproval.agentId),
+                ),
+              ),
+            ),
+          }),
+          knowledgeDb.query.appConnectionResources.findFirst({
+            where: (table, { and, eq }) =>
+              and(
+                eq(table.id, providerApproval.resourceId),
+                eq(table.connectionId, providerApproval.connectionId),
+                eq(table.resourceType, providerApproval.resourceType),
+                eq(table.enabled, true),
+              ),
+            columns: { id: true },
+          }),
+        ])
+      : [[], undefined];
+    const subjectApprovalMode = subjectRestrictions.some(
+      (restriction) => !restriction.enabled || restriction.approvalMode === "deny",
+    )
+      ? "deny"
+      : subjectRestrictions.some(
+            (restriction) => restriction.approvalMode === "ask",
+          )
+        ? "ask"
+        : null;
 
     policies.set(binding.requestId, {
       projectId: input.projectId,
@@ -72,6 +134,10 @@ export async function resolveRuntimeApprovalPolicies(input: {
       environmentApprovalMode: capability.environmentApprovalMode,
       projectApprovalMode: capability.approvalMode,
       minimumApprovalMode: capability.minimumApprovalMode,
+      subjectApprovalMode,
+      ...(providerApproval
+        ? { approvalResourceAvailable: Boolean(approvalResource) }
+        : {}),
       reasonCode: binding.reasonCode,
       canEditProject: input.canEditProject,
       approvalRequirementExplanation: approvalRequirementExplanation(

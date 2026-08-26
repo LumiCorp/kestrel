@@ -627,7 +627,9 @@ function isRememberApprovalEligible(
   return (
     policy.reasonCode === "environment_policy" &&
     policy.environmentApprovalMode === "ask" &&
-    policy.projectApprovalMode !== "deny"
+    policy.projectApprovalMode !== "deny" &&
+    policy.subjectApprovalMode == null &&
+    policy.approvalResourceAvailable !== false
   );
 }
 
@@ -638,7 +640,9 @@ function isCurrentHostedApprovalActionable(
   const policy = interaction.approvalPolicy;
   return !(
     policy?.environmentApprovalMode === "deny" ||
-    policy?.projectApprovalMode === "deny"
+    policy?.projectApprovalMode === "deny" ||
+    policy?.subjectApprovalMode === "deny" ||
+    policy?.approvalResourceAvailable === false
   );
 }
 

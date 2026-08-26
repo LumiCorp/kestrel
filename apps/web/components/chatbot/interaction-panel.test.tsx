@@ -276,6 +276,86 @@ test("a refreshed V3 card hides Remember Approval after Project policy becomes B
   assert.doesNotMatch(html, />Remember Approval</u);
 });
 
+test("a refreshed V3 card hides Remember Approval after Subject policy becomes Ask First", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v3",
+          approval: {
+            toolName: "internet.research",
+            presentation: {
+              policy: { reasonCode: "environment_policy" },
+            },
+          },
+        },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "tavily",
+          capabilityKey: "research",
+          capabilityDisplayName: "Run research",
+          environmentApprovalMode: "ask",
+          projectApprovalMode: "ask",
+          minimumApprovalMode: "auto",
+          subjectApprovalMode: "ask",
+          reasonCode: "environment_policy",
+          canEditProject: true,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Decline</u);
+  assert.match(html, />Approve Once</u);
+  assert.doesNotMatch(html, />Remember Approval</u);
+});
+
+test("a refreshed V3 card exposes only Decline after its exact resource closes", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v3",
+          approval: {
+            toolName: "internet.research",
+            presentation: {
+              policy: { reasonCode: "environment_policy" },
+            },
+          },
+        },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "tavily",
+          capabilityKey: "research",
+          capabilityDisplayName: "Run research",
+          environmentApprovalMode: "ask",
+          projectApprovalMode: "ask",
+          minimumApprovalMode: "auto",
+          approvalResourceAvailable: false,
+          reasonCode: "environment_policy",
+          canEditProject: true,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Decline</u);
+  assert.doesNotMatch(html, />Approve Once</u);
+  assert.doesNotMatch(html, />Remember Approval</u);
+});
+
 test("hosted approval lifecycle distinguishes recorded, accepted, and failed authorization", () => {
   const approval = {
     ...interaction,
