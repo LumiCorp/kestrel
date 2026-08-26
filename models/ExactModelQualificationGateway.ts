@@ -21,6 +21,8 @@ const EXACT_QUALIFICATION_GATEWAYS = new WeakMap<
     endpointCodec: string;
     routingPolicyFingerprint: string;
     adapterRevision: string;
+    registrationRevision: string;
+    registrationFingerprint: string;
     credentialRevision?: string | undefined;
     endpoint: ExactQualificationEndpoint;
   }>
@@ -63,6 +65,8 @@ export function createExactModelQualificationGateway(input: {
         registration.route.routing,
       ),
       adapterRevision: registration.adapterRevision,
+      registrationRevision: registration.revision,
+      registrationFingerprint: registration.fingerprint,
       ...(registration.credentialRevision !== undefined
         ? { credentialRevision: registration.credentialRevision }
         : {}),
@@ -87,6 +91,8 @@ export function assertExactModelQualificationGateway(input: {
     receipt.endpointCodec !== input.binding.endpointCodec ||
     receipt.routingPolicyFingerprint !== input.binding.routingPolicyFingerprint ||
     receipt.adapterRevision !== input.binding.adapterRevision ||
+    receipt.registrationRevision !== input.binding.registrationRevision ||
+    receipt.registrationFingerprint !== input.binding.registrationFingerprint ||
     receipt.credentialRevision !== input.binding.credentialRevision
   ) {
     throw new Error("model live qualification gateway does not match exact registration binding");

@@ -298,10 +298,11 @@ test("a failed forced refresh retains prior observed proof and live runs stay bo
     ...shared,
     force: true,
     gatewayFactory: fakeGatewayFactory(async () => {
-      throw new Error("provider unavailable");
+      throw Object.assign(new Error("provider unavailable"), { code: "secret-code" });
     }),
   });
   assert.equal(failed.results[0]?.outcome, "failed");
+  assert.equal(failed.results[0]?.failureCode, "MODEL_QUALIFICATION_FAILED");
   assert.equal(
     service.read({ ...shared, capability: "json_syntax" }).outcome,
     "qualified",

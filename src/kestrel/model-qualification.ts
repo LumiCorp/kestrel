@@ -230,7 +230,10 @@ export class ModelQualificationService {
     );
     // Only a response-backed result or an explicit codec unsupported result
     // can revise prior evidence. Transport/protocol failures retain it.
-    if (latestResult !== undefined && hasDurableCapabilityEvidence(latestResult)) {
+    if (
+      latestResult !== undefined &&
+      (latestResult.outcome === "qualified" || latestResult.outcome === "unsupported")
+    ) {
       return latest;
     }
     return (
@@ -498,7 +501,7 @@ function secretFreeResponse(response: ModelResponseV2): Record<string, unknown> 
 function qualificationFailureCode(error: unknown): string {
   if (typeof error === "object" && error !== null) {
     const code = (error as { code?: unknown }).code;
-    if (typeof code === "string" && code.trim()) return code;
+    if (typeof code === "string" && isQualificationCode(code)) return code;
   }
   return "MODEL_QUALIFICATION_FAILED";
 }
