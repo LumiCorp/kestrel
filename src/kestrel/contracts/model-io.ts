@@ -70,6 +70,8 @@ export interface ModelVisibleReasoning {
 export interface ModelReasoningContinuation {
   provider: "openai" | "anthropic" | "openrouter";
   kind: "encrypted_content" | "signature" | "reasoning_details";
+  /** Provider-output position relative to the preceding tool call. */
+  replayAfterToolCallId?: string | undefined;
   /** Opaque provider-returned value. This must never be rendered or logged. */
   value: unknown;
 }

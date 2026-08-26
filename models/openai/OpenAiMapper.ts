@@ -15,8 +15,6 @@ import type { OpenAiEnvConfig } from "../contracts.js";
 import { compileOpenRouterResponseSchema } from "../openrouter/OpenRouterSchemaCompiler.js";
 import { createOpenAiBadResponseError } from "./OpenAiErrors.js";
 
-const OPENAI_REPLAY_AFTER_CALL_ID = "__kestrelReplayAfterCallId";
-
 export function buildOpenAiHttpRequest(
   request: ModelRequest,
   env: OpenAiEnvConfig,
@@ -496,25 +494,13 @@ function responseContinuationItems(
         "MODEL_CONTINUATION_ORDER_INVALID",
       );
     }
-    const replayPositionPresent = Object.hasOwn(
-      value,
-      OPENAI_REPLAY_AFTER_CALL_ID,
-    );
-    const replayPosition = value[OPENAI_REPLAY_AFTER_CALL_ID];
-    if (
-      replayPositionPresent &&
-      replayPosition !== null &&
-      typeof replayPosition !== "string"
-    ) {
-      throw createOpenAiBadResponseError(
-        "OpenAI Responses continuation has an invalid provider output position.",
-        "MODEL_CONTINUATION_ORDER_INVALID",
-      );
-    }
-    const replayAfterCallId = asString(replayPosition);
-    const { [OPENAI_REPLAY_AFTER_CALL_ID]: _replayPosition, ...providerItem } =
-      value;
-    return { providerItem, replayPositionPresent, replayAfterCallId };
+    return {
+      providerItem: value,
+      replayPositionPresent: continuation.replayAfterToolCallId !== undefined,
+      ...(continuation.replayAfterToolCallId !== undefined
+        ? { replayAfterCallId: continuation.replayAfterToolCallId }
+        : {}),
+    };
   });
 }
 
@@ -637,10 +623,10 @@ function mapOpenAiResponsesPayload<TOutput>(
         continuation.push({
           provider: "openai",
           kind: "encrypted_content",
-          value: {
-            ...record,
-            [OPENAI_REPLAY_AFTER_CALL_ID]: replayAfterCallId ?? null,
-          },
+          value: record,
+          ...(replayAfterCallId !== undefined
+            ? { replayAfterToolCallId: replayAfterCallId }
+            : {}),
         });
       }
     }

@@ -318,7 +318,12 @@ const TOOL_OUTPUT_FIELD_FIELDS = new Set([
   "itemType",
 ]);
 const REASONING_FIELDS = new Set(["mode", "effort", "continuation"]);
-const CONTINUATION_FIELDS = new Set(["provider", "kind", "value"]);
+const CONTINUATION_FIELDS = new Set([
+  "provider",
+  "kind",
+  "replayAfterToolCallId",
+  "value",
+]);
 const PROVIDER_OPTIONS_FIELDS = new Set(["openrouter", "openai", "anthropic"]);
 const OPENAI_OPTIONS_FIELDS = new Set([
   "endpoint",
@@ -1079,10 +1084,15 @@ function projectModelRequestForCanonicalV2(
             ...value.reasoning,
             ...(continuations !== undefined
               ? {
-                  continuation: continuations.map(({ provider, kind }) => ({
-                    provider,
-                    kind,
-                  })),
+                  continuation: continuations.map(
+                    ({ provider, kind, replayAfterToolCallId }) => ({
+                      provider,
+                      kind,
+                      ...(replayAfterToolCallId !== undefined
+                        ? { replayAfterToolCallId }
+                        : {}),
+                    }),
+                  ),
                 }
               : {}),
           },
@@ -2781,6 +2791,17 @@ function parseReasoning(
               ["encrypted_content", "signature", "reasoning_details"] as const,
               `${label}.kind`,
             ),
+            ...(optionalString(
+              entry.replayAfterToolCallId,
+              `${label}.replayAfterToolCallId`,
+            ) !== undefined
+              ? {
+                  replayAfterToolCallId: optionalString(
+                    entry.replayAfterToolCallId,
+                    `${label}.replayAfterToolCallId`,
+                  ),
+                }
+              : {}),
             value: cloneBoundaryValue(entry.value, `${label}.value`),
           };
         });
