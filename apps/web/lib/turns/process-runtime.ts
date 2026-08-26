@@ -835,8 +835,8 @@ export async function processDurableThreadTurn(
             turnId: turn.id,
             interaction: meta.interaction,
             ...(meta.runId ? { sourceRuntimeRunId: meta.runId } : {}),
-            ...(meta.interaction.approval?.toolCallId
-              ? { runtimeApprovalId: meta.interaction.approval.toolCallId }
+            ...(meta.interaction.kind === "approval"
+              ? { runtimeApprovalId: meta.interaction.requestId }
               : {}),
             messages: terminal.messages,
             replayChunks: terminal.replayChunks,

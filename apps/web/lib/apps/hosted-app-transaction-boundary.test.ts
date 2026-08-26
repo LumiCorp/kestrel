@@ -65,6 +65,19 @@ test("runtime start and authorization acknowledgement share one idempotent trans
   assert.match(boundary, /type: "interaction\.authorization_accepted"/u);
 });
 
+test("V2 waiting approval persists the canonical request identity for hosted decision lookup", async () => {
+  const worker = await source("../turns/process-runtime.ts");
+  const start = worker.indexOf('meta.terminalStatus === "waiting"');
+  const end = worker.indexOf("messages: terminal.messages", start);
+  const boundary = worker.slice(start, end);
+  assert.match(boundary, /meta.interaction.kind === "approval"/u);
+  assert.match(
+    boundary,
+    /runtimeApprovalId: meta.interaction.requestId/u,
+  );
+  assert.doesNotMatch(boundary, /approval\?\.toolCallId/u);
+});
+
 test("grant consumption proves the exact running execution and source interaction chain", async () => {
   const approvals = await source("./app-operation-approvals.ts");
   const start = approvals.indexOf("export async function consumeAppOperationApproval");
