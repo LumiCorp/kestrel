@@ -8,7 +8,11 @@ import {
 type RunResult = { status: number | null; stdout: string };
 type Runner = (command: string, args: string[], inherit?: boolean) => RunResult;
 
-export function parsePublishProductionImageArgs(args: string[]) {
+export function parsePublishProductionImageArgs(args: string[]): {
+  role: string;
+  tag: string;
+  approvalProtocol: "v2" | "v3" | undefined;
+} {
   const normalized = operatorArgs(args);
   const role = argument(normalized, "--role");
   const tag = productionImageTagSchema.parse(argument(normalized, "--tag"));
