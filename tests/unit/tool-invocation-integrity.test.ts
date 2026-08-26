@@ -432,15 +432,15 @@ test("run release bounds terminal keys without reopening stale static replay", a
     }
   ).terminalPreparedExecutionKeysByOwner;
   assert.equal(terminalOwners.size, 1);
-  const releasedOwners = (
+  const releasedSessions = (
     registry as unknown as {
-      releasedPreparedExecutionOwners: Set<string>;
+      releasedPreparedExecutionSessions: Set<string>;
     }
-  ).releasedPreparedExecutionOwners;
-  assert.equal(releasedOwners.size, 1);
+  ).releasedPreparedExecutionSessions;
+  assert.equal(releasedSessions.size, 1);
   await registry.close();
   assert.equal(terminalOwners.size, 0);
-  assert.equal(releasedOwners.size, 0);
+  assert.equal(releasedSessions.size, 0);
   await registry.releasePreparedToolCall(completed[0]!);
   assert.equal(terminalOwners.size, 0);
 });
@@ -876,6 +876,64 @@ test("terminal continuation cleanup releases snapshots retained by the waiting r
     (error) =>
       error instanceof RuntimeFailure && error.code === "TOOL_SNAPSHOT_STALE",
   );
+});
+
+test("differing continuation runs collapse actual prepared owners into one bounded session fence", async () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["free.time.current"],
+  });
+  const sessionId = "repeated-continuation-session";
+  let firstPrepared: PreparedToolCallV1 | undefined;
+  let firstRunContext: ToolRunContext | undefined;
+
+  for (let index = 0; index < 12; index += 1) {
+    const runContext: ToolRunContext = {
+      runId: `waiting-run-${index}`,
+      sessionId,
+      payload: {},
+      sessionState: {},
+    };
+    const prepared = await prepareTestToolCall({
+      gateway: registry,
+      toolName: "free.time.current",
+      toolInput: {},
+      runId: runContext.runId,
+      sessionId,
+      callId: `waiting-call-${index}`,
+      options: { runContext },
+    });
+    firstPrepared ??= prepared;
+    firstRunContext ??= runContext;
+    assert.equal(
+      (await registry.executePreparedToolCall(prepared, { runContext })).status,
+      "OK",
+    );
+
+    await registry.releaseToolRun(`continuation-run-${index}`, sessionId);
+
+    const internals = registry as unknown as {
+      terminalPreparedExecutionKeysByOwner: Map<string, Set<string>>;
+      preparedExecutionOwnersBySession: Map<string, Set<string>>;
+      releasedPreparedExecutionSessions: Set<string>;
+    };
+    assert.equal(internals.terminalPreparedExecutionKeysByOwner.size, 0);
+    assert.equal(internals.preparedExecutionOwnersBySession.size, 0);
+    assert.deepEqual(
+      [...internals.releasedPreparedExecutionSessions],
+      [sessionId],
+    );
+  }
+
+  await assert.rejects(
+    () =>
+      registry.executePreparedToolCall(firstPrepared!, {
+        runContext: firstRunContext!,
+      }),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
+  await registry.close();
 });
 
 test("restart without the prepared dynamic handler fails closed", async () => {

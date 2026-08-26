@@ -205,7 +205,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     string,
     Set<string>
   >();
-  private readonly releasedPreparedExecutionOwners = new Set<string>();
+  private readonly preparedExecutionOwnersBySession = new Map<
+    string,
+    Set<string>
+  >();
+  private readonly releasedPreparedExecutionSessions = new Set<string>();
   private readonly executingPreparedExecutionKeys = new Set<string>();
   private readonly activePreparedExecutionCompletions = new Map<
     string,
@@ -902,6 +906,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       throw this.preparedExecutionUnavailable(prepared);
     }
     const retainedSource = this.preparedExecutions.get(key);
+    if (
+      retainedSource === undefined &&
+      this.releasedPreparedExecutionSessions.has(prepared.sessionId)
+    ) {
+      throw this.preparedExecutionUnavailable(prepared);
+    }
     // A source-free call is a restart recovery, not an ordinary execution.
     // Rehydration therefore requires explicit current run authority. This
     // keeps bounded run cleanup from reopening stale no-authority replay.
@@ -1078,9 +1088,6 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     key: string,
   ): boolean {
     return (
-      this.releasedPreparedExecutionOwners.has(
-        preparedExecutionOwnerKey(prepared.runId, prepared.sessionId),
-      ) ||
       this.terminalPreparedExecutionKeysByOwner
         .get(preparedExecutionOwnerKey(prepared.runId, prepared.sessionId))
         ?.has(key) === true
@@ -1095,12 +1102,19 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       prepared.runId,
       prepared.sessionId,
     );
-    if (this.releasedPreparedExecutionOwners.has(ownerKey)) return;
     const ownedKeys =
       this.terminalPreparedExecutionKeysByOwner.get(ownerKey) ??
       new Set<string>();
     ownedKeys.add(key);
     this.terminalPreparedExecutionKeysByOwner.set(ownerKey, ownedKeys);
+    const sessionOwners =
+      this.preparedExecutionOwnersBySession.get(prepared.sessionId) ??
+      new Set<string>();
+    sessionOwners.add(ownerKey);
+    this.preparedExecutionOwnersBySession.set(
+      prepared.sessionId,
+      sessionOwners,
+    );
   }
 
   private preparedExecutionUnavailable(
@@ -1199,9 +1213,19 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     for (const snapshotId of snapshotIds) {
       await this.releaseToolSurfaceSnapshot(snapshotId);
     }
-    const ownerKey = preparedExecutionOwnerKey(runId, sessionId);
-    this.terminalPreparedExecutionKeysByOwner.delete(ownerKey);
-    this.releasedPreparedExecutionOwners.add(ownerKey);
+    // The terminal continuation may have a different run ID from the run that
+    // prepared the call. Collapse the owners recorded while those calls were
+    // made instead of manufacturing an ineffective continuation owner.
+    const preparedOwnerKeys =
+      this.preparedExecutionOwnersBySession.get(sessionId) ?? new Set<string>();
+    for (const ownerKey of preparedOwnerKeys) {
+      this.terminalPreparedExecutionKeysByOwner.delete(ownerKey);
+    }
+    this.preparedExecutionOwnersBySession.delete(sessionId);
+    // One bounded session fence prevents source-free stale rehydration after
+    // cleanup. A fresh registry has no fence and can still perform an
+    // explicitly authorized restart recovery.
+    this.releasedPreparedExecutionSessions.add(sessionId);
   }
 
   getDescriptor(
@@ -1459,7 +1483,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     this.toolSurfaceSnapshots.clear();
     this.toolSurfaceRunIds.clear();
     this.terminalPreparedExecutionKeysByOwner.clear();
-    this.releasedPreparedExecutionOwners.clear();
+    this.preparedExecutionOwnersBySession.clear();
+    this.releasedPreparedExecutionSessions.clear();
 
     const ownershipReleaseResults = await Promise.allSettled([
       ...[...this.toolSurfaceExecutions.entries()].map(
