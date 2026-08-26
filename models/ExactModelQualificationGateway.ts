@@ -130,6 +130,7 @@ function createRegisteredGateway(input: {
       if (input.openRouterRouteEvidence.endpoint !== input.endpoint) {
         throw new Error("OpenRouter live qualification evidence does not match endpoint codec");
       }
+      assertOpenRouterRouteEvidence(registration, input.openRouterRouteEvidence);
       return createOpenRouterModelGatewayFromEnv({
         envConfig: {
           apiKey: credential.apiKey,
@@ -142,6 +143,30 @@ function createRegisteredGateway(input: {
     default:
       throw new Error(`model live qualification provider '${registration.providerId}' is unsupported`);
   }
+}
+
+function assertOpenRouterRouteEvidence(
+  registration: ModelRegistrationV2,
+  evidence: OpenRouterQualifiedRouteEvidence,
+): void {
+  const expected = registration.route.routing;
+  if (
+    evidence.modelId !== registration.modelId ||
+    evidence.routing.kind !== expected.kind ||
+    evidence.routing.policyId !== expected.policyId ||
+    expected.allowedEndpointIds === undefined ||
+    !sameStrings(evidence.routing.allowedEndpointIds, expected.allowedEndpointIds)
+  ) {
+    throw new Error("OpenRouter live qualification evidence does not match exact routing policy");
+  }
+  if (expected.kind === "fixed" && evidence.routing.allowedEndpointIds.length !== 1) {
+    throw new Error("OpenRouter fixed live qualification route must name one provider endpoint");
+  }
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length &&
+    [...left].sort().every((entry, index) => entry === [...right].sort()[index]);
 }
 
 function endpointForRegistration(

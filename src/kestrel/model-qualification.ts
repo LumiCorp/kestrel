@@ -224,14 +224,22 @@ export class ModelQualificationService {
       .sort((left, right) =>
         Date.parse(right.checkedAt) - Date.parse(left.checkedAt),
       );
-    // A transport/protocol failure has no response evidence and must not
-    // replace a still-valid observed capability during a forced refresh.
+    const latest = matching[0];
+    const latestResult = latest?.results.find(
+      (result) => result.capability === capability,
+    );
+    // Only a response-backed result or an explicit codec unsupported result
+    // can revise prior evidence. Transport/protocol failures retain it.
+    if (latestResult !== undefined && hasDurableCapabilityEvidence(latestResult)) {
+      return latest;
+    }
     return (
-      matching.find((run) =>
-        run.results.some((result) =>
-          result.capability === capability && result.outcome === "qualified",
-        ),
-      ) ?? matching[0]
+      matching.find((run) => {
+        const result = run.results.find(
+          (entry) => entry.capability === capability,
+        );
+        return result !== undefined && hasDurableCapabilityEvidence(result);
+      }) ?? latest
     );
   }
 
@@ -522,6 +530,12 @@ function validateProbes(
 
 function isQualificationCode(value: string): boolean {
   return /^MODEL_[A-Z0-9_]{3,120}$/.test(value);
+}
+
+function hasDurableCapabilityEvidence(
+  result: ModelCapabilityQualification,
+): boolean {
+  return result.responseHash !== undefined || result.outcome === "unsupported";
 }
 
 function assertProbeCarriesCapability(

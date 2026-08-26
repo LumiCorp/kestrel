@@ -306,6 +306,29 @@ test("a failed forced refresh retains prior observed proof and live runs stay bo
     service.read({ ...shared, capability: "json_syntax" }).outcome,
     "qualified",
   );
+  const unsupportedService = new ModelQualificationService({ freshnessMs: 60_000 });
+  const unsupported = {
+    registration: registration(),
+    credentialRevision: "credential-1",
+    probeRevision: "probe-1",
+  };
+  await unsupportedService.refresh({
+    ...unsupported,
+    probes: [{ capability: "strict_tool_inputs", unsupportedCode: "MODEL_QUALIFICATION_CODEC_UNSUPPORTED" }],
+    gatewayFactory: fakeGatewayFactory(async () => completedResponse()),
+  });
+  await unsupportedService.refresh({
+    ...unsupported,
+    force: true,
+    probes: [probe("strict_tool_inputs")],
+    gatewayFactory: fakeGatewayFactory(async () => {
+      throw new Error("provider unavailable");
+    }),
+  });
+  assert.equal(
+    unsupportedService.read({ ...unsupported, capability: "strict_tool_inputs" }).outcome,
+    "unsupported",
+  );
   const proofFailure = await service.refresh({
     ...shared,
     force: true,
@@ -346,6 +369,10 @@ test("a failed forced refresh retains prior observed proof and live runs stay bo
       maxProbes: 1,
     }),
     /probe endpoint does not match exact endpoint codec/u,
+  );
+  assert.throws(
+    () => liveGateway(["other-provider"]),
+    /evidence does not match exact routing policy/u,
   );
 });
 
@@ -483,7 +510,7 @@ function fakeGatewayFactory(
   };
 }
 
-function liveGateway() {
+function liveGateway(allowedEndpointIds = ["provider-1"]) {
   return createExactModelQualificationGateway({
     registration: registration(),
     credential: { revision: "credential-1", apiKey: "test-key" },
@@ -492,7 +519,7 @@ function liveGateway() {
       endpoint: "chat",
       supportedParameters: [],
       endpoints: [{ id: "provider-1", supportedParameters: [] }],
-      routing: { kind: "fixed", policyId: "exact", allowedEndpointIds: ["provider-1"] },
+      routing: { kind: "fixed", policyId: "exact", allowedEndpointIds },
       sourceHash: `sha256:${"b".repeat(64)}`,
     },
     fetchImpl: async () => {
@@ -529,7 +556,12 @@ function registration(credentialRevision = "credential-1") {
     route: {
       apiEndpoint: "https://openrouter.example/api/v1",
       endpointCodec: "openrouter_chat_v2",
-      routing: { kind: "fixed", policyId: "exact", requireParameters: true },
+      routing: {
+        kind: "fixed",
+        policyId: "exact",
+        allowedEndpointIds: ["provider-1"],
+        requireParameters: true,
+      },
     },
     revision: "registration-1",
     adapterRevision: "adapter-1",
