@@ -1683,6 +1683,12 @@ export class RuntimeIO {
     );
   }
 
+  async releasePreparedToolCall(
+    prepared: import("../kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+  ): Promise<void> {
+    await this.options.deps.toolGateway.releasePreparedToolCall?.(prepared);
+  }
+
   private async emitToolUpdate(input: {
     phase: RunToolPhase;
     toolCallId: string;

@@ -59,6 +59,22 @@ test("new hosted approval contracts are strict, versioned, and empty-compatible"
   } as const;
   assert.deepEqual(parseRunnerExternalApprovalBindingV2(bindingV2), bindingV2);
   assert.throws(
+    () =>
+      parseRunnerExternalApprovalBindingV2({
+        ...bindingV2,
+        actionKey: "other.tool",
+      }),
+    /actionKey must match stableToolIdentity\.toolId/u,
+  );
+  assert.throws(
+    () =>
+      parseRunnerExternalApprovalBindingV2({
+        ...bindingV2,
+        authorityRevision: "other-authority",
+      }),
+    /authorityRevision must match stableToolIdentity\.approvalAuthorityRevision/u,
+  );
+  assert.throws(
     () => parseRunnerExternalApprovalBindingV1(bindingV2),
     /unknown field 'preparedInvocationId'|version must/u,
   );

@@ -29,6 +29,94 @@ const activation = createToolActivationRefV1({
 });
 const timestamp = "2026-08-03T12:00:00.000Z";
 
+function v2PreparedCallFixture(): Record<string, unknown> {
+  const effectiveInput = { message: "done" };
+  const policyRevision = hashCanonical({ policy: "ask" });
+  const actor = {
+    actorType: "end_user" as const,
+    actorId: "user-1",
+    tenantId: "org-1",
+  };
+  const stableToolIdentity = {
+    version: "stable_tool_approval_identity_v1" as const,
+    toolId: activation.descriptor.toolId,
+    descriptorContractRevision: activation.descriptor.contractRevision,
+    approvalAuthorityRevision: "approval-authority-v1",
+  };
+  const authorityPayload = {
+    version: "prepared_tool_stable_authority_v1" as const,
+    actor,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    threadId: "thread-1",
+    resourceAuthority: {
+      gatewayUrl: "https://gateway.example.test/mcp",
+      toolSourceKind: activation.descriptor.sourceKind,
+      toolSourceId: activation.descriptor.sourceId,
+    },
+    policyRevision,
+    capabilities: ["external.confirm", "network.call"],
+    descriptorContractRevision: activation.descriptor.contractRevision,
+    approvalAuthorityRevision: stableToolIdentity.approvalAuthorityRevision,
+    normalizedActionHash: hashCanonical({
+      toolId: activation.descriptor.toolId,
+      effectiveInput,
+    }),
+  };
+  const stableAuthority = {
+    ...authorityPayload,
+    fingerprint: hashCanonical(authorityPayload),
+  };
+  const externalApprovalBinding = {
+    version: "runner_external_approval_binding_v2" as const,
+    approvalId: "approval-1",
+    preparedInvocationId: "call-1",
+    threadId: authorityPayload.threadId,
+    actionKey: activation.descriptor.toolId,
+    payloadHash: hashCanonical(effectiveInput),
+    stableAuthorityFingerprint: stableAuthority.fingerprint,
+    stableToolIdentity,
+    requestingActor: actor,
+    toolClass: "external_side_effect" as const,
+    capabilities: authorityPayload.capabilities,
+    authorityKind: "hosted_app_policy" as const,
+    authorityRevision: stableToolIdentity.approvalAuthorityRevision,
+    requestedAt: timestamp,
+    expiresAt: "2026-08-03T12:05:00.000Z",
+  };
+  return {
+    version: "v1",
+    runId: "run-1",
+    sessionId: "session-1",
+    callId: "call-1",
+    activation,
+    origin: {
+      kind: "model",
+      snapshotId: hashCanonical({ request: "model-1" }),
+      modelToolCallId: "model-call-1",
+    },
+    effectiveInput,
+    inputAdapters: [],
+    policy: {
+      decision: "approval_required",
+      policyRevision,
+    },
+    approval: {
+      authorityRevision: hashCanonical({ authority: "prepared-v1" }),
+      approvalId: "approval-1",
+      externalApprovalBinding,
+    },
+    stableAuthority,
+    stableToolIdentity,
+    executionRequirements: {
+      version: "prepared_tool_execution_requirements_v1",
+      credentials: ["continuation_run_segment", "live_handler_capability"],
+    },
+    preparedAt: timestamp,
+  };
+}
+
 test("prepared calls accept only exact model or trusted-runtime origins", () => {
   const prepared = parsePreparedToolCallV1({
     version: "v1",
@@ -201,6 +289,80 @@ test("stable prepared approval authority excludes renewable execution credential
     "workspace_lease",
   ]);
   assert.doesNotMatch(JSON.stringify(first.stableAuthority), /grant-1|lease-1|ticket-1|source-1/u);
+});
+
+test("V2 prepared approval authority round-trips as one consistent identity", () => {
+  const fixture = v2PreparedCallFixture();
+  const parsed = parsePreparedToolCallV1(fixture);
+  assert.deepEqual(parsePreparedToolCallV1(parsed), parsed);
+  assert.equal(
+    parsed.approval?.externalApprovalBinding?.version,
+    "runner_external_approval_binding_v2",
+  );
+});
+
+test("V2 prepared approval authority rejects contradictory persisted identity", () => {
+  const fixture = v2PreparedCallFixture();
+  const mutate = (
+    update: (copy: Record<string, any>) => void,
+  ): Record<string, unknown> => {
+    const copy = structuredClone(fixture) as Record<string, any>;
+    update(copy);
+    return copy;
+  };
+  const refingerprintAuthority = (copy: Record<string, any>): void => {
+    const { fingerprint: _fingerprint, ...authorityPayload } =
+      copy.stableAuthority;
+    copy.stableAuthority.fingerprint = hashCanonical(authorityPayload);
+    copy.approval.externalApprovalBinding.stableAuthorityFingerprint =
+      copy.stableAuthority.fingerprint;
+  };
+  const contradictions: Array<[string, (copy: Record<string, any>) => void]> = [
+    ["actor", (copy) => { copy.approval.externalApprovalBinding.requestingActor.actorId = "user-2"; }],
+    ["thread", (copy) => { copy.approval.externalApprovalBinding.threadId = "thread-2"; }],
+    ["tool", (copy) => {
+      copy.stableToolIdentity.toolId = "other.tool";
+      copy.approval.externalApprovalBinding.actionKey = "other.tool";
+      copy.approval.externalApprovalBinding.stableToolIdentity.toolId = "other.tool";
+    }],
+    ["descriptor", (copy) => {
+      const revision = hashCanonical({ descriptor: "other" });
+      copy.stableToolIdentity.descriptorContractRevision = revision;
+      copy.approval.externalApprovalBinding.stableToolIdentity.descriptorContractRevision = revision;
+    }],
+    ["stable authority descriptor", (copy) => {
+      copy.stableAuthority.descriptorContractRevision = hashCanonical({ descriptor: "forged" });
+      refingerprintAuthority(copy);
+    }],
+    ["capability", (copy) => { copy.approval.externalApprovalBinding.capabilities = ["external.confirm"]; }],
+    ["authority revision", (copy) => {
+      copy.stableAuthority.approvalAuthorityRevision = "approval-authority-v2";
+      refingerprintAuthority(copy);
+    }],
+    ["normalized action", (copy) => {
+      copy.stableAuthority.normalizedActionHash = hashCanonical({ changed: true });
+      refingerprintAuthority(copy);
+    }],
+    ["authority fingerprint", (copy) => {
+      copy.stableAuthority.fingerprint = hashCanonical({ forged: true });
+      copy.approval.externalApprovalBinding.stableAuthorityFingerprint = copy.stableAuthority.fingerprint;
+    }],
+    ["payload", (copy) => { copy.effectiveInput.message = "changed after approval"; }],
+    ["prepared invocation", (copy) => { copy.approval.externalApprovalBinding.preparedInvocationId = "call-2"; }],
+    ["approval", (copy) => { copy.approval.approvalId = "approval-2"; }],
+    ["policy revision", (copy) => { copy.policy.policyRevision = hashCanonical({ policy: "other" }); }],
+    ["tool source", (copy) => {
+      copy.stableAuthority.resourceAuthority.toolSourceId = "other-source";
+      refingerprintAuthority(copy);
+    }],
+  ];
+  for (const [label, update] of contradictions) {
+    assert.throws(
+      () => parsePreparedToolCallV1(mutate(update)),
+      /fingerprint does not match|normalized action does not match|identities do not agree/u,
+      label,
+    );
+  }
 });
 
 test("tool outcomes require normalized terminal evidence and forbid retry after commit", () => {

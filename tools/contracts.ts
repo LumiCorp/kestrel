@@ -334,6 +334,9 @@ export interface ToolRegistryListOptions {
 }
 
 export interface ToolRegistry extends ToolGateway {
+  releasePreparedToolCall(
+    prepared: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+  ): Promise<void>;
   getDescriptor(
     name: string,
     options?: ToolRegistryListOptions,

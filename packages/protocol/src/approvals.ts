@@ -287,20 +287,41 @@ export function parseRunnerExternalApprovalBindingV2(
       "external approval binding v2.expiresAt must be after requestedAt",
     );
   }
+  const stableToolIdentity = parseStableToolApprovalIdentityV1(
+    binding.stableToolIdentity,
+  );
+  const actionKey = requireNonEmptyString(
+    binding.actionKey,
+    "external approval binding v2.actionKey",
+  );
+  const authorityRevision = requireNonEmptyString(
+    binding.authorityRevision,
+    "external approval binding v2.authorityRevision",
+  );
+  if (actionKey !== stableToolIdentity.toolId) {
+    throw new Error(
+      "external approval binding v2.actionKey must match stableToolIdentity.toolId",
+    );
+  }
+  if (authorityRevision !== stableToolIdentity.approvalAuthorityRevision) {
+    throw new Error(
+      "external approval binding v2.authorityRevision must match stableToolIdentity.approvalAuthorityRevision",
+    );
+  }
   return {
     version: RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
     approvalId: requireNonEmptyString(binding.approvalId, "external approval binding v2.approvalId"),
     preparedInvocationId: requireNonEmptyString(binding.preparedInvocationId, "external approval binding v2.preparedInvocationId"),
     threadId: requireNonEmptyString(binding.threadId, "external approval binding v2.threadId"),
-    actionKey: requireNonEmptyString(binding.actionKey, "external approval binding v2.actionKey"),
+    actionKey,
     payloadHash,
     stableAuthorityFingerprint,
-    stableToolIdentity: parseStableToolApprovalIdentityV1(binding.stableToolIdentity),
+    stableToolIdentity,
     requestingActor: parseRunnerApprovalActorAuthorityV1(binding.requestingActor),
     toolClass: "external_side_effect",
     capabilities: requireCanonicalStringArray(binding.capabilities, "external approval binding v2.capabilities"),
     authorityKind: binding.authorityKind as RunnerExternalApprovalAuthorityKind,
-    authorityRevision: requireNonEmptyString(binding.authorityRevision, "external approval binding v2.authorityRevision"),
+    authorityRevision,
     requestedAt,
     expiresAt,
   };

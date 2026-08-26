@@ -1938,6 +1938,8 @@ export class ExecutionEngine {
         runtimeIO.inspectTool(name, input, intent),
       prepareToolForApproval: (name, input, approval, intent) =>
         runtimeIO.prepareToolForApproval(name, input, approval, intent),
+      releasePreparedToolCall: (prepared) =>
+        runtimeIO.releasePreparedToolCall(prepared),
     };
   }
 

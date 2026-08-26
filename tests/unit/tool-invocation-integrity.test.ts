@@ -40,6 +40,7 @@ const TOOL_ID = "mcp.test.lookup";
 class VersionedMcpProvider implements McpToolProvider {
   version = "v1";
   references = 0;
+  failCalls = false;
 
   async refresh(): Promise<McpStatusSnapshot> {
     return {
@@ -73,6 +74,7 @@ class VersionedMcpProvider implements McpToolProvider {
   async assertHealthy(): Promise<void> {}
 
   async callTool<T>(_name: string, _input: unknown): Promise<T> {
+    if (this.failCalls) throw new Error("planned MCP failure");
     return { content: [{ type: "text", text: this.version }] } as T;
   }
 
@@ -82,9 +84,12 @@ class VersionedMcpProvider implements McpToolProvider {
     let references = 1;
     this.references += 1;
     return {
-      call: async <T>(_input: unknown) => ({
-        content: [{ type: "text", text: pinnedVersion }],
-      }) as T,
+      call: async <T>(_input: unknown) => {
+        if (this.failCalls) throw new Error("planned pinned MCP failure");
+        return {
+          content: [{ type: "text", text: pinnedVersion }],
+        } as T;
+      },
       retain: () => {
         assert.ok(references > 0);
         references += 1;
@@ -150,6 +155,185 @@ test("model snapshot, preparation, and execution retain one exact MCP activation
   assert.equal(provider.references, 1);
   await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
   assert.equal(provider.references, 0);
+});
+
+test("explicit prepared-call release is idempotent and prevents later execution", async () => {
+  const provider = new VersionedMcpProvider();
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+  await registry.refresh();
+  const snapshot = await registry.createToolSurfaceSnapshot({ toolNames: [TOOL_ID] });
+  const intent = registry.resolveModelToolIntent({
+    snapshot,
+    toolCall: { id: "call-release", name: TOOL_ID, input: { query: "old" } },
+  });
+  const prepared = await prepareModelIntent(registry, intent);
+  assert.equal(provider.references, 2);
+
+  await registry.releasePreparedToolCall(prepared);
+  assert.equal(provider.references, 1);
+  await registry.releasePreparedToolCall(prepared);
+  assert.equal(provider.references, 1);
+  await assert.rejects(
+    () => registry.executePreparedToolCall(prepared),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
+
+  await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
+  assert.equal(provider.references, 0);
+  await registry.close();
+});
+
+test("explicit release prevents same-process static built-in rehydration", async () => {
+  const registry = new UnifiedToolRegistry({ allowlist: ["free.time.current"] });
+  await registry.refresh();
+  const prepared = await prepareTestToolCall({
+    gateway: registry,
+    toolName: "free.time.current",
+    toolInput: {},
+  });
+
+  await registry.releasePreparedToolCall(prepared);
+  await registry.releasePreparedToolCall(prepared);
+  await assert.rejects(
+    () => registry.executePreparedToolCall(prepared),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
+  await registry.close();
+});
+
+test("a static prepared call executes at most once per registry", async () => {
+  const registry = new UnifiedToolRegistry({ allowlist: ["free.time.current"] });
+  await registry.refresh();
+  const prepared = await prepareTestToolCall({
+    gateway: registry,
+    toolName: "free.time.current",
+    toolInput: {},
+  });
+
+  const result = await registry.executePreparedToolCall(prepared);
+  assert.equal(result.status, "OK");
+  await assert.rejects(
+    () => registry.executePreparedToolCall(prepared),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
+  await registry.close();
+});
+
+test("run release reclaims only that run's terminal prepared keys", async () => {
+  const registry = new UnifiedToolRegistry({ allowlist: ["free.time.current"] });
+  await registry.refresh();
+  const sessionId = "terminal-key-session";
+  const completed = await Promise.all(
+    Array.from({ length: 24 }, (_, index) => prepareTestToolCall({
+      gateway: registry,
+      toolName: "free.time.current",
+      toolInput: {},
+      runId: "completed-run",
+      sessionId,
+      callId: `completed-call-${index}`,
+    })),
+  );
+  for (const prepared of completed) {
+    assert.equal((await registry.executePreparedToolCall(prepared)).status, "OK");
+  }
+  const otherTerminal = await prepareTestToolCall({
+    gateway: registry,
+    toolName: "free.time.current",
+    toolInput: {},
+    runId: "live-run",
+    sessionId,
+    callId: "other-terminal-call",
+  });
+  assert.equal(
+    (await registry.executePreparedToolCall(otherTerminal)).status,
+    "OK",
+  );
+  const livePending = await prepareTestToolCall({
+    gateway: registry,
+    toolName: "free.time.current",
+    toolInput: {},
+    runId: "live-run",
+    sessionId,
+    callId: "live-pending-call",
+  });
+
+  await registry.releaseToolRun("completed-run", sessionId);
+
+  assert.equal(
+    (await registry.executePreparedToolCall(completed[0]!)).status,
+    "OK",
+  );
+  await assert.rejects(
+    () => registry.executePreparedToolCall(otherTerminal),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
+  assert.equal(
+    (await registry.executePreparedToolCall(livePending)).status,
+    "OK",
+  );
+  await registry.close();
+});
+
+test("failed prepared execution releases its retained source", async () => {
+  const provider = new VersionedMcpProvider();
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+  await registry.refresh();
+  const snapshot = await registry.createToolSurfaceSnapshot({ toolNames: [TOOL_ID] });
+  const intent = registry.resolveModelToolIntent({
+    snapshot,
+    toolCall: { id: "call-failure", name: TOOL_ID, input: { query: "old" } },
+  });
+  const prepared = await prepareModelIntent(registry, intent);
+  provider.failCalls = true;
+
+  const result = await registry.executePreparedToolCall(prepared);
+  assert.equal(result.status, "FAILED");
+  assert.equal(provider.references, 1);
+
+  await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
+  assert.equal(provider.references, 0);
+  await registry.close();
+});
+
+test("registry close releases snapshot and prepared-call ownership exactly once", async () => {
+  const provider = new VersionedMcpProvider();
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+  await registry.refresh();
+  const snapshot = await registry.createToolSurfaceSnapshot({ toolNames: [TOOL_ID] });
+  const intent = registry.resolveModelToolIntent({
+    snapshot,
+    toolCall: { id: "call-close", name: TOOL_ID, input: { query: "old" } },
+  });
+  const prepared = await prepareModelIntent(registry, intent);
+  assert.equal(provider.references, 2);
+
+  await registry.close();
+  assert.equal(provider.references, 0);
+  await registry.close();
+  assert.equal(provider.references, 0);
+  await assert.rejects(
+    () => registry.executePreparedToolCall(prepared),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
 });
 
 test("interruption resumes one persisted MCP action without generation substitution", async () => {

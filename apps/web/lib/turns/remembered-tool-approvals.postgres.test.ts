@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
 
@@ -14,7 +15,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
     insertRememberedToolApprovalInTransaction,
     listRememberedToolApprovalEvidenceForRuntime,
   } = await import("./store");
-  const { knowledgeDb } = await import("@/lib/knowledge/db");
+  const { knowledgeDb, schema } = await import("@/lib/knowledge/db");
   const sql = postgres(databaseUrl, { max: 1 });
   const suffix = crypto.randomUUID();
   const userId = `remember-user-${suffix}`;
@@ -23,8 +24,11 @@ test("remembered approval storage enforces identity, authority, and thread casca
   const environmentId = `remember-env-${suffix}`;
   const projectId = `remember-project-${suffix}`;
   const threadId = `remember-thread-${suffix}`;
+  const otherThreadId = `remember-other-thread-${suffix}`;
   const turnId = `remember-turn-${suffix}`;
   const interactionId = `remember-interaction-${suffix}`;
+  const declineInteractionId = `remember-decline-${suffix}`;
+  const approveOnceInteractionId = `remember-approve-once-${suffix}`;
   const now = new Date();
 
   context.after(async () => {
@@ -72,7 +76,9 @@ test("remembered approval storage enforces identity, authority, and thread casca
     await transaction`
       INSERT INTO "threads" (
         "id", "created_by_user_id", "organization_id", "project_id"
-      ) VALUES (${threadId}, ${userId}, ${organizationId}, ${projectId})
+      ) VALUES
+        (${threadId}, ${userId}, ${organizationId}, ${projectId}),
+        (${otherThreadId}, ${userId}, ${organizationId}, ${projectId})
     `;
     await transaction`
       INSERT INTO "thread_turns" (
@@ -87,12 +93,22 @@ test("remembered approval storage enforces identity, authority, and thread casca
     await transaction`
       INSERT INTO "thread_interactions" (
         "id", "request_id", "organization_id", "thread_id", "turn_id", "source",
-        "kind", "event_type", "prompt", "status", "request_envelope",
-        "response_envelope", "resolved_by_user_id", "resolved_at"
-      ) VALUES (
+        "kind", "event_type", "prompt", "status", "request_envelope"
+      ) VALUES
+      (
         ${interactionId}, ${`request-${suffix}`}, ${organizationId}, ${threadId},
-        ${turnId}, 'runtime', 'approval', 'user.approval', 'Approve?', 'resolved',
-        '{}'::jsonb, '{"decision":"remember_approval"}'::jsonb, ${userId}, ${now}
+        ${turnId}, 'runtime', 'approval', 'user.approval', 'Remember?', 'pending',
+        '{}'::jsonb
+      ),
+      (
+        ${declineInteractionId}, ${`decline-request-${suffix}`}, ${organizationId},
+        ${threadId}, ${turnId}, 'runtime', 'approval', 'user.approval', 'Decline?',
+        'pending', '{}'::jsonb
+      ),
+      (
+        ${approveOnceInteractionId}, ${`approve-once-request-${suffix}`},
+        ${organizationId}, ${threadId}, ${turnId}, 'runtime', 'approval',
+        'user.approval', 'Approve once?', 'pending', '{}'::jsonb
       )
     `;
   });
@@ -112,32 +128,95 @@ test("remembered approval storage enforces identity, authority, and thread casca
     sourceInteractionId: interactionId,
     createdAt: now.toISOString(),
   };
+  const sourcePreparedApprovalAuthority = {
+    organizationId,
+    threadId,
+    actorUserId: userId,
+    toolIdentity: record.toolIdentity,
+  };
+  const decideAndInsert = (
+    sourceInteractionId: string,
+    decision: "decline" | "approve_once" | "remember_approval",
+    approval = { ...record, sourceInteractionId },
+    sourceAuthority = sourcePreparedApprovalAuthority,
+  ) => knowledgeDb.transaction(async (tx) => {
+    await tx
+      .update(schema.threadInteractions)
+      .set({
+        status: "processing",
+        responseEnvelope: { decision },
+        resolvedByUserId: userId,
+        resolvedAt: now,
+      })
+      .where(eq(schema.threadInteractions.id, sourceInteractionId));
+    return insertRememberedToolApprovalInTransaction(tx, {
+      approval,
+      sourcePreparedApprovalAuthority: sourceAuthority,
+    });
+  });
+
+  await assert.rejects(
+    () => decideAndInsert(declineInteractionId, "decline", {
+      ...record,
+      id: `decline-${suffix}`,
+      sourceInteractionId: declineInteractionId,
+    }),
+    /exact remember decision/u,
+  );
+  await assert.rejects(
+    () => decideAndInsert(approveOnceInteractionId, "approve_once", {
+      ...record,
+      id: `approve-once-${suffix}`,
+      sourceInteractionId: approveOnceInteractionId,
+    }),
+    /exact remember decision/u,
+  );
+  await assert.rejects(
+    () => decideAndInsert(interactionId, "remember_approval", {
+      ...record,
+      id: `wrong-actor-${suffix}`,
+      actorUserId: `other-user-${suffix}`,
+    }, {
+      ...sourcePreparedApprovalAuthority,
+      actorUserId: `other-user-${suffix}`,
+    }),
+    /exact remember decision by this actor/u,
+  );
+  await assert.rejects(
+    () => decideAndInsert(interactionId, "remember_approval", {
+      ...record,
+      id: `wrong-thread-${suffix}`,
+      threadId: otherThreadId,
+    }, {
+      ...sourcePreparedApprovalAuthority,
+      threadId: otherThreadId,
+    }),
+    /exact remember decision by this actor/u,
+  );
+  await assert.rejects(
+    () => decideAndInsert(interactionId, "remember_approval", {
+      ...record,
+      id: `wrong-identity-${suffix}`,
+      toolIdentity: {
+        ...record.toolIdentity,
+        toolId: "hosted.other-tool",
+      },
+    }),
+    /does not match the source prepared approval authority/u,
+  );
+  await decideAndInsert(interactionId, "remember_approval");
+  const [sourceAfterInsert] = await sql<{ status: string }[]>`
+    SELECT "status" FROM "thread_interactions" WHERE "id" = ${interactionId}
+  `;
+  assert.equal(sourceAfterInsert?.status, "processing");
   await assert.rejects(
     () => knowledgeDb.transaction((tx) =>
       insertRememberedToolApprovalInTransaction(tx, {
-        ...record,
-        id: `wrong-actor-${suffix}`,
-        actorUserId: `other-user-${suffix}`,
-      })),
-    /exact resolved decision by this actor/u,
-  );
-  await assert.rejects(
-    () => knowledgeDb.transaction((tx) =>
-      insertRememberedToolApprovalInTransaction(tx, {
-        ...record,
-        id: `wrong-source-${suffix}`,
-        sourceInteractionId: `other-interaction-${suffix}`,
-      })),
-    /exact resolved decision by this actor/u,
-  );
-  await knowledgeDb.transaction((tx) =>
-    insertRememberedToolApprovalInTransaction(tx, record),
-  );
-  await assert.rejects(
-    () => knowledgeDb.transaction((tx) =>
-      insertRememberedToolApprovalInTransaction(tx, {
-        ...record,
-        id: `duplicate-${suffix}`,
+        approval: {
+          ...record,
+          id: `duplicate-${suffix}`,
+        },
+        sourcePreparedApprovalAuthority,
       })),
     (error: unknown) => {
       const cause = error instanceof Error ? error.cause : undefined;

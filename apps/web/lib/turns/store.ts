@@ -10,8 +10,10 @@ import {
   parseRememberedToolApprovalEvidenceSetV1,
   parseRememberedToolApprovalV1,
   parseRunnerStructuredReviewInteractionV1,
+  parseStableToolApprovalIdentityV1,
   type RememberedToolApprovalEvidenceV1,
   type RememberedToolApprovalV1,
+  type StableToolApprovalIdentityV1,
 } from "@kestrel-agents/protocol";
 import {
   and,
@@ -270,11 +272,46 @@ async function lockAccessibleThread(
  * Dormant issue-01 writer seam. Approval response handling intentionally does
  * not call this until remembered decisions become a product behavior.
  */
+export interface RememberedApprovalSourceAuthority {
+  organizationId: string;
+  threadId: string;
+  actorUserId: string;
+  toolIdentity: StableToolApprovalIdentityV1;
+}
+
 export async function insertRememberedToolApprovalInTransaction(
   tx: TurnTransaction,
-  value: RememberedToolApprovalV1,
+  input: {
+    approval: RememberedToolApprovalV1;
+    /**
+     * Server-owned authority copied from the source prepared invocation. This
+     * must never be populated from approval-card presentation data.
+     */
+    sourcePreparedApprovalAuthority: RememberedApprovalSourceAuthority;
+  },
 ): Promise<RememberedToolApprovalV1> {
-  const approval = parseRememberedToolApprovalV1(value);
+  const approval = parseRememberedToolApprovalV1(input.approval);
+  const sourceAuthority = {
+    ...input.sourcePreparedApprovalAuthority,
+    toolIdentity: parseStableToolApprovalIdentityV1(
+      input.sourcePreparedApprovalAuthority.toolIdentity,
+    ),
+  };
+  if (
+    sourceAuthority.organizationId !== approval.organizationId ||
+    sourceAuthority.threadId !== approval.threadId ||
+    sourceAuthority.actorUserId !== approval.actorUserId ||
+    sourceAuthority.toolIdentity.toolId !== approval.toolIdentity.toolId ||
+    sourceAuthority.toolIdentity.descriptorContractRevision !==
+      approval.toolIdentity.descriptorContractRevision ||
+    sourceAuthority.toolIdentity.approvalAuthorityRevision !==
+      approval.toolIdentity.approvalAuthorityRevision
+  ) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "Remembered approval does not match the source prepared approval authority.",
+    );
+  }
   const [thread] = await tx
     .select({
       id: schema.threads.id,
@@ -296,21 +333,33 @@ export async function insertRememberedToolApprovalInTransaction(
       "Remembered approval requires the owning Project thread.",
     );
   }
-  const source = await tx.query.threadInteractions.findFirst({
-    where: and(
-      eq(schema.threadInteractions.id, approval.sourceInteractionId),
-      eq(schema.threadInteractions.organizationId, approval.organizationId),
-      eq(schema.threadInteractions.threadId, approval.threadId),
-      eq(schema.threadInteractions.kind, "approval"),
-      eq(schema.threadInteractions.status, "resolved"),
-      eq(schema.threadInteractions.resolvedByUserId, approval.actorUserId),
-    ),
-    columns: { id: true },
-  });
-  if (source === undefined) {
+  const [source] = await tx
+    .select({
+      id: schema.threadInteractions.id,
+      organizationId: schema.threadInteractions.organizationId,
+      threadId: schema.threadInteractions.threadId,
+      kind: schema.threadInteractions.kind,
+      status: schema.threadInteractions.status,
+      responseEnvelope: schema.threadInteractions.responseEnvelope,
+      resolvedByUserId: schema.threadInteractions.resolvedByUserId,
+    })
+    .from(schema.threadInteractions)
+    .where(eq(schema.threadInteractions.id, approval.sourceInteractionId))
+    .limit(1)
+    .for("update");
+  const sourceDecision = readPlainRecord(source?.responseEnvelope)?.decision;
+  if (
+    source === undefined ||
+    source.organizationId !== approval.organizationId ||
+    source.threadId !== approval.threadId ||
+    source.kind !== "approval" ||
+    (source.status !== "processing" && source.status !== "resolved") ||
+    source.resolvedByUserId !== approval.actorUserId ||
+    sourceDecision !== "remember_approval"
+  ) {
     throw new DurableTurnError(
       "TURN_CONFLICT",
-      "Remembered approval source interaction is not an exact resolved decision by this actor.",
+      "Remembered approval source interaction is not the exact remember decision by this actor.",
     );
   }
   const [stored] = await tx

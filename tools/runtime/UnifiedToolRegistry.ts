@@ -201,6 +201,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     string,
     PinnedExecutionSource
   >();
+  private readonly terminalPreparedExecutionKeysByOwner = new Map<
+    string,
+    Set<string>
+  >();
+  private readonly executingPreparedExecutionKeys = new Set<string>();
+  private readonly releasingPreparedExecutions = new Map<string, Promise<void>>();
+  private closed = false;
   private registryGenerationSequence = 0;
   private registryGeneration = "tool-registry:uninitialized";
 
@@ -564,6 +571,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     const authorizationProvider = await this.ensureExecutionAuthorization(
       options.runContext,
     );
+    if (this.closed) {
+      throw createRuntimeFailure(
+        "TOOL_PINNED_HANDLER_UNAVAILABLE",
+        "Tool registry is closed and cannot prepare a tool call.",
+        { subsystem: "tooling", classification: "configuration", recoverable: false },
+      );
+    }
     const snapshotSource =
       input.origin.kind === "model"
         ? this.toolSurfaceExecutions
@@ -701,7 +715,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         ],
       });
       const preparedKey = preparedExecutionKey(prepared);
-      if (this.preparedExecutions.has(preparedKey)) {
+      if (
+        this.preparedExecutions.has(preparedKey) ||
+        this.isPreparedExecutionTerminal(prepared, preparedKey) ||
+        this.executingPreparedExecutionKeys.has(preparedKey)
+      ) {
         throw createRuntimeFailure(
           "TOOL_PREPARED_CALL_COLLISION",
           `Prepared tool call '${prepared.callId}' is already active.`,
@@ -815,22 +833,23 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     options: ToolGatewayCallOptions = {},
   ): Promise<AgentToolResultV2> {
     const key = preparedExecutionKey(prepared);
-    const preparedSource =
-      this.preparedExecutions.get(key) ??
+    if (
+      this.closed ||
+      this.isPreparedExecutionTerminal(prepared, key) ||
+      this.executingPreparedExecutionKeys.has(key) ||
+      this.releasingPreparedExecutions.has(key)
+    ) {
+      throw this.preparedExecutionUnavailable(prepared);
+    }
+    const retainedSource = this.preparedExecutions.get(key);
+    const preparedSource = retainedSource ??
       this.rehydrateStaticBuiltInExecution(prepared, options.runContext);
     if (preparedSource === undefined) {
-      throw createRuntimeFailure(
-        "TOOL_PINNED_HANDLER_UNAVAILABLE",
-        `Prepared tool call '${prepared.callId}' has no pinned live handler.`,
-        {
-          subsystem: "tooling",
-          classification: "configuration",
-          recoverable: false,
-          toolName: prepared.activation.descriptor.toolId,
-          registryGeneration: prepared.activation.registryGeneration,
-        },
-      );
+      throw this.preparedExecutionUnavailable(prepared);
     }
+    this.preparedExecutions.delete(key);
+    this.markPreparedExecutionTerminal(prepared, key);
+    this.executingPreparedExecutionKeys.add(key);
     const source = this.rebindPreparedBuiltInForManagedWorktree(
       preparedSource,
       prepared,
@@ -910,10 +929,76 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         progress: this.workspaceSkillReadProgress,
       })) as AgentToolResultV2;
     } finally {
-      this.preparedExecutions.delete(key);
-      if (source !== preparedSource) await source.release?.();
-      await preparedSource.release?.();
+      try {
+        if (source !== preparedSource) await source.release?.();
+        await preparedSource.release?.();
+      } finally {
+        this.executingPreparedExecutionKeys.delete(key);
+      }
     }
+  }
+
+  async releasePreparedToolCall(prepared: PreparedToolCallV1): Promise<void> {
+    const key = preparedExecutionKey(prepared);
+    const existingRelease = this.releasingPreparedExecutions.get(key);
+    if (existingRelease !== undefined) {
+      await existingRelease;
+      return;
+    }
+    if (
+      this.executingPreparedExecutionKeys.has(key) ||
+      this.isPreparedExecutionTerminal(prepared, key)
+    ) return;
+    this.markPreparedExecutionTerminal(prepared, key);
+    const source = this.preparedExecutions.get(key);
+    this.preparedExecutions.delete(key);
+    if (source === undefined) return;
+    const release = Promise.resolve().then(() => source.release?.());
+    this.releasingPreparedExecutions.set(key, release);
+    try {
+      await release;
+    } finally {
+      this.releasingPreparedExecutions.delete(key);
+    }
+  }
+
+  private isPreparedExecutionTerminal(
+    prepared: PreparedToolCallV1,
+    key: string,
+  ): boolean {
+    return this.terminalPreparedExecutionKeysByOwner
+      .get(preparedExecutionOwnerKey(prepared.runId, prepared.sessionId))
+      ?.has(key) === true;
+  }
+
+  private markPreparedExecutionTerminal(
+    prepared: PreparedToolCallV1,
+    key: string,
+  ): void {
+    const ownerKey = preparedExecutionOwnerKey(
+      prepared.runId,
+      prepared.sessionId,
+    );
+    const ownedKeys = this.terminalPreparedExecutionKeysByOwner.get(ownerKey) ??
+      new Set<string>();
+    ownedKeys.add(key);
+    this.terminalPreparedExecutionKeysByOwner.set(ownerKey, ownedKeys);
+  }
+
+  private preparedExecutionUnavailable(
+    prepared: PreparedToolCallV1,
+  ): RuntimeFailure {
+    return createRuntimeFailure(
+      "TOOL_PINNED_HANDLER_UNAVAILABLE",
+      `Prepared tool call '${prepared.callId}' has no pinned live handler.`,
+      {
+        subsystem: "tooling",
+        classification: "configuration",
+        recoverable: false,
+        toolName: prepared.activation.descriptor.toolId,
+        registryGeneration: prepared.activation.registryGeneration,
+      },
+    );
   }
 
   private rebindPreparedBuiltInForManagedWorktree(
@@ -955,13 +1040,16 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     }
   }
 
-  async releaseToolRun(_runId: string, sessionId: string): Promise<void> {
+  async releaseToolRun(runId: string, sessionId: string): Promise<void> {
     const snapshotIds = [...this.toolSurfaceRunIds.entries()]
       .filter(([, owner]) => owner.sessionId === sessionId)
       .map(([snapshotId]) => snapshotId);
     for (const snapshotId of snapshotIds) {
       await this.releaseToolSurfaceSnapshot(snapshotId);
     }
+    this.terminalPreparedExecutionKeysByOwner.delete(
+      preparedExecutionOwnerKey(runId, sessionId),
+    );
   }
 
   getDescriptor(
@@ -1188,7 +1276,27 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   async close(): Promise<void> {
-    await Promise.all([
+    if (this.closed) return;
+    this.closed = true;
+    const retainedSources = [
+      ...[...this.toolSurfaceExecutions.values()].flatMap((executions) => [
+        ...executions.values(),
+      ]),
+      ...this.preparedExecutions.values(),
+    ];
+    const inFlightPreparedReleases = [
+      ...this.releasingPreparedExecutions.values(),
+    ];
+    this.toolSurfaceSnapshots.clear();
+    this.toolSurfaceExecutions.clear();
+    this.toolSurfaceRunIds.clear();
+    this.preparedExecutions.clear();
+    this.terminalPreparedExecutionKeysByOwner.clear();
+    const releaseResults = await Promise.allSettled([
+      ...retainedSources.map((source) => source.release?.()),
+      ...inFlightPreparedReleases,
+    ]);
+    const closeResults = await Promise.allSettled([
       this.mcpManager.close(),
       ...[...this.hostedMcpScopes.values()].map((scope) =>
         scope.manager.close(),
@@ -1206,10 +1314,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       provider.close();
     this.authorizationProvidersByRun.clear();
     this.authorizationProvidersBySession.clear();
-    this.toolSurfaceSnapshots.clear();
-    this.toolSurfaceExecutions.clear();
-    this.toolSurfaceRunIds.clear();
-    this.preparedExecutions.clear();
+    const cleanupFailure = [...releaseResults, ...closeResults].find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (cleanupFailure !== undefined) throw cleanupFailure.reason;
   }
 
   private activateRegistryGeneration(): void {
@@ -2311,6 +2419,10 @@ function withoutGrantId(
 
 function preparedExecutionKey(prepared: PreparedToolCallV1): string {
   return `${prepared.runId}\0${prepared.sessionId}\0${prepared.callId}`;
+}
+
+function preparedExecutionOwnerKey(runId: string, sessionId: string): string {
+  return `${runId}\0${sessionId}`;
 }
 
 function validatePinnedInput(

@@ -31,6 +31,7 @@ import { handleAskUserAction } from "../../agents/reference-react/src/steps/acte
 import { buildFilesystemInspectionActionKey } from "../../agents/reference-react/src/filesystemInspection.js";
 import { detectReadOnlyResultDuplicate } from "../../src/runtime/readOnlyResultDuplicates.js";
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
+import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 import { kestrelOneGitHubIssueCreateTool } from "../../tools/kestrelOne/githubActions.js";
@@ -961,6 +962,30 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         registryGeneration: "hosted-generation",
         scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
       });
+      const stableAuthorityPayload = {
+        version: "prepared_tool_stable_authority_v1" as const,
+        actor: {
+          actorType: "end_user" as const,
+          actorId: "user-1",
+          tenantId: "org-1",
+        },
+        organizationId: "org-1",
+        environmentId: "env-1",
+        projectId: "project-1",
+        threadId: "session-1",
+        resourceAuthority: {
+          toolSourceKind: descriptor.sourceKind,
+          toolSourceId: descriptor.sourceId,
+        },
+        policyRevision: approval.policyRevision,
+        capabilities: [...approval.capabilities].sort(),
+        descriptorContractRevision: descriptor.contractRevision,
+        approvalAuthorityRevision: approval.authorityRevision,
+        normalizedActionHash: hashCanonical({
+          toolId: definition.name,
+          effectiveInput: normalizedToolInput,
+        }),
+      };
       return parsePreparedToolCallV1({
         version: "v1",
         runId: "run-1",
@@ -983,23 +1008,8 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
           authorityRevision: hashCanonical({ approval: approval.authorityRevision }),
         },
         stableAuthority: {
-          version: "prepared_tool_stable_authority_v1",
-          fingerprint: hashCanonical({ stable: "github-1" }),
-          actor: {
-            actorType: "end_user",
-            actorId: "user-1",
-            tenantId: "org-1",
-          },
-          organizationId: "org-1",
-          environmentId: "env-1",
-          projectId: "project-1",
-          threadId: "session-1",
-          resourceAuthority: {},
-          policyRevision: approval.policyRevision,
-          capabilities: [...approval.capabilities].sort(),
-          descriptorContractRevision: descriptor.contractRevision,
-          approvalAuthorityRevision: approval.authorityRevision,
-          normalizedActionHash: hashCanonical(normalizedToolInput),
+          ...stableAuthorityPayload,
+          fingerprint: hashCanonical(stableAuthorityPayload),
         },
         stableToolIdentity: {
           version: "stable_tool_approval_identity_v1",
@@ -1100,37 +1110,40 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     authorityRevision: "changed-authority",
   };
   stalePending.preparedToolCall = stalePrepared;
-  const staleResume = await waitApprovalStep(
-    buildContext({
-      session: {
-        ...buildContext().session,
-        state: { agent: staleAgent },
-        currentStepAgent: "agent.exec.wait_approval",
-      },
-      event: {
-        id: "evt-github-stale-approval",
-        type: "user.approval",
-        sessionId: "session-1",
-        payload: {
-          ...modePayload,
-          message: "approve",
-          approvalId: pendingApproval.approvalId,
+  await assert.rejects(
+    () => waitApprovalStep(
+      buildContext({
+        session: {
+          ...buildContext().session,
+          state: { agent: staleAgent },
+          currentStepAgent: "agent.exec.wait_approval",
+        },
+        event: {
+          id: "evt-github-stale-approval",
+          type: "user.approval",
+          sessionId: "session-1",
+          payload: {
+            ...modePayload,
+            message: "approve",
+            approvalId: pendingApproval.approvalId,
+          },
+        },
+      }),
+      {
+        useModel: async () => {
+          throw new Error("not expected");
+        },
+        inspectTool,
+        prepareToolForApproval,
+        useTool: async () => {
+          throw new Error("stale approval must not execute the mutation");
         },
       },
-    }),
-    {
-      useModel: async () => {
-        throw new Error("not expected");
-      },
-      inspectTool,
-      prepareToolForApproval,
-      useTool: async () => {
-        throw new Error("stale approval must not execute the mutation");
-      },
-    },
+    ),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "HOSTED_PREPARED_APPROVAL_INVALID",
   );
-  assert.equal(staleResume.status, "WAITING");
-  assert.equal(staleResume.waitFor?.eventType, "user.approval");
 
   const resumed = await waitApprovalStep(
     buildContext({

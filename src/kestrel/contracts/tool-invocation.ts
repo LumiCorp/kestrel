@@ -6,6 +6,7 @@ import type {
 import type { RunToolPhase } from "./events.js";
 import {
   canonicalJson,
+  hashCanonical,
   parseToolActivationRefV1,
   type ToolActivationRefV1,
 } from "./tool-contract.js";
@@ -401,6 +402,24 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
       "prepared tool call v2 external approval binding requires stable authority",
     );
   }
+  if (
+    approval?.externalApprovalBinding?.version ===
+      "runner_external_approval_binding_v2"
+  ) {
+    assertPreparedV2ApprovalAuthorityConsistent({
+      callId: stringValue(input.callId, "prepared tool call.callId"),
+      approvalId: approval.approvalId,
+      activation: parseToolActivationRefV1(input.activation),
+      effectiveInput: jsonRecord(
+        input.effectiveInput,
+        "prepared tool call.effectiveInput",
+      ),
+      policyRevision: policy.policyRevision,
+      stableAuthority: stableAuthority!,
+      stableToolIdentity: stableToolIdentity!,
+      binding: approval.externalApprovalBinding,
+    });
+  }
   if (input.inputAdapters !== undefined && !Array.isArray(input.inputAdapters)) {
     throw new Error("prepared tool call.inputAdapters must be an array");
   }
@@ -493,6 +512,71 @@ export function parsePreparedToolStableAuthorityV1(
     approvalAuthorityRevision: stringValue(input.approvalAuthorityRevision, "prepared tool stable authority.approvalAuthorityRevision"),
     normalizedActionHash: hash(input.normalizedActionHash, "prepared tool stable authority.normalizedActionHash"),
   });
+}
+
+function assertPreparedV2ApprovalAuthorityConsistent(input: {
+  callId: string;
+  approvalId: string | undefined;
+  activation: ToolActivationRefV1;
+  effectiveInput: Record<string, unknown>;
+  policyRevision: string;
+  stableAuthority: PreparedToolStableAuthorityV1;
+  stableToolIdentity: StableToolApprovalIdentityV1;
+  binding: Extract<RunnerExternalApprovalBinding, { version: "runner_external_approval_binding_v2" }>;
+}): void {
+  const { fingerprint: _fingerprint, ...authorityPayload } = input.stableAuthority;
+  if (hashCanonical(authorityPayload) !== input.stableAuthority.fingerprint) {
+    throw new Error(
+      "prepared tool call stable authority fingerprint does not match canonical authority",
+    );
+  }
+  const normalizedActionHash = hashCanonical({
+    toolId: input.activation.descriptor.toolId,
+    effectiveInput: input.effectiveInput,
+  });
+  if (normalizedActionHash !== input.stableAuthority.normalizedActionHash) {
+    throw new Error(
+      "prepared tool call stable authority normalized action does not match activation and effective input",
+    );
+  }
+  const payloadHash = hashCanonical(input.effectiveInput);
+  const binding = input.binding;
+  const authority = input.stableAuthority;
+  const identity = input.stableToolIdentity;
+  const actorMatches = canonicalJson(authority.actor) === canonicalJson(binding.requestingActor);
+  const capabilitiesMatch =
+    canonicalJson(authority.capabilities) === canonicalJson(binding.capabilities);
+  const identitiesMatch =
+    canonicalJson(identity) === canonicalJson(binding.stableToolIdentity);
+  const sourceMatches =
+    authority.resourceAuthority.toolSourceKind ===
+      input.activation.descriptor.sourceKind &&
+    authority.resourceAuthority.toolSourceId ===
+      input.activation.descriptor.sourceId;
+  if (
+    input.callId !== binding.preparedInvocationId ||
+    input.approvalId !== binding.approvalId ||
+    input.activation.descriptor.toolId !== identity.toolId ||
+    input.activation.descriptor.contractRevision !==
+      identity.descriptorContractRevision ||
+    authority.descriptorContractRevision !== identity.descriptorContractRevision ||
+    authority.policyRevision !== input.policyRevision ||
+    authority.approvalAuthorityRevision !==
+      identity.approvalAuthorityRevision ||
+    authority.threadId !== binding.threadId ||
+    authority.fingerprint !== binding.stableAuthorityFingerprint ||
+    binding.actionKey !== identity.toolId ||
+    binding.authorityRevision !== identity.approvalAuthorityRevision ||
+    binding.payloadHash !== payloadHash ||
+    actorMatches === false ||
+    capabilitiesMatch === false ||
+    identitiesMatch === false ||
+    sourceMatches === false
+  ) {
+    throw new Error(
+      "prepared tool call v2 approval authority identities do not agree",
+    );
+  }
 }
 
 export function parsePreparedToolExecutionRequirementsV1(

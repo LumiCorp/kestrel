@@ -266,6 +266,9 @@ export interface StepIO {
       toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
     },
   ): Promise<PreparedToolCallV1>;
+  releasePreparedToolCall?(
+    prepared: PreparedToolCallV1,
+  ): Promise<void>;
   useTool?(
     name: string,
     input: unknown,
