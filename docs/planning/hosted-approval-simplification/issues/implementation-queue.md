@@ -4,20 +4,23 @@ Each issue appears in one state. `Ready` is the current dependency-free
 frontier. Move issues between states as implementation and review change the
 graph.
 
-Implementation must start from deployed-source revision
-`b36756002321b7a7e942d9a08799e7b01fa387f3` or a verified descendant.
+Remaining implementation must start from the current deployed production
+source or a verified descendant. Revalidate the named seams before applying
+changes. The Done issues below remain evidence of completed behavior and review
+work; this queue does not reopen them.
 
 ## Ready
 
-None.
+- [Make hosted tool availability and approval one truthful decision](06-unify-hosted-tool-decision.md)
+- [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
 
-- [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md) — rollout proof and compatibility controls implemented; production qualification, rollout evidence, drain observation, and post-drain cleanup remain.
+None.
 
 ## Blocked
 
-None.
+- [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md) — rollout proof and compatibility controls are already implemented; final production qualification, drain evidence, and cleanup are blocked by [the effective hosted tool decision](06-unify-hosted-tool-decision.md) and [truthful cancellation telemetry](07-preserve-cancellation-telemetry.md).
 
 ## Implemented
 

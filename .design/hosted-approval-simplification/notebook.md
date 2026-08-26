@@ -23,6 +23,19 @@ to one authenticated user, one thread, and one stable tool identity. It
 satisfies later Environment or Project Ask First decisions without changing
 Environment or Project policy. Future calls remain newly prepared and audited.
 
+The latest runtime trace exposed an earlier failure plane. `workspace_hosted`
+advertises developer-shell tools and binds them to `ci_bot`, but that pack
+allows `shell.exec` while denying the `external_side_effect` class that contains
+every developer-shell tool. Kestrel removes `exec_command` from the model
+request, rejects the model's accurate unavailable-tool response against the
+unfiltered capability manifest, and spends more model calls on alternatives.
+
+The selected design now starts with one effective tool decision per tool. That
+decision separates availability from approval mode. It drives model exposure,
+execution validation, approval presentation, remembered-approval eligibility,
+and diagnostics. The prepared-invocation design begins only after that decision
+admits the tool.
+
 ## Requested Change
 
 Determine the exact blast radius of the hosted approval findings and select a
@@ -93,6 +106,21 @@ boolean response, so they cannot distinguish Approve Once from Remember
 Approval. The durable decision transaction is already the correct atomic seam
 for recording both the exact current decision and a remembered approval.
 
+The current branch has added the three-way decision and remembered evidence,
+but the hosted profile prevents that design from operating for developer-shell
+tools. `ci_bot` allows `shell.exec`, denies `external_side_effect`, and sets
+`strictApprovalPerCall` to true. `exec_command` is hidden before the approval
+gate. If another tool reaches the gate, Acter replaces an Environment or
+remembered disposition with `runtime_strict` Ask. Web and Mobile then hide
+Remember Approval.
+
+The full capability manifest and model-visible tool surface are separate facts.
+The decision validator treats the unfiltered manifest as proof that a
+policy-hidden tool is available. It rejects `requested_tool_unavailable` and
+prescribes `request_policy_or_approval_change`, but the noninteractive control
+surface exposes no such action. Generic validation feedback then amplifies the
+contradiction into more model calls.
+
 ## Root Design Assessment
 
 The design is not wrong in its security intent. These decisions are correct and
@@ -105,10 +133,49 @@ should remain:
 - tool descriptors and activations are immutable references;
 - outcomes distinguish whether an external effect started or committed.
 
-The hosted composition is wrong at its central seam. It models approval as a
-generic interaction followed by a newly reconstructed run, rather than a pause
-in one durable prepared invocation. That mistake existed before the recent
-patches; the patches expose it rather than create it.
+The hosted composition is wrong at two connected seams. Before approval, the
+profile and policy layers produce contradictory availability facts. After a
+tool is selected, the lifecycle models approval as a generic interaction
+followed by a newly reconstructed run, rather than a pause in one durable
+prepared invocation. Both mistakes existed before the recent patches; the
+patches expose them rather than create them.
+
+## External Research
+
+NIST SP 800-162 defines an access decision over the subject, object, requested
+operation, environment, and policy together. It also describes metapolicy as
+the mechanism that resolves conflicts between policies. This supports one
+composed decision for a tool invocation rather than independent class and
+capability answers that downstream code interprets differently.
+
+- Source: [NIST SP 800-162](https://csrc.nist.gov/pubs/sp/800/162/upd2/final).
+- Code implication: Kestrel should compute one effective result from tool,
+  actor, environment, project, mode, class, capability, and remembered
+  evidence. It should retain the inputs for explanation, not expose conflicting
+  partial answers as separate availability facts.
+
+Open Policy Agent documents a policy decision point that returns one decision
+to a policy enforcement point and records decisions for audit. Kestrel does not
+need OPA, but the responsibility split is useful: policy composition owns the
+decision; model filtering, execution, and clients enforce or project it.
+
+- Source: [Open Policy Agent deployment model](https://www.openpolicyagent.org/docs/deploy).
+- Code implication: the deliberator, Acter, Web, Mobile, and canary should not
+  re-decide policy from different subsets of the same evidence.
+
+NIST SP 800-207 requires authorization to be evaluated against current dynamic
+policy and least-privilege context. Presentation is therefore not durable
+execution authority.
+
+- Source: [NIST SP 800-207](https://nvlpubs.nist.gov/nistpubs/specialpublications/NIST.SP.800-207.pdf).
+- Code implication: model presentation and execution use the same resolver and
+  revisioned inputs, but execution reevaluates current strictness. A stricter
+  policy revision after presentation or approval fails closed or requires a
+  fresh approval.
+
+These sources shape the responsibility boundary. They do not establish
+Kestrel's product policy, which remains defined by the settled Environment,
+Project, and remembered-approval behavior in this notebook.
 
 ## Domain Model
 
@@ -129,6 +196,10 @@ patches; the patches expose it rather than create it.
   identity requires a new remembered approval.
 - **Baseline policy:** Environment and Project Automatic, Ask First, or Blocked
   policy, plus stricter subject, tool-minimum, and runtime requirements.
+- **Effective tool decision:** one computed result for one tool in one turn. It
+  states whether the tool is available, why it is unavailable when blocked,
+  and whether an available invocation is Automatic, Ask First, or Blocked.
+  Model exposure and execution consume the same result.
 - **Effect lifecycle:** not started, started, committed, or unknown, derived from
   `ToolExecutionOutcomeV1` rather than inferred from queue or run status.
 - **Provider capability:** an app-specific, one-time consumption record that
@@ -143,6 +214,19 @@ Invariants:
   its own identity and outcome.
 - Environment Automatic skips the card. Ask First consults remembered approval.
   Blocked always blocks.
+- An Ask First tool remains model-visible. Selecting it creates an approval
+  interaction. Approval policy must not be implemented by hiding the tool.
+- A tool blocked by mode, class, or capability is absent from both the model
+  surface and the validator's effective available-tool set.
+- The model-visible tool surface is a revisioned snapshot, not execution
+  authority. Execution reruns the same effective resolver against current
+  inputs and fails closed or requests fresh approval if authority became
+  stricter.
+- Every external-side-effect tool declares at least one approval capability.
+  Class permission cannot expose an unclassified external effect.
+- The hosted runtime pack is a capability ceiling. Environment and Project
+  policy own Automatic, Ask First, and Blocked. The pack does not silently
+  replace an eligible Ask First decision with runtime-strict approval.
 - Remembered approval cannot override Project Blocked, subject restriction,
   tool-minimum Ask, explicit runtime strictness, disabled capability, or lost
   actor access.
@@ -156,6 +240,33 @@ Invariants:
   records are projections or effect records, not competing decision ledgers.
 
 ## Blast Radius
+
+### Hosted profile and policy composition
+
+Primary owners are `runtimeProfile`, `kestrelOnePolicy`,
+`approvalPolicyPacks`, `KestrelChatRuntime`, the tool catalog, and mode
+contracts. `workspace_hosted` needs a policy pack that permits its intended
+developer-shell class and capabilities without imposing runtime-strict
+approval. Catalog validation must reject any external-effect tool without an
+approval capability. Profile satisfiability must evaluate real descriptors
+against the compiled policy instead of inferring permission from a pack ID.
+
+### Effective model and execution surface
+
+Primary owners are deliberator tool filtering, `DecisionPolicy`, approval
+disposition, and runtime diagnostics. They must consume one effective tool
+decision. A policy-hidden tool cannot remain "available" only because it exists
+in the full catalog. An accurate unavailable-tool response must terminate a
+noninteractive turn instead of entering an impossible correction loop.
+
+### Approval presentation and remembered eligibility
+
+Primary owners are `resolveToolApprovalDispositionV1`, Acter policy gates, the
+hosted request envelope, Web, and Mobile. Remember eligibility must come from
+the effective policy result. Web and Mobile must not independently reconstruct
+it from reason strings. Eligible Environment or Project Ask First decisions
+expose Decline, Approve Once, and Remember Approval. Subject Ask, tool-minimum
+Ask, runtime strictness, and Blocked remain ineligible.
 
 ### Stable invocation versus renewable credentials
 
@@ -235,6 +346,38 @@ the canonical interaction response is proven end to end.
 
 ## Candidate Seams and Options
 
+### Change `ci_bot` in place
+
+Adding `external_side_effect` and disabling strict approval would make the
+current hosted profile work. It would also change every explicit CI Bot profile
+and Desktop or job configuration. The current code does not establish that
+those consumers want interactive hosted semantics. Reject as the default
+design because it broadens the change outside the named environment.
+
+### Bind `workspace_hosted` to the developer pack
+
+The `dev` pack exposes shell execution but also permits network, MCP, and
+confirmation capabilities that the hosted preset does not need. Reject because
+it widens authority and hides the actual composition defect.
+
+### Give `workspace_hosted` a coherent hosted pack
+
+Add one hosted policy pack that permits read-only, sandboxed, and
+external-side-effect classes; permits only the exact capabilities intended by
+the hosted preset; and leaves `strictApprovalPerCall` false. Environment and
+Project policy then decide Automatic, Ask First, or Blocked. Keep `ci_bot`
+unchanged until its real consumers and desired semantics are reviewed. This is
+the selected profile seam because it changes only hosted workspaces.
+
+### Compute one effective tool decision
+
+Keep class, capability, mode, Environment, Project, subject, tool minimum,
+runtime strictness, and remembered evidence as explainable inputs. Resolve them
+once into availability, approval mode, reason, and Remember eligibility. Feed
+that result to model exposure, execution, approval presentation, Web, Mobile,
+and diagnostics. This is the selected policy seam. It removes contradictory
+projections without adding another persisted authority model.
+
 ### Treat Remember Approval as an Environment or Project policy edit
 
 This is the current `Always Approve` direction. It changes policy outside the
@@ -288,6 +431,28 @@ field-by-field resume exceptions, and makes the security proof understandable.
 
 ## Proposed Delta
 
+### Before tool selection
+
+- Add a hosted policy pack and bind `workspace_hosted` to it. Permit the
+  intended developer-shell class and exact capabilities. Do not impose runtime
+  strictness on ordinary hosted turns.
+- Require every external-side-effect descriptor to declare at least one
+  approval capability.
+- Replace hardcoded pack-name satisfiability checks with descriptor-level
+  validation against the compiled policy.
+- Compute one effective tool decision per tool and turn. Keep availability and
+  approval mode distinct: Ask First tools are visible; denied tools are not.
+- Validate `requested_tool_unavailable` against the effective available surface.
+  Do not prescribe a policy-change action that the control surface cannot make.
+- Carry one authoritative Remember-eligibility result to Web and Mobile. It is
+  true for eligible Environment or Project Ask First and false for subject Ask,
+  tool-minimum Ask, runtime strictness, Blocked, or unavailable tools.
+- Make exact-command canaries preflight the effective tool decision before any
+  paid model request. Bound model and validation attempts, record decision
+  rejection, and preserve nonzero telemetry on cancellation.
+
+### After tool selection
+
 1. Introduce a versioned stable authority fingerprint that excludes run-local
    and renewable credential IDs. Keep credential requirements explicit beside
    it for execution-time validation.
@@ -321,10 +486,10 @@ field-by-field resume exceptions, and makes the security proof understandable.
 12. Drive interaction terminal status from `ToolExecutionOutcomeV1`, reacquire
     renewable credentials before execution, and require deterministic dynamic
     provider rebind.
-13. Add a full hosted path that proves first ask, Remember Approval, and later
-    automatic invocations for the life of the thread. Include new-thread,
-    cross-user, cross-tool, stale-authority, credential rotation, restart,
-    expiry, and effect-state cases.
+13. Add a full hosted path that proves effective shell visibility, first Ask
+    First, Remember Approval, and later automatic invocations for the life of
+    the thread. Include new-thread, cross-user, cross-tool, stale-authority,
+    credential rotation, restart, expiry, and effect-state cases.
 14. Remove the old approval reconstruction path, boolean decisions, Environment
     Apps approval-return detour, duplicate app-decision transitions, incident
     reconciliation, and compatibility tests after their removal gates pass.
@@ -434,10 +599,29 @@ invocation identity to renewable execution credential.
 
 ## Decisions
 
+- Bind `workspace_hosted` to a dedicated `hosted_workspace` policy pack. Keep
+  `ci_bot` unchanged until its non-hosted consumers and product intent are
+  reviewed. Confidence: high.
+- The hosted pack permits the intended external-effect class only with exact
+  allowed approval capabilities and does not set runtime strictness.
+  Confidence: high.
+- Compute one effective tool decision and project it everywhere. Do not add a
+  second persisted policy engine. Persist the selected disposition and authority
+  revision only where the prepared invocation and approval audit require them.
+  Confidence: high.
+- Treat Environment or Project Ask First as eligible for Remember Approval.
+  Web and Mobile must consume the authoritative eligibility result instead of
+  recomputing it from reason strings. Confidence: high.
+- Accept an unavailable-tool terminal response against the effective surface
+  when no available control can change the blocking policy. Confidence: high.
+- Fail exact-command qualification before model spending when the required
+  tool is not effectively visible. Confidence: high.
 - The security goal is sound; the pause/resume composition is structurally
   wrong. Confidence: high.
-- The first wrong component is the approval gate/lifecycle, which asks before a
-  durable prepared invocation exists. Confidence: high.
+- For the observed hosted-shell failure, the first wrong component is
+  profile/policy composition. For calls that do reach approval, the first
+  lifecycle defect is the approval gate asking before a durable prepared
+  invocation exists. Confidence: high.
 - `scopeFingerprint` currently conflates identity and credentials. Confidence:
   high.
 - `PreparedToolCallV1` is the existing surface that should own the durable
@@ -493,9 +677,18 @@ invocation identity to renewable execution credential.
 - Return condition: implementation plan is ordered by compatibility and
   production reversibility
 
+## Active Change Frontier
+
+- Cancellation returned zero telemetry despite recorded model calls. The
+  design requires truthful terminal telemetry, but the exact owner between
+  cancel handling, result reconciliation, and stream projection remains to be
+  isolated with a no-provider reproduction.
+- The deployed population of explicit `ci_bot` profiles is unknown. The chosen
+  dedicated hosted pack avoids making that inventory a blocker.
+
 ## Best Next Move
 
-Execute the dependency-aware issue graph from dormant contract expansion
-through exact execution, canonical decision ownership, remembered activation,
-and evidence-gated cleanup. Treat any production bridge as temporary and do
-not merge it merely because focused tests pass.
+Use a no-provider cancellation reproduction to locate the zero-telemetry owner,
+then refresh the existing Product Brief and issue graph against this completed
+design before further implementation. Do not treat the current shell canary as
+evidence for the prepared-invocation path until effective-tool preflight passes.

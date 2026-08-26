@@ -2,6 +2,19 @@
 
 ## Executive Summary
 
+Kestrel must first make hosted tool availability and approval one coherent
+decision. `workspace_hosted` should use a dedicated `hosted_workspace` policy
+pack. The pack exposes the intended shell tools and exact capabilities without
+forcing runtime-strict approval. Environment and Project policy remain the
+owners of Automatic, Ask First, and Blocked.
+
+One effective tool decision must drive the model surface, execution checks,
+approval presentation, remembered-approval eligibility, Web, Mobile, and
+diagnostics. Ask First tools remain visible and pause after selection. Blocked
+tools are unavailable everywhere. Kestrel must not tell the model a tool is
+unavailable and then reject that answer because the unfiltered catalog still
+contains the tool.
+
 Kestrel should approve and resume one durable prepared tool invocation. It
 should stop reconstructing a tool call in a continuation run and comparing that
 new call with the action shown to the user.
@@ -26,16 +39,33 @@ not edit Environment or Project policy.
 
 ## Current Behavior and First Wrong Component
 
-The reference approval gate calculates normalized tool input and writes a
-lightweight `pendingApproval`. It does not persist a `PreparedToolCallV1`.
+The observed hosted-shell failure becomes wrong before an approval card can be
+created. `workspace_hosted` advertises developer-shell tools but defaults to
+the `ci_bot` policy pack. That pack permits `shell.exec`, denies the
+`external_side_effect` class containing `exec_command`, and sets
+`strictApprovalPerCall` to true. Profile satisfiability nevertheless accepts
+the composition through pack-specific assumptions instead of evaluating the
+real tool descriptors against the compiled policy.
 
-After approval, `ExecutionEngine` resolves another tool surface and activation,
-then creates the prepared call in the continuation run. The binding preserves
-the original run ID. `UnifiedToolRegistry` separately reconstructs static
-built-in execution from `blockedToolScope` and permits an MCP grant-ID change.
+The deliberator then removes `exec_command` from the model-visible surface.
+The full capability manifest still contains it. When the model accurately
+reports that the requested tool is unavailable, `DecisionPolicy` validates the
+answer against that unfiltered manifest, rejects it, and asks for a policy or
+approval change that the runtime exposes no control to perform. Generic retry
+handling turns the contradiction into additional paid model calls.
 
-The first wrong component is therefore the approval gate and lifecycle. The
-system asks for approval before the durable executable command exists.
+For this observed failure, the first wrong component is hosted profile and
+policy composition. Tool availability is not resolved once and shared by model
+exposure, validation, execution, approval, and diagnostics.
+
+There is a second structural failure after an Ask First tool is selected. The
+reference approval gate calculates normalized input and writes a lightweight
+`pendingApproval`, but does not persist a `PreparedToolCallV1`. After approval,
+`ExecutionEngine` resolves another tool surface and activation, then creates
+the prepared call in the continuation run. The binding preserves the original
+run ID. `UnifiedToolRegistry` separately reconstructs static built-in execution
+from `blockedToolScope` and permits an MCP grant-ID change. The system asks for
+approval before the durable executable command exists.
 
 `fingerprintToolRunScopeV1` compounds the problem. It hashes stable authority
 with renewable values such as run ID, MCP grant ID, project-context grant ID,
@@ -54,7 +84,77 @@ navigates to Environment Apps, changes broad policy, and then approves the
 pending invocation once. There is no thread-scoped approval memory, and the
 broad policy mutation can affect work beyond the current thread.
 
+The current branch can resolve remembered evidence to an automatic disposition
+in the registry, but the Acter layer subsequently replaces it with
+`runtime_strict` Ask because `ci_bot` requires approval per call. Web and Mobile
+then hide Remember Approval. They also duplicate eligibility from reason
+strings and currently omit Project Ask First, although the settled product
+contract makes both Environment and Project Ask First eligible.
+
+The primary code evidence is concentrated in:
+
+- `src/profile/runtimeProfile.ts`, `src/profile/kestrelOnePolicy.ts`,
+  `src/kestrel/contracts/profile.ts`, and `tools/devshell/execCommand.ts` for
+  hosted profile composition, policy classes, and shell descriptor authority;
+- `agents/reference-react/src/steps/deliberator.ts` and
+  `agents/reference-react/src/policy/DecisionPolicy.ts` for the split between
+  model-visible tools and unavailable-tool validation;
+- `agents/reference-react/src/steps/acter/policyGates.ts` and
+  `apps/web/lib/apps/runtime-approval-policy.ts` for disposition ordering and
+  remembered-approval eligibility;
+- `apps/web/components/chatbot/interaction-panel.tsx` and
+  `apps/web/app/api/mobile/v1/threads/[id]/interactions/[checkpointId]/route.ts`
+  for Web and Mobile projections;
+- `src/engine/ExecutionEngine.ts`, `src/io/ToolInvocationSupport.ts`, and
+  `tools/runtime/UnifiedToolRegistry.ts` for prepared-call reconstruction and
+  credential-bound resume behavior.
+
+## External Findings That Shaped the Design
+
+[NIST SP 800-162](https://csrc.nist.gov/pubs/sp/800/162/upd2/final)
+defines authorization as a decision over subject, object, operation,
+environment, and policy together, with a metapolicy resolving conflicts. This
+supports one composed effective tool decision while retaining its inputs for
+explanation and audit.
+
+The [Open Policy Agent deployment model](https://www.openpolicyagent.org/docs/deploy)
+separates a policy decision point from enforcement points and records decisions
+for audit. Kestrel does not need an OPA dependency. The relevant lesson is that
+policy composition should return one answer; the deliberator, validator,
+Acter, Web, Mobile, and canaries should enforce or project that answer instead
+of independently re-deciding it from partial evidence.
+
+[NIST SP 800-207](https://nvlpubs.nist.gov/nistpubs/specialpublications/NIST.SP.800-207.pdf)
+requires authorization against current dynamic policy and least-privilege
+context. The resulting clarification is important: a model-visible tool surface
+is a revisioned snapshot, not durable execution authority. Presentation and
+execution use the same resolver and revisioned inputs, but execution
+reevaluates current strictness and fails closed or requires fresh approval when
+authority has become stricter. Applying this to an AI tool catalog is an
+architectural inference; the source does not define Kestrel's product modes.
+
 ## Chosen Design
+
+Bind `workspace_hosted` to a dedicated `hosted_workspace` policy pack. The pack
+permits read-only, sandboxed, and intended external-effect classes plus only
+the exact capabilities required by hosted workspaces. It does not impose
+runtime-strict approval. Keep `ci_bot` unchanged until its explicit CI,
+Desktop, and job consumers are reviewed.
+
+Compute one effective tool decision per tool and turn. It contains
+availability, approval mode, reason, Remember eligibility, and authority
+revision. Ask First tools remain model-visible and pause only after selection;
+Blocked tools are unavailable to both the model and effective-surface
+validation. The same decision drives execution checks, Acter, Web, Mobile,
+canaries, and diagnostics. This is a computed contract, not a second persisted
+policy engine. Execution reevaluates the same resolver against current
+revisioned inputs; consistency never authorizes stale authority.
+
+Environment and Project policy remain the owners of Automatic, Ask First, and
+Blocked. Eligible Environment or Project Ask First presents Decline, Approve
+Once, and Remember Approval. Subject restrictions, tool-minimum Ask, explicit
+runtime strictness, disabled capabilities, and lost actor access remain
+ineligible and cannot be weakened by remembered evidence.
 
 The approval gate prepares and normalizes the call before it waits. It persists
 the resulting `PreparedToolCallV1` with a stable invocation identity.
@@ -206,6 +306,8 @@ for deliberate broad policy changes.
 
 | Surface | Change | Production unit |
 | --- | --- | --- |
+| Hosted profile and policy composition | Add a scoped hosted pack; validate real descriptor satisfiability | Shared profile/runtime package and worker image |
+| Effective tool decision | One availability and approval result drives model, validator, execution, and clients | Shared agent/runtime packages, Web, Mobile, and worker image |
 | Approval gate and engine | Prepare before waiting; execute persisted call | Shared runtime and worker image |
 | Tool contracts and registry | Split authority from credentials; remove resume exceptions | Shared runtime packages and images |
 | Actor transport | Carry actual deciding actor | Web and worker |
@@ -215,6 +317,7 @@ for deliberate broad policy changes.
 | Dynamic MCP | Deterministic rebind or fresh approval | Runtime/MCP image |
 | Web and Mobile response protocol | Three-way decision; retire boolean response | Web and Mobile clients |
 | Runtime policy evidence | Carry typed remembered authority to each fresh call | Shared runtime and worker image |
+| Canaries and telemetry | Preflight exact-tool visibility; preserve rejection, spend, and cancellation truth | Web, worker, and operational canaries |
 | Operations | Remove incident reconciliation command | Web repository and runbook |
 
 CLI, Desktop, and TUI receive the versioned shared runtime contract even though
@@ -226,6 +329,12 @@ provider implementations do not need broad rewrites.
 Old and new interactions may coexist only through an explicit version. New
 requests use the prepared-invocation path. Existing old-version requests finish
 on the old path or are expired safely; they are never silently upgraded.
+
+New `workspace_hosted` profile resolutions use `hosted_workspace`. Existing
+resolved profile snapshots retain their recorded pack and contract revision
+until they finish, drain, or expire. The change does not rewrite pending
+approval authority in place. Because `ci_bot` is not changed, its deployed
+population does not block the hosted repair.
 
 The compatibility code can be removed when all of these conditions hold:
 
@@ -247,6 +356,25 @@ condition is defined when they are added. Cleanup is not a separate indefinite
 follow-up.
 
 ## Rejected Alternatives
+
+Changing `ci_bot` in place is rejected. It would alter explicit CI, Desktop,
+and job consumers whose desired approval semantics are not established by the
+hosted incident.
+
+Binding hosted workspaces to the broad developer pack is rejected. It exposes
+network, MCP, and confirmation capabilities beyond the hosted preset's needs.
+
+Permitting the external-effect class without requiring every external-effect
+descriptor to declare an approval capability is rejected. Class permission
+cannot make an unclassified external effect executable.
+
+Teaching Web and Mobile to show Remember Approval for `runtime_strict` is
+rejected. The runtime would still ignore remembered evidence, so the UI would
+promise behavior the execution layer refuses.
+
+Changing the exact-command canary to use a different executable tool is
+rejected. It would hide the `exec_command` composition defect instead of
+proving the advertised hosted tool surface.
 
 Expanding `blockedToolScope` would copy more credentials and require another
 fixed-versus-rotatable classification whenever run context grows. It is
@@ -273,6 +401,17 @@ identity, preparation, validation, effect outcome, and audit evidence.
 The replacement requires one full hosted acceptance path from browser to
 provider effect. It must cover:
 
+- `workspace_hosted` exposes `exec_command` to the model under the dedicated
+  hosted pack;
+- a contradictory profile fails satisfiability before any model request;
+- a policy-hidden requested tool can terminate truthfully without retries when
+  no available control can change policy;
+- the exact-command canary preflights effective availability before model
+  spend;
+- Environment and Project Ask First both render exactly three decisions;
+- explicit runtime strictness remains per-call and never offers Remember;
+- a stricter policy revision after model presentation or approval fails closed
+  or requires fresh approval;
 - normal approval and denial;
 - first Ask First, Remember Approval, and automatic later invocations for the
   life of the thread;
@@ -287,6 +426,8 @@ provider effect. It must cover:
 - failure before an external effect starts;
 - an unknown external effect state;
 - one-time provider consumption;
+- cancellation after model activity preserves nonzero request, token, cost,
+  rejection, and terminal-reason telemetry;
 - no legacy response or blocked-scope invocation on the new version.
 
 Focused source-regex tests do not prove this design. The acceptance path must
@@ -294,6 +435,22 @@ exercise Web, PostgreSQL, queue, worker, runtime, and provider consumption.
 
 ## Decisions
 
+- Bind `workspace_hosted` to a dedicated `hosted_workspace` policy pack; keep
+  `ci_bot` unchanged.
+- Make the hosted pack a capability ceiling with no implicit runtime-strict
+  override. Environment and Project own Automatic, Ask First, and Blocked.
+- Require every external-side-effect tool to declare at least one approval
+  capability.
+- Replace pack-name satisfiability assumptions with descriptor-level checks
+  against the compiled policy.
+- Compute one effective tool decision and project it everywhere; do not add a
+  second persisted policy authority.
+- Treat both Environment and Project Ask First as Remember-eligible. Keep
+  subject Ask, tool-minimum Ask, runtime strictness, Blocked, and unavailable
+  tools ineligible.
+- Accept a truthful unavailable-tool terminal result against the effective
+  surface when the runtime exposes no policy-changing control.
+- Preflight exact-command canaries before paid model work.
 - Keep the approval security model. Replace the reconstruction lifecycle.
 - Use `PreparedToolCallV1` as the durable suspended command.
 - Separate stable invocation authority from renewable execution credentials.
@@ -314,6 +471,15 @@ exercise Web, PostgreSQL, queue, worker, runtime, and provider consumption.
 
 ## Final Contract Shape
 
+The effective tool decision is computed from descriptor, actor, mode,
+Environment, Project, class, capability, subject, runtime strictness, and
+remembered evidence. It is the authoritative input to model exposure,
+validation, execution, and UI projection. Persist only the selected
+disposition and authority revision needed for a prepared invocation and audit;
+do not create another mutable policy store. Execution evaluates current
+revisioned inputs through the same resolver and rejects a stale decision when
+authority has become stricter.
+
 Use `StableToolApprovalIdentityV1` with tool ID, descriptor contract revision,
 and approval-authority revision. Use `RememberedToolApprovalV1` with version,
 record ID, organization ID, thread ID, actor user ID, stable tool identity,
@@ -323,5 +489,10 @@ the maximum configured old-interaction lifetime plus one complete worker
 rollout cycle. This rule derives the wall-clock period from deployed settings
 without changing product behavior or ownership.
 
-No external research shaped this revision because the requested boundary was
-the Kestrel codebase and its current runtime contracts.
+The one unresolved design frontier is cancellation telemetry. The observed run
+returned zero telemetry despite recorded model calls. The contract is settled:
+cancellation must preserve model usage, validation rejection, and terminal
+reason. A no-provider reproduction still needs to isolate whether cancel
+handling, result reconciliation, or stream projection first discards those
+facts. That ownership question does not change the profile, approval, or
+prepared-invocation design above.

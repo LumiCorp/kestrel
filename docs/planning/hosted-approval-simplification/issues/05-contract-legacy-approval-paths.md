@@ -13,12 +13,15 @@ only after no old interaction can use it.
 ## What changes
 
 Extend the hosted approval canary into a full browser-to-effect acceptance path.
-It must cover Decline, Approve Once followed by another ask, Remember Approval
-followed by automatic later calls, and a new thread that asks again. It must
-also prove cross-user, cross-project, cross-Environment, and stale-tool
-isolation, same-actor enforcement, credential rotation, worker and registry
-restart, expiry, provider one-time consumption, effect-not-started failure, and
-unknown effect handling.
+It must first prove the dedicated hosted policy pack, effective
+`exec_command` visibility, and no-spend exact-tool preflight. It must cover
+Decline, Approve Once followed by another ask, Remember Approval followed by
+automatic later calls, and a new thread that asks again. It must also prove a
+truthful policy-hidden terminal result without another model call; cross-user,
+cross-project, cross-Environment, and stale-tool isolation; same-actor
+enforcement; credential rotation; worker and registry restart; expiry;
+provider one-time consumption; effect-not-started failure; unknown effect
+handling; and nonzero telemetry when cancellation follows model work.
 
 The canary must compare the card's server-owned request with the persisted
 prepared invocation, approval binding, and consuming execution. Request ID,
@@ -28,8 +31,9 @@ revision must match. A rendered `Approved` state is not execution proof.
 
 Add production-safe telemetry for approval version, decision, stable tool
 identity revision, policy result, remembered-evidence match or rejection,
-credential refresh, execution outcome, and compatibility-path use. Do not log
-payloads, credentials, or provider secrets.
+credential refresh, model usage, validation rejection, cancellation reason,
+execution outcome, and compatibility-path use. Do not log payloads,
+credentials, prompts, or provider secrets.
 
 Deploy issue 01's additive database migration and empty-evidence parsers before
 any new writer. Deploy compatible shared runtime and turn-worker readers before
@@ -66,9 +70,13 @@ unrebindable invocations.
 
 The canonical requirements are in the [Hosted Approval Simplification Product Brief](../../hosted-approval-simplification-product-brief.md).
 
-The new user experience from [issue 03](03-remember-thread-tool-approval.md) and
-canonical lifecycle from [issue 04](04-canonicalize-approval-lifecycle.md) must
-both be implemented before this issue can contract legacy paths.
+The completed user experience from
+[issue 03](03-remember-thread-tool-approval.md) and canonical lifecycle from
+[issue 04](04-canonicalize-approval-lifecycle.md) remain the approval
+foundation. The effective hosted tool decision from
+[issue 06](06-unify-hosted-tool-decision.md) and cancellation evidence from
+[issue 07](07-preserve-cancellation-telemetry.md) must be complete before this
+issue can finish production qualification or contract legacy paths.
 
 Current compatibility and proof surfaces include
 `apps/web/scripts/github-approval-canary.ts`,
@@ -88,6 +96,11 @@ provider-consumption behavior.
   authenticated actor transport, credential refresh, worker execution,
   provider consumption, and terminal effect projection for every defining
   scenario above.
+- The canary proves `exec_command` is visible under the real hosted profile,
+  policy-hidden tools terminate truthfully without correction retries, and an
+  unavailable exact tool fails before model spend.
+- Production cancellation evidence preserves nonzero usage, validation
+  rejection, cost, and terminal reason after model activity.
 - Mixed-version tests prove old interactions finish or expire safely and new
   interactions never reconstruct or silently downgrade.
 - CLI, Desktop, and TUI parse the final shared contracts with no hosted
@@ -103,8 +116,8 @@ provider-consumption behavior.
   unchanged in purpose.
 - Release notes and the hosted approval operating guidance name migration
   order, rollback boundary, observation evidence, terminal incident status, and
-  final production units: PostgreSQL, Web, Mobile, shared runtime, and
-  turn-worker.
+  final production units: PostgreSQL, Web, Mobile, shared profile, protocol,
+  agent and runtime packages, and turn-worker.
 - The complete hosted acceptance suite passes after cleanup with no legacy
   compatibility consumer.
 - `pnpm validate`, `pnpm validate:postgres`, `pnpm validate:process`, and
@@ -112,5 +125,5 @@ provider-consumption behavior.
 
 ## Depends on
 
-- [Remember Ask First approval for the thread](03-remember-thread-tool-approval.md)
-- [Make the thread interaction the approval decision owner](04-canonicalize-approval-lifecycle.md)
+- [Make hosted tool availability and approval one truthful decision](06-unify-hosted-tool-decision.md)
+- [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)

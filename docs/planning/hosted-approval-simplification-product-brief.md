@@ -4,20 +4,35 @@
 
 Kestrel users can allow tools to run automatically, require approval before
 execution, or block execution through Environment and Project policy. The
-current hosted approval implementation does not preserve that model cleanly.
-It asks before a durable executable command exists, reconstructs the tool call
-after the user responds, and mixes stable approval authority with credentials
-that normally change while the request waits.
+current hosted implementation does not preserve that model cleanly before or
+after approval.
+
+Before approval, `workspace_hosted` advertises developer-shell tools but uses a
+policy pack that denies their execution class and forces approval on every
+call. Kestrel hides `exec_command` from the model, then rejects the model's
+accurate report that the requested tool is unavailable because an unfiltered
+catalog still contains it. The resulting correction cannot be performed by
+the model and can cause repeated paid calls.
+
+After tool selection, Kestrel asks before a durable executable command exists.
+It reconstructs the tool call after the user responds and mixes stable approval
+authority with credentials that normally change while the request waits.
 
 This composition has caused valid approved work to fail when run IDs, MCP
 grants, project-context grants, leases, or pinned handlers change. The Web layer
 also offers an `Always Approve` action that changes broad Environment policy
 instead of remembering the user's choice inside the current thread.
 
-Kestrel must suspend one already prepared tool invocation and resume that exact
-invocation after approval. Environment and Project policy remain Automatic,
-Ask First, or Blocked. When an eligible Ask First decision is required, the
-approval card must offer Decline, Approve Once, and Remember Approval.
+Kestrel must make one effective tool decision from the current profile, tool,
+actor, mode, Environment policy, Project policy, capability, restrictions, and
+remembered evidence. That decision must drive model exposure, validation,
+execution, approval presentation, clients, canaries, and diagnostics.
+
+Kestrel must then suspend one already prepared tool invocation and resume that
+exact invocation after approval. Environment and Project policy remain
+Automatic, Ask First, or Blocked. When an eligible Environment or Project Ask
+First decision is required, the approval card must offer Decline, Approve Once,
+and Remember Approval.
 
 Remember Approval approves the current exact invocation and remembers the tool
 for that authenticated user for the life of that thread. Later calls to the
@@ -29,9 +44,20 @@ change Environment or Project policy and does not approve a future payload.
 
 This initiative must produce these outcomes:
 
+- `workspace_hosted` uses a dedicated `hosted_workspace` policy pack that
+  exposes its intended tools without forcing runtime-strict approval.
+- `ci_bot` keeps its existing behavior for explicit CI, Desktop, and job use.
+- One effective tool decision defines availability, approval mode, reason,
+  Remember eligibility, and authority revision for every consumer.
+- Ask First tools remain visible to the model. Blocked tools are unavailable to
+  both the model and effective-surface validation.
+- Contradictory tool and policy combinations fail before model spend.
+- A truthful unavailable-tool result terminates without impossible correction
+  retries when no available control can change policy.
 - Hosted approval suspends one durable `PreparedToolCallV1` before execution.
 - Approval resumes that same prepared invocation instead of reconstructing it.
-- Eligible Ask First cards show Decline, Approve Once, and Remember Approval.
+- Eligible Environment or Project Ask First cards show Decline, Approve Once,
+  and Remember Approval.
 - Approve Once applies only to the current invocation.
 - Remember Approval applies to the same authenticated user, thread, and stable
   tool identity for the life of the thread.
@@ -43,16 +69,23 @@ This initiative must produce these outcomes:
 - `thread_interactions` becomes the canonical human-decision record.
 - Provider-specific records retain payload and one-time consumption duties but
   stop owning a competing approval decision.
+- Cancellation preserves model usage, validation rejection, cost, and terminal
+  reason when model work has already occurred.
 - Obsolete reconstruction, policy-detour, duplicate-lifecycle, and incident
   compatibility code is removed after explicit drain gates pass.
 
-The delivery boundary includes hosted Web and Mobile approval, shared approval
+The delivery boundary includes hosted profile composition, model tool
+projection and validation, hosted Web and Mobile approval, shared approval
 contracts, runtime policy resolution, durable interaction state, PostgreSQL
 persistence, queue and worker transport, tool execution, provider consumption,
-effect outcomes, migration, compatibility, observability, and cleanup.
+effect outcomes, canaries, migration, compatibility, observability, and
+cleanup.
 
 This initiative does not:
 
+- Change `ci_bot` to carry interactive hosted semantics.
+- Bind hosted workspaces to the broader developer policy pack.
+- Add OPA, Cedar, or another persisted policy engine.
 - Change the meaning of Environment or Project Automatic, Ask First, or
   Blocked.
 - Add a fourth Environment policy mode.
@@ -60,6 +93,7 @@ This initiative does not:
   workflow.
 - Share remembered approval between users, threads, projects, or environments.
 - Reuse the normalized payload or approval identity of an earlier invocation.
+- Treat a model-visible tool snapshot as durable execution authority.
 - Let remembered approval override a disabled capability, Blocked policy,
   subject restriction, tool-minimum approval, explicit runtime strictness, or
   missing actor access.
@@ -70,6 +104,22 @@ This initiative does not:
 - Make the tactical project-context bridge the final architecture.
 
 ## Defining Scenarios
+
+### A hosted turn requests a shell tool under Ask First
+
+Kestrel composes `workspace_hosted` with the dedicated hosted policy pack. The
+effective tool resolver confirms that `exec_command` is available and Ask
+First. The model can select the tool. Kestrel prepares the exact invocation and
+then shows the approval card. The user sees Decline, Approve Once, and Remember
+Approval.
+
+### A requested tool is unavailable by policy
+
+Kestrel excludes the tool from both the model-visible surface and the effective
+available-tool set. If the model has no control that can change the policy, an
+accurate unavailable-tool result ends the turn. Kestrel does not prescribe an
+impossible policy action or make more model calls for the same contradiction.
+An exact-tool canary fails during preflight before paid model work.
 
 ### A user declines an Ask First request
 
@@ -131,6 +181,11 @@ If policy later returns to eligible Ask First in the same thread, the existing
 thread-lifetime record can satisfy the ask when its user and stable tool
 identity still match.
 
+If policy becomes stricter after model presentation or approval, execution
+reevaluates the same effective resolver against current revisioned inputs.
+Kestrel fails closed or requires fresh approval. The earlier tool surface or
+approval does not preserve stale authority.
+
 ### Credentials rotate while approval waits
 
 The prepared invocation retains immutable action and authority. After approval,
@@ -147,6 +202,12 @@ Kestrel records `unknown` and does not retry as though nothing happened. A retry
 is allowed only when `ToolExecutionOutcomeV1` proves that the effect did not
 start.
 
+### A run is canceled after model work
+
+Kestrel records the model requests, token and cost usage, validation rejection,
+and cancellation reason already produced by the run. Cancellation ends further
+work but does not replace recorded activity with zero telemetry.
+
 ### An old approval is still pending during migration
 
 Old and new approval interactions carry explicit versions. New requests use
@@ -158,8 +219,15 @@ silently converts an old pending interaction into the new authority model.
 
 - Environment and Project policy must continue to expose Automatic, Ask First,
   and Blocked.
-- An eligible Ask First approval card must show exactly Decline, Approve Once,
-  and Remember Approval.
+- An eligible Environment or Project Ask First approval card must show exactly
+  Decline, Approve Once, and Remember Approval.
+- Ask First must mean that the tool remains available and pauses after
+  selection. Kestrel must not implement Ask First by hiding the tool.
+- Blocked must mean that the tool is unavailable to the model and execution.
+- Kestrel must not reject a truthful unavailable-tool result by consulting a
+  broader catalog than the model can use.
+- Exact-tool canaries must fail before paid model work when policy makes the
+  required tool unavailable.
 - The product must not label a broad Environment policy mutation as a response
   to one thread approval.
 - Remember Approval must last for the life of the thread without adding a
@@ -181,13 +249,45 @@ silently converts an old pending interaction into the new authority model.
 
 ## Technology Requirements
 
+### Hosted profile and effective tool decision
+
+- `workspace_hosted` must use a dedicated `hosted_workspace` policy pack.
+- The hosted pack must permit `read_only`, `sandboxed_only`, and
+  `external_side_effect` tool classes.
+- The hosted pack must permit only `workspace.read`, `workspace.write`,
+  `shell.exec`, and `code.execute` approval capabilities.
+- The hosted pack must not set runtime-strict approval for ordinary hosted
+  turns. Environment and Project policy must own Automatic, Ask First, and
+  Blocked.
+- `ci_bot` must remain unchanged until its explicit consumers and product
+  semantics are reviewed separately.
+- Every external-side-effect tool descriptor must declare at least one approval
+  capability.
+- Profile satisfiability must evaluate real tool descriptors against the
+  compiled policy. It must not infer permission from a policy pack name.
+- One shared resolver must compute availability, approval mode, reason,
+  Remember eligibility, and authority revision from the current tool, actor,
+  mode, Environment policy, Project policy, class, capability, restrictions,
+  runtime strictness, and remembered evidence.
+- Model projection, unavailable-tool validation, execution, Acter, Web,
+  Mobile, canaries, and diagnostics must consume that resolver's result.
+- Ask First tools must remain model-visible. Tools blocked by mode, class, or
+  capability must be absent from both the model surface and the effective
+  available-tool set used by validation.
+- A policy-hidden tool may produce a terminal unavailable-tool result when the
+  model has no available control that can change the policy.
+- Model presentation must be a revisioned snapshot, not execution authority.
+  Execution must rerun the same resolver against current inputs and fail closed
+  or require fresh approval when authority has become stricter.
+- Exact-tool canaries must preflight the effective decision before model spend.
+
 ### Approval and policy contracts
 
 - The versioned decision contract must represent `decline`, `approve_once`, and
   `remember_approval` instead of an optional boolean.
 - Old boolean interactions may use a compatibility parser only while old
   interactions remain pending or processable.
-- One shared resolver must apply current Environment and Project policy,
+- The shared resolver must apply current Environment and Project policy,
   stricter restrictions, stable tool identity, and remembered evidence.
 - Automatic must run without an approval card.
 - Blocked must never be overridden by remembered evidence.
@@ -281,9 +381,13 @@ silently converts an old pending interaction into the new authority model.
 
 ### Migration, deployment, and cleanup
 
-- The change requires a PostgreSQL migration, Web deployment, shared protocol
-  and runtime package release, Mobile contract update, and hosted turn-worker
-  image.
+- The change requires a PostgreSQL migration, Web deployment, shared profile,
+  protocol, agent, and runtime package release, Mobile contract update, and
+  hosted turn-worker image.
+- New `workspace_hosted` resolutions must use `hosted_workspace`. Existing
+  resolved profile snapshots must retain their recorded pack and contract
+  revision until they finish, drain, or expire.
+- Migration must not rewrite pending approval authority in place.
 - CLI, Desktop, and TUI must accept the versioned shared contracts but do not
   need to persist hosted remembered approvals.
 - New approval requests must use an explicit prepared-invocation version.
@@ -306,6 +410,12 @@ silently converts an old pending interaction into the new authority model.
 
 ### Verification and observability
 
+- Composition tests must prove that the hosted pack exposes `exec_command` and
+  reject any advertised tool denied by its compiled class or capability policy.
+- Unavailable-tool tests must distinguish mode-hidden from policy-hidden tools
+  and prove terminal completion without another model call when no correction
+  control exists.
+- Exact-tool canaries must prove effective visibility during no-spend preflight.
 - Contract tests must cover the three decision values and reject malformed or
   ambiguous responses.
 - Policy tests must cover Automatic, eligible Ask First, Blocked, and every
@@ -323,6 +433,8 @@ silently converts an old pending interaction into the new authority model.
   restart, dynamic provider rebind failure, expiry, provider consumption,
   effect-not-started failure, and unknown effect state.
 - Web and Mobile must prove equivalent decision behavior.
+- Cancellation tests must preserve nonzero model request, token, cost,
+  validation-rejection, and terminal-reason telemetry after model activity.
 - Telemetry must identify approval version, decision, stable tool identity
   revision, policy result, remembered-evidence match or rejection reason,
   credential refresh result, execution outcome, and compatibility-path use
@@ -344,6 +456,8 @@ silently converts an old pending interaction into the new authority model.
   broad app policy changes in Environment Apps.
 - Kestrel owns stable tool identity, policy evaluation, prepared-call
   persistence, credential refresh, effect tracking, and truthful status.
+- Kestrel also owns coherent hosted profile composition and the shared
+  effective tool decision used across model, runtime, and client surfaces.
 - Operators own migration sequencing, mixed-version monitoring, legacy drain
   confirmation, incident-row closure, and removal of compatibility paths.
 - Operators must deploy the PostgreSQL migration before code that writes
@@ -351,7 +465,8 @@ silently converts an old pending interaction into the new authority model.
   compatible throughout rollout.
 - Support must be able to distinguish denial, actor mismatch, stale tool
   identity, stricter policy, expired invocation, credential refresh failure,
-  unrebindable provider, and unknown external effect from structured evidence.
+  unrebindable provider, unavailable policy-hidden tool, impossible correction,
+  cancellation, and unknown external effect from structured evidence.
 - No new approval administrator, manual grant manager, or remembered-approval
   support workflow is introduced.
 
@@ -359,8 +474,15 @@ silently converts an old pending interaction into the new authority model.
 
 Success is observable when:
 
-- Every eligible Ask First card shows Decline, Approve Once, and Remember
-  Approval in Web and Mobile.
+- The default hosted profile exposes `exec_command` under the dedicated hosted
+  pack without weakening `ci_bot`.
+- Contradictory hosted tool and policy combinations fail before model spend.
+- Model exposure, unavailable-tool validation, execution, Web, and Mobile agree
+  on the same effective tool decision.
+- A truthful policy-hidden unavailable-tool result ends without an impossible
+  correction loop or another paid model call.
+- Every eligible Environment or Project Ask First card shows Decline, Approve
+  Once, and Remember Approval in Web and Mobile.
 - Approve Once executes the exact prepared call and asks again next time.
 - Remember Approval executes the exact current call and suppresses later
   eligible prompts only for the same user, thread, and stable tool identity.
@@ -372,6 +494,8 @@ Success is observable when:
   credential check, outcome, and audit record.
 - One canonical interaction decision agrees with provider consumption and
   terminal effect projection.
+- Cancellation after model activity preserves nonzero usage, rejection, cost,
+  and terminal-reason telemetry.
 - No new hosted approval uses reconstructed tool calls, broad-policy approval
   detours, or duplicate decision ledgers.
 - Old approval paths and incident code are removed after their drain evidence
@@ -382,18 +506,28 @@ Success is observable when:
 
 **Readiness: Ready for issue creation.**
 
-The product behavior, policy order, identity contracts, state ownership,
-thread lifetime, deployment units, compatibility rules, cleanup boundary, and
-operating responsibilities are settled. The implementation worktree must start
-from deployed-source revision `b36756002321b7a7e942d9a08799e7b01fa387f3` or a
-verified descendant because the design-artifact worktree was older when the
-blast radius was captured.
+The product behavior, hosted policy composition, effective-decision contract,
+policy order, identity contracts, state ownership, thread lifetime, deployment
+units, compatibility rules, cleanup boundary, and operating responsibilities
+are settled. Implementation must begin from the current deployed production
+source or a verified descendant and revalidate the named seams before changes
+are applied.
 
 The tactical project-context bridge remains a separate production incident
 choice. It may be used only as a bounded bridge with an explicit removal gate;
 it does not change this Product Brief. The exact wall-clock observation period
 is derived from the configured old-interaction lifetime and worker rollout
 cycle, so it does not block issue creation.
+
+The exact component that discards cancellation telemetry remains unknown. This
+does not block issue creation because the required behavior, evidence, and
+failure boundary are settled. Delivery must first reproduce the loss without a
+provider call, then repair the first component that drops recorded activity.
+This is a bounded diagnosis inside the existing telemetry pipeline, not an
+unresolved product behavior or architecture choice.
+
+The deployed population of explicit `ci_bot` profiles is also unknown, but the
+dedicated hosted pack avoids changing those consumers.
 
 ## Source Artifacts
 
