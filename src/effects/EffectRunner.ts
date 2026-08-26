@@ -342,14 +342,17 @@ function validatePreparedEffectForExecution(
   effect: PersistedEffect,
   context: { runId: string; sessionId: string },
 ): PreparedToolCallV1 | undefined {
-  if (effect.runId !== context.runId || effect.sessionId !== context.sessionId) {
+  if (effect.sessionId !== context.sessionId) {
     throw new Error("Effect execution context does not match its persisted continuation owner");
   }
   if (effect.type !== "execute_tool_call" && effect.type !== "tool.execute") return;
   const payload = parseOptionalRecord(effect.payload);
   if (payload?.preparedToolCall === undefined) return;
   const prepared = parsePreparedToolCallV1(payload.preparedToolCall);
-  if (prepared.sessionId !== effect.sessionId || prepared.callId !== effect.idempotencyKey) {
+  if (
+    prepared.sessionId !== effect.sessionId ||
+    prepared.callId !== effect.idempotencyKey
+  ) {
     throw new Error("Prepared tool call does not match the persisted effect identity");
   }
   return prepared;
