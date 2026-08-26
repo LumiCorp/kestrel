@@ -702,6 +702,12 @@ async function runHostedProviderProof(baseUrl: URL) {
           modelProvider: "openrouter",
           model: rawModelId,
           agentStageConfig: { modelByStage: { "agent.loop": rawModelId } },
+          guardrails: {
+            maxModelCallsPerRun: 2,
+            maxToolCallsPerRun: 1,
+            maxStepsPerRun: 20,
+            maxStepVisits: 8,
+          },
           modelCredential: {
             source: "kestrel-one",
             runId: identities.runId,
@@ -728,6 +734,8 @@ async function runHostedProviderProof(baseUrl: URL) {
     const stream = client.streamRun(
       {
         profileId: profile.profileId,
+        signal: AbortSignal.timeout(180_000),
+        abortBehavior: "cancel",
         turn: {
           sessionId: identities.threadId,
           runId: identities.runId,

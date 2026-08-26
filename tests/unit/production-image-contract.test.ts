@@ -159,6 +159,10 @@ test("local real-model qualification accepts and preserves exact prebuilt runtim
     canary,
     /if \(!selectedImages\) \{[\s\S]*docker\("image", "rm"/u,
   );
+  assert.match(canary, /maxModelCallsPerRun: 2/u);
+  assert.match(canary, /maxToolCallsPerRun: 1/u);
+  assert.match(canary, /signal: AbortSignal\.timeout\(180_000\)/u);
+  assert.match(canary, /abortBehavior: "cancel"/u);
 });
 
 test("partial Docker build contexts include root pnpm patches before install", async () => {
