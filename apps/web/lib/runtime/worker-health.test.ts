@@ -7,6 +7,7 @@ test("private worker health is closed until ready and closes during shutdown", a
     role: "turn-worker",
     buildId: "operator-aug16",
     port: 0,
+    host: "127.0.0.1",
   });
   const url = `http://127.0.0.1:${health.port}/healthz`;
   try {
