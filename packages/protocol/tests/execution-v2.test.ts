@@ -1482,6 +1482,53 @@ test("canonical tool presentation validates citation and Artifact identity", () 
   );
 });
 
+test("terminal v2 tool events carry exact execution outcome evidence", () => {
+  const event = parseRunnerEventV2({
+    id: "event-tool-outcome-v2",
+    type: "run.tool.completed",
+    ts: "2026-07-15T12:00:00.000Z",
+    runId: "run-1",
+    sessionId: "session-1",
+    payload: {
+      update: {
+        ...toolUpdate("completed"),
+        version: "v2",
+        toolCallId: "call-1",
+        toolName: "code.execute",
+        activation: exactResultActivation,
+        outcome: exactLoadedResult.outcome,
+      },
+    },
+  });
+  assert.equal(event.type, "run.tool.completed");
+  assert.deepEqual(event.payload.update, {
+    ...toolUpdate("completed"),
+    version: "v2",
+    toolCallId: "call-1",
+    toolName: "code.execute",
+    activation: exactResultActivation,
+    outcome: exactLoadedResult.outcome,
+  });
+
+  assert.throws(
+    () =>
+      parseRunnerEventV2({
+        id: "event-tool-outcome-missing",
+        type: "run.tool.completed",
+        ts: "2026-07-15T12:00:00.000Z",
+        payload: {
+          update: {
+            ...toolUpdate("completed"),
+            version: "v2",
+            toolName: "code.execute",
+            activation: exactResultActivation,
+          },
+        },
+      }),
+    /outcome is required/u,
+  );
+});
+
 test("canonical event parser accepts every registered discriminant", () => {
   for (const type of RUNNER_EVENT_TYPES) {
     const parsed = parseRunnerEventV2({

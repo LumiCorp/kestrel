@@ -846,6 +846,46 @@ test(
         },
       },
     );
+    assert.equal(
+      await store.recordDurableRuntimeStarted({
+        turnId: approvalTurn.turn.id,
+        eventId: `approval-run-started-${suffix}`,
+        executionId: `approval-execution-${suffix}`,
+        runtimeRunId: `approval-resumed-run-${suffix}`,
+        requestedInteractionMode: "chat",
+        effectiveInteractionMode: "chat",
+      }),
+      true,
+    );
+    assert.equal(
+      (await store.listThreadInteractionsForUser({
+        threadId: approvalThreadId,
+        organizationId,
+        userId,
+      }))[0]?.status,
+      "processing",
+      "V2 approval must not report execution success at run startup",
+    );
+    assert.equal(
+      await store.recordDurableRuntimeToolOutcome({
+        turnId: approvalTurn.turn.id,
+        eventId: `approval-tool-completed-${suffix}`,
+        outcome: {
+          callId: approvalInteraction.approval.preparedInvocationId,
+          kind: "success",
+          effectState: "committed",
+        },
+      }),
+      true,
+    );
+    assert.equal(
+      (await store.listThreadInteractionsForUser({
+        threadId: approvalThreadId,
+        organizationId,
+        userId,
+      }))[0]?.status,
+      "resolved",
+    );
     await store.completeDurableThreadTurn({
       turnId: approvalTurn.turn.id,
       status: "completed",

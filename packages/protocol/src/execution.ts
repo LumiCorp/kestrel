@@ -1921,6 +1921,13 @@ export interface RunnerToolUpdateV1 {
   presentation?: RunnerToolPresentationV1 | undefined;
 }
 
+export interface RunnerToolUpdateV2
+  extends Omit<RunnerToolUpdateV1, "version"> {
+  version: "v2";
+  activation: Record<string, unknown>;
+  outcome?: Record<string, unknown> | undefined;
+}
+
 export interface RunProgressEventPayload {
   update: RunnerProgressUpdateV1;
 }
@@ -1934,7 +1941,7 @@ export interface RunAgentProgressEventPayload {
 }
 
 export interface RunToolEventPayload {
-  update: RunnerToolUpdateV1;
+  update: RunnerToolUpdateV1 | RunnerToolUpdateV2;
 }
 
 export interface RunCancelledEventPayload {
@@ -4807,14 +4814,88 @@ function validateRunnerToolUpdate(
   label: string,
   expectedPhase: string,
 ): void {
-  const update = validatePresentationUpdateIdentity(value, label);
-  requireNonEmptyString(update.toolCallId, `${label}.toolCallId`);
-  requireNonEmptyString(update.toolName, `${label}.toolName`);
+  const update = requireRecord(value, label);
+  if (update.version !== "v1" && update.version !== "v2") {
+    throw new RunnerProtocolContractError(
+      `${label}.version must be 'v1' or 'v2'`,
+    );
+  }
+  requireNonEmptyString(update.runId, `${label}.runId`);
+  requireNonEmptyString(update.sessionId, `${label}.sessionId`);
+  requireNonEmptyString(update.ts, `${label}.ts`);
+  requireNonNegativeInteger(update.seq, `${label}.seq`);
+  const toolCallId = requireNonEmptyString(
+    update.toolCallId,
+    `${label}.toolCallId`,
+  );
+  const toolName = requireNonEmptyString(update.toolName, `${label}.toolName`);
   validateEnum(update.phase, `${label}.phase`, ["started", "completed", "failed"]);
   if (update.phase !== expectedPhase) {
     throw new RunnerProtocolContractError(
       `${label}.phase must match the runner event type '${expectedPhase}'`,
     );
+  }
+  if (update.version === "v2") {
+    const activation = validateAgentToolActivationV1(
+      update.activation,
+      `${label}.activation`,
+    );
+    if (activation.descriptorToolId !== toolName) {
+      throw new RunnerProtocolContractError(
+        `${label}.activation must match toolName`,
+      );
+    }
+    if (update.phase !== "started" && update.outcome === undefined) {
+      throw new RunnerProtocolContractError(
+        `${label}.outcome is required for a terminal v2 tool update`,
+      );
+    }
+    if (update.outcome !== undefined) {
+      const outcome = requireRecord(update.outcome, `${label}.outcome`);
+      if (outcome.version !== "v1") {
+        throw new RunnerProtocolContractError(
+          `${label}.outcome.version must be 'v1'`,
+        );
+      }
+      if (
+        requireNonEmptyString(outcome.callId, `${label}.outcome.callId`) !==
+        toolCallId
+      ) {
+        throw new RunnerProtocolContractError(
+          `${label}.outcome.callId must match toolCallId`,
+        );
+      }
+      const outcomeActivation = validateAgentToolActivationV1(
+        outcome.activation,
+        `${label}.outcome.activation`,
+      );
+      if (outcomeActivation.canonicalIdentity !== activation.canonicalIdentity) {
+        throw new RunnerProtocolContractError(
+          `${label}.outcome.activation must match activation`,
+        );
+      }
+      validateEnum(outcome.kind, `${label}.outcome.kind`, [
+        "success",
+        "partial",
+        "failure",
+        "cancellation",
+      ]);
+      validateEnum(outcome.effectState, `${label}.outcome.effectState`, [
+        "not_applicable",
+        "not_started",
+        "committed",
+        "unknown",
+      ]);
+      requireNonEmptyString(outcome.startedAt, `${label}.outcome.startedAt`);
+      requireNonEmptyString(outcome.completedAt, `${label}.outcome.completedAt`);
+      if (outcome.kind !== "success") {
+        requireNonEmptyString(
+          outcome.normalizedFailureCode,
+          `${label}.outcome.normalizedFailureCode`,
+        );
+        requireBoolean(outcome.retryable, `${label}.outcome.retryable`);
+      }
+    }
   }
   validateOptionalNonNegativeInteger(update.stepIndex, `${label}.stepIndex`);
   validateOptionalNonEmptyString(update.stepAgent, `${label}.stepAgent`);

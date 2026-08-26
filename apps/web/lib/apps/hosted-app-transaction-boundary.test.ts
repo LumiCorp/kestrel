@@ -49,20 +49,30 @@ test("every hosted mutation consumes its grant before credentials or provider ex
   }
 });
 
-test("runtime start and authorization acknowledgement share one idempotent transaction", async () => {
+test("V2 approval execution settles from exact tool outcome, not runtime startup", async () => {
   const [worker, store] = await Promise.all([
     source("../turns/process-runtime.ts"),
     source("../turns/store.ts"),
   ]);
   assert.match(worker, /await recordDurableRuntimeStarted\(\{/u);
+  assert.match(worker, /recordDurableRuntimeToolOutcome\(\{/u);
   assert.doesNotMatch(worker, /acknowledgeDurableRuntimeInteraction\(/u);
   const start = store.indexOf("export async function recordDurableRuntimeStarted");
   const end = store.indexOf("export type DurableInteractionFailureEvidence", start);
   const boundary = store.slice(start, end);
   assert.match(boundary, /return knowledgeDb\.transaction\(async \(tx\) =>/u);
   assert.match(boundary, /type: "runtime\.started"/u);
-  assert.match(boundary, /status: "resolved"/u);
-  assert.match(boundary, /type: "interaction\.authorization_accepted"/u);
+  assert.match(
+    boundary,
+    /parseHostedV2ApprovalInteraction\(interaction\) !== null[\s\S]*return true/u,
+  );
+  assert.match(
+    boundary,
+    /export async function recordDurableRuntimeToolOutcome/u,
+  );
+  assert.match(boundary, /preparedInvocationId !== input\.outcome\.callId/u);
+  assert.match(boundary, /effectState: input\.outcome\.effectState/u);
+  assert.match(boundary, /interaction\.execution_settled/u);
 });
 
 test("V2 waiting approval persists the canonical request identity for hosted decision lookup", async () => {

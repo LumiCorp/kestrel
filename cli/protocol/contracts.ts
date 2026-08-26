@@ -20,6 +20,7 @@ import type {
   RunConsoleUpdateV1,
   RunLogEntry,
   RunToolUpdateV1,
+  RunToolUpdateV2,
   ToolExecutionClass,
   WorkspaceCheckpointCleanupPolicy,
   WorkspaceCheckpointCleanupResult,
@@ -673,7 +674,7 @@ export interface RunAgentProgressEventPayload {
 }
 
 export interface RunToolEventPayload {
-  update: RunToolUpdateV1;
+  update: RunToolUpdateV1 | RunToolUpdateV2;
 }
 
 export interface RunCancelledEventPayload {

@@ -28,6 +28,7 @@ import type {
   RunEvent,
   RunLogEntry,
   RunToolUpdateV1,
+  RunToolUpdateV2,
   ToolRuntimeStatus,
   UserTerminalReadResult,
   UserTerminalRecord,
@@ -3431,7 +3432,7 @@ export class RunnerHost {
     );
   }
 
-  private emitToolUpdate(update: RunToolUpdateV1): void {
+  private emitToolUpdate(update: RunToolUpdateV1 | RunToolUpdateV2): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     if (
       (normalizedUpdate.phase === "started" || normalizedUpdate.phase === "completed") &&

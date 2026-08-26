@@ -10,6 +10,10 @@ import type {
   RunToolPhase,
   RunToolUpdateV1,
 } from "../kestrel/contracts/events.js";
+import {
+  parseRunToolUpdateV2,
+  type RunToolUpdateV2,
+} from "../kestrel/contracts/tool-invocation.js";
 
 export function buildPersistedRuntimeEventFromAgentProgressUpdate(
   update: AgentProgressUpdateV1,
@@ -174,7 +178,7 @@ export function readReasoningUpdateFromPersistedRuntimeEvent(
 }
 
 export function buildPersistedRuntimeEventFromToolUpdate(
-  update: RunToolUpdateV1,
+  update: RunToolUpdateV1 | RunToolUpdateV2,
 ): PersistedRuntimeEvent {
   return {
     runId: update.runId,
@@ -190,6 +194,10 @@ export function buildPersistedRuntimeEventFromToolUpdate(
       toolCallId: update.toolCallId,
       toolName: update.toolName,
       phase: update.phase,
+      ...(update.version === "v2" ? { activation: update.activation } : {}),
+      ...(update.version === "v2" && update.outcome !== undefined
+        ? { outcome: update.outcome }
+        : {}),
       ...(update.stepAgent !== undefined ? { stepAgent: update.stepAgent } : {}),
       ...(update.displayName !== undefined ? { displayName: update.displayName } : {}),
       ...(update.toolFamily !== undefined ? { toolFamily: update.toolFamily } : {}),
@@ -205,7 +213,7 @@ export function buildPersistedRuntimeEventFromToolUpdate(
 
 export function readToolUpdateFromPersistedRuntimeEvent(
   event: PersistedRuntimeEvent,
-): RunToolUpdateV1 | undefined {
+): RunToolUpdateV1 | RunToolUpdateV2 | undefined {
   const phase = readToolPhaseFromRunEventType(event.type);
   if (phase === undefined) {
     return ;
@@ -216,6 +224,47 @@ export function readToolUpdateFromPersistedRuntimeEvent(
   const toolName = readString(metadata?.toolName);
   if (seq === undefined || toolCallId === undefined || toolName === undefined) {
     return ;
+  }
+
+  if (metadata?.version === "v2") {
+    try {
+      return parseRunToolUpdateV2({
+        version: "v2",
+        runId: event.runId,
+        sessionId: event.sessionId,
+        ts: readString(metadata.ts) ?? event.timestamp,
+        seq,
+        toolCallId,
+        toolName,
+        activation: metadata.activation,
+        phase,
+        ...(event.stepIndex !== undefined ? { stepIndex: event.stepIndex } : {}),
+        ...(readString(metadata.stepAgent) !== undefined
+          ? { stepAgent: readString(metadata.stepAgent) }
+          : {}),
+        ...(readString(metadata.displayName) !== undefined
+          ? { displayName: readString(metadata.displayName) }
+          : {}),
+        ...(readString(metadata.toolFamily) !== undefined
+          ? { toolFamily: readString(metadata.toolFamily) }
+          : {}),
+        ...(readString(metadata.provider) !== undefined
+          ? { provider: readString(metadata.provider) }
+          : {}),
+        ...(metadata.outcome !== undefined ? { outcome: metadata.outcome } : {}),
+        ...(Object.hasOwn(metadata, "input") ? { input: metadata.input } : {}),
+        ...(Object.hasOwn(metadata, "output") ? { output: metadata.output } : {}),
+        ...(metadata.error !== undefined ? { error: metadata.error } : {}),
+        ...(readNumber(metadata.durationMs) !== undefined
+          ? { durationMs: readNumber(metadata.durationMs) }
+          : {}),
+        ...(metadata.presentation !== undefined
+          ? { presentation: metadata.presentation }
+          : {}),
+      });
+    } catch {
+      return;
+    }
   }
 
   return {

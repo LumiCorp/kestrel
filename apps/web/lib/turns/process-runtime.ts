@@ -62,7 +62,10 @@ import {
   isDurableTurnCancellationRequested,
   listMessagesForDurableTurn,
   persistDurableAssistantOutcome,
+  recordDurableRuntimeDeclineCompleted,
   recordDurableRuntimeStarted,
+  recordDurableRuntimeToolOutcome,
+  type DurableRuntimeToolOutcomeEvidence,
   recordMobileTurnActivity,
   recordMobileTurnRuntimeActivity,
 } from "@/lib/turns/store";
@@ -72,6 +75,46 @@ import {
 } from "@/lib/utils";
 
 const TITLE_FAILURE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,119}$/u;
+
+function readDurableRuntimeToolOutcome(
+  value: unknown,
+): DurableRuntimeToolOutcomeEvidence | null {
+  if (!(value && typeof value === "object" && !Array.isArray(value))) {
+    return null;
+  }
+  const outcome = value as Record<string, unknown>;
+  if (
+    typeof outcome.callId !== "string" ||
+    !["success", "partial", "failure", "cancellation"].includes(
+      String(outcome.kind),
+    ) ||
+    !["not_applicable", "not_started", "committed", "unknown"].includes(
+      String(outcome.effectState),
+    )
+  ) {
+    return null;
+  }
+  const error =
+    outcome.error && typeof outcome.error === "object" &&
+      !Array.isArray(outcome.error)
+      ? (outcome.error as Record<string, unknown>)
+      : undefined;
+  return {
+    callId: outcome.callId,
+    kind: outcome.kind as DurableRuntimeToolOutcomeEvidence["kind"],
+    effectState:
+      outcome.effectState as DurableRuntimeToolOutcomeEvidence["effectState"],
+    ...(typeof outcome.normalizedFailureCode === "string"
+      ? { normalizedFailureCode: outcome.normalizedFailureCode }
+      : {}),
+    ...(typeof outcome.retryable === "boolean"
+      ? { retryable: outcome.retryable }
+      : {}),
+    ...(typeof error?.message === "string"
+      ? { error: { message: error.message } }
+      : {}),
+  };
+}
 
 function attachmentFailureMessage(
   code: HostedAttachmentFailureCode,
@@ -749,6 +792,25 @@ export async function processDurableThreadTurn(
           eventWrites = eventWrites.then(recordRuntimeStarted);
           return;
         }
+        if (
+          event.type === "run.tool.completed" ||
+          event.type === "run.tool.failed"
+        ) {
+          const outcome = readDurableRuntimeToolOutcome(
+            event.payload.update.version === "v2"
+              ? event.payload.update.outcome
+              : undefined,
+          );
+          if (outcome) {
+            eventWrites = eventWrites.then(() =>
+              recordDurableRuntimeToolOutcome({
+                turnId: turn.id,
+                eventId: event.id,
+                outcome,
+              }).then(() => {}),
+            );
+          }
+        }
         eventWrites = eventWrites.then(async () => {
           try {
             await recordMobileTurnRuntimeActivity({
@@ -895,6 +957,12 @@ export async function processDurableThreadTurn(
     // result is authoritative even if the worker lease ends immediately after
     // it. Earlier worker loss reaches the failed/catch paths instead.
     const completionStatus = terminalTurnStatus(terminal.status);
+    if (
+      completionStatus === "completed" &&
+      turn.interactionResponse?.decision === "decline"
+    ) {
+      await recordDurableRuntimeDeclineCompleted({ turnId: turn.id });
+    }
     const interactionFailure = completionStatus === "failed" && !runnerRunStartedObserved
       ? {
           failureCode: terminal.errorCode ?? "RUNTIME_FAILED",

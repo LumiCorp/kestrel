@@ -2237,6 +2237,9 @@ export async function recordDurableRuntimeStarted(input: {
       ),
     });
     if (!interaction) return false;
+    if (parseHostedV2ApprovalInteraction(interaction) !== null) {
+      return true;
+    }
     if (interaction.status === "processing") {
       const now = new Date();
       await tx
@@ -2270,10 +2273,163 @@ export async function recordDurableRuntimeStarted(input: {
   });
 }
 
+export type DurableRuntimeToolOutcomeEvidence = {
+  callId: string;
+  kind: "success" | "partial" | "failure" | "cancellation";
+  effectState: "not_applicable" | "not_started" | "committed" | "unknown";
+  normalizedFailureCode?: string | undefined;
+  retryable?: boolean | undefined;
+  error?: { message?: string | undefined } | undefined;
+};
+
+export async function recordDurableRuntimeToolOutcome(input: {
+  turnId: string;
+  eventId: string;
+  outcome: DurableRuntimeToolOutcomeEvidence;
+}) {
+  return knowledgeDb.transaction(async (tx) => {
+    const currentTurn = await tx.query.threadTurns.findFirst({
+      where: eq(schema.threadTurns.id, input.turnId),
+      columns: { resumeInteractionId: true },
+    });
+    if (!currentTurn?.resumeInteractionId) return false;
+    const interaction = await tx.query.threadInteractions.findFirst({
+      where: and(
+        eq(schema.threadInteractions.id, currentTurn.resumeInteractionId),
+        eq(schema.threadInteractions.source, "runtime"),
+        inArray(schema.threadInteractions.status, [
+          "processing",
+          "resolved",
+          "failed",
+        ]),
+        isNotNull(schema.threadInteractions.resumedAt),
+      ),
+    });
+    if (!interaction) return false;
+    const hostedApproval = parseHostedV2ApprovalInteraction(interaction);
+    if (
+      hostedApproval === null ||
+      hostedApproval.approval.preparedInvocationId !== input.outcome.callId
+    ) {
+      return false;
+    }
+    const existing = await tx.query.threadTurnEvents.findFirst({
+      where: and(
+        eq(schema.threadTurnEvents.turnId, input.turnId),
+        eq(schema.threadTurnEvents.type, "interaction.execution_settled"),
+        sql`${schema.threadTurnEvents.data}->>'eventId' = ${input.eventId}`,
+      ),
+    });
+    if (existing || interaction.status !== "processing") return true;
+
+    if (input.outcome.kind !== "success") {
+      const effectStatus = input.outcome.effectState === "not_started"
+        ? "not_started" as const
+        : input.outcome.effectState === "unknown"
+          ? "unknown" as const
+          : "started" as const;
+      return failDurableRuntimeInteractionInTransaction(tx, input.turnId, {
+        failureCode:
+          input.outcome.normalizedFailureCode ?? "TOOL_EXECUTION_FAILED",
+        failureMessage:
+          input.outcome.error?.message ?? "The approved operation failed.",
+        effectStatus,
+        retryable:
+          effectStatus === "not_started" && input.outcome.retryable === true,
+      });
+    }
+
+    const now = new Date();
+    await tx
+      .update(schema.threadInteractions)
+      .set({
+        status: "resolved",
+        responseFailureCode: null,
+        responseFailureMessage: null,
+        effectStatus: null,
+        responseRetryable: false,
+        updatedAt: now,
+      })
+      .where(eq(schema.threadInteractions.id, interaction.id));
+    await updateInteractionMessagePresentation(tx, interaction, "resolved", {
+      decision: readApprovalDecision(interaction.responseEnvelope),
+      authorizationState: "accepted",
+      effectState: input.outcome.effectState,
+      retryEligible: false,
+    });
+    await appendTurnEvent(tx, {
+      turnId: input.turnId,
+      type: "interaction.execution_settled",
+      data: {
+        eventId: input.eventId,
+        requestId: interaction.requestId,
+        preparedInvocationId: input.outcome.callId,
+        outcomeKind: input.outcome.kind,
+        effectState: input.outcome.effectState,
+      },
+    });
+    return true;
+  });
+}
+
+export async function recordDurableRuntimeDeclineCompleted(input: {
+  turnId: string;
+}) {
+  return knowledgeDb.transaction(async (tx) => {
+    const currentTurn = await tx.query.threadTurns.findFirst({
+      where: eq(schema.threadTurns.id, input.turnId),
+      columns: { resumeInteractionId: true },
+    });
+    if (!currentTurn?.resumeInteractionId) return false;
+    const interaction = await tx.query.threadInteractions.findFirst({
+      where: and(
+        eq(schema.threadInteractions.id, currentTurn.resumeInteractionId),
+        eq(schema.threadInteractions.source, "runtime"),
+        eq(schema.threadInteractions.status, "processing"),
+        isNotNull(schema.threadInteractions.resumedAt),
+      ),
+    });
+    if (
+      !interaction ||
+      parseHostedV2ApprovalInteraction(interaction) === null ||
+      readPlainRecord(interaction.responseEnvelope)?.decision !== "decline"
+    ) {
+      return false;
+    }
+    const now = new Date();
+    await tx
+      .update(schema.threadInteractions)
+      .set({
+        status: "resolved",
+        responseFailureCode: null,
+        responseFailureMessage: null,
+        effectStatus: "not_started",
+        responseRetryable: false,
+        updatedAt: now,
+      })
+      .where(eq(schema.threadInteractions.id, interaction.id));
+    await updateInteractionMessagePresentation(tx, interaction, "resolved", {
+      decision: "denied",
+      authorizationState: "denied",
+      effectState: "not_started",
+      retryEligible: false,
+    });
+    await appendTurnEvent(tx, {
+      turnId: input.turnId,
+      type: "interaction.authorization_denied",
+      data: {
+        requestId: interaction.requestId,
+        effectState: "not_started",
+      },
+    });
+    return true;
+  });
+}
+
 export type DurableInteractionFailureEvidence = {
   failureCode: string;
   failureMessage: string;
-  effectStatus: "not_started" | "unknown";
+  effectStatus: "not_started" | "started" | "unknown";
   retryable: boolean;
 };
 
