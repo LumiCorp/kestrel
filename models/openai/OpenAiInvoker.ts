@@ -1,4 +1,8 @@
-import type { ModelGatewayCallOptions, ModelRequest, ModelResponse } from "../../src/kestrel/contracts/model-io.js";
+import type {
+  ModelGatewayCallOptions,
+  ModelRequest,
+  ModelResponse,
+} from "../../src/kestrel/contracts/model-io.js";
 
 import type { OpenAiEnvConfig, OpenAiInvoker } from "../contracts.js";
 import {
@@ -6,7 +10,11 @@ import {
   createOpenAiHttpError,
   mapOpenAiTransportError,
 } from "./OpenAiErrors.js";
-import { buildOpenAiHttpRequest, mapOpenAiResponse } from "./OpenAiMapper.js";
+import {
+  buildOpenAiHttpRequest,
+  mapOpenAiResponse,
+  mapOpenAiResponseV2,
+} from "./OpenAiMapper.js";
 import { readServerSentEvents } from "../SseStream.js";
 import { parseRetryAfterMs } from "../../src/io/RetryAfter.js";
 
@@ -15,11 +23,16 @@ interface CreateOpenAiInvokerOptions {
   fetchImpl?: typeof fetch;
 }
 
-export function createOpenAiInvoker(options: CreateOpenAiInvokerOptions): OpenAiInvoker {
+export function createOpenAiInvoker(
+  options: CreateOpenAiInvokerOptions,
+): OpenAiInvoker {
   const fetchImpl = options.fetchImpl ?? fetch;
   const providerLabel = options.env.providerLabel;
 
-  return async <TOutput>(request: ModelRequest, callOptions: ModelGatewayCallOptions = {}): Promise<ModelResponse<TOutput>> => {
+  return async <TOutput>(
+    request: ModelRequest,
+    callOptions: ModelGatewayCallOptions = {},
+  ): Promise<ModelResponse<TOutput>> => {
     const mappedRequest = buildOpenAiHttpRequest(request, options.env);
     if (
       callOptions.onEvent !== undefined &&
@@ -27,7 +40,11 @@ export function createOpenAiInvoker(options: CreateOpenAiInvokerOptions): OpenAi
       request.reasoning.mode !== "off" &&
       mappedRequest.endpoint === "chat"
     ) {
-      await callOptions.onEvent({ type: "reasoning.unavailable", attempt: 1, format: "summary" });
+      await callOptions.onEvent({
+        type: "reasoning.unavailable",
+        attempt: 1,
+        format: "summary",
+      });
     }
     const url = `${trimTrailingSlash(options.env.baseUrl)}${mappedRequest.path}`;
 
@@ -39,7 +56,9 @@ export function createOpenAiInvoker(options: CreateOpenAiInvokerOptions): OpenAi
           ...mappedRequest.body,
           ...(callOptions.onEvent !== undefined ? { stream: true } : {}),
         }),
-        ...(callOptions.signal !== undefined ? { signal: callOptions.signal } : {}),
+        ...(callOptions.signal !== undefined
+          ? { signal: callOptions.signal }
+          : {}),
       });
 
       const requestId = response.headers.get("x-request-id") ?? undefined;
@@ -53,16 +72,33 @@ export function createOpenAiInvoker(options: CreateOpenAiInvokerOptions): OpenAi
         );
       }
 
-      const payload = callOptions.onEvent === undefined
-        ? await safeReadJson(response, providerLabel)
-        : await readOpenAiStream(response, mappedRequest.endpoint, callOptions);
-      const mapped = mapOpenAiResponse<TOutput>(payload, {
+      const streamed =
+        callOptions.onEvent === undefined
+          ? undefined
+          : await readOpenAiStream(
+              response,
+              mappedRequest.endpoint,
+              callOptions,
+            );
+      const payload =
+        streamed?.payload ?? (await safeReadJson(response, providerLabel));
+      const context = {
         providerName: options.env.providerName,
         endpoint: mappedRequest.endpoint,
         requestedModel: mappedRequest.model,
         requestId,
         structuredOutput: mappedRequest.structuredOutput,
-      });
+        ...(streamed?.terminalEvent !== undefined
+          ? { streamTerminalEvent: streamed.terminalEvent }
+          : {}),
+        ...(streamed?.visibleOutputStarted !== undefined
+          ? { visibleOutputStarted: streamed.visibleOutputStarted }
+          : {}),
+      };
+      const mapped =
+        request.version === "model_request_v2"
+          ? mapOpenAiResponseV2<TOutput>(payload, context)
+          : mapOpenAiResponse<TOutput>(payload, context);
       if (
         callOptions.onEvent !== undefined &&
         mappedRequest.endpoint === "responses" &&
@@ -70,7 +106,11 @@ export function createOpenAiInvoker(options: CreateOpenAiInvokerOptions): OpenAi
         request.reasoning.mode !== "off" &&
         (mapped.reasoning?.visible.length ?? 0) === 0
       ) {
-        await callOptions.onEvent({ type: "reasoning.unavailable", attempt: 1, format: "summary" });
+        await callOptions.onEvent({
+          type: "reasoning.unavailable",
+          attempt: 1,
+          format: "summary",
+        });
       }
       return mapped;
     } catch (error) {
@@ -83,11 +123,16 @@ async function readOpenAiStream(
   response: Response,
   endpoint: "chat" | "responses",
   options: ModelGatewayCallOptions,
-): Promise<unknown> {
+): Promise<{
+  payload: unknown;
+  terminalEvent: string;
+  visibleOutputStarted: boolean;
+}> {
   if (endpoint === "chat") {
     return readOpenAiChatStream(response, options);
   }
   let completed: unknown;
+  let visibleOutputStarted = false;
   let reasoningStarted = false;
   await readServerSentEvents(response, async ({ data }) => {
     if (data === "[DONE]") return;
@@ -98,18 +143,39 @@ async function readOpenAiStream(
       if (delta === undefined) return;
       if (!reasoningStarted) {
         reasoningStarted = true;
-        await options.onEvent?.({ type: "reasoning.started", attempt: 1, format: "summary" });
+        await options.onEvent?.({
+          type: "reasoning.started",
+          attempt: 1,
+          format: "summary",
+        });
       }
-      await options.onEvent?.({ type: "reasoning.delta", attempt: 1, format: "summary", delta });
+      await options.onEvent?.({
+        type: "reasoning.delta",
+        attempt: 1,
+        format: "summary",
+        delta,
+      });
       return;
     }
     if (type === "response.reasoning_summary_text.done" && reasoningStarted) {
-      await options.onEvent?.({ type: "reasoning.completed", attempt: 1, format: "summary" });
+      await options.onEvent?.({
+        type: "reasoning.completed",
+        attempt: 1,
+        format: "summary",
+      });
       reasoningStarted = false;
       return;
     }
-    if (type === "response.output_text.delta" && typeof event?.delta === "string") {
-      await options.onEvent?.({ type: "output.delta", attempt: 1, delta: event.delta });
+    if (
+      type === "response.output_text.delta" &&
+      typeof event?.delta === "string"
+    ) {
+      await options.onEvent?.({
+        type: "output.delta",
+        attempt: 1,
+        delta: event.delta,
+      });
+      visibleOutputStarted = true;
       return;
     }
     if (type === "response.completed") {
@@ -117,44 +183,99 @@ async function readOpenAiStream(
     }
   });
   if (reasoningStarted) {
-    await options.onEvent?.({ type: "reasoning.completed", attempt: 1, format: "summary" });
+    await options.onEvent?.({
+      type: "reasoning.completed",
+      attempt: 1,
+      format: "summary",
+    });
   }
   if (completed === undefined) {
-    throw createOpenAiBadResponseError("OpenAI stream ended without response.completed.");
+    throw createOpenAiBadResponseError(
+      "OpenAI stream ended without response.completed.",
+    );
   }
-  return completed;
+  return {
+    payload: completed,
+    terminalEvent: "response.completed",
+    visibleOutputStarted,
+  };
 }
 
 async function readOpenAiChatStream(
   response: Response,
   options: ModelGatewayCallOptions,
-): Promise<unknown> {
-  const message: Record<string, unknown> = { role: "assistant", content: "", tool_calls: [] };
+): Promise<{
+  payload: unknown;
+  terminalEvent: string;
+  visibleOutputStarted: boolean;
+}> {
+  const message: Record<string, unknown> = {
+    role: "assistant",
+    content: "",
+    tool_calls: [],
+  };
   const root: Record<string, unknown> = { choices: [{ message }] };
+  let receivedDone = false;
+  let visibleOutputStarted = false;
   await readServerSentEvents(response, async ({ data }) => {
-    if (data === "[DONE]") return;
+    if (data === "[DONE]") {
+      receivedDone = true;
+      return;
+    }
     const chunk = parseJsonRecord(data);
     if (chunk === undefined) return;
     if (typeof chunk.model === "string") root.model = chunk.model;
     if (chunk.usage !== undefined) root.usage = chunk.usage;
     const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
     const choice = isRecord(choices[0]) ? choices[0] : undefined;
+    if (typeof choice?.finish_reason === "string") {
+      (root.choices as Array<Record<string, unknown>>)[0]!.finish_reason =
+        choice.finish_reason;
+    }
     const delta = isRecord(choice?.delta) ? choice.delta : undefined;
     if (typeof delta?.content === "string") {
       message.content = `${String(message.content ?? "")}${delta.content}`;
-      await options.onEvent?.({ type: "output.delta", attempt: 1, delta: delta.content });
+      visibleOutputStarted = true;
+      await options.onEvent?.({
+        type: "output.delta",
+        attempt: 1,
+        delta: delta.content,
+      });
     }
-    mergeChatToolCalls(message, Array.isArray(delta?.tool_calls) ? delta.tool_calls : []);
+    mergeChatToolCalls(
+      message,
+      Array.isArray(delta?.tool_calls) ? delta.tool_calls : [],
+    );
   });
-  return root;
+  if (!receivedDone) {
+    throw createOpenAiBadResponseError(
+      "OpenAI Chat stream ended without [DONE].",
+      "MODEL_INCOMPLETE_RESPONSE",
+    );
+  }
+  const finalChoice = (root.choices as Array<Record<string, unknown>>)[0]!;
+  if (typeof finalChoice.finish_reason !== "string") {
+    finalChoice.finish_reason = "stop";
+  }
+  return {
+    payload: root,
+    terminalEvent: "[DONE]",
+    visibleOutputStarted,
+  };
 }
 
-function mergeChatToolCalls(message: Record<string, unknown>, chunks: unknown[]): void {
+function mergeChatToolCalls(
+  message: Record<string, unknown>,
+  chunks: unknown[],
+): void {
   const target = message.tool_calls as Array<Record<string, unknown>>;
   for (const item of chunks) {
     if (!isRecord(item)) continue;
     const index = typeof item.index === "number" ? item.index : target.length;
-    const current = target[index] ?? { type: "function", function: { name: "", arguments: "" } };
+    const current = target[index] ?? {
+      type: "function",
+      function: { name: "", arguments: "" },
+    };
     const fn = isRecord(item.function) ? item.function : {};
     const currentFn = isRecord(current.function) ? current.function : {};
     target[index] = {
@@ -162,8 +283,12 @@ function mergeChatToolCalls(message: Record<string, unknown>, chunks: unknown[])
       ...(typeof item.id === "string" ? { id: item.id } : {}),
       function: {
         ...currentFn,
-        ...(typeof fn.name === "string" ? { name: `${String(currentFn.name ?? "")}${fn.name}` } : {}),
-        ...(typeof fn.arguments === "string" ? { arguments: `${String(currentFn.arguments ?? "")}${fn.arguments}` } : {}),
+        ...(typeof fn.name === "string"
+          ? { name: `${String(currentFn.name ?? "")}${fn.name}` }
+          : {}),
+        ...(typeof fn.arguments === "string"
+          ? { arguments: `${String(currentFn.arguments ?? "")}${fn.arguments}` }
+          : {}),
       },
     };
   }
@@ -176,11 +301,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseJsonRecord(value: string): Record<string, unknown> | undefined {
   try {
     const parsed = JSON.parse(value);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
+    return typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
       : undefined;
   } catch {
-    return ;
+    return;
   }
 }
 
@@ -200,7 +327,10 @@ function createHeaders(env: OpenAiEnvConfig): Record<string, string> {
   return headers;
 }
 
-async function safeReadJson(response: Response, providerLabel: string): Promise<unknown> {
+async function safeReadJson(
+  response: Response,
+  providerLabel: string,
+): Promise<unknown> {
   try {
     return await response.json();
   } catch (error) {

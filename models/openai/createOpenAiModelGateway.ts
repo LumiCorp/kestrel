@@ -22,7 +22,7 @@ export interface OpenAiGatewayFactoryOptions {
 }
 
 export function createOpenAiModelGatewayFromEnv(
-  options: OpenAiGatewayFactoryOptions = {}
+  options: OpenAiGatewayFactoryOptions = {},
 ): ModelGateway {
   const useOpenAiEnvLoader =
     options.envConfig?.providerName === undefined ||
@@ -48,12 +48,20 @@ export function createOpenAiModelGatewayFromEnv(
       options.envConfig?.providerLabel ?? loaded?.providerLabel ?? "OpenAI",
   };
 
-  const invoker = createVersionedProviderInvokerV1(createOpenAiInvoker({
+  const openAiInvoker = createOpenAiInvoker({
     env: config,
     ...(options.fetchImpl !== undefined
       ? { fetchImpl: options.fetchImpl }
       : {}),
-  }));
+  });
+  const legacyInvoker = createVersionedProviderInvokerV1(openAiInvoker);
+  const invoker = async <T>(
+    request: ModelRequest,
+    callOptions?: ModelGatewayCallOptions,
+  ) =>
+    request.version === "model_request_v2"
+      ? openAiInvoker<T>(request, callOptions)
+      : legacyInvoker<T>(request, callOptions);
 
   return new RetryingModelGateway(
     async <T>(request: ModelRequest, callOptions?: ModelGatewayCallOptions) =>
@@ -66,6 +74,6 @@ export function createOpenAiModelGatewayFromEnv(
         ? { retryCount: options.retryCount }
         : {}),
       providerId: config.providerName,
-    }
+    },
   );
 }
