@@ -18,10 +18,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Show truthful hosted model readiness by role](11-show-truthful-hosted-model-readiness.md) — depends on issues 08, 09, and 10.
 - [Publish exact Local Core and Desktop model readiness](12-publish-local-core-model-readiness.md) — depends on issues 06, 09, and 10.
 
-## Implemented
-
-- [Prove structured output and tool calls before success](02-prove-model-responses.md)
-
 ## Done
 
 - [Establish exact model and request contracts](01-establish-exact-model-contracts.md)
+- [Prove structured output and tool calls before success](02-prove-model-responses.md)
