@@ -1044,6 +1044,39 @@ test("dialog reply saved before close remains available", async () => {
   assert.deepEqual(replies, ["saved reply"]);
 });
 
+test("saved collaborator replies reconcile until the parent acknowledges delivery", async () => {
+  const store = new InMemorySessionStore();
+  const deliveries: string[] = [];
+  let failFirstDelivery = true;
+  let supervisor!: DelegationSupervisor;
+  supervisor = createDialogSupervisor({
+    store,
+    submitChildTurn: async () => ({
+      assistantText: "finished",
+      thread: (await store.getThread("race-child-1"))!,
+      output: buildOutput({ runId: "reply-recovery", status: "COMPLETED" }),
+    }),
+    onDialogReply: async ({ message }) => {
+      deliveries.push(message.messageId);
+      if (failFirstDelivery) {
+        failFirstDelivery = false;
+        throw new Error("queue unavailable");
+      }
+      await supervisor.markDialogReplyEnqueued({ parentSessionId: "root", dialogId: message.dialogId, messageId: message.messageId });
+    },
+  });
+
+  const opened = await supervisor.open({ parentSessionId: "root", name: "Recovery", message: "check" });
+  await tick();
+  assert.equal(deliveries.length, 1);
+  await supervisor.reconcileSavedDialogReplies("root");
+  assert.equal(deliveries.length, 2);
+  const messageId = deliveries[0]!;
+  await supervisor.markDialogReplyDelivered({ parentSessionId: "root", dialogId: opened.dialogId, messageId });
+  await supervisor.reconcileSavedDialogReplies("root");
+  assert.equal(deliveries.length, 2);
+});
+
 test("restart reconciliation marks only open working dialogs interrupted", async () => {
   const store = new InMemorySessionStore();
   const supervisor = createDialogSupervisor({
@@ -1115,7 +1148,7 @@ test("dialog read and list return only saved local state with scoped cursors", a
 function createDialogSupervisor(input: {
   store: InMemorySessionStore;
   submitChildTurn: (input: SubmitTurnInput) => Promise<SubmitTurnResult>;
-  onDialogReply?: ((input: { message: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord }) => void) | undefined;
+  onDialogReply?: ((input: { message: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord }) => void | Promise<void>) | undefined;
 }): DelegationSupervisor {
   let childCount = 0;
   return new DelegationSupervisor({

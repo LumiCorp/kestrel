@@ -62,6 +62,7 @@ export interface DialogMessageRecord {
   createdAt: string;
   dialogStatus: "open" | "closed";
   status?: "failed" | "cancelled" | undefined;
+  delivery?: "pending" | "enqueued" | "delivered" | undefined;
 }
 
 export interface DelegationSupervisorOptions {
@@ -79,7 +80,12 @@ export interface DelegationSupervisorOptions {
     record: DelegationRecord;
     finalizedPayload?: unknown | undefined;
   }) => Promise<void> | void) | undefined;
-  onDialogReply?: ((input: { record: DelegationRecord; message: DialogMessageRecord }) => Promise<void> | void) | undefined;
+  onDialogReply?: ((input: {
+    record: DelegationRecord;
+    message: DialogMessageRecord;
+    dialogStatus: "open" | "closed";
+    activity: DialogSnapshot["activity"];
+  }) => Promise<void> | void) | undefined;
   onHandoffCompleted?: ((input: {
     runId: string;
     sessionId: string;
@@ -241,6 +247,61 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       ...(last === undefined ? {} : { nextCursor: createDialogListCursor(input.parentSessionId, status, last) }),
       hasMore: records.length > page.length,
     };
+  }
+
+  /** Replays saved collaborator replies that have not been acknowledged by the parent. */
+  async reconcileSavedDialogReplies(parentSessionId: string): Promise<void> {
+    const records = await this.store.listDelegations({ parentThreadId: parentSessionId });
+    const replies: Array<{ record: DelegationRecord; message: DialogMessageRecord; dialog: StoredDialogState }> = [];
+    for (const record of records) {
+      const dialog = readDialogState(record);
+      if (dialog === undefined) continue;
+      for (const message of dialog.messages) {
+        if (message.sender !== "collaborator" || message.delivery === "delivered") continue;
+        replies.push({ record, message, dialog });
+      }
+    }
+    replies.sort((left, right) => left.message.createdAt.localeCompare(right.message.createdAt) || left.message.messageId.localeCompare(right.message.messageId));
+    for (const { record, message, dialog } of replies) {
+      await this.onDialogReply?.({ record, message, dialogStatus: dialog.status, activity: dialog.activity });
+    }
+  }
+
+  async markDialogReplyEnqueued(input: { parentSessionId: string; dialogId: string; messageId: string }): Promise<void> {
+    await this.updateDialogReplyDelivery(input, "enqueued");
+  }
+
+  async markDialogReplyDelivered(input: { parentSessionId: string; dialogId: string; messageId: string }): Promise<void> {
+    await this.updateDialogReplyDelivery(input, "delivered");
+  }
+
+  async isDialogReplyDelivered(input: { parentSessionId: string; dialogId: string; messageId: string }): Promise<boolean> {
+    const record = await this.requireDialog(input.dialogId, input.parentSessionId);
+    const message = readDialogState(record)?.messages.find((candidate) => candidate.messageId === input.messageId);
+    return message?.delivery === "delivered";
+  }
+
+  private async updateDialogReplyDelivery(
+    input: { parentSessionId: string; dialogId: string; messageId: string },
+    delivery: "enqueued" | "delivered",
+  ): Promise<void> {
+    for (;;) {
+      const record = await this.requireDialog(input.dialogId, input.parentSessionId);
+      const dialog = readDialogState(record)!;
+      const index = dialog.messages.findIndex((message) => message.messageId === input.messageId && message.sender === "collaborator");
+      if (index < 0) {
+        throw createRuntimeFailure("DIALOG_REPLY_NOT_FOUND", "This collaborator reply is no longer available.", { dialogId: input.dialogId, messageId: input.messageId });
+      }
+      const current = dialog.messages[index]!;
+      if (current.delivery === "delivered" || current.delivery === delivery) return;
+      const messages = [...dialog.messages];
+      messages[index] = { ...current, delivery };
+      const updated = writeDialogState(
+        { ...record, updatedAt: new Date().toISOString() },
+        { ...dialog, revision: dialog.revision + 1, messages },
+      );
+      if (await this.store.compareAndSetDialog(updated, dialog.revision)) return;
+    }
   }
 
   async close(input: { parentSessionId: string; parentRunId?: string | undefined; dialogId: string }): Promise<DialogSnapshot> {
@@ -642,7 +703,13 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
         if (!await this.store.compareAndSetDialog(updated, expectedRevision)) return;
         await this.appendDialogEvent("dialog.message", updated, reply);
         this.emit({ task: toTaskSnapshot(updated, this.profile), kind: "waiting", assistantText: null, dialogMessage: reply });
-        await this.onDialogReply?.({ record: updated, message: reply });
+        const savedDialog = readDialogState(updated)!;
+        await this.onDialogReply?.({
+          record: updated,
+          message: reply,
+          dialogStatus: savedDialog.status,
+          activity: savedDialog.activity,
+        });
         return;
       }
       const failureText = result.output.status === "WAITING"
@@ -847,17 +914,44 @@ function normalizeDialogName(value: string): string {
   return name;
 }
 
+function normalizeDialogMessage(value: unknown): DialogMessageRecord[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+  const item = value as Record<string, unknown>;
+  if (
+    typeof item.messageId !== "string" ||
+    typeof item.dialogId !== "string" ||
+    typeof item.name !== "string" ||
+    typeof item.childSessionId !== "string" ||
+    (item.sender !== "kestrel" && item.sender !== "collaborator" && item.sender !== "system") ||
+    typeof item.text !== "string" ||
+    typeof item.createdAt !== "string" ||
+    (item.dialogStatus !== "open" && item.dialogStatus !== "closed")
+  ) return [];
+  const delivery = item.delivery === "pending" || item.delivery === "enqueued" || item.delivery === "delivered"
+    ? item.delivery
+    : item.sender === "collaborator" ? "pending" : undefined;
+  return [{
+    messageId: item.messageId,
+    dialogId: item.dialogId,
+    ...(typeof item.parentRunId === "string" ? { parentRunId: item.parentRunId } : {}),
+    name: item.name,
+    childSessionId: item.childSessionId,
+    sender: item.sender,
+    text: item.text,
+    createdAt: item.createdAt,
+    dialogStatus: item.dialogStatus,
+    ...(item.status === "failed" || item.status === "cancelled" ? { status: item.status } : {}),
+    ...(delivery !== undefined ? { delivery } : {}),
+  }];
+}
+
 function readDialogState(record: DelegationRecord): StoredDialogState | undefined {
   const value = record.policy?.dialog;
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const dialog = value as Record<string, unknown>;
   if (dialog.version !== "v1" || typeof dialog.name !== "string") return undefined;
   const messages = Array.isArray(dialog.messages)
-    ? dialog.messages.filter((message): message is DialogMessageRecord => {
-        if (typeof message !== "object" || message === null || Array.isArray(message)) return false;
-        const item = message as Record<string, unknown>;
-        return typeof item.messageId === "string" && typeof item.dialogId === "string" && typeof item.name === "string" && typeof item.childSessionId === "string" && (item.sender === "kestrel" || item.sender === "collaborator" || item.sender === "system") && typeof item.text === "string" && typeof item.createdAt === "string" && (item.dialogStatus === "open" || item.dialogStatus === "closed");
-      })
+    ? dialog.messages.flatMap(normalizeDialogMessage)
     : [];
   const status = dialog.status === "closed" ? "closed" : "open";
   const activity = dialog.activity === "idle" || dialog.activity === "working" || dialog.activity === "waiting" || dialog.activity === "interrupted"
@@ -943,6 +1037,7 @@ function createDialogMessage(record: DelegationRecord, sender: DialogMessageReco
     text,
     createdAt: new Date().toISOString(),
     dialogStatus: dialog?.status ?? "open",
+    ...(sender === "collaborator" ? { delivery: "pending" as const } : {}),
   };
 }
 

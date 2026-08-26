@@ -761,6 +761,8 @@ export interface FollowUpQueueEntry {
   dialogId?: string | undefined;
   dialogName?: string | undefined;
   sourceMessageId?: string | undefined;
+  dialogStatus?: "open" | "closed" | undefined;
+  dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
   /** Durable execution context used only when promoting this queue entry. */
   runtimeContext?: FollowUpRuntimeContext | undefined;
   /** Trusted actor captured when the queue entry was accepted. */
@@ -785,6 +787,8 @@ export interface EnqueueFollowUpInput {
   dialogId?: string | undefined;
   dialogName?: string | undefined;
   sourceMessageId?: string | undefined;
+  dialogStatus?: "open" | "closed" | undefined;
+  dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
 }
 
 export interface PendingSteerRecord {

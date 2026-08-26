@@ -45,6 +45,7 @@ import { AssemblyPolicyEvaluator } from "./AssemblyPolicyEvaluator.js";
 import { ContextPolicyManager, type ContextStructuredSummaryGenerator } from "./ContextPolicyManager.js";
 import {
   DelegationSupervisor,
+  type DialogMessageRecord,
   type DelegationSupervisorOptions,
   type DelegationTaskUpdate,
 } from "./DelegationSupervisor.js";
@@ -68,6 +69,7 @@ import {
   markFollowUpStarting,
   pauseFollowUpQueue,
   readFollowUpQueue,
+  refreshDialogFollowUp,
   removeFollowUp,
   resumeFollowUps,
 } from "./FollowUpQueue.js";
@@ -114,6 +116,8 @@ Close a collaborator only when you are sure you will not need them again. Closin
 Collaborators cannot open other collaborators. Do not ask a collaborator to do anything outside the user's current permissions.`;
 
 const PARENT_DIALOG_TOOL_NAMES = ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"] as const;
+
+const COLLABORATOR_REPLY_INSTRUCTIONS = "A named collaborator sent you a message. This is not a message from the user.\n\nUse the collaborator's message in your work. Check the supplied collaborator status before choosing what to do next. If the collaborator is open, use dialog.send to reply or give them more work. Use dialog.read to see more of the private conversation. Use dialog.close only when you are sure you will not need this collaborator again.";
 import { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 
 export interface ThreadRuntimeOptions {
@@ -241,17 +245,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
         onDelegationUpdated: async ({ record, finalizedPayload }) => {
           await this.handleDelegationUpdated(record, finalizedPayload);
         },
-        onDialogReply: async ({ record, message }) => {
-          await this.enqueueFollowUp({
-            threadId: record.parentThreadId,
-            followUpId: message.messageId,
-            message: `${message.name}: ${message.text}`,
-            source: "dialog",
-            dialogId: record.delegationId,
-            dialogName: message.name,
-            sourceMessageId: message.messageId,
-          });
-        },
+        onDialogReply: async (reply) => this.enqueueDialogReply(reply),
       });
     }
   }
@@ -406,6 +400,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
     await this.store.upsertThread(thread);
     if (existing !== null && input.parentThreadId === undefined) {
       await this.delegationSupervisor?.reconcileInterruptedDialogs(thread.threadId);
+      await this.delegationSupervisor?.reconcileSavedDialogReplies(thread.threadId);
     }
     const composedAssembly = await this.runtimeComposer.composeThreadAssembly({
       thread,
@@ -419,6 +414,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
       sessionId: thread.sessionId,
       title: thread.title,
     });
+    if (existing !== null && input.parentThreadId === undefined) void this.processFollowUps(thread.threadId);
     return threadWithIdentity;
   }
 
@@ -1130,6 +1126,8 @@ export class ThreadRuntime implements ThreadRuntimePort {
       ...(input.dialogId !== undefined ? { dialogId: input.dialogId } : {}),
       ...(input.dialogName !== undefined ? { dialogName: input.dialogName } : {}),
       ...(input.sourceMessageId !== undefined ? { sourceMessageId: input.sourceMessageId } : {}),
+      ...(input.dialogStatus !== undefined ? { dialogStatus: input.dialogStatus } : {}),
+      ...(input.dialogActivity !== undefined ? { dialogActivity: input.dialogActivity } : {}),
     };
     const thread = await this.withFollowUpMutation(input.threadId, async (current) => {
       let updated = enqueueFollowUpRecord(current, entry);
@@ -2051,6 +2049,30 @@ export class ThreadRuntime implements ThreadRuntimePort {
     }
   }
 
+  private async enqueueDialogReply(input: {
+    record: { parentThreadId: string; delegationId: string };
+    message: DialogMessageRecord;
+    dialogStatus: "open" | "closed";
+    activity: "idle" | "working" | "waiting" | "interrupted";
+  }): Promise<void> {
+    await this.enqueueFollowUp({
+      threadId: input.record.parentThreadId,
+      followUpId: input.message.messageId,
+      message: `${input.message.name}: ${input.message.text}`,
+      source: "dialog",
+      dialogId: input.record.delegationId,
+      dialogName: input.message.name,
+      sourceMessageId: input.message.messageId,
+      dialogStatus: input.dialogStatus,
+      dialogActivity: input.activity,
+    });
+    await this.delegationSupervisor?.markDialogReplyEnqueued({
+      parentSessionId: input.record.parentThreadId,
+      dialogId: input.record.delegationId,
+      messageId: input.message.messageId,
+    });
+  }
+
   private async processFollowUps(threadId: string): Promise<void> {
     if (this.followUpProcessors.has(threadId)) return;
     this.followUpProcessors.add(threadId);
@@ -2068,10 +2090,31 @@ export class ThreadRuntime implements ThreadRuntimePort {
         if (queue.state === "paused") return;
         const next = queue.items[0];
         if (next === undefined) return;
+        const currentDialog = next.source === "dialog" && next.dialogId !== undefined
+          ? await this.delegationSupervisor?.read({ parentSessionId: threadId, dialogId: next.dialogId, limit: 1 })
+          : undefined;
+        if (
+          next.source === "dialog" &&
+          next.dialogId !== undefined &&
+          next.sourceMessageId !== undefined &&
+          await this.delegationSupervisor?.isDialogReplyDelivered({
+            parentSessionId: threadId,
+            dialogId: next.dialogId,
+            messageId: next.sourceMessageId,
+          }) === true
+        ) {
+          await this.withFollowUpMutation(threadId, async (latest) => {
+            await this.store.upsertThread(removeFollowUp(latest, next.followUpId));
+          });
+          continue;
+        }
         let promotedIdentity: { turnId: string; runId: string } | undefined;
         try {
           await this.withFollowUpMutation(threadId, async (thread) => {
             let updated = markFollowUpStarting(thread, next.followUpId);
+            if (next.source === "dialog" && currentDialog !== undefined) {
+              updated = refreshDialogFollowUp(updated, next.followUpId, currentDialog);
+            }
             if (next.source !== "dialog" && next.sourceMessageId !== undefined) {
               const route = readConversationMessageRoute(thread, next.sourceMessageId);
               if (route === undefined || (route.disposition !== "queued" && route.disposition !== "started")) {
@@ -2130,6 +2173,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
               ...(next.dialogId !== undefined ? { dialogId: next.dialogId } : {}),
               ...(next.dialogName !== undefined ? { dialogName: next.dialogName } : {}),
               ...(next.sourceMessageId !== undefined ? { sourceMessageId: next.sourceMessageId } : {}),
+              ...(currentDialog !== undefined ? { dialogStatus: currentDialog.status, dialogActivity: currentDialog.activity } : {}),
             },
             ...(next.source === "dialog" ? {
               runtimeTurn: {
@@ -2137,9 +2181,14 @@ export class ThreadRuntime implements ThreadRuntimePort {
                 message: next.message,
                 eventType: "dialog.message",
                 actor: { actorType: "service", actorId: next.dialogId ?? "dialog", ...(next.dialogName !== undefined ? { displayName: next.dialogName } : {}) },
-                systemInstructions: [
-                  "This input came from an open collaborator dialog, not from the human. Continue the private dialog with dialog.send when useful. Produce an ordinary user-facing response only when there is a user-relevant outcome, a question requiring the human, or final completion; otherwise the visible dialog exchange is sufficient.",
-                ],
+                metadata: {
+                  source: "dialog",
+                  dialogId: next.dialogId,
+                  ...(next.dialogName !== undefined ? { dialogName: next.dialogName } : {}),
+                  ...(next.sourceMessageId !== undefined ? { sourceMessageId: next.sourceMessageId } : {}),
+                  ...(currentDialog !== undefined ? { dialogStatus: currentDialog.status, dialogActivity: currentDialog.activity } : {}),
+                },
+                systemInstructions: [COLLABORATOR_REPLY_INSTRUCTIONS],
               },
             } : next.runtimeContext !== undefined ? {
               runtimeTurn: {
@@ -2160,6 +2209,13 @@ export class ThreadRuntime implements ThreadRuntimePort {
               },
             } : {}),
           });
+          if (next.source === "dialog" && next.dialogId !== undefined && next.sourceMessageId !== undefined) {
+            await this.delegationSupervisor?.markDialogReplyDelivered({
+              parentSessionId: threadId,
+              dialogId: next.dialogId,
+              messageId: next.sourceMessageId,
+            });
+          }
           await this.withFollowUpMutation(threadId, async (latest) => {
             await this.store.upsertThread(removeFollowUp(latest, next.followUpId));
           });
