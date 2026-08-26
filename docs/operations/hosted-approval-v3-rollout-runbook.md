@@ -94,14 +94,26 @@ Build the three affected production images at each candidate commit. Use a
 different local tag for each commit:
 
 ```bash
-docker buildx build --platform linux/amd64 --load +  --file apps/workspace-runtime/Dockerfile +  --tag local/kestrel-workspace-runtime:<candidate-tag> +  --build-arg KESTREL_BUILD_ID=<candidate-tag> .
-bash apps/workspace-runtime/scripts/image-smoke.sh +  local/kestrel-workspace-runtime:<candidate-tag>
+docker buildx build --platform linux/amd64 --load \
+  --file apps/workspace-runtime/Dockerfile \
+  --tag local/kestrel-workspace-runtime:<candidate-tag> \
+  --build-arg KESTREL_BUILD_ID=<candidate-tag> .
+bash apps/workspace-runtime/scripts/image-smoke.sh \
+  local/kestrel-workspace-runtime:<candidate-tag>
 
-docker buildx build --platform linux/amd64 --load +  --file apps/environment-router/Dockerfile +  --tag local/kestrel-environment-router:<candidate-tag> +  --build-arg KESTREL_BUILD_ID=<candidate-tag> .
-bash apps/environment-router/scripts/image-smoke.sh +  local/kestrel-environment-router:<candidate-tag>
+docker buildx build --platform linux/amd64 --load \
+  --file apps/environment-router/Dockerfile \
+  --tag local/kestrel-environment-router:<candidate-tag> \
+  --build-arg KESTREL_BUILD_ID=<candidate-tag> .
+bash apps/environment-router/scripts/image-smoke.sh \
+  local/kestrel-environment-router:<candidate-tag>
 
-docker buildx build --platform linux/amd64 --load +  --file deploy/fly/kestrel-one-turn-worker/Dockerfile +  --tag local/kestrel-one-turn-worker:<candidate-tag> +  --build-arg KESTREL_BUILD_ID=<candidate-tag> .
-bash deploy/fly/kestrel-one-turn-worker/smoke.sh +  local/kestrel-one-turn-worker:<candidate-tag>
+docker buildx build --platform linux/amd64 --load \
+  --file deploy/fly/kestrel-one-turn-worker/Dockerfile \
+  --tag local/kestrel-one-turn-worker:<candidate-tag> \
+  --build-arg KESTREL_BUILD_ID=<candidate-tag> .
+bash deploy/fly/kestrel-one-turn-worker/smoke.sh \
+  local/kestrel-one-turn-worker:<candidate-tag>
 ```
 
 The compatibility images must report V2 as their hosted approval producer.
@@ -182,8 +194,18 @@ record, and per-Environment operations.
 
 ## Stage 3 — inactive V3 acceptance
 
-Before general V3 activation, run the activation images only on one controlled
-canary Environment and one selected started turn-worker Machine. Preserve all
+Promote the activation commit through the protected `main` to `production`
+path and wait for the `one` and `docs` deployments. Publish one immutable set
+of activation images:
+
+```bash
+pnpm production:image:publish --role workspace-runtime --tag <activation-tag>
+pnpm production:image:publish --role environment-router --tag <activation-tag>
+pnpm production:image:publish --role turn-worker --tag <activation-tag>
+```
+
+Before general V3 rollout, run those images only on one controlled canary
+Environment and one selected started turn-worker Machine. Preserve all
 other readers on the compatibility images. Use exact-target provider changes;
 do not activate an app-wide Fly secret to perform this canary.
 
@@ -221,7 +243,9 @@ manufacture negative cases.
 For every card-bearing run, independently execute:
 
 ```bash
-pnpm --dir apps/web hosted-approval:proof -- +  --thread <thread-id> +  --interaction <interaction-id>
+pnpm --dir apps/web hosted-approval:proof -- \
+  --thread <thread-id> \
+  --interaction <interaction-id>
 ```
 
 **Stop condition:** any identity mismatch, duplicate consumption, approved
@@ -232,16 +256,10 @@ shows a card, or new thread that skips the card.
 effect URL, negative acceptance results, restart proof, credential-rotation
 proof, and exact canary target images.
 
-## Stage 4 — activate V3
+## Stage 4 — activate V3 broadly
 
-Promote the activation commit. Wait for `one` and `docs`, then publish the
-activation images with one new immutable tag:
-
-```bash
-pnpm production:image:publish --role workspace-runtime --tag <activation-tag>
-pnpm production:image:publish --role environment-router --tag <activation-tag>
-pnpm production:image:publish --role turn-worker --tag <activation-tag>
-```
+Use the exact activation images accepted in Stage 3. Do not rebuild or assign
+a second tag between canary acceptance and general rollout.
 
 Repeat the exact turn-worker and runtime-pair rollout from Stage 2: one started
 worker, durable plus hosted canaries, remaining started workers, stopped
@@ -264,7 +282,8 @@ Record the time when every approved producer is V3 and every compatible reader
 is deployed. Run:
 
 ```bash
-pnpm --dir apps/web hosted-approval:drain-report -- +  --since <drain-start-ISO-timestamp>
+pnpm --dir apps/web hosted-approval:drain-report -- \
+  --since <drain-start-ISO-timestamp>
 ```
 
 Repeat it throughout the observation window. Any compatibility decision or

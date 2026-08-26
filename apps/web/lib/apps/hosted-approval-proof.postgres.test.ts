@@ -106,11 +106,16 @@ test("hosted approval proof joins exact identity, rotation, consumption, and eff
   assert.equal(result.rememberedEvidence, "recorded_exact");
   assert.equal(result.compatibilityPath, null);
   assert.equal(result.identity.payloadHash, `sha256:${hash}`);
+  assert.equal(result.providerConsumption?.operationKey, "issue.create");
 });
 
 test("hosted approval proof reports actor, payload, execution, and effect mismatches", () => {
   const result = compareHostedApprovalProof({
     ...proof,
+    providerApproval: {
+      ...proof.providerApproval,
+      operationKey: "pull_request.merge",
+    },
     binding: {
       ...proof.binding,
       payloadHash: `sha256:${"b".repeat(64)}`,
@@ -127,6 +132,7 @@ test("hosted approval proof reports actor, payload, execution, and effect mismat
   });
   assert.equal(result.ok, false);
   assert.deepEqual(result.mismatches, [
+    "provider.operation",
     "binding.payload_hash",
     "binding.actor",
     "consuming_execution.environment",

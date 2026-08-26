@@ -7,6 +7,7 @@ import {
 } from "@kestrel-agents/protocol";
 import { and, eq } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { hostedMutationOperationKey } from "@/lib/apps/hosted-app-operation-identity";
 
 type ProofDatabase = typeof knowledgeDb;
 
@@ -333,6 +334,12 @@ export function compareHostedApprovalProof(input: {
   } else {
     check(
       mismatches,
+      "provider.operation",
+      providerApproval.operationKey,
+      hostedMutationOperationKey(interaction.toolId),
+    );
+    check(
+      mismatches,
       "provider.interaction",
       providerApproval.interactionId,
       interaction.id,
@@ -568,6 +575,7 @@ export function compareHostedApprovalProof(input: {
           : "rotated_execution",
     providerConsumption: providerApproval
       ? {
+          operationKey: providerApproval.operationKey,
           lifecycleVersion: providerApproval.lifecycleVersion,
           availabilityStatus: providerApproval.availabilityStatus,
           requestedExecutionId: providerApproval.requestedExecutionId,

@@ -40,7 +40,12 @@ const rows = await knowledgeDb.execute(sql`
     ) AS "legacyProviderConsumptions",
     count(*) FILTER (
       WHERE interaction.thread_id = ${INCIDENT_THREAD_ID}
-        AND interaction.status NOT IN ('resolved', 'failed', 'cancelled')
+        AND (
+          interaction.status IS DISTINCT FROM 'failed'
+          OR interaction.response_failure_code IS DISTINCT FROM
+            'HISTORICAL_HOSTED_APP_GRANT_MISSING'
+          OR interaction.effect_status IS DISTINCT FROM 'not_started'
+        )
     )::int AS "nonterminalIncidentInteractions",
     (
       SELECT max(approval.expires_at)
