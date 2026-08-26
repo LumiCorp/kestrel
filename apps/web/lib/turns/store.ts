@@ -35,7 +35,10 @@ import {
 import { shouldInvalidateGatewayCredential } from "@/lib/ai/gateway-credential-health";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { isHostedMutationToolName } from "@/lib/apps/hosted-app-operation-contract";
-import { decideAppOperationApprovalInTransaction } from "@/lib/apps/app-operation-approvals";
+import {
+  decideAppOperationApprovalInTransaction,
+  linkAppOperationApprovalToInteractionInTransaction,
+} from "@/lib/apps/app-operation-approvals";
 import { hashAppApprovalAuthority } from "@/lib/apps/app-operation-approval-contract";
 import { resolveEffectiveProjectAppAccess } from "@/lib/apps/project-service";
 import { meterPersistedModelMessages } from "@/lib/costs/metering";
@@ -57,7 +60,11 @@ import {
   defaultThreadWorkspaceMode,
   resolveTurnConcurrencyGroup,
 } from "@/lib/turns/concurrency";
-import { projectSafeThreadInteraction } from "@/lib/turns/interaction-projection";
+import {
+  projectSafeThreadInteraction,
+  setInteractionPresentationStatus,
+} from "@/lib/turns/interaction-projection";
+import { assertHostedApprovalOutcomeInvariant } from "@/lib/turns/outcome-invariant";
 
 export type TurnTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
@@ -1714,6 +1721,20 @@ export async function persistDurableAssistantOutcome(input: {
         },
       })
       .returning();
+    if (
+      interaction &&
+      input.runtimeApprovalId &&
+      input.interaction.kind === "approval" &&
+      isHostedMutationToolName(input.interaction.approval?.toolName)
+    ) {
+      await linkAppOperationApprovalToInteractionInTransaction(tx, {
+        organizationId: turn.organizationId,
+        threadId: turn.threadId,
+        runtimeApprovalId: input.runtimeApprovalId,
+        interactionId: interaction.id,
+        now,
+      });
+    }
     assertThreadTurnTransition(turn.status, "waiting_for_input");
     const [waiting] = await tx
       .update(schema.threadTurns)
@@ -2122,6 +2143,7 @@ export async function resolveDurableRuntimeInteraction(input: {
         threadId: input.threadId,
         userId: input.userId,
         runtimeApprovalId: interaction.runtimeApprovalId,
+        interactionId: interaction.id,
         approved: input.decision === "approve_once" || input.approved === true,
         required: true,
         now,
@@ -2293,8 +2315,10 @@ export async function recordDurableRuntimeToolOutcome(input: {
       columns: { resumeInteractionId: true },
     });
     if (!currentTurn) return false;
-    const interaction = await tx.query.threadInteractions.findFirst({
-      where: and(
+    const [interaction] = await tx
+      .select()
+      .from(schema.threadInteractions)
+      .where(and(
         currentTurn.resumeInteractionId
           ? eq(schema.threadInteractions.id, currentTurn.resumeInteractionId)
           : eq(schema.threadInteractions.turnId, input.turnId),
@@ -2305,8 +2329,9 @@ export async function recordDurableRuntimeToolOutcome(input: {
           "failed",
         ]),
         isNotNull(schema.threadInteractions.resumedAt),
-      ),
-    });
+      ))
+      .limit(1)
+      .for("update");
     if (!interaction) return false;
     const hostedApproval = parseHostedV2ApprovalInteraction(interaction);
     if (
@@ -2324,12 +2349,25 @@ export async function recordDurableRuntimeToolOutcome(input: {
     });
     if (existing || interaction.status !== "processing") return true;
 
+    try {
+      assertHostedApprovalOutcomeInvariant(input.outcome);
+    } catch {
+      return failDurableRuntimeInteractionInTransaction(tx, input.turnId, {
+        failureCode: "TOOL_OUTCOME_INVALID",
+        failureMessage: "The tool outcome did not carry valid effect evidence.",
+        effectStatus: "unknown",
+        retryable: false,
+      });
+    }
+
     if (input.outcome.kind !== "success") {
       const effectStatus = input.outcome.effectState === "not_started"
         ? "not_started" as const
         : input.outcome.effectState === "unknown"
           ? "unknown" as const
-          : "started" as const;
+          : input.outcome.effectState === "committed"
+            ? "committed" as const
+            : "started" as const;
       return failDurableRuntimeInteractionInTransaction(tx, input.turnId, {
         failureCode:
           input.outcome.normalizedFailureCode ?? "TOOL_EXECUTION_FAILED",
@@ -2348,7 +2386,14 @@ export async function recordDurableRuntimeToolOutcome(input: {
         status: "resolved",
         responseFailureCode: null,
         responseFailureMessage: null,
-        effectStatus: null,
+        effectStatus:
+          input.outcome.effectState === "committed"
+            ? "committed"
+            : input.outcome.effectState === "unknown"
+              ? "unknown"
+              : input.outcome.effectState === "not_started"
+                ? "not_started"
+                : "started",
         responseRetryable: false,
         updatedAt: now,
       })
@@ -2433,7 +2478,7 @@ export async function recordDurableRuntimeDeclineCompleted(input: {
 export type DurableInteractionFailureEvidence = {
   failureCode: string;
   failureMessage: string;
-  effectStatus: "not_started" | "started" | "unknown";
+  effectStatus: "not_started" | "started" | "committed" | "unknown";
   retryable: boolean;
 };
 
@@ -2459,19 +2504,50 @@ async function failDurableRuntimeInteractionInTransaction(
     where: eq(schema.threadTurns.id, turnId),
     columns: { resumeInteractionId: true },
   });
-  const interaction = await tx.query.threadInteractions.findFirst({
-    where: and(
+  const [interaction] = await tx
+    .select()
+    .from(schema.threadInteractions)
+    .where(and(
       currentTurn?.resumeInteractionId
         ? eq(schema.threadInteractions.id, currentTurn.resumeInteractionId)
         : eq(schema.threadInteractions.turnId, turnId),
       eq(schema.threadInteractions.source, "runtime"),
       eq(schema.threadInteractions.status, "processing"),
       isNotNull(schema.threadInteractions.resumedAt),
-    ),
-  });
+    ))
+    .limit(1)
+    .for("update");
   if (!interaction) return false;
-  const retryable = input.effectStatus === "not_started" && input.retryable;
   const now = new Date();
+  const interactionOwned = parseHostedV2ApprovalInteraction(interaction) !== null;
+  let retryable = input.effectStatus === "not_started" && input.retryable;
+  if (retryable && interactionOwned && interaction.runtimeApprovalId) {
+    const [providerApproval] = await tx
+      .select({
+        availabilityStatus: schema.appOperationApprovals.availabilityStatus,
+        consumedExecutionId: schema.appOperationApprovals.consumedExecutionId,
+        expiresAt: schema.appOperationApprovals.expiresAt,
+      })
+      .from(schema.appOperationApprovals)
+      .where(and(
+        eq(
+          schema.appOperationApprovals.organizationId,
+          interaction.organizationId,
+        ),
+        eq(
+          schema.appOperationApprovals.runtimeApprovalId,
+          interaction.runtimeApprovalId,
+        ),
+        eq(schema.appOperationApprovals.lifecycleVersion, "interaction_v2"),
+        eq(schema.appOperationApprovals.interactionId, interaction.id),
+      ))
+      .limit(1)
+      .for("update");
+    retryable =
+      providerApproval?.availabilityStatus === "available" &&
+      providerApproval.consumedExecutionId === null &&
+      providerApproval.expiresAt.getTime() > now.getTime();
+  }
   await tx
     .update(schema.threadInteractions)
     .set({
@@ -2487,7 +2563,9 @@ async function failDurableRuntimeInteractionInTransaction(
     await tx
       .update(schema.appOperationApprovals)
       .set({
-        status: "expired",
+        ...(interactionOwned
+          ? { availabilityStatus: "expired" as const }
+          : { status: "expired" as const }),
         payload: sql`jsonb_build_object('redacted', true, 'operation', ${schema.appOperationApprovals.operationKey})`,
         updatedAt: now,
       })
@@ -2501,7 +2579,16 @@ async function failDurableRuntimeInteractionInTransaction(
             schema.appOperationApprovals.runtimeApprovalId,
             interaction.runtimeApprovalId,
           ),
-          inArray(schema.appOperationApprovals.status, ["pending", "approved"]),
+          ...(interactionOwned
+            ? [
+                eq(schema.appOperationApprovals.lifecycleVersion, "interaction_v2"),
+                eq(schema.appOperationApprovals.interactionId, interaction.id),
+                eq(schema.appOperationApprovals.availabilityStatus, "available"),
+              ]
+            : [
+                eq(schema.appOperationApprovals.lifecycleVersion, "legacy_v1"),
+                inArray(schema.appOperationApprovals.status, ["pending", "approved"]),
+              ]),
         ),
       );
   }
@@ -2608,7 +2695,9 @@ export async function retryFailedDurableRuntimeInteraction(input: {
           eq(schema.appOperationApprovals.threadId, input.threadId),
           eq(schema.appOperationApprovals.actorUserId, input.userId),
           eq(schema.appOperationApprovals.runtimeApprovalId, runtimeApprovalId),
-          eq(schema.appOperationApprovals.status, "approved"),
+          eq(schema.appOperationApprovals.lifecycleVersion, "interaction_v2"),
+          eq(schema.appOperationApprovals.interactionId, interaction.id),
+          eq(schema.appOperationApprovals.availabilityStatus, "available"),
           isNull(schema.appOperationApprovals.consumedExecutionId),
           gt(schema.appOperationApprovals.expiresAt, new Date()),
         ),
@@ -2635,7 +2724,6 @@ export async function retryFailedDurableRuntimeInteraction(input: {
       }
       if (
         !isApprovedResponseEnvelope(responseEnvelope) ||
-        appApproval.decidedByUserId !== input.userId ||
         runnerBinding.approvalId !== interaction.runtimeApprovalId ||
         runnerBinding.threadId !== interaction.threadId ||
         (runnerBinding.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
@@ -2904,40 +2992,6 @@ function appendInteractionPresentationParts(
     });
   }
   return parts;
-}
-
-function setInteractionPresentationStatus(
-  value: unknown,
-  requestId: string,
-  status: "processing" | "resolved" | "cancelled" | "failed",
-  approvalOutcome?: Record<string, unknown>,
-) {
-  if (!Array.isArray(value)) return value;
-  return value.map((part) => {
-    if (!(part && typeof part === "object" && !Array.isArray(part)))
-      return part;
-    const record = part as Record<string, unknown>;
-    const data =
-      record.data &&
-      typeof record.data === "object" &&
-      !Array.isArray(record.data)
-        ? (record.data as Record<string, unknown>)
-        : null;
-    if (
-      record.type !== "data-kestrel-interaction" ||
-      data?.requestId !== requestId
-    ) {
-      return part;
-    }
-    return {
-      ...record,
-      data: {
-        ...data,
-        status,
-        ...(approvalOutcome ? { approvalOutcome } : {}),
-      },
-    };
-  });
 }
 
 export async function listThreadInteractionsForUser(input: {

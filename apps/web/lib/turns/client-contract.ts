@@ -37,9 +37,9 @@ export const threadInteractionViewSchema = z.object({
   prompt: z.string(),
   status: z.enum(["pending", "processing", "resolved", "cancelled", "failed"]),
   approvalOutcome: z.object({
-    decision: z.enum(["approved", "denied"]),
-    authorizationState: z.enum(["pending", "accepted", "failed"]),
-    effectState: z.enum(["not_started", "started", "unknown"]),
+    decision: z.enum(["approved", "denied", "expired"]),
+    authorizationState: z.enum(["pending", "accepted", "denied", "expired", "failed"]),
+    effectState: z.enum(["not_started", "started", "committed", "unknown"]),
     failureCode: z.string().optional(),
     publicMessage: z.string().optional(),
     retryEligible: z.boolean(),

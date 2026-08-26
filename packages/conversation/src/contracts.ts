@@ -184,9 +184,9 @@ export interface ConversationInteractionPresentation<
   source?: "runtime" | "mcp" | undefined;
   status: "pending" | "processing" | "resolved" | "cancelled" | "failed";
   approvalOutcome?: {
-    decision: "approved" | "denied";
-    authorizationState: "pending" | "accepted" | "failed";
-    effectState: "not_started" | "started" | "unknown";
+    decision: "approved" | "denied" | "expired";
+    authorizationState: "pending" | "accepted" | "denied" | "expired" | "failed";
+    effectState: "not_started" | "started" | "committed" | "unknown";
     failureCode?: string | undefined;
     publicMessage?: string | undefined;
     retryEligible: boolean;

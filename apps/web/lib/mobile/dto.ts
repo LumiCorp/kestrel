@@ -171,9 +171,9 @@ export function mobileInteractionDto(
     requestEnvelope: Record<string, unknown>;
     createdAt: Date;
     approvalOutcome?: {
-      decision: "approved" | "denied";
-      authorizationState: "pending" | "accepted" | "failed";
-      effectState: "not_started" | "started" | "unknown";
+      decision: "approved" | "denied" | "expired";
+      authorizationState: "pending" | "accepted" | "denied" | "expired" | "failed";
+      effectState: "not_started" | "started" | "committed" | "unknown";
       failureCode?: string;
       publicMessage?: string;
       retryEligible: boolean;

@@ -51,6 +51,8 @@ test(
       mcpControl,
       mcpGrant,
       appApprovals,
+      turnStore,
+      knowledgeDbModule,
     ] = await Promise.all([
       import("@/lib/db/runtime"),
       import("@/lib/environments/store"),
@@ -69,6 +71,8 @@ test(
       import("@/lib/mcp/control-plane"),
       import("@/lib/mcp/grant-service"),
       import("./app-operation-approvals"),
+      import("@/lib/turns/store"),
+      import("@/lib/knowledge/db"),
     ]);
     const sql = postgres(databaseUrl, { max: 1 });
     const suffix = crypto.randomUUID();
@@ -738,6 +742,35 @@ test(
         };
       } = { toolName: "tavily.research" },
     ) => {
+      const requestId = `request-${runtimeApprovalId}`;
+      const requestEnvelope = approval.preparedInvocationId
+        ? {
+            version: "runner_hosted_tool_approval_interaction_v2",
+            requestId,
+            kind: "approval",
+            eventType: "user.approval",
+            prompt: `Approve ${approval.toolName}?`,
+            inputSchema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["decision"],
+              properties: {
+                decision: {
+                  type: "string",
+                  enum: ["decline", "approve_once"],
+                },
+              },
+            },
+            approval: {
+              ...approval,
+              requestingActor: {
+                actorType: "end_user",
+                actorId: userId,
+                tenantId: organizationId,
+              },
+            },
+          }
+        : { approval };
       await sql`
         INSERT INTO "thread_interactions" (
           "id", "request_id", "organization_id", "thread_id", "turn_id",
@@ -745,10 +778,10 @@ test(
           "request_envelope", "response_envelope", "runtime_approval_id",
           "source_runtime_run_id", "resolved_by_user_id", "resolved_at", "resumed_at"
         ) VALUES (
-          ${`interaction-${runtimeApprovalId}`}, ${`request-${runtimeApprovalId}`},
+          ${`interaction-${runtimeApprovalId}`}, ${requestId},
           ${organizationId}, ${threadId}, ${approvalTurnId}, 'runtime', 'approval',
           'user.approval', 'Approve?', ${approval.preparedInvocationId ? "processing" : "resolved"},
-          ${sql.json({ approval })},
+          ${sql.json(requestEnvelope)},
           ${sql.json(
             approval.preparedInvocationId
               ? { decision: "approve_once" }
@@ -757,6 +790,15 @@ test(
           ${userId}, ${now}, ${now}
         )
       `;
+      if (approval.preparedInvocationId) {
+        await sql`
+          UPDATE "app_operation_approvals"
+          SET "interaction_id" = ${`interaction-${runtimeApprovalId}`}
+          WHERE "organization_id" = ${organizationId}
+            AND "runtime_approval_id" = ${runtimeApprovalId}
+            AND "lifecycle_version" = 'interaction_v2'
+        `;
+      }
     };
     await sql`
       INSERT INTO "environment_run_executions" (
@@ -884,13 +926,9 @@ test(
       requestedV2Approval.externalApprovalBinding?.version,
       RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
     );
-    await appApprovals.decideAppOperationApproval({
-      organizationId,
-      threadId,
-      userId,
-      runtimeApprovalId: v2ApprovalBinding.runtimeApprovalId,
-      approved: true,
-    });
+    assert.equal(requestedV2Approval.lifecycleVersion, "interaction_v2");
+    assert.equal(requestedV2Approval.availabilityStatus, "available");
+    assert.equal(requestedV2Approval.status, null);
     await bindApprovalInteraction(v2ApprovalBinding.runtimeApprovalId, {
       toolName: "tavily.research",
       preparedInvocationId: v2PreparedInvocationId,
@@ -900,7 +938,140 @@ test(
       binding: v2ApprovalBinding,
       consumedExecutionId: runId,
     });
-    assert.equal(consumedV2.status, "consumed");
+    assert.equal(consumedV2.status, null);
+    assert.equal(consumedV2.availabilityStatus, "consumed");
+    await sql`
+      UPDATE "thread_turns"
+      SET
+        "approval_id" = NULL,
+        "approval_approved" = NULL,
+        "resume_interaction_id" = ${`interaction-${v2ApprovalBinding.runtimeApprovalId}`}
+      WHERE "id" = ${approvalTurnId}
+    `;
+    assert.equal(
+      await turnStore.recordDurableRuntimeToolOutcome({
+        turnId: approvalTurnId,
+        eventId: `v2-failed-before-effect-${suffix}`,
+        outcome: {
+          callId: v2PreparedInvocationId,
+          kind: "failure",
+          effectState: "not_started",
+          retryable: true,
+          normalizedFailureCode: "PROVIDER_FAILED_BEFORE_EFFECT",
+        },
+      }),
+      true,
+    );
+    const [consumedFailure] = await sql<Array<{
+      availabilityStatus: string;
+      interactionStatus: string;
+      responseRetryable: boolean;
+    }>>`
+      SELECT
+        approval."availability_status" AS "availabilityStatus",
+        interaction."status" AS "interactionStatus",
+        interaction."response_retryable" AS "responseRetryable"
+      FROM "app_operation_approvals" approval
+      JOIN "thread_interactions" interaction
+        ON interaction."id" = approval."interaction_id"
+      WHERE approval."organization_id" = ${organizationId}
+        AND approval."runtime_approval_id" = ${v2ApprovalBinding.runtimeApprovalId}
+    `;
+    assert.deepEqual(consumedFailure, {
+      availabilityStatus: "consumed",
+      interactionStatus: "failed",
+      responseRetryable: false,
+    });
+
+    const expiringV2Binding = {
+      ...v2ApprovalBinding,
+      runtimeApprovalId: `approval-v2-expiring-${suffix}`,
+      payload: { query: "V2 expiry redaction" },
+    };
+    const expiringV2RuntimeBinding = {
+      ...v2RuntimeBinding,
+      approvalId: expiringV2Binding.runtimeApprovalId,
+      preparedInvocationId: `prepared-expiring-${suffix}`,
+      requestedAt: new Date(Date.now() - 1_000).toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    await appApprovals.recordAppOperationApprovalRequest({
+      binding: expiringV2Binding,
+      projectId,
+      requestedExecutionId: runId,
+      expiresAt: new Date(Date.now() + 50_000),
+      runtimeBinding: expiringV2RuntimeBinding,
+    });
+    await bindApprovalInteraction(expiringV2Binding.runtimeApprovalId, {
+      toolName: "tavily.research",
+      preparedInvocationId: expiringV2RuntimeBinding.preparedInvocationId,
+      stableToolIdentity: v2StableToolIdentity,
+    });
+    await appApprovals.expireStaleAppOperationApprovals(
+      new Date(Date.now() + 120_000),
+    );
+    const [expiredV2] = await sql<Array<{
+      availabilityStatus: string;
+      payload: Record<string, unknown>;
+      interactionStatus: string;
+      failureCode: string | null;
+      effectStatus: string | null;
+    }>>`
+      SELECT
+        approval."availability_status" AS "availabilityStatus",
+        approval."payload",
+        interaction."status" AS "interactionStatus",
+        interaction."response_failure_code" AS "failureCode",
+        interaction."effect_status" AS "effectStatus"
+      FROM "app_operation_approvals" approval
+      JOIN "thread_interactions" interaction
+        ON interaction."id" = approval."interaction_id"
+      WHERE approval."organization_id" = ${organizationId}
+        AND approval."runtime_approval_id" = ${expiringV2Binding.runtimeApprovalId}
+    `;
+    assert.deepEqual(expiredV2, {
+      availabilityStatus: "expired",
+      payload: { redacted: true, operation: "tavily.research" },
+      interactionStatus: "failed",
+      failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+      effectStatus: "not_started",
+    });
+
+    const orphanedV2Binding = {
+      ...v2ApprovalBinding,
+      runtimeApprovalId: `approval-v2-orphaned-${suffix}`,
+      payload: { query: "V2 orphan expiry" },
+    };
+    const orphanedV2RuntimeBinding = {
+      ...v2RuntimeBinding,
+      approvalId: orphanedV2Binding.runtimeApprovalId,
+      preparedInvocationId: `prepared-orphaned-${suffix}`,
+      requestedAt: new Date(Date.now() - 1_000).toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    await appApprovals.recordAppOperationApprovalRequest({
+      binding: orphanedV2Binding,
+      projectId,
+      requestedExecutionId: runId,
+      expiresAt: new Date(Date.now() + 50_000),
+      runtimeBinding: orphanedV2RuntimeBinding,
+    });
+    const afterOrphanExpiry = new Date(Date.now() + 120_000);
+    await appApprovals.expireStaleAppOperationApprovals(afterOrphanExpiry);
+    await assert.rejects(
+      knowledgeDbModule.knowledgeDb.transaction((tx) =>
+        appApprovals.linkAppOperationApprovalToInteractionInTransaction(tx, {
+          organizationId,
+          threadId,
+          runtimeApprovalId: orphanedV2Binding.runtimeApprovalId,
+          interactionId: `interaction-after-expiry-${suffix}`,
+          now: afterOrphanExpiry,
+        }),
+      ),
+      (error: unknown) =>
+        error instanceof appApprovals.AppOperationApprovalError &&
+        error.code === "APP_OPERATION_APPROVAL_BINDING_MISMATCH",
+    );
 
     const directlyApprovedBinding = {
       ...approvalBinding,

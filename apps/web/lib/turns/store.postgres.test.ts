@@ -866,8 +866,26 @@ test(
       "processing",
       "V2 approval must not report execution success at run startup",
     );
-    assert.equal(
-      await store.recordDurableRuntimeToolOutcome({
+    let releaseSettlementLock!: () => void;
+    const settlementLockRelease = new Promise<void>((resolve) => {
+      releaseSettlementLock = resolve;
+    });
+    let markSettlementLockAcquired!: () => void;
+    const settlementLockAcquired = new Promise<void>((resolve) => {
+      markSettlementLockAcquired = resolve;
+    });
+    const heldSettlementLock = sql.begin(async (transaction) => {
+      await transaction`
+        SELECT "id"
+        FROM "thread_interactions"
+        WHERE "request_id" = ${approvalRequestId}
+        FOR UPDATE
+      `;
+      markSettlementLockAcquired();
+      await settlementLockRelease;
+    });
+    await settlementLockAcquired;
+    const committedSettlement = store.recordDurableRuntimeToolOutcome({
         turnId: approvalTurn.turn.id,
         eventId: `approval-tool-completed-${suffix}`,
         outcome: {
@@ -875,17 +893,33 @@ test(
           kind: "success",
           effectState: "committed",
         },
-      }),
-      true,
+      });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const conflictingFailureSettlement = store.recordDurableRuntimeToolOutcome({
+      turnId: approvalTurn.turn.id,
+      eventId: `approval-tool-failed-${suffix}`,
+      outcome: {
+        callId: approvalInteraction.approval.preparedInvocationId,
+        kind: "failure",
+        effectState: "unknown",
+        normalizedFailureCode: "CONFLICTING_TERMINAL_OUTCOME",
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    releaseSettlementLock();
+    await heldSettlementLock;
+    assert.deepEqual(
+      await Promise.all([committedSettlement, conflictingFailureSettlement]),
+      [true, true],
     );
-    assert.equal(
-      (await store.listThreadInteractionsForUser({
-        threadId: approvalThreadId,
-        organizationId,
-        userId,
-      }))[0]?.status,
-      "resolved",
-    );
+    const settledApproval = (await store.listThreadInteractionsForUser({
+      threadId: approvalThreadId,
+      organizationId,
+      userId,
+    }))[0];
+    assert.equal(settledApproval?.status, "resolved");
+    assert.equal(settledApproval?.approvalOutcome?.authorizationState, "accepted");
+    assert.equal(settledApproval?.approvalOutcome?.effectState, "committed");
     await store.completeDurableThreadTurn({
       turnId: approvalTurn.turn.id,
       status: "completed",

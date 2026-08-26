@@ -15,6 +15,13 @@ ALTER TABLE "app_operation_approvals"
   FOREIGN KEY ("interaction_id") REFERENCES "thread_interactions"("id")
   ON DELETE CASCADE;
 --> statement-breakpoint
+CREATE INDEX "app_operation_approvals_availability_expiry_idx"
+  ON "app_operation_approvals" ("lifecycle_version", "availability_status", "expires_at");
+--> statement-breakpoint
+CREATE UNIQUE INDEX "app_operation_approvals_interaction_idx"
+  ON "app_operation_approvals" ("interaction_id")
+  WHERE "interaction_id" IS NOT NULL;
+--> statement-breakpoint
 ALTER TABLE "app_operation_approvals"
   DROP CONSTRAINT "app_operation_approvals_lifecycle_check";
 --> statement-breakpoint
@@ -104,7 +111,6 @@ ALTER TABLE "app_operation_approvals"
         OR
         (
           "availability_status" = 'expired'
-          AND "interaction_id" IS NOT NULL
           AND "consumed_execution_id" IS NULL
           AND "consumed_at" IS NULL
         )

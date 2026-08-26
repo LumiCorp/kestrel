@@ -40,6 +40,8 @@ test("hosted approval migration separates legacy decisions from V2 provider avai
   assert.match(migration, /ALTER COLUMN "status" DROP NOT NULL/u);
   assert.match(migration, /'legacy_v1', 'interaction_v2'/u);
   assert.match(migration, /'available', 'consumed', 'expired'/u);
+  assert.match(migration, /app_operation_approvals_availability_expiry_idx/u);
+  assert.match(migration, /app_operation_approvals_interaction_idx/u);
   assert.match(
     schema,
     /lifecycleVersion: text\("lifecycle_version", \{[\s\S]*enum: \["legacy_v1", "interaction_v2"\]/u,
@@ -71,7 +73,7 @@ test("hosted approval migration separates legacy decisions from V2 provider avai
   );
   assert.match(
     migration,
-    /"availability_status" = 'expired'[\s\S]*"interaction_id" IS NOT NULL[\s\S]*"consumed_execution_id" IS NULL[\s\S]*"consumed_at" IS NULL/u,
+    /"availability_status" = 'expired'[\s\S]*"consumed_execution_id" IS NULL[\s\S]*"consumed_at" IS NULL/u,
   );
   assert.match(
     migration,

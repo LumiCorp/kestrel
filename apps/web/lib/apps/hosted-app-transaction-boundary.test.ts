@@ -14,6 +14,7 @@ test("hosted App decision, response, interaction, and queue state share one tran
   assert.match(boundary, /return knowledgeDb\.transaction\(async \(tx\) =>/u);
   assert.match(boundary, /await tx\.insert\(schema\.threadMessages\)/u);
   assert.match(boundary, /await decideAppOperationApprovalInTransaction\(tx,/u);
+  assert.match(boundary, /interactionId: interaction\.id/u);
   assert.match(boundary, /\.update\(schema\.threadInteractions\)/u);
   assert.match(boundary, /\.update\(schema\.threadTurnQueueState\)/u);
 });
@@ -99,5 +100,33 @@ test("grant consumption proves the exact running execution and source interactio
   assert.match(boundary, /threadTurns\.environmentExecutionId, input\.consumedExecutionId/u);
   assert.match(boundary, /consumingTurn\.resumeInteractionId === interaction\.id/u);
   assert.match(boundary, /interaction\.runtimeApprovalId/u);
+  assert.match(boundary, /existing\.lifecycleVersion !== "interaction_v2"/u);
+  assert.match(boundary, /existing\.interactionId !== interaction\.id/u);
+  assert.match(boundary, /interactionResponse\?\.decision !== "approve_once"/u);
+  assert.match(boundary, /availabilityStatus: "consumed"/u);
   assert.match(boundary, /runnerBinding\.runId !== interaction\.sourceRuntimeRunId/u);
+});
+
+test("V2 provider records never write an independent human decision", async () => {
+  const approvals = await source("./app-operation-approvals.ts");
+  const recordStart = approvals.indexOf("export async function recordAppOperationApprovalRequest");
+  const recordEnd = approvals.indexOf("export async function linkAppOperationApprovalToInteractionInTransaction", recordStart);
+  const recordBoundary = approvals.slice(recordStart, recordEnd);
+  assert.match(recordBoundary, /lifecycleVersion: interactionOwned \? "interaction_v2" : "legacy_v1"/u);
+  assert.match(recordBoundary, /availabilityStatus: interactionOwned \? "available" : null/u);
+  assert.match(recordBoundary, /status: interactionOwned[\s\S]*\? null/u);
+
+  const decisionStart = approvals.indexOf("export async function decideAppOperationApprovalInTransaction");
+  const decisionEnd = approvals.indexOf("export async function decideAppOperationApprovalIfPresent", decisionStart);
+  const decisionBoundary = approvals.slice(decisionStart, decisionEnd);
+  assert.match(decisionBoundary, /approval\.lifecycleVersion === "interaction_v2"/u);
+  assert.match(decisionBoundary, /approval\.interactionId !== input\.interactionId/u);
+  assert.match(decisionBoundary, /availabilityStatus: "expired"/u);
+  assert.doesNotMatch(
+    decisionBoundary.slice(
+      decisionBoundary.indexOf('approval.lifecycleVersion === "interaction_v2"'),
+      decisionBoundary.indexOf("const exactRepeatedDecision"),
+    ),
+    /decidedByUserId|decidedAt|status: "approved"|status: "denied"/u,
+  );
 });

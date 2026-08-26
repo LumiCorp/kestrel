@@ -265,9 +265,15 @@ export function InteractionPanel({
                   {interaction.status === "processing"
                     ? "Decision recorded"
                     : interaction.status === "resolved"
-                      ? "Authorization accepted"
+                      ? interaction.approvalOutcome?.authorizationState === "denied"
+                        ? "Authorization declined"
+                        : "Authorization accepted"
+                      : interaction.approvalOutcome?.authorizationState === "expired"
+                        ? "Authorization expired — operation not executed"
                       : interaction.approvalOutcome?.effectState === "not_started"
                         ? "Authorization failed — operation not executed"
+                        : interaction.approvalOutcome?.effectState === "committed"
+                          ? "Authorization failed after the operation committed"
                         : "Authorization failed — effect status unknown"}
                 </p>
               ) : null}

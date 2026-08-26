@@ -3510,6 +3510,14 @@ export const appOperationApprovals = pgTable(
       table.status,
       table.expiresAt,
     ),
+    index("app_operation_approvals_availability_expiry_idx").on(
+      table.lifecycleVersion,
+      table.availabilityStatus,
+      table.expiresAt,
+    ),
+    uniqueIndex("app_operation_approvals_interaction_idx")
+      .on(table.interactionId)
+      .where(sql`${table.interactionId} is not null`),
     index("app_operation_approvals_execution_idx").on(
       table.requestedExecutionId,
     ),
@@ -3548,7 +3556,7 @@ export const appOperationApprovals = pgTable(
         or (${table.lifecycleVersion} = 'interaction_v2' and (
           (${table.availabilityStatus} = 'available' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
           or (${table.availabilityStatus} = 'consumed' and ${table.interactionId} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
-          or (${table.availabilityStatus} = 'expired' and ${table.interactionId} is not null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+          or (${table.availabilityStatus} = 'expired' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
         ))
       )`,
     ),
