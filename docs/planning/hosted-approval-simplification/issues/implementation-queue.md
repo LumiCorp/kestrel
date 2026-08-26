@@ -9,6 +9,9 @@ Implementation must start from deployed-source revision
 
 ## Ready
 
+- [Bind persisted V2 approval to current hosted authority](01a1-bind-v2-to-current-host-authority.md)
+- [Complete prepared execution ownership and shutdown safety](01c1-complete-prepared-resource-ownership.md)
+- [Derive remembered identity from the locked source interaction](01f1-derive-remembered-identity-from-source.md)
 - [Use one canonical persisted invocation for card and approval](01b-canonical-prepared-invocation-state.md)
 - [Align the V2 approval prompt with its strict decisions](01e-align-v2-prompt-decisions.md)
 
@@ -29,8 +32,11 @@ None.
 - [Persist the exact tool invocation before approval](01-persist-prepared-invocation.md)
   — review blocked by [Reject contradictory V2 approval authority](01a-enforce-v2-authority-consistency.md), [Use one canonical persisted invocation for card and approval](01b-canonical-prepared-invocation-state.md), [Release prepared execution resources when approval will not execute](01c-release-abandoned-prepared-executions.md), [Terminate expired V2 approvals without reusing expired authority](01d-terminate-expired-v2-approvals.md), [Align the V2 approval prompt with its strict decisions](01e-align-v2-prompt-decisions.md), and [Bind remembered records to the exact atomic remember decision](01f-bind-remembered-record-to-decision.md)
 - [Reject contradictory V2 approval authority](01a-enforce-v2-authority-consistency.md)
+  — review blocked by [Bind persisted V2 approval to current hosted authority](01a1-bind-v2-to-current-host-authority.md)
 - [Release prepared execution resources when approval will not execute](01c-release-abandoned-prepared-executions.md)
+  — review blocked by [Complete prepared execution ownership and shutdown safety](01c1-complete-prepared-resource-ownership.md)
 - [Bind remembered records to the exact atomic remember decision](01f-bind-remembered-record-to-decision.md)
+  — review blocked by [Derive remembered identity from the locked source interaction](01f1-derive-remembered-identity-from-source.md)
 
 ## Done
 
