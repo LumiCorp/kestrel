@@ -153,6 +153,12 @@ test("runtime model selection preserves the base profile contract", () => {
     environmentId: "env-1",
     rawModelId: "gpt-5.4",
     provider: "openai",
+    routeBinding: {
+      version: "model_credential_route_binding_v2",
+      status: "legacy_unqualified",
+      provider: "openai",
+      rawModelId: "gpt-5.4",
+    },
   });
   assert.equal(JSON.stringify(profile).includes("provider-secret"), false);
   assert.deepEqual(profile.toolAllowlist, [

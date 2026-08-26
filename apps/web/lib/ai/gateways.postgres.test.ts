@@ -291,6 +291,21 @@ test(
     const modelId = `grant-model-${suffix}`;
     const otherModelId = `grant-other-model-${suffix}`;
     const now = new Date();
+    const routeBinding = {
+      version: "model_credential_route_binding_v2" as const,
+      status: "qualified" as const,
+      provider: "openai" as const,
+      rawModelId: "grant-model",
+      registrationId: "registration:grant-model",
+      registrationRevision: "registration-revision-1",
+      registrationFingerprint: `sha256:${"a".repeat(64)}`,
+      qualificationRevision: "qualification-revision-1",
+      apiEndpoint: "https://api.openai.com/v1",
+      endpointCodec: "openai_responses_v1",
+      routingPolicyFingerprint: `sha256:${"b".repeat(64)}`,
+      requiredRole: "agent.loop",
+      credentialRevision: 1,
+    };
 
     context.after(async () => {
       await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
@@ -367,6 +382,7 @@ test(
       runId: executionId,
       gatewayId,
       rawModelId: "grant-model",
+      routeBinding,
     });
 
     await assert.rejects(
@@ -398,22 +414,35 @@ test(
       runId: executionId,
       gatewayId,
       rawModelId: "grant-model",
+      routeBinding,
     });
     const [reactivated] = await sql<
       Array<{
         gatewayModelId: string | null;
         gatewayCredentialRevision: number | null;
+        routeBindingStatus: string | null;
+        modelRegistrationRevision: string | null;
+        modelQualificationRevision: string | null;
+        modelEndpointCodec: string | null;
         status: string;
       }>
     >`
       SELECT "gateway_model_id" AS "gatewayModelId",
-        "gateway_credential_revision" AS "gatewayCredentialRevision", "status"
+        "gateway_credential_revision" AS "gatewayCredentialRevision",
+        "route_binding_status" AS "routeBindingStatus",
+        "model_registration_revision" AS "modelRegistrationRevision",
+        "model_qualification_revision" AS "modelQualificationRevision",
+        "model_endpoint_codec" AS "modelEndpointCodec", "status"
       FROM "environment_model_grants"
       WHERE "run_id" = ${executionId}
     `;
     assert.deepEqual(reactivated, {
       gatewayModelId: modelId,
       gatewayCredentialRevision: 1,
+      routeBindingStatus: "qualified",
+      modelRegistrationRevision: "registration-revision-1",
+      modelQualificationRevision: "qualification-revision-1",
+      modelEndpointCodec: "openai_responses_v1",
       status: "active",
     });
     await sql`

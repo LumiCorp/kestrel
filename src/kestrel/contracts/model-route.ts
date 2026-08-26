@@ -20,7 +20,44 @@ export interface ModelCredentialReferenceV1 {
   environmentId: string;
   rawModelId: string;
   provider: Exclude<ModelRouteProviderV1, "lmstudio">;
+  routeBinding?: ModelCredentialRouteBindingV2 | undefined;
 }
+
+/**
+ * Immutable evidence carried with a gateway-managed execution.  It is kept on
+ * the credential reference because that is the one profile field that reaches
+ * the runtime credential broker without being interpreted as model policy.
+ */
+export const MODEL_CREDENTIAL_ROUTE_BINDING_VERSION =
+  "model_credential_route_binding_v2" as const;
+
+export interface QualifiedModelCredentialRouteBindingV2 {
+  version: typeof MODEL_CREDENTIAL_ROUTE_BINDING_VERSION;
+  status: "qualified";
+  provider: Exclude<ModelRouteProviderV1, "lmstudio">;
+  rawModelId: string;
+  registrationId: string;
+  registrationRevision: string;
+  registrationFingerprint: string;
+  qualificationRevision: string;
+  apiEndpoint: string;
+  endpointCodec: string;
+  routingPolicyFingerprint: string;
+  requiredRole: string;
+  credentialRevision: number;
+}
+
+/** Historical and plain-text callers never acquire capabilities by inference. */
+export interface LegacyModelCredentialRouteBindingV2 {
+  version: typeof MODEL_CREDENTIAL_ROUTE_BINDING_VERSION;
+  status: "legacy_unqualified";
+  provider: Exclude<ModelRouteProviderV1, "lmstudio">;
+  rawModelId: string;
+}
+
+export type ModelCredentialRouteBindingV2 =
+  | QualifiedModelCredentialRouteBindingV2
+  | LegacyModelCredentialRouteBindingV2;
 
 export function parseModelCredentialReferenceV1(
   value: unknown,
@@ -37,10 +74,13 @@ export function parseModelCredentialReferenceV1(
     "environmentId",
     "rawModelId",
     "provider",
+    "routeBinding",
   ]);
   for (const field of Object.keys(record)) {
     if (!fields.has(field)) {
-      throw new Error(`Model credential reference contains unsupported field '${field}'.`);
+      throw new Error(
+        `Model credential reference contains unsupported field '${field}'.`,
+      );
     }
   }
   if (record.source !== "kestrel-one") {
@@ -50,8 +90,8 @@ export function parseModelCredentialReferenceV1(
   if (provider === "lmstudio") {
     throw new Error("Model credential reference provider cannot be lmstudio.");
   }
-  return {
-    source: "kestrel-one",
+  const parsed = {
+    source: "kestrel-one" as const,
     runId: requireString(record.runId, "runId"),
     gatewayId: requireString(record.gatewayId, "gatewayId"),
     organizationId: requireString(record.organizationId, "organizationId"),
@@ -59,13 +99,151 @@ export function parseModelCredentialReferenceV1(
     rawModelId: requireString(record.rawModelId, "rawModelId"),
     provider,
   };
+  const routeBinding =
+    record.routeBinding === undefined
+      ? undefined
+      : parseModelCredentialRouteBindingV2(record.routeBinding);
+  if (
+    routeBinding !== undefined &&
+    (routeBinding.provider !== parsed.provider ||
+      routeBinding.rawModelId !== parsed.rawModelId)
+  ) {
+    throw new Error(
+      "Model credential route binding must match its credential provider and model.",
+    );
+  }
+  return routeBinding === undefined ? parsed : { ...parsed, routeBinding };
+}
+
+export function parseModelCredentialRouteBindingV2(
+  value: unknown,
+): ModelCredentialRouteBindingV2 {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Model credential route binding must be an object.");
+  }
+  const record = value as Record<string, unknown>;
+  const status = record.status;
+  const expectedFields = new Set(
+    status === "qualified"
+      ? [
+          "version",
+          "status",
+          "provider",
+          "rawModelId",
+          "registrationId",
+          "registrationRevision",
+          "registrationFingerprint",
+          "qualificationRevision",
+          "apiEndpoint",
+          "endpointCodec",
+          "routingPolicyFingerprint",
+          "requiredRole",
+          "credentialRevision",
+        ]
+      : ["version", "status", "provider", "rawModelId"],
+  );
+  for (const field of Object.keys(record)) {
+    if (!expectedFields.has(field)) {
+      throw new Error(
+        `Model credential route binding contains unsupported field '${field}'.`,
+      );
+    }
+  }
+  if (record.version !== MODEL_CREDENTIAL_ROUTE_BINDING_VERSION) {
+    throw new Error("Model credential route binding version is invalid.");
+  }
+  const provider = requireProvider(record.provider);
+  if (provider === "lmstudio") {
+    throw new Error(
+      "Model credential route binding provider cannot be lmstudio.",
+    );
+  }
+  const base = {
+    version: MODEL_CREDENTIAL_ROUTE_BINDING_VERSION,
+    provider,
+    rawModelId: requireString(record.rawModelId, "routeBinding.rawModelId"),
+  };
+  if (status === "legacy_unqualified") {
+    return { ...base, status };
+  }
+  if (status !== "qualified") {
+    throw new Error("Model credential route binding status is invalid.");
+  }
+  const credentialRevision = record.credentialRevision;
+  if (
+    typeof credentialRevision !== "number" ||
+    !Number.isSafeInteger(credentialRevision) ||
+    credentialRevision <= 0
+  ) {
+    throw new Error(
+      "Model credential route binding credentialRevision is invalid.",
+    );
+  }
+  return {
+    ...base,
+    status,
+    registrationId: requireString(
+      record.registrationId,
+      "routeBinding.registrationId",
+    ),
+    registrationRevision: requireString(
+      record.registrationRevision,
+      "routeBinding.registrationRevision",
+    ),
+    registrationFingerprint: requireHash(
+      record.registrationFingerprint,
+      "routeBinding.registrationFingerprint",
+    ),
+    qualificationRevision: requireString(
+      record.qualificationRevision,
+      "routeBinding.qualificationRevision",
+    ),
+    apiEndpoint: requireString(record.apiEndpoint, "routeBinding.apiEndpoint"),
+    endpointCodec: requireString(
+      record.endpointCodec,
+      "routeBinding.endpointCodec",
+    ),
+    routingPolicyFingerprint: requireHash(
+      record.routingPolicyFingerprint,
+      "routeBinding.routingPolicyFingerprint",
+    ),
+    requiredRole: requireString(
+      record.requiredRole,
+      "routeBinding.requiredRole",
+    ),
+    credentialRevision,
+  };
+}
+
+export function createLegacyModelCredentialRouteBindingV2(input: {
+  provider: Exclude<ModelRouteProviderV1, "lmstudio">;
+  rawModelId: string;
+}): LegacyModelCredentialRouteBindingV2 {
+  return parseModelCredentialRouteBindingV2({
+    version: MODEL_CREDENTIAL_ROUTE_BINDING_VERSION,
+    status: "legacy_unqualified",
+    provider: input.provider,
+    rawModelId: input.rawModelId,
+  }) as LegacyModelCredentialRouteBindingV2;
 }
 
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Model credential reference ${field} must be a non-empty string.`);
+    throw new Error(
+      `Model credential reference ${field} must be a non-empty string.`,
+    );
   }
   return value.trim();
+}
+
+function requireHash(value: unknown, field: string): string {
+  const parsed = requireString(value, field);
+  if (!/^sha256:[0-9a-f]{64}$/u.test(parsed)) {
+    throw new Error(
+      `Model credential route binding ${field} must be a sha256 hash.`,
+    );
+  }
+  return parsed;
 }
 
 function requireProvider(value: unknown): ModelRouteProviderV1 {

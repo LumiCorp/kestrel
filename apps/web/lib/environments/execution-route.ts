@@ -3,7 +3,8 @@ import {
   signEnvironmentExecutionTicket,
   WORKSPACE_EXECUTION_ACTIVATION_TIMEOUT_MS,
 } from "@lumi/kestrel-environment-auth";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import type { ModelCredentialRouteBindingV2 } from "../../../../src/kestrel/contracts/model-route";
 import { isGatewayCredentialReadyForRuntime } from "@/lib/ai/gateway-credential-health";
 import type { KestrelOneCapabilityApprovalPolicyEvidence } from "@/lib/agent/kestrel-tool-profile";
 import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
@@ -791,9 +792,10 @@ export async function updateEnvironmentExecutionStatus(input: {
       .update(schema.environmentRunExecutions)
       .set({
         status: input.status,
-        failureCode: input.status === "failed" ? input.failureCode ?? null : null,
+        failureCode:
+          input.status === "failed" ? (input.failureCode ?? null) : null,
         failureMessage:
-          input.status === "failed" ? input.failureMessage ?? null : null,
+          input.status === "failed" ? (input.failureMessage ?? null) : null,
         ...(input.status === "running"
           ? { startedAt: now }
           : { completedAt: now }),
@@ -843,6 +845,7 @@ export async function activateEnvironmentModelGrant(input: {
   runId: string;
   gatewayId: string;
   rawModelId: string;
+  routeBinding?: ModelCredentialRouteBindingV2 | undefined;
 }) {
   const now = new Date();
   await knowledgeDb.transaction(async (transaction) => {
@@ -925,12 +928,91 @@ export async function activateEnvironmentModelGrant(input: {
     ) {
       throw new Error("Environment model grant gateway model is unavailable.");
     }
+    const routeBinding = input.routeBinding;
+    if (
+      routeBinding?.status === "qualified" &&
+      (routeBinding.rawModelId !== input.rawModelId ||
+        routeBinding.credentialRevision !== model.credentialRevision)
+    ) {
+      throw new Error(
+        "Environment model grant exact route evidence does not match the selected credential.",
+      );
+    }
+    const qualifiedRouteValues =
+      routeBinding?.status === "qualified"
+        ? {
+            routeBindingStatus: routeBinding.status,
+            routeProvider: routeBinding.provider,
+            modelRegistrationId: routeBinding.registrationId,
+            modelRegistrationRevision: routeBinding.registrationRevision,
+            modelRegistrationFingerprint: routeBinding.registrationFingerprint,
+            modelQualificationRevision: routeBinding.qualificationRevision,
+            modelApiEndpoint: routeBinding.apiEndpoint,
+            modelEndpointCodec: routeBinding.endpointCodec,
+            modelRoutingPolicyFingerprint:
+              routeBinding.routingPolicyFingerprint,
+            modelRequiredRole: routeBinding.requiredRole,
+          }
+        : {
+            routeBindingStatus: "legacy_unqualified" as const,
+            routeProvider: routeBinding?.provider ?? model.provider,
+          };
+    const exactRouteMatchesExisting =
+      routeBinding?.status === "qualified"
+        ? and(
+            eq(schema.environmentModelGrants.routeBindingStatus, "qualified"),
+            eq(
+              schema.environmentModelGrants.routeProvider,
+              routeBinding.provider,
+            ),
+            eq(
+              schema.environmentModelGrants.modelRegistrationRevision,
+              routeBinding.registrationRevision,
+            ),
+            eq(
+              schema.environmentModelGrants.modelRegistrationFingerprint,
+              routeBinding.registrationFingerprint,
+            ),
+            eq(
+              schema.environmentModelGrants.modelQualificationRevision,
+              routeBinding.qualificationRevision,
+            ),
+            eq(
+              schema.environmentModelGrants.modelApiEndpoint,
+              routeBinding.apiEndpoint,
+            ),
+            eq(
+              schema.environmentModelGrants.modelEndpointCodec,
+              routeBinding.endpointCodec,
+            ),
+            eq(
+              schema.environmentModelGrants.modelRoutingPolicyFingerprint,
+              routeBinding.routingPolicyFingerprint,
+            ),
+            eq(
+              schema.environmentModelGrants.modelRequiredRole,
+              routeBinding.requiredRole,
+            ),
+            eq(
+              schema.environmentModelGrants.gatewayCredentialRevision,
+              routeBinding.credentialRevision,
+            ),
+          )
+        : or(
+            isNull(schema.environmentModelGrants.routeBindingStatus),
+            eq(
+              schema.environmentModelGrants.routeBindingStatus,
+              "legacy_unqualified",
+            ),
+          );
+    const { routeBinding: _routeBinding, ...grantInput } = input;
     const [grant] = await transaction
       .insert(schema.environmentModelGrants)
       .values({
-        ...input,
+        ...grantInput,
         gatewayModelId: model.id,
         gatewayCredentialRevision: model.credentialRevision,
+        ...qualifiedRouteValues,
         status: "active",
         createdAt: now,
         updatedAt: now,
@@ -940,10 +1022,9 @@ export async function activateEnvironmentModelGrant(input: {
         setWhere: and(
           eq(schema.environmentModelGrants.gatewayId, input.gatewayId),
           eq(schema.environmentModelGrants.rawModelId, input.rawModelId),
+          exactRouteMatchesExisting,
         ),
         set: {
-          gatewayModelId: model.id,
-          gatewayCredentialRevision: model.credentialRevision,
           status: "active",
           closedAt: null,
           updatedAt: now,

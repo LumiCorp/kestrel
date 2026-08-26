@@ -27,6 +27,10 @@ import {
 import { z } from "zod";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { issueGatewayCredentialLease } from "@/lib/ai/gateway-credential-lease";
+import {
+  parseModelCredentialRouteBindingV2,
+  type ModelCredentialRouteBindingV2,
+} from "../../../../src/kestrel/contracts/model-route";
 import { resolveKestrelAppUrl } from "@/lib/app-url";
 import type { ProjectRole } from "@/lib/projects/access";
 import { toEnvironmentSlug } from "./contracts";
@@ -1200,12 +1204,14 @@ async function issueEncryptedDesktopModelGrant(input: {
       ),
   });
   if (!modelGrant) return undefined;
+  const routeBinding = modelGrantRouteBinding(modelGrant);
   const lease = await issueGatewayCredentialLease({
     version: "gateway-credential-lease-v3",
     gatewayId: modelGrant.gatewayId,
     organizationId: modelGrant.organizationId,
     environmentId: modelGrant.environmentId,
     rawModelId: modelGrant.rawModelId,
+    ...(routeBinding !== undefined ? { routeBinding } : {}),
   });
   return encryptDesktopCredential({
     value: lease,
@@ -1216,6 +1222,35 @@ async function issueEncryptedDesktopModelGrant(input: {
       connectionId: input.authorization.connection.id,
       runId: modelGrant.runId,
     }),
+  });
+}
+
+function modelGrantRouteBinding(
+  grant: typeof schema.environmentModelGrants.$inferSelect,
+): ModelCredentialRouteBindingV2 | undefined {
+  if (grant.routeBindingStatus === null) return;
+  if (grant.routeBindingStatus === "legacy_unqualified") {
+    return parseModelCredentialRouteBindingV2({
+      version: "model_credential_route_binding_v2",
+      status: "legacy_unqualified",
+      provider: grant.routeProvider,
+      rawModelId: grant.rawModelId,
+    });
+  }
+  return parseModelCredentialRouteBindingV2({
+    version: "model_credential_route_binding_v2",
+    status: "qualified",
+    provider: grant.routeProvider,
+    rawModelId: grant.rawModelId,
+    registrationId: grant.modelRegistrationId,
+    registrationRevision: grant.modelRegistrationRevision,
+    registrationFingerprint: grant.modelRegistrationFingerprint,
+    qualificationRevision: grant.modelQualificationRevision,
+    apiEndpoint: grant.modelApiEndpoint,
+    endpointCodec: grant.modelEndpointCodec,
+    routingPolicyFingerprint: grant.modelRoutingPolicyFingerprint,
+    requiredRole: grant.modelRequiredRole,
+    credentialRevision: grant.gatewayCredentialRevision,
   });
 }
 

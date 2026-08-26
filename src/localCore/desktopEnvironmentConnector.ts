@@ -27,6 +27,7 @@ import {
 } from "@kestrel-agents/protocol";
 
 import type { DesktopProjectRegistration } from "../desktopShell/contracts.js";
+import { parseModelCredentialReferenceV1 } from "../kestrel/contracts/model-route.js";
 import {
   registerEmbeddedGatewayCredentialLease,
   type GatewayCredentialLease,
@@ -1030,13 +1031,14 @@ export class LocalCoreDesktopEnvironmentManager {
           runId: ticket.runId,
         }),
       });
+      const reference = parseGatewayCredentialReference(modelCredential);
       assertDesktopModelLease(
         lease as unknown as Record<string, unknown>,
-        modelCredential,
+        reference,
         ticket,
       );
       embeddedModelLease = {
-        reference: parseGatewayCredentialReference(modelCredential),
+        reference,
         lease,
       };
     } else if (input.modelGrant !== undefined) {
@@ -1602,7 +1604,7 @@ function parseDesktopCredentialEnvelope(
 
 function assertDesktopModelLease(
   lease: Record<string, unknown>,
-  reference: Record<string, unknown>,
+  reference: GatewayCredentialReference,
   ticket: {
     organizationId: string;
     environmentId: string;
@@ -1619,6 +1621,13 @@ function assertDesktopModelLease(
   ) {
     throw new Error("Desktop model grant does not match its execution.");
   }
+  if (
+    reference.routeBinding !== undefined &&
+    JSON.stringify(lease.routeBinding) !==
+      JSON.stringify(reference.routeBinding)
+  ) {
+    throw new Error("Desktop model grant route does not match its execution.");
+  }
   const expiresAt = Date.parse(requireText(lease.expiresAt, "lease.expiresAt"));
   if (
     !Number.isFinite(expiresAt) ||
@@ -1632,30 +1641,11 @@ function assertDesktopModelLease(
 function parseGatewayCredentialReference(
   value: Record<string, unknown>,
 ): GatewayCredentialReference {
-  const provider = value.provider;
-  if (
-    provider !== "openai" &&
-    provider !== "openrouter" &&
-    provider !== "anthropic" &&
-    provider !== "ollama"
-  ) {
-    throw new Error("Desktop model credential provider is invalid.");
+  try {
+    return parseModelCredentialReferenceV1(value);
+  } catch {
+    throw new Error("Desktop model credential reference is invalid.");
   }
-  return {
-    source: "kestrel-one",
-    runId: requireText(value.runId, "modelCredential.runId"),
-    gatewayId: requireText(value.gatewayId, "modelCredential.gatewayId"),
-    organizationId: requireText(
-      value.organizationId,
-      "modelCredential.organizationId",
-    ),
-    environmentId: requireText(
-      value.environmentId,
-      "modelCredential.environmentId",
-    ),
-    rawModelId: requireText(value.rawModelId, "modelCredential.rawModelId"),
-    provider,
-  };
 }
 
 function leaseProviderMatchesReference(

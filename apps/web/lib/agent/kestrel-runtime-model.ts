@@ -9,6 +9,14 @@ import {
   readGatewayModelEconomicsProfile,
   type GatewayModelEconomicsProfile,
 } from "@/lib/ai/model-economics-profile";
+import {
+  createLegacyModelCredentialRouteBindingV2,
+  type ModelCredentialRouteBindingV2,
+} from "../../../../src/kestrel/contracts/model-route";
+import {
+  fingerprintModelRoutingPolicyV2,
+  parseModelRegistrationV2,
+} from "../../../../src/kestrel/contracts/model-registration";
 
 type RunnerModelProvider = NonNullable<RunnerProfile["modelProvider"]>;
 
@@ -19,6 +27,7 @@ export type KestrelOneRuntimeModelSelection = {
   environmentId: string;
   model: string;
   provider: RunnerModelProvider;
+  routeBinding?: ModelCredentialRouteBindingV2 | undefined;
   economicsProfile?: GatewayModelEconomicsProfile | undefined;
 };
 
@@ -54,15 +63,17 @@ export function toKestrelOneRuntimeModelSelection(input: {
   metadata?: unknown;
   organizationId: string;
   environmentId: string;
+  credentialRevision?: number | undefined;
+  requiredRole?: string | undefined;
 }): KestrelOneRuntimeModelSelection {
   if (!isKestrelRuntimeLanguageProvider(input.gatewayProvider)) {
     throw new Error(
-      `Approved ${input.gatewayProvider} model "${input.id}" cannot run through the external Kestrel runtime.`
+      `Approved ${input.gatewayProvider} model "${input.id}" cannot run through the external Kestrel runtime.`,
     );
   }
   if (!input.gatewayId) {
     throw new Error(
-      `Approved model "${input.id}" is missing its gateway reference.`
+      `Approved model "${input.id}" is missing its gateway reference.`,
     );
   }
   const provider =
@@ -91,6 +102,14 @@ export function toKestrelOneRuntimeModelSelection(input: {
     throw error;
   }
 
+  const routeBinding = readQualifiedRouteBinding({
+    metadata: input.metadata,
+    provider: provider as ModelCredentialRouteBindingV2["provider"],
+    rawModelId: input.rawModelId,
+    credentialRevision: input.credentialRevision,
+    requiredRole: input.requiredRole ?? "agent.loop",
+  });
+
   return {
     id: input.id,
     gatewayId: input.gatewayId,
@@ -98,6 +117,7 @@ export function toKestrelOneRuntimeModelSelection(input: {
     environmentId: input.environmentId,
     model: input.rawModelId,
     provider: provider as RunnerModelProvider,
+    ...(routeBinding !== undefined ? { routeBinding } : {}),
     economicsProfile,
   };
 }
@@ -108,7 +128,7 @@ export function applyKestrelOneModelsToProfile(
     EnvironmentRuntimeModelSelection,
     ...EnvironmentRuntimeModelSelection[],
   ],
-  runId: string
+  runId: string,
 ): RunnerProfile {
   const selection = selections[0];
   const economicsProfile =
@@ -163,7 +183,61 @@ export function applyKestrelOneModelsToProfile(
       environmentId: selection.environmentId,
       rawModelId: selection.model,
       provider: selection.provider,
+      routeBinding:
+        selection.routeBinding ??
+        createLegacyModelCredentialRouteBindingV2({
+          provider: selection.provider,
+          rawModelId: selection.model,
+        }),
     },
+  };
+}
+
+function readQualifiedRouteBinding(input: {
+  metadata: unknown;
+  provider: ModelCredentialRouteBindingV2["provider"];
+  rawModelId: string;
+  credentialRevision: number | undefined;
+  requiredRole: string;
+}): ModelCredentialRouteBindingV2 | undefined {
+  if (
+    !(input.metadata && typeof input.metadata === "object") ||
+    Array.isArray(input.metadata) ||
+    input.credentialRevision === undefined
+  ) {
+    return;
+  }
+  const registration = (input.metadata as Record<string, unknown>)
+    .kestrelModelRegistrationV2;
+  if (registration === undefined) return;
+  const parsed = parseModelRegistrationV2(registration);
+  if (
+    parsed.providerId !== input.provider ||
+    parsed.modelId !== input.rawModelId ||
+    parsed.qualification.state !== "qualified" ||
+    parsed.qualification.revision === undefined ||
+    parsed.credentialRevision !== String(input.credentialRevision)
+  ) {
+    throw new Error(
+      "The selected model registration does not match its exact runtime route.",
+    );
+  }
+  return {
+    version: "model_credential_route_binding_v2",
+    status: "qualified",
+    provider: input.provider,
+    rawModelId: input.rawModelId,
+    registrationId: parsed.registrationId,
+    registrationRevision: parsed.revision,
+    registrationFingerprint: parsed.fingerprint,
+    qualificationRevision: parsed.qualification.revision,
+    apiEndpoint: parsed.route.apiEndpoint,
+    endpointCodec: parsed.route.endpointCodec,
+    routingPolicyFingerprint: fingerprintModelRoutingPolicyV2(
+      parsed.route.routing,
+    ),
+    requiredRole: input.requiredRole,
+    credentialRevision: input.credentialRevision,
   };
 }
 
@@ -179,7 +253,9 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function asEconomicsControl(value: unknown):
+function asEconomicsControl(
+  value: unknown,
+):
   | { modelProfiles: GatewayModelEconomicsProfile[]; [key: string]: unknown }
   | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
