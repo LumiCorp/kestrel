@@ -9,11 +9,10 @@ import {
   parseRunnerExternalApprovalBindingV1,
   parseRememberedToolApprovalEvidenceSetV1,
   parseRememberedToolApprovalV1,
+  parseRunnerHostedToolApprovalInteractionV2,
   parseRunnerStructuredReviewInteractionV1,
-  parseStableToolApprovalIdentityV1,
   type RememberedToolApprovalEvidenceV1,
   type RememberedToolApprovalV1,
-  type StableToolApprovalIdentityV1,
 } from "@kestrel-agents/protocol";
 import {
   and,
@@ -272,44 +271,67 @@ async function lockAccessibleThread(
  * Dormant issue-01 writer seam. Approval response handling intentionally does
  * not call this until remembered decisions become a product behavior.
  */
-export interface RememberedApprovalSourceAuthority {
-  organizationId: string;
-  threadId: string;
-  actorUserId: string;
-  toolIdentity: StableToolApprovalIdentityV1;
-}
-
 export async function insertRememberedToolApprovalInTransaction(
   tx: TurnTransaction,
-  input: {
-    approval: RememberedToolApprovalV1;
-    /**
-     * Server-owned authority copied from the source prepared invocation. This
-     * must never be populated from approval-card presentation data.
-     */
-    sourcePreparedApprovalAuthority: RememberedApprovalSourceAuthority;
-  },
+  input: { approval: RememberedToolApprovalV1 },
 ): Promise<RememberedToolApprovalV1> {
   const approval = parseRememberedToolApprovalV1(input.approval);
-  const sourceAuthority = {
-    ...input.sourcePreparedApprovalAuthority,
-    toolIdentity: parseStableToolApprovalIdentityV1(
-      input.sourcePreparedApprovalAuthority.toolIdentity,
-    ),
-  };
+  const [source] = await tx
+    .select({
+      id: schema.threadInteractions.id,
+      organizationId: schema.threadInteractions.organizationId,
+      threadId: schema.threadInteractions.threadId,
+      kind: schema.threadInteractions.kind,
+      status: schema.threadInteractions.status,
+      requestEnvelope: schema.threadInteractions.requestEnvelope,
+      responseEnvelope: schema.threadInteractions.responseEnvelope,
+      resolvedByUserId: schema.threadInteractions.resolvedByUserId,
+    })
+    .from(schema.threadInteractions)
+    .where(eq(schema.threadInteractions.id, approval.sourceInteractionId))
+    .limit(1)
+    .for("update");
+  const sourceDecision = readPlainRecord(source?.responseEnvelope)?.decision;
   if (
-    sourceAuthority.organizationId !== approval.organizationId ||
-    sourceAuthority.threadId !== approval.threadId ||
-    sourceAuthority.actorUserId !== approval.actorUserId ||
-    sourceAuthority.toolIdentity.toolId !== approval.toolIdentity.toolId ||
-    sourceAuthority.toolIdentity.descriptorContractRevision !==
-      approval.toolIdentity.descriptorContractRevision ||
-    sourceAuthority.toolIdentity.approvalAuthorityRevision !==
-      approval.toolIdentity.approvalAuthorityRevision
+    source === undefined ||
+    source.kind !== "approval" ||
+    source.status !== "processing" ||
+    typeof source.resolvedByUserId !== "string" ||
+    sourceDecision !== "remember_approval"
   ) {
     throw new DurableTurnError(
       "TURN_CONFLICT",
-      "Remembered approval does not match the source prepared approval authority.",
+      "Remembered approval source interaction is not the exact remember decision by this actor.",
+    );
+  }
+  let sourceRequest: ReturnType<
+    typeof parseRunnerHostedToolApprovalInteractionV2
+  >;
+  try {
+    sourceRequest = parseRunnerHostedToolApprovalInteractionV2(
+      source.requestEnvelope,
+    );
+  } catch {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "Remembered approval source interaction does not contain exact prepared tool identity.",
+    );
+  }
+  const sourceToolIdentity = sourceRequest.approval.stableToolIdentity;
+  if (
+    approval.sourceInteractionId !== source.id ||
+    approval.organizationId !== source.organizationId ||
+    approval.threadId !== source.threadId ||
+    approval.actorUserId !== source.resolvedByUserId ||
+    approval.toolIdentity.toolId !== sourceToolIdentity.toolId ||
+    approval.toolIdentity.descriptorContractRevision !==
+      sourceToolIdentity.descriptorContractRevision ||
+    approval.toolIdentity.approvalAuthorityRevision !==
+      sourceToolIdentity.approvalAuthorityRevision
+  ) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "Remembered approval does not match the locked source interaction authority.",
     );
   }
   const [thread] = await tx
@@ -321,8 +343,8 @@ export async function insertRememberedToolApprovalInTransaction(
     .from(schema.threads)
     .where(
       and(
-        eq(schema.threads.id, approval.threadId),
-        eq(schema.threads.organizationId, approval.organizationId),
+        eq(schema.threads.id, source.threadId),
+        eq(schema.threads.organizationId, source.organizationId),
       ),
     )
     .limit(1)
@@ -333,49 +355,20 @@ export async function insertRememberedToolApprovalInTransaction(
       "Remembered approval requires the owning Project thread.",
     );
   }
-  const [source] = await tx
-    .select({
-      id: schema.threadInteractions.id,
-      organizationId: schema.threadInteractions.organizationId,
-      threadId: schema.threadInteractions.threadId,
-      kind: schema.threadInteractions.kind,
-      status: schema.threadInteractions.status,
-      responseEnvelope: schema.threadInteractions.responseEnvelope,
-      resolvedByUserId: schema.threadInteractions.resolvedByUserId,
-    })
-    .from(schema.threadInteractions)
-    .where(eq(schema.threadInteractions.id, approval.sourceInteractionId))
-    .limit(1)
-    .for("update");
-  const sourceDecision = readPlainRecord(source?.responseEnvelope)?.decision;
-  if (
-    source === undefined ||
-    source.organizationId !== approval.organizationId ||
-    source.threadId !== approval.threadId ||
-    source.kind !== "approval" ||
-    (source.status !== "processing" && source.status !== "resolved") ||
-    source.resolvedByUserId !== approval.actorUserId ||
-    sourceDecision !== "remember_approval"
-  ) {
-    throw new DurableTurnError(
-      "TURN_CONFLICT",
-      "Remembered approval source interaction is not the exact remember decision by this actor.",
-    );
-  }
   const [stored] = await tx
     .insert(schema.rememberedToolApprovals)
     .values({
       id: approval.id,
       version: approval.version,
-      organizationId: approval.organizationId,
-      threadId: approval.threadId,
-      actorUserId: approval.actorUserId,
-      toolId: approval.toolIdentity.toolId,
+      organizationId: source.organizationId,
+      threadId: source.threadId,
+      actorUserId: source.resolvedByUserId,
+      toolId: sourceToolIdentity.toolId,
       descriptorContractRevision:
-        approval.toolIdentity.descriptorContractRevision,
+        sourceToolIdentity.descriptorContractRevision,
       approvalAuthorityRevision:
-        approval.toolIdentity.approvalAuthorityRevision,
-      sourceInteractionId: approval.sourceInteractionId,
+        sourceToolIdentity.approvalAuthorityRevision,
+      sourceInteractionId: source.id,
       createdAt: new Date(approval.createdAt),
     })
     .returning();

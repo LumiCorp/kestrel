@@ -23,6 +23,12 @@ const interaction = {
   approval: {
     preparedInvocationId: "prepared-1",
     toolName: "hosted.tool",
+    stableToolIdentity: {
+      version: "stable_tool_approval_identity_v1",
+      toolId: "hosted.tool",
+      descriptorContractRevision: `sha256:${"a".repeat(64)}`,
+      approvalAuthorityRevision: "approval-authority-v1",
+    },
     presentation: { title: "Approve tool" },
   },
 } as const;
@@ -94,5 +100,31 @@ test("hosted approval interaction V2 is separate from strict V1", () => {
         },
       }),
     /inputSchema is invalid/u,
+  );
+  assert.throws(
+    () =>
+      parseRunnerHostedToolApprovalInteractionV2({
+        ...interaction,
+        approval: {
+          preparedInvocationId: interaction.approval.preparedInvocationId,
+          toolName: interaction.approval.toolName,
+          presentation: interaction.approval.presentation,
+        },
+      }),
+    /stable tool approval identity/u,
+  );
+  assert.throws(
+    () =>
+      parseRunnerHostedToolApprovalInteractionV2({
+        ...interaction,
+        approval: {
+          ...interaction.approval,
+          stableToolIdentity: {
+            ...interaction.approval.stableToolIdentity,
+            toolId: "hosted.other-tool",
+          },
+        },
+      }),
+    /stableToolIdentity\.toolId must match/u,
   );
 });

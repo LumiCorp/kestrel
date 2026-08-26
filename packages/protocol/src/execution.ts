@@ -2,8 +2,10 @@ import { RunnerProtocolContractError } from "./errors.js";
 import {
   parseHostedToolApprovalDecision,
   parseRememberedToolApprovalEvidenceSetV1,
+  parseStableToolApprovalIdentityV1,
   type HostedToolApprovalDecision,
   type RememberedToolApprovalEvidenceV1,
+  type StableToolApprovalIdentityV1,
 } from "./approvals.js";
 import {
   parseRunnerProjectAction,
@@ -631,6 +633,7 @@ export interface RunnerHostedToolApprovalInteractionV2
   approval: {
     preparedInvocationId: string;
     toolName: string;
+    stableToolIdentity: StableToolApprovalIdentityV1;
     presentation?: unknown;
   };
 }
@@ -4091,13 +4094,26 @@ function validateRunnerHostedToolApprovalInteractionV2(
   rejectUnknownFields(
     approval,
     `${label}.approval`,
-    ["preparedInvocationId", "toolName", "presentation"],
+    [
+      "preparedInvocationId",
+      "toolName",
+      "stableToolIdentity",
+      "presentation",
+    ],
   );
   requireNonEmptyString(
     approval.preparedInvocationId,
     `${label}.approval.preparedInvocationId`,
   );
   requireNonEmptyString(approval.toolName, `${label}.approval.toolName`);
+  const stableToolIdentity = parseStableToolApprovalIdentityV1(
+    approval.stableToolIdentity,
+  );
+  if (stableToolIdentity.toolId !== approval.toolName) {
+    throw new RunnerProtocolContractError(
+      `${label}.approval.stableToolIdentity.toolId must match ${label}.approval.toolName`,
+    );
+  }
   if (approval.presentation !== undefined) {
     requireRecord(approval.presentation, `${label}.approval.presentation`);
   }

@@ -1098,6 +1098,122 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
   assert.equal(pendingApproval.version, "hosted_tool_approval_v2");
   assert.equal(approvalPreparations, 1);
 
+  const expectPersistedApprovalRejected = async (
+    agent: Record<string, unknown>,
+    payload: Record<string, unknown>,
+    label: string,
+  ): Promise<void> => {
+    await assert.rejects(
+      () =>
+        waitApprovalStep(
+          buildContext({
+            session: {
+              ...buildContext().session,
+              state: { agent },
+              currentStepAgent: "agent.exec.wait_approval",
+            },
+            event: {
+              id: `evt-github-${label}`,
+              type: "user.approval",
+              sessionId: "session-1",
+              payload: {
+                ...payload,
+                message: "approve",
+                approvalId: pendingApproval.approvalId,
+              },
+            },
+          }),
+          {
+            useModel: async () => {
+              throw new Error("not expected");
+            },
+            inspectTool,
+            prepareToolForApproval,
+            useTool: async () => {
+              throw new Error("invalid persisted approval must not execute");
+            },
+          },
+        ),
+      (error) =>
+        error instanceof RuntimeFailure &&
+        error.code === "HOSTED_PREPARED_APPROVAL_INVALID",
+      label,
+    );
+  };
+
+  const missingBindingAgent = structuredClone(waitingAgent);
+  const missingBindingExec = missingBindingAgent.exec as Record<string, unknown>;
+  const missingBindingPending = missingBindingExec.pendingApproval as Record<
+    string,
+    unknown
+  >;
+  const missingBindingPrepared = missingBindingPending.preparedToolCall as Record<
+    string,
+    unknown
+  >;
+  delete (missingBindingPrepared.approval as Record<string, unknown>)
+    .externalApprovalBinding;
+  delete missingBindingPending.externalApprovalBinding;
+  await expectPersistedApprovalRejected(
+    missingBindingAgent,
+    modePayload,
+    "missing-v2-binding",
+  );
+
+  const authoritySubstitutions: Array<
+    [
+      string,
+      (
+        authority: Record<string, any>,
+        approvalBinding: Record<string, any>,
+      ) => void,
+    ]
+  > = [
+    ["cross-organization", (authority, approvalBinding) => {
+      authority.organizationId = "org-2";
+      authority.actor.tenantId = "org-2";
+      approvalBinding.requestingActor.tenantId = "org-2";
+    }],
+    ["cross-environment", (authority) => {
+      authority.environmentId = "env-2";
+    }],
+    ["cross-project", (authority) => {
+      authority.projectId = "project-2";
+    }],
+    ["cross-actor", (authority, approvalBinding) => {
+      authority.actor.actorId = "user-2";
+      approvalBinding.requestingActor.actorId = "user-2";
+    }],
+  ];
+  for (const [label, substitute] of authoritySubstitutions) {
+    const substitutedAgent = structuredClone(waitingAgent);
+    const substitutedPending = (
+      substitutedAgent.exec as Record<string, unknown>
+    ).pendingApproval as Record<string, any>;
+    const substitutedPrepared = substitutedPending.preparedToolCall as Record<
+      string,
+      any
+    >;
+    const substitutedAuthority = substitutedPrepared.stableAuthority as Record<
+      string,
+      any
+    >;
+    const substitutedBinding = substitutedPrepared.approval
+      .externalApprovalBinding as Record<string, any>;
+    substitute(substitutedAuthority, substitutedBinding);
+    const { fingerprint: _fingerprint, ...authorityPayload } =
+      substitutedAuthority;
+    substitutedAuthority.fingerprint = hashCanonical(authorityPayload);
+    substitutedBinding.stableAuthorityFingerprint =
+      substitutedAuthority.fingerprint;
+    substitutedPending.externalApprovalBinding = substitutedBinding;
+    await expectPersistedApprovalRejected(
+      substitutedAgent,
+      modePayload,
+      label,
+    );
+  }
+
   const staleAgent = structuredClone(waitingAgent);
   const staleExec = staleAgent.exec as Record<string, unknown>;
   const stalePending = staleExec.pendingApproval as Record<string, unknown>;
@@ -1158,6 +1274,23 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         sessionId: "session-1",
         payload: {
           ...modePayload,
+          mcpContext: {
+            organizationId: "org-1",
+            environmentId: "env-1",
+            projectId: "project-1",
+            threadId: "session-1",
+            grantId: "rotated-mcp-grant",
+          },
+          mcpAuthorization: {
+            executionTicket: "rotated-execution-ticket",
+          },
+          clientCapabilities: {
+            kestrelOne: { contextGrantId: "rotated-context-grant" },
+          },
+          workspace: {
+            workspaceRoot: "/workspace/project",
+            leaseId: "rotated-workspace-lease",
+          },
           message: "approve",
           approvalId: pendingApproval.approvalId,
         },

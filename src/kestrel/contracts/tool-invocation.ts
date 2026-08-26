@@ -468,6 +468,34 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
   });
 }
 
+/**
+ * Parses a prepared call at a durable approval boundary.
+ *
+ * A hosted V2 prepared call may be temporarily unbound while the policy gate
+ * is constructing its first approval wait. Once persisted, however, its exact
+ * external approval binding is part of the durable authority and may not be
+ * reconstructed from the persisted call itself.
+ */
+export function parseDurablePreparedToolCallV1(
+  value: unknown,
+): PreparedToolCallV1 {
+  const prepared = parsePreparedToolCallV1(value);
+  const hasPreparedApprovalV2 =
+    prepared.stableAuthority !== undefined ||
+    prepared.stableToolIdentity !== undefined ||
+    prepared.executionRequirements !== undefined;
+  if (
+    hasPreparedApprovalV2 &&
+    prepared.approval?.externalApprovalBinding?.version !==
+      "runner_external_approval_binding_v2"
+  ) {
+    throw new Error(
+      "durable prepared tool call new-version approval authority requires a complete v2 external approval binding",
+    );
+  }
+  return prepared;
+}
+
 export function parsePreparedToolStableAuthorityV1(
   value: unknown,
 ): PreparedToolStableAuthorityV1 {
@@ -480,10 +508,11 @@ export function parsePreparedToolStableAuthorityV1(
   }
   const actorInput = record(input.actor, "prepared tool stable authority.actor");
   rejectUnknown(actorInput, STABLE_AUTHORITY_ACTOR_KEYS, "prepared tool stable authority.actor");
+  const actorType = actorInput.actorType;
   if (
-    actorInput.actorType !== "end_user" &&
-    actorInput.actorType !== "operator" &&
-    actorInput.actorType !== "service"
+    actorType !== "end_user" &&
+    actorType !== "operator" &&
+    actorType !== "service"
   ) {
     throw new Error("prepared tool stable authority.actor.actorType is invalid");
   }
@@ -491,17 +520,27 @@ export function parsePreparedToolStableAuthorityV1(
     input.capabilities,
     "prepared tool stable authority.capabilities",
   );
+  const actor: RunnerApprovalActorAuthorityV1 = {
+    actorType,
+    actorId: stringValue(actorInput.actorId, "prepared tool stable authority.actor.actorId"),
+    ...(actorInput.tenantId === undefined
+      ? {}
+      : { tenantId: stringValue(actorInput.tenantId, "prepared tool stable authority.actor.tenantId") }),
+  };
+  const organizationId = stringValue(
+    input.organizationId,
+    "prepared tool stable authority.organizationId",
+  );
+  if (actor.tenantId !== undefined && actor.tenantId !== organizationId) {
+    throw new Error(
+      "prepared tool stable authority.actor.tenantId must match organizationId",
+    );
+  }
   return freeze({
     version: PREPARED_TOOL_STABLE_AUTHORITY_VERSION,
     fingerprint: hash(input.fingerprint, "prepared tool stable authority.fingerprint"),
-    actor: {
-      actorType: actorInput.actorType,
-      actorId: stringValue(actorInput.actorId, "prepared tool stable authority.actor.actorId"),
-      ...(actorInput.tenantId === undefined
-        ? {}
-        : { tenantId: stringValue(actorInput.tenantId, "prepared tool stable authority.actor.tenantId") }),
-    },
-    organizationId: stringValue(input.organizationId, "prepared tool stable authority.organizationId"),
+    actor,
+    organizationId,
     environmentId: stringValue(input.environmentId, "prepared tool stable authority.environmentId"),
     projectId: stringValue(input.projectId, "prepared tool stable authority.projectId"),
     threadId: stringValue(input.threadId, "prepared tool stable authority.threadId"),

@@ -17,6 +17,7 @@ import type {
   PreparedToolCallV1,
   ResolvedModelToolIntentV1,
 } from "../../src/kestrel/contracts/tool-invocation.js";
+import type { ToolRunContext } from "../../src/kestrel/contracts/model-io.js";
 import {
   parseAgentToolResultV2,
   parsePreparedToolCallV1,
@@ -41,33 +42,42 @@ class VersionedMcpProvider implements McpToolProvider {
   version = "v1";
   references = 0;
   failCalls = false;
+  releaseFailuresRemaining = 0;
+  closeFailuresRemaining = 0;
+  closeCalls = 0;
+  activePinnedCalls = 0;
+  closedDuringPinnedCall = false;
+  onPinnedCallStart: (() => void) | undefined;
+  pinnedCallBarrier: Promise<void> | undefined;
 
   async refresh(): Promise<McpStatusSnapshot> {
     return {
       healthy: true,
       checkedAt: new Date().toISOString(),
       servers: [],
-      tools: [{
-        serverId: "test",
-        toolName: "lookup",
-        namespacedToolName: TOOL_ID,
-        description: `Lookup ${this.version}`,
-        inputSchema: {
-          type: "object",
-          properties: { query: { type: "string" } },
-          required: ["query"],
-          additionalProperties: false,
+      tools: [
+        {
+          serverId: "test",
+          toolName: "lookup",
+          namespacedToolName: TOOL_ID,
+          description: `Lookup ${this.version}`,
+          inputSchema: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+            additionalProperties: false,
+          },
+          presentation: {
+            displayName: "Lookup",
+            aliases: [TOOL_ID],
+            keywords: ["lookup"],
+            provider: "test",
+            toolFamily: "test",
+            capabilityClasses: ["test.lookup"],
+            approvalMode: "auto",
+          },
         },
-        presentation: {
-          displayName: "Lookup",
-          aliases: [TOOL_ID],
-          keywords: ["lookup"],
-          provider: "test",
-          toolFamily: "test",
-          capabilityClasses: ["test.lookup"],
-          approvalMode: "auto",
-        },
-      }],
+      ],
     };
   }
 
@@ -86,9 +96,16 @@ class VersionedMcpProvider implements McpToolProvider {
     return {
       call: async <T>(_input: unknown) => {
         if (this.failCalls) throw new Error("planned pinned MCP failure");
-        return {
-          content: [{ type: "text", text: pinnedVersion }],
-        } as T;
+        this.activePinnedCalls += 1;
+        this.onPinnedCallStart?.();
+        try {
+          await this.pinnedCallBarrier;
+          return {
+            content: [{ type: "text", text: pinnedVersion }],
+          } as T;
+        } finally {
+          this.activePinnedCalls -= 1;
+        }
       },
       retain: () => {
         assert.ok(references > 0);
@@ -97,13 +114,46 @@ class VersionedMcpProvider implements McpToolProvider {
       },
       release: async () => {
         if (references === 0) return;
+        if (this.releaseFailuresRemaining > 0) {
+          this.releaseFailuresRemaining -= 1;
+          throw new Error("planned pinned release failure");
+        }
         references -= 1;
         this.references -= 1;
       },
     };
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    this.closeCalls += 1;
+    if (this.activePinnedCalls > 0) this.closedDuringPinnedCall = true;
+    if (this.closeFailuresRemaining > 0) {
+      this.closeFailuresRemaining -= 1;
+      throw new Error("planned provider close failure");
+    }
+  }
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+function executionTicket(nonce: string): string {
+  return [
+    "header",
+    Buffer.from(
+      JSON.stringify({
+        expiresAt: Math.floor(Date.now() / 1000) + 600,
+        nonce,
+      }),
+      "utf8",
+    ).toString("base64url"),
+    "signature",
+  ].join(".");
 }
 
 test("explicit runtime-only tools receive activations without entering the model surface", async () => {
@@ -148,10 +198,14 @@ test("model snapshot, preparation, and execution retain one exact MCP activation
 
   assert.equal(result.status, "OK");
   assert.equal(
-    ((result.auditRecord.output as { content: Array<{ text: string }> }).content[0]?.text),
+    (result.auditRecord.output as { content: Array<{ text: string }> })
+      .content[0]?.text,
     "v1",
   );
-  assert.equal(result.activation.descriptor.contractRevision, intent.activation.descriptor.contractRevision);
+  assert.equal(
+    result.activation.descriptor.contractRevision,
+    intent.activation.descriptor.contractRevision,
+  );
   assert.equal(provider.references, 1);
   await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
   assert.equal(provider.references, 0);
@@ -164,7 +218,9 @@ test("explicit prepared-call release is idempotent and prevents later execution"
     mcpManager: provider,
   });
   await registry.refresh();
-  const snapshot = await registry.createToolSurfaceSnapshot({ toolNames: [TOOL_ID] });
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    toolNames: [TOOL_ID],
+  });
   const intent = registry.resolveModelToolIntent({
     snapshot,
     toolCall: { id: "call-release", name: TOOL_ID, input: { query: "old" } },
@@ -189,7 +245,9 @@ test("explicit prepared-call release is idempotent and prevents later execution"
 });
 
 test("explicit release prevents same-process static built-in rehydration", async () => {
-  const registry = new UnifiedToolRegistry({ allowlist: ["free.time.current"] });
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["free.time.current"],
+  });
   await registry.refresh();
   const prepared = await prepareTestToolCall({
     gateway: registry,
@@ -209,7 +267,9 @@ test("explicit release prevents same-process static built-in rehydration", async
 });
 
 test("a static prepared call executes at most once per registry", async () => {
-  const registry = new UnifiedToolRegistry({ allowlist: ["free.time.current"] });
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["free.time.current"],
+  });
   await registry.refresh();
   const prepared = await prepareTestToolCall({
     gateway: registry,
@@ -228,22 +288,29 @@ test("a static prepared call executes at most once per registry", async () => {
   await registry.close();
 });
 
-test("run release reclaims only that run's terminal prepared keys", async () => {
-  const registry = new UnifiedToolRegistry({ allowlist: ["free.time.current"] });
+test("run release bounds terminal keys without reopening stale static replay", async () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["free.time.current"],
+  });
   await registry.refresh();
   const sessionId = "terminal-key-session";
   const completed = await Promise.all(
-    Array.from({ length: 24 }, (_, index) => prepareTestToolCall({
-      gateway: registry,
-      toolName: "free.time.current",
-      toolInput: {},
-      runId: "completed-run",
-      sessionId,
-      callId: `completed-call-${index}`,
-    })),
+    Array.from({ length: 24 }, (_, index) =>
+      prepareTestToolCall({
+        gateway: registry,
+        toolName: "free.time.current",
+        toolInput: {},
+        runId: "completed-run",
+        sessionId,
+        callId: `completed-call-${index}`,
+      }),
+    ),
   );
   for (const prepared of completed) {
-    assert.equal((await registry.executePreparedToolCall(prepared)).status, "OK");
+    assert.equal(
+      (await registry.executePreparedToolCall(prepared)).status,
+      "OK",
+    );
   }
   const otherTerminal = await prepareTestToolCall({
     gateway: registry,
@@ -268,9 +335,11 @@ test("run release reclaims only that run's terminal prepared keys", async () => 
 
   await registry.releaseToolRun("completed-run", sessionId);
 
-  assert.equal(
-    (await registry.executePreparedToolCall(completed[0]!)).status,
-    "OK",
+  await assert.rejects(
+    () => registry.executePreparedToolCall(completed[0]!),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
   );
   await assert.rejects(
     () => registry.executePreparedToolCall(otherTerminal),
@@ -282,6 +351,111 @@ test("run release reclaims only that run's terminal prepared keys", async () => 
     (await registry.executePreparedToolCall(livePending)).status,
     "OK",
   );
+  const terminalOwners = (
+    registry as unknown as {
+      terminalPreparedExecutionKeysByOwner: Map<string, Set<string>>;
+    }
+  ).terminalPreparedExecutionKeysByOwner;
+  assert.equal(terminalOwners.size, 1);
+  await registry.close();
+  assert.equal(terminalOwners.size, 0);
+  await registry.releasePreparedToolCall(completed[0]!);
+  assert.equal(terminalOwners.size, 0);
+});
+
+test("hosted authorization preparation owns exactly one new MCP pin", async () => {
+  const provider = new VersionedMcpProvider();
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+  const runContext: ToolRunContext = {
+    runId: "hosted-authorized-run",
+    sessionId: "hosted-authorized-session",
+    payload: {},
+    sessionState: {},
+  };
+  await registry.refreshForRuntimeTurn({
+    runId: runContext.runId,
+    sessionId: runContext.sessionId,
+    mcpAuthorization: {
+      executionTicket: executionTicket("hosted-reference-count"),
+      renewal: {
+        version: "execution-authorization-renewal-v1",
+        endpoint: "https://kestrel.example/renew",
+        token: "renewal-token",
+      },
+    },
+  });
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    toolNames: [TOOL_ID],
+    runContext,
+  });
+  const intent = registry.resolveModelToolIntent({
+    snapshot,
+    toolCall: {
+      id: "hosted-reference-call",
+      name: TOOL_ID,
+      input: { query: "hosted" },
+    },
+  });
+  const prepared = await prepareModelIntent(registry, intent, runContext);
+
+  assert.equal(provider.references, 2);
+  assert.equal(
+    (await registry.executePreparedToolCall(prepared, { runContext })).status,
+    "OK",
+  );
+  assert.equal(provider.references, 1);
+  const declinedIntent = registry.resolveModelToolIntent({
+    snapshot,
+    toolCall: {
+      id: "hosted-reference-declined-call",
+      name: TOOL_ID,
+      input: { query: "declined" },
+    },
+  });
+  const declinedPrepared = await prepareModelIntent(
+    registry,
+    declinedIntent,
+    runContext,
+  );
+  assert.equal(provider.references, 2);
+  await registry.releasePreparedToolCall(declinedPrepared);
+  assert.equal(provider.references, 1);
+  await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
+  assert.equal(provider.references, 0);
+  await registry.close();
+});
+
+test("run release retains failed snapshot ownership for retry", async () => {
+  const provider = new VersionedMcpProvider();
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+  await registry.refresh();
+  const runContext: ToolRunContext = {
+    runId: "snapshot-release-retry-run",
+    sessionId: "snapshot-release-retry-session",
+    payload: {},
+    sessionState: {},
+  };
+  await registry.createToolSurfaceSnapshot({
+    toolNames: [TOOL_ID],
+    runContext,
+  });
+  assert.equal(provider.references, 1);
+  provider.releaseFailuresRemaining = 1;
+
+  await assert.rejects(
+    () => registry.releaseToolRun(runContext.runId, runContext.sessionId),
+    /planned pinned release failure/u,
+  );
+  assert.equal(provider.references, 1);
+
+  await registry.releaseToolRun(runContext.runId, runContext.sessionId);
+  assert.equal(provider.references, 0);
   await registry.close();
 });
 
@@ -292,7 +466,9 @@ test("failed prepared execution releases its retained source", async () => {
     mcpManager: provider,
   });
   await registry.refresh();
-  const snapshot = await registry.createToolSurfaceSnapshot({ toolNames: [TOOL_ID] });
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    toolNames: [TOOL_ID],
+  });
   const intent = registry.resolveModelToolIntent({
     snapshot,
     toolCall: { id: "call-failure", name: TOOL_ID, input: { query: "old" } },
@@ -316,7 +492,9 @@ test("registry close releases snapshot and prepared-call ownership exactly once"
     mcpManager: provider,
   });
   await registry.refresh();
-  const snapshot = await registry.createToolSurfaceSnapshot({ toolNames: [TOOL_ID] });
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    toolNames: [TOOL_ID],
+  });
   const intent = registry.resolveModelToolIntent({
     snapshot,
     toolCall: { id: "call-close", name: TOOL_ID, input: { query: "old" } },
@@ -336,6 +514,99 @@ test("registry close releases snapshot and prepared-call ownership exactly once"
   );
 });
 
+test("registry close waits for an active prepared effect before provider close", async () => {
+  const provider = new VersionedMcpProvider();
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+  await registry.refresh();
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    toolNames: [TOOL_ID],
+  });
+  const intent = registry.resolveModelToolIntent({
+    snapshot,
+    toolCall: {
+      id: "call-close-race",
+      name: TOOL_ID,
+      input: { query: "wait" },
+    },
+  });
+  const prepared = await prepareModelIntent(registry, intent);
+  const callStarted = deferred();
+  const permitCall = deferred();
+  provider.onPinnedCallStart = callStarted.resolve;
+  provider.pinnedCallBarrier = permitCall.promise;
+
+  const execution = registry.executePreparedToolCall(prepared);
+  await callStarted.promise;
+  const closing = registry.close();
+  await Promise.resolve();
+  assert.equal(provider.closeCalls, 0);
+  assert.equal(provider.closedDuringPinnedCall, false);
+
+  permitCall.resolve();
+  assert.equal((await execution).status, "OK");
+  await closing;
+  assert.equal(provider.closedDuringPinnedCall, false);
+  assert.equal(provider.closeCalls, 1);
+});
+
+test("failed close cleanup remains owned and a later close retries it", async () => {
+  const provider = new VersionedMcpProvider();
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+  await registry.refresh();
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    toolNames: [TOOL_ID],
+  });
+  const intent = registry.resolveModelToolIntent({
+    snapshot,
+    toolCall: {
+      id: "call-close-retry",
+      name: TOOL_ID,
+      input: { query: "retry" },
+    },
+  });
+  await prepareModelIntent(registry, intent);
+  assert.equal(provider.references, 2);
+  provider.releaseFailuresRemaining = 1;
+
+  await assert.rejects(
+    () => registry.close(),
+    /planned pinned release failure/u,
+  );
+  assert.equal(provider.references, 1);
+  assert.equal(provider.closeCalls, 0);
+
+  await registry.close();
+  assert.equal(provider.references, 0);
+  assert.equal(provider.closeCalls, 1);
+  await registry.close();
+  assert.equal(provider.closeCalls, 1);
+});
+
+test("failed provider close remains retryable and later close is idempotent", async () => {
+  const provider = new VersionedMcpProvider();
+  provider.closeFailuresRemaining = 1;
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+
+  await assert.rejects(
+    () => registry.close(),
+    /planned provider close failure/u,
+  );
+  assert.equal(provider.closeCalls, 1);
+  await registry.close();
+  assert.equal(provider.closeCalls, 2);
+  await registry.close();
+  assert.equal(provider.closeCalls, 2);
+});
+
 test("interruption resumes one persisted MCP action without generation substitution", async () => {
   const provider = new VersionedMcpProvider();
   const registry = new UnifiedToolRegistry({
@@ -348,7 +619,11 @@ test("interruption resumes one persisted MCP action without generation substitut
   });
   const intent = registry.resolveModelToolIntent({
     snapshot,
-    toolCall: { id: "call-interrupted", name: TOOL_ID, input: { query: "old" } },
+    toolCall: {
+      id: "call-interrupted",
+      name: TOOL_ID,
+      input: { query: "old" },
+    },
   });
   const prepared = await prepareModelIntent(registry, intent);
   const persisted = parsePreparedToolCallV1(
@@ -360,7 +635,8 @@ test("interruption resumes one persisted MCP action without generation substitut
   const result = await registry.executePreparedToolCall(persisted);
   assert.equal(result.status, "OK");
   assert.equal(
-    ((result.auditRecord.output as { content: Array<{ text: string }> }).content[0]?.text),
+    (result.auditRecord.output as { content: Array<{ text: string }> })
+      .content[0]?.text,
     "v1",
   );
   assert.deepEqual(result.activation, persisted.activation);
@@ -376,7 +652,9 @@ test("interruption resumes one persisted MCP action without generation substitut
 });
 
 test("terminal continuation cleanup releases snapshots retained by the waiting run", async () => {
-  const registry = new UnifiedToolRegistry({ allowlist: ["free.time.current"] });
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["free.time.current"],
+  });
   const snapshot = await registry.createToolSurfaceSnapshot({
     toolNames: ["free.time.current"],
     runContext: {
@@ -390,14 +668,15 @@ test("terminal continuation cleanup releases snapshots retained by the waiting r
   await registry.releaseToolRun("continuation-run", "shared-session");
 
   assert.throws(
-    () => registry.resolveModelToolIntent({
-      snapshot,
-      toolCall: {
-        id: "stale-call",
-        name: "free.time.current",
-        input: {},
-      },
-    }),
+    () =>
+      registry.resolveModelToolIntent({
+        snapshot,
+        toolCall: {
+          id: "stale-call",
+          name: "free.time.current",
+          input: {},
+        },
+      }),
     (error) =>
       error instanceof RuntimeFailure && error.code === "TOOL_SNAPSHOT_STALE",
   );
@@ -405,9 +684,14 @@ test("terminal continuation cleanup releases snapshots retained by the waiting r
 
 test("restart without the prepared dynamic handler fails closed", async () => {
   const provider = new VersionedMcpProvider();
-  const original = new UnifiedToolRegistry({ allowlist: [TOOL_ID], mcpManager: provider });
+  const original = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
   await original.refresh();
-  const snapshot = await original.createToolSurfaceSnapshot({ toolNames: [TOOL_ID] });
+  const snapshot = await original.createToolSurfaceSnapshot({
+    toolNames: [TOOL_ID],
+  });
   const intent = original.resolveModelToolIntent({
     snapshot,
     toolCall: { id: "call-restart", name: TOOL_ID, input: { query: "old" } },
@@ -421,7 +705,9 @@ test("restart without the prepared dynamic handler fails closed", async () => {
   await restarted.refresh();
   await assert.rejects(
     () => restarted.executePreparedToolCall(prepared),
-    (error) => error instanceof RuntimeFailure && error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
   );
 });
 
@@ -431,27 +717,29 @@ test("dynamic tools without exact generation pinning fail closed before exposure
       healthy: true,
       checkedAt: new Date().toISOString(),
       servers: [],
-      tools: [{
-        serverId: "test",
-        toolName: "lookup",
-        namespacedToolName: TOOL_ID,
-        description: "Unpinned lookup",
-        inputSchema: {
-          type: "object",
-          properties: { query: { type: "string" } },
-          required: ["query"],
-          additionalProperties: false,
+      tools: [
+        {
+          serverId: "test",
+          toolName: "lookup",
+          namespacedToolName: TOOL_ID,
+          description: "Unpinned lookup",
+          inputSchema: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+            additionalProperties: false,
+          },
+          presentation: {
+            displayName: "Lookup",
+            aliases: [TOOL_ID],
+            keywords: ["lookup"],
+            provider: "test",
+            toolFamily: "test",
+            capabilityClasses: ["test.lookup"],
+            approvalMode: "auto",
+          },
         },
-        presentation: {
-          displayName: "Lookup",
-          aliases: [TOOL_ID],
-          keywords: ["lookup"],
-          provider: "test",
-          toolFamily: "test",
-          capabilityClasses: ["test.lookup"],
-          approvalMode: "auto",
-        },
-      }],
+      ],
     }),
     assertHealthy: async () => {},
     callTool: async <T>() => ({}) as T,
@@ -471,19 +759,57 @@ test("dynamic tools without exact generation pinning fail closed before exposure
   );
 });
 
-test("restart rehydrates only an exact static built-in activation", async () => {
-  const original = new UnifiedToolRegistry({ allowlist: ["free.time.current"] });
+test("restart rehydrates an exact static built-in only with current run authority", async () => {
+  const runContext: ToolRunContext = {
+    runId: "authorized-static-restart-run",
+    sessionId: "authorized-static-restart-session",
+    payload: { workspace: { workspaceRoot: "/workspace/authorized" } },
+    sessionState: {},
+  };
+  const original = new UnifiedToolRegistry({
+    allowlist: ["free.time.current"],
+  });
   await original.refresh();
   const prepared = await prepareTestToolCall({
     gateway: original,
     toolName: "free.time.current",
     toolInput: {},
+    runId: runContext.runId,
+    sessionId: runContext.sessionId,
+    options: { runContext },
   });
-  const restarted = new UnifiedToolRegistry({ allowlist: ["free.time.current"] });
-  await restarted.refresh();
-  const result = await restarted.executePreparedToolCall(prepared);
+  const unauthenticatedRestart = new UnifiedToolRegistry({
+    allowlist: ["free.time.current"],
+  });
+  await unauthenticatedRestart.refresh();
+  await assert.rejects(
+    () => unauthenticatedRestart.executePreparedToolCall(prepared),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
+
+  const authorizedRestart = new UnifiedToolRegistry({
+    allowlist: ["free.time.current"],
+  });
+  await authorizedRestart.refresh();
+  const result = await authorizedRestart.executePreparedToolCall(prepared, {
+    runContext,
+  });
   assert.equal(result.status, "OK");
-  assert.equal(result.activation.descriptor.contractRevision, prepared.activation.descriptor.contractRevision);
+  assert.equal(
+    result.activation.descriptor.contractRevision,
+    prepared.activation.descriptor.contractRevision,
+  );
+  await assert.rejects(
+    () => authorizedRestart.executePreparedToolCall(prepared, { runContext }),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+  );
+  await original.close();
+  await unauthenticatedRestart.close();
+  await authorizedRestart.close();
 });
 
 test("approval resume rehydrates an exact static built-in before inspection and preparation", async (t) => {
@@ -524,7 +850,11 @@ test("approval resume rehydrates an exact static built-in before inspection and 
   const intent = structuredClone(
     original.resolveModelToolIntent({
       snapshot,
-      toolCall: { id: "call-static-approval-resume", name: "fs.list", input: { path: "." } },
+      toolCall: {
+        id: "call-static-approval-resume",
+        name: "fs.list",
+        input: { path: "." },
+      },
     }),
   );
   await original.releaseToolSurfaceSnapshot(snapshot.snapshotId);
@@ -632,10 +962,11 @@ test("approval resume rehydrates an exact static built-in before inspection and 
     },
   ]) {
     await assert.rejects(
-      () => resumed.inspectToolCall!(
-        { activation: intent.activation, origin, rawInput: intent.rawInput },
-        { runContext: rejectedRunContext },
-      ),
+      () =>
+        resumed.inspectToolCall!(
+          { activation: intent.activation, origin, rawInput: intent.rawInput },
+          { runContext: rejectedRunContext },
+        ),
       (error) =>
         error instanceof RuntimeFailure &&
         error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
@@ -645,7 +976,9 @@ test("approval resume rehydrates an exact static built-in before inspection and 
 });
 
 test("static restart rehydration rejects changed workspace authority", async () => {
-  const original = new UnifiedToolRegistry({ allowlist: ["free.time.current"] });
+  const original = new UnifiedToolRegistry({
+    allowlist: ["free.time.current"],
+  });
   await original.refresh();
   const prepared = await prepareTestToolCall({
     gateway: original,
@@ -660,18 +993,21 @@ test("static restart rehydration rejects changed workspace authority", async () 
       },
     },
   });
-  const restarted = new UnifiedToolRegistry({ allowlist: ["free.time.current"] });
+  const restarted = new UnifiedToolRegistry({
+    allowlist: ["free.time.current"],
+  });
   await restarted.refresh();
 
   await assert.rejects(
-    () => restarted.executePreparedToolCall(prepared, {
-      runContext: {
-        runId: "run-scope",
-        sessionId: "session-scope",
-        payload: { workspace: { workspaceRoot: "/workspace/b" } },
-        sessionState: {},
-      },
-    }),
+    () =>
+      restarted.executePreparedToolCall(prepared, {
+        runContext: {
+          runId: "run-scope",
+          sessionId: "session-scope",
+          payload: { workspace: { workspaceRoot: "/workspace/b" } },
+          sessionState: {},
+        },
+      }),
     (error) =>
       error instanceof RuntimeFailure &&
       error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
@@ -683,16 +1019,21 @@ test("handlers cannot replace the gateway-owned result envelope", async () => {
     ownerId: "kestrel.tests",
     toolId: "test.envelope",
     description: "Envelope rejection test",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     capability: capability("read_only"),
     presentation: presentation("Envelope"),
     handlerId: "test:envelope:handler:v1",
     resultNormalizerId: "test:envelope:normalizer:v1",
-    handler: async () => buildAgentToolSuccessResult({
-      toolName: "test.envelope",
-      input: {},
-      output: { forged: true },
-    }),
+    handler: async () =>
+      buildAgentToolSuccessResult({
+        toolName: "test.envelope",
+        input: {},
+        output: { forged: true },
+      }),
   });
   const result = await executeTestToolCall({
     gateway: new AllowlistedToolGateway([module]),
@@ -701,7 +1042,10 @@ test("handlers cannot replace the gateway-owned result envelope", async () => {
   });
   assert.equal(result.status, "FAILED");
   assert.equal(result.outcome.kind, "failure");
-  assert.equal(result.outcome.kind === "failure" && result.outcome.normalizedFailureCode, "TOOL_RESULT_ENVELOPE_FORBIDDEN");
+  assert.equal(
+    result.outcome.kind === "failure" && result.outcome.normalizedFailureCode,
+    "TOOL_RESULT_ENVELOPE_FORBIDDEN",
+  );
 });
 
 test("ordinary tool errors preserve structured cleanup evidence in the normalized result", async () => {
@@ -709,7 +1053,11 @@ test("ordinary tool errors preserve structured cleanup evidence in the normalize
     ownerId: "kestrel.tests",
     toolId: "test.cleanup-evidence",
     description: "Cleanup evidence serialization test",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     capability: capability("external_side_effect"),
     presentation: presentation("Cleanup evidence"),
     handlerId: "test:cleanup-evidence:handler:v1",
@@ -718,7 +1066,12 @@ test("ordinary tool errors preserve structured cleanup evidence in the normalize
       const primary = new Error("promotion persistence failed");
       Object.assign(primary, {
         details: {
-          cleanupFailures: [{ operation: "release_provisional_retention", message: "release failed" }],
+          cleanupFailures: [
+            {
+              operation: "release_provisional_retention",
+              message: "release failed",
+            },
+          ],
         },
       });
       throw primary;
@@ -733,9 +1086,16 @@ test("ordinary tool errors preserve structured cleanup evidence in the normalize
 
   assert.equal(result.outcome.kind, "failure");
   assert.deepEqual(
-    result.outcome.kind === "failure" ? result.outcome.error.details : undefined,
+    result.outcome.kind === "failure"
+      ? result.outcome.error.details
+      : undefined,
     {
-      cleanupFailures: [{ operation: "release_provisional_retention", message: "release failed" }],
+      cleanupFailures: [
+        {
+          operation: "release_provisional_retention",
+          message: "release failed",
+        },
+      ],
     },
   );
 });
@@ -745,7 +1105,11 @@ test("preparation rejects a forged descriptor reference under a valid revision",
     ownerId: "kestrel.tests",
     toolId: "test.activation",
     description: "Exact activation test",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     capability: capability("read_only"),
     presentation: presentation("Activation"),
     handlerId: "test:activation:handler:v1",
@@ -757,28 +1121,29 @@ test("preparation rejects a forged descriptor reference under a valid revision",
   const activation = snapshot.tools[0]!;
 
   await assert.rejects(
-    () => gateway.prepareToolCall({
-      runId: "run-forged",
-      sessionId: "session-forged",
-      callId: "call-forged",
-      activation: {
-        ...activation,
-        descriptor: {
-          ...activation.descriptor,
-          sourceId: "forged-owner",
+    () =>
+      gateway.prepareToolCall({
+        runId: "run-forged",
+        sessionId: "session-forged",
+        callId: "call-forged",
+        activation: {
+          ...activation,
+          descriptor: {
+            ...activation.descriptor,
+            sourceId: "forged-owner",
+          },
         },
-      },
-      origin: {
-        kind: "trusted_runtime",
-        producerId: "test:v1",
-        adapterId: "test:v1",
-      },
-      rawInput: {},
-      policy: {
-        decision: "allow",
-        policyRevision: hashCanonical({ source: "test" }),
-      },
-    }),
+        origin: {
+          kind: "trusted_runtime",
+          producerId: "test:v1",
+          adapterId: "test:v1",
+        },
+        rawInput: {},
+        policy: {
+          decision: "allow",
+          policyRevision: hashCanonical({ source: "test" }),
+        },
+      }),
     (error) =>
       error instanceof RuntimeFailure && error.code === "TOOL_ACTIVATION_STALE",
   );
@@ -813,24 +1178,26 @@ test("model input must pass the exposed schema before preparation", async () => 
   });
 
   await assert.rejects(
-    () => gateway.prepareToolCall({
-      runId: "run-invalid-model-input",
-      sessionId: "session-invalid-model-input",
-      callId: intent.modelToolCallId,
-      activation: intent.activation,
-      origin: {
-        kind: "model",
-        snapshotId: intent.snapshotId,
-        modelToolCallId: intent.modelToolCallId,
-      },
-      rawInput: intent.rawInput,
-      policy: {
-        decision: "allow",
-        policyRevision: hashCanonical({ source: "model-input-test" }),
-      },
-    }),
+    () =>
+      gateway.prepareToolCall({
+        runId: "run-invalid-model-input",
+        sessionId: "session-invalid-model-input",
+        callId: intent.modelToolCallId,
+        activation: intent.activation,
+        origin: {
+          kind: "model",
+          snapshotId: intent.snapshotId,
+          modelToolCallId: intent.modelToolCallId,
+        },
+        rawInput: intent.rawInput,
+        policy: {
+          decision: "allow",
+          policyRevision: hashCanonical({ source: "model-input-test" }),
+        },
+      }),
     (error) =>
-      error instanceof RuntimeFailure && error.code === "TOOL_INPUT_SCHEMA_FAILED",
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_INPUT_SCHEMA_FAILED",
   );
 });
 
@@ -863,24 +1230,26 @@ test("model input validation never strips unsupported fields", async () => {
   });
 
   await assert.rejects(
-    () => gateway.prepareToolCall({
-      runId: "run-extra-model-field",
-      sessionId: "session-extra-model-field",
-      callId: intent.modelToolCallId,
-      activation: intent.activation,
-      origin: {
-        kind: "model",
-        snapshotId: intent.snapshotId,
-        modelToolCallId: intent.modelToolCallId,
-      },
-      rawInput: intent.rawInput,
-      policy: {
-        decision: "allow",
-        policyRevision: hashCanonical({ source: "model-field-test" }),
-      },
-    }),
+    () =>
+      gateway.prepareToolCall({
+        runId: "run-extra-model-field",
+        sessionId: "session-extra-model-field",
+        callId: intent.modelToolCallId,
+        activation: intent.activation,
+        origin: {
+          kind: "model",
+          snapshotId: intent.snapshotId,
+          modelToolCallId: intent.modelToolCallId,
+        },
+        rawInput: intent.rawInput,
+        policy: {
+          decision: "allow",
+          policyRevision: hashCanonical({ source: "model-field-test" }),
+        },
+      }),
     (error) =>
-      error instanceof RuntimeFailure && error.code === "TOOL_INPUT_SCHEMA_FAILED",
+      error instanceof RuntimeFailure &&
+      error.code === "TOOL_INPUT_SCHEMA_FAILED",
   );
   assert.deepEqual(intent.rawInput, { query: "exact", unsupported: true });
 });
@@ -890,7 +1259,11 @@ test("preparation rejects a stale runtime scope fingerprint", async () => {
     ownerId: "kestrel.tests",
     toolId: "test.scope",
     description: "Scope binding test",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     capability: capability("read_only"),
     presentation: presentation("Scope"),
     handlerId: "test:scope:handler:v1",
@@ -909,27 +1282,31 @@ test("preparation rejects a stale runtime scope fingerprint", async () => {
   });
 
   await assert.rejects(
-    () => gateway.prepareToolCall({
-      runId: "run-scope-original",
-      sessionId: "session-scope",
-      callId: "call-stale-scope",
-      activation: snapshot.tools[0]!,
-      origin: {
-        kind: "trusted_runtime",
-        producerId: "test:v1",
-        adapterId: "test:v1",
-      },
-      rawInput: {},
-      policy: {
-        decision: "allow",
-        policyRevision: hashCanonical({ source: "scope-test" }),
-      },
-    }, {
-      runContext: {
-        ...originalContext,
-        payload: { workspace: { workspaceRoot: "/workspace/substituted" } },
-      },
-    }),
+    () =>
+      gateway.prepareToolCall(
+        {
+          runId: "run-scope-original",
+          sessionId: "session-scope",
+          callId: "call-stale-scope",
+          activation: snapshot.tools[0]!,
+          origin: {
+            kind: "trusted_runtime",
+            producerId: "test:v1",
+            adapterId: "test:v1",
+          },
+          rawInput: {},
+          policy: {
+            decision: "allow",
+            policyRevision: hashCanonical({ source: "scope-test" }),
+          },
+        },
+        {
+          runContext: {
+            ...originalContext,
+            payload: { workspace: { workspaceRoot: "/workspace/substituted" } },
+          },
+        },
+      ),
     (error) =>
       error instanceof RuntimeFailure && error.code === "TOOL_ACTIVATION_STALE",
   );
@@ -940,7 +1317,11 @@ test("approval authority includes the exact descriptor revision", () => {
     ownerId: "kestrel.tests",
     toolId: "test.approval-revision",
     description: "Approval revision one",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     capability: capability("external_side_effect"),
     presentation: presentation("Approval revision"),
     handlerId: "test:approval-revision:handler:v1",
@@ -951,38 +1332,43 @@ test("approval authority includes the exact descriptor revision", () => {
     ownerId: "kestrel.tests",
     toolId: "test.approval-revision",
     description: "Approval revision two",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     capability: capability("external_side_effect"),
     presentation: presentation("Approval revision"),
     handlerId: "test:approval-revision:handler:v1",
     resultNormalizerId: "test:approval-revision:normalizer:v1",
     handler: async () => ({}),
   }).descriptor;
-  const buildPrepared = (descriptor: typeof first) => createPreparedToolCallV1({
-    runId: "run-approval-revision",
-    sessionId: "session-approval-revision",
-    callId: "call-approval-revision",
-    activation: createToolActivationRefV1({
-      descriptor: toToolDescriptorRefV1(descriptor),
-      registryGeneration: hashCanonical({ generation: "fixed" }),
-      scopeFingerprint: hashCanonical({ scope: "fixed" }),
-    }),
-    origin: {
-      kind: "trusted_runtime",
-      producerId: "test:v1",
-      adapterId: "test:v1",
-    },
-    effectiveInput: {},
-    policy: {
-      decision: "approval_required",
-      policyRevision: hashCanonical({ policy: "fixed" }),
-    },
-    approval: {
-      approvalId: "approval-revision",
-      authorityRevision: hashCanonical({ upstream: "fixed" }),
-    },
-    preparedAt: "2026-08-03T00:00:00.000Z",
-  });
+  const buildPrepared = (descriptor: typeof first) =>
+    createPreparedToolCallV1({
+      runId: "run-approval-revision",
+      sessionId: "session-approval-revision",
+      callId: "call-approval-revision",
+      activation: createToolActivationRefV1({
+        descriptor: toToolDescriptorRefV1(descriptor),
+        registryGeneration: hashCanonical({ generation: "fixed" }),
+        scopeFingerprint: hashCanonical({ scope: "fixed" }),
+      }),
+      origin: {
+        kind: "trusted_runtime",
+        producerId: "test:v1",
+        adapterId: "test:v1",
+      },
+      effectiveInput: {},
+      policy: {
+        decision: "approval_required",
+        policyRevision: hashCanonical({ policy: "fixed" }),
+      },
+      approval: {
+        approvalId: "approval-revision",
+        authorityRevision: hashCanonical({ upstream: "fixed" }),
+      },
+      preparedAt: "2026-08-03T00:00:00.000Z",
+    });
 
   assert.notEqual(first.contractRevision, second.contractRevision);
   assert.notEqual(
@@ -996,7 +1382,11 @@ test("successful tool results require exact descriptor evidence", async () => {
     ownerId: "kestrel.tests",
     toolId: "test.result-evidence",
     description: "Result evidence test",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     capability: capability("read_only"),
     presentation: presentation("Result evidence"),
     handlerId: "test:result-evidence:handler:v1",
@@ -1010,7 +1400,10 @@ test("successful tool results require exact descriptor evidence", async () => {
   });
   const parsed = parseAgentToolResultV2(result);
   assert.deepEqual(parsed.activation, parsed.outcome.activation);
-  assert.match(parsed.activation.descriptor.contractRevision, /^sha256:[0-9a-f]{64}$/u);
+  assert.match(
+    parsed.activation.descriptor.contractRevision,
+    /^sha256:[0-9a-f]{64}$/u,
+  );
 });
 
 test("allowlisted terminal cleanup releases session-owned snapshots", async () => {
@@ -1018,7 +1411,11 @@ test("allowlisted terminal cleanup releases session-owned snapshots", async () =
     ownerId: "kestrel.tests",
     toolId: "test.release",
     description: "Snapshot release test",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     capability: capability("read_only"),
     presentation: presentation("Release"),
     handlerId: "test:release:handler:v1",
@@ -1038,10 +1435,11 @@ test("allowlisted terminal cleanup releases session-owned snapshots", async () =
   gateway.releaseToolRun("continuation-run", "allowlisted-session");
 
   assert.throws(
-    () => gateway.resolveModelToolIntent({
-      snapshot,
-      toolCall: { id: "stale", name: "test.release", input: {} },
-    }),
+    () =>
+      gateway.resolveModelToolIntent({
+        snapshot,
+        toolCall: { id: "stale", name: "test.release", input: {} },
+      }),
     (error) =>
       error instanceof RuntimeFailure && error.code === "TOOL_SNAPSHOT_STALE",
   );
@@ -1052,7 +1450,11 @@ test("committed external effects never become retryable after output-contract fa
     ownerId: "kestrel.tests",
     toolId: "test.external",
     description: "External result contract test",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     runtimeOutputSchema: {
       type: "object",
       properties: { ok: { type: "boolean" } },
@@ -1073,7 +1475,10 @@ test("committed external effects never become retryable after output-contract fa
   assert.equal(result.status, "FAILED");
   assert.equal(result.outcome.kind, "failure");
   if (result.outcome.kind !== "failure") return;
-  assert.equal(result.outcome.normalizedFailureCode, "TOOL_RESULT_CONTRACT_FAILED");
+  assert.equal(
+    result.outcome.normalizedFailureCode,
+    "TOOL_RESULT_CONTRACT_FAILED",
+  );
   assert.equal(result.outcome.effectState, "committed");
   assert.equal(result.outcome.retryable, false);
 });
@@ -1083,16 +1488,28 @@ test("ambiguous external-effect handler failures remain terminal", async () => {
     ownerId: "kestrel.tests",
     toolId: "test.external.throwing",
     description: "Throws after an external dispatch may have started.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    runtimeOutputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    runtimeOutputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     capability: capability("external_side_effect"),
     presentation: presentation("External throwing"),
     handlerId: "test:external-throwing:handler:v1",
     resultNormalizerId: "test:external-throwing:normalizer:v1",
     handler: async () => {
-      throw createRuntimeFailure("REMOTE_WRITE_FAILED", "Remote response was lost.", {
-        recoverable: true,
-      });
+      throw createRuntimeFailure(
+        "REMOTE_WRITE_FAILED",
+        "Remote response was lost.",
+        {
+          recoverable: true,
+        },
+      );
     },
   });
   const result = await executeTestToolCall({
@@ -1113,7 +1530,11 @@ test("external effects persist committed evidence when cancellation races after 
     ownerId: "kestrel.tests",
     toolId: "test.external.cancel-race",
     description: "Cancellation settlement test",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     capability: capability("external_side_effect"),
     presentation: presentation("External cancellation"),
     handlerId: "test:external-cancel-race:handler:v1",
@@ -1142,23 +1563,27 @@ test("external effects persist committed evidence when cancellation races after 
 async function prepareModelIntent(
   registry: UnifiedToolRegistry,
   intent: ResolvedModelToolIntentV1,
+  runContext?: ToolRunContext | undefined,
 ): Promise<PreparedToolCallV1> {
-  return registry.prepareToolCall({
-    runId: "run-1",
-    sessionId: "session-1",
-    callId: intent.modelToolCallId,
-    activation: intent.activation,
-    origin: {
-      kind: "model",
-      snapshotId: intent.snapshotId,
-      modelToolCallId: intent.modelToolCallId,
+  return registry.prepareToolCall(
+    {
+      runId: runContext?.runId ?? "run-1",
+      sessionId: runContext?.sessionId ?? "session-1",
+      callId: intent.modelToolCallId,
+      activation: intent.activation,
+      origin: {
+        kind: "model",
+        snapshotId: intent.snapshotId,
+        modelToolCallId: intent.modelToolCallId,
+      },
+      rawInput: intent.rawInput,
+      policy: {
+        decision: "allow",
+        policyRevision: hashCanonical({ source: "test", intent }),
+      },
     },
-    rawInput: intent.rawInput,
-    policy: {
-      decision: "allow",
-      policyRevision: hashCanonical({ source: "test", intent }),
-    },
-  });
+    { runContext },
+  );
 }
 
 function capability(executionClass: "read_only" | "external_side_effect") {

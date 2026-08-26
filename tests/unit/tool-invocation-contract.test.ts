@@ -8,6 +8,7 @@ import {
 } from "../../src/kestrel/contracts/tool-contract.js";
 import {
   parseAgentToolResultV2,
+  parseDurablePreparedToolCallV1,
   parsePreparedToolCallV1,
   parseRunToolUpdateV2,
   parseToolExecutionOutcomeV1,
@@ -298,6 +299,41 @@ test("V2 prepared approval authority round-trips as one consistent identity", ()
   assert.equal(
     parsed.approval?.externalApprovalBinding?.version,
     "runner_external_approval_binding_v2",
+  );
+});
+
+test("durable V2 prepared approval authority requires its complete binding", () => {
+  const transient = structuredClone(v2PreparedCallFixture()) as Record<
+    string,
+    any
+  >;
+  delete transient.approval.externalApprovalBinding;
+
+  assert.doesNotThrow(() => parsePreparedToolCallV1(transient));
+  assert.throws(
+    () => parseDurablePreparedToolCallV1(transient),
+    /requires a complete v2 external approval binding/u,
+  );
+  assert.doesNotThrow(() =>
+    parseDurablePreparedToolCallV1(v2PreparedCallFixture()),
+  );
+});
+
+test("V2 stable actor tenant must match its organization", () => {
+  const fixture = structuredClone(v2PreparedCallFixture()) as Record<
+    string,
+    any
+  >;
+  fixture.stableAuthority.organizationId = "org-2";
+  const { fingerprint: _fingerprint, ...authorityPayload } =
+    fixture.stableAuthority;
+  fixture.stableAuthority.fingerprint = hashCanonical(authorityPayload);
+  fixture.approval.externalApprovalBinding.stableAuthorityFingerprint =
+    fixture.stableAuthority.fingerprint;
+
+  assert.throws(
+    () => parsePreparedToolCallV1(fixture),
+    /actor\.tenantId must match organizationId/u,
   );
 });
 

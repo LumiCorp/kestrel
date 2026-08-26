@@ -275,6 +275,7 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
     approval: {
       preparedInvocationId: prepared.callId,
       toolName: descriptor.toolId,
+      stableToolIdentity: prepared.stableToolIdentity,
       presentation: { title: "Approve search" },
     },
   };

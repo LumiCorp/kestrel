@@ -368,6 +368,7 @@ function buildPreparedApprovalInteractionV2(
     approval: {
       preparedInvocationId: prepared.callId,
       toolName: prepared.activation.descriptor.toolId,
+      stableToolIdentity: prepared.stableToolIdentity,
       presentation,
     },
   }) as RuntimeHostedToolApprovalInteractionV2;

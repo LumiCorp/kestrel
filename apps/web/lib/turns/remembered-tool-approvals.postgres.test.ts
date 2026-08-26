@@ -29,7 +29,42 @@ test("remembered approval storage enforces identity, authority, and thread casca
   const interactionId = `remember-interaction-${suffix}`;
   const declineInteractionId = `remember-decline-${suffix}`;
   const approveOnceInteractionId = `remember-approve-once-${suffix}`;
+  const emptySourceInteractionId = `remember-empty-source-${suffix}`;
+  const malformedIdentityInteractionId = `remember-malformed-identity-${suffix}`;
   const now = new Date();
+  const toolIdentity = {
+    version: "stable_tool_approval_identity_v1" as const,
+    toolId: "hosted.tool",
+    descriptorContractRevision: `sha256:${"a".repeat(64)}`,
+    approvalAuthorityRevision: "approval-authority-v1",
+  };
+  const hostedApprovalRequest = (
+    requestId: string,
+    identity = toolIdentity,
+    toolName = identity.toolId,
+  ) => ({
+    version: "runner_hosted_tool_approval_interaction_v2" as const,
+    requestId,
+    kind: "approval" as const,
+    eventType: "user.approval" as const,
+    prompt: "Remember?",
+    inputSchema: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      required: ["decision"] as const,
+      properties: {
+        decision: {
+          type: "string" as const,
+          enum: ["decline", "approve_once"] as const,
+        },
+      },
+    },
+    approval: {
+      preparedInvocationId: `prepared-${requestId}`,
+      toolName,
+      stableToolIdentity: identity,
+    },
+  });
 
   context.after(async () => {
     await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
@@ -98,17 +133,33 @@ test("remembered approval storage enforces identity, authority, and thread casca
       (
         ${interactionId}, ${`request-${suffix}`}, ${organizationId}, ${threadId},
         ${turnId}, 'runtime', 'approval', 'user.approval', 'Remember?', 'pending',
-        '{}'::jsonb
+        ${transaction.json(hostedApprovalRequest(`request-${suffix}`))}
       ),
       (
         ${declineInteractionId}, ${`decline-request-${suffix}`}, ${organizationId},
         ${threadId}, ${turnId}, 'runtime', 'approval', 'user.approval', 'Decline?',
-        'pending', '{}'::jsonb
+        'pending', ${transaction.json(hostedApprovalRequest(`decline-request-${suffix}`))}
       ),
       (
         ${approveOnceInteractionId}, ${`approve-once-request-${suffix}`},
         ${organizationId}, ${threadId}, ${turnId}, 'runtime', 'approval',
-        'user.approval', 'Approve once?', 'pending', '{}'::jsonb
+        'user.approval', 'Approve once?', 'pending',
+        ${transaction.json(hostedApprovalRequest(`approve-once-request-${suffix}`))}
+      ),
+      (
+        ${emptySourceInteractionId}, ${`empty-source-request-${suffix}`},
+        ${organizationId}, ${threadId}, ${turnId}, 'runtime', 'approval',
+        'user.approval', 'Empty source?', 'pending', '{}'::jsonb
+      ),
+      (
+        ${malformedIdentityInteractionId}, ${`malformed-request-${suffix}`},
+        ${organizationId}, ${threadId}, ${turnId}, 'runtime', 'approval',
+        'user.approval', 'Malformed identity?', 'pending',
+        ${transaction.json(hostedApprovalRequest(
+          `malformed-request-${suffix}`,
+          { ...toolIdentity, toolId: "hosted.arbitrary-tool" },
+          "hosted.tool",
+        ))}
       )
     `;
   });
@@ -119,26 +170,14 @@ test("remembered approval storage enforces identity, authority, and thread casca
     organizationId,
     threadId,
     actorUserId: userId,
-    toolIdentity: {
-      version: "stable_tool_approval_identity_v1" as const,
-      toolId: "hosted.tool",
-      descriptorContractRevision: `sha256:${"a".repeat(64)}`,
-      approvalAuthorityRevision: "approval-authority-v1",
-    },
+    toolIdentity,
     sourceInteractionId: interactionId,
     createdAt: now.toISOString(),
-  };
-  const sourcePreparedApprovalAuthority = {
-    organizationId,
-    threadId,
-    actorUserId: userId,
-    toolIdentity: record.toolIdentity,
   };
   const decideAndInsert = (
     sourceInteractionId: string,
     decision: "decline" | "approve_once" | "remember_approval",
     approval = { ...record, sourceInteractionId },
-    sourceAuthority = sourcePreparedApprovalAuthority,
   ) => knowledgeDb.transaction(async (tx) => {
     await tx
       .update(schema.threadInteractions)
@@ -151,7 +190,6 @@ test("remembered approval storage enforces identity, authority, and thread casca
       .where(eq(schema.threadInteractions.id, sourceInteractionId));
     return insertRememberedToolApprovalInTransaction(tx, {
       approval,
-      sourcePreparedApprovalAuthority: sourceAuthority,
     });
   });
 
@@ -176,22 +214,36 @@ test("remembered approval storage enforces identity, authority, and thread casca
       ...record,
       id: `wrong-actor-${suffix}`,
       actorUserId: `other-user-${suffix}`,
-    }, {
-      ...sourcePreparedApprovalAuthority,
-      actorUserId: `other-user-${suffix}`,
     }),
-    /exact remember decision by this actor/u,
+    /locked source interaction authority/u,
   );
   await assert.rejects(
     () => decideAndInsert(interactionId, "remember_approval", {
       ...record,
       id: `wrong-thread-${suffix}`,
       threadId: otherThreadId,
-    }, {
-      ...sourcePreparedApprovalAuthority,
-      threadId: otherThreadId,
     }),
-    /exact remember decision by this actor/u,
+    /locked source interaction authority/u,
+  );
+  await assert.rejects(
+    () => decideAndInsert(emptySourceInteractionId, "remember_approval", {
+      ...record,
+      id: `empty-source-${suffix}`,
+      sourceInteractionId: emptySourceInteractionId,
+    }),
+    /does not contain exact prepared tool identity/u,
+  );
+  await assert.rejects(
+    () => decideAndInsert(malformedIdentityInteractionId, "remember_approval", {
+      ...record,
+      id: `arbitrary-source-${suffix}`,
+      sourceInteractionId: malformedIdentityInteractionId,
+      toolIdentity: {
+        ...record.toolIdentity,
+        toolId: "hosted.arbitrary-tool",
+      },
+    }),
+    /does not contain exact prepared tool identity/u,
   );
   await assert.rejects(
     () => decideAndInsert(interactionId, "remember_approval", {
@@ -202,7 +254,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
         toolId: "hosted.other-tool",
       },
     }),
-    /does not match the source prepared approval authority/u,
+    /does not match the locked source interaction authority/u,
   );
   await decideAndInsert(interactionId, "remember_approval");
   const [sourceAfterInsert] = await sql<{ status: string }[]>`
@@ -216,7 +268,6 @@ test("remembered approval storage enforces identity, authority, and thread casca
           ...record,
           id: `duplicate-${suffix}`,
         },
-        sourcePreparedApprovalAuthority,
       })),
     (error: unknown) => {
       const cause = error instanceof Error ? error.cause : undefined;

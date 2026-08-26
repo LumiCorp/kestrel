@@ -28,6 +28,7 @@ import {
 } from "../../../../../src/mode/contracts.js";
 import { isMutationCapableToolName } from "../../../../../src/runtime/mutationTools.js";
 import {
+  parseDurablePreparedToolCallV1,
   parsePreparedToolCallV1,
   type PreparedToolCallV1,
 } from "../../../../../src/kestrel/contracts/tool-invocation.js";
@@ -582,9 +583,13 @@ async function maybeRequireToolApproval(input: {
   let persistedPreparedToolCall;
   if (currentPendingApproval?.version === "hosted_tool_approval_v2") {
     try {
-      persistedPreparedToolCall = parsePreparedToolCallV1(
+      persistedPreparedToolCall = parseDurablePreparedToolCallV1(
         currentPendingApproval.preparedToolCall,
       );
+      assertPreparedApprovalMatchesCurrentHostedAuthority({
+        preparedToolCall: persistedPreparedToolCall,
+        eventPayload: input.eventPayload,
+      });
     } catch (error) {
       throw createRuntimeFailure(
         "HOSTED_PREPARED_APPROVAL_INVALID",
@@ -694,7 +699,7 @@ async function maybeRequireToolApproval(input: {
   const durablePreparedToolCall =
     preparedToolCall === undefined
       ? undefined
-      : parsePreparedToolCallV1({
+      : parseDurablePreparedToolCallV1({
           ...preparedToolCall,
           approval: {
             ...preparedToolCall.approval,
@@ -1452,7 +1457,7 @@ function validatePendingExternalApprovalV2(input: {
   let pending: RunnerExternalApprovalBindingV2;
   let prepared: PreparedToolCallV1;
   try {
-    prepared = parsePreparedToolCallV1(
+    prepared = parseDurablePreparedToolCallV1(
       input.currentPendingApproval?.preparedToolCall,
     );
     pending = parseRunnerExternalApprovalBindingV2(
@@ -1556,6 +1561,60 @@ function hasHostedPreparedApprovalAuthority(
     asString(authority?.threadId) !== undefined &&
     asString(actor?.actorId) !== undefined
   );
+}
+
+function assertPreparedApprovalMatchesCurrentHostedAuthority(input: {
+  preparedToolCall: PreparedToolCallV1;
+  eventPayload: Record<string, unknown> | undefined;
+}): void {
+  const authority = asRecord(input.eventPayload?.hostedApprovalAuthority);
+  const actorInput = asRecord(input.eventPayload?.actor);
+  const actorType = asString(actorInput?.actorType);
+  const actorId = asString(actorInput?.actorId);
+  const actorTenantId = asString(actorInput?.tenantId);
+  const organizationId = asString(authority?.organizationId);
+  const environmentId = asString(authority?.environmentId);
+  const projectId = asString(authority?.projectId);
+  const threadId = asString(authority?.threadId);
+  if (
+    authority?.version !== "runner_hosted_approval_authority_v1" ||
+    (actorType !== "end_user" &&
+      actorType !== "operator" &&
+      actorType !== "service") ||
+    actorId === undefined ||
+    organizationId === undefined ||
+    environmentId === undefined ||
+    projectId === undefined ||
+    threadId === undefined
+  ) {
+    throw new Error(
+      "current hosted approval authority is missing or incomplete",
+    );
+  }
+  if (actorTenantId !== undefined && actorTenantId !== organizationId) {
+    throw new Error(
+      "current hosted approval actor tenant does not match organization",
+    );
+  }
+  const stableAuthority = input.preparedToolCall.stableAuthority;
+  if (stableAuthority === undefined) {
+    throw new Error(
+      "persisted hosted approval is missing stable hosted authority",
+    );
+  }
+  if (
+    stableAuthority.actor.actorType !== actorType ||
+    stableAuthority.actor.actorId !== actorId ||
+    stableAuthority.actor.tenantId !== actorTenantId ||
+    stableAuthority.organizationId !== organizationId ||
+    stableAuthority.environmentId !== environmentId ||
+    stableAuthority.projectId !== projectId ||
+    stableAuthority.threadId !== threadId
+  ) {
+    throw new Error(
+      "persisted hosted approval authority does not match the current hosted context",
+    );
+  }
 }
 
 async function resolveApprovalDecision(input: {

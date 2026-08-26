@@ -42,6 +42,7 @@ import type {
   SessionRecord,
 } from "./store.js";
 import type { HeapDiagnosticsReporter } from "../../runtime/heapDiagnostics.js";
+import type { StableToolApprovalIdentityV1 } from "@kestrel-agents/protocol";
 
 export interface UserReplyWaitMetadata extends Record<string, unknown> {
   prompt?: string | undefined;
@@ -90,6 +91,7 @@ export interface RuntimeHostedToolApprovalInteractionV2
   approval: {
     preparedInvocationId: string;
     toolName: string;
+    stableToolIdentity: StableToolApprovalIdentityV1;
     presentation?: unknown;
   };
 }

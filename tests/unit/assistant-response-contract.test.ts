@@ -164,6 +164,10 @@ test("new hosted approval card reloads its action from the persisted prepared ca
   const interaction = result.output.waitFor?.interaction;
   assert.equal(interaction?.version, "runner_hosted_tool_approval_interaction_v2");
   assert.equal(interaction?.approval?.toolName, "internet.search");
+  assert.deepEqual(
+    interaction?.approval?.stableToolIdentity,
+    prepared.stableToolIdentity,
+  );
   assert.equal(
     "preparedInvocationId" in (interaction?.approval ?? {})
       ? interaction?.approval.preparedInvocationId
