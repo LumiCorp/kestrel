@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
+import { createModelRequestV2 } from "../../src/kestrel/contracts/model-registration.js";
 
 import { createOpenRouterInvoker } from "../../models/index.js";
+import type { OpenRouterQualifiedRouteEvidence } from "../../models/openrouter/OpenRouterV2Codec.js";
 
 
 const BASE_ENV = {
@@ -199,4 +201,51 @@ test("OpenRouter invoker reports structured parse failure without success teleme
   assert.equal(response.text, "{\"ok\":");
   assert.equal(response.provider.structuredOutput?.outcome, "parse_failed");
   assert.equal(response.provider.structuredOutput?.source, "none");
+});
+
+test("OpenRouter Responses stream carries function-argument deltas into the terminal V2 response", async () => {
+  const encoder = new TextEncoder();
+  const request = createModelRequestV2({
+    version: "model_request_v2",
+    model: "openai/gpt-5.2-chat",
+    input: "look this up",
+    tools: [{
+      name: "lookup",
+      description: "Look up a value.",
+      inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false },
+    }],
+    requirements: {
+      runtimeRole: "test",
+      output: { kind: "text", assurance: "none" },
+      tools: { choice: "required", strictArguments: true, parallelism: "forbidden" },
+      reasoning: { mode: "off", continuationKinds: [] },
+      streaming: { required: true, terminalBehavior: "required" },
+      inputModalities: ["text"],
+      endpoint: "responses",
+    },
+  });
+  const route: OpenRouterQualifiedRouteEvidence = {
+    modelId: "openai/gpt-5.2-chat",
+    endpoint: "responses",
+    supportedParameters: ["tools", "tool_choice", "parallel_tool_calls"],
+    routing: { kind: "fixed", policyId: "openai-responses", allowedEndpointIds: ["openai"] },
+    sourceHash: `sha256:${"f".repeat(64)}`,
+  };
+  const invoker = createOpenRouterInvoker({
+    env: BASE_ENV,
+    routeEvidence: route,
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "response.function_call_arguments.delta", call_id: "call-1", name: "lookup", delta: "{\"query\":\"Kestrel\"" })}\n\n`));
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "response.function_call_arguments.delta", call_id: "call-1", delta: "}" })}\n\n`));
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "response.completed", response: { status: "completed", output: [] } })}\n\n`));
+        controller.close();
+      },
+    }), { headers: { "content-type": "text/event-stream" } }),
+  });
+
+  const response = await invoker(request, { onEvent: async () => {} });
+
+  assert.deepEqual(response.toolIntents, [{ id: "call-1", name: "lookup", input: { query: "Kestrel" } }]);
+  assert.equal((response as { terminal?: { providerTerminalEvent?: string } }).terminal?.providerTerminalEvent, "response.completed");
 });

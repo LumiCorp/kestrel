@@ -161,7 +161,7 @@ test("createOpenRouterModelGatewayFromEnv preserves required tool choice", async
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.url.endsWith("/api/v1/chat/completions"), true);
   assert.equal(requests[0]?.body.tool_choice, "required");
-  assert.equal(requests[0]?.body.parallel_tool_calls, true);
+  assert.equal(requests[0]?.body.parallel_tool_calls, undefined);
   assert.equal(Array.isArray(requests[0]?.body.tools), true);
 });
 

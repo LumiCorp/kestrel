@@ -129,7 +129,7 @@ test("OpenRouter mapper ignores JSON toolIntents when native calls are absent", 
   assert.equal(mapped.toolIntents.length, 0);
 });
 
-test("OpenRouter mapper parses JSON payload wrapped in markdown fences", () => {
+test("OpenRouter mapper refuses JSON payload wrapped in markdown fences", () => {
   const mapped = mapOpenRouterResponse<{ nextAction: { kind: string } }>(
     {
       model: "openai/gpt-5.2-chat",
@@ -148,7 +148,7 @@ test("OpenRouter mapper parses JSON payload wrapped in markdown fences", () => {
     },
   );
 
-  assert.equal(mapped.output?.nextAction.kind, "finalize");
+  assert.equal(mapped.output, undefined);
 });
 
 test("OpenRouter chat mapper parses JSON when content is structured array blocks", () => {
@@ -313,7 +313,7 @@ test("OpenRouter request builder preserves required tool choice for chat", () =>
 
   assert.equal(body.tool_choice, "required");
   assert.equal(body.tools?.length, 1);
-  assert.equal(body.parallel_tool_calls, true);
+  assert.equal(body.parallel_tool_calls, undefined);
 });
 
 test("OpenRouter request builder preserves required tool choice for responses", () => {
@@ -350,7 +350,7 @@ test("OpenRouter request builder preserves required tool choice for responses", 
 
   assert.equal(body.tool_choice, "required");
   assert.equal(body.tools?.length, 1);
-  assert.equal(body.parallel_tool_calls, true);
+  assert.equal(body.parallel_tool_calls, undefined);
 });
 
 test("OpenRouter request builder preserves documented tool choices", () => {

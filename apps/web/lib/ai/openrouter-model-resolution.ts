@@ -1,5 +1,27 @@
+import { createHash } from "node:crypto";
+
 import { GatewayModelProviderResolutionError } from "./gateway-lifecycle-error";
 import { validateOpenRouterModelDetails } from "./model-economics-profile";
+
+export type OpenRouterCapabilityEvidence = {
+  version: 1;
+  modelId: string;
+  supportedParameters: string[];
+  endpoints: Array<{
+    id: string;
+    supportedParameters: string[];
+  }>;
+  routing: {
+    kind: "fixed" | "provider";
+    policyId: string;
+    allowedEndpointIds: string[];
+  } | undefined;
+  sourceHash: string;
+};
+
+export type OpenRouterResolvedModelDetails = Record<string, unknown> & {
+  kestrelOpenRouterCapabilityEvidence: OpenRouterCapabilityEvidence;
+};
 
 export async function fetchOpenRouterModelDetailsWithCredentials(input: {
   baseUrl: string;
@@ -7,7 +29,7 @@ export async function fetchOpenRouterModelDetailsWithCredentials(input: {
   rawModelId: string;
   timeoutMs?: number;
   fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-}): Promise<Record<string, unknown>> {
+}): Promise<OpenRouterResolvedModelDetails> {
   const { baseUrl, apiKey, rawModelId } = input;
   const fetchImpl = input.fetchImpl ?? fetch;
   const parts = rawModelId.split("/");
@@ -60,5 +82,88 @@ export async function fetchOpenRouterModelDetailsWithCredentials(input: {
       retryable: retryableStatus,
     });
   }
-  return validateOpenRouterModelDetails({ requestedModelId: rawModelId, response: json });
+  const details = validateOpenRouterModelDetails({ requestedModelId: rawModelId, response: json });
+  return {
+    ...details,
+    kestrelOpenRouterCapabilityEvidence: translateOpenRouterCapabilityEvidence({
+      modelId: rawModelId,
+      details,
+    }),
+  };
+}
+
+/**
+ * Preserves exact catalog evidence without inferring support from model names
+ * or a broad provider declaration. A missing endpoint set remains explicitly
+ * unqualified instead of becoming an eligible fallback route.
+ */
+export function translateOpenRouterCapabilityEvidence(input: {
+  modelId: string;
+  details: Record<string, unknown>;
+}): OpenRouterCapabilityEvidence {
+  const supportedParameters = uniqueStrings(input.details.supported_parameters);
+  const endpoints = readEndpoints(input.details.endpoints);
+  const routing = endpoints.length === 0
+    ? undefined
+    : endpoints.length === 1
+      ? {
+          kind: "fixed" as const,
+          policyId: `openrouter:${input.modelId}:${endpoints[0]!.id}`,
+          allowedEndpointIds: [endpoints[0]!.id],
+        }
+      : {
+          kind: "provider" as const,
+          policyId: `openrouter:${input.modelId}:qualified-endpoints`,
+          allowedEndpointIds: endpoints.map((endpoint) => endpoint.id),
+        };
+  const retained = {
+    modelId: input.modelId,
+    supportedParameters,
+    endpoints,
+    routing,
+  };
+  return {
+    version: 1,
+    ...retained,
+    sourceHash: `sha256:${createHash("sha256").update(canonicalJson(retained)).digest("hex")}`,
+  };
+}
+
+function readEndpoints(value: unknown): OpenRouterCapabilityEvidence["endpoints"] {
+  if (!Array.isArray(value)) return [];
+  const endpoints = value.flatMap((entry) => {
+    const record = asRecord(entry);
+    const id = typeof record.id === "string"
+      ? record.id
+      : typeof record.name === "string"
+        ? record.name
+        : undefined;
+    return id === undefined ? [] : [{ id, supportedParameters: uniqueStrings(record.supported_parameters) }];
+  });
+  const ids = new Set<string>();
+  return endpoints.filter((endpoint) => {
+    if (ids.has(endpoint.id)) return false;
+    ids.add(endpoint.id);
+    return true;
+  }).sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function uniqueStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0))].sort();
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
