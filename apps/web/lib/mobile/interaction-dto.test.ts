@@ -98,3 +98,28 @@ test("hosted V2 approval publishes its exact decision vocabulary", () => {
   assert.equal(dto.version, "runner_hosted_tool_approval_interaction_v2");
   assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
 });
+
+test("hosted V3 approval publishes the remembered decision vocabulary", () => {
+  const dto = mobileInteractionDto(
+    {
+      id: "runtime-interaction-1",
+      requestId: "approval-1",
+      source: "runtime",
+      kind: "approval",
+      prompt: "Approve this exact tool?",
+      status: "pending",
+      requestEnvelope: {
+        version: "runner_hosted_tool_approval_interaction_v3",
+      },
+      createdAt: new Date("2026-07-13T12:00:00.000Z"),
+    },
+  );
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.equal(dto.version, "runner_hosted_tool_approval_interaction_v3");
+  assert.deepEqual(dto.decisions, [
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ]);
+});

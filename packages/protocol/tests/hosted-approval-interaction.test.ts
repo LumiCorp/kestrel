@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   parseRunnerHostedToolApprovalInteractionV2,
+  parseRunnerHostedToolApprovalInteractionV3,
+  parseRunnerInteractionRequest,
   parseRunnerInteractionRequestV1,
 } from "../src/index.js";
 
@@ -35,6 +37,22 @@ const interaction = {
       tenantId: "org-1",
     },
     presentation: { title: "Approve tool" },
+  },
+} as const;
+
+const rememberedInteraction = {
+  ...interaction,
+  version: "runner_hosted_tool_approval_interaction_v3",
+  prompt:
+    "Approve hosted.tool? Choose 'decline', 'approve_once', or 'remember_approval'.",
+  inputSchema: {
+    ...interaction.inputSchema,
+    properties: {
+      decision: {
+        type: "string",
+        enum: ["decline", "approve_once", "remember_approval"],
+      },
+    },
   },
 } as const;
 
@@ -170,4 +188,49 @@ test("hosted approval interaction V2 advertises exactly its schema decisions", (
   assert.deepEqual(advertised, accepted);
   assert.deepEqual(accepted, ["approve_once", "decline"]);
   assert.doesNotMatch(parsed.prompt, /remember_approval|'approve'|'deny'/u);
+});
+
+test("hosted approval interaction V3 adds remember without changing V2", () => {
+  assert.deepEqual(
+    parseRunnerHostedToolApprovalInteractionV3(rememberedInteraction),
+    rememberedInteraction,
+  );
+  assert.deepEqual(
+    parseRunnerInteractionRequest(rememberedInteraction),
+    rememberedInteraction,
+  );
+  assert.throws(
+    () => parseRunnerHostedToolApprovalInteractionV2(rememberedInteraction),
+    /version must be 'runner_hosted_tool_approval_interaction_v2'/u,
+  );
+  assert.throws(
+    () =>
+      parseRunnerHostedToolApprovalInteractionV3({
+        ...rememberedInteraction,
+        inputSchema: interaction.inputSchema,
+      }),
+    /inputSchema is invalid/u,
+  );
+});
+
+test("hosted approval interaction V3 advertises exactly its schema decisions", () => {
+  const parsed = parseRunnerHostedToolApprovalInteractionV3(
+    rememberedInteraction,
+  );
+  const advertised = [
+    ...parsed.prompt.matchAll(
+      /'(approve_once|decline|remember_approval)'/gu,
+    ),
+  ]
+    .map((match) => match[1])
+    .sort();
+  const accepted = [...parsed.inputSchema.properties.decision.enum].sort();
+
+  assert.deepEqual(advertised, accepted);
+  assert.deepEqual(accepted, [
+    "approve_once",
+    "decline",
+    "remember_approval",
+  ]);
+  assert.doesNotMatch(parsed.prompt, /'approve'|'deny'/u);
 });

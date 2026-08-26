@@ -29,7 +29,11 @@ test(
       }).success,
       true
     );
-    for (const decision of ["decline", "approve_once"] as const) {
+    for (const decision of [
+      "decline",
+      "approve_once",
+      "remember_approval",
+    ] as const) {
       assert.equal(
         threadTurnBodySchema.safeParse({
           interactionResponse: {
@@ -97,6 +101,33 @@ test("Thread turn boundary rejects mixed approval decision versions", () => {
       },
     }).success,
     false
+  );
+});
+
+test("Thread turn boundary does not broaden legacy boolean compatibility", () => {
+  assert.equal(
+    threadTurnBodySchema.safeParse({
+      interactionResponse: {
+        requestId: "request-v1",
+        eventType: "user.approval",
+        turnId: "turn-v1",
+        message: "Approved",
+        approved: true,
+      },
+    }).success,
+    true,
+  );
+  assert.equal(
+    threadTurnBodySchema.safeParse({
+      interactionResponse: {
+        requestId: "request-v1",
+        eventType: "user.approval",
+        turnId: "turn-v1",
+        message: "Remember approval",
+        approved: "remember_approval",
+      },
+    }).success,
+    false,
   );
 });
 

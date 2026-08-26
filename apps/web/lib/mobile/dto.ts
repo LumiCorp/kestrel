@@ -195,9 +195,11 @@ export function mobileInteractionDto(
         }
       : {};
   if (kind === "sampling" || kind === "mcp_sampling" || kind === "approval") {
-    const version =
-      interaction.requestEnvelope.version ===
-      "runner_hosted_tool_approval_interaction_v2"
+    const version = interaction.requestEnvelope.version ===
+      "runner_hosted_tool_approval_interaction_v3"
+      ? ("runner_hosted_tool_approval_interaction_v3" as const)
+      : interaction.requestEnvelope.version ===
+          "runner_hosted_tool_approval_interaction_v2"
         ? ("runner_hosted_tool_approval_interaction_v2" as const)
         : ("legacy" as const);
     return {
@@ -205,8 +207,10 @@ export function mobileInteractionDto(
       kind: "approval" as const,
       version,
       decisions:
-        version === "runner_hosted_tool_approval_interaction_v2"
-          ? (["decline", "approve_once"] as const)
+        version === "runner_hosted_tool_approval_interaction_v3"
+          ? (["decline", "approve_once", "remember_approval"] as const)
+          : version === "runner_hosted_tool_approval_interaction_v2"
+            ? (["decline", "approve_once"] as const)
           : (["approve", "deny"] as const),
       title: "Allow this agent request?",
       prompt:

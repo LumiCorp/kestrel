@@ -2114,7 +2114,8 @@
             "type": "string",
             "enum": [
               "legacy",
-              "runner_hosted_tool_approval_interaction_v2"
+              "runner_hosted_tool_approval_interaction_v2",
+              "runner_hosted_tool_approval_interaction_v3"
             ]
           },
           "decisions": {
@@ -2125,7 +2126,8 @@
                 "approve",
                 "deny",
                 "decline",
-                "approve_once"
+                "approve_once",
+                "remember_approval"
               ]
             }
           },
@@ -2298,7 +2300,8 @@
               "approve",
               "deny",
               "decline",
-              "approve_once"
+              "approve_once",
+              "remember_approval"
             ]
           },
           "content": {

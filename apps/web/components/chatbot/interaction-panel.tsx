@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import {
   runnerStructuredReviewOptionLabel,
   type RunnerStructuredReviewOptionId,
@@ -20,7 +19,7 @@ export type RuntimeInteractionResponse = {
   turnId: string;
   message: string;
   approved?: boolean | undefined;
-  decision?: "decline" | "approve_once" | undefined;
+  decision?: "decline" | "approve_once" | "remember_approval" | undefined;
   reason?: string | undefined;
   recoveryOptionId?: string | undefined;
   presentation?: "control" | undefined;
@@ -50,7 +49,7 @@ export function InteractionPanel({
 
   async function resolveRuntime(
     interaction: ThreadInteractionView,
-    decision?: "decline" | "approve_once",
+    decision?: "decline" | "approve_once" | "remember_approval",
     recoveryOptionId?: string
   ) {
     const answer = content[interaction.requestId]?.trim();
@@ -62,9 +61,11 @@ export function InteractionPanel({
             recoveryOptionId as RunnerStructuredReviewOptionId
           )
         : interaction.kind === "approval"
-        ? decision === "approve_once"
-          ? "Approve once"
-          : "Decline"
+        ? decision === "remember_approval"
+          ? "Remember approval"
+          : decision === "approve_once"
+            ? "Approve once"
+            : "Decline"
         : answer;
     if (!message) {
       setError("Enter a response before continuing.");
@@ -83,7 +84,7 @@ export function InteractionPanel({
         turnId: interaction.turnId,
         message,
         ...(interaction.kind === "approval"
-          ? isHostedV2Approval(interaction)
+          ? isStrictHostedApproval(interaction)
             ? { decision }
             : { approved: decision === "approve_once" }
           : {}),
@@ -410,14 +411,6 @@ export function InteractionPanel({
                             interaction.approvalPolicy.projectApprovalMode,
                           )}
                         </dd>
-                        {interaction.approvalPolicy.alwaysApprovalAction ===
-                        "open_environment_apps" ? (
-                          <p className="mt-1 text-muted-foreground text-xs">
-                            Always Approve requires changing{" "}
-                            {interaction.approvalPolicy.capabilityDisplayName}{" "}
-                            to Automatic in Environment Apps.
-                          </p>
-                        ) : null}
                       </div>
                     ) : null}
                   </dl>
@@ -468,7 +461,7 @@ export function InteractionPanel({
                         size="sm"
                         variant="outline"
                       >
-                        {isHostedV2Approval(interaction) ? "Decline" : "Deny"}
+                        {isStrictHostedApproval(interaction) ? "Decline" : "Deny"}
                       </Button>
                       <Button
                         autoFocus={index === 0}
@@ -479,30 +472,20 @@ export function InteractionPanel({
                       >
                         Approve Once
                       </Button>
-                      {interaction.approvalPolicy?.alwaysApprovalAction ===
-                      "open_environment_apps" ? (
+                      {isRememberApprovalEligible(interaction) ? (
                         <Button
-                          asChild
+                          disabled={busy !== null}
+                          onClick={() =>
+                            void resolveRuntime(
+                              interaction,
+                              "remember_approval",
+                            )
+                          }
                           size="sm"
-                          title={alwaysApprovalTitle(interaction)}
                         >
-                          <Link
-                            href={
-                              interaction.approvalPolicy.environmentAppsHref
-                            }
-                          >
-                            Always Approve
-                          </Link>
+                          Remember Approval
                         </Button>
-                      ) : (
-                        <Button
-                          disabled
-                          size="sm"
-                          title={alwaysApprovalTitle(interaction)}
-                        >
-                          Always Approve
-                        </Button>
-                      )}
+                      ) : null}
                     </>
                   ) : (
                     <Button
@@ -624,19 +607,29 @@ function isHostedV2Approval(interaction: ThreadInteractionView): boolean {
     "runner_hosted_tool_approval_interaction_v2";
 }
 
+function isHostedV3Approval(interaction: ThreadInteractionView): boolean {
+  return interaction.requestEnvelope.version ===
+    "runner_hosted_tool_approval_interaction_v3";
+}
+
+function isStrictHostedApproval(interaction: ThreadInteractionView): boolean {
+  return isHostedV2Approval(interaction) || isHostedV3Approval(interaction);
+}
+
+function isRememberApprovalEligible(
+  interaction: ThreadInteractionView,
+): boolean {
+  if (!isHostedV3Approval(interaction)) return false;
+  const policy = interaction.approvalPolicy;
+  if (!policy || policy.minimumApprovalMode !== "auto") return false;
+  return (
+    policy.reasonCode === "environment_policy" &&
+    policy.environmentApprovalMode === "ask"
+  );
+}
+
 function approvalModeLabel(mode: "auto" | "ask" | "deny") {
   if (mode === "auto") return "Automatic";
   if (mode === "ask") return "Ask first";
   return "Blocked";
-}
-
-function alwaysApprovalTitle(interaction: ThreadInteractionView) {
-  const action = interaction.approvalPolicy?.alwaysApprovalAction;
-  if (action === "open_environment_apps") {
-    return "Open this capability in Environment Apps";
-  }
-  if (action === "minimum_ask") {
-    return "This capability requires approval for every invocation";
-  }
-  return "Persistent approval is unavailable for this request";
 }

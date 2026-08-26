@@ -21,7 +21,13 @@ const paramsSchema = z.object({
   checkpointId: routeIdSchema,
 });
 const bodySchema = z.object({
-  decision: z.enum(["approve", "deny", "decline", "approve_once"]).optional(),
+  decision: z.enum([
+    "approve",
+    "deny",
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ]).optional(),
   recoveryOptionId: z.string().trim().min(1).max(256).optional(),
   content: z
     .record(
@@ -68,13 +74,22 @@ export async function POST(
         pending.kind === "approval" &&
         pending.requestEnvelope.version ===
           "runner_hosted_tool_approval_interaction_v2";
+      const hostedV3Approval =
+        pending.kind === "approval" &&
+        pending.requestEnvelope.version ===
+          "runner_hosted_tool_approval_interaction_v3";
+      const strictHostedApproval = hostedV2Approval || hostedV3Approval;
       if (pending.kind === "approval" && body.decision === undefined) {
         throw new Error("An approval interaction requires a decision.");
       }
       if (
         pending.kind === "approval" &&
-        (hostedV2Approval
-          ? body.decision !== "decline" && body.decision !== "approve_once"
+        (hostedV3Approval
+          ? body.decision !== "decline" &&
+            body.decision !== "approve_once" &&
+            body.decision !== "remember_approval"
+          : hostedV2Approval
+            ? body.decision !== "decline" && body.decision !== "approve_once"
           : body.decision !== "approve" && body.decision !== "deny")
       ) {
         throw new Error("The approval decision does not match its version.");
@@ -115,10 +130,12 @@ export async function POST(
           ? recoveryOptionLabel(body.recoveryOptionId)
           : body.message ??
         (pending.kind === "approval"
-          ? hostedV2Approval
-            ? body.decision === "approve_once"
-              ? "Approve once"
-              : "Decline"
+          ? strictHostedApproval
+            ? body.decision === "remember_approval"
+              ? "Remember approval"
+              : body.decision === "approve_once"
+                ? "Approve once"
+                : "Decline"
             : body.decision === "approve"
               ? "Approved"
               : "Denied"
@@ -134,8 +151,13 @@ export async function POST(
         turnId: pending.turnId,
         message,
         ...(pending.kind === "approval"
-          ? hostedV2Approval
-            ? { decision: body.decision as "decline" | "approve_once" }
+          ? strictHostedApproval
+            ? {
+                decision: body.decision as
+                  | "decline"
+                  | "approve_once"
+                  | "remember_approval",
+              }
             : { approved: body.decision === "approve" }
           : {}),
         ...(body.recoveryOptionId !== undefined

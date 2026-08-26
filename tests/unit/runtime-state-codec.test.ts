@@ -15,7 +15,10 @@ import {
   hashCanonical,
 } from "../../src/kestrel/contracts/tool-contract.js";
 import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
-import { projectHostedToolApprovalInteractionV2 } from "../../src/runtime/assistantResponseContract.js";
+import {
+  projectHostedToolApprovalInteractionV2,
+  projectHostedToolApprovalInteractionV3,
+} from "../../src/runtime/assistantResponseContract.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
 
 
@@ -336,6 +339,20 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
     version: "hosted_tool_approval_v2",
     preparedInvocationId: prepared.callId,
   });
+  const rememberedInteraction = projectHostedToolApprovalInteractionV3({
+    preparedToolCall: prepared,
+    requestId: "approval-restart-1",
+  });
+  const rememberedRestart = structuredClone(restarted);
+  const rememberedAgent = rememberedRestart.agent as Record<string, unknown>;
+  rememberedAgent.assistantText = rememberedInteraction.prompt;
+  (rememberedAgent.waitingFor as Record<string, unknown>).interaction =
+    rememberedInteraction;
+  assert.equal(validateRuntimeSessionState(rememberedRestart), undefined);
+  assert.deepEqual(
+    readWaitState(rememberedRestart)?.interaction,
+    rememberedInteraction,
+  );
   const downgraded = structuredClone(restarted);
   const downgradedPending = (
     (downgraded.agent as Record<string, unknown>).exec as Record<

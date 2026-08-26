@@ -9,7 +9,7 @@ Implementation must start from deployed-source revision
 
 ## Ready
 
-- [Remember Ask First approval for the thread](03-remember-thread-tool-approval.md)
+None.
 
 ## In progress
 
@@ -21,7 +21,7 @@ None.
 
 ## Implemented
 
-None.
+- [Remember Ask First approval for the thread](03-remember-thread-tool-approval.md)
 
 ## Done
 

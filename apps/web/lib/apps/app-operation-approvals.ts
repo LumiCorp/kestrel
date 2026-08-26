@@ -5,6 +5,7 @@ import {
   parseRunnerExternalApprovalBinding,
   RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   serializeCanonicalApprovalPayload,
+  type StableToolApprovalIdentityV1,
   type RunnerExternalApprovalBinding,
 } from "@kestrel-agents/protocol";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -17,6 +18,7 @@ import {
   type AppOperationApprovalBinding,
 } from "./app-operation-approval-contract";
 import { resolveEffectiveProjectAppAccess } from "./project-service";
+import { getCoreAppDefinition } from "./catalog";
 
 const APPROVAL_TTL_MS = 5 * 60_000;
 type ApprovalTransaction = Parameters<Parameters<typeof knowledgeDb.transaction>[0]>[0];
@@ -424,6 +426,172 @@ export async function decideAppOperationApprovalInTransaction(
   return decided ?? null;
 }
 
+export async function validateRememberedAppApprovalEligibilityInTransaction(
+  tx: ApprovalTransaction,
+  input: {
+    organizationId: string;
+    projectId: string;
+    threadId: string;
+    userId: string;
+    runtimeApprovalId: string;
+    interactionId: string;
+    toolName: string;
+    stableToolIdentity: StableToolApprovalIdentityV1;
+    now: Date;
+  },
+) {
+  const [approval] = await tx
+    .select()
+    .from(schema.appOperationApprovals)
+    .where(
+      and(
+        eq(schema.appOperationApprovals.organizationId, input.organizationId),
+        eq(schema.appOperationApprovals.threadId, input.threadId),
+        eq(schema.appOperationApprovals.runtimeApprovalId, input.runtimeApprovalId),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  if (
+    approval?.lifecycleVersion !== "interaction_v2" ||
+    approval.interactionId !== input.interactionId ||
+    approval.actorUserId !== input.userId ||
+    approval.availabilityStatus !== "available" ||
+    approval.consumedExecutionId !== null ||
+    approval.expiresAt.getTime() <= input.now.getTime() ||
+    !approval.externalApprovalBinding ||
+    !approval.authorityRevision
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_NOT_PENDING");
+  }
+  let runnerBinding: RunnerExternalApprovalBinding;
+  try {
+    runnerBinding = parseRunnerExternalApprovalBinding(
+      approval.externalApprovalBinding,
+    );
+  } catch {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
+  }
+  if (
+    runnerBinding.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION ||
+    runnerBinding.approvalId !== input.runtimeApprovalId ||
+    runnerBinding.preparedInvocationId.length === 0 ||
+    runnerBinding.threadId !== input.threadId ||
+    runnerBinding.actionKey !== input.toolName ||
+    runnerBinding.requestingActor.actorType !== "end_user" ||
+    runnerBinding.requestingActor.actorId !== input.userId ||
+    runnerBinding.requestingActor.tenantId !== input.organizationId ||
+    Date.parse(runnerBinding.expiresAt) <= input.now.getTime() ||
+    serializeCanonicalApprovalPayload(runnerBinding.stableToolIdentity) !==
+      serializeCanonicalApprovalPayload(input.stableToolIdentity)
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
+  }
+  const [thread, resource, environmentGrant, projectPolicy] = await Promise.all([
+    tx.query.threads.findFirst({
+      where: and(
+        eq(schema.threads.id, input.threadId),
+        eq(schema.threads.organizationId, input.organizationId),
+        eq(schema.threads.projectId, input.projectId),
+      ),
+      columns: { id: true },
+    }),
+    tx.query.appConnectionResources.findFirst({
+      where: and(
+        eq(schema.appConnectionResources.id, approval.resourceId),
+        eq(schema.appConnectionResources.connectionId, approval.connectionId),
+        eq(schema.appConnectionResources.resourceType, approval.resourceType),
+        eq(schema.appConnectionResources.enabled, true),
+      ),
+      columns: { id: true },
+    }),
+    tx.query.environmentAppCapabilityGrants.findFirst({
+      where: and(
+        eq(
+          schema.environmentAppCapabilityGrants.environmentId,
+          approval.environmentId,
+        ),
+        eq(schema.environmentAppCapabilityGrants.appKey, approval.appKey),
+        eq(
+          schema.environmentAppCapabilityGrants.capabilityKey,
+          approval.capabilityKey,
+        ),
+      ),
+    }),
+    tx.query.projectAppCapabilityPolicies.findFirst({
+      where: and(
+        eq(schema.projectAppCapabilityPolicies.projectId, input.projectId),
+        eq(schema.projectAppCapabilityPolicies.appKey, approval.appKey),
+        eq(
+          schema.projectAppCapabilityPolicies.capabilityKey,
+          approval.capabilityKey,
+        ),
+      ),
+    }),
+  ]);
+  const access = await resolveEffectiveProjectAppAccess(
+    {
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+      appKey: approval.appKey,
+      userId: input.userId,
+      includePolicyOnly: true,
+      skipResourceReadiness: true,
+      skipInitialization: true,
+    },
+    tx as unknown as typeof knowledgeDb,
+  );
+  const capability = access?.capabilities.find(
+    (candidate) => candidate.key === approval.capabilityKey,
+  );
+  const minimumApprovalMode =
+    getCoreAppDefinition(approval.appKey)?.capabilities.find(
+      (candidate) => candidate.key === approval.capabilityKey,
+    )?.minimumApprovalMode ?? "auto";
+  if (
+    !thread ||
+    !resource ||
+    environmentGrant?.enabled !== true ||
+    environmentGrant.approvalMode !== "ask" ||
+    (projectPolicy !== undefined &&
+      (projectPolicy.enabled !== true || projectPolicy.approvalMode === "deny")) ||
+    minimumApprovalMode !== "auto" ||
+    access?.environmentId !== approval.environmentId ||
+    access.connectionId !== approval.connectionId ||
+    capability?.approvalMode !== "ask"
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_ACCESS_DENIED");
+  }
+  const currentAuthorityRevision = hashAppApprovalAuthority(
+    appApprovalPolicyEvidence({
+      binding: {
+        organizationId: approval.organizationId,
+        environmentId: approval.environmentId,
+        workspaceId: approval.workspaceId,
+        threadId: approval.threadId,
+        actorUserId: approval.actorUserId,
+        agentId: approval.agentId,
+        appKey: approval.appKey,
+        capabilityKey: approval.capabilityKey,
+        connectionId: approval.connectionId,
+        resourceId: approval.resourceId,
+        resourceType: approval.resourceType,
+        operationKey: approval.operationKey,
+        runtimeApprovalId: approval.runtimeApprovalId,
+        payload: approval.payload,
+      },
+      projectId: input.projectId,
+      access,
+      capability,
+      resourceId: resource.id,
+    }),
+  );
+  if (currentAuthorityRevision !== approval.authorityRevision) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
+  }
+  return approval;
+}
+
 export async function decideAppOperationApprovalIfPresent(input: {
   organizationId: string;
   threadId: string;
@@ -614,7 +782,8 @@ export async function consumeAppOperationApproval(input: {
           existing.interactionId !== interaction.id ||
           existing.availabilityStatus !== "available" ||
           interaction.resolvedByUserId !== input.binding.actorUserId ||
-          interactionResponse?.decision !== "approve_once"
+          interactionResponse?.decision !== "approve_once" &&
+          interactionResponse?.decision !== "remember_approval"
         : existing.lifecycleVersion !== "legacy_v1" ||
           existing.status !== "approved") ||
       existing.expiresAt.getTime() <= now.getTime()

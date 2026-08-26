@@ -193,16 +193,16 @@ test("new hosted approval card reloads its action from the persisted prepared ca
     assistantText: "stale",
   });
   const interaction = result.output.waitFor?.interaction;
-  assert.equal(interaction?.version, "runner_hosted_tool_approval_interaction_v2");
+  assert.equal(interaction?.version, "runner_hosted_tool_approval_interaction_v3");
   assert.equal(
     interaction?.prompt,
-    "Approve internet.search? Reply with decision 'approve_once' or 'decline'.",
+    "Approve internet.search? Choose 'decline', 'approve_once', or 'remember_approval'.",
   );
   assert.deepEqual(
     interaction?.inputSchema?.properties.decision.enum,
-    ["decline", "approve_once"],
+    ["decline", "approve_once", "remember_approval"],
   );
-  assert.doesNotMatch(
+  assert.match(
     `${interaction?.prompt} ${JSON.stringify(interaction?.inputSchema)}`,
     /remember_approval/u,
   );

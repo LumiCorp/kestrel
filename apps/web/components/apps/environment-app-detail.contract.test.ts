@@ -34,18 +34,16 @@ test("nested Environment App details preserve the Environment as the sole h1", (
   assert.match(environmentDetail, /headingLevel=\{2\}/u);
 });
 
-test("approval return context is revalidated from durable server state", () => {
+test("Environment App details do not carry approval-return behavior", () => {
   const page = read(
     "app/(workspace)/organization/environments/[id]/apps/[appKey]/page.tsx",
   );
-  const policy = read("lib/apps/runtime-approval-policy.ts");
+  const environmentDetail = read("components/apps/environment-apps-panel.tsx");
 
-  assert.match(page, /validateRuntimeApprovalReturnContext\(/u);
-  assert.doesNotMatch(page, /canEditProject: z\./u);
-  assert.doesNotMatch(page, /projectApprovalMode: z\./u);
-  assert.match(policy, /getThreadAccessForUser\(/u);
-  assert.match(policy, /candidate\.status === "pending"/u);
-  assert.match(policy, /projectRoleAllows\(access\.projectRole, "editor"\)/u);
+  assert.doesNotMatch(page, /approvalReturnContext/u);
+  assert.doesNotMatch(page, /searchParams/u);
+  assert.doesNotMatch(environmentDetail, /approvalReturnContext/u);
+  assert.doesNotMatch(environmentDetail, /Save and approve this request/u);
 });
 
 test("Environment capability switches show their current on or off state", () => {

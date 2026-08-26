@@ -4724,7 +4724,7 @@ export const threadInteractions = pgTable(
   ],
 );
 
-/** Dormant thread-lifetime approval evidence. No response path writes it yet. */
+/** Thread-lifetime approval evidence written atomically with a V3 remember decision. */
 export const rememberedToolApprovals = pgTable(
   "remembered_tool_approvals",
   {

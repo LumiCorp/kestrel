@@ -378,7 +378,11 @@ test("createKestrelOneAgentResponse preserves Build mode while resuming a blocke
 });
 
 test("createKestrelOneAgentResponse carries strict hosted approval decisions", async () => {
-  for (const decision of ["decline", "approve_once"] as const) {
+  for (const decision of [
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ] as const) {
     let capturedInput: KestrelOneAgentTurnInput | undefined;
     const response = createKestrelOneAgentResponseFromAgent({
       request: new Request("http://example.test/api/threads/thread-approval", {

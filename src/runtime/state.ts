@@ -2,10 +2,16 @@ import type {
   RuntimeError,
   StateNodeRef,
 } from "../kestrel/contracts/base.js";
-import { parseRunnerHostedToolApprovalInteractionV2 } from "@kestrel-agents/protocol";
+import {
+  parseRunnerHostedToolApprovalInteractionV2,
+  parseRunnerHostedToolApprovalInteractionV3,
+} from "@kestrel-agents/protocol";
 import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
 import { parseDurablePreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
-import { projectHostedToolApprovalInteractionV2 } from "./assistantResponseContract.js";
+import {
+  projectHostedToolApprovalInteractionV2,
+  projectHostedToolApprovalInteractionV3,
+} from "./assistantResponseContract.js";
 import {
   normalizeVisibleTodoState,
   validateVisibleTodoState,
@@ -400,7 +406,8 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
         "runner_external_approval_binding_v2";
     if (
       hasHostedApprovalV2Evidence &&
-      interaction?.version !== "runner_hosted_tool_approval_interaction_v2"
+      interaction?.version !== "runner_hosted_tool_approval_interaction_v2" &&
+      interaction?.version !== "runner_hosted_tool_approval_interaction_v3"
     ) {
       return {
         code: "RUNTIME_STATE_INVALID",
@@ -410,17 +417,26 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
         },
       };
     }
-    if (interaction?.version === "runner_hosted_tool_approval_interaction_v2") {
+    if (
+      interaction?.version === "runner_hosted_tool_approval_interaction_v2" ||
+      interaction?.version === "runner_hosted_tool_approval_interaction_v3"
+    ) {
       try {
         if (waitingFor.kind !== "approval") {
           throw new Error(
             "hosted tool approval interaction requires an approval wait",
           );
         }
-        const parsedInteraction = parseRunnerHostedToolApprovalInteractionV2(
-          interaction,
-          waitingFor.eventType,
-        );
+        const parsedInteraction = interaction.version ===
+          "runner_hosted_tool_approval_interaction_v3"
+          ? parseRunnerHostedToolApprovalInteractionV3(
+              interaction,
+              waitingFor.eventType,
+            )
+          : parseRunnerHostedToolApprovalInteractionV2(
+              interaction,
+              waitingFor.eventType,
+            );
         const prepared = parseDurablePreparedToolCallV1(
           waitMetadata?.preparedToolCall,
         );
@@ -434,10 +450,16 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
             "hosted tool approval must use one canonical prepared invocation",
           );
         }
-        const projectedInteraction = projectHostedToolApprovalInteractionV2({
-          preparedToolCall: prepared,
-          requestId: parsedInteraction.requestId,
-        });
+        const projectedInteraction = interaction.version ===
+          "runner_hosted_tool_approval_interaction_v3"
+          ? projectHostedToolApprovalInteractionV3({
+              preparedToolCall: prepared,
+              requestId: parsedInteraction.requestId,
+            })
+          : projectHostedToolApprovalInteractionV2({
+              preparedToolCall: prepared,
+              requestId: parsedInteraction.requestId,
+            });
         if (
           canonicalJson(parsedInteraction) !== canonicalJson(projectedInteraction)
         ) {
@@ -608,6 +630,12 @@ export function readWaitState(state: Record<string, unknown>): RuntimeWaitState 
                   waitingFor.interaction,
                   waitingFor.eventType,
                 )
+              : waitingFor.interaction.version ===
+                  "runner_hosted_tool_approval_interaction_v3"
+                ? parseRunnerHostedToolApprovalInteractionV3(
+                    waitingFor.interaction,
+                    waitingFor.eventType,
+                  )
               : waitingFor.interaction,
         }
       : {}),

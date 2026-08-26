@@ -14,6 +14,14 @@ test("hosted App decision, response, interaction, and queue state share one tran
   assert.match(boundary, /return knowledgeDb\.transaction\(async \(tx\) =>/u);
   assert.match(boundary, /await tx\.insert\(schema\.threadMessages\)/u);
   assert.match(boundary, /await decideAppOperationApprovalInTransaction\(tx,/u);
+  assert.match(
+    boundary,
+    /await validateRememberedAppApprovalEligibilityInTransaction\(tx,/u,
+  );
+  assert.match(
+    boundary,
+    /await insertRememberedToolApprovalInTransaction\(tx,/u,
+  );
   assert.match(boundary, /interactionId: interaction\.id/u);
   assert.match(boundary, /\.update\(schema\.threadInteractions\)/u);
   assert.match(boundary, /\.update\(schema\.threadTurnQueueState\)/u);
@@ -65,7 +73,7 @@ test("V2 approval execution settles from exact tool outcome, not runtime startup
   assert.match(boundary, /type: "runtime\.started"/u);
   assert.match(
     boundary,
-    /parseHostedV2ApprovalInteraction\(interaction\) !== null[\s\S]*return true/u,
+    /parseHostedPreparedApprovalInteraction\(interaction\) !== null[\s\S]*return true/u,
   );
   assert.match(
     boundary,
@@ -103,6 +111,7 @@ test("grant consumption proves the exact running execution and source interactio
   assert.match(boundary, /existing\.lifecycleVersion !== "interaction_v2"/u);
   assert.match(boundary, /existing\.interactionId !== interaction\.id/u);
   assert.match(boundary, /interactionResponse\?\.decision !== "approve_once"/u);
+  assert.match(boundary, /interactionResponse\?\.decision !== "remember_approval"/u);
   assert.match(boundary, /availabilityStatus: "consumed"/u);
   assert.match(boundary, /runnerBinding\.runId !== interaction\.sourceRuntimeRunId/u);
 });
@@ -129,4 +138,24 @@ test("V2 provider records never write an independent human decision", async () =
     ),
     /decidedByUserId|decidedAt|status: "approved"|status: "denied"/u,
   );
+});
+
+test("remember eligibility revalidates exact identity, access, and current Environment Ask First", async () => {
+  const approvals = await source("./app-operation-approvals.ts");
+  const start = approvals.indexOf(
+    "export async function validateRememberedAppApprovalEligibilityInTransaction",
+  );
+  const end = approvals.indexOf(
+    "export async function decideAppOperationApprovalIfPresent",
+    start,
+  );
+  const boundary = approvals.slice(start, end);
+  assert.match(boundary, /\.for\("update"\)/u);
+  assert.match(boundary, /runnerBinding\.stableToolIdentity/u);
+  assert.match(boundary, /serializeCanonicalApprovalPayload\(input\.stableToolIdentity\)/u);
+  assert.match(boundary, /environmentGrant\.approvalMode !== "ask"/u);
+  assert.match(boundary, /minimumApprovalMode !== "auto"/u);
+  assert.match(boundary, /resolveEffectiveProjectAppAccess/u);
+  assert.match(boundary, /currentAuthorityRevision !== approval\.authorityRevision/u);
+  assert.match(boundary, /appConnectionResources\.enabled, true/u);
 });

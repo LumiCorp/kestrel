@@ -43,7 +43,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
     identity = toolIdentity,
     toolName = identity.toolId,
   ) => ({
-    version: "runner_hosted_tool_approval_interaction_v2" as const,
+    version: "runner_hosted_tool_approval_interaction_v3" as const,
     requestId,
     kind: "approval" as const,
     eventType: "user.approval" as const,
@@ -55,7 +55,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
       properties: {
         decision: {
           type: "string" as const,
-          enum: ["decline", "approve_once"] as const,
+          enum: ["decline", "approve_once", "remember_approval"] as const,
         },
       },
     },

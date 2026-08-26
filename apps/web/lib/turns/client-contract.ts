@@ -19,12 +19,6 @@ export const runtimeApprovalPolicyViewSchema = z.object({
   ]),
   canEditProject: z.boolean(),
   approvalRequirementExplanation: z.string().optional(),
-  alwaysApprovalAction: z.enum([
-    "open_environment_apps",
-    "minimum_ask",
-    "unavailable",
-  ]),
-  environmentAppsHref: z.string(),
 });
 
 export const threadInteractionViewSchema = z.object({

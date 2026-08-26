@@ -19,7 +19,8 @@ export type ToolApprovalReasonCode =
   | "environment_policy"
   | "project_restriction"
   | "subject_restriction"
-  | "runtime_strict";
+  | "runtime_strict"
+  | "remembered_thread";
 export type ToolApprovalAuthorityKind =
   | "runtime_policy"
   | "hosted_mcp_grant"
@@ -68,6 +69,39 @@ export function resolveToolApprovalDispositionV1(input: {
     reasonCode = "runtime_strict";
   }
   return { mode, reasonCode, authority: { ...input.authority } };
+}
+
+export function applyRememberedThreadApprovalV1(input: {
+  disposition: ToolApprovalDispositionV1;
+  exactEvidenceMatch: boolean;
+  currentPolicy: {
+    environment: ToolApprovalMode;
+    project?: ToolApprovalMode | undefined;
+    subject?: ToolApprovalMode | undefined;
+    minimum: Exclude<ToolApprovalMode, "deny">;
+    strictApprovalPerCall?: boolean | undefined;
+  };
+}): ToolApprovalDispositionV1 {
+  if (
+    input.exactEvidenceMatch !== true ||
+    input.disposition.mode !== "ask" ||
+    input.disposition.reasonCode !== "environment_policy" ||
+    input.currentPolicy.environment !== "ask" ||
+    input.currentPolicy.subject === "ask" ||
+    input.currentPolicy.subject === "deny" ||
+    input.currentPolicy.minimum !== "auto" ||
+    input.currentPolicy.strictApprovalPerCall === true
+  ) {
+    return {
+      ...input.disposition,
+      authority: { ...input.disposition.authority },
+    };
+  }
+  return {
+    mode: "auto",
+    reasonCode: "remembered_thread",
+    authority: { ...input.disposition.authority },
+  };
 }
 
 function isStricterApprovalMode(

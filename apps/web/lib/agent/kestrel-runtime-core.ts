@@ -61,7 +61,7 @@ export type KestrelOneAgentTurnInput = KestrelAgentTurnInput & {
   signal?: AbortSignal;
   abortBehavior?: "cancel" | "detach" | undefined;
   resumeRequestId?: string | undefined;
-  decision?: "decline" | "approve_once" | undefined;
+  decision?: "decline" | "approve_once" | "remember_approval" | undefined;
   decidingActor?: RunnerActorMetadata | undefined;
 };
 
@@ -169,7 +169,7 @@ export type KestrelOneAgentResponseInput = {
         eventType: string;
         message: string;
         approved?: boolean | undefined;
-        decision?: "decline" | "approve_once" | undefined;
+        decision?: "decline" | "approve_once" | "remember_approval" | undefined;
         decidingActor?: RunnerActorMetadata | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;

@@ -100,9 +100,32 @@ export interface RuntimeHostedToolApprovalInteractionV2
   };
 }
 
+export interface RuntimeHostedToolApprovalInteractionV3
+  extends Record<string, unknown> {
+  version: "runner_hosted_tool_approval_interaction_v3";
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: {
+    type: "object";
+    additionalProperties: false;
+    required: ["decision"];
+    properties: {
+      decision: {
+        type: "string";
+        enum: Array<"decline" | "approve_once" | "remember_approval">;
+      };
+    };
+  };
+  metadata?: Record<string, unknown> | undefined;
+  approval: RuntimeHostedToolApprovalInteractionV2["approval"];
+}
+
 export type RuntimeInteractionRequest =
   | RuntimeInteractionRequestV1
-  | RuntimeHostedToolApprovalInteractionV2;
+  | RuntimeHostedToolApprovalInteractionV2
+  | RuntimeHostedToolApprovalInteractionV3;
 
 export interface UserWaitForMatcher {
   kind: "user";

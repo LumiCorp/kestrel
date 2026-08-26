@@ -3,11 +3,13 @@ import type {
   RuntimeInteractionRequest,
   RuntimeInteractionRequestV1,
   RuntimeHostedToolApprovalInteractionV2,
+  RuntimeHostedToolApprovalInteractionV3,
   WaitForMatcher,
 } from "../kestrel/contracts/execution.js";
 import type { InteractionRequestRecord } from "../kestrel/contracts/orchestration.js";
 import {
   parseRunnerHostedToolApprovalInteractionV2,
+  parseRunnerHostedToolApprovalInteractionV3,
   parseRunnerStructuredReviewInteractionV1,
   RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
 } from "@kestrel-agents/protocol";
@@ -102,7 +104,7 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
     waitFor.kind === "approval"
       ? metadata?.preparedToolCall === undefined
         ? undefined
-        : projectHostedToolApprovalInteractionV2({
+        : projectHostedToolApprovalInteractionV3({
             preparedToolCall: metadata.preparedToolCall,
             requestId,
           })
@@ -351,10 +353,8 @@ export function projectHostedToolApprovalInteractionV2(input: {
       mode: "ask",
       reasonCode,
       authority: {
-        kind: binding?.authorityKind ?? "runtime_policy",
-        revision:
-          binding?.authorityRevision ??
-          prepared.stableToolIdentity.approvalAuthorityRevision,
+        kind: binding.authorityKind,
+        revision: binding.authorityRevision,
       },
     },
   });
@@ -383,6 +383,72 @@ export function projectHostedToolApprovalInteractionV2(input: {
       presentation,
     },
   }) as RuntimeHostedToolApprovalInteractionV2;
+}
+
+export function projectHostedToolApprovalInteractionV3(input: {
+  preparedToolCall: unknown;
+  requestId?: string | undefined;
+}): RuntimeHostedToolApprovalInteractionV3 {
+  const prepared = parsePreparedToolCallV1(input.preparedToolCall);
+  if (
+    prepared.stableAuthority === undefined ||
+    prepared.stableToolIdentity === undefined ||
+    prepared.executionRequirements === undefined
+  ) {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      "A new-version hosted approval must contain complete prepared authority.",
+    );
+  }
+  const effectiveRequestId =
+    input.requestId ?? prepared.approval?.approvalId ?? prepared.callId;
+  const reasonCode = readToolApprovalReasonCode(prepared.policy.reasonCode);
+  const binding = prepared.approval?.externalApprovalBinding;
+  if (binding?.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION) {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      "A new-version hosted approval must contain its complete external approval binding.",
+    );
+  }
+  const presentation = buildToolApprovalPresentation({
+    toolName: prepared.activation.descriptor.toolId,
+    effectiveInput: prepared.effectiveInput,
+    disposition: {
+      mode: "ask",
+      reasonCode,
+      authority: {
+        kind: binding?.authorityKind ?? "runtime_policy",
+        revision:
+          binding?.authorityRevision ??
+          prepared.stableToolIdentity.approvalAuthorityRevision,
+      },
+    },
+  });
+  return parseRunnerHostedToolApprovalInteractionV3({
+    version: "runner_hosted_tool_approval_interaction_v3",
+    requestId: effectiveRequestId,
+    kind: "approval",
+    eventType: "user.approval",
+    prompt: `Approve ${prepared.activation.descriptor.toolId}? Choose 'decline', 'approve_once', or 'remember_approval'.`,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["decision"],
+      properties: {
+        decision: {
+          type: "string",
+          enum: ["decline", "approve_once", "remember_approval"],
+        },
+      },
+    },
+    approval: {
+      preparedInvocationId: prepared.callId,
+      toolName: prepared.activation.descriptor.toolId,
+      stableToolIdentity: prepared.stableToolIdentity,
+      requestingActor: binding.requestingActor,
+      presentation,
+    },
+  }) as RuntimeHostedToolApprovalInteractionV3;
 }
 
 function readToolApprovalReasonCode(

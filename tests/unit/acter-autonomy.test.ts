@@ -1135,12 +1135,12 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
   assert.equal(approvalWait.status, "WAITING");
   assert.equal(approvalWait.waitFor?.eventType, "user.approval");
   assert.match(
-    approvalWait.waitFor?.metadata?.prompt as string,
-    /'approve_once'.*'decline'/u,
+    approvalWait.waitFor?.interaction?.prompt as string,
+    /'decline'.*'approve_once'.*'remember_approval'/u,
   );
   assert.doesNotMatch(
-    approvalWait.waitFor?.metadata?.prompt as string,
-    /remember_approval|'approve' or 'deny'/u,
+    approvalWait.waitFor?.interaction?.prompt as string,
+    /'approve' or 'deny'/u,
   );
   assert.deepEqual(
     (
@@ -1148,7 +1148,7 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
         properties?: { decision?: { enum?: unknown } };
       }
     ).properties?.decision?.enum,
-    ["decline", "approve_once"],
+    ["decline", "approve_once", "remember_approval"],
   );
   assert.equal(approvalWait.waitFor?.metadata?.toolName, definition.name);
   assert.deepEqual(

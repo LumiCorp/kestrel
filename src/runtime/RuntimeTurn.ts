@@ -63,7 +63,7 @@ export interface RuntimeTurnInput {
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
   recoveryOptionId?: string | undefined;
-  decision?: "decline" | "approve_once" | undefined;
+  decision?: "decline" | "approve_once" | "remember_approval" | undefined;
   decidingActor?: RuntimeTurnActor | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;

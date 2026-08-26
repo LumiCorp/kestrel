@@ -63,7 +63,11 @@ test("run.start accepts the autonomous turn marker", () => {
 });
 
 test("run.start carries only strict hosted approval decisions", () => {
-  for (const decision of ["decline", "approve_once"] as const) {
+  for (const decision of [
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ] as const) {
     const parsed = parseRunnerCommandV2({
       id: `command-${decision}`,
       type: "run.start",

@@ -527,7 +527,7 @@ export interface RunnerTurnInput {
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
   recoveryOptionId?: string | undefined;
-  decision?: "decline" | "approve_once" | undefined;
+  decision?: HostedToolApprovalDecision | undefined;
   decidingActor?: RunnerActorMetadata | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
@@ -642,9 +642,35 @@ export interface RunnerHostedToolApprovalInteractionV2
   };
 }
 
+export const RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3 =
+  "runner_hosted_tool_approval_interaction_v3" as const;
+
+export interface RunnerHostedToolApprovalInteractionV3
+  extends Record<string, unknown> {
+  version: typeof RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3;
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: {
+    type: "object";
+    additionalProperties: false;
+    required: ["decision"];
+    properties: {
+      decision: {
+        type: "string";
+        enum: HostedToolApprovalDecision[];
+      };
+    };
+  };
+  metadata?: Record<string, unknown> | undefined;
+  approval: RunnerHostedToolApprovalInteractionV2["approval"];
+}
+
 export type RunnerInteractionRequest =
   | RunnerInteractionRequestV1
-  | RunnerHostedToolApprovalInteractionV2;
+  | RunnerHostedToolApprovalInteractionV2
+  | RunnerHostedToolApprovalInteractionV3;
 
 export type RunnerStructuredReviewReason =
   | "recovery_review"
@@ -716,6 +742,19 @@ export function parseRunnerHostedToolApprovalInteractionV2(
   return structuredClone(interaction) as RunnerHostedToolApprovalInteractionV2;
 }
 
+export function parseRunnerHostedToolApprovalInteractionV3(
+  value: unknown,
+  expectedEventType = "user.approval",
+): RunnerHostedToolApprovalInteractionV3 {
+  const interaction = requireRecord(value, "hosted tool approval interaction");
+  validateRunnerHostedToolApprovalInteractionV3(
+    interaction,
+    "hosted tool approval interaction",
+    expectedEventType,
+  );
+  return structuredClone(interaction) as RunnerHostedToolApprovalInteractionV3;
+}
+
 export function parseRunnerInteractionRequest(
   value: unknown,
   expectedEventType?: string | undefined,
@@ -723,6 +762,12 @@ export function parseRunnerInteractionRequest(
   const interaction = requireRecord(value, "runner interaction");
   if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2) {
     return parseRunnerHostedToolApprovalInteractionV2(
+      interaction,
+      expectedEventType,
+    );
+  }
+  if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3) {
+    return parseRunnerHostedToolApprovalInteractionV3(
       interaction,
       expectedEventType,
     );
@@ -3578,7 +3623,11 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalBoolean(turn.resumeBlockedRun, `${label}.resumeBlockedRun`);
   validateOptionalNonEmptyString(turn.resumeRequestId, `${label}.resumeRequestId`);
   validateOptionalNonEmptyString(turn.recoveryOptionId, `${label}.recoveryOptionId`);
-  validateOptionalEnum(turn.decision, `${label}.decision`, ["decline", "approve_once"]);
+  validateOptionalEnum(turn.decision, `${label}.decision`, [
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ]);
   const decidingActor = turn.decidingActor === undefined
     ? undefined
     : parseRunnerActorMetadata(turn.decidingActor, `${label}.decidingActor`);
@@ -4021,6 +4070,14 @@ function validateRunnerInteractionRequest(
     );
     return;
   }
+  if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3) {
+    validateRunnerHostedToolApprovalInteractionV3(
+      interaction,
+      label,
+      waitEventType,
+    );
+    return;
+  }
   if (interaction.version !== "v1") {
     throw new RunnerProtocolContractError(`${label}.version must be 'v1'`);
   }
@@ -4067,6 +4124,38 @@ function validateRunnerHostedToolApprovalInteractionV2(
   label: string,
   waitEventType: string,
 ): void {
+  validateRunnerHostedToolApprovalInteraction(
+    interaction,
+    label,
+    waitEventType,
+    RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2,
+    ["decline", "approve_once"],
+  );
+}
+
+function validateRunnerHostedToolApprovalInteractionV3(
+  interaction: Record<string, unknown>,
+  label: string,
+  waitEventType: string,
+): void {
+  validateRunnerHostedToolApprovalInteraction(
+    interaction,
+    label,
+    waitEventType,
+    RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3,
+    ["decline", "approve_once", "remember_approval"],
+  );
+}
+
+function validateRunnerHostedToolApprovalInteraction(
+  interaction: Record<string, unknown>,
+  label: string,
+  waitEventType: string,
+  expectedVersion:
+    | typeof RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2
+    | typeof RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3,
+  expectedDecisions: readonly HostedToolApprovalDecision[],
+): void {
   rejectUnknownFields(interaction, label, [
     "version",
     "requestId",
@@ -4077,9 +4166,9 @@ function validateRunnerHostedToolApprovalInteractionV2(
     "metadata",
     "approval",
   ]);
-  if (interaction.version !== RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2) {
+  if (interaction.version !== expectedVersion) {
     throw new RunnerProtocolContractError(
-      `${label}.version must be '${RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2}'`,
+      `${label}.version must be '${expectedVersion}'`,
     );
   }
   requireNonEmptyString(interaction.requestId, `${label}.requestId`);
@@ -4113,9 +4202,8 @@ function validateRunnerHostedToolApprovalInteractionV2(
     schema.required[0] !== "decision" ||
     decision.type !== "string" ||
     Array.isArray(decision.enum) === false ||
-    decision.enum.length !== 2 ||
-    decision.enum[0] !== "decline" ||
-    decision.enum[1] !== "approve_once" ||
+    decision.enum.length !== expectedDecisions.length ||
+    decision.enum.some((entry, index) => entry !== expectedDecisions[index]) ||
     decision.enum.some((entry) => {
       try {
         parseHostedToolApprovalDecision(entry);

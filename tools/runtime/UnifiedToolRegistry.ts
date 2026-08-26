@@ -31,10 +31,12 @@ import type {
 import {
   createPreparedToolCallV1,
   createPreparedToolApprovalAuthorityV1,
+  createStableToolApprovalIdentityV1,
   createToolSurfaceForDescriptorsV1,
   executePinnedToolCallV1,
   fingerprintToolRunScopeV1,
   resolveModelToolIntentV1,
+  readHostedStableApprovalContext,
   RUNTIME_DEADLINE_BUDGET_ADAPTER_ID,
   type PinnedToolExecutionV1,
 } from "../../src/io/ToolInvocationSupport.js";
@@ -76,6 +78,7 @@ import { normalizeToolActionInput } from "./normalizeToolInput.js";
 import type { SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { applyExternalDeadlineToolBudget } from "../../src/engine/ExecutionEngineSupport.js";
 import {
+  applyRememberedThreadApprovalV1,
   resolveToolApprovalDispositionV1,
   type ToolApprovalDispositionV1,
 } from "../../src/mode/contracts.js";
@@ -1331,7 +1334,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           upstreamAuthority,
           options.runContext,
         );
-        const approvalDisposition: ToolApprovalDispositionV1 | undefined =
+        const baselineApprovalDisposition: ToolApprovalDispositionV1 | undefined =
           approvalPolicyEvidence !== undefined
             ? resolveToolApprovalDispositionV1({
                 environment: approvalPolicyEvidence.environment,
@@ -1348,6 +1351,46 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                   minimum: builtIn.minimumApprovalMode ?? "auto",
                   authority: approvalAuthority,
                 });
+        const stableToolIdentity = createStableToolApprovalIdentityV1({
+          toolId: name,
+          descriptorContractRevision: descriptor.contractRevision,
+          approvalAuthorityRevision: approvalAuthority.revision,
+        });
+        const hostedScope = options.runContext === undefined
+          ? undefined
+          : readHostedStableApprovalContext(options.runContext);
+        const exactRememberedEvidenceMatch =
+          hostedScope?.actor.actorType === "end_user" &&
+          activeBuiltInContext.kestrelOne?.rememberedToolApprovalEvidence?.some(
+            (evidence) =>
+              evidence.organizationId === hostedScope.organizationId &&
+              evidence.environmentId === hostedScope.environmentId &&
+              evidence.projectId === hostedScope.projectId &&
+              evidence.threadId === hostedScope.threadId &&
+              evidence.actorUserId === hostedScope.actor.actorId &&
+              evidence.toolIdentity.toolId === stableToolIdentity.toolId &&
+              evidence.toolIdentity.descriptorContractRevision ===
+                stableToolIdentity.descriptorContractRevision &&
+              evidence.toolIdentity.approvalAuthorityRevision ===
+                stableToolIdentity.approvalAuthorityRevision,
+          ) === true;
+        const approvalDisposition = baselineApprovalDisposition === undefined
+          ? undefined
+          : applyRememberedThreadApprovalV1({
+              disposition: baselineApprovalDisposition,
+              exactEvidenceMatch: exactRememberedEvidenceMatch,
+              currentPolicy: {
+                environment:
+                  approvalPolicyEvidence?.environment ??
+                  configuredAppApprovalMode!,
+                project: approvalPolicyEvidence?.project,
+                subject: approvalPolicyEvidence?.subject,
+                minimum:
+                  builtIn.minimumApprovalMode ??
+                  approvalPolicyEvidence?.minimum ??
+                  "auto",
+              },
+            });
         if (approvalDisposition?.mode === "deny") continue;
         const appApprovalMode =
           approvalDisposition?.mode ?? configuredAppApprovalMode;
@@ -1641,8 +1684,6 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       revision: hashCanonical({
         version: "tool-approval-authority-v1",
         descriptor: toToolDescriptorRefV1(descriptor),
-        activeGeneration: this.registryGeneration,
-        scopeFingerprint: fingerprintToolRunScopeV1(runContext),
         upstream,
       }),
     };

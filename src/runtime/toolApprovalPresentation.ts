@@ -334,6 +334,8 @@ export function approvalReasonExplanation(
       return "A user or agent restriction requires approval for this invocation.";
     case "runtime_strict":
       return "The current runtime mode requires approval for every tool call.";
+    case "remembered_thread":
+      return "This tool was approved for the rest of this thread.";
   }
 }
 

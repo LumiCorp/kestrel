@@ -640,7 +640,7 @@ export function fingerprintToolRunScopeV1(
   });
 }
 
-function readHostedStableApprovalContext(runContext: ToolRunContext):
+export function readHostedStableApprovalContext(runContext: ToolRunContext):
   | {
       actor: RunnerApprovalActorAuthorityV1;
       organizationId: string;

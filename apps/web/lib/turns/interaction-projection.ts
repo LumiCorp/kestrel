@@ -37,13 +37,15 @@ export function projectSafeThreadInteraction(
     ((responseEnvelope &&
       (typeof responseEnvelope.approved === "boolean" ||
         responseEnvelope.decision === "decline" ||
-        responseEnvelope.decision === "approve_once")) ||
+        (responseEnvelope.decision === "approve_once" ||
+          responseEnvelope.decision === "remember_approval"))) ||
       interaction.responseFailureCode === "EXTERNAL_APPROVAL_EXPIRED")
       ? {
           decision:
             interaction.responseFailureCode === "EXTERNAL_APPROVAL_EXPIRED"
               ? "expired" as const
               : responseEnvelope?.decision === "approve_once" ||
+                  responseEnvelope?.decision === "remember_approval" ||
                   responseEnvelope?.approved === true
                 ? "approved" as const
                 : "denied" as const,
