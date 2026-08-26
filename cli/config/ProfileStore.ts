@@ -1,5 +1,6 @@
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { parseRememberedToolApprovalEvidenceSetV1 } from "@kestrel-agents/protocol";
 
 import type { CodeModeProfileConfig } from "../../src/code/contracts.js";
 import { DEFAULT_CODE_MODE_DISABLED_CONFIG } from "../../src/code/contracts.js";
@@ -881,6 +882,7 @@ const KESTREL_MANAGED_CONFIGURATION_FIELDS = new Set([
   "storeDriver",
   "kestrelOneAppApprovalModes",
   "kestrelOneAppApprovalPolicies",
+  "rememberedToolApprovalEvidence",
 ]);
 
 export function parseKestrelManagedConfiguration(
@@ -991,6 +993,14 @@ export function parseKestrelManagedConfiguration(
             record.kestrelOneAppApprovalPolicies,
             KESTREL_ONE_POLICY_ID,
           ),
+        }
+      : {}),
+    ...(record.rememberedToolApprovalEvidence !== undefined
+      ? {
+          rememberedToolApprovalEvidence:
+            parseRememberedToolApprovalEvidenceSetV1(
+              record.rememberedToolApprovalEvidence,
+            ),
         }
       : {}),
     ...overlay,
