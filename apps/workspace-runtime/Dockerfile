@@ -73,6 +73,6 @@ RUN test -f /app/dist/db/migrations/001_sessions_runs.sql \
     && python3 --version \
     && mkdir -p /workspace \
     && node /app/apps/workspace-runtime/scripts/dev-shell-package-smoke.mjs
-ENV NODE_ENV=production KESTREL_BUILD_ID=$KESTREL_BUILD_ID KESTREL_WORKSPACE_ROOT=/workspace KESTREL_WORKSPACE_PORT=43104 KESTREL_PROFILE_ENVIRONMENT=workspace_hosted KESTREL_HOSTED_APPROVAL_PROTOCOL=v3
+ENV NODE_ENV=production KESTREL_BUILD_ID=$KESTREL_BUILD_ID KESTREL_WORKSPACE_ROOT=/workspace KESTREL_WORKSPACE_PORT=43104 KESTREL_PROFILE_ENVIRONMENT=workspace_hosted KESTREL_HOSTED_APPROVAL_PROTOCOL=v2
 EXPOSE 43104
 CMD ["node", "apps/workspace-runtime/dist/server.js"]
