@@ -345,6 +345,7 @@
         "tests/unit/model-catalog-presentation.test.ts",
         "tests/unit/model-gateway-retry.test.ts",
         "tests/unit/model-gateway.test.ts",
+        "tests/unit/model-qualification.test.ts",
         "tests/unit/model-response-verifier.test.ts",
         "tests/unit/model-registration.test.ts",
         "tests/unit/model-timing-policy.test.ts",

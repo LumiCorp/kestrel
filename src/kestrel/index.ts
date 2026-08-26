@@ -1,4 +1,21 @@
 export { Kestrel } from "./Kestrel.js";
+export {
+  MODEL_QUALIFICATION_CAPABILITIES,
+  ModelQualificationService,
+  createModelQualificationBinding,
+} from "./model-qualification.js";
+export type {
+  ModelCapabilityQualification,
+  ModelQualificationBinding,
+  ModelQualificationCapability,
+  ModelQualificationOutcome,
+  ModelQualificationProbe,
+  ModelQualificationProbeRequest,
+  ModelQualificationRead,
+  ModelQualificationRoleReadiness,
+  ModelQualificationRun,
+  ModelUnsupportedQualificationProbe,
+} from "./model-qualification.js";
 export type {
   EffectFailurePolicy,
   ToolIntent,
