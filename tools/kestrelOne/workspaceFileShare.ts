@@ -216,7 +216,7 @@ async function shareWorkspaceFiles(
     const downloadName = resolveDownloadName(input, sources);
     const mediaType = input.mode === "zip"
       ? "application/zip"
-      : "application/octet-stream";
+      : mediaTypeForFileName(sources[0]!.entryName);
     stagePath = await mkdtemp(path.join(tempRoot, STAGING_PREFIX));
     const ownedStage = await registerOwnedStage(stagePath);
     stageOwnership = ownedStage;
@@ -477,6 +477,20 @@ function resolveDownloadName(input: ShareInput, sources: OpenSource[]): string {
     );
   }
   return candidate;
+}
+
+function mediaTypeForFileName(fileName: string): string {
+  const extension = path.extname(fileName).toLowerCase();
+  return {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pdf": "application/pdf",
+    ".json": "application/json",
+    ".csv": "text/csv",
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".html": "text/html",
+    ".htm": "text/html",
+  }[extension] ?? "application/octet-stream";
 }
 
 async function copySinglePayload(
@@ -799,7 +813,7 @@ async function startDownloadProcess(
   return { processId: result.processId, port: ready };
 }
 
-function parseServerReady(text: string): number | undefined {
+export function parseServerReady(text: string): number | undefined {
   for (const line of text.split(/\r?\n/u)) {
     if (!line.startsWith(SERVER_READY_PREFIX)) continue;
     try {
@@ -1123,7 +1137,7 @@ function publishedPreviewId(value: unknown): string | undefined {
     : undefined;
 }
 
-function requirePreviewBaseUrl(
+export function requirePreviewBaseUrl(
   preview: { url: string },
   appUrl: string | undefined,
 ): string {
@@ -1263,7 +1277,7 @@ function updateCrc32(current: number, buffer: Buffer): number {
   return value;
 }
 
-function shellQuote(value: string): string {
+export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 

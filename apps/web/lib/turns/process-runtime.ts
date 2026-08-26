@@ -29,6 +29,8 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { listThreadFileInventory } from "@/lib/files/service";
 import {
   issueProjectContextGrant,
+  refreshProjectContextGrant,
+  resolveProjectContextGrantContinuationId,
   revokeProjectContextGrant,
 } from "@/lib/projects/context-grants";
 import { formatProjectSystemContext } from "@/lib/projects/runtime-context";
@@ -243,7 +245,8 @@ async function loadBoundProjectContext(turn: {
   organizationId: string;
   authorUserId: string;
   projectContextRevisionId: string | null;
-}) {
+  resumeInteractionId: string | null;
+}, continuationExecutionId: string | null) {
   if (!turn.projectContextRevisionId) {
     return null;
   }
@@ -266,14 +269,31 @@ async function loadBoundProjectContext(turn: {
   if (!(bound && bound.organizationId === turn.organizationId)) {
     throw new Error("The bound Project context revision is unavailable.");
   }
-  const grant = await issueProjectContextGrant({
+  const grantIdentity = {
     organizationId: turn.organizationId,
     projectId: bound.projectId,
     threadId: turn.threadId,
     actorUserId: turn.authorUserId,
     contextRevisionId: bound.revisionId,
     contextRevision: bound.revision,
-  });
+  };
+  const continuityGrantId = continuationExecutionId || turn.resumeInteractionId
+    ? await resolveProjectContextGrantContinuationId({
+        ...grantIdentity,
+        ...(continuationExecutionId
+          ? { executionId: continuationExecutionId }
+          : { resumeInteractionId: turn.resumeInteractionId! }),
+      })
+    : null;
+  const grant = continuityGrantId
+    ? {
+        grantId: continuityGrantId,
+        grant: await refreshProjectContextGrant({
+          grantId: continuityGrantId,
+          grant: grantIdentity,
+        }),
+      }
+    : await issueProjectContextGrant(grantIdentity);
   const projectSystemContext = formatProjectSystemContext({
     projectName: bound.projectName,
     instructions: bound.instructions,
@@ -281,6 +301,7 @@ async function loadBoundProjectContext(turn: {
   });
   return {
     grantId: grant.grantId,
+    revocationGrant: grant.grant,
     projectId: bound.projectId,
     contextRevisionId: bound.revisionId,
     contextRevision: bound.revision,
@@ -560,7 +581,10 @@ export async function processDurableThreadTurn(
       stage: "reading_context",
       milestoneId: `turn:${turn.id}:context`,
     });
-    projectContext = await loadBoundProjectContext(turn);
+    projectContext = await loadBoundProjectContext(
+      turn,
+      reattachExecutionId ?? recoveredCompletedExecutionId,
+    );
     const threadFileInventory = await listThreadFileInventory({
       threadId: turn.threadId,
       organizationId: turn.organizationId,
@@ -939,6 +963,18 @@ export async function processDurableThreadTurn(
       typeof error.code === "string"
         ? error.code
         : null;
+    const retryableHostedApprovalFailure =
+      errorCode === "HOSTED_APPROVAL_EXTERNAL_BINDING_INVALID" ||
+      errorCode === "HOSTED_APPROVAL_TERMINAL_METADATA_INVALID" ||
+      errorCode === "HOSTED_APPROVAL_TERMINAL_BINDING_MISMATCH";
+    const publicFailureMessage =
+      errorCode === "PROJECT_CONTEXT_GRANT_CONTINUITY_INVALID"
+        ? "The Project context authorization could not be continued. Retry the request."
+        : errorCode?.startsWith("HOSTED_APPROVAL_") === true
+          ? retryableHostedApprovalFailure
+            ? "The approval step could not be completed. Retry the operation."
+            : "The approval step could not be completed. Request fresh approval."
+          : null;
     const attachmentCode =
       error instanceof HostedAttachmentResolutionError ? error.code : null;
     const attachmentFileIds =
@@ -962,7 +998,7 @@ export async function processDurableThreadTurn(
     const failurePresentation = buildFailurePresentation({
       errorMessage: attachmentCode
         ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
-        : message,
+        : publicFailureMessage ?? message,
       status: stopped ? "cancelled" : "failed",
       turn,
       assistantMessageId: terminal.assistantMessageId,
@@ -986,21 +1022,28 @@ export async function processDurableThreadTurn(
           : errorCode === "RUNNER_EVENT_CURSOR_EXPIRED" ||
               errorCode === "RUNNER_EVENT_CURSOR_UNKNOWN"
             ? errorCode
+          : errorCode === "PROJECT_CONTEXT_GRANT_CONTINUITY_INVALID"
+            ? errorCode
           : "TURN_WORKER_FAILED",
       failureMessage: stopped
         ? null
         : attachmentCode
           ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
-          : message,
-      interactionFailure: runnerRunStartedObserved
+          : publicFailureMessage ?? message,
+      interactionFailure: runnerRunStartedObserved && publicFailureMessage === null
         ? undefined
         : {
             failureCode: stopped
               ? "TURN_STOPPED"
               : attachmentCode ?? errorCode ?? "TURN_WORKER_FAILED",
-            failureMessage: stopped ? "Turn stopped." : message,
-            effectStatus: runnerInvocationBegan ? "unknown" : "not_started",
-            retryable: false,
+            failureMessage: stopped ? "Turn stopped." : publicFailureMessage ?? message,
+            effectStatus:
+              retryableHostedApprovalFailure
+                ? "not_started"
+                : runnerInvocationBegan
+                  ? "unknown"
+                  : "not_started",
+            retryable: retryableHostedApprovalFailure,
           },
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
@@ -1011,7 +1054,10 @@ export async function processDurableThreadTurn(
     );
     options.workerSignal?.removeEventListener("abort", interruptForWorkerLoss);
     if (projectContext) {
-      await revokeProjectContextGrant(projectContext.grantId).catch(() => {});
+      await revokeProjectContextGrant(
+        projectContext.grantId,
+        projectContext.revocationGrant,
+      ).catch(() => {});
     }
   }
 }
