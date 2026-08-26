@@ -9,7 +9,7 @@ Implementation must start from deployed-source revision
 
 ## Ready
 
-- [Resume the exact prepared invocation after approval](02-resume-prepared-invocation.md)
+- [Make the thread interaction the approval decision owner](04-canonicalize-approval-lifecycle.md)
 
 ## In progress
 
@@ -17,7 +17,6 @@ None.
 
 ## Blocked
 
-- [Make the thread interaction the approval decision owner](04-canonicalize-approval-lifecycle.md) — blocked by [Resume the exact prepared invocation after approval](02-resume-prepared-invocation.md)
 - [Remember Ask First approval for the thread](03-remember-thread-tool-approval.md) — blocked by [Make the thread interaction the approval decision owner](04-canonicalize-approval-lifecycle.md)
 - [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md) — blocked by [Remember Ask First approval for the thread](03-remember-thread-tool-approval.md) and [Make the thread interaction the approval decision owner](04-canonicalize-approval-lifecycle.md)
 
@@ -27,6 +26,7 @@ None.
 
 ## Done
 
+- [Resume the exact prepared invocation after approval](02-resume-prepared-invocation.md)
 - [Persist the exact tool invocation before approval](01-persist-prepared-invocation.md)
 - [Reject contradictory V2 approval authority](01a-enforce-v2-authority-consistency.md)
 - [Bind persisted V2 approval to current hosted authority](01a1-bind-v2-to-current-host-authority.md)
