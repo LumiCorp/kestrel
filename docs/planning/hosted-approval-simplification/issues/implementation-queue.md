@@ -9,7 +9,10 @@ Implementation must start from deployed-source revision
 
 ## Ready
 
-None.
+- [Bind the approval card to the canonical prepared invocation](01b1-bind-card-to-canonical-invocation.md)
+- [Carry strict V2 decisions through hosted clients](01e1-carry-v2-decisions-end-to-end.md)
+- [Serialize MCP retain, release, and retire](01c4-serialize-mcp-retain-and-retire.md)
+- [Clean up the prepared run owner after continuation](01c5-clean-up-the-prepared-run-owner.md)
 
 ## In progress
 
@@ -26,26 +29,25 @@ None.
 ## Implemented
 
 - [Persist the exact tool invocation before approval](01-persist-prepared-invocation.md)
-  — review blocked by [Reject contradictory V2 approval authority](01a-enforce-v2-authority-consistency.md), [Use one canonical persisted invocation for card and approval](01b-canonical-prepared-invocation-state.md), [Release prepared execution resources when approval will not execute](01c-release-abandoned-prepared-executions.md), [Terminate expired V2 approvals without reusing expired authority](01d-terminate-expired-v2-approvals.md), [Align the V2 approval prompt with its strict decisions](01e-align-v2-prompt-decisions.md), and [Bind remembered records to the exact atomic remember decision](01f-bind-remembered-record-to-decision.md)
-- [Reject contradictory V2 approval authority](01a-enforce-v2-authority-consistency.md)
-  — review blocked by [Bind persisted V2 approval to current hosted authority](01a1-bind-v2-to-current-host-authority.md)
+  — review blocked by [Use one canonical persisted invocation for card and approval](01b-canonical-prepared-invocation-state.md), [Release prepared execution resources when approval will not execute](01c-release-abandoned-prepared-executions.md), [Terminate expired V2 approvals without reusing expired authority](01d-terminate-expired-v2-approvals.md), and [Align the V2 approval prompt with its strict decisions](01e-align-v2-prompt-decisions.md)
 - [Release prepared execution resources when approval will not execute](01c-release-abandoned-prepared-executions.md)
   — review blocked by [Complete prepared execution ownership and shutdown safety](01c1-complete-prepared-resource-ownership.md)
-- [Bind remembered records to the exact atomic remember decision](01f-bind-remembered-record-to-decision.md)
-  — review blocked by [Derive remembered identity from the locked source interaction](01f1-derive-remembered-identity-from-source.md)
-- [Bind persisted V2 approval to current hosted authority](01a1-bind-v2-to-current-host-authority.md)
-  — review blocked by [Reject downgraded V2 pending approval state](01a2-reject-downgraded-v2-pending-state.md)
 - [Complete prepared execution ownership and shutdown safety](01c1-complete-prepared-resource-ownership.md)
   — review blocked by [Close replay and snapshot-creation races](01c2-close-replay-and-snapshot-races.md) and [Make production MCP cleanup retryable](01c3-make-mcp-cleanup-retryable.md)
-- [Derive remembered identity from the locked source interaction](01f1-derive-remembered-identity-from-source.md)
-  — review blocked by [Preserve canonical turn lock order for remembered approval](01f2-preserve-turn-lock-order.md)
 - [Use one canonical persisted invocation for card and approval](01b-canonical-prepared-invocation-state.md)
+  — review blocked by [Bind the approval card to the canonical prepared invocation](01b1-bind-card-to-canonical-invocation.md)
 - [Align the V2 approval prompt with its strict decisions](01e-align-v2-prompt-decisions.md)
-- [Reject downgraded V2 pending approval state](01a2-reject-downgraded-v2-pending-state.md)
+  — review blocked by [Carry strict V2 decisions through hosted clients](01e1-carry-v2-decisions-end-to-end.md)
 - [Close replay and snapshot-creation races](01c2-close-replay-and-snapshot-races.md)
+  — review blocked by [Clean up the prepared run owner after continuation](01c5-clean-up-the-prepared-run-owner.md)
 - [Make production MCP cleanup retryable](01c3-make-mcp-cleanup-retryable.md)
-- [Preserve canonical turn lock order for remembered approval](01f2-preserve-turn-lock-order.md)
+  — review blocked by [Serialize MCP retain, release, and retire](01c4-serialize-mcp-retain-and-retire.md)
 
 ## Done
 
-None.
+- [Reject contradictory V2 approval authority](01a-enforce-v2-authority-consistency.md)
+- [Bind persisted V2 approval to current hosted authority](01a1-bind-v2-to-current-host-authority.md)
+- [Reject downgraded V2 pending approval state](01a2-reject-downgraded-v2-pending-state.md)
+- [Bind remembered records to the exact atomic remember decision](01f-bind-remembered-record-to-decision.md)
+- [Derive remembered identity from the locked source interaction](01f1-derive-remembered-identity-from-source.md)
+- [Preserve canonical turn lock order for remembered approval](01f2-preserve-turn-lock-order.md)
