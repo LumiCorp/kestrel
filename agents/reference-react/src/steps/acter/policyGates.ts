@@ -786,21 +786,8 @@ async function maybeRequireToolApproval(input: {
           error instanceof RuntimeFailure &&
           error.code === "EXTERNAL_APPROVAL_EXPIRED"
         ) {
-          if (input.io.releasePreparedToolCall === undefined) {
-            throw createRuntimeFailure(
-              "HOSTED_PREPARED_APPROVAL_INVALID",
-              "The expired hosted approval invocation cannot be released.",
-              {
-                subsystem: "react",
-                classification: "policy",
-                recoverable: false,
-                approvalId,
-              },
-            );
-          }
-          await input.io.releasePreparedToolCall(
-            parseDurablePreparedToolCallV1(durablePreparedToolCall),
-          );
+          const expiredPreparedToolCall =
+            parseDurablePreparedToolCallV1(durablePreparedToolCall);
           const lastActionResult = {
             ok: false,
             kind: "approval_expiration",
@@ -817,6 +804,14 @@ async function maybeRequireToolApproval(input: {
             stepIndex: input.stepIndex,
             activeRegion: input.activeRegion,
             phase: "THINK",
+            effects: [
+              {
+                type: "release_prepared_tool_call",
+                payload: { preparedToolCall: expiredPreparedToolCall },
+                idempotencyKey: `${expiredPreparedToolCall.callId}:release`,
+                failurePolicy: "STOP",
+              },
+            ],
             reactPatch: {
               lastActionResult,
               observations: appendAgentObservation(input.reactState, lastActionResult),
@@ -858,21 +853,9 @@ async function maybeRequireToolApproval(input: {
   }
 
   if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "deny") {
-    if (durablePreparedToolCall !== undefined) {
-      if (input.io.releasePreparedToolCall === undefined) {
-        throw createRuntimeFailure(
-          "HOSTED_PREPARED_APPROVAL_INVALID",
-          "The declined hosted approval invocation cannot be released.",
-          {
-            subsystem: "react",
-            classification: "policy",
-            recoverable: false,
-            approvalId,
-          },
-        );
-      }
-      await input.io.releasePreparedToolCall(durablePreparedToolCall);
-    }
+    const declinedPreparedToolCall = durablePreparedToolCall === undefined
+      ? undefined
+      : parseDurablePreparedToolCallV1(durablePreparedToolCall);
     const lastActionResult = {
       ok: false,
       kind: "approval_denial",
@@ -889,6 +872,16 @@ async function maybeRequireToolApproval(input: {
       stepIndex: input.stepIndex,
       activeRegion: input.activeRegion,
       phase: "THINK",
+      effects: declinedPreparedToolCall === undefined
+        ? undefined
+        : [
+            {
+              type: "release_prepared_tool_call",
+              payload: { preparedToolCall: declinedPreparedToolCall },
+              idempotencyKey: `${declinedPreparedToolCall.callId}:release`,
+              failurePolicy: "STOP",
+            },
+          ],
       reactPatch: {
         lastActionResult,
         observations: appendAgentObservation(input.reactState, lastActionResult),

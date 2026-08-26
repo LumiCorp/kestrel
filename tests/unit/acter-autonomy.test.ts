@@ -1436,7 +1436,15 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
   assert.equal(expiredExec.pendingApproval, undefined);
   assert.equal(expiredAgent.waitingFor, undefined);
   assert.equal(expiredResult.status, "expired");
-  assert.equal(approvalReleases, 1);
+  assert.equal(expired.effects?.length, 1);
+  assert.equal(expired.effects?.[0]?.type, "release_prepared_tool_call");
+  assert.equal(
+    (
+      expired.effects?.[0]?.payload.preparedToolCall as Record<string, unknown>
+    ).callId,
+    "prepared-github-1",
+  );
+  assert.equal(approvalReleases, 0);
   assert.equal(approvalPreparations, 1);
 
   const declined = await waitApprovalStep(
@@ -1469,7 +1477,6 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
       },
     },
   );
-  assert.equal(declined.effects, undefined);
   assert.equal(
     (
       (declined.statePatch?.agent as Record<string, unknown>)
@@ -1478,7 +1485,9 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
     "denied",
   );
   assert.equal(approvalPreparations, 1);
-  assert.equal(approvalReleases, 2);
+  assert.equal(declined.effects?.length, 1);
+  assert.equal(declined.effects?.[0]?.type, "release_prepared_tool_call");
+  assert.equal(approvalReleases, 0);
 
   const resumed = await waitApprovalStep(
     buildContext({

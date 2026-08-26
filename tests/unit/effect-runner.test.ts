@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { InlineEffectRunner } from "../../src/effects/EffectRunner.js";
 import { EffectRegistry } from "../../src/effects/EffectRegistry.js";
 import { createExecuteToolCallHandler } from "../../src/effects/handlers/executeToolCall.js";
+import { createReleasePreparedToolCallHandler } from "../../src/effects/handlers/releasePreparedToolCall.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { InMemorySessionStore as DurableInMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
@@ -383,6 +384,64 @@ test("execute-tool handler persists the exact completed result before returning 
 
   assert.equal((output as { status?: string }).status, "OK");
   assert.deepEqual(order, ["tool-completed", "exact-result-durable", "handler-returned"]);
+});
+
+test("prepared-call cleanup runs only after its durable effect exists and remains idempotent", async () => {
+  const store = new InMemorySessionStore();
+  const toolGateway = adaptLegacyTestToolGateway({
+    validateInput: async (_name, input) => input,
+    call: async () => {
+      throw new Error("cleanup must not execute the prepared call");
+    },
+  });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: toolGateway,
+    toolName: "code.execute",
+    toolInput: { language: "javascript", code: "return 1" },
+    runId: "run-cleanup",
+    sessionId: "session-cleanup",
+    callId: "call-cleanup",
+  });
+  let releases = 0;
+  toolGateway.releasePreparedToolCall = async (prepared) => {
+    assert.equal(prepared.callId, "call-cleanup");
+    releases += 1;
+  };
+  const registry = new EffectRegistry();
+  registry.register(
+    "release_prepared_tool_call",
+    createReleasePreparedToolCallHandler(toolGateway),
+  );
+  const runner = new InlineEffectRunner(store, registry);
+  const effect = {
+    runId: "run-cleanup-continuation",
+    sessionId: "session-cleanup",
+    stepIndex: 2,
+    type: "release_prepared_tool_call",
+    payload: { preparedToolCall },
+    idempotencyKey: "call-cleanup:release",
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-26T12:00:00.000Z",
+  };
+
+  assert.equal(
+    (await runner.runEffects([effect], {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    })).stop,
+    false,
+  );
+  assert.equal(
+    (await runner.runEffects([effect], {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    })).stop,
+    false,
+  );
+  assert.equal(releases, 1);
 });
 
 test("deferred capability output mutation cannot alter or masquerade as the persisted snapshot", async () => {
