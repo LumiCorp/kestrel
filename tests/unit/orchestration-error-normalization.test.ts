@@ -986,6 +986,7 @@ test("persistent dialogs support multi-turn exchange, lifetime name ownership, a
     () => supervisor.open({ parentSessionId: "root", name: "Peregrine", message: "new" }),
     { code: "DIALOG_NAME_IN_USE" },
   );
+  assert.equal(childCount, 1);
 });
 
 test("dialog close wins over a late child completion", async () => {

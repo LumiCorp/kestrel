@@ -124,6 +124,14 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
 
   async open(input: { parentSessionId: string; parentRunId?: string | undefined; name: string; message: string }): Promise<DialogSnapshot> {
     const name = normalizeDialogName(input.name);
+    const existing = await this.store.listDelegations({ parentThreadId: input.parentSessionId });
+    if (existing.some((record) => readDialogState(record)?.normalizedName === name.toLocaleLowerCase())) {
+      throw createRuntimeFailure(
+        "DIALOG_NAME_IN_USE",
+        `A collaborator named '${name}' already exists in this task. Use dialog.list to find it. Names cannot be reused after close.`,
+        { dialogName: name },
+      );
+    }
     const handle = await this.spawnDelegation({
       parentThreadId: input.parentSessionId,
       ...(input.parentRunId !== undefined ? { parentRunId: input.parentRunId } : {}),

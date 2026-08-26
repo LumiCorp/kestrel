@@ -279,7 +279,11 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
               policy_json = $15::jsonb,
               updated_at = $16::timestamptz
         WHERE delegation_id = $1
-          AND COALESCE(NULLIF(policy_json -> 'dialog' ->> 'revision', '')::bigint, 0) = $17
+          AND CASE
+                WHEN COALESCE(policy_json -> 'dialog' ->> 'revision', '') ~ '^[0-9]+$'
+                  THEN (policy_json -> 'dialog' ->> 'revision')::bigint
+                ELSE 0
+              END = $17
        RETURNING delegation_id`,
       [
         record.delegationId,
