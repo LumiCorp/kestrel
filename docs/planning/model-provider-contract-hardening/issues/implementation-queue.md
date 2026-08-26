@@ -9,10 +9,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Use native Anthropic Messages contracts](05-correct-anthropic-codec.md)
 - [Bind runtime routes to exact model evidence](07-bind-exact-runtime-routes.md)
 
-## In progress
-
-- [Prove structured output and tool calls before success](02-prove-model-responses.md)
-
 ## Blocked
 
 - [Qualify exact model capabilities through real codecs](06-qualify-exact-model-capabilities.md) — depends on issues 02, 03, 04, and 05.
@@ -24,7 +20,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Implemented
 
-None.
+- [Prove structured output and tool calls before success](02-prove-model-responses.md)
 
 ## Done
 
