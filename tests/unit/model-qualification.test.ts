@@ -10,7 +10,10 @@ import {
 } from "../../src/kestrel/contracts/model-registration.js";
 import type { ModelGateway, ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 import {
+  bindModelQualificationGateway,
+  createModelQualificationBinding,
   ModelQualificationService,
+  runLiveModelQualification,
   type ModelQualificationCapability,
   type ModelQualificationProbe,
 } from "../../src/kestrel/model-qualification.js";
@@ -153,6 +156,29 @@ test("qualification refuses a mislabeled bounded probe before transport", async 
   assert.equal(calls, 0);
 });
 
+test("qualification rejects a gateway that belongs to another exact route before transport", async () => {
+  const service = new ModelQualificationService({ freshnessMs: 60_000 });
+  let calls = 0;
+  const gateway = fakeGateway(async () => {
+    calls += 1;
+    return completedResponse();
+  });
+  await assert.rejects(
+    service.refresh({
+      registration: registration(),
+      credentialRevision: "credential-1",
+      probeRevision: "probe-1",
+      probes: [probe("json_syntax")],
+      gateway: {
+        ...gateway,
+        binding: { ...gateway.binding, apiEndpoint: "https://wrong.example/v1" },
+      },
+    }),
+    /gateway does not match its exact registration route/u,
+  );
+  assert.equal(calls, 0);
+});
+
 test("qualification requires the exact response route and capability-specific proof", async () => {
   const service = new ModelQualificationService({ freshnessMs: 60_000 });
   const run = await service.refresh({
@@ -196,6 +222,38 @@ test("fresh qualification runs never suppress an independently requested capabil
   assert.equal(
     service.read({ ...shared, capability: "required_tool_choice" }).outcome,
     "qualified",
+  );
+});
+
+test("a failed forced refresh retains prior observed proof and live runs stay bounded", async () => {
+  const service = new ModelQualificationService({ freshnessMs: 60_000 });
+  const shared = {
+    registration: registration(),
+    credentialRevision: "credential-1",
+    probeRevision: "probe-1",
+    probes: [probe("json_syntax")],
+  };
+  await service.refresh({ ...shared, gateway: fakeGateway(async () => completedResponse()) });
+  const failed = await service.refresh({
+    ...shared,
+    force: true,
+    gateway: fakeGateway(async () => {
+      throw new Error("provider unavailable");
+    }),
+  });
+  assert.equal(failed.results[0]?.outcome, "failed");
+  assert.equal(
+    service.read({ ...shared, capability: "json_syntax" }).outcome,
+    "qualified",
+  );
+  await assert.rejects(
+    runLiveModelQualification({
+      service,
+      ...shared,
+      gateway: fakeGateway(async () => completedResponse()),
+      maxProbes: 0,
+    }),
+    /maxProbes/u,
   );
 });
 
@@ -287,6 +345,7 @@ function completedResponse() {
   return {
     version: "model_response_v2",
     text: "ok",
+    output: { ok: true },
     toolIntents: [],
     provider: { name: "openrouter", model: "z-ai/glm-test", endpoint: "chat" },
     terminal: { state: "completed", visibleOutputStarted: false, providerTerminalEvent: "chat.completion" },
@@ -311,12 +370,20 @@ function toolResponse() {
 
 function fakeGateway(
   call: (request: ModelRequest) => Promise<unknown>,
-): ModelGateway {
-  return {
+): ReturnType<typeof bindModelQualificationGateway> {
+  const gateway: ModelGateway = {
     async call<T>(request: ModelRequest): Promise<T> {
       return (await call(request)) as T;
     },
   };
+  return bindModelQualificationGateway({
+    gateway,
+    binding: createModelQualificationBinding({
+      registration: registration(),
+      credentialRevision: "credential-1",
+      probeRevision: "probe-1",
+    }),
+  });
 }
 
 function registration(credentialRevision = "credential-1") {

@@ -2,12 +2,12 @@ import type { ModelGateway } from "./contracts/model-io.js";
 import {
   fingerprintModelRoutingPolicyV2,
   parseModelRegistrationV2,
-  parseModelResponseV2,
   type ModelRegistrationV2,
   type ModelRequestV2,
   type ModelResponseV2,
 } from "./contracts/model-registration.js";
 import { hashCanonical } from "./contracts/tool-contract.js";
+import { verifyModelResponseV2 } from "../io/ModelResponseVerifier.js";
 
 /** Each probe is intentionally independent; success never implies another role. */
 export const MODEL_QUALIFICATION_CAPABILITIES = [
@@ -100,6 +100,53 @@ export interface ModelQualificationServiceOptions {
 }
 
 /**
+ * The provider factory binds its real transport to this exact, non-secret
+ * route receipt before it can be used for qualification. A generic
+ * ModelGateway is deliberately not accepted: an otherwise valid response
+ * from another base URL, codec, or routing policy is not registration proof.
+ */
+export interface BoundModelQualificationGateway {
+  readonly binding: Pick<
+    ModelQualificationBinding,
+    | "providerId"
+    | "modelId"
+    | "apiEndpoint"
+    | "endpointCodec"
+    | "routingPolicyFingerprint"
+    | "adapterRevision"
+    | "credentialRevision"
+  >;
+  call<T>(request: ModelRequestV2): Promise<T>;
+}
+
+export function bindModelQualificationGateway(input: {
+  gateway: ModelGateway;
+  binding: BoundModelQualificationGateway["binding"];
+}): BoundModelQualificationGateway {
+  const {
+    providerId,
+    modelId,
+    apiEndpoint,
+    endpointCodec,
+    routingPolicyFingerprint,
+    adapterRevision,
+    credentialRevision,
+  } = input.binding;
+  return Object.freeze({
+    binding: Object.freeze({
+      providerId,
+      modelId,
+      apiEndpoint,
+      endpointCodec,
+      routingPolicyFingerprint,
+      adapterRevision,
+      ...(credentialRevision !== undefined ? { credentialRevision } : {}),
+    }),
+    call: <T>(request: ModelRequestV2) => input.gateway.call<T>(request),
+  });
+}
+
+/**
  * In-memory lifecycle for exact, bounded qualification. Persistence belongs to
  * Issue 08; this service deliberately retains immutable historical runs so a
  * failed refresh cannot erase the last completed evidence.
@@ -123,7 +170,9 @@ export class ModelQualificationService {
     credentialRevision?: string | undefined;
     probeRevision: string;
     probes: readonly ModelQualificationProbe[];
-    gateway: ModelGateway;
+    gateway: BoundModelQualificationGateway;
+    /** An operator-requested requalification never erases retained proof. */
+    force?: boolean | undefined;
   }): Promise<ModelQualificationRun> {
     const registration = parseModelRegistrationV2(input.registration);
     const binding = createModelQualificationBinding({
@@ -132,9 +181,10 @@ export class ModelQualificationService {
       probeRevision: input.probeRevision,
     });
     const probes = validateProbes(input.probes, binding);
+    assertGatewayMatchesBinding(input.gateway.binding, binding);
     const key = qualificationRunKey(binding, probes);
     const current = this.currentRun(key);
-    if (current !== undefined && this.isFresh(current)) return current;
+    if (input.force !== true && current !== undefined && this.isFresh(current)) return current;
     const active = this.refreshes.get(key);
     if (active !== undefined) return active;
 
@@ -190,7 +240,7 @@ export class ModelQualificationService {
     capability: ModelQualificationCapability,
   ): ModelQualificationRun | undefined {
     const identity = bindingKey(binding);
-    return [...this.runs.values()]
+    const matching = [...this.runs.values()]
       .flat()
       .filter(
         (run) =>
@@ -199,7 +249,16 @@ export class ModelQualificationService {
       )
       .sort((left, right) =>
         Date.parse(right.checkedAt) - Date.parse(left.checkedAt),
-      )[0];
+      );
+    // A transport/protocol failure has no response evidence and must not
+    // replace a still-valid observed capability during a forced refresh.
+    return (
+      matching.find((run) =>
+        run.results.some((result) =>
+          result.capability === capability && hasObservedCapabilityEvidence(result),
+        ),
+      ) ?? matching[0]
+    );
   }
 
   private isFresh(run: ModelQualificationRun): boolean {
@@ -209,7 +268,7 @@ export class ModelQualificationService {
   private async execute(input: {
     binding: ModelQualificationBinding;
     probes: readonly ModelQualificationProbe[];
-    gateway: ModelGateway;
+    gateway: BoundModelQualificationGateway;
   }): Promise<ModelQualificationRun> {
     const checkedAt = this.now().toISOString();
     const results = await Promise.all(
@@ -258,7 +317,7 @@ async function executeProbe(input: {
   binding: ModelQualificationBinding;
   checkedAt: string;
   probe: ModelQualificationProbe;
-  gateway: ModelGateway;
+  gateway: BoundModelQualificationGateway;
 }): Promise<ModelCapabilityQualification> {
   if ("unsupportedReason" in input.probe) {
     return Object.freeze({
@@ -278,7 +337,8 @@ async function executeProbe(input: {
   const requestHash = hashCanonical(input.probe.request);
   try {
     assertProbeMatchesBinding(input.probe.request, input.binding);
-    const response = parseModelResponseV2(
+    const response = verifyModelResponseV2(
+      input.probe.request,
       await input.gateway.call<ModelResponseV2>(input.probe.request),
     );
     const outcome = responseProvesCapability(
@@ -313,6 +373,30 @@ async function executeProbe(input: {
       failureCode: qualificationFailureCode(error),
     });
   }
+}
+
+/**
+ * Explicit, bounded opt-in entry point for a real provider transport. Callers
+ * construct the bound gateway from their provider factory; this module never
+ * discovers credentials or performs background provider calls.
+ */
+export async function runLiveModelQualification(input: {
+  service: ModelQualificationService;
+  registration: ModelRegistrationV2;
+  credentialRevision?: string | undefined;
+  probeRevision: string;
+  probes: readonly ModelQualificationProbe[];
+  gateway: BoundModelQualificationGateway;
+  maxProbes: number;
+  force?: boolean | undefined;
+}): Promise<ModelQualificationRun> {
+  if (!Number.isSafeInteger(input.maxProbes) || input.maxProbes <= 0) {
+    throw new Error("model live qualification maxProbes must be a positive safe integer");
+  }
+  if (input.probes.length > input.maxProbes) {
+    throw new Error("model live qualification probe limit exceeded");
+  }
+  return input.service.refresh(input);
 }
 
 function responseProvesCapability(
@@ -370,6 +454,32 @@ function assertProbeMatchesBinding(
   if (request.model !== binding.modelId) {
     throw new Error("model qualification probe model does not match its registration");
   }
+}
+
+function assertGatewayMatchesBinding(
+  gateway: BoundModelQualificationGateway["binding"],
+  binding: ModelQualificationBinding,
+): void {
+  const expected = {
+    providerId: binding.providerId,
+    modelId: binding.modelId,
+    apiEndpoint: binding.apiEndpoint,
+    endpointCodec: binding.endpointCodec,
+    routingPolicyFingerprint: binding.routingPolicyFingerprint,
+    adapterRevision: binding.adapterRevision,
+    ...(binding.credentialRevision !== undefined
+      ? { credentialRevision: binding.credentialRevision }
+      : {}),
+  };
+  if (hashCanonical(gateway) !== hashCanonical(expected)) {
+    throw new Error("model qualification gateway does not match its exact registration route");
+  }
+}
+
+function hasObservedCapabilityEvidence(
+  result: ModelCapabilityQualification,
+): boolean {
+  return result.outcome === "unsupported" || result.responseHash !== undefined;
 }
 
 function secretFreeResponse(response: ModelResponseV2): Record<string, unknown> {
