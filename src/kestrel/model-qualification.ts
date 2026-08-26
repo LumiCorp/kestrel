@@ -110,7 +110,13 @@ export interface ModelQualificationGatewayFactory {
   createGateway(input: {
     registration: ModelRegistrationV2;
     binding: ModelQualificationBinding;
-  }): Promise<ModelGateway> | ModelGateway;
+    /** Issues an opaque receipt only for this exact registration binding. */
+    attestGateway(gateway: ModelGateway): AttestedModelQualificationGateway;
+  }): Promise<AttestedModelQualificationGateway> | AttestedModelQualificationGateway;
+}
+
+export interface AttestedModelQualificationGateway {
+  call<T>(request: ModelRequestV2): Promise<T>;
 }
 
 /**
@@ -226,7 +232,7 @@ export class ModelQualificationService {
     return (
       matching.find((run) =>
         run.results.some((result) =>
-          result.capability === capability && hasObservedCapabilityEvidence(result),
+          result.capability === capability && result.outcome === "qualified",
         ),
       ) ?? matching[0]
     );
@@ -243,10 +249,21 @@ export class ModelQualificationService {
     gatewayFactory: ModelQualificationGatewayFactory;
   }): Promise<ModelQualificationRun> {
     const checkedAt = this.now().toISOString();
+    const issuedGateways = new WeakSet<object>();
     const gateway = await input.gatewayFactory.createGateway({
       registration: input.registration,
       binding: input.binding,
+      attestGateway: (candidate) => {
+        const attested = Object.freeze({
+          call: <T>(request: ModelRequestV2) => candidate.call<T>(request),
+        });
+        issuedGateways.add(attested);
+        return attested;
+      },
     });
+    if (!issuedGateways.has(gateway)) {
+      throw new Error("model qualification gateway lacks an exact route attestation");
+    }
     const results = await Promise.all(
       input.probes.map(async (probe) =>
         executeProbe({ ...input, gateway, checkedAt, probe }),
@@ -431,25 +448,28 @@ function assertProbeMatchesBinding(
   }
 }
 
-function hasObservedCapabilityEvidence(
-  result: ModelCapabilityQualification,
-): boolean {
-  return result.outcome === "unsupported" || result.responseHash !== undefined;
-}
-
 function secretFreeResponse(response: ModelResponseV2): Record<string, unknown> {
   return {
     version: response.version,
-    provider: response.provider,
-    terminal: response.terminal,
+    provider: {
+      name: response.provider.name,
+      model: response.provider.model,
+      endpoint: response.provider.endpoint,
+    },
+    terminal: {
+      state: response.terminal.state,
+      visibleOutputStarted: response.terminal.visibleOutputStarted,
+      ...(response.terminal.providerTerminalEvent !== undefined
+        ? { providerTerminalEvent: response.terminal.providerTerminalEvent }
+        : {}),
+    },
     validation: response.validation,
-    toolIntents: response.toolIntents.map(({ id, name, input }) => ({
-      ...(id !== undefined ? { id } : {}),
-      name,
-      input,
-    })),
-    ...(response.output !== undefined ? { output: response.output } : {}),
-    ...(response.text !== undefined ? { text: response.text } : {}),
+    toolIntents: response.toolIntents.map(({ name }) => ({ name })),
+    reasoning: {
+      visibleFormats: response.reasoning?.visible?.map(({ format }) => format) ?? [],
+      continuationKinds:
+        response.reasoning?.continuation?.map(({ kind }) => kind) ?? [],
+    },
   };
 }
 

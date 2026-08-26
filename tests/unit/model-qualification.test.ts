@@ -13,6 +13,7 @@ import {
   ModelQualificationService,
   runLiveModelQualification,
   type ModelQualificationCapability,
+  type ModelQualificationGatewayFactory,
   type ModelQualificationProbe,
 } from "../../src/kestrel/model-qualification.js";
 
@@ -158,13 +159,13 @@ test("qualification dispatch is constructed by a route-owning factory", async ()
   const service = new ModelQualificationService({ freshnessMs: 60_000 });
   let calls = 0;
   let factoryBinding: unknown;
-  const gatewayFactory = {
-    createGateway(input: { binding: unknown }) {
+  const gatewayFactory: ModelQualificationGatewayFactory = {
+    createGateway(input) {
       factoryBinding = input.binding;
-      return fakeGateway(async () => {
+      return input.attestGateway(fakeGateway(async () => {
         calls += 1;
         return completedResponse();
-      });
+      }));
     },
   };
   const run = await service.refresh({
@@ -177,6 +178,29 @@ test("qualification dispatch is constructed by a route-owning factory", async ()
   assert.equal(calls, 1);
   assert.equal(run.results[0]?.outcome, "qualified");
   assert.deepEqual(factoryBinding, run.binding);
+});
+
+test("qualification refuses an unattested factory gateway before provider dispatch", async () => {
+  const service = new ModelQualificationService({ freshnessMs: 60_000 });
+  let calls = 0;
+  await assert.rejects(
+    service.refresh({
+      registration: registration(),
+      credentialRevision: "credential-1",
+      probeRevision: "probe-1",
+      probes: [probe("json_syntax")],
+      gatewayFactory: {
+        createGateway() {
+          return fakeGateway(async () => {
+            calls += 1;
+            return completedResponse();
+          }) as never;
+        },
+      },
+    }),
+    /lacks an exact route attestation/u,
+  );
+  assert.equal(calls, 0);
 });
 
 test("qualification stores the V2 secret-safe request fingerprint, not request data", async () => {
@@ -194,6 +218,23 @@ test("qualification stores the V2 secret-safe request fingerprint, not request d
     (jsonProbe as { request: ModelRequestV2 }).request.fingerprints.request,
   );
   assert.equal("reason" in (run.results[0] ?? {}), false);
+});
+
+test("qualification response hashes exclude text, output, and tool argument payloads", async () => {
+  const runFor = async (text: string) => new ModelQualificationService({ freshnessMs: 60_000 })
+    .refresh({
+      registration: registration(),
+      credentialRevision: "credential-1",
+      probeRevision: "probe-1",
+      probes: [probe("json_syntax")],
+      gatewayFactory: fakeGatewayFactory(async () => ({
+        ...completedResponse(),
+        text,
+        output: { ok: text },
+      })),
+    });
+  const [first, second] = await Promise.all([runFor("low-entropy-secret"), runFor("different")]);
+  assert.equal(first.results[0]?.responseHash, second.results[0]?.responseHash);
 });
 
 test("qualification rejects malformed probe before its route-owning factory creates transport", async () => {
@@ -283,6 +324,19 @@ test("a failed forced refresh retains prior observed proof and live runs stay bo
     }),
   });
   assert.equal(failed.results[0]?.outcome, "failed");
+  assert.equal(
+    service.read({ ...shared, capability: "json_syntax" }).outcome,
+    "qualified",
+  );
+  const proofFailure = await service.refresh({
+    ...shared,
+    force: true,
+    gatewayFactory: fakeGatewayFactory(async () => ({
+      ...completedResponse(),
+      output: "not an object",
+    })),
+  });
+  assert.equal(proofFailure.results[0]?.outcome, "failed");
   assert.equal(
     service.read({ ...shared, capability: "json_syntax" }).outcome,
     "qualified",
@@ -421,10 +475,10 @@ function fakeGateway(
 
 function fakeGatewayFactory(
   call: (request: ModelRequest) => Promise<unknown>,
-) {
+): ModelQualificationGatewayFactory {
   return {
-    createGateway() {
-      return fakeGateway(call);
+    createGateway(input) {
+      return input.attestGateway(fakeGateway(call));
     },
   };
 }
