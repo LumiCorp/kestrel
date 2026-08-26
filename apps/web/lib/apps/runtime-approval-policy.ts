@@ -6,6 +6,7 @@ import { knowledgeDb } from "@/lib/knowledge/db";
 import { listProjectAppConfigurations } from "./project-service";
 
 type ApprovalInteraction = {
+  id: string;
   requestId: string;
   turnId?: string | null | undefined;
   source: string;
@@ -39,7 +40,12 @@ export async function resolveRuntimeApprovalPolicies(input: {
     const reasonCode = readApprovalReasonCode(policy?.reasonCode);
     return binding === null || reasonCode === undefined
       ? []
-      : [{ requestId: interaction.requestId, reasonCode, ...binding }];
+      : [{
+          interactionId: interaction.id,
+          requestId: interaction.requestId,
+          reasonCode,
+          ...binding,
+        }];
   });
   if (bindings.length === 0) {
     return new Map<string, RuntimeApprovalPolicyView>();
@@ -68,7 +74,7 @@ export async function resolveRuntimeApprovalPolicies(input: {
         and(
           eq(table.organizationId, input.organizationId),
           eq(table.threadId, input.threadId),
-          eq(table.runtimeApprovalId, binding.requestId),
+          eq(table.interactionId, binding.interactionId),
         ),
       columns: {
         actorUserId: true,

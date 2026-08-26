@@ -52,6 +52,7 @@ test(
       mcpGrant,
       appApprovals,
       turnStore,
+      runtimeApprovalPolicy,
       knowledgeDbModule,
     ] = await Promise.all([
       import("@/lib/db/runtime"),
@@ -72,6 +73,7 @@ test(
       import("@/lib/mcp/grant-service"),
       import("./app-operation-approvals"),
       import("@/lib/turns/store"),
+      import("./runtime-approval-policy"),
       import("@/lib/knowledge/db"),
     ]);
     const sql = postgres(databaseUrl, { max: 1 });
@@ -2035,6 +2037,35 @@ test(
         'calendar.events.create', NULL, true, 'ask'
       )
     `;
+    const subjectRestrictedPolicy = await runtimeApprovalPolicy.resolveRuntimeApprovalPolicies({
+      threadId,
+      organizationId,
+      projectId,
+      userId,
+      canEditProject: false,
+      interactions: [{
+        id: subjectRestricted.interactionId,
+        requestId: subjectRestricted.requestId,
+        source: "runtime",
+        kind: "approval",
+        status: "pending",
+        requestEnvelope: rememberRequestEnvelope,
+      }],
+    });
+    assert.deepEqual(
+      {
+        subjectApprovalMode:
+          subjectRestrictedPolicy.get(subjectRestricted.requestId)
+            ?.subjectApprovalMode,
+        approvalResourceAvailable:
+          subjectRestrictedPolicy.get(subjectRestricted.requestId)
+            ?.approvalResourceAvailable,
+      },
+      {
+        subjectApprovalMode: "ask",
+        approvalResourceAvailable: true,
+      },
+    );
     const subjectRestrictedResolution =
       await turnStore.resolveDurableRuntimeInteraction({
         threadId,
@@ -2126,6 +2157,26 @@ test(
       SET "enabled" = false
       WHERE "id" = ${rememberResource.id}
     `;
+    const closedResourcePolicy = await runtimeApprovalPolicy.resolveRuntimeApprovalPolicies({
+      threadId,
+      organizationId,
+      projectId,
+      userId,
+      canEditProject: false,
+      interactions: [{
+        id: closedResourceApproveOnce.interactionId,
+        requestId: closedResourceApproveOnce.requestId,
+        source: "runtime",
+        kind: "approval",
+        status: "pending",
+        requestEnvelope: rememberRequestEnvelope,
+      }],
+    });
+    assert.equal(
+      closedResourcePolicy.get(closedResourceApproveOnce.requestId)
+        ?.approvalResourceAvailable,
+      false,
+    );
     const closedResourceResolution =
       await turnStore.resolveDurableRuntimeInteraction({
         threadId,
