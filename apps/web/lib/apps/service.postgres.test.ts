@@ -5,6 +5,7 @@ import {
   type EnvironmentExecutionTicket,
   verifyEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
+import { RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION } from "@kestrel-agents/protocol";
 import postgres from "postgres";
 import { installTestStableRuntimeBundle } from "@/lib/environments/test-runtime-channel";
 
@@ -724,7 +725,19 @@ test(
         ${runId}, ${environmentId}, ${`approval-turn-${suffix}`}, 1, 1, 'running'
       )
     `;
-    const bindApprovalInteraction = async (runtimeApprovalId: string) => {
+    const bindApprovalInteraction = async (
+      runtimeApprovalId: string,
+      approval: {
+        toolName: string;
+        preparedInvocationId?: string;
+        stableToolIdentity?: {
+          version: string;
+          toolId: string;
+          descriptorContractRevision: string;
+          approvalAuthorityRevision: string;
+        };
+      } = { toolName: "tavily.research" },
+    ) => {
       await sql`
         INSERT INTO "thread_interactions" (
           "id", "request_id", "organization_id", "thread_id", "turn_id",
@@ -735,7 +748,7 @@ test(
           ${`interaction-${runtimeApprovalId}`}, ${`request-${runtimeApprovalId}`},
           ${organizationId}, ${threadId}, ${approvalTurnId}, 'runtime', 'approval',
           'user.approval', 'Approve?', 'resolved',
-          ${sql.json({ approval: { toolName: "tavily.research" } })},
+          ${sql.json({ approval })},
           ${sql.json({ approved: true })}, ${runtimeApprovalId}, ${runId},
           ${userId}, ${now}, ${now}
         )
@@ -821,6 +834,69 @@ test(
     });
     assert.equal(consumedReplay.id, approved.id);
     assert.equal(consumedReplay.status, "consumed");
+
+    const v2StableToolIdentity = {
+      version: "stable_tool_approval_identity_v1" as const,
+      toolId: "tavily.research",
+      descriptorContractRevision: `sha256:${"d".repeat(64)}`,
+      approvalAuthorityRevision: "approval-authority-v2",
+    };
+    const v2PreparedInvocationId = `prepared-${suffix}`;
+    const v2ApprovalBinding = {
+      ...approvalBinding,
+      runtimeApprovalId: `approval-v2-${suffix}`,
+      payload: { query: "V2 approval integrity" },
+    };
+    const v2RuntimeBinding = {
+      version: RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
+      approvalId: v2ApprovalBinding.runtimeApprovalId,
+      preparedInvocationId: v2PreparedInvocationId,
+      threadId,
+      actionKey: "tavily.research",
+      payloadHash: `sha256:${"e".repeat(64)}`,
+      stableAuthorityFingerprint: `sha256:${"f".repeat(64)}`,
+      stableToolIdentity: v2StableToolIdentity,
+      requestingActor: {
+        actorType: "end_user" as const,
+        actorId: userId,
+        tenantId: organizationId,
+      },
+      toolClass: "external_side_effect" as const,
+      capabilities: ["external.confirm", "network.call"],
+      authorityKind: "runtime_policy" as const,
+      authorityRevision: "approval-authority-v2",
+      requestedAt: new Date(Date.now() - 1_000).toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const requestedV2Approval =
+      await appApprovals.recordAppOperationApprovalRequest({
+        binding: v2ApprovalBinding,
+        projectId,
+        requestedExecutionId: runId,
+        expiresAt: new Date(Date.now() + 50_000),
+        runtimeBinding: v2RuntimeBinding,
+      });
+    assert.equal(
+      requestedV2Approval.externalApprovalBinding?.version,
+      RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
+    );
+    await appApprovals.decideAppOperationApproval({
+      organizationId,
+      threadId,
+      userId,
+      runtimeApprovalId: v2ApprovalBinding.runtimeApprovalId,
+      approved: true,
+    });
+    await bindApprovalInteraction(v2ApprovalBinding.runtimeApprovalId, {
+      toolName: "tavily.research",
+      preparedInvocationId: v2PreparedInvocationId,
+      stableToolIdentity: v2StableToolIdentity,
+    });
+    const consumedV2 = await appApprovals.consumeAppOperationApproval({
+      binding: v2ApprovalBinding,
+      consumedExecutionId: runId,
+    });
+    assert.equal(consumedV2.status, "consumed");
 
     const directlyApprovedBinding = {
       ...approvalBinding,

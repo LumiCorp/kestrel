@@ -2,9 +2,10 @@ import "server-only";
 
 import { and, eq, gt, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import {
-  parseRunnerExternalApprovalBindingV1,
+  parseRunnerExternalApprovalBinding,
+  RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   serializeCanonicalApprovalPayload,
-  type RunnerExternalApprovalBindingV1,
+  type RunnerExternalApprovalBinding,
 } from "@kestrel-agents/protocol";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
@@ -31,7 +32,7 @@ export async function recordAppOperationApprovalRequest(input: {
   projectId: string;
   requestedExecutionId: string;
   expiresAt: Date;
-  runtimeBinding?: RunnerExternalApprovalBindingV1 | undefined;
+  runtimeBinding?: RunnerExternalApprovalBinding | undefined;
   approvedByUserId?: string | undefined;
 }) {
   const now = new Date();
@@ -108,7 +109,7 @@ export async function recordAppOperationApprovalRequest(input: {
     }),
   );
   const runtimeBinding = input.runtimeBinding
-    ? parseRunnerExternalApprovalBindingV1(input.runtimeBinding)
+    ? parseRunnerExternalApprovalBinding(input.runtimeBinding)
     : createAppExternalApprovalBinding({
         binding: input.binding,
         requestedExecutionId: input.requestedExecutionId,
@@ -119,6 +120,11 @@ export async function recordAppOperationApprovalRequest(input: {
   if (
     runtimeBinding.approvalId !== input.binding.runtimeApprovalId ||
     runtimeBinding.threadId !== input.binding.threadId ||
+    (runtimeBinding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+      (runtimeBinding.requestingActor.actorId !== input.binding.actorUserId ||
+        (runtimeBinding.requestingActor.tenantId !== undefined &&
+          runtimeBinding.requestingActor.tenantId !==
+            input.binding.organizationId))) ||
     input.expiresAt.getTime() > Date.parse(runtimeBinding.expiresAt)
   ) {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
@@ -476,9 +482,11 @@ export async function consumeAppOperationApproval(input: {
       typeof (requestApproval as Record<string, unknown>).toolName === "string"
         ? (requestApproval as Record<string, unknown>).toolName
         : null;
-    let runnerBinding: RunnerExternalApprovalBindingV1;
+    let runnerBinding: RunnerExternalApprovalBinding;
     try {
-      runnerBinding = parseRunnerExternalApprovalBindingV1(existing.externalApprovalBinding);
+      runnerBinding = parseRunnerExternalApprovalBinding(
+        existing.externalApprovalBinding,
+      );
     } catch {
       throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
     }
@@ -490,7 +498,17 @@ export async function consumeAppOperationApproval(input: {
       !(directSourceTurn || retrySourceTurn) ||
       runnerBinding.approvalId !== interaction.runtimeApprovalId ||
       runnerBinding.threadId !== interaction.threadId ||
-      runnerBinding.runId !== interaction.sourceRuntimeRunId ||
+      (runnerBinding.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+        runnerBinding.runId !== interaction.sourceRuntimeRunId) ||
+      (runnerBinding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+        (runnerBinding.preparedInvocationId !==
+          (requestApproval as Record<string, unknown> | undefined)
+            ?.preparedInvocationId ||
+          serializeCanonicalApprovalPayload(runnerBinding.stableToolIdentity) !==
+            serializeCanonicalApprovalPayload(
+              (requestApproval as Record<string, unknown> | undefined)
+                ?.stableToolIdentity,
+            ))) ||
       runnerBinding.actionKey !== requestToolName ||
       !runnerBinding.payloadHash.startsWith("sha256:") ||
       runnerBinding.capabilities.length === 0 ||

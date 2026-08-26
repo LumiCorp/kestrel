@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
   RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION,
+  RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   serializeCanonicalApprovalPayload,
 } from "@kestrel-agents/protocol";
 import type { RunnerRunTerminalEvent } from "@kestrel-agents/sdk";
@@ -28,6 +29,36 @@ test("trusted terminal approval preserves request, runtime approval, and runner 
   assert.equal(parsed?.runtimeApprovalId, "run-1:0:approval");
   assert.equal(parsed?.runId, "run-1");
   assert.deepEqual(parsed?.toolInput, emailInput());
+});
+
+test("trusted terminal approval accepts the canonical V2 prepared invocation", () => {
+  const event = waitingV2Event();
+  const parsed = parseTrustedTerminalApproval({ event, threadId: "thread-1" });
+  assert.equal(parsed?.requestId, "request-v2");
+  assert.equal(parsed?.runtimeApprovalId, "request-v2");
+  assert.equal(parsed?.runId, "run-1");
+  assert.equal(
+    parsed?.externalBinding.version,
+    RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
+  );
+  assert.deepEqual(parsed?.toolInput, emailInput());
+});
+
+test("trusted terminal approval rejects a V2 card detached from its prepared invocation", () => {
+  const event = waitingV2Event();
+  if (event.type !== "run.completed") assert.fail("expected terminal event");
+  const metadata = event.payload.result.output.waitFor?.metadata as Record<
+    string,
+    unknown
+  >;
+  const prepared = metadata.preparedToolCall as Record<string, unknown>;
+  prepared.callId = "prepared-other";
+  assert.throws(
+    () => parseTrustedTerminalApproval({ event, threadId: "thread-1" }),
+    (error) =>
+      error instanceof TrustedTerminalApprovalError &&
+      error.code === "HOSTED_APPROVAL_TERMINAL_BINDING_MISMATCH",
+  );
 });
 
 test("trusted terminal approval rejects every cross-identity and payload mismatch", () => {
@@ -129,6 +160,104 @@ function waitingEvent(): RunnerRunTerminalEvent {
               toolName,
               toolInput,
               externalApprovalBinding: binding,
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+function waitingV2Event(): RunnerRunTerminalEvent {
+  const toolInput = emailInput();
+  const approvalId = "request-v2";
+  const preparedInvocationId = "prepared-v2";
+  const toolName = "kestrel_one.email_send";
+  const now = Date.now();
+  const stableToolIdentity = {
+    version: "stable_tool_approval_identity_v1" as const,
+    toolId: toolName,
+    descriptorContractRevision: `sha256:${"b".repeat(64)}`,
+    approvalAuthorityRevision: "approval-authority-v2",
+  };
+  const stableAuthorityFingerprint = `sha256:${"c".repeat(64)}`;
+  const binding = {
+    version: RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
+    approvalId,
+    preparedInvocationId,
+    threadId: "thread-1",
+    actionKey: toolName,
+    payloadHash: `sha256:${createHash("sha256").update(serializeCanonicalApprovalPayload(toolInput)).digest("hex")}`,
+    stableAuthorityFingerprint,
+    stableToolIdentity,
+    requestingActor: {
+      actorType: "end_user" as const,
+      actorId: "user-1",
+      tenantId: "org-1",
+    },
+    toolClass: "external_side_effect" as const,
+    capabilities: ["external.confirm", "network.call"],
+    authorityKind: "runtime_policy" as const,
+    authorityRevision: "approval-authority-v2",
+    requestedAt: new Date(now - 1_000).toISOString(),
+    expiresAt: new Date(now + 60_000).toISOString(),
+  };
+  const preparedToolCall = {
+    callId: preparedInvocationId,
+    runId: "run-1",
+    effectiveInput: toolInput,
+    stableAuthority: { fingerprint: stableAuthorityFingerprint },
+    stableToolIdentity,
+    approval: { externalApprovalBinding: binding },
+  };
+  return {
+    id: "event-v2",
+    type: "run.completed",
+    ts: new Date(now).toISOString(),
+    runId: "run-1",
+    sessionId: "session-1",
+    threadId: "thread-1",
+    payload: {
+      result: {
+        assistantText: "Approve send?",
+        output: {
+          status: "WAITING",
+          sessionId: "session-1",
+          runId: "run-1",
+          errors: [],
+          waitFor: {
+            kind: "approval",
+            eventType: "user.approval",
+            interaction: {
+              version: "runner_hosted_tool_approval_interaction_v2",
+              requestId: approvalId,
+              kind: "approval",
+              eventType: "user.approval",
+              prompt: "Approve send?",
+              inputSchema: {
+                type: "object",
+                additionalProperties: false,
+                required: ["decision"],
+                properties: {
+                  decision: {
+                    type: "string",
+                    enum: ["decline", "approve_once"],
+                  },
+                },
+              },
+              approval: {
+                preparedInvocationId,
+                toolName,
+                stableToolIdentity,
+                presentation: { title: "Approve send?" },
+              },
+            },
+            metadata: {
+              approvalId,
+              toolName,
+              toolInput,
+              externalApprovalBinding: binding,
+              preparedToolCall,
             },
           },
         },

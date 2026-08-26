@@ -2,9 +2,11 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import {
-  parseRunnerExternalApprovalBindingV1,
+  parseRunnerExternalApprovalBinding,
+  RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
+  RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2,
   serializeCanonicalApprovalPayload,
-  type RunnerExternalApprovalBindingV1,
+  type RunnerExternalApprovalBinding,
 } from "@kestrel-agents/protocol";
 import type { RunnerRunTerminalEvent } from "@kestrel-agents/sdk";
 
@@ -22,7 +24,7 @@ export type TrustedTerminalApproval = {
   toolName: string;
   toolInput: Record<string, unknown>;
   expiresAt: Date;
-  externalBinding: RunnerExternalApprovalBindingV1;
+  externalBinding: RunnerExternalApprovalBinding;
 };
 
 export function readTrustedTerminalApprovalToolName(
@@ -64,13 +66,18 @@ export function parseTrustedTerminalApproval(input: {
     throw new TrustedTerminalApprovalError("HOSTED_APPROVAL_TERMINAL_METADATA_INVALID");
   }
   const requestId = readString(interaction.requestId);
-  const runtimeApprovalId = readString(approval.toolCallId);
+  const isV2 =
+    interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2;
+  const preparedInvocationId = readString(approval.preparedInvocationId);
+  const runtimeApprovalId = isV2
+    ? requestId
+    : readString(approval.toolCallId);
   const approvalToolName = readString(approval.toolName);
   const metadataApprovalId = readString(metadata.approvalId);
   const metadataToolName = readString(metadata.toolName);
-  let binding: RunnerExternalApprovalBindingV1;
+  let binding: RunnerExternalApprovalBinding;
   try {
-    binding = parseRunnerExternalApprovalBindingV1(metadata.externalApprovalBinding);
+    binding = parseRunnerExternalApprovalBinding(metadata.externalApprovalBinding);
   } catch {
     throw new TrustedTerminalApprovalError("HOSTED_APPROVAL_EXTERNAL_BINDING_INVALID");
   }
@@ -85,13 +92,45 @@ export function parseTrustedTerminalApproval(input: {
     runtimeApprovalId !== binding.approvalId ||
     approvalToolName !== metadataToolName ||
     approvalToolName !== binding.actionKey ||
-    output.runId !== binding.runId ||
+    (binding.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+      output.runId !== binding.runId) ||
     (event.runId !== undefined && event.runId !== output.runId) ||
     binding.threadId !== input.threadId ||
     (event.threadId !== undefined && event.threadId !== input.threadId) ||
     payloadHash !== binding.payloadHash
   ) {
     throw new TrustedTerminalApprovalError("HOSTED_APPROVAL_TERMINAL_BINDING_MISMATCH");
+  }
+  if (binding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION) {
+    const prepared = asRecord(metadata.preparedToolCall);
+    const preparedApproval = asRecord(prepared?.approval);
+    const preparedAuthority = asRecord(prepared?.stableAuthority);
+    if (
+      !isV2 ||
+      !preparedInvocationId ||
+      preparedInvocationId !== binding.preparedInvocationId ||
+      readString(prepared?.callId) !== binding.preparedInvocationId ||
+      readString(prepared?.runId) !== output.runId ||
+      readString(preparedAuthority?.fingerprint) !==
+        binding.stableAuthorityFingerprint ||
+      serializeCanonicalApprovalPayload(prepared?.effectiveInput) !==
+        serializeCanonicalApprovalPayload(toolInput) ||
+      serializeCanonicalApprovalPayload(prepared?.stableToolIdentity) !==
+        serializeCanonicalApprovalPayload(binding.stableToolIdentity) ||
+      serializeCanonicalApprovalPayload(
+        preparedApproval?.externalApprovalBinding,
+      ) !== serializeCanonicalApprovalPayload(binding) ||
+      serializeCanonicalApprovalPayload(approval.stableToolIdentity) !==
+        serializeCanonicalApprovalPayload(binding.stableToolIdentity)
+    ) {
+      throw new TrustedTerminalApprovalError(
+        "HOSTED_APPROVAL_TERMINAL_BINDING_MISMATCH",
+      );
+    }
+  } else if (isV2) {
+    throw new TrustedTerminalApprovalError(
+      "HOSTED_APPROVAL_TERMINAL_BINDING_MISMATCH",
+    );
   }
   const expiresAt = new Date(binding.expiresAt);
   if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {

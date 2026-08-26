@@ -28,7 +28,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { KNOWLEDGE_EMBEDDING_DIMENSIONS } from "@/lib/knowledge/documents/constants";
-import type { RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
+import type { RunnerExternalApprovalBinding } from "@kestrel-agents/protocol";
 import type {
   OciMcpEgressPolicyV1,
   ResolvedOciMcpEgressBindingV1,
@@ -3460,7 +3460,7 @@ export const appOperationApprovals = pgTable(
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     externalApprovalBinding: jsonb(
       "external_approval_binding",
-    ).$type<RunnerExternalApprovalBindingV1>(),
+    ).$type<RunnerExternalApprovalBinding>(),
     authorityRevision: text("authority_revision"),
     status: text("status", {
       enum: ["pending", "approved", "denied", "consumed", "expired"],

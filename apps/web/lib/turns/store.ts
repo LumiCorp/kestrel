@@ -6,11 +6,13 @@ import {
   CONVERSATION_ATTACHMENT_MAX_TURN_BYTES,
 } from "@kestrel-agents/conversation";
 import {
-  parseRunnerExternalApprovalBindingV1,
+  parseRunnerExternalApprovalBinding,
+  RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   parseRememberedToolApprovalEvidenceSetV1,
   parseRememberedToolApprovalV1,
   parseRunnerHostedToolApprovalInteractionV2,
   parseRunnerStructuredReviewInteractionV1,
+  serializeCanonicalApprovalPayload,
   type RememberedToolApprovalEvidenceV1,
   type RememberedToolApprovalV1,
 } from "@kestrel-agents/protocol";
@@ -2426,7 +2428,7 @@ export async function retryFailedDurableRuntimeInteraction(input: {
       const responseEnvelope = readPlainRecord(interaction.responseEnvelope);
       let runnerBinding;
       try {
-        runnerBinding = parseRunnerExternalApprovalBindingV1(
+        runnerBinding = parseRunnerExternalApprovalBinding(
           appApproval.externalApprovalBinding,
         );
       } catch {
@@ -2440,7 +2442,17 @@ export async function retryFailedDurableRuntimeInteraction(input: {
         appApproval.decidedByUserId !== input.userId ||
         runnerBinding.approvalId !== interaction.runtimeApprovalId ||
         runnerBinding.threadId !== interaction.threadId ||
-        runnerBinding.runId !== interaction.sourceRuntimeRunId ||
+        (runnerBinding.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+          runnerBinding.runId !== interaction.sourceRuntimeRunId) ||
+        (runnerBinding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+          (runnerBinding.preparedInvocationId !==
+            approvalEnvelope?.preparedInvocationId ||
+            serializeCanonicalApprovalPayload(
+              runnerBinding.stableToolIdentity,
+            ) !==
+              serializeCanonicalApprovalPayload(
+                approvalEnvelope?.stableToolIdentity,
+              ))) ||
         runnerBinding.actionKey !== approvalEnvelope?.toolName ||
         Date.parse(runnerBinding.expiresAt) <= Date.now()
       ) {
