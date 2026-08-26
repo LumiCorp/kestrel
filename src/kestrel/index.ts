@@ -3,9 +3,11 @@ export {
   MODEL_QUALIFICATION_CAPABILITIES,
   ModelQualificationService,
   createModelQualificationBinding,
+  runLiveModelQualification,
 } from "./model-qualification.js";
 export type {
   ModelCapabilityQualification,
+  ModelQualificationGatewayFactory,
   ModelQualificationBinding,
   ModelQualificationCapability,
   ModelQualificationOutcome,

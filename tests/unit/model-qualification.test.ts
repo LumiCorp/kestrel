@@ -10,8 +10,6 @@ import {
 } from "../../src/kestrel/contracts/model-registration.js";
 import type { ModelGateway, ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 import {
-  bindModelQualificationGateway,
-  createModelQualificationBinding,
   ModelQualificationService,
   runLiveModelQualification,
   type ModelQualificationCapability,
@@ -36,10 +34,10 @@ test("qualification probes bind exact evidence and keep GLM-like partial support
       probe("required_tool_choice"),
       {
         capability: "strict_tool_inputs",
-        unsupportedReason: "The exact endpoint codec cannot encode strict tool inputs.",
+        unsupportedCode: "MODEL_QUALIFICATION_CODEC_UNSUPPORTED",
       },
     ],
-    gateway: fakeGateway(async (request) => {
+    gatewayFactory: fakeGatewayFactory(async (request) => {
         const capability = capabilityFor(request as ModelRequestV2);
         observed.push(capability);
         const failed =
@@ -71,8 +69,8 @@ test("qualification probes bind exact evidence and keep GLM-like partial support
   assert.equal(run.results[0]?.requestHash.length, 71);
   assert.equal(run.results[0]?.responseHash?.length, 71);
   assert.equal(
-    run.results.find((entry) => entry.capability === "strict_tool_inputs")?.reason,
-    "The exact endpoint codec cannot encode strict tool inputs.",
+    run.results.find((entry) => entry.capability === "strict_tool_inputs")?.failureCode,
+    "MODEL_QUALIFICATION_CODEC_UNSUPPORTED",
   );
   assert.equal(
     service.roleReadiness({
@@ -97,7 +95,7 @@ test("qualification refresh is concurrent, fresh-idempotent, and stale only for 
     credentialRevision: "credential-1",
     probeRevision: "probe-1",
     probes: [probe("json_syntax")],
-    gateway: fakeGateway(async () => {
+    gatewayFactory: fakeGatewayFactory(async () => {
         calls += 1;
         return completedResponse();
     }),
@@ -146,7 +144,7 @@ test("qualification refuses a mislabeled bounded probe before transport", async 
           request: (probe("json_syntax") as { request: ModelRequestV2 }).request,
         },
       ],
-      gateway: fakeGateway(async () => {
+      gatewayFactory: fakeGatewayFactory(async () => {
           calls += 1;
           return completedResponse();
       }),
@@ -156,25 +154,68 @@ test("qualification refuses a mislabeled bounded probe before transport", async 
   assert.equal(calls, 0);
 });
 
-test("qualification rejects a gateway that belongs to another exact route before transport", async () => {
+test("qualification dispatch is constructed by a route-owning factory", async () => {
   const service = new ModelQualificationService({ freshnessMs: 60_000 });
   let calls = 0;
-  const gateway = fakeGateway(async () => {
-    calls += 1;
-    return completedResponse();
+  let factoryBinding: unknown;
+  const gatewayFactory = {
+    createGateway(input: { binding: unknown }) {
+      factoryBinding = input.binding;
+      return fakeGateway(async () => {
+        calls += 1;
+        return completedResponse();
+      });
+    },
+  };
+  const run = await service.refresh({
+    registration: registration(),
+    credentialRevision: "credential-1",
+    probeRevision: "probe-1",
+    probes: [probe("json_syntax")],
+    gatewayFactory,
   });
+  assert.equal(calls, 1);
+  assert.equal(run.results[0]?.outcome, "qualified");
+  assert.deepEqual(factoryBinding, run.binding);
+});
+
+test("qualification stores the V2 secret-safe request fingerprint, not request data", async () => {
+  const service = new ModelQualificationService({ freshnessMs: 60_000 });
+  const jsonProbe = probe("json_syntax");
+  const run = await service.refresh({
+    registration: registration(),
+    credentialRevision: "credential-1",
+    probeRevision: "probe-1",
+    probes: [jsonProbe],
+    gatewayFactory: fakeGatewayFactory(async () => completedResponse()),
+  });
+  assert.equal(
+    run.results[0]?.requestHash,
+    (jsonProbe as { request: ModelRequestV2 }).request.fingerprints.request,
+  );
+  assert.equal("reason" in (run.results[0] ?? {}), false);
+});
+
+test("qualification rejects malformed probe before its route-owning factory creates transport", async () => {
+  const service = new ModelQualificationService({ freshnessMs: 60_000 });
+  let calls = 0;
   await assert.rejects(
     service.refresh({
       registration: registration(),
       credentialRevision: "credential-1",
       probeRevision: "probe-1",
-      probes: [probe("json_syntax")],
-      gateway: {
-        ...gateway,
-        binding: { ...gateway.binding, apiEndpoint: "https://wrong.example/v1" },
-      },
+      probes: [
+        {
+          capability: "required_tool_choice",
+          request: (probe("json_syntax") as { request: ModelRequestV2 }).request,
+        },
+      ],
+      gatewayFactory: fakeGatewayFactory(async () => {
+        calls += 1;
+        return completedResponse();
+      }),
     }),
-    /gateway does not match its exact registration route/u,
+    /does not carry its required V2 contract/u,
   );
   assert.equal(calls, 0);
 });
@@ -186,7 +227,7 @@ test("qualification requires the exact response route and capability-specific pr
     credentialRevision: "credential-1",
     probeRevision: "probe-1",
     probes: [probe("reasoning_summary"), probe("json_syntax")],
-    gateway: fakeGateway(async (request) =>
+    gatewayFactory: fakeGatewayFactory(async (request) =>
       capabilityFor(request as ModelRequestV2) === "json_syntax"
         ? { ...completedResponse(), provider: { name: "openrouter", model: "another-model", endpoint: "chat" } }
         : completedResponse(),
@@ -204,7 +245,7 @@ test("qualification requires the exact response route and capability-specific pr
 test("fresh qualification runs never suppress an independently requested capability", async () => {
   let calls = 0;
   const service = new ModelQualificationService({ freshnessMs: 60_000 });
-  const gateway = fakeGateway(async (request) => {
+  const gatewayFactory = fakeGatewayFactory(async (request) => {
     calls += 1;
     return capabilityFor(request as ModelRequestV2) === "required_tool_choice"
       ? toolResponse()
@@ -214,7 +255,7 @@ test("fresh qualification runs never suppress an independently requested capabil
     registration: registration(),
     credentialRevision: "credential-1",
     probeRevision: "probe-1",
-    gateway,
+    gatewayFactory,
   };
   await service.refresh({ ...shared, probes: [probe("json_syntax")] });
   await service.refresh({ ...shared, probes: [probe("required_tool_choice")] });
@@ -233,11 +274,11 @@ test("a failed forced refresh retains prior observed proof and live runs stay bo
     probeRevision: "probe-1",
     probes: [probe("json_syntax")],
   };
-  await service.refresh({ ...shared, gateway: fakeGateway(async () => completedResponse()) });
+  await service.refresh({ ...shared, gatewayFactory: fakeGatewayFactory(async () => completedResponse()) });
   const failed = await service.refresh({
     ...shared,
     force: true,
-    gateway: fakeGateway(async () => {
+    gatewayFactory: fakeGatewayFactory(async () => {
       throw new Error("provider unavailable");
     }),
   });
@@ -250,7 +291,7 @@ test("a failed forced refresh retains prior observed proof and live runs stay bo
     runLiveModelQualification({
       service,
       ...shared,
-      gateway: fakeGateway(async () => completedResponse()),
+      gatewayFactory: fakeGatewayFactory(async () => completedResponse()),
       maxProbes: 0,
     }),
     /maxProbes/u,
@@ -370,20 +411,22 @@ function toolResponse() {
 
 function fakeGateway(
   call: (request: ModelRequest) => Promise<unknown>,
-): ReturnType<typeof bindModelQualificationGateway> {
-  const gateway: ModelGateway = {
+): ModelGateway {
+  return {
     async call<T>(request: ModelRequest): Promise<T> {
       return (await call(request)) as T;
     },
   };
-  return bindModelQualificationGateway({
-    gateway,
-    binding: createModelQualificationBinding({
-      registration: registration(),
-      credentialRevision: "credential-1",
-      probeRevision: "probe-1",
-    }),
-  });
+}
+
+function fakeGatewayFactory(
+  call: (request: ModelRequest) => Promise<unknown>,
+) {
+  return {
+    createGateway() {
+      return fakeGateway(call);
+    },
+  };
 }
 
 function registration(credentialRevision = "credential-1") {

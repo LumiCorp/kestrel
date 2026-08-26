@@ -69,7 +69,8 @@ export interface ModelQualificationProbeRequest {
 /** Codec owners may explicitly report a contract their codec cannot encode. */
 export interface ModelUnsupportedQualificationProbe {
   capability: ModelQualificationCapability;
-  unsupportedReason: string;
+  /** Stable local classification; arbitrary provider text is never retained. */
+  unsupportedCode: string;
 }
 
 export type ModelQualificationProbe =
@@ -100,50 +101,16 @@ export interface ModelQualificationServiceOptions {
 }
 
 /**
- * The provider factory binds its real transport to this exact, non-secret
- * route receipt before it can be used for qualification. A generic
- * ModelGateway is deliberately not accepted: an otherwise valid response
- * from another base URL, codec, or routing policy is not registration proof.
+ * The route-owning provider factory receives the immutable registration and
+ * derived binding. A generic gateway is deliberately not accepted at the
+ * qualification boundary, so callers cannot label an arbitrary transport as
+ * an exact route after it has been constructed.
  */
-export interface BoundModelQualificationGateway {
-  readonly binding: Pick<
-    ModelQualificationBinding,
-    | "providerId"
-    | "modelId"
-    | "apiEndpoint"
-    | "endpointCodec"
-    | "routingPolicyFingerprint"
-    | "adapterRevision"
-    | "credentialRevision"
-  >;
-  call<T>(request: ModelRequestV2): Promise<T>;
-}
-
-export function bindModelQualificationGateway(input: {
-  gateway: ModelGateway;
-  binding: BoundModelQualificationGateway["binding"];
-}): BoundModelQualificationGateway {
-  const {
-    providerId,
-    modelId,
-    apiEndpoint,
-    endpointCodec,
-    routingPolicyFingerprint,
-    adapterRevision,
-    credentialRevision,
-  } = input.binding;
-  return Object.freeze({
-    binding: Object.freeze({
-      providerId,
-      modelId,
-      apiEndpoint,
-      endpointCodec,
-      routingPolicyFingerprint,
-      adapterRevision,
-      ...(credentialRevision !== undefined ? { credentialRevision } : {}),
-    }),
-    call: <T>(request: ModelRequestV2) => input.gateway.call<T>(request),
-  });
+export interface ModelQualificationGatewayFactory {
+  createGateway(input: {
+    registration: ModelRegistrationV2;
+    binding: ModelQualificationBinding;
+  }): Promise<ModelGateway> | ModelGateway;
 }
 
 /**
@@ -170,7 +137,7 @@ export class ModelQualificationService {
     credentialRevision?: string | undefined;
     probeRevision: string;
     probes: readonly ModelQualificationProbe[];
-    gateway: BoundModelQualificationGateway;
+    gatewayFactory: ModelQualificationGatewayFactory;
     /** An operator-requested requalification never erases retained proof. */
     force?: boolean | undefined;
   }): Promise<ModelQualificationRun> {
@@ -181,14 +148,18 @@ export class ModelQualificationService {
       probeRevision: input.probeRevision,
     });
     const probes = validateProbes(input.probes, binding);
-    assertGatewayMatchesBinding(input.gateway.binding, binding);
     const key = qualificationRunKey(binding, probes);
     const current = this.currentRun(key);
     if (input.force !== true && current !== undefined && this.isFresh(current)) return current;
     const active = this.refreshes.get(key);
     if (active !== undefined) return active;
 
-    const run = this.execute({ binding, probes, gateway: input.gateway });
+    const run = this.execute({
+      registration,
+      binding,
+      probes,
+      gatewayFactory: input.gatewayFactory,
+    });
     this.refreshes.set(key, run);
     try {
       const completed = await run;
@@ -266,14 +237,19 @@ export class ModelQualificationService {
   }
 
   private async execute(input: {
+    registration: ModelRegistrationV2;
     binding: ModelQualificationBinding;
     probes: readonly ModelQualificationProbe[];
-    gateway: BoundModelQualificationGateway;
+    gatewayFactory: ModelQualificationGatewayFactory;
   }): Promise<ModelQualificationRun> {
     const checkedAt = this.now().toISOString();
+    const gateway = await input.gatewayFactory.createGateway({
+      registration: input.registration,
+      binding: input.binding,
+    });
     const results = await Promise.all(
       input.probes.map(async (probe) =>
-        executeProbe({ ...input, checkedAt, probe }),
+        executeProbe({ ...input, gateway, checkedAt, probe }),
       ),
     );
     return Object.freeze({ binding: input.binding, checkedAt, results });
@@ -317,9 +293,9 @@ async function executeProbe(input: {
   binding: ModelQualificationBinding;
   checkedAt: string;
   probe: ModelQualificationProbe;
-  gateway: BoundModelQualificationGateway;
+  gateway: ModelGateway;
 }): Promise<ModelCapabilityQualification> {
-  if ("unsupportedReason" in input.probe) {
+  if ("unsupportedCode" in input.probe) {
     return Object.freeze({
       capability: input.probe.capability,
       outcome: "unsupported",
@@ -327,14 +303,13 @@ async function executeProbe(input: {
       checkedAt: input.checkedAt,
       requestHash: hashCanonical({
         capability: input.probe.capability,
-        unsupportedReason: input.probe.unsupportedReason,
+        unsupportedCode: input.probe.unsupportedCode,
       }),
       validationOutcome: "not_requested",
-      failureCode: "MODEL_QUALIFICATION_UNSUPPORTED",
-      reason: input.probe.unsupportedReason,
+      failureCode: input.probe.unsupportedCode,
     });
   }
-  const requestHash = hashCanonical(input.probe.request);
+  const requestHash = input.probe.request.fingerprints.request;
   try {
     assertProbeMatchesBinding(input.probe.request, input.binding);
     const response = verifyModelResponseV2(
@@ -377,7 +352,7 @@ async function executeProbe(input: {
 
 /**
  * Explicit, bounded opt-in entry point for a real provider transport. Callers
- * construct the bound gateway from their provider factory; this module never
+ * construct the gateway from their provider factory; this module never
  * discovers credentials or performs background provider calls.
  */
 export async function runLiveModelQualification(input: {
@@ -386,7 +361,7 @@ export async function runLiveModelQualification(input: {
   credentialRevision?: string | undefined;
   probeRevision: string;
   probes: readonly ModelQualificationProbe[];
-  gateway: BoundModelQualificationGateway;
+  gatewayFactory: ModelQualificationGatewayFactory;
   maxProbes: number;
   force?: boolean | undefined;
 }): Promise<ModelQualificationRun> {
@@ -456,26 +431,6 @@ function assertProbeMatchesBinding(
   }
 }
 
-function assertGatewayMatchesBinding(
-  gateway: BoundModelQualificationGateway["binding"],
-  binding: ModelQualificationBinding,
-): void {
-  const expected = {
-    providerId: binding.providerId,
-    modelId: binding.modelId,
-    apiEndpoint: binding.apiEndpoint,
-    endpointCodec: binding.endpointCodec,
-    routingPolicyFingerprint: binding.routingPolicyFingerprint,
-    adapterRevision: binding.adapterRevision,
-    ...(binding.credentialRevision !== undefined
-      ? { credentialRevision: binding.credentialRevision }
-      : {}),
-  };
-  if (hashCanonical(gateway) !== hashCanonical(expected)) {
-    throw new Error("model qualification gateway does not match its exact registration route");
-  }
-}
-
 function hasObservedCapabilityEvidence(
   result: ModelCapabilityQualification,
 ): boolean {
@@ -519,9 +474,9 @@ function validateProbes(
       throw new Error(`model qualification duplicate probe '${probe.capability}'`);
     }
     seen.add(probe.capability);
-    if ("unsupportedReason" in probe) {
-      if (!probe.unsupportedReason.trim()) {
-        throw new Error("model qualification unsupportedReason must be non-empty");
+    if ("unsupportedCode" in probe) {
+      if (!isQualificationCode(probe.unsupportedCode)) {
+        throw new Error("model qualification unsupportedCode must be a stable MODEL_* code");
       }
     } else {
       assertProbeCarriesCapability(probe);
@@ -529,6 +484,10 @@ function validateProbes(
     }
     return Object.freeze({ ...probe });
   });
+}
+
+function isQualificationCode(value: string): boolean {
+  return /^MODEL_[A-Z0-9_]{3,120}$/.test(value);
 }
 
 function assertProbeCarriesCapability(
