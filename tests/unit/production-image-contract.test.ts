@@ -159,9 +159,8 @@ test("local real-model qualification accepts and preserves exact prebuilt runtim
     canary,
     /if \(!selectedImages\) \{[\s\S]*docker\("image", "rm"/u,
   );
-  assert.match(canary, /maxModelCallsPerRun: 2/u);
-  assert.match(canary, /maxToolCallsPerRun: 1/u);
-  assert.match(canary, /signal: AbortSignal\.timeout\(180_000\)/u);
+  assert.match(canary, /modelTimeoutMs: 60_000/u);
+  assert.match(canary, /signal: AbortSignal\.timeout\(90_000\)/u);
   assert.match(canary, /abortBehavior: "cancel"/u);
 });
 
