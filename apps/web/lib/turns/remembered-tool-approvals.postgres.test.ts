@@ -63,6 +63,11 @@ test("remembered approval storage enforces identity, authority, and thread casca
       preparedInvocationId: `prepared-${requestId}`,
       toolName,
       stableToolIdentity: identity,
+      requestingActor: {
+        actorType: "end_user" as const,
+        actorId: userId,
+        tenantId: organizationId,
+      },
     },
   });
 

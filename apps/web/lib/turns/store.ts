@@ -2292,10 +2292,12 @@ export async function recordDurableRuntimeToolOutcome(input: {
       where: eq(schema.threadTurns.id, input.turnId),
       columns: { resumeInteractionId: true },
     });
-    if (!currentTurn?.resumeInteractionId) return false;
+    if (!currentTurn) return false;
     const interaction = await tx.query.threadInteractions.findFirst({
       where: and(
-        eq(schema.threadInteractions.id, currentTurn.resumeInteractionId),
+        currentTurn.resumeInteractionId
+          ? eq(schema.threadInteractions.id, currentTurn.resumeInteractionId)
+          : eq(schema.threadInteractions.turnId, input.turnId),
         eq(schema.threadInteractions.source, "runtime"),
         inArray(schema.threadInteractions.status, [
           "processing",
@@ -2380,10 +2382,12 @@ export async function recordDurableRuntimeDeclineCompleted(input: {
       where: eq(schema.threadTurns.id, input.turnId),
       columns: { resumeInteractionId: true },
     });
-    if (!currentTurn?.resumeInteractionId) return false;
+    if (!currentTurn) return false;
     const interaction = await tx.query.threadInteractions.findFirst({
       where: and(
-        eq(schema.threadInteractions.id, currentTurn.resumeInteractionId),
+        currentTurn.resumeInteractionId
+          ? eq(schema.threadInteractions.id, currentTurn.resumeInteractionId)
+          : eq(schema.threadInteractions.turnId, input.turnId),
         eq(schema.threadInteractions.source, "runtime"),
         eq(schema.threadInteractions.status, "processing"),
         isNotNull(schema.threadInteractions.resumedAt),
