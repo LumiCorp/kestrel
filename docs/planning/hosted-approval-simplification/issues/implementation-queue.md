@@ -9,10 +9,7 @@ Implementation must start from deployed-source revision
 
 ## Ready
 
-- [Bind the approval card to the canonical prepared invocation](01b1-bind-card-to-canonical-invocation.md)
-- [Carry strict V2 decisions through hosted clients](01e1-carry-v2-decisions-end-to-end.md)
-- [Serialize MCP retain, release, and retire](01c4-serialize-mcp-retain-and-retire.md)
-- [Clean up the prepared run owner after continuation](01c5-clean-up-the-prepared-run-owner.md)
+None.
 
 ## In progress
 
@@ -42,6 +39,10 @@ None.
   — review blocked by [Clean up the prepared run owner after continuation](01c5-clean-up-the-prepared-run-owner.md)
 - [Make production MCP cleanup retryable](01c3-make-mcp-cleanup-retryable.md)
   — review blocked by [Serialize MCP retain, release, and retire](01c4-serialize-mcp-retain-and-retire.md)
+- [Bind the approval card to the canonical prepared invocation](01b1-bind-card-to-canonical-invocation.md)
+- [Carry strict V2 decisions through hosted clients](01e1-carry-v2-decisions-end-to-end.md)
+- [Serialize MCP retain, release, and retire](01c4-serialize-mcp-retain-and-retire.md)
+- [Clean up the prepared run owner after continuation](01c5-clean-up-the-prepared-run-owner.md)
 
 ## Done
 
