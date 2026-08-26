@@ -3,6 +3,8 @@ set -euo pipefail
 
 image="${1:?usage: smoke.sh IMAGE}"
 
+test "$(docker run --rm --entrypoint node "$image" -p 'process.env.KESTREL_HOSTED_APPROVAL_PROTOCOL')" = "v3"
+
 matrix_output="$(docker run --rm \
   --entrypoint node \
   "$image" \

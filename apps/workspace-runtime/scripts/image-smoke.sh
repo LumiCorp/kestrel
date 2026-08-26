@@ -6,6 +6,8 @@ image="${1:?usage: image-smoke.sh IMAGE}"
 container="kestrel-workspace-runtime-smoke-$$"
 health_file="/tmp/kestrel-workspace-runtime-health-$$"
 
+test "$(docker run --rm --entrypoint node "$image" -p 'process.env.KESTREL_HOSTED_APPROVAL_PROTOCOL')" = "v3"
+
 matrix_output="$(docker run --rm \
   --entrypoint node \
   "$image" \
