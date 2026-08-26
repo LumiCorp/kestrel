@@ -2120,14 +2120,14 @@ export async function retryFailedDurableRuntimeInteraction(input: {
       .for("update");
     if (
       !interaction?.turnId ||
-      interaction.kind !== "approval" ||
+      (interaction.kind !== "approval" && interaction.kind !== "user_input") ||
       interaction.status !== "failed" ||
       interaction.effectStatus !== "not_started" ||
       interaction.responseRetryable !== true ||
       interaction.resolvedByUserId !== input.userId ||
-      !interaction.runtimeApprovalId ||
-      !interaction.sourceRuntimeRunId ||
-      !interaction.responseEnvelope
+      !interaction.responseEnvelope ||
+      (interaction.kind === "approval" &&
+        (!interaction.runtimeApprovalId || !interaction.sourceRuntimeRunId))
     ) {
       throw new DurableTurnError(
         "TURN_CONFLICT",
@@ -2137,6 +2137,19 @@ export async function retryFailedDurableRuntimeInteraction(input: {
     const requestEnvelope = readPlainRecord(interaction.requestEnvelope);
     const approvalEnvelope = readPlainRecord(requestEnvelope?.approval);
     if (isHostedMutationToolName(approvalEnvelope?.toolName)) {
+      if (interaction.kind !== "approval") {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The hosted App approval interaction is invalid; request fresh approval.",
+        );
+      }
+      const runtimeApprovalId = interaction.runtimeApprovalId;
+      if (!runtimeApprovalId) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The hosted App approval is missing its runtime identity; request fresh approval.",
+        );
+      }
       if (!accessibleThread.projectId) {
         throw new DurableTurnError(
           "TURN_CONFLICT",
@@ -2148,7 +2161,7 @@ export async function retryFailedDurableRuntimeInteraction(input: {
           eq(schema.appOperationApprovals.organizationId, input.organizationId),
           eq(schema.appOperationApprovals.threadId, input.threadId),
           eq(schema.appOperationApprovals.actorUserId, input.userId),
-          eq(schema.appOperationApprovals.runtimeApprovalId, interaction.runtimeApprovalId),
+          eq(schema.appOperationApprovals.runtimeApprovalId, runtimeApprovalId),
           eq(schema.appOperationApprovals.status, "approved"),
           isNull(schema.appOperationApprovals.consumedExecutionId),
           gt(schema.appOperationApprovals.expiresAt, new Date()),

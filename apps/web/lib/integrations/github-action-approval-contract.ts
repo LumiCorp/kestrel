@@ -18,7 +18,11 @@ export function readGitHubApprovalRequest(event: RunnerRunTerminalEvent) {
   if (!(interaction?.kind === "approval" && approval)) return null;
   const operation = operationForToolName(approval.toolName);
   if (!operation) return null;
-  const input = asRecord(approval.input);
+  const metadata =
+    event.type === "run.completed"
+      ? asRecord(event.payload.result.output.waitFor?.metadata)
+      : null;
+  const input = asRecord(approval.input) ?? asRecord(metadata?.toolInput);
   if (!input) return null;
   const repository = readString(input.repository);
   if (!repository) return null;

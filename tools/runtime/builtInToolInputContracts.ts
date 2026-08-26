@@ -116,6 +116,7 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "kestrel_one.vercel_list_projects": { mode: "schema-only" },
   "kestrel_one.vercel_list_deployments": { mode: "schema-only" },
   "kestrel_one.vercel_deployment_events": { mode: "schema-only" },
+  "kestrel_one.word_document_create": { mode: "schema-only" },
 } satisfies Record<string, BuiltInToolInputContract>;
 
 export function validateBuiltInToolInputContract(
