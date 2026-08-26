@@ -146,6 +146,33 @@ test("in-memory execution claim has one atomic PENDING to CLAIMED winner", async
   assert.deepEqual((await store.listPendingEffects(requested.sessionId)).map((candidate) => candidate.status), ["CLAIMED"]);
 });
 
+test("cancellation recognizes a durably started effect without rewriting it as not started", async () => {
+  const store = new InMemorySessionStore({ tenantId: "tenant-1" });
+  await store.appendSandboxCapabilityLeaseTransition({
+    expectedSequence: 0,
+    record: leaseRecord,
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push({
+    ...effect,
+    status: "PENDING",
+  });
+  assert.equal(
+    await store.claimEffectExecution(requested.idempotencyKey, requested),
+    "claimed",
+  );
+  assert.deepEqual(
+    await store.claimExactEffectCancellation({
+      ...requested,
+      tenantId: "tenant-1",
+    }),
+    { status: "started" },
+  );
+  assert.equal(
+    (await store.getPersistedEffect(requested.idempotencyKey))?.status,
+    "CLAIMED",
+  );
+});
+
 test("in-memory exact completion and cancellation claims have a single durable winner", async () => {
   const cancellationWins = new InMemorySessionStore({ tenantId: "tenant-1" });
   await cancellationWins.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: leaseRecord });

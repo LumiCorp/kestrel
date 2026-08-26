@@ -1478,7 +1478,7 @@ export class RunnerHost {
             rejectDurablyCompletedCancellation();
             return;
           }
-          if (claim.status !== "cancelled") {
+          if (claim.status !== "cancelled" && claim.status !== "started") {
             return this.emitRunCancelNotFound(commandId, payload, active.runId);
           }
         }

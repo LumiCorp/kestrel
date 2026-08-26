@@ -472,6 +472,7 @@ export type ExactEffectResultRead =
 
 export type ExactEffectCancellationClaim =
   | { status: "cancelled" }
+  | { status: "started" }
   | { status: "completed" }
   | { status: "not_found" }
   | { status: "conflict" };

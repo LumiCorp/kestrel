@@ -1004,6 +1004,7 @@ export class InMemorySessionStore implements SessionStore {
           : tenantRead.status === "not_found" ? "not_found" : "conflict",
       } as const;
     }
+    if (effect.status === "CLAIMED") return { status: "started" } as const;
     if (effect.status !== "PENDING") return { status: "conflict" } as const;
     effect.status = "FAILED";
     this.operationLog.push(`claimExactEffectCancellation:${input.idempotencyKey}`);
