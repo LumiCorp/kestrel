@@ -313,6 +313,11 @@ test("approval resume rehydrates an exact static built-in before inspection and 
     sessionId: "session-static-approval-resume",
     payload: {
       workspace: { workspaceRoot },
+      clientCapabilities: {
+        kestrelOne: {
+          contextGrantId: "context-grant-static-approval-resume",
+        },
+      },
       mcpContext: {
         gatewayUrl: "https://gateway.example.test",
         grantId: "11111111-1111-4111-8111-111111111111",
@@ -395,6 +400,15 @@ test("approval resume rehydrates an exact static built-in before inspection and 
   assert.equal(result.status, "OK");
   assert.match(JSON.stringify(result.auditRecord.output), /sentinel\.txt/u);
   for (const rejectedRunContext of [
+    {
+      ...resumedRunContext,
+      payload: {
+        ...resumedRunContext.payload,
+        clientCapabilities: {
+          kestrelOne: { contextGrantId: "context-grant-unrelated" },
+        },
+      },
+    },
     {
       ...resumedRunContext,
       payload: {
