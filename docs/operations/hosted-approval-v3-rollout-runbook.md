@@ -99,7 +99,7 @@ docker buildx build --platform linux/amd64 --load \
   --tag local/kestrel-workspace-runtime:<candidate-tag> \
   --build-arg KESTREL_BUILD_ID=<candidate-tag> .
 bash apps/workspace-runtime/scripts/image-smoke.sh \
-  local/kestrel-workspace-runtime:<candidate-tag>
+  local/kestrel-workspace-runtime:<candidate-tag> <v2-or-v3>
 
 docker buildx build --platform linux/amd64 --load \
   --file apps/environment-router/Dockerfile \
@@ -113,7 +113,7 @@ docker buildx build --platform linux/amd64 --load \
   --tag local/kestrel-one-turn-worker:<candidate-tag> \
   --build-arg KESTREL_BUILD_ID=<candidate-tag> .
 bash deploy/fly/kestrel-one-turn-worker/smoke.sh \
-  local/kestrel-one-turn-worker:<candidate-tag>
+  local/kestrel-one-turn-worker:<candidate-tag> <v2-or-v3>
 ```
 
 The compatibility images must report V2 as their hosted approval producer.
@@ -160,9 +160,9 @@ migration result, production health, and legacy canary JSON.
 Publish only the compatibility images:
 
 ```bash
-pnpm production:image:publish --role workspace-runtime --tag <compatibility-tag>
+pnpm production:image:publish --role workspace-runtime --tag <compatibility-tag> --approval-protocol v2
 pnpm production:image:publish --role environment-router --tag <compatibility-tag>
-pnpm production:image:publish --role turn-worker --tag <compatibility-tag>
+pnpm production:image:publish --role turn-worker --tag <compatibility-tag> --approval-protocol v2
 ```
 
 Follow the
@@ -199,9 +199,9 @@ path and wait for the `one` and `docs` deployments. Publish one immutable set
 of activation images:
 
 ```bash
-pnpm production:image:publish --role workspace-runtime --tag <activation-tag>
+pnpm production:image:publish --role workspace-runtime --tag <activation-tag> --approval-protocol v3
 pnpm production:image:publish --role environment-router --tag <activation-tag>
-pnpm production:image:publish --role turn-worker --tag <activation-tag>
+pnpm production:image:publish --role turn-worker --tag <activation-tag> --approval-protocol v3
 ```
 
 Before emitting V3, qualify the activation runtime pair with its disposable

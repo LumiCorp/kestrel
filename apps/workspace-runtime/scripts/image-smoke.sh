@@ -2,11 +2,13 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/lib/image-smoke.sh"
 
-image="${1:?usage: image-smoke.sh IMAGE}"
+image="${1:?usage: image-smoke.sh IMAGE EXPECTED_APPROVAL_PROTOCOL}"
+expected_approval_protocol="${2:?usage: image-smoke.sh IMAGE EXPECTED_APPROVAL_PROTOCOL}"
 container="kestrel-workspace-runtime-smoke-$$"
 health_file="/tmp/kestrel-workspace-runtime-health-$$"
 
-test "$(docker run --rm --entrypoint node "$image" -p 'process.env.KESTREL_HOSTED_APPROVAL_PROTOCOL')" = "v3"
+test "$expected_approval_protocol" = "v2" || test "$expected_approval_protocol" = "v3"
+test "$(docker run --rm --entrypoint node "$image" -p 'process.env.KESTREL_HOSTED_APPROVAL_PROTOCOL ?? "v2"')" = "$expected_approval_protocol"
 
 matrix_output="$(docker run --rm \
   --entrypoint node \
