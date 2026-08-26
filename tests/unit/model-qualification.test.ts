@@ -337,9 +337,22 @@ test("a failed forced refresh retains prior observed proof and live runs stay bo
     }),
     /not minted by the adapter registry/u,
   );
+  await assert.rejects(
+    runLiveModelQualification({
+      service,
+      ...shared,
+      probes: [probe("json_syntax", "responses")],
+      gateway: liveGateway(),
+      maxProbes: 1,
+    }),
+    /probe endpoint does not match exact endpoint codec/u,
+  );
 });
 
-function probe(capability: ModelQualificationCapability): ModelQualificationProbe {
+function probe(
+  capability: ModelQualificationCapability,
+  endpoint: ModelRequestV2["requirements"]["endpoint"] = "chat",
+): ModelQualificationProbe {
   const requirements: ModelRequestV2["requirements"] = {
     runtimeRole: `qualification.${capability}`,
     output: { kind: "text" as const, assurance: "none" as const },
@@ -351,7 +364,7 @@ function probe(capability: ModelQualificationCapability): ModelQualificationProb
     reasoning: { mode: "off", continuationKinds: [] },
     streaming: { required: false, terminalBehavior: "not_required" as const },
     inputModalities: ["text" as const],
-    endpoint: "chat" as const,
+    endpoint,
   };
   if (capability === "json_syntax") {
     requirements.output = { kind: "json_object", assurance: "json_syntax" };

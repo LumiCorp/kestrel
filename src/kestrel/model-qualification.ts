@@ -374,7 +374,18 @@ export async function runLiveModelQualification(input: {
     credentialRevision: input.credentialRevision,
     probeRevision: input.probeRevision,
   });
-  assertExactModelQualificationGateway({ gateway: input.gateway, binding });
+  const endpoint = assertExactModelQualificationGateway({
+    gateway: input.gateway,
+    binding,
+  });
+  for (const probe of input.probes) {
+    if (
+      "request" in probe &&
+      probe.request.requirements.endpoint !== endpoint
+    ) {
+      throw new Error("model live qualification probe endpoint does not match exact endpoint codec");
+    }
+  }
   if (!Number.isSafeInteger(input.maxProbes) || input.maxProbes <= 0) {
     throw new Error("model live qualification maxProbes must be a positive safe integer");
   }

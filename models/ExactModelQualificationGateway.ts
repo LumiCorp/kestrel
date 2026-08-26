@@ -10,6 +10,8 @@ import { createOpenAiModelGatewayFromEnv } from "./openai/createOpenAiModelGatew
 import { createOpenRouterModelGatewayFromEnv } from "./openrouter/createOpenRouterModelGateway.js";
 import type { OpenRouterQualifiedRouteEvidence } from "./openrouter/OpenRouterV2Codec.js";
 
+type ExactQualificationEndpoint = "chat" | "responses" | "messages";
+
 const EXACT_QUALIFICATION_GATEWAYS = new WeakMap<
   object,
   Readonly<{
@@ -20,6 +22,7 @@ const EXACT_QUALIFICATION_GATEWAYS = new WeakMap<
     routingPolicyFingerprint: string;
     adapterRevision: string;
     credentialRevision?: string | undefined;
+    endpoint: ExactQualificationEndpoint;
   }>
 >();
 
@@ -44,7 +47,8 @@ export function createExactModelQualificationGateway(input: {
   if (registration.providerConfiguration.endpoint !== registration.route.apiEndpoint) {
     throw new Error("model qualification provider endpoint does not match registration route");
   }
-  const gateway = createRegisteredGateway({ ...input, registration });
+  const endpoint = endpointForRegistration(registration);
+  const gateway = createRegisteredGateway({ ...input, registration, endpoint });
   const exact = Object.freeze({
     call: <T>(request: Parameters<ModelGateway["call"]>[0]) => gateway.call<T>(request),
   });
@@ -62,6 +66,7 @@ export function createExactModelQualificationGateway(input: {
       ...(registration.credentialRevision !== undefined
         ? { credentialRevision: registration.credentialRevision }
         : {}),
+      endpoint,
     }),
   );
   return exact;
@@ -70,7 +75,7 @@ export function createExactModelQualificationGateway(input: {
 export function assertExactModelQualificationGateway(input: {
   gateway: ExactModelQualificationGateway;
   binding: ModelQualificationBinding;
-}): void {
+}): ExactQualificationEndpoint {
   const receipt = EXACT_QUALIFICATION_GATEWAYS.get(input.gateway);
   if (receipt === undefined) {
     throw new Error("model live qualification gateway was not minted by the adapter registry");
@@ -86,6 +91,7 @@ export function assertExactModelQualificationGateway(input: {
   ) {
     throw new Error("model live qualification gateway does not match exact registration binding");
   }
+  return receipt.endpoint;
 }
 
 function createRegisteredGateway(input: {
@@ -93,6 +99,7 @@ function createRegisteredGateway(input: {
   credential: { revision: string; apiKey: string };
   fetchImpl?: typeof fetch | undefined;
   openRouterRouteEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
+  endpoint: ExactQualificationEndpoint;
 }): ModelGateway {
   const { registration, credential } = input;
   switch (registration.providerId) {
@@ -120,6 +127,9 @@ function createRegisteredGateway(input: {
       if (input.openRouterRouteEvidence === undefined) {
         throw new Error("OpenRouter live qualification requires exact route evidence");
       }
+      if (input.openRouterRouteEvidence.endpoint !== input.endpoint) {
+        throw new Error("OpenRouter live qualification evidence does not match endpoint codec");
+      }
       return createOpenRouterModelGatewayFromEnv({
         envConfig: {
           apiKey: credential.apiKey,
@@ -132,4 +142,34 @@ function createRegisteredGateway(input: {
     default:
       throw new Error(`model live qualification provider '${registration.providerId}' is unsupported`);
   }
+}
+
+function endpointForRegistration(
+  registration: ModelRegistrationV2,
+): ExactQualificationEndpoint {
+  const codec = registration.route.endpointCodec;
+  const matches = (
+    providerId: ModelRegistrationV2["providerId"],
+    values: readonly string[],
+    endpoint: ExactQualificationEndpoint,
+  ) => {
+    if (registration.providerId === providerId && values.includes(codec)) {
+      return endpoint;
+    }
+    return undefined;
+  };
+  return (
+    matches("openai", ["openai.chat.v2", "openai_chat_v2"], "chat") ??
+    matches("openai", ["openai.responses.v2", "openai_responses_v2"], "responses") ??
+    matches("anthropic", ["anthropic.messages.v2", "anthropic_messages_v2"], "messages") ??
+    matches("openrouter", ["openrouter.chat.v2", "openrouter_chat_v2"], "chat") ??
+    matches("openrouter", ["openrouter.responses.v2", "openrouter_responses_v2"], "responses") ??
+    unsupportedCodec(registration)
+  );
+}
+
+function unsupportedCodec(registration: ModelRegistrationV2): never {
+  throw new Error(
+    `model live qualification endpoint codec '${registration.route.endpointCodec}' is unsupported for provider '${registration.providerId}'`,
+  );
 }
