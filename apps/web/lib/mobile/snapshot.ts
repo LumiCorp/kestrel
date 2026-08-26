@@ -13,6 +13,7 @@ import {
 } from "@/lib/turns/store";
 import { getMobileV2ThreadSnapshot } from "@/lib/mobile/v2/snapshot";
 import { mobileInteractionLifecycleRequested } from "@/lib/mobile/interaction-lifecycle";
+import { resolveRuntimeApprovalPolicies } from "@/lib/apps/runtime-approval-policy";
 
 type StoredMessage = NonNullable<
   Awaited<ReturnType<typeof getThreadWithMessagesForUser>>
@@ -45,6 +46,16 @@ export async function getMobileThreadSnapshot(input: {
     listThreadInteractionsForUser(input),
     mobileThreadDtos([thread]),
   ]);
+  const approvalPolicies = thread.projectId
+    ? await resolveRuntimeApprovalPolicies({
+        threadId: input.threadId,
+        organizationId: input.organizationId,
+        projectId: thread.projectId,
+        userId: input.userId,
+        canEditProject: false,
+        interactions,
+      })
+    : new Map();
   const visibleTurns = queueState.turns.filter(
     (turn) => turn.failureCode !== "TURN_REMOVED"
   );
@@ -83,7 +94,10 @@ export async function getMobileThreadSnapshot(input: {
           : interaction.status === "pending",
       )
       .map((interaction) =>
-        mobileInteractionDto(interaction, {
+        mobileInteractionDto({
+          ...interaction,
+          approvalPolicy: approvalPolicies.get(interaction.requestId),
+        }, {
           richInteractionLifecycle: input.richInteractionLifecycle,
         }),
       ),

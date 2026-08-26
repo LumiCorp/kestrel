@@ -463,15 +463,17 @@ export function InteractionPanel({
                       >
                         {isStrictHostedApproval(interaction) ? "Decline" : "Deny"}
                       </Button>
-                      <Button
-                        autoFocus={index === 0}
-                        disabled={busy !== null}
-                        onClick={() => void resolveRuntime(interaction, "approve_once")}
-                        size="sm"
-                        variant="outline"
-                      >
-                        Approve Once
-                      </Button>
+                      {isCurrentHostedApprovalActionable(interaction) ? (
+                        <Button
+                          autoFocus={index === 0}
+                          disabled={busy !== null}
+                          onClick={() => void resolveRuntime(interaction, "approve_once")}
+                          size="sm"
+                          variant="outline"
+                        >
+                          Approve Once
+                        </Button>
+                      ) : null}
                       {isRememberApprovalEligible(interaction) ? (
                         <Button
                           disabled={busy !== null}
@@ -624,7 +626,19 @@ function isRememberApprovalEligible(
   if (!policy || policy.minimumApprovalMode !== "auto") return false;
   return (
     policy.reasonCode === "environment_policy" &&
-    policy.environmentApprovalMode === "ask"
+    policy.environmentApprovalMode === "ask" &&
+    policy.projectApprovalMode !== "deny"
+  );
+}
+
+function isCurrentHostedApprovalActionable(
+  interaction: ThreadInteractionView,
+): boolean {
+  if (!isStrictHostedApproval(interaction)) return true;
+  const policy = interaction.approvalPolicy;
+  return !(
+    policy?.environmentApprovalMode === "deny" ||
+    policy?.projectApprovalMode === "deny"
   );
 }
 

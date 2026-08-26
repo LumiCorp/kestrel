@@ -1943,6 +1943,10 @@ test(
         effectStatus: string | null;
         failureCode: string | null;
         interactionStatus: string;
+        turnStatus: string;
+        queueState: string;
+        queuePauseReason: string | null;
+        activeTurnId: string | null;
         rememberedCount: number;
       }>
     >`
@@ -1951,12 +1955,19 @@ test(
           interaction."effect_status" AS "effectStatus",
           interaction."response_failure_code" AS "failureCode",
           interaction."status" AS "interactionStatus",
+          turn."status" AS "turnStatus",
+          queue."state" AS "queueState",
+          queue."pause_reason" AS "queuePauseReason",
+          queue."active_turn_id" AS "activeTurnId",
           (SELECT count(*)::int FROM "remembered_tool_approvals" remembered
             WHERE remembered."source_interaction_id" = interaction."id")
             AS "rememberedCount"
         FROM "thread_interactions" interaction
         JOIN "app_operation_approvals" approval
           ON approval."interaction_id" = interaction."id"
+        JOIN "thread_turns" turn ON turn."id" = interaction."turn_id"
+        JOIN "thread_turn_queue_state" queue
+          ON queue."thread_id" = interaction."thread_id"
         WHERE interaction."id" = ${policyChanged.interactionId}
       `;
     assert.deepEqual(policyChangedState, {
@@ -1964,6 +1975,10 @@ test(
       effectStatus: "not_started",
       failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED",
       interactionStatus: "failed",
+      turnStatus: "failed",
+      queueState: "paused",
+      queuePauseReason: "turn_failed",
+      activeTurnId: null,
       rememberedCount: 0,
     });
     const repeatedPolicyChanged =
@@ -2004,12 +2019,140 @@ test(
       enabled: true,
       approvalMode: "ask",
     });
+    const subjectRestricted = await createAdditionalRememberInteraction({
+      label: "subject-restricted",
+      sequence: 102,
+    });
+    const subjectRestrictionId = `remember-subject-restriction-${suffix}`;
+    await sql`
+      INSERT INTO "environment_capability_subject_restrictions" (
+        "id", "organization_id", "environment_id", "subject_type",
+        "subject_id", "provider_key", "capability_key", "resource_id",
+        "enabled", "approval_mode"
+      ) VALUES (
+        ${subjectRestrictionId}, ${organizationId}, ${environmentId}, 'actor',
+        ${userId}, ${googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY},
+        'calendar.events.create', NULL, true, 'ask'
+      )
+    `;
+    const subjectRestrictedResolution =
+      await turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: subjectRestricted.requestId,
+        eventType: "user.approval",
+        turnId: subjectRestricted.turnId,
+        message: "Remember approval",
+        decision: "remember_approval",
+        messageId: `remember-subject-restricted-message-${suffix}`,
+        source: "web",
+      });
+    assert.equal(subjectRestrictedResolution.shouldDispatch, false);
+    const [subjectRestrictedState] = await sql<
+      Array<{
+        failureCode: string | null;
+        rememberedCount: number;
+        turnStatus: string;
+      }>
+    >`
+      SELECT
+        interaction."response_failure_code" AS "failureCode",
+        turn."status" AS "turnStatus",
+        (SELECT count(*)::int FROM "remembered_tool_approvals" remembered
+          WHERE remembered."source_interaction_id" = interaction."id")
+          AS "rememberedCount"
+      FROM "thread_interactions" interaction
+      JOIN "thread_turns" turn ON turn."id" = interaction."turn_id"
+      WHERE interaction."id" = ${subjectRestricted.interactionId}
+    `;
+    assert.deepEqual(subjectRestrictedState, {
+      failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED",
+      rememberedCount: 0,
+      turnStatus: "failed",
+    });
+    await sql`
+      DELETE FROM "environment_capability_subject_restrictions"
+      WHERE "id" = ${subjectRestrictionId}
+    `;
+
+    const expiredApproveOnce = await createAdditionalRememberInteraction({
+      label: "expired-approve-once",
+      sequence: 103,
+    });
+    await sql`
+      UPDATE "app_operation_approvals"
+      SET "expires_at" = ${new Date(Date.now() - 1000)}
+      WHERE "organization_id" = ${organizationId}
+        AND "runtime_approval_id" = ${expiredApproveOnce.approvalId}
+    `;
+    const expiredApproveOnceResolution =
+      await turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: expiredApproveOnce.requestId,
+        eventType: "user.approval",
+        turnId: expiredApproveOnce.turnId,
+        message: "Approve once",
+        decision: "approve_once",
+        messageId: `remember-expired-approve-once-message-${suffix}`,
+        source: "mobile",
+      });
+    assert.equal(expiredApproveOnceResolution.shouldDispatch, false);
+    const [expiredApproveOnceState] = await sql<
+      Array<{ failureCode: string | null; interactionStatus: string; turnStatus: string }>
+    >`
+      SELECT
+        interaction."response_failure_code" AS "failureCode",
+        interaction."status" AS "interactionStatus",
+        turn."status" AS "turnStatus"
+      FROM "thread_interactions" interaction
+      JOIN "thread_turns" turn ON turn."id" = interaction."turn_id"
+      WHERE interaction."id" = ${expiredApproveOnce.interactionId}
+    `;
+    assert.deepEqual(expiredApproveOnceState, {
+      failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+      interactionStatus: "failed",
+      turnStatus: "failed",
+    });
+
+    const closedResourceApproveOnce = await createAdditionalRememberInteraction({
+      label: "closed-resource-approve-once",
+      sequence: 104,
+    });
+    await sql`
+      UPDATE "app_connection_resources"
+      SET "enabled" = false
+      WHERE "id" = ${rememberResource.id}
+    `;
+    const closedResourceResolution =
+      await turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: closedResourceApproveOnce.requestId,
+        eventType: "user.approval",
+        turnId: closedResourceApproveOnce.turnId,
+        message: "Approve once",
+        decision: "approve_once",
+        messageId: `remember-closed-resource-message-${suffix}`,
+        source: "web",
+      });
+    assert.equal(closedResourceResolution.shouldDispatch, false);
+    await sql`
+      UPDATE "app_connection_resources"
+      SET "enabled" = true
+      WHERE "id" = ${rememberResource.id}
+    `;
     await sql`
       DELETE FROM "app_operation_approvals"
       WHERE
         "organization_id" = ${organizationId}
         AND "runtime_approval_id" IN (
-          ${mixedClient.approvalId}, ${policyChanged.approvalId}
+          ${mixedClient.approvalId}, ${policyChanged.approvalId},
+          ${subjectRestricted.approvalId}, ${expiredApproveOnce.approvalId},
+          ${closedResourceApproveOnce.approvalId}
         )
     `;
     const [availabilitySharing] = await sql<

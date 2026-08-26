@@ -11,6 +11,7 @@ import {
   mobileTurnDto,
 } from "@/lib/mobile/dto";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { resolveRuntimeApprovalPolicies } from "@/lib/apps/runtime-approval-policy";
 import {
   listDurableThreadQueueForUser,
   listThreadInteractionsForUser,
@@ -79,6 +80,16 @@ export async function getMobileV2ThreadSnapshot(input: {
   // The window lookup also enforces the thread access boundary before we return it.
   const window = await getMobileV2MessageWindow(input);
   if (!window) return null;
+  const approvalPolicies = thread.projectId
+    ? await resolveRuntimeApprovalPolicies({
+        threadId: input.threadId,
+        organizationId: input.organizationId,
+        projectId: thread.projectId,
+        userId: input.userId,
+        canEditProject: false,
+        interactions,
+      })
+    : new Map();
   const latestTurnRevision = visibleTurns.reduce(
     (latest, turn) =>
       turn.updatedAt.getTime() > latest.getTime() ? turn.updatedAt : latest,
@@ -146,7 +157,10 @@ export async function getMobileV2ThreadSnapshot(input: {
         const turnId = interaction.turnId ?? queueState.queue.activeTurnId;
         return turnId
           ? [{
-              ...mobileInteractionDto(interaction, {
+              ...mobileInteractionDto({
+                ...interaction,
+                approvalPolicy: approvalPolicies.get(interaction.requestId),
+              }, {
                 richInteractionLifecycle: input.richInteractionLifecycle,
               }),
               turnId,

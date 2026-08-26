@@ -40,7 +40,7 @@ import {
   AppOperationApprovalError,
   decideAppOperationApprovalInTransaction,
   linkAppOperationApprovalToInteractionInTransaction,
-  validateRememberedAppApprovalEligibilityInTransaction,
+  validateAppApprovalDecisionEligibilityInTransaction,
 } from "@/lib/apps/app-operation-approvals";
 import { hashAppApprovalAuthority } from "@/lib/apps/app-operation-approval-contract";
 import { resolveEffectiveProjectAppAccess } from "@/lib/apps/project-service";
@@ -2151,31 +2151,58 @@ export async function resolveDurableRuntimeInteraction(input: {
     const requestEnvelope = readPlainRecord(interaction.requestEnvelope);
     const approvalEnvelope = readPlainRecord(requestEnvelope?.approval);
     const hostedMutation = isHostedMutationToolName(approvalEnvelope?.toolName);
-    if (decision === "remember_approval") {
-      const presentation = readPlainRecord(hostedApproval?.approval.presentation);
-      const presentationPolicy = readPlainRecord(presentation?.policy);
+    const presentation = readPlainRecord(hostedApproval?.approval.presentation);
+    const presentationPolicy = readPlainRecord(presentation?.policy);
+    const approvesCurrentInvocation =
+      decision === "approve_once" || decision === "remember_approval";
+    if (hostedMutation) {
       try {
+        if (!interaction.runtimeApprovalId) {
+          throw new AppOperationApprovalError(
+            "APP_OPERATION_APPROVAL_REQUIRED",
+          );
+        }
         if (
-          hostedApproval?.version !==
+          decision === "remember_approval" &&
+          (hostedApproval?.version !==
             "runner_hosted_tool_approval_interaction_v3" ||
-          !hostedMutation ||
-          !interaction.runtimeApprovalId ||
-          !accessibleThread.projectId ||
-          presentationPolicy?.reasonCode !== "environment_policy"
+            !accessibleThread.projectId ||
+            presentationPolicy?.reasonCode !== "environment_policy")
         ) {
           throw new AppOperationApprovalError(
             "APP_OPERATION_APPROVAL_ACCESS_DENIED",
           );
         }
-        await validateRememberedAppApprovalEligibilityInTransaction(tx, {
+        if (
+          approvesCurrentInvocation &&
+          !(hostedApproval && accessibleThread.projectId)
+        ) {
+          throw new AppOperationApprovalError(
+            "APP_OPERATION_APPROVAL_BINDING_MISMATCH",
+          );
+        }
+        if (approvesCurrentInvocation && hostedApproval && accessibleThread.projectId) {
+          await validateAppApprovalDecisionEligibilityInTransaction(tx, {
+            organizationId: input.organizationId,
+            projectId: accessibleThread.projectId,
+            threadId: input.threadId,
+            userId: input.userId,
+            runtimeApprovalId: interaction.runtimeApprovalId,
+            interactionId: interaction.id,
+            toolName: hostedApproval.approval.toolName,
+            stableToolIdentity: hostedApproval.approval.stableToolIdentity,
+            decision,
+            now,
+          });
+        }
+        await decideAppOperationApprovalInTransaction(tx, {
           organizationId: input.organizationId,
-          projectId: accessibleThread.projectId,
           threadId: input.threadId,
           userId: input.userId,
           runtimeApprovalId: interaction.runtimeApprovalId,
           interactionId: interaction.id,
-          toolName: hostedApproval.approval.toolName,
-          stableToolIdentity: hostedApproval.approval.stableToolIdentity,
+          approved: approvesCurrentInvocation || approved === true,
+          required: true,
           now,
         });
       } catch (error) {
@@ -2186,8 +2213,10 @@ export async function resolveDurableRuntimeInteraction(input: {
             : error.code === "APP_OPERATION_APPROVAL_ACCESS_DENIED"
               ? "EXTERNAL_APPROVAL_POLICY_CHANGED"
               : "EXTERNAL_APPROVAL_IDENTITY_MISMATCH";
-        const failedEvent = await failPendingRememberApprovalInTransaction(tx, {
+        const failedEvent = await failPendingHostedApprovalInTransaction(tx, {
           interaction,
+          turn,
+          queueState,
           responseEnvelope,
           userId: input.userId,
           now,
@@ -2199,27 +2228,6 @@ export async function resolveDurableRuntimeInteraction(input: {
           replayAfterSequence: failedEvent.sequence,
         };
       }
-    }
-    if (hostedMutation) {
-      if (!interaction.runtimeApprovalId) {
-        throw new DurableTurnError(
-          "TURN_CONFLICT",
-          "The hosted App approval is missing its runtime approval identity.",
-        );
-      }
-      await decideAppOperationApprovalInTransaction(tx, {
-        organizationId: input.organizationId,
-        threadId: input.threadId,
-        userId: input.userId,
-        runtimeApprovalId: interaction.runtimeApprovalId,
-        interactionId: interaction.id,
-        approved:
-          decision === "approve_once" ||
-          decision === "remember_approval" ||
-          approved === true,
-        required: true,
-        now,
-      });
     }
     await tx
       .update(schema.threadInteractions)
@@ -2303,10 +2311,12 @@ export async function resolveDurableRuntimeInteraction(input: {
   });
 }
 
-async function failPendingRememberApprovalInTransaction(
+async function failPendingHostedApprovalInTransaction(
   tx: TurnTransaction,
   input: {
     interaction: typeof schema.threadInteractions.$inferSelect;
+    turn: typeof schema.threadTurns.$inferSelect;
+    queueState: typeof schema.threadTurnQueueState.$inferSelect;
     responseEnvelope: Record<string, unknown>;
     userId: string;
     now: Date;
@@ -2370,7 +2380,7 @@ async function failPendingRememberApprovalInTransaction(
       : failureMessage,
     retryEligible: false,
   });
-  return appendTurnEvent(tx, {
+  await appendTurnEvent(tx, {
     turnId: input.interaction.turnId!,
     type: "interaction.authorization_failed",
     data: {
@@ -2378,6 +2388,78 @@ async function failPendingRememberApprovalInTransaction(
       failureCode: input.failureCode,
       effectState: "not_started",
       retryable: false,
+    },
+  });
+  assertThreadTurnTransition(input.turn.status, "failed");
+  await tx
+    .update(schema.threadTurns)
+    .set({
+      status: "failed",
+      failureCode: input.failureCode,
+      failureMessage,
+      finishedAt: input.now,
+      updatedAt: input.now,
+    })
+    .where(eq(schema.threadTurns.id, input.turn.id));
+  await terminalizeTurnEnvironmentExecution(
+    tx,
+    input.turn,
+    "failed",
+    input.now,
+    { code: input.failureCode, message: failureMessage },
+  );
+  await updateMobileTurnPresentation(tx, {
+    turnId: input.turn.id,
+    stage: "working",
+    now: input.now,
+  });
+  await tx
+    .update(schema.threadTurnQueueState)
+    .set({
+      activeTurnId: null,
+      state: "paused",
+      pauseReason: "turn_failed",
+      version: input.queueState.version + 1,
+      updatedAt: input.now,
+    })
+    .where(eq(schema.threadTurnQueueState.threadId, input.turn.threadId));
+  const devices = await tx
+    .select({ id: schema.mobileDeviceRegistrations.id })
+    .from(schema.mobileDeviceRegistrations)
+    .where(
+      and(
+        eq(schema.mobileDeviceRegistrations.userId, input.turn.authorUserId),
+        eq(schema.mobileDeviceRegistrations.enabled, true),
+      ),
+    );
+  if (devices.length > 0) {
+    await tx
+      .insert(schema.mobilePushDeliveries)
+      .values(
+        devices.map((device) => ({
+          id: crypto.randomUUID(),
+          deviceRegistrationId: device.id,
+          organizationId: input.turn.organizationId,
+          threadId: input.turn.threadId,
+          turnId: input.turn.id,
+          kind: "failed" as const,
+          status: "pending" as const,
+        })),
+      )
+      .onConflictDoNothing({
+        target: [
+          schema.mobilePushDeliveries.turnId,
+          schema.mobilePushDeliveries.deviceRegistrationId,
+          schema.mobilePushDeliveries.kind,
+        ],
+      });
+  }
+  return appendTurnEvent(tx, {
+    turnId: input.turn.id,
+    type: "turn.failed",
+    data: {
+      status: "failed",
+      failureCode: input.failureCode,
     },
   });
 }

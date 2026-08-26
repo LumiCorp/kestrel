@@ -3,6 +3,7 @@ import { z } from "zod";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import type { DbThread } from "@/lib/knowledge/db-types";
 import { parseUrlElicitation } from "@/lib/mcp/interaction-protocol";
+import type { RuntimeApprovalPolicyView } from "@/lib/turns/client-contract";
 
 export const MOBILE_API_VERSION = "1";
 
@@ -170,6 +171,7 @@ export function mobileInteractionDto(
     status: string;
     requestEnvelope: Record<string, unknown>;
     createdAt: Date;
+    approvalPolicy?: RuntimeApprovalPolicyView;
     approvalOutcome?: {
       decision: "approved" | "denied" | "expired";
       authorizationState: "pending" | "accepted" | "denied" | "expired" | "failed";
@@ -207,7 +209,15 @@ export function mobileInteractionDto(
     const policy = asRecord(presentation?.policy);
     const rememberEligible =
       version === "runner_hosted_tool_approval_interaction_v3" &&
-      policy?.reasonCode === "environment_policy";
+      policy?.reasonCode === "environment_policy" &&
+      interaction.approvalPolicy?.reasonCode === "environment_policy" &&
+      interaction.approvalPolicy.environmentApprovalMode === "ask" &&
+      interaction.approvalPolicy.projectApprovalMode !== "deny" &&
+      interaction.approvalPolicy.minimumApprovalMode === "auto";
+    const currentApprovalActionable = !(
+      interaction.approvalPolicy?.environmentApprovalMode === "deny" ||
+      interaction.approvalPolicy?.projectApprovalMode === "deny"
+    );
     return {
       id,
       kind: "approval" as const,
@@ -217,7 +227,9 @@ export function mobileInteractionDto(
           ? (["decline", "approve_once", "remember_approval"] as const)
           : version === "runner_hosted_tool_approval_interaction_v2" ||
               version === "runner_hosted_tool_approval_interaction_v3"
-            ? (["decline", "approve_once"] as const)
+            ? currentApprovalActionable
+              ? (["decline", "approve_once"] as const)
+              : (["decline"] as const)
           : (["approve", "deny"] as const),
       title: "Allow this agent request?",
       prompt:

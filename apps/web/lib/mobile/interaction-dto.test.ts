@@ -90,6 +90,18 @@ test("hosted V2 approval publishes its exact decision vocabulary", () => {
       requestEnvelope: {
         version: "runner_hosted_tool_approval_interaction_v2",
       },
+      approvalPolicy: {
+        projectId: "project-1",
+        environmentId: "environment-1",
+        appKey: "google-workspace",
+        capabilityKey: "calendar.events.create",
+        capabilityDisplayName: "Create calendar events",
+        environmentApprovalMode: "ask",
+        projectApprovalMode: "ask",
+        minimumApprovalMode: "auto",
+        reasonCode: "environment_policy",
+        canEditProject: false,
+      },
       createdAt: new Date("2026-07-13T12:00:00.000Z"),
     },
   );
@@ -114,6 +126,18 @@ test("hosted V3 approval publishes the remembered decision vocabulary", () => {
           presentation: { policy: { reasonCode: "environment_policy" } },
         },
       },
+      approvalPolicy: {
+        projectId: "project-1",
+        environmentId: "environment-1",
+        appKey: "google-workspace",
+        capabilityKey: "calendar.events.create",
+        capabilityDisplayName: "Create calendar events",
+        environmentApprovalMode: "ask",
+        projectApprovalMode: "ask",
+        minimumApprovalMode: "auto",
+        reasonCode: "environment_policy",
+        canEditProject: false,
+      },
       createdAt: new Date("2026-07-13T12:00:00.000Z"),
     },
   );
@@ -127,7 +151,7 @@ test("hosted V3 approval publishes the remembered decision vocabulary", () => {
   ]);
 });
 
-test("hosted V3 approval hides remember for a stricter current policy", () => {
+test("hosted V3 approval hides remember after current Project policy becomes stricter", () => {
   const dto = mobileInteractionDto(
     {
       id: "runtime-interaction-2",
@@ -139,13 +163,25 @@ test("hosted V3 approval hides remember for a stricter current policy", () => {
       requestEnvelope: {
         version: "runner_hosted_tool_approval_interaction_v3",
         approval: {
-          presentation: { policy: { reasonCode: "runtime_strict" } },
+          presentation: { policy: { reasonCode: "environment_policy" } },
         },
+      },
+      approvalPolicy: {
+        projectId: "project-1",
+        environmentId: "environment-1",
+        appKey: "google-workspace",
+        capabilityKey: "calendar.events.create",
+        capabilityDisplayName: "Create calendar events",
+        environmentApprovalMode: "ask",
+        projectApprovalMode: "deny",
+        minimumApprovalMode: "auto",
+        reasonCode: "environment_policy",
+        canEditProject: false,
       },
       createdAt: new Date("2026-07-13T12:00:00.000Z"),
     },
   );
   assert.equal(dto.kind, "approval");
   if (dto.kind !== "approval") assert.fail("expected approval DTO");
-  assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
+  assert.deepEqual(dto.decisions, ["decline"]);
 });

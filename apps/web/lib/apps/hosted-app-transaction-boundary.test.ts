@@ -16,7 +16,7 @@ test("hosted App decision, response, interaction, and queue state share one tran
   assert.match(boundary, /await decideAppOperationApprovalInTransaction\(tx,/u);
   assert.match(
     boundary,
-    /await validateRememberedAppApprovalEligibilityInTransaction\(tx,/u,
+    /await validateAppApprovalDecisionEligibilityInTransaction\(tx,/u,
   );
   assert.match(
     boundary,
@@ -143,7 +143,7 @@ test("V2 provider records never write an independent human decision", async () =
 test("remember eligibility revalidates exact identity, access, and current Environment Ask First", async () => {
   const approvals = await source("./app-operation-approvals.ts");
   const start = approvals.indexOf(
-    "export async function validateRememberedAppApprovalEligibilityInTransaction",
+    "export async function validateAppApprovalDecisionEligibilityInTransaction",
   );
   const end = approvals.indexOf(
     "export async function decideAppOperationApprovalIfPresent",
@@ -155,6 +155,8 @@ test("remember eligibility revalidates exact identity, access, and current Envir
   assert.match(boundary, /serializeCanonicalApprovalPayload\(input\.stableToolIdentity\)/u);
   assert.match(boundary, /environmentGrant\.approvalMode !== "ask"/u);
   assert.match(boundary, /minimumApprovalMode !== "auto"/u);
+  assert.match(boundary, /environmentCapabilitySubjectRestrictions/u);
+  assert.match(boundary, /subjectRequiresApproval/u);
   assert.match(boundary, /resolveEffectiveProjectAppAccess/u);
   assert.match(boundary, /currentAuthorityRevision !== approval\.authorityRevision/u);
   assert.match(boundary, /appConnectionResources\.enabled, true/u);

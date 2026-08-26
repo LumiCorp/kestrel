@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, gt, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import {
   parseRunnerExternalApprovalBinding,
   RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
@@ -426,7 +426,7 @@ export async function decideAppOperationApprovalInTransaction(
   return decided ?? null;
 }
 
-export async function validateRememberedAppApprovalEligibilityInTransaction(
+export async function validateAppApprovalDecisionEligibilityInTransaction(
   tx: ApprovalTransaction,
   input: {
     organizationId: string;
@@ -437,6 +437,7 @@ export async function validateRememberedAppApprovalEligibilityInTransaction(
     interactionId: string;
     toolName: string;
     stableToolIdentity: StableToolApprovalIdentityV1;
+    decision: "approve_once" | "remember_approval";
     now: Date;
   },
 ) {
@@ -487,7 +488,7 @@ export async function validateRememberedAppApprovalEligibilityInTransaction(
   ) {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
   }
-  const [thread, resource, environmentGrant, projectPolicy] = await Promise.all([
+  const [thread, resource, environmentGrant, projectPolicy, subjectRestrictions] = await Promise.all([
     tx.query.threads.findFirst({
       where: and(
         eq(schema.threads.id, input.threadId),
@@ -528,6 +529,49 @@ export async function validateRememberedAppApprovalEligibilityInTransaction(
         ),
       ),
     }),
+    tx.query.environmentCapabilitySubjectRestrictions.findMany({
+      where: and(
+        eq(
+          schema.environmentCapabilitySubjectRestrictions.organizationId,
+          input.organizationId,
+        ),
+        eq(
+          schema.environmentCapabilitySubjectRestrictions.environmentId,
+          approval.environmentId,
+        ),
+        eq(
+          schema.environmentCapabilitySubjectRestrictions.providerKey,
+          approval.appKey,
+        ),
+        eq(
+          schema.environmentCapabilitySubjectRestrictions.capabilityKey,
+          approval.capabilityKey,
+        ),
+        isNull(schema.environmentCapabilitySubjectRestrictions.resourceId),
+        or(
+          and(
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.subjectType,
+              "actor",
+            ),
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.subjectId,
+              approval.actorUserId,
+            ),
+          ),
+          and(
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.subjectType,
+              "agent",
+            ),
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.subjectId,
+              approval.agentId,
+            ),
+          ),
+        ),
+      ),
+    }),
   ]);
   const access = await resolveEffectiveProjectAppAccess(
     {
@@ -548,17 +592,27 @@ export async function validateRememberedAppApprovalEligibilityInTransaction(
     getCoreAppDefinition(approval.appKey)?.capabilities.find(
       (candidate) => candidate.key === approval.capabilityKey,
     )?.minimumApprovalMode ?? "auto";
+  const subjectBlocked = subjectRestrictions.some(
+    (restriction) => !restriction.enabled || restriction.approvalMode === "deny",
+  );
+  const subjectRequiresApproval = subjectRestrictions.some(
+    (restriction) => restriction.approvalMode === "ask",
+  );
   if (
-    !thread ||
-    !resource ||
+    !(thread && resource) ||
     environmentGrant?.enabled !== true ||
-    environmentGrant.approvalMode !== "ask" ||
     (projectPolicy !== undefined &&
       (projectPolicy.enabled !== true || projectPolicy.approvalMode === "deny")) ||
-    minimumApprovalMode !== "auto" ||
     access?.environmentId !== approval.environmentId ||
     access.connectionId !== approval.connectionId ||
-    capability?.approvalMode !== "ask"
+    !capability ||
+    capability.approvalMode === "deny" ||
+    subjectBlocked ||
+    (input.decision === "remember_approval" &&
+      (environmentGrant.approvalMode !== "ask" ||
+        minimumApprovalMode !== "auto" ||
+        capability.approvalMode !== "ask" ||
+        subjectRequiresApproval))
   ) {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_ACCESS_DENIED");
   }
