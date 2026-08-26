@@ -1,5 +1,9 @@
 export { Kestrel } from "./Kestrel.js";
-export type { EffectFailurePolicy, ToolIntent, TransitionStatus } from "./contracts/base.js";
+export type {
+  EffectFailurePolicy,
+  ToolIntent,
+  TransitionStatus,
+} from "./contracts/base.js";
 export type {
   PersistedRuntimeEvent,
   ProgressCode,
@@ -52,32 +56,68 @@ export type {
 export {
   MODEL_CAPABILITY_DESCRIPTOR_VERSION,
   MODEL_REGISTRATION_VERSION,
+  MODEL_REGISTRATION_V2_VERSION,
   MODEL_REQUEST_VERSION,
+  MODEL_REQUEST_V2_VERSION,
   MODEL_RESPONSE_VERSION,
+  MODEL_RESPONSE_V2_VERSION,
+  PROVIDER_CODEC_ENVELOPE_VERSION,
   PROVIDER_RUNTIME_CONFIGURATION_VERSION,
   adaptModelRequestV0ToV1,
+  adaptModelRequestV1ToV2,
   adaptModelResponseV0ToV1,
+  adaptModelRegistrationV1ToV2,
   assertCurrentModelRegistrationV1,
+  assertCurrentModelRegistrationV2,
   canonicalModelRegistrationJsonV1,
+  canonicalModelRegistrationJsonV2,
+  canonicalModelRequestJsonV2,
   createModelRegistrationV1,
+  createModelRegistrationV2,
+  createModelRequestV2,
   fingerprintModelRegistrationV1,
+  fingerprintModelRegistrationV2,
+  fingerprintModelRequestV2,
+  fingerprintModelRoutingPolicyV2,
+  fingerprintModelSchemaV2,
+  fingerprintModelToolSurfaceV2,
   normalizeModelRequestV1,
+  normalizeModelRequestV2,
   normalizeModelResponseV1,
+  normalizeModelResponseV2,
   parseModelCapabilityDescriptorV1,
   parseModelRegistrationV1,
+  parseModelRegistrationV2,
   parseModelRequestV1,
+  parseModelRequestV2,
   parseModelResponseV1,
+  parseModelResponseV2,
   parseProviderRuntimeConfigurationV1,
 } from "./contracts/model-registration.js";
 export type {
   ModelCapabilityDescriptorV1,
+  ModelCapabilityClaimV2,
+  ModelCapabilityEvidenceV2,
+  ModelCapabilitySetV2,
+  ModelCapabilityStateV2,
   ModelLimitV1,
   ModelProviderIdentityV1,
   ModelProviderProtocolV1,
   ModelRegistrationAuthoringV1,
+  ModelRegistrationAuthoringV2,
   ModelRegistrationV1,
+  ModelRegistrationV2,
   ModelRequestV1,
+  ModelRequestV2,
+  ModelRequestFingerprintsV2,
+  ModelRequestRequirementsV2,
   ModelResponseV1,
+  ModelResponseV2,
+  ModelResponseValidationV2,
+  ModelQualificationReferenceV2,
+  ModelQualificationStateV2,
+  ModelRouteV2,
+  ModelRoutingPolicyV2,
   ProviderCredentialReferenceV1,
   ProviderRuntimeConfigurationV1,
 } from "./contracts/model-registration.js";
@@ -413,12 +453,8 @@ export type {
   MemoryBackendAdapterV1,
   MemoryReadContextV1,
 } from "../memory/MemoryGateway.js";
-export {
-  InMemoryMemoryBackend,
-} from "../memory/InMemoryMemoryBackend.js";
-export type {
-  InMemoryMemoryRecordV1,
-} from "../memory/InMemoryMemoryBackend.js";
+export { InMemoryMemoryBackend } from "../memory/InMemoryMemoryBackend.js";
+export type { InMemoryMemoryRecordV1 } from "../memory/InMemoryMemoryBackend.js";
 export {
   COMPLETION_EVIDENCE_ASSERTIONS_V1,
   COMPLETION_EVIDENCE_ASSET_BUNDLE_V1,

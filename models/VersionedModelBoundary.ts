@@ -5,7 +5,9 @@ import type {
 } from "../src/kestrel/contracts/model-io.js";
 import {
   normalizeModelRequestV1,
+  normalizeModelRequestV2,
   normalizeModelResponseV1,
+  normalizeModelResponseV2,
 } from "../src/kestrel/contracts/model-registration.js";
 
 export type VersionedProviderInvokerV1 = <TOutput>(
@@ -14,8 +16,9 @@ export type VersionedProviderInvokerV1 = <TOutput>(
 ) => Promise<ModelResponse<TOutput>>;
 
 /**
- * Provider entry is the temporary V0 migration seam. Legacy callers are
- * upgraded once here, then provider responses are returned in the V1 envelope.
+ * Provider entry preserves V1 behavior and carries V2 contracts intact. V2
+ * callers receive a V2 terminal envelope; provider codecs remain responsible
+ * for their own transport behavior until their dedicated slices land.
  */
 export function createVersionedProviderInvokerV1(
   invoke: VersionedProviderInvokerV1,
@@ -24,7 +27,17 @@ export function createVersionedProviderInvokerV1(
     request: ModelRequest,
     options?: ModelGatewayCallOptions,
   ): Promise<ModelResponse<TOutput>> => {
-    const response = await invoke<TOutput>(normalizeModelRequestV1(request), options);
+    if ((request as { version?: string }).version === "model_request_v2") {
+      const response = await invoke<TOutput>(
+        normalizeModelRequestV2(request),
+        options,
+      );
+      return normalizeModelResponseV2(response);
+    }
+    const response = await invoke<TOutput>(
+      normalizeModelRequestV1(request),
+      options,
+    );
     return normalizeModelResponseV1(response);
   };
 }
