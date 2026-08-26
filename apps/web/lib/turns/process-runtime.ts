@@ -581,9 +581,13 @@ export async function processDurableThreadTurn(
       stage: "reading_context",
       milestoneId: `turn:${turn.id}:context`,
     });
+    const continuationExecutionId =
+      reattachExecutionId ??
+      recoveredCompletedExecutionId ??
+      (turn.interactionResponse ? turn.environmentExecutionId : null);
     projectContext = await loadBoundProjectContext(
       turn,
-      reattachExecutionId ?? recoveredCompletedExecutionId,
+      continuationExecutionId,
     );
     const threadFileInventory = await listThreadFileInventory({
       threadId: turn.threadId,
