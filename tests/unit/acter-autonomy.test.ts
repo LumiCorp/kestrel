@@ -892,7 +892,7 @@ test("exec.wait_approval records processor-owned approval denials", async () => 
   assert.equal(workingPlan.status, "dispatching");
 });
 
-test("GitHub external confirmation resumes only the exact approved mutation", async () => {
+test("GitHub external confirmation resumes the exact mutation and terminates an expired restart", async () => {
   const definition = kestrelOneGitHubIssueCreateTool.definition;
   const toolInput = {
     repository: "acme/support",
@@ -952,6 +952,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     return { effectiveInput: normalizedToolInput };
   };
   let approvalPreparations = 0;
+  let approvalReleases = 0;
   const descriptor = defaultToolCatalog.getDescriptorRef(definition.name);
   assert.ok(descriptor);
   const prepareToolForApproval: NonNullable<StepIO["prepareToolForApproval"]> =
@@ -1026,6 +1027,11 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         },
         preparedAt: "2026-08-26T12:00:00.000Z",
       });
+    };
+  const releasePreparedToolCall: NonNullable<StepIO["releasePreparedToolCall"]> =
+    async (prepared) => {
+      assert.equal(prepared.callId, "prepared-github-1");
+      approvalReleases += 1;
     };
 
   const legacyWait = await dispatchStep(
@@ -1385,6 +1391,54 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
       error.code === "HOSTED_PREPARED_APPROVAL_INVALID",
   );
 
+  const originalDateNow = Date.now;
+  Date.now = () => Date.parse(binding.expiresAt) + 1;
+  let expired: Awaited<ReturnType<typeof waitApprovalStep>>;
+  try {
+    expired = await waitApprovalStep(
+      buildContext({
+        session: {
+          ...buildContext().session,
+          state: { agent: structuredClone(waitingAgent) },
+          currentStepAgent: "agent.exec.wait_approval",
+        },
+        event: {
+          id: "evt-github-expired-approval",
+          type: "user.approval",
+          sessionId: "session-1",
+          payload: {
+            ...modePayload,
+            decision: "approve_once",
+            approvalId: pendingApproval.approvalId,
+          },
+        },
+      }),
+      {
+        useModel: async () => {
+          throw new Error("not expected");
+        },
+        inspectTool,
+        prepareToolForApproval,
+        releasePreparedToolCall,
+        useTool: async () => {
+          throw new Error("expired approval must not execute");
+        },
+      },
+    );
+  } finally {
+    Date.now = originalDateNow;
+  }
+  assert.equal(expired.status, "RUNNING");
+  assert.equal(expired.waitFor, undefined);
+  const expiredAgent = expired.statePatch?.agent as Record<string, unknown>;
+  const expiredExec = expiredAgent.exec as Record<string, unknown>;
+  const expiredResult = expiredAgent.lastActionResult as Record<string, unknown>;
+  assert.equal(expiredExec.pendingApproval, undefined);
+  assert.equal(expiredAgent.waitingFor, undefined);
+  assert.equal(expiredResult.status, "expired");
+  assert.equal(approvalReleases, 1);
+  assert.equal(approvalPreparations, 1);
+
   const declined = await waitApprovalStep(
     buildContext({
       session: {
@@ -1409,6 +1463,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
       },
       inspectTool,
       prepareToolForApproval,
+      releasePreparedToolCall,
       useTool: async () => {
         throw new Error("declined approval must not execute");
       },
@@ -1423,6 +1478,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     "denied",
   );
   assert.equal(approvalPreparations, 1);
+  assert.equal(approvalReleases, 2);
 
   const resumed = await waitApprovalStep(
     buildContext({

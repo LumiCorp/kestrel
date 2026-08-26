@@ -784,10 +784,68 @@ async function maybeRequireToolApproval(input: {
       } catch (error) {
         if (
           error instanceof RuntimeFailure &&
+          error.code === "EXTERNAL_APPROVAL_EXPIRED"
+        ) {
+          if (input.io.releasePreparedToolCall === undefined) {
+            throw createRuntimeFailure(
+              "HOSTED_PREPARED_APPROVAL_INVALID",
+              "The expired hosted approval invocation cannot be released.",
+              {
+                subsystem: "react",
+                classification: "policy",
+                recoverable: false,
+                approvalId,
+              },
+            );
+          }
+          await input.io.releasePreparedToolCall(
+            parseDurablePreparedToolCallV1(durablePreparedToolCall),
+          );
+          const lastActionResult = {
+            ok: false,
+            kind: "approval_expiration",
+            status: "expired",
+            approvalId,
+            toolName: input.toolName,
+            toolClass: input.toolClass,
+            ts: new Date().toISOString(),
+          };
+          return createReferenceReactEffectCollectCheckpoint({
+            reactState: input.reactState,
+            currentStepAgent: input.currentStepAgent,
+            nextStepAgent: input.deliberationStepId,
+            stepIndex: input.stepIndex,
+            activeRegion: input.activeRegion,
+            phase: "THINK",
+            reactPatch: {
+              lastActionResult,
+              observations: appendAgentObservation(input.reactState, lastActionResult),
+              decisionTrace: [
+                {
+                  eventType: "decision.executed",
+                  phase: "acter",
+                  decisionCode: "tool_approval_expired",
+                  metadata: {
+                    approvalId,
+                    toolName: input.toolName,
+                    toolClass: input.toolClass,
+                  },
+                },
+              ],
+            },
+            execPatch: {
+              pendingApproval: undefined,
+            },
+            regionExecPatch: {
+              pendingApproval: undefined,
+            },
+          });
+        }
+        if (
+          error instanceof RuntimeFailure &&
           (
             error.code === "EXTERNAL_APPROVAL_BINDING_INVALID" ||
-            error.code === "EXTERNAL_APPROVAL_BINDING_CHANGED" ||
-            error.code === "EXTERNAL_APPROVAL_EXPIRED"
+            error.code === "EXTERNAL_APPROVAL_BINDING_CHANGED"
           )
         ) {
           exactApprovalMatches = false;
@@ -800,6 +858,21 @@ async function maybeRequireToolApproval(input: {
   }
 
   if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "deny") {
+    if (durablePreparedToolCall !== undefined) {
+      if (input.io.releasePreparedToolCall === undefined) {
+        throw createRuntimeFailure(
+          "HOSTED_PREPARED_APPROVAL_INVALID",
+          "The declined hosted approval invocation cannot be released.",
+          {
+            subsystem: "react",
+            classification: "policy",
+            recoverable: false,
+            approvalId,
+          },
+        );
+      }
+      await input.io.releasePreparedToolCall(durablePreparedToolCall);
+    }
     const lastActionResult = {
       ok: false,
       kind: "approval_denial",
