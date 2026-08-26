@@ -224,12 +224,23 @@ test("McpClientManager retries a failed active-provider close and closes once su
     new Map([["mcp.docs.lookup", toolHandle(client)]]),
     new Map([["docs", { serverId: "docs", client }]]),
   );
+  const pinned = manager.pinTool("mcp.docs.lookup");
 
   await assert.rejects(
     () => manager.close(),
     /planned active-close close failure/u,
   );
   assert.equal(client.closeCalls, 1);
+  assert.throws(
+    () => pinned.retain(),
+    (error: unknown) =>
+      error instanceof RuntimeFailure && error.code === "MCP_CLIENT_RETIRED",
+  );
+  assert.throws(
+    () => pinned.call({}),
+    (error: unknown) =>
+      error instanceof RuntimeFailure && error.code === "MCP_PIN_RELEASED",
+  );
   await manager.close();
   assert.equal(client.closeCalls, 2);
   await manager.close();

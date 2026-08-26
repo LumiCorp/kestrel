@@ -300,6 +300,7 @@ export class McpClientManager {
       call: <T>(input: unknown) => {
         if (
           references < 1 ||
+          this.closing ||
           this.closedClients.has(handle.client) ||
           this.clientCloseAttempts.has(handle.client)
         ) {
@@ -334,6 +335,7 @@ export class McpClientManager {
 
   private retainClient(client: unknown): void {
     if (
+      this.closing ||
       this.retiredClients.has(client) ||
       this.closedClients.has(client) ||
       this.clientReleaseChains.has(client) ||
