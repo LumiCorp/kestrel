@@ -878,6 +878,7 @@ export interface ExecutionProfileResolvedEventPayload {
       | "workspace_hosted";
     version: number;
   };
+  hostedApprovalProducerProtocol?: "v2" | "v3" | "v4" | undefined;
   resolvedProfile: TuiProfile;
   exactToolDecisions?: Record<string, EffectiveToolDecisionV1> | undefined;
 }

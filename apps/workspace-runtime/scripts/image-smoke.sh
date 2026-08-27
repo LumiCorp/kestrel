@@ -7,7 +7,8 @@ expected_approval_protocol="${2:?usage: image-smoke.sh IMAGE EXPECTED_APPROVAL_P
 container="kestrel-workspace-runtime-smoke-$$"
 health_file="/tmp/kestrel-workspace-runtime-health-$$"
 
-test "$expected_approval_protocol" = "v2" || test "$expected_approval_protocol" = "v3"
+test "$expected_approval_protocol" = "v2" || test "$expected_approval_protocol" = "v3" || test "$expected_approval_protocol" = "v4"
+test "$(docker image inspect --format '{{ index .Config.Labels "com.lumicorp.kestrel.hosted-approval-producer" }}' "$image")" = "$expected_approval_protocol"
 test "$(docker run --rm --entrypoint node "$image" -p 'process.env.KESTREL_HOSTED_APPROVAL_PROTOCOL ?? "v2"')" = "$expected_approval_protocol"
 
 matrix_output="$(docker run --rm \

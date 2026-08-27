@@ -815,10 +815,17 @@ export async function resolveHostedKestrelExecutionProfile(input: {
 export function assertHostedWorkspaceProfileCompatibility(
   resolution: Awaited<ReturnType<HostedKestrelExecutionProfileResolver["resolveExecutionProfile"]>>,
 ): void {
+  const preset4ProducerSupported =
+    resolution.environmentPreset.version ===
+      WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION &&
+    (resolution.hostedApprovalProducerProtocol === "v2" ||
+      resolution.hostedApprovalProducerProtocol === "v4");
+  const legacyPreset3BridgeSupported =
+    resolution.environmentPreset.version === 3 &&
+    resolution.hostedApprovalProducerProtocol === undefined;
   if (
     resolution.environmentPreset.id !== "workspace_hosted" ||
-    resolution.environmentPreset.version !==
-      WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION ||
+    !(preset4ProducerSupported || legacyPreset3BridgeSupported) ||
     resolution.resolvedProfile.approvalPolicyPackId !== "hosted_workspace"
   ) {
     throw Object.assign(
@@ -830,6 +837,9 @@ export function assertHostedWorkspaceProfileCompatibility(
           approvalPolicyPackId:
             resolution.resolvedProfile.approvalPolicyPackId ?? null,
           requiredPresetVersion: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+          hostedApprovalProducerProtocol:
+            resolution.hostedApprovalProducerProtocol ?? null,
+          acceptedPresetVersions: [3, WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION],
         },
       },
     );

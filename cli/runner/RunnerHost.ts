@@ -49,6 +49,7 @@ import type {
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import type { ExactEffectResultStore } from "../../src/kestrel/contracts/store.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import { resolveHostedApprovalProtocolVersion } from "../../src/runtime/RuntimeTurnCoordinator.js";
 import { resolveKestrelHome } from "../config/kestrelHome.js";
 import { ProfileStore } from "../config/ProfileStore.js";
 import type { OperatorAssemblySummary, TuiProfile } from "../contracts.js";
@@ -3915,6 +3916,12 @@ function createDefaultProfileProvider(): RunnerProfileProvider {
           id: payload.environmentPresetId,
           version: provenance.environmentPreset.version,
         },
+        ...(payload.environmentPresetId === "workspace_hosted"
+          ? {
+              hostedApprovalProducerProtocol:
+                resolveHostedApprovalProtocolVersion(process.env),
+            }
+          : {}),
         resolvedProfile: registered.profile,
       };
     },

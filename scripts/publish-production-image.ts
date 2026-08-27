@@ -38,7 +38,7 @@ export function productionImageBuildCommands(input: {
   image: string;
   tag: string;
   smoke: string;
-  expectedApprovalProtocol?: "v2" | "v3" | "v4" | undefined;
+  approvalProtocol?: "v2" | "v3" | "v4" | undefined;
 }) {
   return [
     {
@@ -55,6 +55,12 @@ export function productionImageBuildCommands(input: {
         input.image,
         "--build-arg",
         `KESTREL_BUILD_ID=${input.tag}`,
+        ...(input.approvalProtocol
+          ? [
+              "--build-arg",
+              `KESTREL_HOSTED_APPROVAL_PROTOCOL=${input.approvalProtocol}`,
+            ]
+          : []),
         ".",
       ],
     },
@@ -63,12 +69,30 @@ export function productionImageBuildCommands(input: {
       args: [
         input.smoke,
         input.image,
-        ...(input.expectedApprovalProtocol
-          ? [input.expectedApprovalProtocol]
+        ...(input.approvalProtocol
+          ? [input.approvalProtocol]
           : []),
       ],
     },
+    ...(input.approvalProtocol
+      ? [{
+          command: "docker",
+          args: [
+            "image",
+            "inspect",
+            "--format",
+            '{{ index .Config.Labels "com.lumicorp.kestrel.hosted-approval-producer" }}',
+            input.image,
+          ],
+          evidence: "approval-protocol" as const,
+        }]
+      : []),
     { command: "docker", args: ["push", input.image] },
+    {
+      command: "docker",
+      args: ["image", "inspect", "--format", "{{index .RepoDigests 0}}", input.image],
+      evidence: "repo-digest" as const,
+    },
   ] as const;
 }
 
@@ -87,24 +111,50 @@ export async function publishProductionImage(
   if (approvalProtocol && !protocolAware) {
     throw new Error(`${role} does not carry a hosted approval producer.`);
   }
-  const expectedApprovalProtocol = protocolAware
-    ? (approvalProtocol ?? "v4")
-    : undefined;
+  if (protocolAware && approvalProtocol === undefined) {
+    throw new Error(`${role} publication requires --approval-protocol.`);
+  }
   assertProductionImageCanaryEnvironment(role, environment);
   const taggedImage = `${image.repository}:${tag}`;
+  let digestImage: string | undefined;
   for (const command of productionImageBuildCommands({
     dockerfile: image.dockerfile,
     image: taggedImage,
     tag,
     smoke: image.smoke,
-    expectedApprovalProtocol,
+    approvalProtocol,
   })) {
-    requireSuccess(
-      runner(command.command, [...command.args], true),
+    const evidence = "evidence" in command ? command.evidence : undefined;
+    const commandResult = runner(
       command.command,
+      [...command.args],
+      evidence === undefined,
     );
+    requireSuccess(commandResult, command.command);
+    if (evidence === "approval-protocol") {
+      if (commandResult.stdout.trim() !== approvalProtocol) {
+        throw new Error(
+          `Built ${role} image advertises '${commandResult.stdout.trim() || "missing"}' instead of '${approvalProtocol}'.`,
+        );
+      }
+    } else if (evidence === "repo-digest") {
+      digestImage = commandResult.stdout.trim();
+      const [digestRepository, digest] = digestImage.split("@");
+      if (
+        digestRepository !== image.repository ||
+        !/^sha256:[a-f0-9]{64}$/u.test(digest ?? "")
+      ) {
+        throw new Error(`${role} publication did not produce immutable digest evidence.`);
+      }
+    }
   }
-  const result = { role: image.role, tag, image: taggedImage };
+  const result = {
+    role: image.role,
+    tag,
+    image: taggedImage,
+    digestImage: digestImage!,
+    ...(approvalProtocol ? { approvalProtocol } : {}),
+  };
   process.stdout.write(`${JSON.stringify(result)}\n`);
   return result;
 }

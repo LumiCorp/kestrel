@@ -1939,6 +1939,7 @@ export interface ExecutionProfileResolvedEventPayload {
       | "workspace_hosted";
     version: number;
   };
+  hostedApprovalProducerProtocol?: "v2" | "v3" | "v4" | undefined;
   resolvedProfile: RunnerProfile;
   exactToolDecisions?: Record<string, EffectiveToolDecisionV1> | undefined;
 }
@@ -3338,6 +3339,11 @@ function parseRunnerEventPayloadV2(
       validateSha256(payload.fingerprint, `${label}.fingerprint`);
       validateProfileResolutionProvenance(payload.policy, `${label}.policy`);
       validateEnvironmentPresetProvenance(payload.environmentPreset, `${label}.environmentPreset`);
+      validateOptionalEnum(
+        payload.hostedApprovalProducerProtocol,
+        `${label}.hostedApprovalProducerProtocol`,
+        ["v2", "v3", "v4"],
+      );
       validateRunnerProfile(
         requireRecord(payload.resolvedProfile, `${label}.resolvedProfile`),
         `${label}.resolvedProfile`,

@@ -1080,7 +1080,7 @@ test("canonical execution profile contracts validate exact-tool preflight fields
   );
 });
 
-test("an older Web event parser can transport the V4 hosted preset for fail-closed negotiation", () => {
+test("profile events carry an explicit preset-4 producer protocol marker", () => {
   const event = parseRunnerEventV2({
     id: "event:workspace-hosted-v4",
     type: "execution-profile.resolved",
@@ -1091,6 +1091,7 @@ test("an older Web event parser can transport the V4 hosted preset for fail-clos
         id: "workspace_hosted",
         version: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
       },
+      hostedApprovalProducerProtocol: "v2",
       resolvedProfile: {
         ...(eventPayloads["execution-profile.resolved"]!
           .resolvedProfile as Record<string, unknown>),
@@ -1102,6 +1103,22 @@ test("an older Web event parser can transport the V4 hosted preset for fail-clos
   assert.equal(
     event.payload.environmentPreset.version,
     WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+  );
+  assert.equal(event.payload.hostedApprovalProducerProtocol, "v2");
+});
+
+test("hosted producer protocol markers reject unknown release modes", () => {
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event:workspace-hosted-unknown-producer",
+      type: "execution-profile.resolved",
+      ts: "2026-08-26T12:00:00.000Z",
+      payload: {
+        ...eventPayloads["execution-profile.resolved"],
+        hostedApprovalProducerProtocol: "automatic",
+      },
+    }),
+    /hostedApprovalProducerProtocol must be one of 'v2', 'v3', 'v4'/u,
   );
 });
 

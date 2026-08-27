@@ -15,11 +15,11 @@ depends_on:
 
 This is the operator procedure for
 [Issue 05](../planning/hosted-approval-simplification/issues/05-contract-legacy-approval-paths.md).
-It qualifies preset-4 compatibility images that still emit V2, proves them
-against the existing Web deployment, and rolls them out before Web starts
-requiring preset 4. It then deploys V2/V3/V4 readers, proves the inactive V2
-boundary, activates V4 producers on exact targets, observes legacy drain, and
-only then permits a separate cleanup release.
+It first establishes a dual-profile Web bridge against the uniform preset-3
+fleet. It then builds and rolls preset-4 compatibility images that still emit
+V2, proves the inactive V2 boundary, and only afterward builds and activates
+V4 producers on exact targets. Finally it observes legacy drain before
+permitting a separate cleanup release.
 
 This runbook does not authorize a deployment. The operator must have an
 approved production change window and must retain every checkpoint named
@@ -28,15 +28,19 @@ provider credentials into the evidence record.
 
 ## Release shape
 
-Use two qualified commits and never collapse them into one production
-promotion:
+Use one qualified bridge source release and two separately qualified producer
+artifact modes. Never collapse their production evidence:
 
-1. **Compatibility commit:** preset-4 Runtime and worker profiles that still
-   emit V2, migrations, V2/V3/V4 readers, strict V4 decisions, proof tooling,
-   and the telemetry report.
-2. **Activation commit:** the same qualified tree plus
-   `KESTREL_HOSTED_APPROVAL_PROTOCOL=v4` in the Workspace Runtime and
-   turn-worker images.
+1. **Bridge source commit:** V2/V3/V4 readers, a Web assertion accepting
+   only legacy `workspace_hosted` preset 3 or explicitly marked preset 4 with
+   the `hosted_workspace` pack, parameterized producer Dockerfiles, migrations,
+   proof tooling, and telemetry. The compatibility images are built with
+   `KESTREL_HOSTED_APPROVAL_PROTOCOL=v2` and carry the matching OCI label.
+2. **Activation artifacts:** images built from that same qualified source with
+   `KESTREL_HOSTED_APPROVAL_PROTOCOL=v4` and the matching OCI label. Record
+   different immutable tags and registry digests. A protocol build argument is
+   the explicit artifact boundary; do not invent an empty source commit or
+   mutable retag to distinguish activation.
 
 The V2 default is the inactive boundary. An invalid configured value fails
 startup. Existing V2 interactions remain V2; existing V3 interactions remain
@@ -50,8 +54,8 @@ Complete current provider state before changing anything.
 | Target                         | Current production state                    | Required action                                                          | Required proof                                              | Status     |
 | ------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------- | ---------- |
 | PostgreSQL                     | Record migration head                       | Apply additive migrations through the native `one` build                 | Migration and build succeeded                               | Pending    |
-| Vercel `one`                   | Record deployment ID and commit             | Promote compatibility commit only after compatible images are live, then promote activation commit | Exact deployment, health, approval API                      | Pending    |
-| Vercel `docs`                  | Record deployment ID and commit             | Native deployment collateral for both promotions                         | Exact build and production URL                              | Pending    |
+| Vercel `one`                   | Record deployment ID and commit             | Promote bridge commit before compatibility images                        | Exact deployment, health, approval API                      | Pending    |
+| Vercel `docs`                  | Record deployment ID and commit             | Native deployment collateral for the bridge promotion                    | Exact build and production URL                              | Pending    |
 | Workspace Runtime              | Inventory every Environment image           | Publish compatibility pair, then V4 pair                                 | Local image E2E, disposable canary, live canary Environment | Pending    |
 | Environment Router             | Inventory every Environment image           | Publish with Workspace Runtime under the same tag                        | Pair smoke, operation, Workspace and Preview canaries       | Pending    |
 | turn-worker                    | Inventory every started and stopped Machine | Publish compatibility image, then V4 image; update one Machine at a time | Worker check, durable turn, hosted approval proof           | Pending    |
@@ -62,15 +66,14 @@ Complete current provider state before changing anything.
 
 Stop if the repository delta proves an “unaffected” target changed.
 
-## Stage 0 — qualify both commits and image modes locally
+## Stage 0 — inventory preset 3 and qualify both artifact modes
 
 Record:
 
 ```text
 Operator:
 Start time:
-Compatibility commit:
-Activation commit:
+Bridge source commit:
 origin/main:
 origin/production:
 merge base:
@@ -82,10 +85,11 @@ canary Environment:
 current runtime pair:
 turn-worker Machine IDs, states, checks, and images:
 rollback image for every target:
+resolved profile for every started producer:
 ```
 
 Refresh the protected branches and inspect the complete delta. Require a clean
-checkout at each candidate commit. Run:
+checkout at the bridge source commit. Run:
 
 ```bash
 pnpm validate
@@ -95,16 +99,23 @@ pnpm validate:audit
 pnpm --dir apps/web build
 ```
 
-Check out each exact candidate commit before building its images. Never build
-the compatibility tag from the activation checkout. Build the three affected
-production images at each candidate commit, and use a different local tag for
-each commit:
+Before qualification, resolve every started turn-worker and Environment
+profile. Stop unless the production fleet is uniformly
+`workspace_hosted` preset 3 with the `hosted_workspace` policy pack. Preset 2,
+preset 4, `ci_bot`, an unknown pack, or a mixed fleet is not an accepted
+starting state. The current Web deployment is only a rollback target for this
+uniform preset-3 fleet; this runbook never claims it accepts preset 4.
+
+From that exact checkout, build the three affected production images once in
+each producer mode. Use a different local tag for each artifact boundary and
+pass the producer protocol into the build:
 
 ```bash
 docker buildx build --platform linux/amd64 --load \
   --file apps/workspace-runtime/Dockerfile \
   --tag local/kestrel-workspace-runtime:<candidate-tag> \
-  --build-arg KESTREL_BUILD_ID=<candidate-tag> .
+  --build-arg KESTREL_BUILD_ID=<candidate-tag> \
+  --build-arg KESTREL_HOSTED_APPROVAL_PROTOCOL=<v2-or-v4> .
 bash apps/workspace-runtime/scripts/image-smoke.sh \
   local/kestrel-workspace-runtime:<candidate-tag> <v2-or-v4>
 
@@ -118,13 +129,15 @@ bash apps/environment-router/scripts/image-smoke.sh \
 docker buildx build --platform linux/amd64 --load \
   --file deploy/fly/kestrel-one-turn-worker/Dockerfile \
   --tag local/kestrel-one-turn-worker:<candidate-tag> \
-  --build-arg KESTREL_BUILD_ID=<candidate-tag> .
+  --build-arg KESTREL_BUILD_ID=<candidate-tag> \
+  --build-arg KESTREL_HOSTED_APPROVAL_PROTOCOL=<v2-or-v4> .
 bash deploy/fly/kestrel-one-turn-worker/smoke.sh \
   local/kestrel-one-turn-worker:<candidate-tag> <v2-or-v4>
 ```
 
-The compatibility images must report V2 as their hosted approval producer.
-The activation Workspace Runtime and turn-worker images must report V4. For
+The compatibility images must report V2 in both the runtime environment and
+`com.lumicorp.kestrel.hosted-approval-producer` OCI label. The activation
+Workspace Runtime and turn-worker images must report V4 in both places. For
 each candidate, run a real approved model through the exact prebuilt Runtime
 pair and retain the participating image IDs:
 
@@ -143,15 +156,44 @@ canary in Stage 1. If the repository cannot route the real-model path through
 the prebuilt Runtime pair, stop here and repair that test seam; source tests,
 image health, or a later production canary do not replace it.
 
-**Resume evidence:** both commit SHAs, four validation results, Web build,
+**Resume evidence:** bridge source commit SHA, four validation results, Web build,
 three image IDs and smokes for each commit, and exact local-image real-model
 results.
 
-## Stage 1 — prove compatibility images against old Web
+## Stage 1 — deploy the dual-profile bridge against preset 3
 
-Keep the existing production Web and Mobile deployment unchanged throughout
-this stage. Use the exact compatibility checkout qualified in Stage 0. Publish
-only the preset-4 images that still emit V2:
+Promote the exact bridge/compatibility commit through the protected `main` to
+`production` path while every producer remains on the Stage 0 preset-3
+inventory. Wait for native `one` and `docs` deployments, then require the
+`one` migration/build and both production deployments to pass.
+
+1. Confirm Web and Mobile read V2, V3, and V4 while old boolean submissions
+   remain accepted.
+2. Resolve the profile from every inventoried producer. The bridge must accept
+   exact `workspace_hosted` preset 3 with `hosted_workspace`.
+3. Use a non-executing contract probe to prove preset 2, `ci_bot`, unknown
+   policy packs, and preset 4 without an explicit supported producer marker
+   still fail closed before model spend.
+4. Repeat the exact-tool no-spend preflight on one preset-3 canary Environment.
+   Require `exec_command` Ask First without creating a turn or model request.
+5. Complete one bounded preset-3 V2 decline and require a terminal decision
+   with no provider effect.
+
+Do not publish or roll a preset-4 image until all bridge evidence is retained.
+
+**Rollback:** restore the recorded Web deployment. This is safe only because
+the producer fleet is still uniformly preset 3. Never roll back to pre-bridge
+Web after any preset-4 producer is active.
+
+**Resume evidence:** promotion PR and commit; both Vercel deployment IDs;
+migration/build results; complete preset-3 inventory; dual-profile assertion
+proof; fail-closed probes; no-spend preflight; V2 decline; and rollback ID.
+
+## Stage 2 — build, prove, and roll preset-4/V2 compatibility images
+
+Stage 1 must establish the bridge Web while the fleet is still uniformly
+preset 3. Use the exact bridge source checkout qualified in Stage 0 and
+publish new immutable tags only:
 
 ```bash
 pnpm production:image:publish --role workspace-runtime --tag <compatibility-tag> --approval-protocol v2
@@ -159,75 +201,37 @@ pnpm production:image:publish --role environment-router --tag <compatibility-tag
 pnpm production:image:publish --role turn-worker --tag <compatibility-tag> --approval-protocol v2
 ```
 
-`--approval-protocol v2` is a smoke expectation, not an image override. Stop if
-either producer image was built with V4 or fails the V2 smoke.
+For both producers, `--approval-protocol v2` is a Docker build input, smoke
+expectation, and verified OCI-label value. Retain the publisher JSON containing
+the exact protocol, tag, and registry digest. Stop before rollout if any field
+is missing, any digest is mutable or unresolved, or the image reports a
+different protocol.
 
 Follow the
 [runtime-pair rollout](../../deploy/fly/kestrel-one-runner/ROLLOUT.md) and
 [turn-worker rollout](../../deploy/fly/kestrel-one-turn-worker/ROLLOUT.md)
-exactly. The hosted approval ordering in this runbook takes precedence over
-their ordinary Web-first dependency rule.
+exactly. First run the disposable worker and runtime-pair canaries against the
+published digests. Then:
 
-First prove the worker image without changing a queue consumer. Run its
-disposable attachment canary, and retain the immutable image identity. Then:
-
-1. Update one started turn-worker Machine.
+1. Update one started turn-worker Machine to the exact compatibility digest.
 2. Require the `worker` check and one durable ordinary turn.
-3. Update the remaining started Machines individually while preserving
-   capacity. Do not run a hosted canary against a mixed started fleet because
-   the queue cannot target one worker.
-4. Run the disposable runtime-pair canary.
-5. Update one exact canary Environment and wait for
-   `environment.update.ready`.
-6. Before submitting a model turn, call the canary Environment's
-   `workspace/canary/exact-tool-preflight` endpoint through authenticated
-   operator tooling. Require `exec_command` to be available with an exact Ask
-   First decision. This request must not create a turn or spend model tokens.
-7. With old Web still serving production, create one bounded hosted V2 request
-   on the canary Environment and decline it. Confirm the persisted interaction
-   version is `runner_hosted_tool_approval_interaction_v2`, the decision is
-   terminal, and no provider effect executed.
-
-Stop if old Web rejects preset 4, cannot render or persist the V2 decision, or
-spends model tokens before the exact-tool preflight succeeds. Do not promote
-new Web as a workaround. Restore the exact previous images first, then repair
-the compatibility boundary in a new qualified commit. If old Web rejects the
-preflight, retain proof that it created no turn and made no model request
-before rollback.
-
-Do not activate the runtime pair or update another Environment yet. Do not
-start the drain clock. V2 production is still expected.
-
-**Rollback:** restore each changed turn-worker Machine to its recorded image.
-Restore the complete Router/Workspace pair on the canary Environment and prove
-the old Web path again. Never repair only one image in the pair.
-
-**Resume evidence:** published immutable compatibility images; every started
-worker before/after record; disposable canaries; durable ordinary turn; exact
-canary Environment operation; no-spend preflight response; V2 request,
-decline, and no-effect evidence; and rollback identities.
-
-## Stage 2 — complete the preset-4 V2 image rollout
-
-Stage 1 must prove that old Web accepts the preset-4, V2-producing
-compatibility images. Keep old Web deployed while completing this stage.
-
-1. Update every stopped turn-worker Machine individually without starting it.
-2. Re-inventory every started and stopped Machine. Each must resolve to the
-   compatibility image.
-3. Run the live Workspace and Preview canaries on the accepted canary
-   Environment.
-4. Activate the exact accepted compatibility Router/Workspace pair.
-5. Update every approved noncanary Environment through a separate durable
+3. Update remaining started Machines individually while preserving capacity.
+   Do not run a hosted canary against a mixed started fleet because the queue
+   cannot target one worker.
+4. Update one exact canary Environment to the compatibility Router/Workspace
+   pair and wait for `environment.update.ready`.
+5. Run exact-tool no-spend preflight, then one bounded hosted V2 decline.
+   Require preset 4, explicit producer protocol V2, a V2 interaction, no tool
+   execution, and no remembered record.
+6. Update every stopped turn-worker Machine individually without starting it.
+7. Run the live Workspace and Preview canaries, activate the accepted pair,
+   and update each approved noncanary Environment with a separate durable
    operation.
-6. For each Environment, require `environment.update.ready`, exact paired image
-   identities, and the smallest affected Workspace proof.
-7. Re-inventory every Environment. Each must use the compatibility pair and
-   resolve `workspace_hosted` preset 4 while still producing V2.
+8. Re-inventory all Machines and Environments. Every producer must resolve to
+   the recorded compatibility digest and preset-4/V2 profile.
 
-Do not promote new Web until the complete Machine and Environment inventories
-are uniform. An unqualified preset-2 or preset-3 producer would be rejected as
-soon as the new Web assertion becomes active.
+Do not roll back Web to its pre-bridge deployment. An old Web cannot accept
+preset 4. Do not start the drain clock; V2 production is still expected.
 
 Do not start the drain clock. V2 production is still expected.
 
@@ -240,19 +244,14 @@ individually.
 record, durable turn, canary operation, Workspace/Preview results, activation
 record, per-Environment operations, and final preset-4/V2 inventories.
 
-## Stage 3 — deploy compatible readers and prove inactive V2
+## Stage 3 — prove the inactive V2 checkpoint
 
-Only after Stage 2 establishes a uniform preset-4/V2 fleet, promote the
-compatibility commit through the protected `main` to `production` process.
-
-1. Wait for native `one` and `docs` deployments.
-2. Require the `one` migration/build and both production deployments to pass.
-3. Confirm Web and Mobile read V2, V3, and V4 while old boolean submissions
-   remain accepted.
-4. Confirm Web's preset-4 assertion accepts every inventoried production
-   Runtime and worker profile.
-5. Repeat the exact-tool no-spend preflight before submitting a model turn.
-6. Confirm every new hosted interaction still emits V2.
+Only after Stage 2 establishes a uniform preset-4/V2 fleet, repeat production
+health and confirm the already-deployed Web and Mobile readers still accept
+V2, V3, V4, and old boolean submissions. Confirm the bridge assertion accepts
+every inventoried preset-4 producer only with its explicit V2 marker. Repeat
+the exact-tool no-spend preflight and confirm every new hosted interaction
+still emits V2.
 
 Set the named canary variables in the existing operator environment. Run the
 boolean-reader denial canary with
@@ -286,19 +285,19 @@ Then run one canonical V2 checkpoint on an exact canary thread:
 Also resume one already-persisted metadata-less V3 interaction through Approve
 Once or Decline. Do not renegotiate its recorded profile or convert it to V4.
 
-**Rollback:** restore Web to the recorded old deployment. Keep the compatible
-preset-4/V2 images in place because Stage 1 proved that exact rollback pair.
-Never reverse additive migrations.
+**Rollback:** keep the bridge Web deployed and restore each exact producer to
+its recorded compatibility digest if the checkpoint changes producer state.
+Never restore pre-bridge Web while preset-4 images exist, and never reverse
+additive migrations.
 
-**Resume evidence:** promotion PR and commit; both Vercel deployment IDs;
-migration result; production health; preset inventory; no-spend preflight;
-legacy canary JSON; canonical V2 proof JSON; and metadata-less V3 resume proof.
+**Resume evidence:** production health; complete preset-4/V2 digest inventory;
+no-spend preflight; legacy canary JSON; canonical V2 proof JSON; and
+metadata-less V3 resume proof.
 
 ## Stage 4 — activate V4 on controlled targets
 
-Promote the activation commit through the protected `main` to `production`
-path and wait for the `one` and `docs` deployments. From the exact activation
-checkout qualified in Stage 0, publish one immutable activation image set:
+Keep the qualified bridge Web deployed. From the exact bridge source checkout
+qualified in Stage 0, publish one immutable activation image set:
 
 ```bash
 pnpm production:image:publish --role workspace-runtime --tag <activation-tag> --approval-protocol v4
@@ -306,8 +305,10 @@ pnpm production:image:publish --role environment-router --tag <activation-tag>
 pnpm production:image:publish --role turn-worker --tag <activation-tag> --approval-protocol v4
 ```
 
-`--approval-protocol v4` is also a smoke expectation. It must verify the exact
-activation checkout rather than convert a compatibility image.
+For both producers, `--approval-protocol v4` is a Docker build input, smoke
+expectation, and verified OCI-label value. Retain the publisher JSON containing
+the exact protocol, new immutable tag, and registry digest. Never retag or
+convert a compatibility image.
 
 Before emitting V4 from a Workspace Runtime, qualify the activation runtime
 pair with its disposable canary. Roll the activation image to every started
@@ -399,7 +400,7 @@ them into reconstruction.
 compatible readers. Do not roll back migrations. Do not turn an already-created
 V3 or V4 interaction into another version.
 
-**Resume evidence:** second promotion, exact images, target-by-target rollout,
+**Resume evidence:** activation promotion, exact images, target-by-target rollout,
 full hosted acceptance, runtime activation, and rollback identities.
 
 ## Stage 6 — observe legacy drain
@@ -436,8 +437,9 @@ completion, and terminal incident evidence.
 
 Only after Stage 6 evidence is complete, implement the deletion list in Issue
 05 as a separate reviewed change. Remove the incident command only after its
-target rows are terminal. Run all four gates, both image qualifications, and
-the full acceptance suite again.
+target rows are terminal. This is also the earliest release that may remove
+the preset-3 Web bridge and restore a strict preset-4 assertion. Run all four
+gates, both image qualifications, and the full acceptance suite again.
 
 After cleanup, old writers are not a rollback option. Failures are fixed
 forward while preserving canonical interactions, consume-before-provider
@@ -446,8 +448,7 @@ atomicity, exact normalization, and effect outcomes.
 ## Closeout record
 
 ```text
-Compatibility commit and promotion:
-Activation commit and promotion:
+Bridge source commit and promotion:
 Vercel one/docs deployments:
 Migration:
 Compatibility images and rollout:
