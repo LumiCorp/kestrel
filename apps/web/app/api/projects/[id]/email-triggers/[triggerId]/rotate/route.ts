@@ -19,7 +19,8 @@ export async function POST(
   context: { params: Promise<{ id: string; triggerId: string }> },
 ) {
   try {
-    const { organizationId, session } = await requireActiveOrganization();
+    const { organizationId, session } =
+      await requireActiveOrganization(request);
     const { id: projectId, triggerId } = paramsSchema.parse(
       await context.params,
     );

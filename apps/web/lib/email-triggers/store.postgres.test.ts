@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import postgres from "postgres";
 import { withGatewayModelEconomicsProfile } from "@/lib/ai/model-economics-profile";
+import { createEmailTriggerInputSchema } from "./contracts";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
@@ -174,6 +175,8 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
   assert.equal(created.executionOwnerUserId, ids.creator);
   assert.equal(created.createdByUserId, ids.creator);
   assert.equal(created.revision, 1);
+  assert.equal(created.enabled, true);
+  assert.equal(created.disabledReason, null);
   assert.match(created.addressLocalPart, /^[a-f0-9]{32}$/u);
   assert.equal(created.addressDomain, "inbound.example.test");
   assert.equal(
@@ -270,6 +273,22 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
   });
   assert.equal(manual.disabledReason, "manual");
   assert.equal(manual.revision, 2);
+  const repeatedManual = await triggers.updateProjectEmailTrigger({
+    triggerId: manuallyDisabled.id,
+    projectId: ids.project,
+    organizationId: ids.organization,
+    userId: ids.creator,
+    expectedRevision: 2,
+    enabled: false,
+  });
+  assert.equal(repeatedManual.disabledReason, "manual");
+  assert.equal(repeatedManual.revision, 2);
+  const [manualAuditHistory] = await sql<Array<{ count: number }>>`
+    SELECT count(*)::int AS "count"
+    FROM "project_audit_events"
+    WHERE "target_id" = ${manuallyDisabled.id}
+  `;
+  assert.equal(manualAuditHistory?.count, 2);
 
   await projects.removeProjectMember({
     projectId: ids.project,
@@ -299,6 +318,22 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
     reason: "manual",
     revision: 2,
   });
+  const repeatedOwnerLoss = await triggers.updateProjectEmailTrigger({
+    triggerId: created.id,
+    projectId: ids.project,
+    organizationId: ids.organization,
+    userId: ids.owner,
+    expectedRevision: 4,
+    enabled: false,
+  });
+  assert.equal(repeatedOwnerLoss.disabledReason, "execution_owner_access_lost");
+  assert.equal(repeatedOwnerLoss.revision, 4);
+  const [ownerLossAuditHistory] = await sql<Array<{ count: number }>>`
+    SELECT count(*)::int AS "count"
+    FROM "project_audit_events"
+    WHERE "target_id" = ${created.id}
+  `;
+  assert.equal(ownerLossAuditHistory?.count, 4);
 
   const archiveTarget = await triggers.createProjectEmailTrigger({
     organizationId: ids.organization,
@@ -348,6 +383,22 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
       revision: 2,
     },
   );
+  const repeatedArchive = await triggers.updateProjectEmailTrigger({
+    triggerId: archiveTarget.id,
+    projectId: ids.project,
+    organizationId: ids.organization,
+    userId: ids.owner,
+    expectedRevision: 2,
+    enabled: false,
+  });
+  assert.equal(repeatedArchive.disabledReason, "project_archived");
+  assert.equal(repeatedArchive.revision, 2);
+  const [archiveAuditHistory] = await sql<Array<{ count: number }>>`
+    SELECT count(*)::int AS "count"
+    FROM "project_audit_events"
+    WHERE "target_id" = ${archiveTarget.id}
+  `;
+  assert.equal(archiveAuditHistory?.count, 2);
   assert.deepEqual(
     archiveRows.find((row) => row.id === archiveManualTarget.id),
     {
@@ -441,11 +492,37 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
     organizationId: ids.organization,
     projectId: ids.project,
     userId: ids.owner,
-    name: "Prepared before activation",
+    ...createEmailTriggerInputSchema.parse({
+      name: "Prepared before activation",
+      instruction: triggers.DEFAULT_EMAIL_TRIGGER_INSTRUCTION,
+      modelId: "openrouter/email-trigger-model",
+      claimedFromFilter: null,
+    }),
+  });
+  assert.equal(inactive.enabled, false);
+  assert.equal(inactive.disabledReason, "manual");
+  await assert.rejects(
+    triggers.createProjectEmailTrigger({
+      organizationId: ids.organization,
+      projectId: ids.project,
+      userId: ids.owner,
+      name: "Explicit activation before receiving",
+      modelId: "openrouter/email-trigger-model",
+      enabled: true,
+    }),
+    (error: unknown) =>
+      error instanceof triggers.EmailTriggerReadinessError &&
+      error.reason === "inbound_receiving_unavailable",
+  );
+  const explicitlyInactive = await triggers.createProjectEmailTrigger({
+    organizationId: ids.organization,
+    projectId: ids.project,
+    userId: ids.owner,
+    name: "Explicitly prepared before activation",
     modelId: "openrouter/email-trigger-model",
     enabled: false,
   });
-  assert.equal(inactive.enabled, false);
+  assert.equal(explicitlyInactive.enabled, false);
   await assert.rejects(
     triggers.updateProjectEmailTrigger({
       triggerId: inactive.id,

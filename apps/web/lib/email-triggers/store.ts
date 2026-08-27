@@ -255,7 +255,7 @@ function readinessMessage(reason: EmailTriggerReadinessReason) {
   }
 }
 
-async function assertEnablementReady(
+async function emailTriggerReadinessInTransaction(
   tx: EmailTriggerTransaction,
   input: {
     organizationId: string;
@@ -277,6 +277,22 @@ async function assertEnablementReady(
     }),
   };
   const reason = readinessReason(readiness);
+  return { ...readiness, reason };
+}
+
+async function assertEnablementReady(
+  tx: EmailTriggerTransaction,
+  input: {
+    organizationId: string;
+    projectId: string;
+    projectArchivedAt: Date | null;
+    environmentId: string;
+    executionOwnerUserId: string | null;
+    modelId: string;
+  },
+) {
+  const readiness = await emailTriggerReadinessInTransaction(tx, input);
+  const reason = readiness.reason;
   if (reason) {
     throw new EmailTriggerReadinessError(reason, readinessMessage(reason));
   }
@@ -443,8 +459,6 @@ export async function createProjectEmailTrigger(input: {
   const claimedFromFilter = normalizeClaimedFromFilter(
     input.claimedFromFilter,
   );
-  const enabled = input.enabled ?? true;
-
   return knowledgeDb.transaction(async (tx) => {
     const access = await lockProjectEmailTriggerAccessInTransaction(tx, input);
     if (!access || access.archivedAt) {
@@ -479,27 +493,27 @@ export async function createProjectEmailTrigger(input: {
       );
     }
 
-    if (enabled) {
-      await assertEnablementReady(tx, {
-        organizationId: input.organizationId,
-        projectId: input.projectId,
-        projectArchivedAt: access.archivedAt,
-        environmentId: access.environmentId,
-        executionOwnerUserId: input.userId,
-        modelId,
-      });
-    } else if (
-      !(await isKestrelRuntimeModelSelectionAvailableInTransaction(tx, {
-        organizationId: input.organizationId,
-        environmentId: access.environmentId,
-        modelId,
-      }))
-    ) {
+    const readiness = await emailTriggerReadinessInTransaction(tx, {
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+      projectArchivedAt: access.archivedAt,
+      environmentId: access.environmentId,
+      executionOwnerUserId: input.userId,
+      modelId,
+    });
+    if (!readiness.model) {
       throw new EmailTriggerReadinessError(
         "environment_model_unavailable",
         readinessMessage("environment_model_unavailable"),
       );
     }
+    if (input.enabled === true && readiness.reason) {
+      throw new EmailTriggerReadinessError(
+        readiness.reason,
+        readinessMessage(readiness.reason),
+      );
+    }
+    const enabled = input.enabled ?? readiness.reason === null;
 
     const now = new Date();
     const [created] = await tx
@@ -603,13 +617,8 @@ export async function updateProjectEmailTrigger(input: {
         ? trigger.claimedFromFilter
         : normalizeClaimedFromFilter(input.claimedFromFilter);
     const enabled = input.enabled ?? trigger.enabled;
-    const changesDefinition =
-      input.name !== undefined ||
-      input.instruction !== undefined ||
-      input.modelId !== undefined ||
-      input.claimedFromFilter !== undefined;
     if (
-      (changesDefinition || input.enabled === true) &&
+      (input.modelId !== undefined || input.enabled === true) &&
       !(await isKestrelRuntimeModelSelectionAvailableInTransaction(tx, {
         organizationId: input.organizationId,
         environmentId: access.environmentId,
@@ -637,6 +646,19 @@ export async function updateProjectEmailTrigger(input: {
       modelId !== trigger.modelId ||
       claimedFromFilter !== trigger.claimedFromFilter ||
       enabled !== trigger.enabled;
+    const disableTransition = input.enabled === false && trigger.enabled;
+    const disabledReason = disableTransition
+      ? "manual"
+      : input.enabled === true
+        ? null
+        : trigger.disabledReason;
+    if (
+      name === trigger.name &&
+      !revisionChanges &&
+      disabledReason === trigger.disabledReason
+    ) {
+      return trigger;
+    }
     const revision = trigger.revision + (revisionChanges ? 1 : 0);
     const now = new Date();
     const [updated] = await tx
@@ -647,12 +669,7 @@ export async function updateProjectEmailTrigger(input: {
         modelId,
         claimedFromFilter,
         enabled,
-        disabledReason:
-          input.enabled === false
-            ? "manual"
-            : input.enabled === true
-              ? null
-              : trigger.disabledReason,
+        disabledReason,
         revision,
         updatedAt: now,
       })
@@ -669,7 +686,7 @@ export async function updateProjectEmailTrigger(input: {
       projectId: input.projectId,
       actorUserId: input.userId,
       action:
-        input.enabled === false
+        disableTransition
           ? "project.email_trigger.disabled"
           : input.enabled === true
             ? "project.email_trigger.enabled"

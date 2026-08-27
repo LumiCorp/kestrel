@@ -25,6 +25,8 @@ test("Email Triggers are a primary Work surface with private useful-run controls
   assert.match(client, /DEFAULT_EMAIL_TRIGGER_INSTRUCTION/u);
   assert.match(client, /Label htmlFor="trigger-model">Model/u);
   assert.match(client, /\/api\/models\/approved\?modality=language&projectId=/u);
+  assert.match(client, /configured model is unavailable and will be preserved/iu);
+  assert.match(client, /draft\.modelId !== editing\.modelId/u);
   assert.match(client, /Runs as/u);
   assert.match(client, /Exact claimed-From filter/u);
   assert.match(client, /does not verify the sender's identity/u);
@@ -38,6 +40,13 @@ test("Email Triggers are a primary Work surface with private useful-run controls
     client.match(/type EmailTriggerDraft = \{[\s\S]*?\n\};/u)?.[0] ?? "",
     /accessMode|executionOwner/u,
   );
+  const saveRequest =
+    client.match(/async function saveTrigger\(\)[\s\S]*?\n {2}async function setEnabled/u)?.[0] ??
+    "";
+  assert.match(saveRequest, /method: editing \? "PATCH" : "POST"/u);
+  assert.match(saveRequest, /name: draft\.name/u);
+  assert.match(saveRequest, /modelId: draft\.modelId/u);
+  assert.doesNotMatch(saveRequest, /\benabled\b/u);
 });
 
 test("Email Trigger APIs accept neither public mode nor a configurable Execution Owner", () => {

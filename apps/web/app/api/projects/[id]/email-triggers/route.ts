@@ -12,11 +12,12 @@ import { routeIdSchema } from "@/lib/knowledge/validation";
 const paramsSchema = z.object({ id: routeIdSchema });
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { organizationId, session } = await requireActiveOrganization();
+    const { organizationId, session } =
+      await requireActiveOrganization(request);
     const { id: projectId } = paramsSchema.parse(await context.params);
     const triggers = await listProjectEmailTriggersForUser({
       organizationId,
@@ -34,7 +35,8 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { organizationId, session } = await requireActiveOrganization();
+    const { organizationId, session } =
+      await requireActiveOrganization(request);
     const { id: projectId } = paramsSchema.parse(await context.params);
     const body = createEmailTriggerInputSchema.parse(await request.json());
     const created = await createProjectEmailTrigger({

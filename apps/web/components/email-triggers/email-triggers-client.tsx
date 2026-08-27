@@ -58,6 +58,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  emailTriggerModelIsUnavailable,
+  reconcileEmailTriggerModelSelection,
+} from "@/lib/email-triggers/model-selection";
 import { DEFAULT_EMAIL_TRIGGER_INSTRUCTION } from "@/lib/email-triggers/shared";
 
 export type EmailTriggerProjectOption = {
@@ -183,13 +187,11 @@ export function EmailTriggersClient({
         setModels(result.models);
         setDraft((current) => {
           if (current.projectId !== projectId) return current;
-          const selected = result.models?.some(
-            (model) => model.id === current.modelId,
-          )
-            ? current.modelId
-            : (result.models?.find((model) => model.isDefault)?.id ??
-              result.models?.[0]?.id ??
-              "");
+          const selected = reconcileEmailTriggerModelSelection({
+            currentModelId: current.modelId,
+            models: result.models ?? [],
+            mode: editing ? "edit" : "create",
+          });
           return { ...current, modelId: selected };
         });
       })
@@ -204,7 +206,17 @@ export function EmailTriggersClient({
         if (!controller.signal.aborted) setModelsLoading(false);
       });
     return () => controller.abort();
-  }, [dialogOpen, draft.projectId]);
+  }, [dialogOpen, draft.projectId, editing]);
+
+  const configuredModelUnavailable = Boolean(
+    editing &&
+      !modelsLoading &&
+      !modelsError &&
+      emailTriggerModelIsUnavailable({
+        configuredModelId: draft.modelId,
+        models,
+      }),
+  );
 
   const grouped = useMemo(() => {
     const groups = new Map<string, EmailTriggerSummary[]>();
@@ -262,7 +274,9 @@ export function EmailTriggersClient({
             ...(editing ? { expectedRevision: editing.revision } : {}),
             name: draft.name,
             instruction: draft.instruction,
-            modelId: draft.modelId,
+            ...(!editing || draft.modelId !== editing.modelId
+              ? { modelId: draft.modelId }
+              : {}),
             claimedFromFilter: draft.claimedFromFilter.trim() || null,
           }),
         },
@@ -547,6 +561,11 @@ export function EmailTriggersClient({
                   <SelectValue placeholder={modelsLoading ? "Loading models…" : "Choose a model"} />
                 </SelectTrigger>
                 <SelectContent>
+                  {configuredModelUnavailable ? (
+                    <SelectItem disabled value={draft.modelId}>
+                      {draft.modelId} · unavailable
+                    </SelectItem>
+                  ) : null}
                   {models.map((model) => (
                     <SelectItem key={`${model.provider}:${model.id}`} value={model.id}>
                       {model.name} · {model.provider}
@@ -555,6 +574,11 @@ export function EmailTriggersClient({
                 </SelectContent>
               </Select>
               {modelsError ? <p className="text-destructive text-xs" role="alert">{modelsError}</p> : null}
+              {configuredModelUnavailable ? (
+                <p className="text-muted-foreground text-xs" role="status">
+                  The configured model is unavailable and will be preserved. Choose an available model deliberately before enabling this Trigger.
+                </p>
+              ) : null}
             </div>
             <div className="space-y-2">
               <Label htmlFor="trigger-claimed-from">Exact claimed-From filter (optional)</Label>
