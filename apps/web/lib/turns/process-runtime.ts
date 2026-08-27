@@ -1073,6 +1073,11 @@ export async function processDurableThreadTurn(
       // A canonical cleanup turn cannot become terminal through Web failure or
       // Stop handling until the runner has durably completed the exact release.
       // Requeue the same cleanup marker so recovery can retry idempotently.
+      if (runtimeTerminalObserved && environmentExecutionId) {
+        throw new PreparedApprovalCleanupRetryError({
+          preserveRunningExecution: true,
+        });
+      }
       if (
         await resetDurablePreparedApprovalCleanupForRetry({ turnId: turn.id })
       ) {

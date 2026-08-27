@@ -93,12 +93,43 @@ function createRuntime(
   });
 }
 
-test("resumed cleanup release terminalizes before scheduler or model work", async () => {
+test("completed cleanup release survives Web requeue without scheduler or duplicate release", async () => {
   const store = new InMemorySessionStore();
   const sessionId = "prepared-cleanup-resume";
   const runId = "prepared-cleanup-original-run";
-  const idempotencyKey = "prepared-cleanup-release";
-  await store.ensureSession(sessionId);
+  const preparedCallId = "prepared-cleanup-release";
+  const idempotencyKey = `${preparedCallId}:release`;
+  const cleanup = {
+    version: "runner_prepared_approval_cleanup_v1" as const,
+    organizationId: "org-cleanup",
+    threadId: sessionId,
+    turnId: "turn-cleanup",
+    interactionId: "interaction-cleanup",
+    requestId: "approval-cleanup",
+    failureCode: "EXTERNAL_APPROVAL_EXPIRED" as const,
+    failureMessage: "Expired.",
+  };
+  const initialSession = await store.ensureSession(sessionId);
+  await store.patchSessionState({
+    sessionId,
+    expectedVersion: initialSession.version,
+    statePatch: {
+      agent: {
+        terminal: {
+          status: "COMPLETED",
+          finalStepAgent: "agent.exec.wait_approval",
+          finalizedAt: "2026-08-27T00:00:02.000Z",
+          reasonCode: cleanup.failureCode,
+          message: cleanup.failureMessage,
+          preparedApprovalCleanup: {
+            version: "prepared_approval_cleanup_terminal_v1",
+            releaseEffectIdempotencyKey: idempotencyKey,
+            cleanup,
+          },
+        },
+      },
+    },
+  });
   let modelCalls = 0;
   let releases = 0;
   const baseGateway = adaptLegacyTestToolGateway({
@@ -118,7 +149,7 @@ test("resumed cleanup release terminalizes before scheduler or model work", asyn
     toolInput: { cmd: "true" },
     runId,
     sessionId,
-    callId: idempotencyKey,
+    callId: preparedCallId,
   });
   const effect = {
     runId,
@@ -127,16 +158,7 @@ test("resumed cleanup release terminalizes before scheduler or model work", asyn
     type: "release_prepared_tool_call",
     payload: {
       preparedToolCall,
-      preparedApprovalCleanup: {
-        version: "runner_prepared_approval_cleanup_v1" as const,
-        organizationId: "org-cleanup",
-        threadId: sessionId,
-        turnId: "turn-cleanup",
-        interactionId: "interaction-cleanup",
-        requestId: "approval-cleanup",
-        failureCode: "EXTERNAL_APPROVAL_EXPIRED" as const,
-        failureMessage: "Expired.",
-      },
+      preparedApprovalCleanup: cleanup,
     },
     idempotencyKey,
     failurePolicy: "STOP" as const,
@@ -163,14 +185,25 @@ test("resumed cleanup release terminalizes before scheduler or model work", asyn
     }),
   });
 
-  const output = await kestrel.run({
-    id: "evt-prepared-cleanup-resume",
-    type: "system.resume",
+  const firstOutput = await kestrel.run({
+    id: "evt-prepared-cleanup-first-resume",
+    type: "user.approval",
     sessionId,
-    payload: {},
+    payload: { preparedApprovalCleanup: cleanup },
+  });
+  const secondOutput = await kestrel.run({
+    id: "evt-prepared-cleanup-web-requeue",
+    type: "user.approval",
+    sessionId,
+    payload: { preparedApprovalCleanup: cleanup },
   });
 
-  assert.equal(output.status, "COMPLETED");
+  assert.equal(firstOutput.status, "COMPLETED");
+  assert.equal(
+    secondOutput.status,
+    "COMPLETED",
+    JSON.stringify(secondOutput),
+  );
   assert.equal(releases, 1);
   assert.equal(modelCalls, 0);
   assert.equal(
@@ -178,11 +211,11 @@ test("resumed cleanup release terminalizes before scheduler or model work", asyn
     "DONE",
   );
   assert.equal(
-    store.getRunEvents().some((event) =>
+    store.getRunEvents().filter((event) =>
       event.type === "run.completed" &&
       event.metadata?.reason === "prepared_approval_cleanup_completed"
-    ),
-    true,
+    ).length,
+    2,
   );
 });
 

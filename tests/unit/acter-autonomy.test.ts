@@ -1772,6 +1772,18 @@ test("GitHub external confirmation resumes the exact mutation and releases rejec
       (cleanup.effects[0].payload.preparedApprovalCleanup as Record<string, unknown>).requestId,
     pendingApproval.approvalId,
   );
+  assert.deepEqual(
+    (
+      (cleanup.statePatch?.agent as Record<string, unknown>)
+        .terminal as Record<string, unknown>
+    ).preparedApprovalCleanup,
+    {
+      version: "prepared_approval_cleanup_terminal_v1",
+      releaseEffectIdempotencyKey:
+        `${String(pendingApproval.preparedInvocationId)}:release`,
+      cleanup: cleanup.effects?.[0]?.payload.preparedApprovalCleanup,
+    },
+  );
 
   const resumed = await waitApprovalStep(
     buildContext({

@@ -21,6 +21,7 @@ import {
   createRunnerStructuredReviewInteractionV1,
   parseRunnerExternalApprovalBindingV1,
   parseRunnerExternalApprovalBindingV2,
+  parseRunnerPreparedApprovalCleanupV1,
   serializeCanonicalApprovalPayload,
 } from "@kestrel-agents/protocol";
 
@@ -130,6 +131,7 @@ import {
 import { resolveKestrelTurnObjective } from "../runtime/turnObjective.js";
 import { redactDiagnosticText } from "../diagnostics/redaction.js";
 import { isPreparedApprovalCleanupRelease } from "../effects/EffectRunner.js";
+import { parsePreparedApprovalCleanupTerminalV1 } from "../runtime/preparedApprovalCleanupTerminal.js";
 
 export { readModelRequestSchemaName } from "./ExecutionEngineSupport.js";
 
@@ -739,7 +741,7 @@ export class ExecutionEngine {
       const resumeOutcome = await this.resumePendingEffects(
         runId,
         event,
-        session.sessionId,
+        session,
         errors,
         options.signal,
       );
@@ -3317,7 +3319,7 @@ export class ExecutionEngine {
   private async resumePendingEffects(
     runId: string,
     event: RuntimeEvent,
-    sessionId: string,
+    session: SessionRecord,
     errors: RuntimeError[],
     signal?: AbortSignal,
   ): Promise<{
@@ -3325,9 +3327,14 @@ export class ExecutionEngine {
     errors: RuntimeError[];
     cleanupCompleted?: boolean | undefined;
   } | undefined> {
+    const sessionId = session.sessionId;
     const pendingEffects = await this.deps.store.listPendingEffects(sessionId);
     if (pendingEffects.length === 0) {
-      return ;
+      return this.recoverCompletedPreparedApprovalCleanup({
+        event,
+        session,
+        errors,
+      });
     }
 
     await this.logInfo({
@@ -3368,6 +3375,95 @@ export class ExecutionEngine {
     }
 
     return ;
+  }
+
+  private async recoverCompletedPreparedApprovalCleanup(input: {
+    event: RuntimeEvent;
+    session: SessionRecord;
+    errors: RuntimeError[];
+  }): Promise<{
+    status: TransitionStatus;
+    errors: RuntimeError[];
+    cleanupCompleted: true;
+  } | undefined> {
+    const eventPayload = this.asRecord(input.event.payload);
+    if (eventPayload?.preparedApprovalCleanup === undefined) return;
+    const agent = this.asRecord(input.session.state.agent);
+    const terminal = this.asRecord(agent?.terminal);
+    if (terminal?.preparedApprovalCleanup === undefined) return;
+
+    try {
+      const eventCleanup = parseRunnerPreparedApprovalCleanupV1(
+        eventPayload.preparedApprovalCleanup,
+      );
+      const terminalCleanup = parsePreparedApprovalCleanupTerminalV1(
+        terminal.preparedApprovalCleanup,
+      );
+      if (
+        serializeCanonicalApprovalPayload(eventCleanup) !==
+          serializeCanonicalApprovalPayload(terminalCleanup.cleanup)
+      ) {
+        throw new Error(
+          "cleanup recovery event does not match the terminal cleanup identity",
+        );
+      }
+      if (this.deps.store.getPersistedEffect === undefined) {
+        throw new Error("cleanup recovery requires persisted effect lookup");
+      }
+      const effect = await this.deps.store.getPersistedEffect(
+        terminalCleanup.releaseEffectIdempotencyKey,
+      );
+      const result = await this.deps.store.getEffectResult(
+        terminalCleanup.releaseEffectIdempotencyKey,
+      );
+      if (
+        effect === null ||
+        effect.sessionId !== input.session.sessionId ||
+        effect.idempotencyKey !==
+          terminalCleanup.releaseEffectIdempotencyKey ||
+        effect.status !== "DONE" ||
+        !isPreparedApprovalCleanupRelease(effect) ||
+        result?.idempotencyKey !== effect.idempotencyKey ||
+        result.status !== "DONE"
+      ) {
+        throw new Error(
+          "cleanup recovery does not have an exact durable DONE effect and result",
+        );
+      }
+      const effectPayload = this.asRecord(effect.payload);
+      const effectCleanup = parseRunnerPreparedApprovalCleanupV1(
+        effectPayload?.preparedApprovalCleanup,
+      );
+      const preparedToolCall = parseDurablePreparedToolCallV1(
+        effectPayload?.preparedToolCall,
+      );
+      if (
+        serializeCanonicalApprovalPayload(effectCleanup) !==
+          serializeCanonicalApprovalPayload(terminalCleanup.cleanup) ||
+        preparedToolCall.sessionId !== input.session.sessionId ||
+        `${preparedToolCall.callId}:release` !== effect.idempotencyKey
+      ) {
+        throw new Error(
+          "cleanup recovery effect does not match its terminal identity",
+        );
+      }
+      return {
+        status: "COMPLETED",
+        errors: input.errors,
+        cleanupCompleted: true,
+      };
+    } catch (error) {
+      throw createRuntimeFailure(
+        "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+        "Prepared approval cleanup could not prove its exact durable release result.",
+        {
+          subsystem: "runtime",
+          classification: "runtime",
+          sessionId: input.session.sessionId,
+          cause: error instanceof Error ? error.message : "unknown",
+        },
+      );
+    }
   }
 
   private resolveRegionLaneCursor(sessionState: Record<string, unknown>): string | undefined {

@@ -101,13 +101,22 @@ test(
 test(
   "prepared cleanup bypasses ordinary exhaustion through explicit reconciliation",
   async () => {
-    const queueSource = await readFile(
-      new URL("./queue.ts", import.meta.url),
-      "utf8",
-    );
+    const [queueSource, runtimeSource] = await Promise.all([
+      readFile(new URL("./queue.ts", import.meta.url), "utf8"),
+      readFile(new URL("./process-runtime.ts", import.meta.url), "utf8"),
+    ]);
 
     assert.match(queueSource, /isPreparedApprovalCleanupRetryError/u);
     assert.match(queueSource, /cleanupReconciliation \? 0 : 3/u);
+    assert.match(queueSource, /nextPreparedApprovalCleanupRetrySchedule/u);
+    assert.match(queueSource, /startAfter: cleanupRetrySchedule\.startAfter/u);
+    assert.match(queueSource, /cleanupReconciliationAttempt:/u);
+    assert.match(queueSource, /cleanupResumeRunning/u);
+    assert.match(queueSource, /shouldPreservePreparedApprovalCleanupExecution/u);
+    assert.match(
+      runtimeSource,
+      /runtimeTerminalObserved && environmentExecutionId[\s\S]*preserveRunningExecution: true/u,
+    );
     assert.match(
       queueSource,
       /hasDurablePreparedApprovalCleanupPending[\s\S]*reconcileDurablePreparedApprovalCleanupForRetry/u,

@@ -28,6 +28,7 @@ import {
   type ToolApprovalDispositionV1,
 } from "../../../../../src/mode/contracts.js";
 import { isMutationCapableToolName } from "../../../../../src/runtime/mutationTools.js";
+import { createPreparedApprovalCleanupTerminalV1 } from "../../../../../src/runtime/preparedApprovalCleanupTerminal.js";
 import {
   parseDurablePreparedToolCallV1,
   parsePreparedToolCallV1,
@@ -1079,6 +1080,7 @@ function toPreparedApprovalCleanupTransition(input: {
   preparedToolCall: PreparedToolCallV1;
   cleanup: ReturnType<typeof parseRunnerPreparedApprovalCleanupV1>;
 }): Transition {
+  const releaseEffectIdempotencyKey = `${input.preparedToolCall.callId}:release`;
   const lastActionResult = {
     ok: false,
     kind: "prepared_approval_cleanup",
@@ -1103,7 +1105,7 @@ function toPreparedApprovalCleanupTransition(input: {
           preparedToolCall: input.preparedToolCall,
           preparedApprovalCleanup: input.cleanup,
         },
-        idempotencyKey: `${input.preparedToolCall.callId}:release`,
+        idempotencyKey: releaseEffectIdempotencyKey,
         failurePolicy: "STOP",
       },
     ],
@@ -1113,6 +1115,10 @@ function toPreparedApprovalCleanupTransition(input: {
         status: "COMPLETED",
         reasonCode: input.cleanup.failureCode,
         message: input.cleanup.failureMessage,
+        preparedApprovalCleanup: createPreparedApprovalCleanupTerminalV1({
+          releaseEffectIdempotencyKey,
+          cleanup: input.cleanup,
+        }),
       },
       observations: appendAgentObservation(input.reactState, lastActionResult),
     },

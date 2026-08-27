@@ -16,7 +16,11 @@ import {
   reconcileDurablePreparedApprovalCleanupForRetry,
 } from "@/lib/turns/store";
 import { resolveTurnConcurrencyGroup } from "@/lib/turns/concurrency";
-import { isPreparedApprovalCleanupRetryError } from "@/lib/turns/prepared-approval-cleanup";
+import {
+  isPreparedApprovalCleanupRetryError,
+  shouldPreservePreparedApprovalCleanupExecution,
+} from "@/lib/turns/prepared-approval-cleanup";
+import { nextPreparedApprovalCleanupRetrySchedule } from "@/lib/turns/prepared-approval-cleanup-retry";
 
 export const DURABLE_THREAD_TURN_QUEUE = "thread.turn.execute";
 export const PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE =
@@ -85,7 +89,11 @@ async function getTurnBoss() {
 async function sendTurn(
   boss: PgBoss,
   turnId: string,
-  options: { cleanupReconciliation?: boolean | undefined } = {},
+  options: {
+    cleanupReconciliation?: boolean | undefined;
+    previousCleanupReconciliationAttempt?: number | undefined;
+    cleanupResumeRunning?: boolean | undefined;
+  } = {},
 ) {
   const [turn] = await knowledgeDb
     .select({
@@ -103,9 +111,25 @@ async function sendTurn(
   if (!turn) throw new Error("The durable turn is unavailable for dispatch.");
   const concurrencyGroupKey =
     turn.concurrencyGroupKey ?? resolveTurnConcurrencyGroup(turn);
+  const cleanupRetrySchedule = options.cleanupReconciliation
+    ? nextPreparedApprovalCleanupRetrySchedule({
+        previousAttempt: options.previousCleanupReconciliationAttempt,
+        nowMs: Date.now(),
+      })
+    : undefined;
   const jobId = await boss.send(
     DURABLE_THREAD_TURN_QUEUE,
-    { turnId },
+    {
+      turnId,
+      ...(cleanupRetrySchedule === undefined
+        ? {}
+        : {
+            cleanupReconciliationAttempt: cleanupRetrySchedule.attempt,
+            ...(options.cleanupResumeRunning
+              ? { cleanupResumeRunning: true }
+              : {}),
+          }),
+    },
     {
       retryLimit: options.cleanupReconciliation ? 0 : 3,
       retryDelay: 5,
@@ -113,6 +137,9 @@ async function sendTurn(
       expireInSeconds: DURABLE_TURN_EXPIRE_SECONDS,
       heartbeatSeconds: DURABLE_TURN_HEARTBEAT_SECONDS,
       group: { id: concurrencyGroupKey },
+      ...(cleanupRetrySchedule === undefined
+        ? {}
+        : { startAfter: cleanupRetrySchedule.startAfter }),
     },
   );
   if (!jobId) {
@@ -414,7 +441,11 @@ export async function startDurableThreadTurnWorker() {
         includeMetadata: true,
         heartbeatRefreshSeconds: DURABLE_TURN_HEARTBEAT_REFRESH_SECONDS,
       },
-      async (jobs: Array<JobWithMetadata<{ turnId?: unknown }>>) => {
+      async (jobs: Array<JobWithMetadata<{
+        turnId?: unknown;
+        cleanupReconciliationAttempt?: unknown;
+        cleanupResumeRunning?: unknown;
+      }>>) => {
         for (const job of jobs) {
           const turnId = job.data?.turnId;
           if (typeof turnId !== "string") {
@@ -424,7 +455,10 @@ export async function startDurableThreadTurnWorker() {
             const { processDurableThreadTurn } =
               await import("@/lib/turns/process-runtime");
             const result = await processDurableThreadTurn(turnId, {
-              retryCount: job.retryCount,
+              retryCount:
+                job.data?.cleanupResumeRunning === true
+                  ? Math.max(1, job.retryCount)
+                  : job.retryCount,
               workerSignal: job.signal,
             });
             if (result.nextTurnId) {
@@ -433,13 +467,21 @@ export async function startDurableThreadTurnWorker() {
             await runWorkerMaintenance();
           } catch (error) {
             if (isPreparedApprovalCleanupRetryError(error)) {
-              const preserved =
-                await reconcileDurablePreparedApprovalCleanupForRetry({
-                  turnId,
-                });
+              const preserveRunningExecution =
+                shouldPreservePreparedApprovalCleanupExecution(error);
+              const preserved = preserveRunningExecution
+                ? await hasDurablePreparedApprovalCleanupPending({ turnId })
+                : await reconcileDurablePreparedApprovalCleanupForRetry({
+                    turnId,
+                  });
               if (!preserved) throw error;
               await sendTurn(boss, turnId, {
                 cleanupReconciliation: true,
+                previousCleanupReconciliationAttempt:
+                  typeof job.data?.cleanupReconciliationAttempt === "number"
+                    ? job.data.cleanupReconciliationAttempt
+                    : undefined,
+                cleanupResumeRunning: preserveRunningExecution,
               });
               continue;
             }

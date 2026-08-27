@@ -614,6 +614,13 @@ export class InMemorySessionStore implements SessionStore {
       .map((effect) => ({ ...effect }));
   }
 
+  async getPersistedEffect(idempotencyKey: string) {
+    const effect = this.effects.find(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    return effect === undefined ? null : structuredClone(effect);
+  }
+
   async getEffectResult(idempotencyKey: string): Promise<EffectResult | null> {
     const result = this.effectResults.get(idempotencyKey);
     if (result === undefined) {

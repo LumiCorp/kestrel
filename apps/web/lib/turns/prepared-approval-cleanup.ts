@@ -9,10 +9,13 @@ export const PREPARED_APPROVAL_CLEANUP_VERSION =
 
 export class PreparedApprovalCleanupRetryError extends Error {
   readonly code = "PREPARED_APPROVAL_CLEANUP_RETRY" as const;
+  readonly preserveRunningExecution: boolean;
 
-  constructor() {
+  constructor(input: { preserveRunningExecution?: boolean | undefined } = {}) {
     super("Prepared approval cleanup release will retry.");
     this.name = "PreparedApprovalCleanupRetryError";
+    this.preserveRunningExecution =
+      input.preserveRunningExecution === true;
   }
 }
 
@@ -23,6 +26,12 @@ export function isPreparedApprovalCleanupRetryError(
     (error instanceof Error &&
       "code" in error &&
       error.code === "PREPARED_APPROVAL_CLEANUP_RETRY");
+}
+
+export function shouldPreservePreparedApprovalCleanupExecution(
+  error: PreparedApprovalCleanupRetryError,
+) {
+  return error.preserveRunningExecution === true;
 }
 
 export function preparedApprovalQueueLockKey(threadId: string) {

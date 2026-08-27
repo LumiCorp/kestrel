@@ -2102,41 +2102,53 @@ test(
       failureCode: null,
       rememberedCount: 0,
     });
-    assert.deepEqual(
-      (await turnStore.claimDurableThreadTurn(legacyExecRemember.turnId))
-        ?.interactionResponse,
-      {
-        requestId: legacyExecRemember.requestId,
-        eventType: "user.approval",
-        message: "Remember approval",
-        decision: "decline",
-        decidingActor: {
-          actorType: "end_user",
-          actorId: userId,
-          tenantId: organizationId,
-        },
-        preparedApprovalCleanupFailureCode:
-          "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-        preparedApprovalCleanupFailureMessage:
-          "The approval no longer matches the prepared tool invocation.",
-        preparedApprovalCleanup: {
-          version: "runner_prepared_approval_cleanup_v1",
-          organizationId,
-          threadId,
-          turnId: legacyExecRemember.turnId,
-          interactionId: legacyExecRemember.interactionId,
-          requestId: legacyExecRemember.requestId,
-          failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-          failureMessage:
-            "The approval no longer matches the prepared tool invocation.",
-        },
+    const legacyExecRememberClaim = await turnStore.claimDurableThreadTurn(
+      legacyExecRemember.turnId,
+    );
+    const legacyExecRememberCleanupResponse = {
+      requestId: legacyExecRemember.requestId,
+      eventType: "user.approval",
+      message: "Remember approval",
+      decision: "decline",
+      decidingActor: {
+        actorType: "end_user",
+        actorId: userId,
+        tenantId: organizationId,
       },
+      preparedApprovalCleanupFailureCode:
+        "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+      preparedApprovalCleanupFailureMessage:
+        "The approval no longer matches the prepared tool invocation.",
+      preparedApprovalCleanup: {
+        version: "runner_prepared_approval_cleanup_v1",
+        organizationId,
+        threadId,
+        turnId: legacyExecRemember.turnId,
+        interactionId: legacyExecRemember.interactionId,
+        requestId: legacyExecRemember.requestId,
+        failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+        failureMessage:
+          "The approval no longer matches the prepared tool invocation.",
+      },
+    } as const;
+    assert.deepEqual(
+      legacyExecRememberClaim?.interactionResponse,
+      legacyExecRememberCleanupResponse,
     );
     assert.equal(
-      await turnStore.recordDurablePreparedApprovalCleanupCompleted({
+      await turnStore.reconcileDurablePreparedApprovalCleanupForRetry({
         turnId: legacyExecRemember.turnId,
       }),
       true,
+    );
+    assert.equal(
+      (await turnStore.getDurableTurn(legacyExecRemember.turnId))?.status,
+      "waiting_for_input",
+    );
+    assert.deepEqual(
+      (await turnStore.claimDurableThreadTurn(legacyExecRemember.turnId))
+        ?.interactionResponse,
+      legacyExecRememberCleanupResponse,
     );
     await turnStore.completeDurableThreadTurn({
       turnId: legacyExecRemember.turnId,
@@ -2144,6 +2156,19 @@ test(
       failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
       failureMessage:
         "The approval no longer matches the prepared tool invocation.",
+    });
+    const [legacyExecRememberFinal] = await sql<
+      Array<{ interactionStatus: string; turnStatus: string }>
+    >`
+      SELECT interaction."status" AS "interactionStatus",
+             turn."status" AS "turnStatus"
+      FROM "thread_interactions" interaction
+      JOIN "thread_turns" turn ON turn."id" = interaction."turn_id"
+      WHERE interaction."id" = ${legacyExecRemember.interactionId}
+    `;
+    assert.deepEqual(legacyExecRememberFinal, {
+      interactionStatus: "failed",
+      turnStatus: "failed",
     });
     const mismatchedActorApproveOnce = await createExecRememberInteraction(
       "mismatched-actor",
