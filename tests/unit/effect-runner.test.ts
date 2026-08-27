@@ -301,7 +301,7 @@ test("Effect runner STOP policy halts on failure", async () => {
   assert.equal(outcome.errors.length, 1);
 });
 
-test("cleanup-only prepared release retries a transient failure under the same idempotency identity", async () => {
+test("two cleanup runners converge when FAILED commits before atomic release success", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();
   let calls = 0;
@@ -333,9 +333,10 @@ test("cleanup-only prepared release retries a transient failure under the same i
     createdAt: "2026-08-26T00:00:00.000Z",
   };
   (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
-  const runner = new InlineEffectRunner(store, registry);
+  const failingRunner = new InlineEffectRunner(store, registry);
+  const successfulRunner = new InlineEffectRunner(store, registry);
 
-  const failed = await runner.runEffects([effect], {
+  const failed = await failingRunner.runEffects([effect], {
     runId: effect.runId,
     sessionId: effect.sessionId,
     stepIndex: effect.stepIndex,
@@ -343,7 +344,7 @@ test("cleanup-only prepared release retries a transient failure under the same i
   assert.equal(failed.stop, true);
   assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "FAILED");
 
-  const retried = await runner.runEffects([effect], {
+  const retried = await successfulRunner.runEffects([effect], {
     runId: effect.runId,
     sessionId: effect.sessionId,
     stepIndex: effect.stepIndex,
@@ -352,8 +353,34 @@ test("cleanup-only prepared release retries a transient failure under the same i
   assert.equal(calls, 2);
   assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "DONE");
   assert.equal(
+    (await store.getPersistedEffect(effect.idempotencyKey))?.status,
+    "DONE",
+  );
+  await store.saveEffectResult(effect.runId, effect.sessionId, {
+    idempotencyKey: effect.idempotencyKey,
+    status: "FAILED",
+    error: {
+      code: "EFFECT_EXECUTION_FAILED",
+      message: "stale failing runner",
+    },
+    timestamp: "2026-08-27T00:00:02.000Z",
+  });
+  await store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
+  assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "DONE");
+  assert.equal(
+    (await store.getPersistedEffect(effect.idempotencyKey))?.status,
+    "DONE",
+  );
+  assert.equal(
     store.operationLog.filter((entry) =>
       entry === `resetPreparedApprovalCleanupEffectExecution:${effect.idempotencyKey}`
+    ).length,
+    1,
+  );
+  assert.equal(
+    store.operationLog.filter((entry) =>
+      entry ===
+        `commitPreparedApprovalCleanupEffectDone:${effect.idempotencyKey}`
     ).length,
     1,
   );

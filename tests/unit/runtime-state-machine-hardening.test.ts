@@ -209,6 +209,13 @@ test("completed cleanup release survives Web requeue without scheduler or duplic
   assert.equal(thirdOutput.status, "COMPLETED", JSON.stringify(thirdOutput));
   assert.equal(releaseAttempts, 2);
   assert.equal(releases, 1);
+  assert.equal(
+    store.operationLog.filter((entry) =>
+      entry ===
+        `commitPreparedApprovalCleanupEffectDone:${idempotencyKey}`
+    ).length,
+    1,
+  );
   assert.equal(modelCalls, 0);
   assert.equal(
     (await store.getEffectResult(idempotencyKey))?.status,

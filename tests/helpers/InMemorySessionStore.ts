@@ -684,6 +684,43 @@ export class InMemorySessionStore implements SessionStore {
     return "reset";
   }
 
+  async commitPreparedApprovalCleanupEffectDone(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+    result: EffectResult & { status: "DONE" },
+  ): Promise<void> {
+    const effect = this.effects.find(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    const payload =
+      effect?.payload &&
+      typeof effect.payload === "object" &&
+      !Array.isArray(effect.payload)
+        ? effect.payload as Record<string, unknown>
+        : undefined;
+    if (
+      effect === undefined ||
+      effect.runId !== owner.runId ||
+      effect.sessionId !== owner.sessionId ||
+      result.idempotencyKey !== idempotencyKey ||
+      result.status !== "DONE" ||
+      effect.type !== "release_prepared_tool_call" ||
+      payload?.preparedApprovalCleanup === undefined
+    ) {
+      throw new Error(
+        "Cleanup effect success does not match exact durable authority",
+      );
+    }
+    parseRunnerPreparedApprovalCleanupV1(payload.preparedApprovalCleanup);
+    if (this.effectResults.get(idempotencyKey)?.status !== "DONE") {
+      this.effectResults.set(idempotencyKey, structuredClone(result));
+    }
+    effect.status = "DONE";
+    this.operationLog.push(
+      `commitPreparedApprovalCleanupEffectDone:${idempotencyKey}`,
+    );
+  }
+
   async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, _owner: { runId: string; sessionId: string }): Promise<void> {
     for (const effect of this.effects) {
       if (effect.idempotencyKey === idempotencyKey) {

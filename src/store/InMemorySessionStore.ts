@@ -1074,6 +1074,37 @@ export class InMemorySessionStore implements SessionStore {
     return "reset";
   }
 
+  async commitPreparedApprovalCleanupEffectDone(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+    result: EffectResult & { status: "DONE" },
+  ): Promise<void> {
+    const effect = this.effects.find(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    if (
+      effect === undefined ||
+      effect.runId !== owner.runId ||
+      effect.sessionId !== owner.sessionId ||
+      result.idempotencyKey !== idempotencyKey ||
+      result.status !== "DONE" ||
+      effect.type !== "release_prepared_tool_call" ||
+      !hasPreparedApprovalCleanupMarker(effect.payload) ||
+      !this.hasTrustedEffectTenant(effect, result)
+    ) {
+      throw new SandboxCapabilityExactResultConflictError(
+        "Cleanup effect success does not match exact durable authority",
+      );
+    }
+    if (this.effectResults.get(idempotencyKey)?.status !== "DONE") {
+      this.effectResults.set(idempotencyKey, structuredClone(result));
+    }
+    effect.status = "DONE";
+    this.operationLog.push(
+      `commitPreparedApprovalCleanupEffectDone:${idempotencyKey}`,
+    );
+  }
+
   async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, owner: { runId: string; sessionId: string }): Promise<void> {
     const effect = this.effects.find((candidate) => candidate.idempotencyKey === idempotencyKey);
     if (

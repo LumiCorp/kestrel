@@ -1922,6 +1922,129 @@ export class PostgresSessionStore implements SessionStore {
     });
   }
 
+  async commitPreparedApprovalCleanupEffectDone(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+    result: EffectResult & { status: "DONE" },
+  ): Promise<void> {
+    await this.ensureSchemaV3();
+    await this.withTransaction(async (executor) => {
+      const selected = await executor.query<{
+        run_id: string;
+        session_id: string;
+        status: PersistedEffect["status"];
+        effect_type: string;
+        payload_json: Record<string, unknown>;
+        step_index: number;
+        failure_policy: PersistedEffect["failurePolicy"];
+        created_at: string;
+        tenant_id: string | null;
+        tenant_ownership_state:
+          | "legacy_unknown"
+          | "explicit_unbound"
+          | "tenant_bound";
+      }>(
+        `SELECT run_id, session_id, status, effect_type, payload_json,
+                step_index, failure_policy, created_at, tenant_id,
+                tenant_ownership_state
+           FROM effects
+          WHERE idempotency_key = $1
+          FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const row = selected.rows[0];
+      if (
+        row === undefined ||
+        row.run_id !== owner.runId ||
+        row.session_id !== owner.sessionId ||
+        result.idempotencyKey !== idempotencyKey ||
+        result.status !== "DONE" ||
+        !isPreparedApprovalCleanupReleaseEffect(
+          row.effect_type,
+          row.payload_json,
+        )
+      ) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup effect success does not match exact durable authority",
+        );
+      }
+      const effect: PersistedEffect = {
+        runId: row.run_id,
+        sessionId: row.session_id,
+        stepIndex: row.step_index,
+        type: row.effect_type,
+        payload: row.payload_json,
+        idempotencyKey,
+        failurePolicy: row.failure_policy,
+        status: row.status,
+        createdAt: normalizeTimestampString(row.created_at),
+      };
+      if (
+        !await this.hasTrustedPostgresEffectTenant(
+          executor,
+          effect,
+          row.tenant_id,
+          row.tenant_ownership_state,
+          result,
+        )
+      ) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup effect success tenant does not match durable authority",
+        );
+      }
+      const recorded = await executor.query<{
+        run_id: string;
+        session_id: string;
+        status: "DONE" | "FAILED";
+      }>(
+        `SELECT run_id, session_id, status
+           FROM effect_results
+          WHERE idempotency_key = $1
+          FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const existing = recorded.rows[0];
+      if (
+        existing !== undefined &&
+        (existing.run_id !== owner.runId ||
+          existing.session_id !== owner.sessionId)
+      ) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup effect result owner does not match durable authority",
+        );
+      }
+      await executor.query(
+        `INSERT INTO effect_results
+           (run_id, session_id, idempotency_key, status, output_json,
+            error_json, created_at)
+         VALUES ($1, $2, $3, 'DONE', $4::jsonb, NULL, $5::timestamptz)
+         ON CONFLICT (idempotency_key) DO UPDATE
+           SET run_id = EXCLUDED.run_id,
+               session_id = EXCLUDED.session_id,
+               status = 'DONE',
+               output_json = EXCLUDED.output_json,
+               error_json = NULL,
+               created_at = EXCLUDED.created_at
+         WHERE effect_results.status = 'FAILED'`,
+        [
+          owner.runId,
+          owner.sessionId,
+          idempotencyKey,
+          stringifySanitizedJson(result.output ?? null),
+          normalizeTimestampString(result.timestamp),
+        ],
+      );
+      await executor.query(
+        `UPDATE effects
+            SET status = 'DONE'
+          WHERE idempotency_key = $1
+            AND run_id = $2
+            AND session_id = $3`,
+        [idempotencyKey, owner.runId, owner.sessionId],
+      );
+    });
+  }
+
   async markEffectStatus(
     idempotencyKey: string,
     status: EffectExecutionStatus,

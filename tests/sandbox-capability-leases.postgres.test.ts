@@ -282,6 +282,82 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     assert.deepEqual(await store.claimExactEffectCancellation({
       sessionId, runId, idempotencyKey: binding.toolCallId, tenantId: binding.tenantId,
     }), { status: "completed" });
+    const cleanupEffectId = `cleanup-release-${suffix}`;
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json,
+          idempotency_key, failure_policy, status, created_at, tenant_id,
+          tenant_ownership_state)
+       VALUES ($1, $2, 2, 'release_prepared_tool_call', $3::jsonb, $4,
+               'STOP', 'CLAIMED', NOW(), $5, 'tenant_bound')`,
+      [
+        runId,
+        sessionId,
+        JSON.stringify({
+          preparedApprovalCleanup: {
+            version: "runner_prepared_approval_cleanup_v1",
+            organizationId: binding.tenantId,
+            threadId: sessionId,
+            turnId: `cleanup-turn-${suffix}`,
+            interactionId: `cleanup-interaction-${suffix}`,
+            requestId: `cleanup-request-${suffix}`,
+            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+            failureMessage: "Expired.",
+          },
+        }),
+        cleanupEffectId,
+        binding.tenantId,
+      ],
+    );
+    const cleanupOwner = { runId, sessionId };
+    await store.saveEffectResult(runId, sessionId, {
+      idempotencyKey: cleanupEffectId,
+      status: "FAILED",
+      error: {
+        code: "EFFECT_EXECUTION_FAILED",
+        message: "first runner failed",
+      },
+      timestamp: "2026-08-27T00:00:01.000Z",
+    });
+    await store.markEffectStatus(cleanupEffectId, "FAILED", cleanupOwner);
+    await Promise.all([
+      store.commitPreparedApprovalCleanupEffectDone(
+        cleanupEffectId,
+        cleanupOwner,
+        {
+          idempotencyKey: cleanupEffectId,
+          status: "DONE",
+          output: { releasedPreparedInvocationId: `prepared-${suffix}` },
+          timestamp: "2026-08-27T00:00:02.000Z",
+        },
+      ),
+      (async () => {
+        await store.saveEffectResult(runId, sessionId, {
+          idempotencyKey: cleanupEffectId,
+          status: "FAILED",
+          error: {
+            code: "EFFECT_EXECUTION_FAILED",
+            message: "stale runner failed",
+          },
+          timestamp: "2026-08-27T00:00:03.000Z",
+        });
+        await store.markEffectStatus(
+          cleanupEffectId,
+          "FAILED",
+          cleanupOwner,
+        );
+      })(),
+    ]);
+    assert.equal(
+      (await store.getPersistedEffect(cleanupEffectId))?.status,
+      "DONE",
+    );
+    assert.deepEqual(await store.getEffectResult(cleanupEffectId), {
+      idempotencyKey: cleanupEffectId,
+      status: "DONE",
+      output: { releasedPreparedInvocationId: `prepared-${suffix}` },
+      timestamp: "2026-08-27T00:00:02.000Z",
+    });
     const cancelledToolCallId = `cancelled-call-${suffix}`;
     const cancelledLeaseId = `cancelled-lease-${suffix}`;
     const cancelledBinding = { ...binding, toolCallId: cancelledToolCallId };

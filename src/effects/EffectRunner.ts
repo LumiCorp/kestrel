@@ -232,7 +232,10 @@ export class InlineEffectRunner implements EffectRunner {
           persistCompletedCapabilityResult,
         });
         await persistCompletedResult(output);
-        if (readSandboxCapabilityReplayEvidence(output) === undefined) {
+        if (
+          readSandboxCapabilityReplayEvidence(output) === undefined &&
+          !isPreparedApprovalCleanupRelease(effect)
+        ) {
           try {
             await this.store.markEffectStatus(
               effect.idempotencyKey,
@@ -355,6 +358,14 @@ export class InlineEffectRunner implements EffectRunner {
     },
     signal?: AbortSignal | undefined,
   ): Promise<void> {
+    if (isPreparedApprovalCleanupRelease(effect)) {
+      await this.store.commitPreparedApprovalCleanupEffectDone(
+        effect.idempotencyKey,
+        effect,
+        result,
+      );
+      return;
+    }
     const capabilityReplay = readSandboxCapabilityReplayEvidence(result.output);
     if (capabilityReplay === undefined) {
       await this.store.saveEffectResult(effect.runId, effect.sessionId, result);
