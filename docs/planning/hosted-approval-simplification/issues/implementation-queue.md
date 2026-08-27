@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-None.
+- [Atomically commit cleanup release success](06k-atomically-commit-cleanup-release-success.md)
 
 ## Blocked
 
