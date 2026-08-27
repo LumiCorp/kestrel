@@ -4,11 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Reconcile configured Receiving Connections into staged webhooks](41-reconcile-configured-receiving-webhooks.md)
-- [Replace Resend credentials without orphaning webhook staging](42-replace-resend-credentials-safely.md)
-- [Recover queued receipts after terminal pg-boss jobs](43-recover-terminal-receipt-jobs.md)
-- [Decommission Resend receiving before Organization deletion](44-decommission-resend-before-organization-deletion.md)
-- [Bound Resend webhook bodies before verification](45-bound-resend-webhook-bodies.md)
+None.
 
 ## In progress
 
@@ -25,6 +21,11 @@ None.
 ## Implemented
 
 - [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
+- [Reconcile configured Receiving Connections into staged webhooks](41-reconcile-configured-receiving-webhooks.md)
+- [Replace Resend credentials without orphaning webhook staging](42-replace-resend-credentials-safely.md)
+- [Recover queued receipts after terminal pg-boss jobs](43-recover-terminal-receipt-jobs.md)
+- [Decommission Resend receiving before Organization deletion](44-decommission-resend-before-organization-deletion.md)
+- [Bound Resend webhook bodies before verification](45-bound-resend-webhook-bodies.md)
 
 ## Done
 

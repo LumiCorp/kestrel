@@ -88,10 +88,10 @@ test("receiving provider failures have stable actionable HTTP status classes", (
         "The receiving configuration changed while receiving was being saved. Refresh and try again.",
     },
     {
-      code: "RESEND_RECEIVING_WEBHOOK_KEY_REPLACEMENT_UNSUPPORTED",
+      code: "RESEND_RECEIVING_WEBHOOK_KEY_AUTHORITY_CONFLICT",
       status: 409,
       error:
-        "This receiving connection already has a staged webhook. Continue with its current Resend API key; replacing the key is not supported yet.",
+        "The replacement Resend credential cannot manage the existing receiving webhook.",
     },
     {
       code: "RESEND_RECEIVING_WEBHOOK_STAGING_FAILED",
@@ -251,7 +251,11 @@ test("all four receiving mutations reject unauthenticated and non-Admin callers 
       const { request, readCount } = trackedMalformedRequest(mutation.url);
       const response = await mutation.invoke(request);
       assert.equal(response.status, authorization.status, mutation.name);
-      assert.deepEqual(await response.json(), authorization.body, mutation.name);
+      assert.deepEqual(
+        await response.json(),
+        authorization.body,
+        mutation.name,
+      );
       assert.equal(readCount(), 0, `${mutation.name} must authorize first`);
     }
   }
@@ -283,8 +287,7 @@ function receivingMutationCases(input: {
   requireDesktopAdmin: () => Promise<{ id: string }>;
 }) {
   const organizationId = "organization-route-contract";
-  const oneReceivingUrl =
-    "http://localhost/api/organization/email/receiving";
+  const oneReceivingUrl = "http://localhost/api/organization/email/receiving";
   const desktopReceivingUrl = `http://localhost/api/desktop/v1/organizations/${organizationId}/email/receiving`;
   const desktopContext = {
     params: Promise.resolve({ organizationId }),

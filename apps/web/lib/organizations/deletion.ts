@@ -13,6 +13,11 @@ import { queueManagedRunPodDeletion } from "@/lib/ai/managed-runpod-store";
 import { processManagedRunPodRun } from "@/lib/ai/managed-runpod-runtime";
 import { withOrganizationDeletionLock } from "@/lib/environments/reconcile-lock";
 import { ManagedRunPodActiveModelGrantsError } from "@/lib/ai/managed-runpod-lifecycle-error";
+import {
+  decommissionOrganizationReceivingWebhook,
+  ReceivingDecommissionError,
+} from "@/lib/email/receiving-decommission";
+import type { ResendWebhookDecommissionProvider } from "@/lib/email/receiving-provider";
 
 const BILLABLE_SUBSCRIPTION_STATUSES = new Set([
   "active",
@@ -217,14 +222,26 @@ export async function retryOrganizationDeletion(input: {
   return operation;
 }
 
-export async function processOrganizationDeletion(operationId: string) {
+export async function processOrganizationDeletion(
+  operationId: string,
+  dependencies: {
+    receivingProvider?: ResendWebhookDecommissionProvider;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+) {
   await withOrganizationDeletionLock({
     operationId,
-    run: () => processOrganizationDeletionLocked(operationId),
+    run: () => processOrganizationDeletionLocked(operationId, dependencies),
   });
 }
 
-async function processOrganizationDeletionLocked(operationId: string) {
+async function processOrganizationDeletionLocked(
+  operationId: string,
+  dependencies: {
+    receivingProvider?: ResendWebhookDecommissionProvider;
+    env?: NodeJS.ProcessEnv;
+  },
+) {
   const operation =
     await knowledgeDb.query.organizationDeletionOperations.findFirst({
       where: eq(schema.organizationDeletionOperations.id, operationId),
@@ -281,6 +298,38 @@ async function processOrganizationDeletionLocked(operationId: string) {
     )
     .returning({ id: schema.organizationDeletionOperations.id });
   if (!started) return;
+
+  await knowledgeDb
+    .update(schema.organizationDeletionOperations)
+    .set({
+      stage: "organization.deletion.removing_receiving_webhook",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.organizationDeletionOperations.id, operation.id),
+        eq(schema.organizationDeletionOperations.status, "running"),
+      ),
+    );
+  try {
+    await decommissionOrganizationReceivingWebhook({
+      organizationId: operation.organizationId,
+      ...(dependencies.receivingProvider
+        ? { provider: dependencies.receivingProvider }
+        : {}),
+      ...(dependencies.env ? { env: dependencies.env } : {}),
+    });
+  } catch (error) {
+    const safeError =
+      error instanceof ReceivingDecommissionError
+        ? error
+        : new ReceivingDecommissionError();
+    await failOrganizationDeletion(operation.id, {
+      code: safeError.code,
+      message: safeError.message,
+    });
+    return;
+  }
 
   const environmentIds = Array.isArray(
     (operation.inventory as { environments?: unknown } | null)?.environments,

@@ -146,12 +146,113 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
     WHERE "id" = ${connectionId}
   `;
 
+  const maxWebhookBodyBytes = 2 * 1024 * 1024;
+  const oversizedMarker = `oversized-private-${suffix}`;
+  const declaredOversized = trackedBodyRequest(url, oversizedMarker, {
+    ...signedHeaders(signingSecret, oversizedMarker),
+    "content-length": String(maxWebhookBodyBytes + 1),
+  });
+  const declaredOversizedResponse = await route.POST(
+    declaredOversized.request,
+    { params: Promise.resolve({ locator }) },
+  );
+  assert.equal(declaredOversizedResponse.status, 413);
+  assert.equal(await declaredOversizedResponse.text(), "");
+  assert.equal(declaredOversized.readCount(), 0);
+  assert.equal(declaredOversized.cancelCount(), 0);
+  assert.equal(await receiptCount(sql, connectionId), 0);
+
+  for (const contentLength of [undefined, "1"]) {
+    const chunks = [
+      new Uint8Array(maxWebhookBodyBytes),
+      new TextEncoder().encode(oversizedMarker),
+    ];
+    const streamedOversized = trackedChunkedBodyRequest(url, chunks, {
+      ...signedHeaders(signingSecret, oversizedMarker),
+      ...(contentLength === undefined
+        ? {}
+        : { "content-length": contentLength }),
+    });
+    const streamedOversizedResponse = await route.POST(
+      streamedOversized.request,
+      { params: Promise.resolve({ locator }) },
+    );
+    assert.equal(streamedOversizedResponse.status, 413);
+    assert.equal(await streamedOversizedResponse.text(), "");
+    assert.equal(streamedOversized.readCount(), 1);
+    assert.equal(streamedOversized.cancelCount(), 1);
+    assert.equal(await receiptCount(sql, connectionId), 0);
+  }
+
+  const invalidUtf8 = trackedChunkedBodyRequest(
+    url,
+    [new Uint8Array([0xc3, 0x28])],
+    signedHeaders(signingSecret, "\ufffd("),
+  );
+  const invalidUtf8Response = await route.POST(invalidUtf8.request, {
+    params: Promise.resolve({ locator }),
+  });
+  assert.equal(invalidUtf8Response.status, 400);
+  assert.deepEqual(await invalidUtf8Response.json(), {
+    error: "Invalid webhook.",
+  });
+  assert.equal(invalidUtf8.readCount(), 1);
+  assert.equal(await receiptCount(sql, connectionId), 0);
+
+  const malformedPayload = "{malformed";
+  const malformed = trackedBodyRequest(
+    url,
+    malformedPayload,
+    signedHeaders(signingSecret, malformedPayload),
+  );
+  const malformedResponse = await route.POST(malformed.request, {
+    params: Promise.resolve({ locator }),
+  });
+  assert.equal(malformedResponse.status, 400);
+  assert.deepEqual(await malformedResponse.json(), {
+    error: "Invalid webhook.",
+  });
+  assert.equal(malformed.readCount(), 1);
+  assert.equal(await receiptCount(sql, connectionId), 0);
+
+  const exactPrefix = '{"padding":"';
+  const exactSuffix = '"}';
+  const exactPayload = `${exactPrefix}${"x".repeat(
+    maxWebhookBodyBytes - exactPrefix.length - exactSuffix.length,
+  )}${exactSuffix}`;
+  assert.equal(Buffer.byteLength(exactPayload), maxWebhookBodyBytes);
+  const exactTelemetryStart = telemetry.length;
+  const exactLimit = trackedBodyRequest(url, exactPayload, {
+    ...signedHeaders(signingSecret, exactPayload),
+    "content-length": String(maxWebhookBodyBytes),
+  });
+  const exactLimitResponse = await route.POST(exactLimit.request, {
+    params: Promise.resolve({ locator }),
+  });
+  assert.equal(exactLimitResponse.status, 400);
+  assert.equal(exactLimit.readCount(), 1);
+  assert.equal(exactLimit.cancelCount(), 0);
+  assert.equal(await receiptCount(sql, connectionId), 0);
+  assert.equal(
+    telemetry
+      .slice(exactTelemetryStart)
+      .some((entry) => JSON.stringify(entry).includes("invalid_event")),
+    true,
+  );
+
   const emailId = `email-${suffix}`;
   const providerMessageId = `provider-message-${suffix}`;
   const event = receivedEvent({ emailId, providerMessageId });
-  const invalid = await invokeSigned(route, url, locator, signingSecret, event, {
-    signature: "v1,invalid",
-  });
+  const invalid = await invokeSigned(
+    route,
+    url,
+    locator,
+    signingSecret,
+    event,
+    {
+      signature: "v1,invalid",
+    },
+  );
   assert.equal(invalid.status, 400);
   assert.equal(await receiptCount(sql, connectionId), 0);
 
@@ -175,9 +276,16 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
     }
     return jobId;
   };
-  const accepted = await invokeSigned(route, url, locator, signingSecret, event, {
-    svixId: firstSvixId,
-  });
+  const accepted = await invokeSigned(
+    route,
+    url,
+    locator,
+    signingSecret,
+    event,
+    {
+      svixId: firstSvixId,
+    },
+  );
   bossPrototype.send = originalQueueSend;
   assert.equal(accepted.status, 202);
   assert.equal(throwAfterCommittedSend, false);
@@ -186,11 +294,21 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
     state: string;
   };
   assert.equal(firstBody.state, "queued");
-  assert.doesNotMatch(JSON.stringify(firstBody), /email-|provider-message|svix-/u);
+  assert.doesNotMatch(
+    JSON.stringify(firstBody),
+    /email-|provider-message|svix-/u,
+  );
 
-  const repeated = await invokeSigned(route, url, locator, signingSecret, event, {
-    svixId: firstSvixId,
-  });
+  const repeated = await invokeSigned(
+    route,
+    url,
+    locator,
+    signingSecret,
+    event,
+    {
+      svixId: firstSvixId,
+    },
+  );
   assert.equal(repeated.status, 202);
   assert.equal((await repeated.json()).receiptId, firstBody.receiptId);
 
@@ -207,9 +325,16 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
       }),
     ),
   );
-  assert.equal(concurrent.every(({ status }) => status === 202), true);
+  assert.equal(
+    concurrent.every(({ status }) => status === 202),
+    true,
+  );
   assert.deepEqual(
-    new Set(await Promise.all(concurrent.map(async (response) => (await response.json()).receiptId))),
+    new Set(
+      await Promise.all(
+        concurrent.map(async (response) => (await response.json()).receiptId),
+      ),
+    ),
     new Set([firstBody.receiptId]),
   );
 
@@ -331,22 +456,26 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
     queue.EMAIL_DELIVERY_RECEIPT_QUEUE,
     { data: { receiptId: firstBody.receiptId } },
   );
-  assert.equal(receiptJobs.filter(({ state }) => state === "created").length, 1);
+  assert.equal(
+    receiptJobs.filter(({ state }) => state === "created").length,
+    1,
+  );
 
   const recoveryEmailId = `recovery-email-${suffix}`;
-  const recoveryReceipt = await receiptStore.createOrFindQueuedEmailDeliveryReceipt({
-    organizationId,
-    receivingConnectionId: connectionId,
-    svixId: `recovery-svix-${suffix}`,
-    resendEmailId: recoveryEmailId,
-    eventAt: now,
-    claimedFrom: "recovery@example.test",
-    toMailboxes: ["trigger@example.test"],
-    ccMailboxes: [],
-    bccMailboxes: [],
-    receivedForMailboxes: ["trigger@example.test"],
-    subject: "Recovery",
-  });
+  const recoveryReceipt =
+    await receiptStore.createOrFindQueuedEmailDeliveryReceipt({
+      organizationId,
+      receivingConnectionId: connectionId,
+      svixId: `recovery-svix-${suffix}`,
+      resendEmailId: recoveryEmailId,
+      eventAt: now,
+      claimedFrom: "recovery@example.test",
+      toMailboxes: ["trigger@example.test"],
+      ccMailboxes: [],
+      bccMailboxes: [],
+      receivedForMailboxes: ["trigger@example.test"],
+      subject: "Recovery",
+    });
   assert.equal(
     (
       await boss.findJobs(queue.EMAIL_DELIVERY_RECEIPT_QUEUE, {
@@ -356,12 +485,63 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
     0,
   );
   await queue.reconcileEmailDeliveryReceiptQueue();
+  const firstRecoveryJobs = await boss.findJobs(
+    queue.EMAIL_DELIVERY_RECEIPT_QUEUE,
+    { data: { receiptId: recoveryReceipt.receipt.id } },
+  );
+  const firstRecoveryJob = firstRecoveryJobs.find(
+    ({ state }) => state === "created",
+  );
+  assert.ok(firstRecoveryJob);
+  await boss.complete(
+    queue.EMAIL_DELIVERY_RECEIPT_QUEUE,
+    firstRecoveryJob.id,
+    null,
+    { includeQueued: true },
+  );
+
+  await Promise.all([
+    queue.reconcileEmailDeliveryReceiptQueue(),
+    queue.reconcileEmailDeliveryReceiptQueue(),
+    queue.reconcileEmailDeliveryReceiptQueue(),
+  ]);
+  const recoveredAfterTerminal = await boss.findJobs(
+    queue.EMAIL_DELIVERY_RECEIPT_QUEUE,
+    { data: { receiptId: recoveryReceipt.receipt.id } },
+  );
   assert.equal(
-    (
-      await boss.findJobs(queue.EMAIL_DELIVERY_RECEIPT_QUEUE, {
-        data: { receiptId: recoveryReceipt.receipt.id },
-      })
-    ).some(({ state }) => state === "created"),
+    recoveredAfterTerminal.filter(({ state }) => state === "completed").length,
+    1,
+  );
+  assert.equal(
+    recoveredAfterTerminal.filter(({ state }) => state === "created").length,
+    1,
+  );
+
+  const liveRecoveryJob = recoveredAfterTerminal.find(
+    ({ state }) => state === "created",
+  );
+  assert.ok(liveRecoveryJob);
+  await boss.complete(
+    queue.EMAIL_DELIVERY_RECEIPT_QUEUE,
+    liveRecoveryJob.id,
+    null,
+    { includeQueued: true },
+  );
+  await sql`
+    UPDATE "email_delivery_receipts"
+    SET "state" = 'failed', "reason" = 'HYDRATION_FAILED',
+      "finished_at" = ${now}, "updated_at" = ${now}
+    WHERE "id" = ${recoveryReceipt.receipt.id}
+  `;
+  await queue.reconcileEmailDeliveryReceiptQueue();
+  const terminalReceiptJobs = await boss.findJobs(
+    queue.EMAIL_DELIVERY_RECEIPT_QUEUE,
+    { data: { receiptId: recoveryReceipt.receipt.id } },
+  );
+  assert.equal(terminalReceiptJobs.length, 2);
+  assert.equal(
+    terminalReceiptJobs.every(({ state }) => state === "completed"),
     true,
   );
 
@@ -459,6 +639,7 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
 
   const serializedTelemetry = JSON.stringify(telemetry);
   assert.doesNotMatch(serializedTelemetry, new RegExp(locator, "u"));
+  assert.doesNotMatch(serializedTelemetry, new RegExp(oversizedMarker, "u"));
   assert.doesNotMatch(serializedTelemetry, /provider-message|sender@example/u);
   assert.doesNotMatch(serializedTelemetry, new RegExp(emailId, "u"));
 });
@@ -508,7 +689,8 @@ async function invokeSigned(
 ) {
   const payload = JSON.stringify(event);
   const svixId = overrides.svixId ?? `svix-${randomUUID()}`;
-  const timestamp = overrides.timestamp ?? String(Math.floor(Date.now() / 1000));
+  const timestamp =
+    overrides.timestamp ?? String(Math.floor(Date.now() / 1000));
   const signature =
     overrides.signature ?? signSvix(signingSecret, svixId, timestamp, payload);
   return route.POST(
@@ -539,22 +721,70 @@ function signSvix(
   return `v1,${digest}`;
 }
 
-function trackedBodyRequest(url: string, body: string) {
-  const request = new Request(url, { method: "POST", body });
-  let reads = 0;
-  Object.defineProperty(request, "text", {
-    value: async () => {
-      reads += 1;
-      return body;
-    },
-  });
-  return { request, readCount: () => reads };
+function signedHeaders(
+  signingSecret: string,
+  payload: string,
+  overrides: { svixId?: string; timestamp?: string } = {},
+) {
+  const svixId = overrides.svixId ?? `svix-${randomUUID()}`;
+  const timestamp =
+    overrides.timestamp ?? String(Math.floor(Date.now() / 1000));
+  return {
+    "content-type": "application/json",
+    "svix-id": svixId,
+    "svix-timestamp": timestamp,
+    "svix-signature": signSvix(signingSecret, svixId, timestamp, payload),
+  };
 }
 
-async function receiptCount(
-  sql: postgres.Sql,
-  receivingConnectionId: string,
+function trackedBodyRequest(
+  url: string,
+  body: string,
+  headers: Record<string, string> = {},
 ) {
+  return trackedChunkedBodyRequest(
+    url,
+    [new TextEncoder().encode(body)],
+    headers,
+  );
+}
+
+function trackedChunkedBodyRequest(
+  url: string,
+  chunks: Uint8Array[],
+  headers: Record<string, string> = {},
+) {
+  const request = new Request(url, { method: "POST", headers });
+  let reads = 0;
+  let cancels = 0;
+  Object.defineProperty(request, "body", {
+    value: {
+      getReader() {
+        reads += 1;
+        let index = 0;
+        return {
+          async cancel() {
+            cancels += 1;
+          },
+          async read() {
+            const value = chunks[index];
+            index += 1;
+            return value
+              ? { done: false as const, value }
+              : { done: true as const };
+          },
+        };
+      },
+    },
+  });
+  return {
+    request,
+    readCount: () => reads,
+    cancelCount: () => cancels,
+  };
+}
+
+async function receiptCount(sql: postgres.Sql, receivingConnectionId: string) {
   const [row] = await sql<Array<{ count: string }>>`
     SELECT count(*)::text AS "count" FROM "email_delivery_receipts"
     WHERE "receiving_connection_id" = ${receivingConnectionId}

@@ -19,7 +19,10 @@ export async function parseReceivingAdminJson(request: Request) {
 }
 
 export function getSafeReceivingAdminError(error: unknown) {
-  if (error instanceof ZodError || error instanceof ReceivingAdminJsonSyntaxError) {
+  if (
+    error instanceof ZodError ||
+    error instanceof ReceivingAdminJsonSyntaxError
+  ) {
     return {
       status: 422,
       body: {
@@ -142,13 +145,13 @@ function safeConfigError(error: ReceivingConfigError) {
           error: "Resend rejected the receiving request.",
         },
       };
-    case "RESEND_RECEIVING_WEBHOOK_KEY_REPLACEMENT_UNSUPPORTED":
+    case "RESEND_RECEIVING_WEBHOOK_KEY_AUTHORITY_CONFLICT":
       return {
         status: 409,
         body: {
           code: error.code,
           error:
-            "This receiving connection already has a staged webhook. Continue with its current Resend API key; replacing the key is not supported yet.",
+            "The replacement Resend credential cannot manage the existing receiving webhook.",
         },
       };
     case "RESEND_RECEIVING_WEBHOOK_STAGING_FAILED":

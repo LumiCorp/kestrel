@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
+import { ResendReceivingProviderError } from "./receiving-provider";
 import type {
   ResendReceivingDomain,
   ResendWebhookCreateIntent,
@@ -69,6 +70,25 @@ test("provider webhook staging persists checkpoints, recovers ambiguous create, 
   assert.equal(ambiguous.providerWebhookId, null);
   assert.equal(ambiguous.encryptedSigningSecret, null);
   assert.equal(ambiguous.webhookStatus, "error");
+
+  await assert.rejects(
+    receiving.saveReceivingConnection({
+      organizationId,
+      actorUserId: userId,
+      apiKey: "re_rotated",
+      receivingDomainId: "domain-one",
+      provider,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof receiving.ReceivingConfigError);
+      assert.equal(
+        error.code,
+        "RESEND_RECEIVING_WEBHOOK_KEY_AUTHORITY_CONFLICT",
+      );
+      return true;
+    },
+  );
+  assert.deepEqual((await readStored(sql, organizationId))[0], ambiguous);
 
   await receiving.saveReceivingConnection({
     organizationId,
@@ -154,6 +174,61 @@ test("provider webhook staging persists checkpoints, recovers ambiguous create, 
   assert.deepEqual(afterStaleCompletion, afterReplacement);
   assert.equal(provider.createCalls, 1);
 
+  await receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    apiKey: "re_rotated",
+    receivingDomainId: "domain-one",
+    provider,
+  });
+  const [afterRotation] = await readStored(sql, organizationId);
+  assert.equal(afterRotation?.providerWebhookId, provider.webhook.id);
+  assert.equal(afterRotation?.webhookStatus, "staged");
+  assert.equal(afterRotation?.inboundEnabled, false);
+  assert.equal(provider.createCalls, 1);
+  assert.equal(
+    receiving.decryptReceivingApiKey({
+      organizationId,
+      encryptedApiKey: afterRotation?.encryptedApiKey ?? "",
+    }),
+    "re_rotated",
+  );
+
+  const replacementAuthorityRead = deferred();
+  const releaseReplacementAuthorityRead = deferred();
+  provider.onGet = async (apiKey) => {
+    if (apiKey === "re_candidate_after_read") {
+      replacementAuthorityRead.resolve();
+      await releaseReplacementAuthorityRead.promise;
+    }
+  };
+  const staleRotation = receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    apiKey: "re_candidate_after_read",
+    receivingDomainId: "domain-one",
+    provider,
+  });
+  await replacementAuthorityRead.promise;
+  await receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    receivingDomainId: "domain-one",
+    provider,
+  });
+  const [afterConcurrentSave] = await readStored(sql, organizationId);
+  releaseReplacementAuthorityRead.resolve();
+  await assert.rejects(staleRotation, (error: unknown) => {
+    assert.ok(error instanceof receiving.ReceivingConfigError);
+    assert.equal(error.code, "RESEND_RECEIVING_SAVE_SUPERSEDED");
+    return true;
+  });
+  assert.deepEqual(
+    (await readStored(sql, organizationId))[0],
+    afterConcurrentSave,
+  );
+  provider.onGet = undefined;
+
   await assert.rejects(
     receiving.saveReceivingConnection({
       organizationId,
@@ -166,12 +241,15 @@ test("provider webhook staging persists checkpoints, recovers ambiguous create, 
       assert.ok(error instanceof receiving.ReceivingConfigError);
       assert.equal(
         error.code,
-        "RESEND_RECEIVING_WEBHOOK_KEY_REPLACEMENT_UNSUPPORTED",
+        "RESEND_RECEIVING_WEBHOOK_KEY_AUTHORITY_CONFLICT",
       );
       return true;
     },
   );
-  assert.deepEqual((await readStored(sql, organizationId))[0], afterReplacement);
+  assert.deepEqual(
+    (await readStored(sql, organizationId))[0],
+    afterConcurrentSave,
+  );
   assert.equal(provider.createCalls, 1);
 });
 
@@ -220,6 +298,12 @@ class StagingProvider implements ResendWebhookCreateRecoveryProvider {
   }
 
   async getWebhook(apiKey: string) {
+    if (apiKey === "re_different_account") {
+      throw new ResendReceivingProviderError(
+        "RESEND_RECEIVING_DOMAIN_INVALID",
+        "provider detail must stay private",
+      );
+    }
     await this.onGet?.(apiKey);
     return {
       id: this.webhook.id,
@@ -246,7 +330,11 @@ class StagingProvider implements ResendWebhookCreateRecoveryProvider {
         ...(input.endpoint ? { endpoint: input.endpoint } : {}),
         ...(input.enabled === undefined
           ? {}
-          : { status: input.enabled ? ("enabled" as const) : ("disabled" as const) }),
+          : {
+              status: input.enabled
+                ? ("enabled" as const)
+                : ("disabled" as const),
+            }),
       },
     };
   }
@@ -271,6 +359,7 @@ function readStored(sql: postgres.Sql, organizationId: string) {
     Array<{
       webhookCreateIntent: { endpoint: string; events: string[] } | null;
       webhookCreateAttemptedAt: Date | null;
+      encryptedApiKey: string;
       providerWebhookId: string | null;
       encryptedSigningSecret: string | null;
       webhookStatus: string;
@@ -281,6 +370,7 @@ function readStored(sql: postgres.Sql, organizationId: string) {
     SELECT
       "webhook_create_intent" AS "webhookCreateIntent",
       "webhook_create_attempted_at" AS "webhookCreateAttemptedAt",
+      "encrypted_api_key" AS "encryptedApiKey",
       "provider_webhook_id" AS "providerWebhookId",
       "encrypted_signing_secret" AS "encryptedSigningSecret",
       "webhook_status" AS "webhookStatus",

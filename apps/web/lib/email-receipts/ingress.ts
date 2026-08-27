@@ -44,12 +44,29 @@ export const resendEmailReceivedEventSchema = z
 
 type IngressOutcome =
   | "unavailable"
+  | "payload_too_large"
   | "invalid_signature"
   | "invalid_event"
   | "accepted"
   | "accepted_dispatch_pending"
   | "receipt_conflict"
   | "internal_failure";
+
+export const RESEND_WEBHOOK_MAX_BODY_BYTES = 2 * 1024 * 1024;
+
+class ResendWebhookBodyTooLargeError extends Error {
+  constructor() {
+    super("Resend webhook body exceeds the allowed size.");
+    this.name = "ResendWebhookBodyTooLargeError";
+  }
+}
+
+class ResendWebhookInvalidEncodingError extends Error {
+  constructor() {
+    super("Resend webhook body is not valid UTF-8.");
+    this.name = "ResendWebhookInvalidEncodingError";
+  }
+}
 
 export function recordEmailIngressTelemetry(
   input: {
@@ -124,7 +141,26 @@ async function handleResendInboundWebhookRequest(
     return Response.json({ error: "Invalid webhook." }, { status: 400 });
   }
 
-  const rawBody = await request.text();
+  let rawBody: string;
+  try {
+    rawBody = await readBoundedResendWebhookBody(request);
+  } catch (error) {
+    if (error instanceof ResendWebhookBodyTooLargeError) {
+      recordEmailIngressTelemetry({
+        outcome: "payload_too_large",
+        durationMs: performance.now() - startedAt,
+      });
+      return new Response(null, { status: 413 });
+    }
+    if (error instanceof ResendWebhookInvalidEncodingError) {
+      recordEmailIngressTelemetry({
+        outcome: "invalid_signature",
+        durationMs: performance.now() - startedAt,
+      });
+      return Response.json({ error: "Invalid webhook." }, { status: 400 });
+    }
+    throw error;
+  }
   let verified: unknown;
   try {
     verified = new Resend("re_webhook_verification_only").webhooks.verify({
@@ -194,4 +230,48 @@ async function handleResendInboundWebhookRequest(
     }
     throw error;
   }
+}
+
+export async function readBoundedResendWebhookBody(request: Request) {
+  if (declaredBodyExceedsLimit(request.headers.get("content-length"))) {
+    throw new ResendWebhookBodyTooLargeError();
+  }
+
+  const reader = request.body?.getReader();
+  if (!reader) {
+    return "";
+  }
+
+  const body = new Uint8Array(RESEND_WEBHOOK_MAX_BODY_BYTES);
+  let byteLength = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    byteLength += value.byteLength;
+    if (byteLength > RESEND_WEBHOOK_MAX_BODY_BYTES) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Cancellation is best effort; the bounded public outcome is authoritative.
+      }
+      throw new ResendWebhookBodyTooLargeError();
+    }
+    body.set(value, byteLength - value.byteLength);
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(
+      body.subarray(0, byteLength),
+    );
+  } catch {
+    throw new ResendWebhookInvalidEncodingError();
+  }
+}
+
+function declaredBodyExceedsLimit(value: string | null) {
+  if (!(value && /^\d+$/u.test(value))) {
+    return false;
+  }
+  return BigInt(value) > BigInt(RESEND_WEBHOOK_MAX_BODY_BYTES);
 }

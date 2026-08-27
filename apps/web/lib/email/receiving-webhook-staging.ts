@@ -18,6 +18,8 @@ export async function stageReceivingWebhook(input: {
   organizationId: string;
   provider: ResendWebhookCreateRecoveryProvider;
   env?: NodeJS.ProcessEnv;
+  expectedEncryptedApiKey?: string;
+  expectedStagingSequence?: number;
 }) {
   const authority = await prepareStagingAuthority(input);
   let created: { id: string; signingSecret: string };
@@ -171,6 +173,8 @@ export async function stageReceivingWebhook(input: {
 async function prepareStagingAuthority(input: {
   organizationId: string;
   env?: NodeJS.ProcessEnv;
+  expectedEncryptedApiKey?: string;
+  expectedStagingSequence?: number;
 }) {
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
@@ -186,6 +190,14 @@ async function prepareStagingAuthority(input: {
         "RESEND_RECEIVING_CREDENTIAL_REQUIRED",
         "Configure Resend receiving before staging its webhook.",
       );
+    }
+    if (
+      (input.expectedEncryptedApiKey !== undefined &&
+        row.encryptedApiKey !== input.expectedEncryptedApiKey) ||
+      (input.expectedStagingSequence !== undefined &&
+        row.webhookStagingSequence !== input.expectedStagingSequence)
+    ) {
+      throw stagingSuperseded();
     }
     const intent =
       row.webhookCreateIntent ??
@@ -250,7 +262,9 @@ async function createAfterAttemptCheckpoint(
           schema.organizationReceivingConnections.organizationId,
           input.organizationId,
         ),
-        isNull(schema.organizationReceivingConnections.webhookCreateAttemptedAt),
+        isNull(
+          schema.organizationReceivingConnections.webhookCreateAttemptedAt,
+        ),
         eq(
           schema.organizationReceivingConnections.encryptedApiKey,
           input.encryptedApiKey,
@@ -297,7 +311,10 @@ async function persistCreateEvidence(input: {
     ) {
       throw stagingSuperseded();
     }
-    if (row.providerWebhookId && row.providerWebhookId !== input.providerWebhookId) {
+    if (
+      row.providerWebhookId &&
+      row.providerWebhookId !== input.providerWebhookId
+    ) {
       throw new ReceivingConfigError(
         "RESEND_RECEIVING_WEBHOOK_CONFLICT",
         "Resend webhook staging requires operator review.",

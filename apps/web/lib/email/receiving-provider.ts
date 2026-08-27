@@ -82,6 +82,19 @@ export interface ResendWebhookCreateRecoveryProvider
   }): Promise<CreatedResendWebhook>;
 }
 
+/** Provider lifecycle operations required before deleting their local owner. */
+export interface ResendWebhookDecommissionProvider
+  extends ResendWebhookCreateRecoveryProvider {
+  /**
+   * Retrieve a webhook while preserving an explicit provider 404 as absence
+   * evidence. Other provider failures must still reject.
+   */
+  getWebhookIfPresent(
+    apiKey: string,
+    webhookId: string,
+  ): Promise<ResendWebhookProjection | null>;
+}
+
 type ReceivingFetch = (
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -103,7 +116,7 @@ export class ResendReceivingProviderError extends Error {
 }
 
 export class ResendHttpReceivingProvider
-  implements ResendWebhookCreateRecoveryProvider
+  implements ResendWebhookDecommissionProvider
 {
   readonly #fetch: ReceivingFetch;
   readonly #baseUrl: URL;
@@ -227,6 +240,21 @@ export class ResendHttpReceivingProvider
     );
   }
 
+  async getWebhookIfPresent(
+    apiKey: string,
+    webhookId: string,
+  ): Promise<ResendWebhookProjection | null> {
+    const response = await this.#request(
+      apiKey,
+      `/webhooks/${encodeURIComponent(webhookId)}`,
+      {},
+      [404],
+    );
+    return acceptedProviderStatus(response, 404)
+      ? null
+      : parseWebhook(response);
+  }
+
   async updateWebhook(input: {
     apiKey: string;
     webhookId: string;
@@ -291,7 +319,9 @@ export class ResendHttpReceivingProvider
         "Resend receiving is temporarily unavailable.",
       );
     }
-    if (acceptedStatuses.includes(response.status)) return {};
+    if (acceptedStatuses.includes(response.status)) {
+      return { acceptedProviderStatus: response.status };
+    }
     if (response.status === 401 || response.status === 403) {
       throw new ResendReceivingProviderError(
         "RESEND_RECEIVING_CREDENTIAL_INSUFFICIENT",
@@ -485,5 +515,14 @@ function invalidResponse() {
   return new ResendReceivingProviderError(
     "RESEND_RECEIVING_RESPONSE_INVALID",
     "Resend returned an invalid receiving response.",
+  );
+}
+
+function acceptedProviderStatus(value: unknown, status: number): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Reflect.get(value, "acceptedProviderStatus") === status
   );
 }

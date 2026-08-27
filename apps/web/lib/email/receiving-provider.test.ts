@@ -832,6 +832,24 @@ test("webhook removal is retry-safe after an acknowledged delete", async () => {
   ]);
 });
 
+test("webhook absence verification scopes 404 handling to the lifecycle read", async () => {
+  const provider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async () => new Response(null, { status: 404 }),
+  });
+
+  assert.equal(
+    await provider.getWebhookIfPresent("re_full_access", "webhook-absent"),
+    null,
+  );
+  await assert.rejects(
+    provider.getWebhook("re_full_access", "webhook-absent"),
+    (error: unknown) =>
+      error instanceof ResendReceivingProviderError &&
+      error.code === "RESEND_RECEIVING_DOMAIN_INVALID",
+  );
+});
+
 test("Sending-only credentials return the specific inbound readiness failure", async () => {
   const provider = new ResendHttpReceivingProvider({
     baseUrl: "https://resend.test",

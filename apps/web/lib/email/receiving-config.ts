@@ -45,7 +45,10 @@ export type PublicReceivingConnection = {
 export type ReceivingDomainOption = ResendReceivingDomain;
 
 export class ReceivingConfigError extends Error {
-  constructor(readonly code: string, message: string) {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
     super(message);
     this.name = "ReceivingConfigError";
   }
@@ -135,25 +138,22 @@ export async function saveReceivingConnection(input: {
     encryptedApiKey: storedEncryptedApiKey,
     env: input.env,
   });
-  if (
-    suppliedApiKey &&
-    existing?.providerWebhookId &&
-    existingApiKey &&
-    suppliedApiKey !== existingApiKey
-  ) {
-    throw new ReceivingConfigError(
-      "RESEND_RECEIVING_WEBHOOK_KEY_REPLACEMENT_UNSUPPORTED",
-      "This receiving connection already has a staged webhook. Continue with its current Resend API key; replacing the key is not supported yet.",
-    );
-  }
-  const apiKey =
-    suppliedApiKey ??
-    existingApiKey;
+  const replacingApiKey = Boolean(
+    suppliedApiKey && existingApiKey && suppliedApiKey !== existingApiKey,
+  );
+  const apiKey = suppliedApiKey ?? existingApiKey;
   if (!apiKey) {
     throw new ReceivingConfigError(
       "RESEND_RECEIVING_CREDENTIAL_REQUIRED",
       "Enter a Resend Full access API key.",
     );
+  }
+  if (replacingApiKey) {
+    await verifyReplacementWebhookAuthority({
+      apiKey,
+      existing,
+      provider,
+    });
   }
   const storedHealthCheck =
     !suppliedApiKey && storedEncryptedApiKey
@@ -229,74 +229,65 @@ export async function saveReceivingConnection(input: {
       "Enter a Resend Full access API key.",
     );
   }
-  await knowledgeDb.transaction(async (transaction) => {
-    await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
-    );
-    const lockedExisting =
-      await transaction.query.organizationReceivingConnections.findFirst({
-        where: (table, { eq }) =>
-          eq(table.organizationId, input.organizationId),
-      });
-    if (
-      !suppliedApiKey &&
-      (lockedExisting?.encryptedApiKey ?? null) !== storedEncryptedApiKey
-    ) {
-      throw new ReceivingConfigError(
-        "RESEND_RECEIVING_CREDENTIAL_CHANGED",
-        "The Resend credential changed while receiving was being saved. Refresh and try again.",
+  const committedAuthority = await knowledgeDb.transaction(
+    async (transaction) => {
+      await transaction.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
       );
-    }
-    if (
-      storedHealthCheck &&
-      lockedExisting?.healthCheckSequence !==
-        storedHealthCheck.healthCheckSequence
-    ) {
-      throw new ReceivingConfigError(
-        "RESEND_RECEIVING_SAVE_SUPERSEDED",
-        "The receiving configuration changed while receiving was being saved. Refresh and try again.",
-      );
-    }
-    const encryptedApiKey = suppliedApiKey
-      ? preparedEncryptedApiKey
-      : lockedExisting?.encryptedApiKey;
-    if (!encryptedApiKey) {
-      throw new ReceivingConfigError(
-        "RESEND_RECEIVING_CREDENTIAL_REQUIRED",
-        "Enter a Resend Full access API key.",
-      );
-    }
-    await transaction
-      .insert(schema.organizationReceivingConnections)
-      .values({
-        id: lockedExisting?.id ?? randomUUID(),
-        organizationId: input.organizationId,
-        provider: "resend",
-        encryptedApiKey,
-        credentialStatus: "full_access",
-        credentialValidatedAt: now,
-        receivingDomainId: domain.id,
-        receivingDomain: domain.name,
-        receivingDomainStatus: domain.status,
-        mxStatus: domain.mxStatus,
-        domainCheckedAt: now,
-        routeLocator:
-          lockedExisting?.routeLocator ?? randomBytes(32).toString("base64url"),
-        inboundEnabled: false,
-        webhookStatus:
-          lockedExisting?.providerWebhookId &&
-          lockedExisting.encryptedSigningSecret
-            ? "disabled"
-            : "not_staged",
-        webhookStagingSequence: (lockedExisting?.webhookStagingSequence ?? -1) + 1,
-        lastHealthCheckedAt: now,
-        lastErrorCode: null,
-        updatedByUserId: input.actorUserId,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: schema.organizationReceivingConnections.organizationId,
-        set: {
+      const lockedExisting =
+        await transaction.query.organizationReceivingConnections.findFirst({
+          where: (table, { eq }) =>
+            eq(table.organizationId, input.organizationId),
+        });
+      if (
+        !suppliedApiKey &&
+        (lockedExisting?.encryptedApiKey ?? null) !== storedEncryptedApiKey
+      ) {
+        throw new ReceivingConfigError(
+          "RESEND_RECEIVING_CREDENTIAL_CHANGED",
+          "The Resend credential changed while receiving was being saved. Refresh and try again.",
+        );
+      }
+      if (
+        suppliedApiKey &&
+        !sameReceivingCheckpoint(lockedExisting, existing) &&
+        !(
+          replacingApiKey &&
+          canRebaseUnattemptedReplacement(lockedExisting, existing)
+        )
+      ) {
+        throw new ReceivingConfigError(
+          "RESEND_RECEIVING_SAVE_SUPERSEDED",
+          "The receiving configuration changed while receiving was being saved. Refresh and try again.",
+        );
+      }
+      if (
+        storedHealthCheck &&
+        lockedExisting?.healthCheckSequence !==
+          storedHealthCheck.healthCheckSequence
+      ) {
+        throw new ReceivingConfigError(
+          "RESEND_RECEIVING_SAVE_SUPERSEDED",
+          "The receiving configuration changed while receiving was being saved. Refresh and try again.",
+        );
+      }
+      const encryptedApiKey = suppliedApiKey
+        ? preparedEncryptedApiKey
+        : lockedExisting?.encryptedApiKey;
+      if (!encryptedApiKey) {
+        throw new ReceivingConfigError(
+          "RESEND_RECEIVING_CREDENTIAL_REQUIRED",
+          "Enter a Resend Full access API key.",
+        );
+      }
+      const webhookStagingSequence =
+        (lockedExisting?.webhookStagingSequence ?? -1) + 1;
+      await transaction
+        .insert(schema.organizationReceivingConnections)
+        .values({
+          id: lockedExisting?.id ?? randomUUID(),
+          organizationId: input.organizationId,
+          provider: "resend",
           encryptedApiKey,
           credentialStatus: "full_access",
           credentialValidatedAt: now,
@@ -305,31 +296,144 @@ export async function saveReceivingConnection(input: {
           receivingDomainStatus: domain.status,
           mxStatus: domain.mxStatus,
           domainCheckedAt: now,
+          routeLocator:
+            lockedExisting?.routeLocator ??
+            randomBytes(32).toString("base64url"),
           inboundEnabled: false,
           webhookStatus:
             lockedExisting?.providerWebhookId &&
             lockedExisting.encryptedSigningSecret
               ? "disabled"
               : "not_staged",
-          webhookStagingSequence: sql`${schema.organizationReceivingConnections.webhookStagingSequence} + 1`,
+          webhookStagingSequence,
           lastHealthCheckedAt: now,
           lastErrorCode: null,
           updatedByUserId: input.actorUserId,
           updatedAt: now,
-        },
-      });
-  });
+        })
+        .onConflictDoUpdate({
+          target: schema.organizationReceivingConnections.organizationId,
+          set: {
+            encryptedApiKey,
+            credentialStatus: "full_access",
+            credentialValidatedAt: now,
+            receivingDomainId: domain.id,
+            receivingDomain: domain.name,
+            receivingDomainStatus: domain.status,
+            mxStatus: domain.mxStatus,
+            domainCheckedAt: now,
+            inboundEnabled: false,
+            webhookStatus:
+              lockedExisting?.providerWebhookId &&
+              lockedExisting.encryptedSigningSecret
+                ? "disabled"
+                : "not_staged",
+            webhookStagingSequence,
+            lastHealthCheckedAt: now,
+            lastErrorCode: null,
+            updatedByUserId: input.actorUserId,
+            updatedAt: now,
+          },
+        });
+      return { encryptedApiKey, webhookStagingSequence };
+    },
+  );
   if (isWebhookRecoveryProvider(provider)) {
-    const { stageReceivingWebhook } = await import(
-      "./receiving-webhook-staging"
-    );
+    const { stageReceivingWebhook } =
+      await import("./receiving-webhook-staging");
     await stageReceivingWebhook({
       organizationId: input.organizationId,
       provider,
       env: input.env,
+      expectedEncryptedApiKey: committedAuthority.encryptedApiKey,
+      expectedStagingSequence: committedAuthority.webhookStagingSequence,
     });
   }
   return getPublicReceivingConnection(input.organizationId);
+}
+
+function canRebaseUnattemptedReplacement(
+  locked: Awaited<ReturnType<typeof findConnection>>,
+  observed: Awaited<ReturnType<typeof findConnection>>,
+) {
+  return Boolean(
+    locked &&
+    observed &&
+    locked.encryptedApiKey === observed.encryptedApiKey &&
+    !locked.webhookCreateAttemptedAt &&
+    !observed.webhookCreateAttemptedAt &&
+    !locked.providerWebhookId &&
+    !observed.providerWebhookId &&
+    !locked.encryptedSigningSecret &&
+    !observed.encryptedSigningSecret,
+  );
+}
+
+async function verifyReplacementWebhookAuthority(input: {
+  apiKey: string;
+  existing: Awaited<ReturnType<typeof findConnection>>;
+  provider: ResendReceivingProvider;
+}) {
+  const existing = input.existing;
+  if (!existing) return;
+  if (existing.webhookCreateAttemptedAt && !existing.providerWebhookId) {
+    throw replacementAuthorityConflict();
+  }
+  if (
+    Boolean(existing.providerWebhookId) !==
+    Boolean(existing.encryptedSigningSecret)
+  ) {
+    throw replacementAuthorityConflict();
+  }
+  if (!existing.providerWebhookId) return;
+  try {
+    const webhook = await input.provider.getWebhook(
+      input.apiKey,
+      existing.providerWebhookId,
+    );
+    if (webhook.id !== existing.providerWebhookId) {
+      throw replacementAuthorityConflict();
+    }
+  } catch (error) {
+    if (
+      error instanceof ReceivingConfigError &&
+      error.code === "RESEND_RECEIVING_WEBHOOK_KEY_AUTHORITY_CONFLICT"
+    ) {
+      throw error;
+    }
+    const normalized = normalizeProviderError(error);
+    if (
+      normalized.code === "RESEND_RECEIVING_PROVIDER_UNAVAILABLE" ||
+      normalized.code === "RESEND_RECEIVING_RESPONSE_INVALID"
+    ) {
+      throw normalized;
+    }
+    throw replacementAuthorityConflict();
+  }
+}
+
+function replacementAuthorityConflict() {
+  return new ReceivingConfigError(
+    "RESEND_RECEIVING_WEBHOOK_KEY_AUTHORITY_CONFLICT",
+    "The replacement Resend credential cannot manage the existing receiving webhook.",
+  );
+}
+
+function sameReceivingCheckpoint(
+  locked: Awaited<ReturnType<typeof findConnection>>,
+  observed: Awaited<ReturnType<typeof findConnection>>,
+) {
+  if (!(locked && observed)) return locked === observed;
+  return (
+    locked.encryptedApiKey === observed.encryptedApiKey &&
+    locked.webhookStagingSequence === observed.webhookStagingSequence &&
+    JSON.stringify(locked.webhookCreateIntent) ===
+      JSON.stringify(observed.webhookCreateIntent) &&
+    locked.webhookCreateAttemptedAt?.getTime() ===
+      observed.webhookCreateAttemptedAt?.getTime() &&
+    locked.providerWebhookId === observed.providerWebhookId &&
+    locked.encryptedSigningSecret === observed.encryptedSigningSecret
+  );
 }
 
 function isWebhookRecoveryProvider(
@@ -367,8 +471,8 @@ export async function resolveReceivingIngressAuthority(
   routeLocator: string,
   env?: NodeJS.ProcessEnv,
 ) {
-  const row = await knowledgeDb.query.organizationReceivingConnections.findFirst(
-    {
+  const row =
+    await knowledgeDb.query.organizationReceivingConnections.findFirst({
       columns: {
         id: true,
         organizationId: true,
@@ -377,8 +481,7 @@ export async function resolveReceivingIngressAuthority(
         webhookStatus: true,
       },
       where: (table, { eq }) => eq(table.routeLocator, routeLocator),
-    },
-  );
+    });
   if (!row) return null;
   if (
     !row.inboundEnabled ||
@@ -430,10 +533,12 @@ async function persistStoredCredentialHealth(input: {
   organizationId: string;
   expectedEncryptedApiKey: string;
   healthCheckSequence: number;
-  outcome?: {
-    credentialStatus: "full_access" | "insufficient" | "error";
-    errorCode: string | null;
-  } | undefined;
+  outcome?:
+    | {
+        credentialStatus: "full_access" | "insufficient" | "error";
+        errorCode: string | null;
+      }
+    | undefined;
   checkedDomains?: readonly ReceivingDomainOption[] | undefined;
   failedConfiguredDomainId?: string | undefined;
 }) {

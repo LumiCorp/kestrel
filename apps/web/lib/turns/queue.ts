@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
@@ -25,6 +25,7 @@ import {
   shouldPreservePreparedApprovalCleanupExecution,
 } from "@/lib/turns/prepared-approval-cleanup";
 import { nextPreparedApprovalCleanupRetrySchedule } from "@/lib/turns/prepared-approval-cleanup-retry";
+import { runTurnWorkerMaintenance } from "@/lib/turns/worker-maintenance";
 
 export const DURABLE_THREAD_TURN_QUEUE = "thread.turn.execute";
 export const PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE =
@@ -60,6 +61,24 @@ function reportPushFailure(error: unknown) {
   console.error("Kestrel One mobile push delivery failed.", {
     message: error instanceof Error ? error.message : "Unknown push error",
   });
+}
+
+function reportReceivingWebhookRecoveryFailure(error: unknown) {
+  console.error("Kestrel receiving webhook reconciliation failed.", {
+    errorType: error instanceof Error ? error.name : "UnknownError",
+  });
+}
+
+function reportEmailReceiptRecoveryFailure(error: unknown) {
+  console.error("Kestrel email receipt queue recovery failed.", {
+    errorType: error instanceof Error ? error.name : "UnknownError",
+  });
+}
+
+async function reconcileConfiguredReceivingWebhooks() {
+  const receiving =
+    await import("@/lib/email/receiving-webhook-reconciliation");
+  await receiving.reconcileConfiguredReceivingWebhooks();
 }
 
 async function createTurnBoss() {
@@ -111,7 +130,10 @@ async function sendTurn(
       workspaceMode: schema.threads.workspaceMode,
     })
     .from(schema.threadTurns)
-    .innerJoin(schema.threads, eq(schema.threads.id, schema.threadTurns.threadId))
+    .innerJoin(
+      schema.threads,
+      eq(schema.threads.id, schema.threadTurns.threadId),
+    )
     .where(eq(schema.threadTurns.id, turnId))
     .limit(1);
   if (!turn) throw new Error("The durable turn is unavailable for dispatch.");
@@ -169,14 +191,15 @@ async function sendEmailDeliveryReceipt(boss: PgBoss, receiptId: string) {
     EMAIL_DELIVERY_RECEIPT_QUEUE,
     { receiptId },
     {
-      id: receiptId,
       retryLimit: 3,
       retryDelay: 5,
       retryBackoff: true,
       singletonKey: receiptId,
     },
   );
-  if (!(jobId || (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)))) {
+  if (
+    !(jobId || (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)))
+  ) {
     throw new Error("The email delivery receipt queue rejected the job.");
   }
 }
@@ -185,19 +208,32 @@ async function dispatchEmailDeliveryReceiptOrReconcile(
   boss: PgBoss,
   receiptId: string,
 ) {
-  try {
-    await sendEmailDeliveryReceipt(boss, receiptId);
-  } catch (error) {
+  await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:email-receipt-dispatch:${receiptId}`}, 0))`,
+    );
+    const [receipt] = await transaction
+      .select({ state: schema.emailDeliveryReceipts.state })
+      .from(schema.emailDeliveryReceipts)
+      .where(eq(schema.emailDeliveryReceipts.id, receiptId))
+      .limit(1);
+    if (!receipt || receipt.state !== "queued") return;
+    if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)) return;
     try {
-      if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)) return;
-      const receipt = await readEmailDeliveryReceiptState(receiptId);
-      if (!receipt || receipt.state !== "queued") return;
-    } catch {
-      // The queued database record remains durable dispatch intent. Worker
-      // maintenance retries after either queue or database state is readable.
+      await sendEmailDeliveryReceipt(boss, receiptId);
+    } catch (error) {
+      try {
+        if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId))
+          return;
+        const current = await readEmailDeliveryReceiptState(receiptId);
+        if (!current || current.state !== "queued") return;
+      } catch {
+        // The queued database record remains durable dispatch intent. Worker
+        // maintenance retries after either queue or database state is readable.
+      }
+      throw error;
     }
-    throw error;
-  }
+  });
 }
 
 export async function enqueueEmailDeliveryReceipt(receiptId: string) {
@@ -217,8 +253,7 @@ async function dispatchTurnOrReconcile(boss: PgBoss, turnId: string) {
         state &&
         (state.queueState !== "running" ||
           state.activeTurnId !== turnId ||
-          (state.status !== "queued" &&
-            state.status !== "waiting_for_input"))
+          (state.status !== "queued" && state.status !== "waiting_for_input"))
       ) {
         return;
       }
@@ -256,7 +291,8 @@ export async function finalizeExhaustedDurableTurnJob(input: {
       "The Kestrel agent could not start this turn. Please try again.",
     interactionFailure: {
       failureCode: "TURN_DISPATCH_FAILED",
-      failureMessage: "The durable queue exhausted dispatch before the runner started.",
+      failureMessage:
+        "The durable queue exhausted dispatch before the runner started.",
       effectStatus: "not_started",
       retryable: true,
     },
@@ -332,9 +368,10 @@ async function recoverQueuedProjectPromptScheduleRuns(boss: PgBoss) {
 async function recoverQueuedEmailDeliveryReceipts(boss: PgBoss) {
   const receiptIds = await listDispatchableEmailDeliveryReceiptIds();
   for (const receiptId of receiptIds) {
-    if (!(await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId))) {
-      await dispatchEmailDeliveryReceiptOrReconcile(boss, receiptId);
-    }
+    if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)) continue;
+    const receipt = await readEmailDeliveryReceiptState(receiptId);
+    if (!receipt || receipt.state !== "queued") continue;
+    await dispatchEmailDeliveryReceiptOrReconcile(boss, receiptId);
   }
 }
 
@@ -373,11 +410,12 @@ async function hasResolvedUnconsumedRuntimeInteraction(turnId: string) {
 }
 
 async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
-  const capacity =
-    await knowledgeDb.query.platformTurnWorkerCapacity.findFirst({
+  const capacity = await knowledgeDb.query.platformTurnWorkerCapacity.findFirst(
+    {
       where: eq(schema.platformTurnWorkerCapacity.id, "default"),
       columns: { admissionClosedUntil: true },
-    });
+    },
+  );
   if (!capacity) {
     throw new Error("Turn Worker capacity configuration is unavailable.");
   }
@@ -453,7 +491,8 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
           "The Kestrel agent was interrupted before this turn finished. Please try again.",
         interactionFailure: {
           failureCode: "TURN_WORKER_INTERRUPTED",
-          failureMessage: "The orphaned worker could not prove whether execution started.",
+          failureMessage:
+            "The orphaned worker could not prove whether execution started.",
           effectStatus: "unknown",
           retryable: false,
         },
@@ -468,11 +507,17 @@ export async function reconcileDurableThreadTurnQueue() {
 
 function createWorkerMaintenance(boss: PgBoss) {
   return createSingleFlightOperation(async () => {
-    await recoverQueuedEmailDeliveryReceipts(boss);
-    await recoverQueuedProjectPromptScheduleRuns(boss);
-    await reconcileDurableThreadTurnQueueWithBoss(boss);
+    await runTurnWorkerMaintenance({
+      reconcileReceivingWebhooks: reconcileConfiguredReceivingWebhooks,
+      reportReceivingWebhookFailure: reportReceivingWebhookRecoveryFailure,
+      recoverEmailReceipts: () => recoverQueuedEmailDeliveryReceipts(boss),
+      reportEmailReceiptFailure: reportEmailReceiptRecoveryFailure,
+      recoverSchedules: () => recoverQueuedProjectPromptScheduleRuns(boss),
+      reconcileTurns: () => reconcileDurableThreadTurnQueueWithBoss(boss),
+      drainMobilePush: drainMobilePushOutbox,
+      reportMobilePushFailure: reportPushFailure,
+    });
     await advanceActiveProjectWorkflows(boss);
-    await drainMobilePushOutbox().catch(reportPushFailure);
   });
 }
 
