@@ -157,6 +157,8 @@ export function parseModelCredentialReferenceV1(
       registration.qualification.revision !== routeBinding.qualificationRevision ||
       registration.route.apiEndpoint !== routeBinding.apiEndpoint ||
       registration.route.endpointCodec !== routeBinding.endpointCodec ||
+      fingerprintModelRoutingPolicyV2(registration.route.routing) !==
+        routeBinding.routingPolicyFingerprint ||
       registration.credentialRevision !== String(routeBinding.credentialRevision)
     ) {
       throw new Error(
@@ -174,10 +176,19 @@ export function parseModelCredentialReferenceV1(
     if (
       openRouterRouteEvidence !== undefined &&
       (openRouterRouteEvidence.modelId !== routeBinding.rawModelId ||
-        openRouterRouteEvidence.endpoint !== endpointForCodec(routeBinding.endpointCodec))
+        openRouterRouteEvidence.endpoint !== endpointForCodec(routeBinding.endpointCodec) ||
+        openRouterRouteEvidence.routing.kind !== registration.route.routing.kind ||
+        openRouterRouteEvidence.routing.policyId !== registration.route.routing.policyId ||
+        !sameStrings(
+          openRouterRouteEvidence.routing.allowedEndpointIds,
+          registration.route.routing.allowedEndpointIds ?? [],
+        ) ||
+        openRouterRouteEvidence.sourceHash !==
+          registration.providerEvidence.find((entry) => entry.source === "provider")
+            ?.retainedPayloadHash)
     ) {
       throw new Error(
-        "OpenRouter route evidence does not match its qualified route binding.",
+        "OpenRouter route evidence does not match its qualified registration binding.",
       );
     }
   } else if (registration !== undefined || openRouterRouteEvidence !== undefined) {
@@ -230,6 +241,11 @@ function requireStringArray(value: unknown, field: string): string[] {
 
 function endpointForCodec(codec: string): "chat" | "responses" | undefined {
   return codec === "openrouter.chat.v2" ? "chat" : codec === "openrouter.responses.v2" ? "responses" : undefined;
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length &&
+    [...left].sort().every((entry, index) => entry === [...right].sort()[index]);
 }
 
 export function parseModelCredentialRouteBindingV2(
@@ -376,6 +392,7 @@ function requireProvider(value: unknown): ModelRouteProviderV1 {
   return value;
 }
 import {
+  fingerprintModelRoutingPolicyV2,
   parseModelRegistrationV2,
   type ModelRegistrationV2,
 } from "./model-registration.js";

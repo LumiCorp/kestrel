@@ -16,6 +16,7 @@ import type {
   ModelGateway,
   ModelGatewayCallOptions,
   ModelRequest,
+  ModelResponse,
 } from "../../src/kestrel/contracts/model-io.js";
 import {
   MODEL_REQUEST_V2_VERSION,
@@ -255,6 +256,45 @@ test("broker blocks structured legacy routes before acquiring a credential lease
       error.code === "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
   );
   assert.equal(loads, 0);
+});
+
+test("leased OpenRouter transport receives the qualified route evidence", async () => {
+  let fetches = 0;
+  const gateway = createProviderGatewayForLease(
+    lease({
+      leaseId: "qualified-openrouter-lease",
+      expiresAtMs: Date.now() + GATEWAY_CREDENTIAL_CACHE_TTL_MS,
+    }),
+    {
+      routeEvidence: {
+        modelId: reference.rawModelId,
+        endpoint: "chat",
+        supportedParameters: [],
+        endpoints: [{ id: "provider-1", supportedParameters: [] }],
+        routing: {
+          kind: "fixed",
+          policyId: "qualified-openrouter-route",
+          allowedEndpointIds: ["provider-1"],
+        },
+        sourceHash: `sha256:${"c".repeat(64)}`,
+      },
+      fetchImpl: async () => {
+        fetches += 1;
+        return new Response(
+          JSON.stringify({
+            model: reference.rawModelId,
+            choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+          }),
+          { status: 200 },
+        );
+      },
+    },
+  );
+
+  const response = await gateway.call<ModelResponse>(qualifiedRequest());
+
+  assert.equal(fetches, 1);
+  assert.equal(response.provider.endpoint, "chat");
 });
 
 function qualifiedRequest() {

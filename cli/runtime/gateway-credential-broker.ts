@@ -458,9 +458,6 @@ export function createProviderGatewayForLease(
     }
     return createAnthropicModelGatewayFromEnv({
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-      ...(options.routeEvidence === undefined
-        ? {}
-        : { routeEvidence: options.routeEvidence }),
       envConfig: {
         apiKey: lease.apiKey,
         model: lease.rawModelId,
@@ -474,6 +471,9 @@ export function createProviderGatewayForLease(
     }
     return createOpenRouterModelGatewayFromEnv({
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.routeEvidence === undefined
+        ? {}
+        : { routeEvidence: options.routeEvidence }),
       envConfig: {
         apiKey: lease.apiKey,
         model: lease.rawModelId,

@@ -7,6 +7,11 @@ import {
   readHostedModelRegistrationState,
   withHostedModelRegistration,
 } from "./hosted-model-registration";
+import {
+  createModelRegistrationV2,
+  fingerprintModelRoutingPolicyV2,
+} from "../../../../src/kestrel/contracts/model-registration";
+import { parseModelCredentialReferenceV1 } from "../../../../src/kestrel/contracts/model-route";
 
 function providerConfiguration(
   provider: "openai" | "openrouter" | "anthropic",
@@ -211,6 +216,103 @@ test("qualification projections remain bound to their immutable declaration", ()
         state: "qualified",
       }),
     /credential revision/u,
+  );
+});
+
+test("qualified OpenRouter route evidence remains bound to registration proof", () => {
+  const pending = createRegistration(
+    {
+      provider: "openrouter",
+      details: {
+        id: "z-ai/glm-5.2:free",
+        supported_parameters: ["tools"],
+        endpoints: [{ id: "provider-a", supported_parameters: ["tools"] }],
+      },
+    },
+    "z-ai/glm-5.2:free",
+  ).registration;
+  const { fingerprint: _fingerprint, ...authoring } = pending;
+  const registration = createModelRegistrationV2({
+    ...authoring,
+    qualification: {
+      state: "qualified",
+      revision: "qualification-1",
+      checkedAt: "2026-08-26T00:01:00.000Z",
+      probeHash: `sha256:${"d".repeat(64)}`,
+    },
+  });
+  const sourceHash = registration.providerEvidence.find(
+    (entry) => entry.source === "provider",
+  )?.retainedPayloadHash;
+  assert.ok(sourceHash);
+  const reference = {
+    source: "kestrel-one" as const,
+    runId: "run-1",
+    gatewayId: "gateway-1",
+    organizationId: "organization-1",
+    environmentId: "environment-1",
+    rawModelId: registration.modelId,
+    provider: "openrouter" as const,
+    registration,
+    routeBinding: {
+      version: "model_credential_route_binding_v2" as const,
+      status: "qualified" as const,
+      provider: "openrouter" as const,
+      rawModelId: registration.modelId,
+      registrationId: registration.registrationId,
+      registrationRevision: registration.revision,
+      registrationFingerprint: registration.fingerprint,
+      qualificationRevision: "qualification-1",
+      apiEndpoint: registration.route.apiEndpoint,
+      endpointCodec: registration.route.endpointCodec,
+      routingPolicyFingerprint: fingerprintModelRoutingPolicyV2(
+        registration.route.routing,
+      ),
+      requiredRole: "agent.loop",
+      credentialRevision: 7,
+    },
+    openRouterRouteEvidence: {
+      modelId: registration.modelId,
+      endpoint: "chat" as const,
+      supportedParameters: ["tools"],
+      endpoints: [{ id: "provider-a", supportedParameters: ["tools"] }],
+      routing: {
+        kind: "fixed" as const,
+        policyId: registration.route.routing.policyId,
+        allowedEndpointIds: ["provider-a"],
+      },
+      sourceHash,
+    },
+  };
+
+  assert.equal(
+    parseModelCredentialReferenceV1(reference).openRouterRouteEvidence?.sourceHash,
+    sourceHash,
+  );
+  assert.throws(
+    () =>
+      parseModelCredentialReferenceV1({
+        ...reference,
+        openRouterRouteEvidence: {
+          ...reference.openRouterRouteEvidence,
+          sourceHash: `sha256:${"e".repeat(64)}`,
+        },
+      }),
+    /qualified registration binding/u,
+  );
+  assert.throws(
+    () =>
+      parseModelCredentialReferenceV1({
+        ...reference,
+        openRouterRouteEvidence: {
+          ...reference.openRouterRouteEvidence,
+          routing: {
+            ...reference.openRouterRouteEvidence.routing,
+            allowedEndpointIds: ["provider-b"],
+          },
+        },
+      }),
+    /qualified registration binding/u,
   );
 });
 
