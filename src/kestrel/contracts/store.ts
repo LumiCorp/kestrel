@@ -564,7 +564,6 @@ export function quarantinePreparedApprovalCleanupDoneResult(
   return {
     idempotencyKey: result.idempotencyKey,
     status: "FAILED",
-    ...(result.output === undefined ? {} : { output: result.output }),
     error: {
       code: "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
       message:

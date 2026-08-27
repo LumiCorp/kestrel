@@ -31,8 +31,10 @@ import {
   validatePreparedApprovalCleanupDoneEvidence,
   validatePreparedApprovalCleanupEffectIdentity,
 } from "../../src/kestrel/contracts/store.js";
-import { stringifySanitizedJson } from "../../src/runtime/jsonSanitizer.js";
-import { buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent } from "../../src/runtime/preparedApprovalCleanupAudit.js";
+import {
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  normalizePreparedApprovalCleanupDoneEvidence,
+} from "../../src/runtime/preparedApprovalCleanupAudit.js";
 
 import {
   normalizeRuntimeStateForPersist,
@@ -746,16 +748,16 @@ export class InMemorySessionStore implements SessionStore {
           effect.status = "DONE";
           return "done";
         } catch {
-          const auditEvent = JSON.parse(stringifySanitizedJson(
+          const normalizedDoneResult =
+            normalizePreparedApprovalCleanupDoneEvidence(doneResult);
+          const auditEvent =
             buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
               effect,
-              invalidResult: doneResult,
+              invalidResult: normalizedDoneResult,
               occurredAt: new Date().toISOString(),
-            }),
-          )) as RunEvent;
-          const quarantinedResult = JSON.parse(stringifySanitizedJson(
-            quarantinePreparedApprovalCleanupDoneResult(doneResult),
-          )) as EffectResult;
+            });
+          const quarantinedResult =
+            quarantinePreparedApprovalCleanupDoneResult(normalizedDoneResult);
           const preparedAuditEvent = structuredClone(auditEvent);
           const preparedQuarantinedResult = structuredClone(quarantinedResult);
           this.runEvents.push(preparedAuditEvent);

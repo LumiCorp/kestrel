@@ -29,7 +29,9 @@ import {
 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import type { PersistedEffect } from "../../src/kestrel/contracts/store.js";
 import {
+  boundPreparedApprovalCleanupQuarantineAuditMetadata,
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  normalizePreparedApprovalCleanupDoneEvidence,
   PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
 } from "../../src/runtime/preparedApprovalCleanupAudit.js";
 
@@ -75,6 +77,38 @@ async function buildPreparedApprovalCleanupEffect(input: {
       createdAt: "2026-08-27T00:00:00.000Z",
     },
   };
+}
+
+async function persistPreparedApprovalCleanupEffect(
+  store: DurableInMemorySessionStore,
+  effect: PersistedEffect,
+): Promise<PersistedEffect> {
+  const event = {
+    id: `event-${effect.runId}`,
+    type: "user.message" as const,
+    sessionId: effect.sessionId,
+    payload: {},
+    timestamp: "2026-08-27T00:00:00.000Z",
+  };
+  const session = await store.ensureSession(effect.sessionId);
+  await store.startRun(effect.runId, event);
+  const committed = await store.commitStep({
+    runId: effect.runId,
+    event,
+    sessionId: effect.sessionId,
+    expectedVersion: session.version,
+    effects: [{
+      type: effect.type,
+      payload: effect.payload,
+      idempotencyKey: effect.idempotencyKey,
+      failurePolicy: effect.failurePolicy,
+    }],
+    emitEvents: [],
+    stepIndex: effect.stepIndex,
+  });
+  const persisted = committed.persistedEffects[0];
+  if (persisted === undefined) throw new Error("Cleanup effect was not persisted");
+  return persisted;
 }
 
 
@@ -514,7 +548,7 @@ test("cleanup DONE quarantine preserves malformed audit evidence across effect s
     const quarantined = await store.getEffectResult(effect.idempotencyKey);
     assert.equal(quarantined?.status, "FAILED");
     assert.equal(quarantined?.timestamp, timestamp);
-    assert.deepEqual(quarantined?.output, malformedOutput);
+    assert.equal(quarantined?.output, undefined);
     assert.equal(
       quarantined?.error?.code,
       "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
@@ -586,6 +620,11 @@ test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free",
 
   assert.deepEqual(first, second);
   assert.deepEqual(first, jsonbStyle);
+  assert.equal(
+    (first.metadata?.resultIdentity as Record<string, unknown>)
+      .originalTimestamp,
+    invalidResult.timestamp,
+  );
   const serialized = JSON.stringify(first);
   for (const sentinel of [
     "private-prepared-call-sentinel",
@@ -618,7 +657,7 @@ test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free",
     type: "object",
     topLevelEntriesObserved: 16,
     topLevelEntriesTruncated: true,
-    topLevelValueTypes: { truncated: 1, string: 15 },
+    topLevelValueTypes: { string: 14, object: 2 },
   });
   assert.deepEqual(evidence.errorShape, {
     type: "object",
@@ -630,6 +669,41 @@ test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free",
     String((first.metadata?.releasedPreparedInvocationId as Record<string, unknown>)
       .canonicalHash),
     /^sha256:[0-9a-f]{64}$/u,
+  );
+
+  const rawDurableForm: Record<string, unknown> = {
+    stable: "value",
+    omitted: undefined,
+    functionValue: () => "omitted",
+    symbolValue: Symbol("omitted"),
+    invalidUnicode: "bad\ud800value",
+  };
+  rawDurableForm.self = rawDurableForm;
+  const rawDurableResult = {
+    ...invalidResult,
+    output: rawDurableForm,
+    error: undefined,
+  };
+  const normalizedDurableResult =
+    normalizePreparedApprovalCleanupDoneEvidence(rawDurableResult);
+  const rawDurableEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect,
+      invalidResult: rawDurableResult,
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  const persistedDurableEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect,
+      invalidResult: {
+        ...normalizedDurableResult,
+        output: JSON.parse(JSON.stringify(normalizedDurableResult.output)),
+      },
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  assert.deepEqual(
+    rawDurableEvent.metadata?.evidence,
+    persistedDurableEvent.metadata?.evidence,
   );
 
   const identitySentinel = "oversized-identifier-secret-sentinel".repeat(50_000);
@@ -653,130 +727,158 @@ test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free",
       .idempotencyKey as Record<string, unknown>).canonicalHash,
     hashCanonical({ value: identitySentinel }),
   );
-});
 
-test("production in-memory quarantine prepares atomically and retry converges", async () => {
-  const store = new DurableInMemorySessionStore();
-  const registry = new EffectRegistry();
-  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
-    suffix: "atomic-preparation",
-    status: "PENDING",
-  });
-  const internal = store as unknown as {
-    effects: Array<PersistedEffect & {
-      tenantOwnershipState: "explicit_unbound";
-    }>;
-    effectResults: Map<string, {
-      idempotencyKey: string;
-      status: "DONE" | "FAILED";
-      output?: unknown;
-      error?: unknown;
-      timestamp: string;
-    }>;
-  };
-  internal.effects.push({
-    ...structuredClone(effect),
-    tenantOwnershipState: "explicit_unbound",
-  });
-  internal.effectResults.set(effect.idempotencyKey, {
-    idempotencyKey: effect.idempotencyKey,
-    status: "DONE",
-    output: {
-      releasedPreparedInvocationId: "wrong-call",
-      nonJsonValue: 1n,
-    },
-    timestamp: "2026-08-27T00:00:01.000Z",
-  });
-
-  await assert.rejects(
-    store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
-      effect.idempotencyKey,
+  const timestampSentinel = "timestamp-secret-sentinel".repeat(50_000);
+  const malformedTimestampEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
       effect,
-    ),
-    /BigInt/u,
-  );
-  await assert.rejects(
-    store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
-      effect.idempotencyKey,
-      effect,
-    ),
-    /BigInt/u,
-  );
-  assert.equal(store.getRunEvents().length, 0);
+      invalidResult: { ...invalidResult, timestamp: timestampSentinel },
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  const malformedTimestampSerialized = JSON.stringify(malformedTimestampEvent);
   assert.equal(
-    (await store.getPersistedEffect(effect.idempotencyKey))?.status,
-    "PENDING",
-  );
-  assert.equal(
-    (await store.getEffectResult(effect.idempotencyKey))?.status,
-    "DONE",
-  );
-  assert.equal(
-    store.operationLog.some((entry) => entry.startsWith("runEvent:")),
+    malformedTimestampSerialized.includes("timestamp-secret-sentinel"),
     false,
   );
+  const timestampEvidence = (malformedTimestampEvent.metadata?.resultIdentity as
+    Record<string, unknown>).originalTimestamp as Record<string, unknown>;
+  assert.equal(timestampEvidence.type, "string");
+  assert.equal(
+    timestampEvidence.canonicalHash,
+    hashCanonical({ value: timestampSentinel }),
+  );
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(malformedTimestampEvent.metadata)) <=
+      PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+  );
+  const fallback = boundPreparedApprovalCleanupQuarantineAuditMetadata(
+    { secret: "fallback-secret-sentinel".repeat(1_000) },
+    String(evidence.canonicalHash),
+  );
+  assert.equal(fallback.projectionStatus, "metadata_bound_exceeded");
+  assert.equal(JSON.stringify(fallback).includes("fallback-secret-sentinel"), false);
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(fallback)) <=
+      PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+  );
+});
 
-  const retryableOutput: Record<string, unknown> = {
-    releasedPreparedInvocationId: "wrong-call",
-    functionValue: () => "not persisted",
-    symbolValue: Symbol("not persisted"),
+test("production in-memory quarantine is total through public store APIs", async () => {
+  const cyclic: Record<string, unknown> = { invalidUnicode: "bad\ud800value" };
+  cyclic.self = cyclic;
+  const throwingGetter: Record<string, unknown> = {};
+  Object.defineProperty(throwingGetter, "secret", {
+    enumerable: true,
+    get: () => { throw new Error("getter-secret-sentinel"); },
+  });
+  const throwingToJson = {
+    stable: "value",
+    toJSON: () => { throw new Error("to-json-secret-sentinel"); },
   };
-  retryableOutput.cycle = retryableOutput;
-  internal.effectResults.set(effect.idempotencyKey, {
-    idempotencyKey: effect.idempotencyKey,
-    status: "DONE",
-    output: retryableOutput,
-    timestamp: "2026-08-27T00:00:02.000Z",
+  const throwingProxy = new Proxy({}, {
+    ownKeys: () => { throw new Error("proxy-secret-sentinel"); },
   });
-  assert.equal(
-    await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
-      effect.idempotencyKey,
-      effect,
-    ),
-    "quarantined",
-  );
-  assert.equal(store.getRunEvents().length, 1);
-  const serializedAudit = JSON.stringify(store.getRunEvents()[0]);
-  assert.equal(serializedAudit.includes("wrong-call"), false);
-  assert.equal(serializedAudit.includes("not persisted"), false);
-  assert.deepEqual(
-    (await store.getEffectResult(effect.idempotencyKey))?.output,
-    {
-      releasedPreparedInvocationId: "wrong-call",
-      cycle: "[Circular]",
-    },
-  );
-  assert.equal(
-    await store.resetPreparedApprovalCleanupEffectExecution(
-      effect.idempotencyKey,
-      effect,
-    ),
-    "reset",
-  );
-  let releases = 0;
-  registry.register("release_prepared_tool_call", async () => {
-    releases += 1;
-    return { releasedPreparedInvocationId: preparedCallId };
-  });
-  const outcome = await new InlineEffectRunner(store, registry).runEffects(
-    [effect],
-    {
-      runId: effect.runId,
-      sessionId: effect.sessionId,
-      stepIndex: effect.stepIndex,
-    },
-  );
-  assert.equal(outcome.stop, false);
-  assert.equal(releases, 1);
-  assert.equal(store.getRunEvents().length, 1);
-  assert.equal(
-    (await store.getPersistedEffect(effect.idempotencyKey))?.status,
-    "DONE",
-  );
-  assert.deepEqual(
-    (await store.getEffectResult(effect.idempotencyKey))?.output,
-    { releasedPreparedInvocationId: preparedCallId },
-  );
+  const cases: Array<[string, unknown, string?]> = [
+    ["bigint", 1n],
+    ["throwing-getter", throwingGetter],
+    ["throwing-to-json", throwingToJson],
+    ["proxy", throwingProxy],
+    ["function", () => "function-secret-sentinel"],
+    ["symbol", Symbol("symbol-secret-sentinel")],
+    ["undefined", undefined],
+    ["cycle", cyclic],
+    ["invalid-unicode", "bad\ud800value"],
+    ["secret-timestamp", "value", "timestamp-secret-sentinel"],
+    [
+      "oversized-timestamp",
+      "value",
+      "timestamp-secret-sentinel".repeat(50_000),
+    ],
+  ];
+
+  for (const [suffix, unusualValue, timestamp] of cases) {
+    const store = new DurableInMemorySessionStore();
+    const registry = new EffectRegistry();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: `public-total-${suffix}`,
+      status: "PENDING",
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(
+      store,
+      built.effect,
+    );
+    await store.saveEffectResult(effect.runId, effect.sessionId, {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE",
+      output: {
+        releasedPreparedInvocationId: "wrong-call-secret-sentinel",
+        unusualValue,
+      },
+      timestamp: timestamp ?? "2026-08-27T00:00:01.000Z",
+    });
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "quarantined",
+      suffix,
+    );
+    assert.equal(store.getRunEvents().length, 1, suffix);
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "conflict",
+      suffix,
+    );
+    assert.equal(store.getRunEvents().length, 1, suffix);
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(store.getRunEvents()[0]?.metadata)) <=
+        PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+      suffix,
+    );
+    assert.equal(
+      JSON.stringify(store.getRunEvents()[0]).includes("secret-sentinel"),
+      false,
+      suffix,
+    );
+    assert.equal(
+      (await store.getEffectResult(effect.idempotencyKey))?.output,
+      undefined,
+      suffix,
+    );
+    assert.equal(
+      await store.resetPreparedApprovalCleanupEffectExecution(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "reset",
+      suffix,
+    );
+    let releases = 0;
+    registry.register("release_prepared_tool_call", async () => {
+      releases += 1;
+      return { releasedPreparedInvocationId: built.preparedCallId };
+    });
+    const outcome = await new InlineEffectRunner(store, registry).runEffects(
+      [effect],
+      {
+        runId: effect.runId,
+        sessionId: effect.sessionId,
+        stepIndex: effect.stepIndex,
+      },
+    );
+    assert.equal(outcome.stop, false, suffix);
+    assert.equal(releases, 1, suffix);
+    assert.equal(store.getRunEvents().length, 1, suffix);
+    assert.equal(
+      (await store.getPersistedEffect(effect.idempotencyKey))?.status,
+      "DONE",
+      suffix,
+    );
+  }
 });
 
 test("cleanup DONE quarantine preserves exact evidence and refuses ordinary effects", async () => {

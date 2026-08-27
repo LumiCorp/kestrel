@@ -11,8 +11,6 @@ work; this queue does not reopen them.
 
 ## Ready
 
-- [Normalize cleanup quarantine values across stores](06t-normalize-cleanup-quarantine-values.md)
-- [Bound cleanup quarantine audit timestamp](06u-bound-cleanup-audit-timestamp.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
@@ -25,6 +23,8 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Normalize cleanup quarantine values across stores](06t-normalize-cleanup-quarantine-values.md)
+- [Bound cleanup quarantine audit timestamp](06u-bound-cleanup-audit-timestamp.md)
 - [Align hosted approval contract gates](06s-align-hosted-approval-contract-gates.md)
 - [Make in-memory cleanup quarantine atomic](06r-make-in-memory-quarantine-atomic.md)
 - [Bound and canonicalize cleanup audit identities](06q-bound-and-canonicalize-cleanup-audit-identities.md)

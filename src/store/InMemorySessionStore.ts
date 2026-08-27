@@ -53,8 +53,10 @@ import {
   validateRuntimeSessionState,
 } from "../runtime/state.js";
 import { SessionBusyError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
-import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
-import { buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent } from "../runtime/preparedApprovalCleanupAudit.js";
+import {
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  normalizePreparedApprovalCleanupDoneEvidence,
+} from "../runtime/preparedApprovalCleanupAudit.js";
 import {
   buildCanonicalWaitingFor,
   readActiveWaitState,
@@ -1131,16 +1133,16 @@ export class InMemorySessionStore implements SessionStore {
           effect.status = "DONE";
           return "done";
         } catch {
-          const auditEvent = JSON.parse(stringifySanitizedJson(
+          const normalizedDoneResult =
+            normalizePreparedApprovalCleanupDoneEvidence(doneResult);
+          const auditEvent =
             buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
               effect,
-              invalidResult: doneResult,
+              invalidResult: normalizedDoneResult,
               occurredAt: new Date().toISOString(),
-            }),
-          )) as RunEvent;
-          const quarantinedResult = JSON.parse(stringifySanitizedJson(
-            quarantinePreparedApprovalCleanupDoneResult(doneResult),
-          )) as EffectResult;
+            });
+          const quarantinedResult =
+            quarantinePreparedApprovalCleanupDoneResult(normalizedDoneResult);
           const preparedAuditEvent = structuredClone(auditEvent);
           const preparedQuarantinedResult = structuredClone(quarantinedResult);
           this.runEvents.push(preparedAuditEvent);

@@ -92,7 +92,10 @@ import {
 } from "../runtime/stateDiagnostics.js";
 import { normalizeOptionalTimestampString, normalizeTimestampString } from "../runtime/timestamps.js";
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
-import { buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent } from "../runtime/preparedApprovalCleanupAudit.js";
+import {
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  normalizePreparedApprovalCleanupDoneEvidence,
+} from "../runtime/preparedApprovalCleanupAudit.js";
 import {
   buildCanonicalWaitingFor,
   readActiveWaitState,
@@ -2030,17 +2033,20 @@ export class PostgresSessionStore implements SessionStore {
         );
         return "done";
       } catch {
-        const quarantined = quarantinePreparedApprovalCleanupDoneResult(result);
+        const normalizedResult =
+          normalizePreparedApprovalCleanupDoneEvidence(result);
+        const quarantined =
+          quarantinePreparedApprovalCleanupDoneResult(normalizedResult);
         await this.appendRunEventsBatchWithExecutor(executor, [
           buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
             effect,
-            invalidResult: result,
+            invalidResult: normalizedResult,
             occurredAt: new Date().toISOString(),
           }),
         ]);
         await executor.query(
           `UPDATE effect_results
-              SET status = 'FAILED', error_json = $2::jsonb
+              SET status = 'FAILED', output_json = NULL, error_json = $2::jsonb
             WHERE idempotency_key = $1`,
           [idempotencyKey, stringifySanitizedJson(quarantined.error)],
         );

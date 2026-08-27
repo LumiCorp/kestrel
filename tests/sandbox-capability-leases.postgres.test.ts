@@ -16,7 +16,11 @@ import { hashCanonical } from "../src/kestrel/contracts/tool-contract.js";
 import { SandboxCapabilityExactResultConflictError } from "../src/kestrel/contracts/store.js";
 import { PgSqlExecutor } from "../src/store/PgSqlExecutor.js";
 import { PostgresSessionStore } from "../src/store/PostgresSessionStore.js";
-import { PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES } from "../src/runtime/preparedApprovalCleanupAudit.js";
+import {
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  normalizePreparedApprovalCleanupDoneEvidence,
+  PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+} from "../src/runtime/preparedApprovalCleanupAudit.js";
 import { createTestToolGateway, prepareTestToolCall } from "./helpers/createTestToolGateway.js";
 
 const databaseUrl = process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL?.trim();
@@ -511,6 +515,22 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         binding.tenantId,
       ],
     );
+    const rawEquivalentOutput: Record<string, unknown> = {
+      releasedPreparedInvocationId: "wrong-call",
+      apiKey: "pg-api-key-sentinel",
+      providerPayload: { token: "pg-provider-token-sentinel" },
+      url: "https://pg-private.example.invalid/provider",
+      omitted: undefined,
+      functionValue: () => "pg-function-secret-sentinel",
+      invalidUnicode: "bad\ud800value",
+    };
+    rawEquivalentOutput.self = rawEquivalentOutput;
+    const normalizedPgResult = normalizePreparedApprovalCleanupDoneEvidence({
+      idempotencyKey: conflictingEffectId,
+      status: "DONE",
+      output: rawEquivalentOutput,
+      timestamp: "2026-08-27T00:00:01.000Z",
+    });
     await pool.query(
       `INSERT INTO effect_results
          (run_id, session_id, idempotency_key, status, output_json,
@@ -520,12 +540,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         runId,
         sessionId,
         conflictingEffectId,
-        JSON.stringify({
-          releasedPreparedInvocationId: "wrong-call",
-          apiKey: "pg-api-key-sentinel",
-          providerPayload: { token: "pg-provider-token-sentinel" },
-          url: "https://pg-private.example.invalid/provider",
-        }),
+        JSON.stringify(normalizedPgResult.output),
         "2026-08-27T00:00:01.000Z",
       ],
     );
@@ -549,12 +564,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       quarantinedConflict?.error?.code,
       "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
     );
-    assert.deepEqual(quarantinedConflict?.output, {
-      releasedPreparedInvocationId: "wrong-call",
-      apiKey: "pg-api-key-sentinel",
-      providerPayload: { token: "pg-provider-token-sentinel" },
-      url: "https://pg-private.example.invalid/provider",
-    });
+    assert.equal(quarantinedConflict?.output, undefined);
     assert.equal(
       quarantinedConflict?.timestamp,
       "2026-08-27T00:00:01.000Z",
@@ -632,6 +642,24 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       return resultIdentity?.originalTimestamp ===
         "2026-08-27T00:00:01.000Z";
     });
+    const conflictingEffect = await store.getPersistedEffect(conflictingEffectId);
+    assert.ok(conflictingEffect);
+    const expectedRawAudit =
+      buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+        effect: conflictingEffect,
+        invalidResult: {
+          idempotencyKey: conflictingEffectId,
+          status: "DONE",
+          output: rawEquivalentOutput,
+          timestamp: "2026-08-27T00:00:01.000Z",
+        },
+        occurredAt: "2026-08-27T00:00:02.000Z",
+      });
+    assert.deepEqual(
+      conflictingAudit?.metadata?.evidence,
+      expectedRawAudit.metadata?.evidence,
+      "raw in-memory and JSONB-persisted forms must project identically",
+    );
     const conflictingResultIdentity = conflictingAudit?.metadata
       ?.resultIdentity as Record<string, unknown>;
     assert.equal(conflictingResultIdentity.status, "DONE");
@@ -647,6 +675,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       "pg-api-key-sentinel",
       "pg-provider-token-sentinel",
       "pg-private.example.invalid",
+      "pg-function-secret-sentinel",
     ]) {
       assert.equal(serializedConflictAudit.includes(sentinel), false, sentinel);
     }
