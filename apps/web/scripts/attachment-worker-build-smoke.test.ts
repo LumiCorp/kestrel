@@ -83,6 +83,20 @@ test("production build externalizes and traces the attachment package", async ()
   assert.match(canvasPatch, /return require\(process\.env\.NAPI_RS_NATIVE_LIBRARY_PATH\)/u);
 });
 
+test("Vercel source bundling keeps CLI source while excluding root runtime output", async () => {
+  const [vercelIgnore, finalizePayload] = await Promise.all([
+    readFile(new URL("../../../.vercelignore", import.meta.url), "utf8"),
+    readFile(new URL("../../../cli/output/FinalizePayload.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(vercelIgnore, /^\/output\/$/mu);
+  assert.doesNotMatch(vercelIgnore, /^output\/$/mu);
+  assert.match(
+    finalizePayload,
+    /buildFinalizePlainText/u,
+    "Kestrel One imports this CLI source during its hosted TypeScript build.",
+  );
+});
+
 test("attachment extraction resolves its worker through the package boundary", async () => {
   const source = await readFile(
     new URL("../../../packages/attachments/src/index.ts", import.meta.url),
