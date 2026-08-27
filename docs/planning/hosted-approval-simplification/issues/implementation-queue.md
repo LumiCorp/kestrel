@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-- [Bridge the deployed preset-2 baseline](06h-bridge-the-deployed-preset2-baseline.md)
+None.
 
 ## Blocked
 
@@ -23,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Bridge the deployed preset-2 baseline](06h-bridge-the-deployed-preset2-baseline.md)
 - [Converge prepared cleanup across retry and lifecycle](06g-converge-cleanup-across-retry-and-lifecycle.md)
 - [Construct the V4 compatibility release](06f-construct-v4-compatibility-release.md)
 - [Make prepared approval cleanup durable](06e-make-prepared-cleanup-durable.md)
