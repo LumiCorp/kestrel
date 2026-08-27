@@ -195,6 +195,15 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     await savingExactEffectResult;
     assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactEffectResult);
     assert.equal((await store.getPersistedEffect(binding.toolCallId))?.status, "DONE");
+    await store.markEffectStatus(binding.toolCallId, "FAILED", {
+      runId,
+      sessionId,
+    });
+    assert.equal(
+      (await store.getPersistedEffect(binding.toolCallId))?.status,
+      "DONE",
+      "an exact durable DONE result must prevent a later FAILED downgrade",
+    );
     await pool.query(`UPDATE effects SET status = 'PENDING' WHERE idempotency_key = $1`, [binding.toolCallId]);
     const abortedIdempotentSave = new AbortController();
     abortedIdempotentSave.abort();

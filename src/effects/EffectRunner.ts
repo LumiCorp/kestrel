@@ -233,7 +233,24 @@ export class InlineEffectRunner implements EffectRunner {
         });
         await persistCompletedResult(output);
         if (readSandboxCapabilityReplayEvidence(output) === undefined) {
-          await this.store.markEffectStatus(effect.idempotencyKey, "DONE", effect);
+          try {
+            await this.store.markEffectStatus(
+              effect.idempotencyKey,
+              "DONE",
+              effect,
+            );
+          } catch (statusWriteError) {
+            const recordedResult = await this.store.getEffectResult(
+              effect.idempotencyKey,
+            );
+            if (recordedResult?.status !== "DONE") throw statusWriteError;
+            assertExactRecordedToolResult(effect, recordedResult);
+            await this.store.markEffectStatus(
+              effect.idempotencyKey,
+              "DONE",
+              effect,
+            );
+          }
         }
         if (toolActivity !== undefined) {
           const evidence = readAgentToolResultV2(output);

@@ -1091,6 +1091,13 @@ export class InMemorySessionStore implements SessionStore {
     ) {
       throw new SandboxCapabilityExactResultCancelledError("Completed effect status lost to durable cancellation");
     }
+    if (
+      status === "FAILED" &&
+      (effect.status === "DONE" ||
+        this.effectResults.get(idempotencyKey)?.status === "DONE")
+    ) {
+      return;
+    }
     effect.status = status;
     this.operationLog.push(`markEffectStatus:${idempotencyKey}:${status}`);
   }

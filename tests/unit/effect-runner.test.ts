@@ -108,6 +108,59 @@ test("Effect runner durably claims immediately before invoking the validated han
   ), ["claimEffectExecution:claim-1", "saveEffectResult:claim-1:DONE"]);
 });
 
+test("Effect runner repairs a split DONE result without downgrading or replaying the effect", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const effect = {
+    runId: "run-split-done",
+    sessionId: "session-split-done",
+    stepIndex: 0,
+    type: "test.split-done",
+    payload: {},
+    idempotencyKey: "split-done-1",
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-27T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push(
+    { ...effect },
+  );
+  let handlerCalls = 0;
+  registry.register(effect.type, async () => {
+    handlerCalls += 1;
+    return { released: true };
+  });
+  const markEffectStatus = store.markEffectStatus.bind(store);
+  let injectedFailure = true;
+  store.markEffectStatus = async (idempotencyKey, status, owner) => {
+    if (status === "DONE" && injectedFailure) {
+      injectedFailure = false;
+      throw new Error("Injected crash after saving the DONE result.");
+    }
+    await markEffectStatus(idempotencyKey, status, owner);
+  };
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    },
+  );
+
+  assert.equal(outcome.stop, false);
+  assert.equal(handlerCalls, 1);
+  assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "DONE");
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.equal(
+    store.operationLog.includes(
+      `markEffectStatus:${effect.idempotencyKey}:FAILED`,
+    ),
+    false,
+  );
+});
+
 test("Effect runner records terminal unknown and never repeats a claimed prepared call without a result", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();

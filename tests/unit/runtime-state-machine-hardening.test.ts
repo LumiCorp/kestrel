@@ -131,6 +131,7 @@ test("completed cleanup release survives Web requeue without scheduler or duplic
     },
   });
   let modelCalls = 0;
+  let releaseAttempts = 0;
   let releases = 0;
   const baseGateway = adaptLegacyTestToolGateway({
     call: async () => {
@@ -140,6 +141,10 @@ test("completed cleanup release survives Web requeue without scheduler or duplic
   const gateway = {
     ...baseGateway,
     releasePreparedToolCall: async () => {
+      releaseAttempts += 1;
+      if (releaseAttempts === 1) {
+        throw new Error("Transient release failure.");
+      }
       releases += 1;
     },
   };
@@ -168,15 +173,6 @@ test("completed cleanup release survives Web requeue without scheduler or duplic
   (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push(
     structuredClone(effect),
   );
-  await store.saveEffectResult(runId, sessionId, {
-    idempotencyKey,
-    status: "FAILED",
-    error: {
-      code: "EFFECT_EXECUTION_FAILED",
-      message: "Transient release failure.",
-    },
-    timestamp: "2026-08-27T00:00:01.000Z",
-  });
   const kestrel = createRuntime(store, {}, {
     toolGateway: gateway,
     modelGateway: new RetryingModelGateway(async () => {
@@ -192,18 +188,26 @@ test("completed cleanup release survives Web requeue without scheduler or duplic
     payload: { preparedApprovalCleanup: cleanup },
   });
   const secondOutput = await kestrel.run({
+    id: "evt-prepared-cleanup-retry",
+    type: "user.approval",
+    sessionId,
+    payload: { preparedApprovalCleanup: cleanup },
+  });
+  const thirdOutput = await kestrel.run({
     id: "evt-prepared-cleanup-web-requeue",
     type: "user.approval",
     sessionId,
     payload: { preparedApprovalCleanup: cleanup },
   });
 
-  assert.equal(firstOutput.status, "COMPLETED");
+  assert.equal(firstOutput.status, "FAILED");
   assert.equal(
     secondOutput.status,
     "COMPLETED",
     JSON.stringify(secondOutput),
   );
+  assert.equal(thirdOutput.status, "COMPLETED", JSON.stringify(thirdOutput));
+  assert.equal(releaseAttempts, 2);
   assert.equal(releases, 1);
   assert.equal(modelCalls, 0);
   assert.equal(

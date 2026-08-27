@@ -1960,6 +1960,15 @@ export class PostgresSessionStore implements SessionStore {
       }, row.tenant_id, row.tenant_ownership_state)) {
         throw new SandboxCapabilityExactResultConflictError("Effect status owner or tenant does not match durable authority");
       }
+      if (status === "FAILED") {
+        const exactResult = await executor.query<{ status: "DONE" | "FAILED" }>(
+          `SELECT status FROM effect_results WHERE idempotency_key = $1 FOR UPDATE`,
+          [idempotencyKey],
+        );
+        if (row.status === "DONE" || exactResult.rows[0]?.status === "DONE") {
+          return;
+        }
+      }
       await executor.query(
         `UPDATE effects SET status = $2 WHERE idempotency_key = $1`,
         [idempotencyKey, status],

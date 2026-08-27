@@ -2135,6 +2135,17 @@ test(
       legacyExecRememberClaim?.interactionResponse,
       legacyExecRememberCleanupResponse,
     );
+    const [cleanupWithoutDurableExecutionBinding] = await sql<
+      Array<{ environmentExecutionId: string | null; status: string }>
+    >`
+      SELECT "environment_execution_id" AS "environmentExecutionId", "status"
+      FROM "thread_turns"
+      WHERE "id" = ${legacyExecRemember.turnId}
+    `;
+    assert.deepEqual(cleanupWithoutDurableExecutionBinding, {
+      environmentExecutionId: null,
+      status: "running",
+    });
     assert.equal(
       await turnStore.reconcileDurablePreparedApprovalCleanupForRetry({
         turnId: legacyExecRemember.turnId,

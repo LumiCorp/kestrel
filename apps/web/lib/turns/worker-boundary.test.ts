@@ -118,6 +118,14 @@ test(
       /runtimeTerminalObserved && environmentExecutionId[\s\S]*preserveRunningExecution: true/u,
     );
     assert.match(
+      runtimeSource,
+      /interruptedCleanup &&[\s\S]*!interrupted\.environmentExecutionId[\s\S]*resetDurablePreparedApprovalCleanupForRetry/u,
+    );
+    assert.match(
+      runtimeSource,
+      /preparedApprovalCleanup &&[\s\S]*runnerRunStartedObserved &&[\s\S]*!runtimeStartedRecorded[\s\S]*resetDurablePreparedApprovalCleanupForRetry/u,
+    );
+    assert.match(
       queueSource,
       /hasDurablePreparedApprovalCleanupPending[\s\S]*reconcileDurablePreparedApprovalCleanupForRetry/u,
     );

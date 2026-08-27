@@ -377,6 +377,17 @@ export async function processDurableThreadTurn(
     if (interrupted?.status === "running") {
       const interruptedCleanup =
         await hasDurablePreparedApprovalCleanupPending({ turnId });
+      if (
+        interruptedCleanup &&
+        !interrupted.environmentExecutionId
+      ) {
+        if (await resetDurablePreparedApprovalCleanupForRetry({ turnId })) {
+          throw new PreparedApprovalCleanupRetryError();
+        }
+        throw new Error(
+          "Prepared approval cleanup lost its durable Environment execution binding.",
+        );
+      }
       let interruptedTerminalStatus:
         | "completed"
         | "failed"
@@ -1054,6 +1065,18 @@ export async function processDurableThreadTurn(
     if (error instanceof PreparedApprovalCleanupRetryError) throw error;
     await transientTitle;
     await eventWrites.catch(() => {});
+    if (
+      preparedApprovalCleanup &&
+      runnerRunStartedObserved &&
+      !runtimeStartedRecorded
+    ) {
+      if (
+        await resetDurablePreparedApprovalCleanupForRetry({ turnId: turn.id })
+      ) {
+        throw new PreparedApprovalCleanupRetryError();
+      }
+      throw error;
+    }
     if (runnerRunStartedObserved && !runtimeStartedRecorded) {
       // The runner may already have begun executing. Leave the turn running so
       // a later worker can reattach and commit the start acknowledgement.

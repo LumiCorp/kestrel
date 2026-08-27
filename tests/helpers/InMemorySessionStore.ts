@@ -687,6 +687,13 @@ export class InMemorySessionStore implements SessionStore {
   async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, _owner: { runId: string; sessionId: string }): Promise<void> {
     for (const effect of this.effects) {
       if (effect.idempotencyKey === idempotencyKey) {
+        if (
+          status === "FAILED" &&
+          (effect.status === "DONE" ||
+            this.effectResults.get(idempotencyKey)?.status === "DONE")
+        ) {
+          return;
+        }
         effect.status = status;
       }
     }
