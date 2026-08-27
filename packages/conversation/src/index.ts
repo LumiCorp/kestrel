@@ -1,6 +1,7 @@
 export * from "./activity.js";
 export * from "./attachments.js";
 export * from "./composer.js";
+export * from "./collaborators.js";
 export * from "./conformance.js";
 export * from "./contracts.js";
 export * from "./links.js";

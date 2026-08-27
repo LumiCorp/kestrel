@@ -29,7 +29,9 @@ This release must create these outcomes:
 - Plain-language instructions explain when each tool helps, when no dialog tool
   should be used, and why the parent should not repeatedly poll.
 - Open creates one local named collaborator and private child Thread, starts the
-  first work, and returns without waiting for the reply.
+  first work, and returns without waiting for the reply. Repeating open with
+  the same name returns that saved collaborator with `created: false`; it does
+  not resend the opening message or fail the parent turn.
 - Send supports sequential work with the same open collaborator and rejects a
   new message while that collaborator is still working.
 - Read and list return saved local state without sending a message, waking a
@@ -267,14 +269,18 @@ required atomic transition.
 - List limit accepts 1 through 100 and defaults to 50.
 - Treat cursors as opaque and scoped to the parent Thread and query.
 - Read without a cursor returns the newest bounded messages in time order.
-- Read with a cursor returns only later messages and repeats the cursor when
-  nothing new exists.
+- `afterCursor` returns only later messages and repeats the cursor when nothing
+  new exists. `beforeCursor` returns older messages, so readable history does
+  not stop at the newest page. The two cursors cannot be used together.
 - List orders by last update descending and then dialog ID descending.
 
-Open, send, and close return a summary with `dialogId`, name, child Thread ID,
+Open returns a summary with `created`, `dialogId`, name, child Thread ID,
+open or closed status, activity, compatibility `active`, newest cursor,
+timestamps, and the latest actionable error when present. Send and close return
+a summary with `dialogId`, name, child Thread ID,
 open or closed status, activity, compatibility `active`, newest cursor,
 timestamps, and the latest actionable error when present. Read adds saved text
-messages, `nextCursor`, `hasEarlier`, and `hasMore`. List returns `dialogs`, an
+messages, `nextCursor`, `previousCursor`, `hasEarlier`, and `hasMore`. List returns `dialogs`, an
 optional `nextCursor`, and `hasMore`.
 
 The local activity vocabulary is `idle`, `working`, `waiting`, or
@@ -287,7 +293,6 @@ false after close.
 | --- | --- |
 | `DIALOG_NAME_INVALID` | A collaborator name must contain 1 to 40 characters. Choose a short, memorable name. |
 | `DIALOG_NAME_RESERVED` | 'Kestrel' is the name of the primary participant. Choose another collaborator name. |
-| `DIALOG_NAME_IN_USE` | A collaborator named '{name}' already exists in this task. Use dialog.list to find it. Names cannot be reused after close. |
 | `DIALOG_NOT_FOUND` | This collaborator does not exist in the current task. Use dialog.list to find the available collaborators. |
 | `DIALOG_BUSY` | '{name}' is still working. Wait for the reply or use dialog.read to check the saved status. |
 | `DIALOG_CLOSED` | '{name}' is closed. You can read its history, but you cannot send another message or reopen it. |
@@ -305,9 +310,12 @@ The store must give close and completion one durable order:
   parent follow-up.
 
 Save a reply before marking it for parent delivery. Use its stable message ID
-to make enqueue idempotent. Recover a saved reply that still needs delivery
-after restart through the existing dialog state and `FollowUpQueue`. Do not add
-a general-purpose outbox for unrelated runtime work.
+to make enqueue idempotent and to derive the parent continuation's durable
+turn identity. If Kestrel restarts after that parent continuation finishes but
+before the reply is marked delivered, it must replay the stored terminal turn,
+not call the model again. Recover a saved reply that still needs delivery after
+restart through the existing dialog state and `FollowUpQueue`. Do not add a
+general-purpose outbox for unrelated runtime work.
 
 ### Existing data and restart behavior
 

@@ -21,6 +21,12 @@ continues work, `read` inspects it without starting work, `list` recovers the
 roster, and `close` is the terminal cancel-and-archive event. Close never
 deletes history and never permits reopen or name reuse in that parent Thread.
 
+The user-facing direction is also settled: private collaborator messages must
+not flood the primary conversation. Desktop and Kestrel One show one compact
+Collaborators control for the Thread and an on-demand inspector grouped by
+collaborator. Kestrel's normal reply, not raw collaborator traffic, explains
+findings in the main conversation.
+
 ## Requested Change
 
 Enable the primary Kestrel thread to:
@@ -84,6 +90,13 @@ enforces unique open names within that thread
 The Web persistence path stores each message with its dialog ID, message ID,
 name, and sender (`apps/web/lib/turns/dialog-messages.ts:18-66`).
 
+The current UI does the wrong thing for a busy Thread. Desktop appends each
+runtime dialog message as a `RendererTranscriptLine`, and `MessageEntry`
+renders it as an ordinary timeline message. Kestrel One persists the same
+record as an assistant message and `PreviewMessage` renders every
+`data-kestrel-dialog-message` part inline. The persisted data is right; the
+flat, per-message presentation is not.
+
 The current implementation is therefore durable for history and resumable by
 dialog ID, but it has no model-visible read operation. `dialog.open` and
 `dialog.send` return a small snapshot; the model cannot explicitly retrieve
@@ -109,6 +122,9 @@ The parent must currently guess the intended product behavior.
 - Orchestration store queries if name lookup or durable leases are added.
 - Web dialog/message materialization and shared conversation presentation.
 - Desktop and operator projections that already expose dialog messages.
+- Desktop `ConversationTimeline` and Kestrel One `PreviewMessage`, which must
+  group dialog messages by collaborator instead of treating them as ordinary
+  chat bubbles.
 - Profile policy: concurrency, depth, nested-collaborator prohibition, and
   tool/capability inheritance.
 - Security and tenancy: a child must remain bound to its parent thread,
@@ -150,6 +166,14 @@ The key design implication is that a Kestrel named collaborator is not itself
 the same thing as a single A2A message. It is an identity plus a context and
 one or more tasks. The current `DelegationRecord` combines some of these
 responsibilities and may need a typed adapter or a later split.
+
+Apple recommends a subtle, in-context foreground update instead of an
+unnecessary notification, and says indefinite work should use a transient
+activity indicator rather than an invented percent complete
+([Notifications](https://developer.apple.com/design/human-interface-guidelines/notifications), [Progress indicators](https://developer.apple.com/design/human-interface-guidelines/progress-indicators?changes=_4_6)). WAI-ARIA's `status` role is polite live feedback that should not take focus
+([WAI-ARIA status role](https://www.w3.org/TR/wai-aria/#status)). This supports
+one quiet Thread-level status control and an on-demand inspector; it does not
+support a toast or chat bubble for each collaborator event.
 
 ## Candidate Seams and Options
 
@@ -198,6 +222,28 @@ Expose `agent.spawn` or `delegate.*` to the model. This is incompatible with
 the managed Kestrel One contract, loses the clear private-dialog semantics, and
 would reopen nested-agent and result-shaping problems. Do not select it.
 
+### Present every collaborator message in the main conversation
+
+This is the current Desktop and Kestrel One presentation. It is direct, but it
+makes a multi-collaborator Thread noisy and confuses private collaborator work
+with Kestrel's answer to the user. Do not select it.
+
+### Add a separate collaborator workspace
+
+A permanent sidebar section or a dedicated page could show every collaborator
+and its history. It would add another navigation model for a feature that lives
+inside one Thread. Do not select it for the first experience.
+
+### Present a Thread-level collaborator summary and private inspector
+
+Group durable dialog messages by collaborator. Show one compact active summary
+in the Thread header and reveal the private transcript only when the user asks
+to inspect it. Keep lifecycle actions in the normal user-to-Kestrel
+conversation. This is selected. It retains durable visibility and makes the
+feature discoverable without turning the parent conversation into a second
+transcript. Desktop can use a resizable right-side panel; Kestrel One uses the
+same panel when space allows and a sheet on small screens.
+
 ## Proposed Delta
 
 Treat a named sub-agent as a **parent-thread-scoped collaborator identity**.
@@ -209,6 +255,14 @@ The public model contract remains `dialog.open`, `dialog.send`,
 these named agents or collaborators, but a duplicate `agent.*` vocabulary is
 not part of this change. Legacy `agent.spawn` and `delegate.*` surfaces remain
 internal.
+
+The presentation groups saved dialog messages by `dialogId`. The newest saved
+message gives each collaborator row its visible state; the ordered group is the
+private transcript in an inspector. The main conversation gets neither the
+opening request nor the raw reply. It gets Kestrel's normal response after the
+parent processes the structured collaborator follow-up. An inspector action can
+help the user ask Kestrel about a named collaborator, but it must not bypass
+the model with direct browser-side send, read, or close calls.
 
 ## Resolved Model-Facing Language
 
@@ -410,6 +464,14 @@ against future reuse. No `agent.*` alias set is part of this transition.
   confidence high. Persist the child message first; if the parent is idle,
   schedule a continuation. If it is busy, queue the update for the next safe
   parent continuation rather than starting competing runs.
+- **Keep private collaborator traffic out of the main transcript:** settled by
+  participant; confidence high. One compact Thread-level control and a private
+  inspector expose durable status and history. Kestrel's ordinary reply is the
+  user-facing explanation of collaborator findings.
+- **Keep lifecycle controls with the primary model:** selected; confidence
+  high. The inspector is a reader. It can help the user ask Kestrel about a
+  collaborator, but it does not bypass `dialog.*` tools with browser-side send,
+  read, or close actions.
 - **Use an adapter lane, not a universal A2A Gateway:** recommended;
   confidence high. Local child Threads and remote A2A agents are different
   providers behind one collaborator boundary. The diagram should not imply
@@ -425,7 +487,10 @@ against future reuse. No `agent.*` alias set is part of this transition.
   existing queue.
 - Vanished local work is marked interrupted rather than silently replayed;
   remote A2A work is reconciled by opaque task ID with `GetTask`.
-- `dialog.list` provides the roster. Exact UI layout is a presentation detail.
+- `dialog.list` provides the roster. Exact UI layout is now bounded: the Thread
+  header owns a compact Collaborators control, and an inspector owns grouped
+  private history. No raw collaborator messages appear as ordinary chat
+  bubbles.
 - Read without a cursor returns a bounded recent window; read with a cursor
   returns only later records.
 - A2A is outbound v1 client support first. Inbound serving, gRPC, v0.3
@@ -448,5 +513,6 @@ against future reuse. No `agent.*` alias set is part of this transition.
 
 Use `docs/design/named-sub-agents-change-design.md` as the canonical design. It
 contains the exact parent and tool instructions, concrete tool-choice examples,
-settled lifecycle, provider-boundary diagrams, persistence ownership, A2A
-mapping, close fence, recovery behavior, and coexistence rules.
+settled lifecycle, provider-boundary diagrams, quiet Desktop and Kestrel One
+presentation rules, persistence ownership, A2A mapping, close fence, recovery
+behavior, and coexistence rules.

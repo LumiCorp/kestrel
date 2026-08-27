@@ -10,6 +10,7 @@ import {
   projectDesktopConversationTimeline,
   projectDesktopRunStream,
 } from "../renderer/src/runStream.js";
+import { groupDesktopCollaboratorMessages } from "../renderer/src/collaborators.js";
 import type { DesktopRunnerEvent } from "../src/contracts.js";
 
 
@@ -893,8 +894,8 @@ test("Desktop renders a stopped transition when cancellation has no assistant re
   assert.match(html, /state-cancelled/u);
 });
 
-test("Desktop distinguishes collaborator history from human input and shows terminal status", () => {
-  const items = projectDesktopConversationTimeline([{
+test("Desktop keeps collaborator history out of the timeline and groups it for the inspector", () => {
+  const transcript = [{
     role: "assistant",
     text: "The check failed.",
     timestamp: "2026-08-20T12:00:00.000Z",
@@ -908,16 +909,16 @@ test("Desktop distinguishes collaborator history from human input and shows term
       dialogActivity: "idle",
       status: "failed",
     },
-  }], []);
+  }] as const;
+  const items = projectDesktopConversationTimeline(transcript, []);
   const html = renderToStaticMarkup(React.createElement(ConversationTimeline, {
     items,
     active: false,
     activity: "Ready",
     endRef: { current: null },
   }));
-  assert.match(html, /Collaborator: Reviewer/u);
-  assert.match(html, /Closed/u);
-  assert.match(html, /Needs attention/u);
+  assert.doesNotMatch(html, /The check failed\./u);
+  assert.equal(groupDesktopCollaboratorMessages(transcript)[0]?.visibleState, "problem");
 });
 
 test("Desktop does not render Completed before the agent finalizes an answer", () => {

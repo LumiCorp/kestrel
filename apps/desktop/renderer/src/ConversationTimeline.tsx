@@ -53,6 +53,7 @@ export function ConversationTimeline(props: {
     (entry, index) =>
       index > lastRunIndex &&
       entry.type === "transcript" &&
+      entry.line.dialog === undefined &&
       entry.line.role === "assistant",
   );
   const terminalState =
@@ -122,6 +123,8 @@ export function ConversationTimeline(props: {
               </Fragment>
             );
           }
+
+          if (entry.line.dialog !== undefined) return null;
 
           const transition =
             index === terminalAssistantIndex &&

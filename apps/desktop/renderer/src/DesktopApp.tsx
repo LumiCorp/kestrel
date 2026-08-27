@@ -13,10 +13,12 @@ import {
   Settings,
   Square,
   Sun,
+  UsersRound,
   Wrench,
   X,
 } from "lucide-react";
 import {
+  type CSSProperties,
   type FormEvent,
   useEffect,
   useMemo,
@@ -96,6 +98,8 @@ import {
   type DesktopRunStreamItem,
 } from "./runStream";
 import { ConversationExplorer } from "./ConversationExplorer";
+import { CollaboratorInspector } from "./CollaboratorInspector";
+import { groupDesktopCollaboratorMessages } from "./collaborators";
 import {
   isDesktopThreadProjectUnavailable,
   projectDesktopWorkNavigator,
@@ -216,6 +220,7 @@ export function DesktopApp(props: {
   const workNavigatorTriggerRef = useRef<HTMLElement | null>(null);
   const workNavigatorFallbackRef = useRef<HTMLButtonElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const collaboratorTriggerRef = useRef<HTMLButtonElement>(null);
   const threadsRef = useRef<DesktopRendererState["threads"]>([]);
   const pendingTurnSubmissionsRef = useRef(new Map<string, DesktopConversationSubmissionIdentity>());
   const queuedTurnSubmissionsRef = useRef(new Map<string, DesktopConversationSubmissionIdentity>());
@@ -322,6 +327,32 @@ export function DesktopApp(props: {
     : composerPolicy.mode === "reply_to_request"
       ? "Waiting for your input"
       : activeThreadFeedback.activity;
+  const collaboratorGroups = useMemo(
+    () => activeThread === undefined ? [] : groupDesktopCollaboratorMessages(activeThread.transcript),
+    [activeThread],
+  );
+  const collaboratorStatusLabel = collaboratorGroups.some((group) => group.visibleState === "working")
+    ? `${collaboratorGroups.find((group) => group.visibleState === "working")?.name} is working`
+    : `${collaboratorGroups.length} collaborators`;
+  const [collaboratorInspectorOpen, setCollaboratorInspectorOpen] = useState(false);
+  const [collaboratorInspectorWidth, setCollaboratorInspectorWidth] = useState(360);
+  useEffect(() => {
+    setCollaboratorInspectorOpen(false);
+  }, [activeThread?.id]);
+  useEffect(() => {
+    if (collaboratorGroups.length === 0) setCollaboratorInspectorOpen(false);
+  }, [collaboratorGroups.length]);
+  const [collaboratorInspectorModal, setCollaboratorInspectorModal] = useState(
+    () => typeof window !== "undefined" && window.innerWidth < 980,
+  );
+  useEffect(() => {
+    const updateCollaboratorInspectorMode = () => {
+      setCollaboratorInspectorModal(window.innerWidth < 980);
+    };
+    updateCollaboratorInspectorMode();
+    window.addEventListener("resize", updateCollaboratorInspectorMode);
+    return () => window.removeEventListener("resize", updateCollaboratorInspectorMode);
+  }, []);
   const conversationTimeline = activeThread === undefined
     ? []
     : projectDesktopConversationTimeline(
@@ -329,7 +360,7 @@ export function DesktopApp(props: {
         activeRunStream,
         threadViews[activeThread.id]?.conversationTurns ?? [],
         threadViews[activeThread.id]?.conversationMessageRoutes ?? [],
-      );
+      ).filter((item) => item.type !== "transcript" || item.line.dialog === undefined);
   const threadNavigation = useMemo(() => resolveDesktopThreadNavigationStates({
     threads: state?.threads ?? [],
     threadViews,
@@ -2078,6 +2109,21 @@ export function DesktopApp(props: {
           {surface === "chat" ? null : <span className="titlebar-page-title">{surfacePageTitle(surface)}</span>}
         </div>
         <div className="titlebar-actions">
+          {surface === "chat" && collaboratorGroups.length > 0 ? (
+            <>
+              <button
+                aria-label={`Open ${collaboratorStatusLabel}`}
+                className="topbar-find collaborator-trigger"
+                onClick={() => setCollaboratorInspectorOpen(true)}
+                ref={collaboratorTriggerRef}
+                type="button"
+              >
+                <UsersRound size={16} aria-hidden="true" />
+                <span>Collaborators · {collaboratorGroups.length}</span>
+              </button>
+              <span className="sr-only" role="status">{collaboratorStatusLabel}</span>
+            </>
+          ) : null}
           <button
             className="topbar-find"
             ref={workNavigatorFallbackRef}
@@ -2120,6 +2166,18 @@ export function DesktopApp(props: {
           type="button"
           aria-label="Close find work"
           onClick={() => closeWorkNavigator()}
+        />
+      ) : null}
+
+      {collaboratorInspectorOpen && collaboratorInspectorModal ? (
+        <button
+          aria-label="Close collaborators"
+          className="collaborator-inspector-scrim"
+          onClick={() => {
+            setCollaboratorInspectorOpen(false);
+            requestAnimationFrame(() => collaboratorTriggerRef.current?.focus());
+          }}
+          type="button"
         />
       ) : null}
 
@@ -2274,7 +2332,12 @@ export function DesktopApp(props: {
         </aside>
 
         {surface === "chat" ? (
-          <main className="conversation-pane" id="app-main" inert={workNavigatorOpen ? true : undefined}>
+          <main
+            className={`conversation-pane ${collaboratorInspectorOpen ? "with-collaborator-inspector" : ""}`}
+            id="app-main"
+            inert={workNavigatorOpen ? true : undefined}
+            style={{ "--collaborator-inspector-width": `${collaboratorInspectorWidth}px` } as CSSProperties}
+          >
           <ConversationTimeline
             items={conversationTimeline}
             active={activeRun !== undefined}
@@ -2628,6 +2691,25 @@ export function DesktopApp(props: {
             )}
             </>
           )}
+          <CollaboratorInspector
+            canAsk={!threadReadOnlySelected}
+            groups={collaboratorGroups}
+            modal={collaboratorInspectorModal}
+            onAsk={(group) => {
+              setCollaboratorInspectorOpen(false);
+              if (activeThread.draft.trim().length === 0) {
+                setState((current) => current === undefined ? current : updateRendererDraft(current, activeThread.id, `What did ${group.name} find?`));
+              }
+              requestAnimationFrame(() => composerTextareaRef.current?.focus());
+            }}
+            onClose={() => {
+              setCollaboratorInspectorOpen(false);
+              requestAnimationFrame(() => collaboratorTriggerRef.current?.focus());
+            }}
+            open={collaboratorInspectorOpen}
+            onResize={setCollaboratorInspectorWidth}
+            width={collaboratorInspectorWidth}
+          />
           </main>
         ) : (
           <div className="surface-host" inert={workNavigatorOpen ? true : undefined}>

@@ -16,6 +16,12 @@ The model makes the judgment. Kestrel does not use keyword routing or a hidden
 classifier. This report defines the exact production copy and the cases where
 the parent should use no dialog tool.
 
+Desktop and Kestrel One must keep collaborator traffic out of the ordinary
+chat transcript. Each client shows one quiet collaborator control for the
+Thread and a private inspector when the user asks to see the details. Kestrel's
+normal answer remains the place where collaborator findings are explained to
+the user.
+
 Close means cancel-and-archive. It immediately and permanently rejects future
 sends, preserves the child Thread, messages, tasks, and artifacts for reads,
 and fences late provider completions. The collaborator name is immutable and
@@ -118,6 +124,17 @@ The existing contract is incomplete in five specific places:
    ([prompt assembly](../../src/runtime/agent-context/systemPrompts.ts),
    [reply branch](../../src/orchestration/ThreadRuntime.ts)). The model must
    guess the product behavior.
+6. Desktop appends every `dialogMessage` to `RendererTranscriptLine` and
+   `ConversationTimeline` renders it as a normal message
+   ([Desktop projection](../../apps/desktop/renderer/src/DesktopApp.tsx),
+   [Desktop timeline](../../apps/desktop/renderer/src/ConversationTimeline.tsx)).
+   Kestrel One persists each dialog message as an assistant message and renders
+   it inline in `PreviewMessage`
+   ([Web projection](../../apps/web/lib/turns/dialog-messages.ts),
+   [Web renderer](../../apps/web/components/chatbot/message.tsx)). Several
+   collaborators would therefore turn one human conversation into a noisy copy
+   of their private conversations. Those renderers are the first components
+   that make the desired quiet experience wrong.
 
 The current `dialog.open` description also asks the model to choose a bird
 species, while runtime validates only a nonempty 1-to-40-character name
@@ -305,13 +322,15 @@ Input descriptions:
 | Field | Required | Description shown to the parent |
 | --- | --- | --- |
 | `dialogId` | yes | The collaborator to read. Use the dialog ID returned by dialog.open or dialog.list. |
-| `afterCursor` | no | Return only messages and results that arrived after this cursor. Leave this out to get the most recent items. |
+| `afterCursor` | no | Return only messages and results that arrived after this cursor. Leave this out to get the most recent items. Do not use with `beforeCursor`. |
+| `beforeCursor` | no | Return older saved messages before this cursor. Use this when `hasEarlier` is true. Do not use with `afterCursor`. |
 | `limit` | no | The maximum number of messages and results to return. |
 
 Read returns the collaborator's name, open or closed status, current work
 status, child Thread ID, latest error, messages, saved files, and a cursor for
-the next read. Without `afterCursor`, it returns a limited recent window in
-time order. With a current cursor, it returns no new messages.
+the next read. Without a cursor, it returns a limited recent window in time
+order. `afterCursor` checks for newer messages; `beforeCursor` pages into older
+history. With a current `afterCursor`, it returns no new messages.
 
 Read uses only Kestrel's saved state. It does not contact the collaborator,
 wake it, start work, or create a parent turn. Kestrel updates remote A2A work
@@ -366,13 +385,17 @@ The input rules are exact:
   those fields are present. The normal runtime request-size limit applies to
   messages; the dialog tools do not create another text-size limit.
 - `dialog.read.limit` accepts an integer from 1 through 100 and defaults to 20.
+- `dialog.read` accepts at most one of `afterCursor` and `beforeCursor`.
 - `dialog.list.status` accepts `open`, `closed`, or `all` and defaults to `all`.
 - `dialog.list.limit` accepts an integer from 1 through 100 and defaults to 50.
 - Treat every cursor as opaque. Reject a cursor created for another parent
   Thread, collaborator, query, or sort order.
 - Reject unknown fields in every tool input.
 
-`dialog.open`, `dialog.send`, and `dialog.close` return this summary shape.
+`dialog.open` returns this summary shape plus `created`. When a normalized name
+already exists, open returns its saved summary with `created: false` and does
+not resend the opening message. `dialog.send` and `dialog.close` return this
+summary shape.
 `active` remains as a compatibility field and is derived from `activity`.
 
 ```ts
@@ -431,6 +454,7 @@ skip an artifact that arrived between two messages.
 interface DialogReadResultV2 extends DialogSummaryV2 {
   items: DialogReadItemV2[];
   nextCursor: string;
+  previousCursor?: string;
   hasEarlier: boolean;
   hasMore: boolean;
 }
@@ -467,11 +491,13 @@ type DialogPartV2 =
     };
 ```
 
-Without `afterCursor`, read selects the newest `limit` items and returns them
-oldest first. `hasEarlier` says whether older items exist. With `afterCursor`,
-read selects the next `limit` items in time order. `hasMore` says whether more
-items exist after the returned page. `nextCursor` marks the newest returned
-item. If nothing new exists, it repeats the supplied cursor.
+Without a cursor, read selects the newest `limit` items and returns them oldest
+first. `hasEarlier` says whether older items exist and `previousCursor` marks
+the oldest returned item. With `afterCursor`, read selects the next `limit`
+items in time order. With `beforeCursor`, it selects the preceding `limit`
+items. `hasMore` says whether more items exist after the returned page.
+`nextCursor` marks the newest returned item. If nothing new exists after an
+`afterCursor`, it repeats the supplied cursor.
 
 `dialog.list` returns summaries ordered by `updatedAt` descending, then
 `dialogId` descending. Its cursor preserves that order.
@@ -495,7 +521,6 @@ Errors must state what happened and what the parent can do next. Use this copy:
 | --- | --- |
 | `DIALOG_NAME_INVALID` | A collaborator name must contain 1 to 40 characters. Choose a short, memorable name. |
 | `DIALOG_NAME_RESERVED` | 'Kestrel' is the name of the primary participant. Choose another collaborator name. |
-| `DIALOG_NAME_IN_USE` | A collaborator named '{name}' already exists in this task. Use dialog.list to find it. Names cannot be reused after close. |
 | `DIALOG_NOT_FOUND` | This collaborator does not exist in the current task. Use dialog.list to find the available collaborators. |
 | `DIALOG_BUSY` | '{name}' is still working. Wait for the reply or use dialog.read to check the saved status. |
 | `DIALOG_DELIVERY_UNKNOWN` | Kestrel does not know whether the last message reached '{name}'. Do not resend it. Use dialog.read to check the saved status. |
@@ -564,6 +589,142 @@ The tests can preserve exact approved copy or assert every required sentence.
 They must fail if an edit removes the use case, the important limit, or the
 consequence of close.
 
+## Conversation-First Collaborator Experience
+
+The private collaborator conversation is durable Thread data, but it is not a
+second stream of chat bubbles. The primary conversation remains between the
+user and Kestrel. Kestrel uses collaborator findings in its normal answer.
+
+Each Thread that has at least one collaborator shows one compact
+**Collaborators** control in the Thread header. It shows the number of known
+collaborators and, when work is active, the names of up to two active ones.
+For example: `Collaborators · Research is working` or `Collaborators · 2`.
+It is a status control, not a new navigation area, toast, or dashboard.
+
+Selecting the control opens a collaborator inspector. It is a right-side panel
+on wide Desktop and Kestrel One windows and a full-height sheet on a narrow
+Kestrel One window. The inspector has a compact list first and one selected
+private conversation second. It closes without changing the main conversation
+or moving the user's input focus.
+
+```text
+Thread header
+  Project title                         Collaborators · Research is working
+
+Main conversation                       Collaborator inspector
+  You: Investigate the failures           Research                 Working
+  Kestrel: I am checking both paths.      Kestrel  Please inspect …
+  Kestrel: Research found the cause…      Research The request …
+                                           [Ask Kestrel about Research]
+```
+
+The inspector presents the saved conversation as a private exchange between
+Kestrel, the named collaborator, and the system. It shows messages, current
+state, failures, and saved artifacts. A user can close the panel, switch
+collaborators, and return to the main conversation without losing position.
+`Ask Kestrel about Research` focuses the normal composer with a plain-language
+request; it does not call `dialog.send`, `dialog.read`, or `dialog.close`
+directly. The primary model remains the only participant that manages the
+collaborator lifecycle and therefore remains inside the existing policy and
+tool contract.
+
+### What appears in the main conversation
+
+| Runtime event | Collaborators control and inspector | Ordinary chat transcript |
+| --- | --- | --- |
+| Kestrel opens or messages a collaborator | Add or update that collaborator's row and show its working state. | Do not add the private request as a chat message. |
+| A collaborator replies | Show `Research replied` as the row's recent event and its current state as `Research is ready`. A local attention dot can mark the new event in the current session. | Do not render the reply text. The parent receives the structured follow-up and can explain the result in its own answer. |
+| A collaborator waits, is interrupted, or fails | Update the row with one plain status and keep the diagnostic in the inspector. | Do not add a status bubble or interrupt the user. Kestrel asks the user only if it cannot continue without them. |
+| Kestrel closes a collaborator | Move it from active rows to the inspector's archived list. | Do not add a closure bubble. Its private history remains readable. |
+
+An active row uses the latest saved message for that collaborator. It is not a
+row per message. The compact control can show a small attention dot when a
+reply is ready, but the first slice does not add a cross-device unread model.
+It must never show a changing message count as a substitute for useful state.
+
+### Status words and visual behavior
+
+Use the collaborator's immutable name in each label. Do not label a private
+message as an ordinary Kestrel answer or as a human message.
+
+| Runtime state | Visible words | Treatment |
+| --- | --- | --- |
+| open + working | `Research is working` | A small, labeled activity indicator. It has no made-up percentage or time estimate. |
+| open + idle | `Research is ready` | Quiet neutral state. |
+| open + waiting | `Research is waiting for Kestrel` | Neutral attention state. Kestrel decides whether it can answer or needs the user. |
+| open + interrupted | `Research is paused` | Quiet attention state with the reason in the inspector. |
+| task failure | `Research ran into a problem` | Attention state. Show the saved plain-language failure in the inspector. |
+| closed | `Research is archived` | Remove it from the active summary but retain it in the inspector. |
+
+Color supports these words; it does not replace them. Working uses an
+indeterminate activity indicator because collaborator work has no truthful
+percentage. The indicator stays in the same header and inspector locations
+while it is active. It does not spin or announce inside every saved message.
+
+### Desktop and Kestrel One responsibilities
+
+Both clients use the same grouping rule and the same runtime message metadata.
+Neither client calls `dialog.read` to make the screen feel live, polls a
+provider, or treats its local display state as lifecycle authority.
+
+| Surface | Primary affordance | Detail behavior |
+| --- | --- | --- |
+| Kestrel Desktop | A compact header control, with small active-name chips when the window has room. | A resizable right-side inspector. It preserves the conversation scroll position and works with keyboard focus inside the panel. |
+| Kestrel One | The same compact header control. On smaller screens it shortens to `Collaborators · 2` rather than wrapping names. | A side panel on wide windows and a sheet on small windows. The underlying chat remains visible only when enough room exists. |
+
+Do not add a permanent sidebar section, a separate collaborators page, a
+workflow canvas, raw provider labels, or one global toast per collaborator
+event. Local and A2A collaborators share the same presentation; provider type
+is an operator concern unless a user-facing permission or failure requires
+disclosure.
+
+### Delivery, focus, and accessibility
+
+When a collaborator update arrives, update the compact control in place. Do
+not steal focus, auto-open the inspector, scroll the main conversation, or
+show a foreground notification. A user who is away from the bottom keeps the
+existing return-to-latest control; the collaborator control provides the
+discoverable path to the new private result.
+
+The compact state uses `role="status"` or an equivalent polite live region.
+Announce a meaningful state change once, such as `Research replied`, but never
+announce spinner frames, repeated working updates, or the full private reply.
+The inspector opener has an accessible name that includes the collaborator
+count and active state. Keyboard focus moves into the inspector only after the
+user opens it and returns to the opener when they close it.
+
+Apple's guidance recommends in-context, noninterrupting foreground updates
+instead of unnecessary notifications. It also treats a busy indicator as
+transient feedback rather than a fake progress measure
+([Notifications](https://developer.apple.com/design/human-interface-guidelines/notifications), [Progress indicators](https://developer.apple.com/design/human-interface-guidelines/progress-indicators?changes=_4_6)). WAI-ARIA defines `status` as advisory, polite live feedback that should not receive focus when it changes
+([WAI-ARIA status role](https://www.w3.org/TR/wai-aria/#status)). These rules
+fit the existing persistent event projection: state can change in place while
+the canonical dialog record and parent follow-up remain unchanged.
+
+### Presentation contract
+
+- Group every saved dialog message by `dialogId` before rendering. The latest
+  message supplies the row state; the complete ordered group supplies the
+  inspector transcript.
+- Keep raw dialog messages out of `ConversationTimeline.MessageEntry` and out
+  of Kestrel One's ordinary `PreviewMessage` body. The parent reply that uses a
+  collaborator result remains an ordinary Kestrel message.
+- Rebuild the group from the existing Desktop `view.dialogs` recovery data and
+  Kestrel One `thread_messages` dialog parts. Do not add a second message store
+  or make a UI state flag authoritative.
+- Preserve a closed collaborator's group and artifact links for the life of the
+  parent Thread. Its archived row must remain selectable from the inspector.
+- Treat the inspector as a reader. Sending, reading, or closing through the
+  model tools stays visible in durable runtime events and follows the model's
+  policy path, not a browser-side shortcut.
+
+The presentation checks must prove that ten dialog messages from three
+collaborators produce at most one header control and one row per collaborator,
+not ten transcript entries. They must also prove that an incoming reply leaves
+the user's scroll position and input focus unchanged, an archived collaborator
+remains readable, and status updates have accessible text without duplicate
+live announcements.
+
 ## Lifecycle and Delivery
 
 ```mermaid
@@ -617,7 +778,9 @@ The follow-up outbox and reply commit are one transaction. The existing
 `FollowUpQueue` remains the consumer: it starts a parent continuation when the
 parent is idle and serializes the update when the parent is busy. Multiple
 collaborator replies remain separate causally identified entries; they are not
-merged by rendered text.
+merged by rendered text. Each entry derives its parent turn identity from the
+saved collaborator message ID, so recovery replays a completed parent turn
+instead of calling the model twice.
 
 ## State Ownership and Persistence
 
@@ -785,7 +948,7 @@ credentials in an A2A message.
 | Local child execution | Preserve one private child Thread, persisted role/policy binding, no nesting, and interrupted-run recovery |
 | A2A client provider | Approved discovery, transport negotiation, send/get/cancel, content normalization, and ambiguous-delivery handling |
 | Web persistence | Project canonical lifecycle/task/message state; stop treating the partial open-name index as the runtime invariant |
-| Web/Desktop/TUI/operator views | Render immutable name, open/closed lifecycle, activity, task failures, artifacts, and archived readable history |
+| Web/Desktop/TUI/operator views | Group private messages by collaborator; show the immutable name, open/closed lifecycle, activity, task failures, artifacts, and archived readable history without rendering every private message in the primary transcript |
 | Replay/evidence | Include collaborator/task/message/source IDs and close-fence outcomes in deterministic events |
 | Prompt and tool-choice tests | Protect the approved words, reply instructions, examples, and no-tool cases as behavior |
 
@@ -803,10 +966,12 @@ records, advances the revision, and only then applies send or close. A v1
 dialog that was `RUNNING` when no owner remains is promoted as interrupted,
 not automatically replayed. New opens are v2 only.
 
-Runtime events and Web projection payloads are versioned. Consumers that know
-only v1 continue to render text dialog messages; v2 consumers also render task,
-artifact, lifecycle, and synchronization data. `dialogId`, child Thread ID,
-existing message IDs, and parent follow-up source metadata remain stable.
+Runtime events and Web projection payloads are versioned. A generic consumer
+that knows only v1 can retain its text fallback. Desktop and Kestrel One group
+both v1 and v2 dialog messages by `dialogId` and keep those private messages
+out of the ordinary transcript. V2 consumers also render task, artifact,
+lifecycle, and synchronization data. `dialogId`, child Thread ID, existing
+message IDs, and parent follow-up source metadata remain stable.
 
 Compatibility can be removed only when no persisted v1 dialog remains
 unpromoted and all shipped runtime/profile consumers require the five-tool

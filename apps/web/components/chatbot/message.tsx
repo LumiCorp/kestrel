@@ -715,40 +715,6 @@ const PurePreviewMessage = ({
               );
             }
 
-            if (part.type === "data-kestrel-dialog-message") {
-              const dialog = part.data;
-              const lifecycle = dialog.dialogStatus === "closed"
-                ? "Closed"
-                : dialog.dialogActivity === "working"
-                  ? "Working"
-                  : dialog.dialogActivity === "waiting"
-                    ? "Waiting for input"
-                    : dialog.dialogActivity === "interrupted"
-                      ? "Interrupted"
-                      : "Idle";
-              return (
-                <div
-                  className="space-y-1"
-                  data-dialog-id={dialog.dialogId}
-                  data-testid="dialog-message"
-                  key={key}
-                >
-                  <div className="mb-1 flex items-center gap-2 text-xs">
-                    <span className="font-semibold">
-                      {dialog.sender === "collaborator" ? `Collaborator: ${dialog.name}` : dialog.sender === "kestrel" ? "Kestrel to collaborator" : "Collaborator system"}
-                    </span>
-                    <span aria-label={`Collaborator status: ${lifecycle}`} className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
-                      {lifecycle}
-                    </span>
-                    {dialog.status === "failed" ? <span className="text-destructive">Needs attention</span> : null}
-                  </div>
-                  <div className={dialog.status === "failed" ? "whitespace-pre-wrap text-destructive" : "whitespace-pre-wrap"}>
-                    {dialog.text}
-                  </div>
-                </div>
-              );
-            }
-
             if (isKestrelPresentationPart(part)) {
               return null;
             }
