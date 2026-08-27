@@ -218,3 +218,31 @@ test("Guardrails preserve completed model usage, price, and validation rejection
     },
   );
 });
+
+test("Guardrails distinguish exact zero-dollar pricing from unavailable pricing", () => {
+  const config = {
+    maxStepsPerRun: 10,
+    maxToolCallsPerRun: 10,
+    maxModelCallsPerRun: 10,
+    maxConcurrentToolJobsPerRun: 2,
+    maxConcurrentToolJobsGlobal: 4,
+    maxQueuedToolJobsPerRun: 10,
+    toolBatchCheckpointSize: 5,
+    toolCallRetryCount: 1,
+  };
+
+  const unpriced = new Guardrails(config);
+  unpriced.onModelCost(undefined);
+  assert.equal(unpriced.telemetry().pricedCostUsd, undefined);
+
+  const priced = new Guardrails(config);
+  priced.onModelCost(0);
+  assert.equal(priced.telemetry().pricedCostUsd, 0);
+  priced.onModelCost(undefined);
+  priced.onModelCost(0);
+  assert.equal(priced.telemetry().pricedCostUsd, 0);
+  priced.onModelCost(0.0042);
+  priced.onModelCost(undefined);
+  priced.onModelCost(0.0018);
+  assert.equal(priced.telemetry().pricedCostUsd, 0.006);
+});

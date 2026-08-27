@@ -2126,7 +2126,53 @@ test(
 
     const cancelled = await createTurn(cancelledThreadId, "cancelled");
     assert.ok(await store.claimDurableThreadTurn(cancelled.turn.id));
-    const cancelledMessages = presentation("cancelled");
+    const cancelledMessages = [
+      {
+        ...presentation("cancelled")[0]!,
+        inputTokens: 13,
+        cachedInputTokens: 5,
+        outputTokens: 7,
+        reasoningTokens: 3,
+        durationMs: 211,
+      },
+    ];
+    await sql`
+      CREATE FUNCTION "issue_235_fail_terminal_commit"()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $function$
+      BEGIN
+        RAISE EXCEPTION 'issue 07b cancellation terminal commit fault';
+      END;
+      $function$
+    `;
+    await sql`
+      CREATE CONSTRAINT TRIGGER "issue_235_fail_terminal_commit"
+      AFTER INSERT ON "thread_turn_events"
+      DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW
+      WHEN (NEW."type" = 'turn.cancelled')
+      EXECUTE FUNCTION "issue_235_fail_terminal_commit"()
+    `;
+    await assert.rejects(
+      store.completeDurableThreadTurn({
+        turnId: cancelled.turn.id,
+        status: "cancelled",
+        failureCode: "TURN_STOPPED",
+        messages: cancelledMessages,
+        replayChunks: terminalReplayChunks("cancelled", "cancelled"),
+      }),
+      /issue 07b cancellation terminal commit fault/u,
+    );
+    assert.deepEqual(await assistantMessageIds(cancelled.turn.id), []);
+    await dropTerminalFault();
+    await store.completeDurableThreadTurn({
+      turnId: cancelled.turn.id,
+      status: "cancelled",
+      failureCode: "TURN_STOPPED",
+      messages: cancelledMessages,
+      replayChunks: terminalReplayChunks("cancelled", "cancelled"),
+    });
     await store.completeDurableThreadTurn({
       turnId: cancelled.turn.id,
       status: "cancelled",
@@ -2136,6 +2182,47 @@ test(
     });
     assert.deepEqual(await assistantMessageIds(cancelled.turn.id), [
       cancelledMessages[0]?.id,
+    ]);
+    const [persistedCancellationMessage] = await sql<
+      Array<{
+        inputTokens: number | null;
+        cachedInputTokens: number | null;
+        outputTokens: number | null;
+        reasoningTokens: number | null;
+        durationMs: number | null;
+      }>
+    >`
+      SELECT
+        "input_tokens" AS "inputTokens",
+        "cached_input_tokens" AS "cachedInputTokens",
+        "output_tokens" AS "outputTokens",
+        "reasoning_tokens" AS "reasoningTokens",
+        "duration_ms" AS "durationMs"
+      FROM "thread_messages"
+      WHERE "id" = ${cancelledMessages[0]!.id}
+    `;
+    assert.deepEqual(persistedCancellationMessage, {
+      inputTokens: 13,
+      cachedInputTokens: 5,
+      outputTokens: 7,
+      reasoningTokens: 3,
+      durationMs: 211,
+    });
+    const cancellationUsage = await sql<
+      Array<{ meter: string; quantity: string }>
+    >`
+      SELECT "meter", "quantity"
+      FROM "organization_usage_events"
+      WHERE
+        "organization_id" = ${organizationId}
+        AND "source_kind" = 'model_message'
+        AND "source_id" = ${cancelledMessages[0]!.id}
+      ORDER BY "meter"
+    `;
+    assert.deepEqual(cancellationUsage, [
+      { meter: "cached_input_tokens", quantity: "5.000000000" },
+      { meter: "input_tokens", quantity: "8.000000000" },
+      { meter: "output_tokens", quantity: "7.000000000" },
     ]);
     assert.deepEqual(await eventTypes(cancelled.turn.id), [
       "turn.queued",

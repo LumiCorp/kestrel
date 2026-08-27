@@ -187,6 +187,9 @@ test("external cancellation errors retain completed usage and safe support evide
                 details: {
                   cancellationReason: "user_requested",
                   modelWorkRecorded: true,
+                  validationRejections: 1,
+                  prompt: "secret prompt",
+                  credential: "secret credential",
                 },
               }],
               telemetry: {
@@ -222,7 +225,11 @@ test("external cancellation errors retain completed usage and safe support evide
         usage?: Record<string, number>;
       };
       assert.equal(failure.code, "RUN_CANCELLED");
-      assert.equal(failure.details?.cancellationReason, "user_requested");
+      assert.deepEqual(failure.details, {
+        cancellationReason: "user_requested",
+        modelWorkRecorded: true,
+        validationRejections: 1,
+      });
       assert.deepEqual(failure.usage, {
         modelCalls: 1,
         inputTokens: 21,

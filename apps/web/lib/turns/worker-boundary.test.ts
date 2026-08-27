@@ -303,6 +303,31 @@ test(
 );
 
 test(
+  "terminal persistence recovery retains captured messages and telemetry",
+  async () => {
+    const runtimeSource = await readFile(
+      new URL("./process-runtime.ts", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(
+      runtimeSource,
+      /runtimeTerminalObserved && terminal\.messages\.length > 0/u,
+    );
+    assert.match(runtimeSource, /messages: terminal\.messages/u);
+    assert.match(runtimeSource, /replayChunks: terminal\.replayChunks/u);
+    assert.match(
+      runtimeSource,
+      /capturedTerminalPresentation \?\?[\s\S]*buildFailurePresentation/u,
+    );
+    assert.match(
+      runtimeSource,
+      /const fallbackStatus = stopped \? "cancelled" as const : "failed" as const/u,
+    );
+  },
+);
+
+test(
   "model authentication failures retain their normalized durable code",
   async () => {
     const [runtimeSource, storeSource] = await Promise.all([

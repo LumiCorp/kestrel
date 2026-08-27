@@ -1160,22 +1160,46 @@ export async function processDurableThreadTurn(
         throw error;
       }
     }
-    const failurePresentation = buildFailurePresentation({
-      errorMessage: attachmentCode
-        ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
-        : publicFailureMessage ?? message,
-      status: stopped ? "cancelled" : "failed",
-      turn,
-      assistantMessageId: terminal.assistantMessageId,
-      textPartId: terminal.textPartId,
-    });
+    // onFinishPersist snapshots the complete runtime presentation before the
+    // terminal transaction begins. If that transaction fails, retry the exact
+    // captured messages and telemetry instead of replacing completed model
+    // work with the synthetic zero-usage failure presentation. Pre-runtime
+    // failures have no terminal event and continue to use the fallback below.
+    const capturedTerminalPresentation =
+      runtimeTerminalObserved && terminal.messages.length > 0
+        ? {
+            status: terminalTurnStatus(terminal.status),
+            messages: terminal.messages,
+            replayChunks: terminal.replayChunks,
+          }
+        : null;
+    const fallbackStatus = stopped ? "cancelled" as const : "failed" as const;
+    const recoveryStatus =
+      capturedTerminalPresentation?.status ?? fallbackStatus;
+    const failurePresentation =
+      capturedTerminalPresentation ??
+      buildFailurePresentation({
+        errorMessage: attachmentCode
+          ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
+          : publicFailureMessage ?? message,
+        status: fallbackStatus,
+        turn,
+        assistantMessageId: terminal.assistantMessageId,
+        textPartId: terminal.textPartId,
+      });
     const completion = await completeDurableThreadTurn({
       turnId: turn.id,
-      status: stopped ? "cancelled" : "failed",
+      status: recoveryStatus,
       messages: failurePresentation.messages,
       replayChunks: failurePresentation.replayChunks,
-      failureCode: stopped
+      failureCode: recoveryStatus === "completed"
+        ? null
+        : recoveryStatus === "cancelled"
         ? "TURN_STOPPED"
+        : capturedTerminalPresentation
+          ? terminal.status === "contract_failure"
+            ? "PRESENTATION_CONTRACT_FAILURE"
+            : terminal.errorCode ?? "RUNTIME_FAILED"
           : attachmentCode
           ? attachmentCode
           : workerInterrupted
@@ -1190,12 +1214,17 @@ export async function processDurableThreadTurn(
           : errorCode === "PROJECT_CONTEXT_GRANT_CONTINUITY_INVALID"
             ? errorCode
           : "TURN_WORKER_FAILED",
-      failureMessage: stopped
+      failureMessage: recoveryStatus === "completed" ||
+          recoveryStatus === "cancelled"
         ? null
-        : attachmentCode
+        : capturedTerminalPresentation
+          ? terminal.error
+          : attachmentCode
           ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
           : publicFailureMessage ?? message,
-      interactionFailure: runnerRunStartedObserved && publicFailureMessage === null
+      interactionFailure:
+        capturedTerminalPresentation ||
+        (runnerRunStartedObserved && publicFailureMessage === null)
         ? undefined
         : {
             failureCode: stopped

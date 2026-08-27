@@ -2489,6 +2489,11 @@ test("runner cancellation preserves completed model telemetry on the original te
         });
         return {
           assistantText: "must not survive cancellation",
+          finalizedPayload: { secret: "finalized-secret" },
+          operatorAffordance: {
+            interactionMode: "build" as const,
+            secret: "operator-secret",
+          },
           output: {
             status: "COMPLETED",
             sessionId: input.sessionId,
@@ -2499,7 +2504,12 @@ test("runner cancellation preserves completed model telemetry on the original te
               reworkRate: 0,
               thrashIndex: 0,
             },
-            errors: [],
+            errors: [{
+              code: "PROVIDER_DETAIL",
+              message: "provider-secret",
+              details: { secret: "error-secret" },
+            }],
+            leakedSecret: "output-secret",
             telemetry: {
               stepsExecuted: 1,
               toolCalls: 0,
@@ -2580,8 +2590,92 @@ test("runner cancellation preserves completed model telemetry on the original te
     assert.match(body, /"validationRejections":1/u);
     assert.match(body, /"cancellationReason":"user_requested"/u);
     assert.doesNotMatch(body, /must not survive cancellation/u);
+    assert.doesNotMatch(body, /finalized-secret|operator-secret|provider-secret|error-secret|output-secret/u);
     assert.doesNotMatch(body, /"type":"run\.completed"/u);
   } finally {
     await server.close();
+  }
+});
+
+test("runner shutdown cancellation preserves its lifecycle source", async () => {
+  let resolveStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    resolveStarted = resolve;
+  });
+  const server = await createRunnerServiceServer({
+    runtimeFactory: () => ({
+      runTurn: async (input, options) => {
+        resolveStarted();
+        await new Promise<void>((resolve) => {
+          options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return {
+          assistantText: null,
+          output: {
+            status: "FAILED",
+            sessionId: input.sessionId,
+            runId: input.runId ?? "run-shutdown-cancel",
+            quality: {
+              citationCoverage: 0,
+              unresolvedClaims: 0,
+              reworkRate: 0,
+              thrashIndex: 0,
+            },
+            errors: [],
+            telemetry: {
+              stepsExecuted: 0,
+              toolCalls: 0,
+              modelCalls: 1,
+              durationMs: 25,
+            },
+          },
+        };
+      },
+      close: async () => {},
+    }),
+  });
+  let closed = false;
+
+  try {
+    const streamResponsePromise = fetch(`${server.url}/commands/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json", connection: "close" },
+      body: JSON.stringify({
+        id: "cmd-run-shutdown-cancel",
+        type: "run.start",
+        metadata: {
+          actor: {
+            actorId: "runner-service",
+            actorType: "service",
+            tenantId: "internal",
+          },
+          tenantId: "internal",
+          profile,
+        },
+        payload: {
+          profile,
+          turn: {
+            sessionId: "session-shutdown-cancel",
+            runId: "run-shutdown-cancel",
+            message: "wait for shutdown",
+            eventType: "user.message",
+          },
+        },
+      }),
+    });
+    await started;
+    const closePromise = server.gracefulClose().then(() => {
+      closed = true;
+    });
+    const response = await streamResponsePromise;
+    const body = await response.text();
+    await closePromise;
+    assert.match(body, /"type":"run\.cancelled"/u);
+    assert.match(body, /"cancellationReason":"runner_shutdown"/u);
+    assert.doesNotMatch(body, /"cancellationReason":"user_requested"/u);
+  } finally {
+    if (!closed) {
+      await server.forceClose();
+    }
   }
 });

@@ -515,6 +515,25 @@ export class RuntimeIO {
           requestedModel,
         }),
       );
+      // The provider request has completed at this boundary. Capture only its
+      // safe usage and pricing evidence before cancellation can stop response
+      // consumption and all later work.
+      const modelUsage = this.options.extractModelUsage(recoveredResult);
+      const economicsUsage = normalizeEconomicsUsage(modelUsage);
+      guardrails.onModelUsage(modelUsage);
+      const modelMetadata = this.options.extractModelMetadata(recoveredResult);
+      const actualProvider = readNonEmptyString(modelMetadata?.provider) ?? requestedProvider;
+      const actualModel = readNonEmptyString(modelMetadata?.model) ?? requestedModel;
+      const actualEconomicsModelProfile = actualProvider !== undefined && actualModel !== undefined && economicsControl !== undefined
+        ? resolveModelEconomicsProfileV1(economicsControl, actualProvider, actualModel)
+        : economicsModelProfile;
+      const pricing = attributeModelCallPrice({
+        usage: economicsUsage,
+        profile: actualEconomicsModelProfile,
+        provider: actualProvider,
+        model: actualModel,
+      });
+      guardrails.onModelCost(pricing.status === "priced" ? pricing.totalCostUsd : undefined);
       throwIfRuntimeIOAborted(progress.signal);
       const responseBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist<T>({
         boundary: "model_action",
@@ -553,22 +572,6 @@ export class RuntimeIO {
       if (this.options.deps.providerReasoningVault !== undefined && isModelResponse(result)) {
         await this.options.deps.providerReasoningVault.captureResponse(result, reasoningContext);
       }
-      const modelUsage = this.options.extractModelUsage(result);
-      const economicsUsage = normalizeEconomicsUsage(modelUsage);
-      guardrails.onModelUsage(modelUsage);
-      const modelMetadata = this.options.extractModelMetadata(result);
-      const actualProvider = readNonEmptyString(modelMetadata?.provider) ?? requestedProvider;
-      const actualModel = readNonEmptyString(modelMetadata?.model) ?? requestedModel;
-      const actualEconomicsModelProfile = actualProvider !== undefined && actualModel !== undefined && economicsControl !== undefined
-        ? resolveModelEconomicsProfileV1(economicsControl, actualProvider, actualModel)
-        : economicsModelProfile;
-      const pricing = attributeModelCallPrice({
-        usage: economicsUsage,
-        profile: actualEconomicsModelProfile,
-        provider: actualProvider,
-        model: actualModel,
-      });
-      guardrails.onModelCost(pricing.status === "priced" ? pricing.totalCostUsd : undefined);
       const completedAt = new Date().toISOString();
       const latencyMs = Date.now() - startedAt;
       await this.options.persistModelResponseDump({

@@ -33,6 +33,7 @@ export class Guardrails {
   private reasoningTokens = 0;
   private totalTokens = 0;
   private pricedCostUsd = 0;
+  private hasPricedCostEvidence = false;
   private validationRejections = 0;
 
   constructor(
@@ -153,6 +154,7 @@ export class Guardrails {
 
   onModelCost(costUsd: number | undefined): void {
     if (typeof costUsd === "number" && Number.isFinite(costUsd) && costUsd >= 0) {
+      this.hasPricedCostEvidence = true;
       this.pricedCostUsd += costUsd;
     }
   }
@@ -196,7 +198,7 @@ export class Guardrails {
       ...(this.outputTokens > 0 ? { outputTokens: this.outputTokens } : {}),
       ...(this.reasoningTokens > 0 ? { reasoningTokens: this.reasoningTokens } : {}),
       ...(this.totalTokens > 0 ? { totalTokens: this.totalTokens } : {}),
-      ...(this.pricedCostUsd > 0 ? { pricedCostUsd: this.pricedCostUsd } : {}),
+      ...(this.hasPricedCostEvidence ? { pricedCostUsd: this.pricedCostUsd } : {}),
       ...(this.validationRejections > 0 ? { validationRejections: this.validationRejections } : {}),
     };
   }

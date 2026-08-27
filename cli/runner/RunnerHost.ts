@@ -188,6 +188,7 @@ interface ActiveRunEntry {
   abortController: AbortController;
   runId?: string | undefined;
   cancelRequested?: boolean | undefined;
+  cancellationReason?: CancellationReason | undefined;
   finalizingAnswer?: boolean | undefined;
   exactEffectCandidate?: {
     runId: string;
@@ -958,10 +959,11 @@ export class RunnerHost {
         this.writer.emit("run.cancelled", {
           sessionId: turn.sessionId,
           runId: emittedRunId,
-          result: buildCancelledTerminalResult(terminalResult, {
-            sessionId: turn.sessionId,
-            runId: emittedRunId,
-          }),
+        result: buildCancelledTerminalResult(terminalResult, {
+          sessionId: turn.sessionId,
+          runId: emittedRunId,
+          reason: active.cancellationReason ?? "user_requested",
+        }),
         }, { commandId, runId: emittedRunId, sessionId: turn.sessionId });
         return;
       }
@@ -1512,6 +1514,7 @@ export class RunnerHost {
           }
         }
         active.cancelRequested = true;
+        active.cancellationReason = "user_requested";
         active.abortController.abort();
         cancelledRunId = active.runId;
         cancelled = true;
@@ -2064,6 +2067,7 @@ export class RunnerHost {
                 result: buildCancelledTerminalResult(result, {
                   sessionId: completedSessionId,
                   runId,
+                  reason: active.cancellationReason ?? "user_requested",
                 }),
               }, { commandId, sessionId: completedSessionId, runId, threadId: payload.threadId });
               return;
@@ -3051,6 +3055,7 @@ export class RunnerHost {
     if (options.abortActiveRuns === true) {
       for (const active of this.activeRuns.values()) {
         active.cancelRequested = true;
+        active.cancellationReason = "runner_shutdown";
         active.abortController.abort();
       }
     }
@@ -3837,31 +3842,80 @@ function buildNonResponsiveTerminalResult(input: {
 
 function buildCancelledTerminalResult(
   result: RunTurnResult,
-  identity: { sessionId: string; runId: string },
+  identity: {
+    sessionId: string;
+    runId: string;
+    reason: CancellationReason;
+  },
 ): RunTurnResult {
-  const telemetry = result.output.telemetry;
+  const telemetry = projectCancellationTelemetry(result.output.telemetry);
   return {
-    ...result,
     assistantText: null,
     output: {
-      ...result.output,
       status: "FAILED",
       sessionId: identity.sessionId,
       runId: identity.runId,
-      errors: [
-        ...result.output.errors.filter((error) => error.code !== "RUN_CANCELLED"),
-        {
-          code: "RUN_CANCELLED",
-          message: "Run cancelled.",
-          details: {
-            cancellationReason: "user_requested",
-            modelWorkRecorded: (telemetry.modelCalls ?? 0) > 0,
-            validationRejections: telemetry.validationRejections ?? 0,
-          },
+      quality: {
+        citationCoverage: safeNonNegativeNumber(
+          result.output.quality.citationCoverage,
+        ),
+        unresolvedClaims: safeNonNegativeNumber(
+          result.output.quality.unresolvedClaims,
+        ),
+        reworkRate: safeNonNegativeNumber(result.output.quality.reworkRate),
+        thrashIndex: safeNonNegativeNumber(result.output.quality.thrashIndex),
+      },
+      errors: [{
+        code: "RUN_CANCELLED",
+        message: "Run cancelled.",
+        details: {
+          cancellationReason: identity.reason,
+          modelWorkRecorded: telemetry.modelCalls > 0,
+          validationRejections: telemetry.validationRejections ?? 0,
         },
-      ],
+      }],
+      telemetry,
     },
   };
+}
+
+type CancellationReason = "user_requested" | "runner_shutdown";
+
+function projectCancellationTelemetry(
+  telemetry: RunTurnResult["output"]["telemetry"],
+): RunTurnResult["output"]["telemetry"] {
+  const required = {
+    stepsExecuted: safeNonNegativeNumber(telemetry.stepsExecuted),
+    toolCalls: safeNonNegativeNumber(telemetry.toolCalls),
+    modelCalls: safeNonNegativeNumber(telemetry.modelCalls),
+    durationMs: safeNonNegativeNumber(telemetry.durationMs),
+  };
+  const optional = {} as Record<string, number>;
+  for (const field of [
+    "effectToolCalls",
+    "actionModelCalls",
+    "maintenanceModelCalls",
+    "inputTokens",
+    "cachedInputTokens",
+    "cacheWriteInputTokens",
+    "outputTokens",
+    "reasoningTokens",
+    "totalTokens",
+    "pricedCostUsd",
+    "validationRejections",
+  ] as const) {
+    const value = telemetry[field];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      optional[field] = value;
+    }
+  }
+  return { ...required, ...optional };
+}
+
+function safeNonNegativeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : 0;
 }
 
 function isSessionVersionConflictError(error: unknown): error is Error {

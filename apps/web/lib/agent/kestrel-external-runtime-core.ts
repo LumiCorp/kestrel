@@ -107,11 +107,10 @@ function readTerminalText(
     const cancellation = terminal.payload.result.output.errors.find(
       (error) => error.code === "RUN_CANCELLED",
     );
+    const details = readCancellationDetails(cancellation?.details);
     throw Object.assign(new Error("The Kestrel run was cancelled."), {
       code: "RUN_CANCELLED",
-      ...(cancellation?.details !== undefined
-        ? { details: cancellation.details }
-        : {}),
+      ...(details !== undefined ? { details } : {}),
       ...(usage !== undefined ? { usage } : {}),
     });
   }
@@ -123,6 +122,33 @@ function readTerminalText(
     });
   }
   return assistantText;
+}
+
+function readCancellationDetails(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return;
+  }
+  const input = value as Record<string, unknown>;
+  const details: Record<string, unknown> = {};
+  if (
+    input.cancellationReason === "user_requested" ||
+    input.cancellationReason === "runner_shutdown"
+  ) {
+    details.cancellationReason = input.cancellationReason;
+  }
+  if (typeof input.modelWorkRecorded === "boolean") {
+    details.modelWorkRecorded = input.modelWorkRecorded;
+  }
+  if (
+    typeof input.validationRejections === "number" &&
+    Number.isFinite(input.validationRejections) &&
+    input.validationRejections >= 0
+  ) {
+    details.validationRejections = input.validationRejections;
+  }
+  return Object.keys(details).length > 0 ? details : undefined;
 }
 
 function readTokenUsage(
