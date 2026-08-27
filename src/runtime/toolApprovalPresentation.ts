@@ -36,6 +36,18 @@ type Presenter = {
 };
 
 const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
+  exec_command: presenter(
+    "Run command",
+    "Review this command before it runs.",
+    [
+      ["command", "Command"],
+      ["cwd", "Working directory"],
+      ["envNames", "Environment access", "string_list"],
+    ],
+    [
+      "Allow for thread remembers only this exact command in this folder.",
+    ],
+  ),
   "internet.search": presenter("Search the web", "Run a Tavily web search.", [
     ["query", "Query"],
   ]),
@@ -411,7 +423,7 @@ function displayValue(
   if (format === "string_list") {
     return Array.isArray(value) &&
       value.every((item): item is string => typeof item === "string")
-      ? JSON.stringify(value)
+      ? value.join(", ") || "None"
       : "Configured selection";
   }
   if (typeof value === "string") return value;

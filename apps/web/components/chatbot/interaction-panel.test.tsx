@@ -108,22 +108,22 @@ test("legacy approval cards keep their explicit compatibility actions", () => {
     />,
   );
 
-  assert.match(html, />Deny</u);
-  assert.match(html, />Approve Once</u);
-  assert.doesNotMatch(html, />Remember Approval</u);
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.match(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
   assert.doesNotMatch(html, />Always Approve</u);
   assert.match(html, /Start a multi-source Tavily research task/u);
-  assert.match(html, /internet\.research/u);
+  assert.doesNotMatch(html, /internet\.research/u);
   assert.match(html, /Research request/u);
   assert.match(html, /Kestrel/u);
-  assert.match(html, /Environment: Ask first/u);
-  assert.match(html, /Project: Ask first/u);
-  assert.match(html, /Environment Apps is configured to ask/u);
+  assert.doesNotMatch(html, /Environment: Ask first/u);
+  assert.doesNotMatch(html, /Project: Ask first/u);
+  assert.match(html, /Your environment asks before this action runs/u);
   assert.doesNotMatch(html, /organization\/environments/u);
   assert.doesNotMatch(html, />Approve<\/button>/u);
 });
 
-test("strict V2 approval cards advertise exact decisions", () => {
+test("strict V4 approval cards advertise exact decisions", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[{
@@ -132,7 +132,7 @@ test("strict V2 approval cards advertise exact decisions", () => {
         eventType: "user.approval",
         prompt: "Approve test.tool?",
         requestEnvelope: {
-          version: "runner_hosted_tool_approval_interaction_v2",
+          version: "runner_hosted_tool_approval_interaction_v4",
           approval: { toolName: "test.tool" },
         },
         approvalPolicy: {
@@ -153,9 +153,9 @@ test("strict V2 approval cards advertise exact decisions", () => {
       threadId="thread-1"
     />
   );
-  assert.match(html, />Decline</u);
-  assert.match(html, />Approve Once</u);
-  assert.doesNotMatch(html, />Remember Approval</u);
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.match(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
   assert.doesNotMatch(html, />Deny</u);
 });
 
@@ -167,7 +167,7 @@ test("a strict hosted card with missing current authority exposes only Decline",
         kind: "approval",
         eventType: "user.approval",
         requestEnvelope: {
-          version: "runner_hosted_tool_approval_interaction_v3",
+          version: "runner_hosted_tool_approval_interaction_v4",
           approval: { toolName: "exec_command" },
         },
       }]}
@@ -176,12 +176,12 @@ test("a strict hosted card with missing current authority exposes only Decline",
       threadId="thread-1"
     />,
   );
-  assert.match(html, />Decline</u);
-  assert.doesNotMatch(html, />Approve Once</u);
-  assert.doesNotMatch(html, />Remember Approval</u);
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.doesNotMatch(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
 });
 
-test("legacy V3 cards never advertise Remember Approval", () => {
+test("strict V4 cards advertise Remember Approval when policy permits it", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[
@@ -190,7 +190,7 @@ test("legacy V3 cards never advertise Remember Approval", () => {
           kind: "approval",
           eventType: "user.approval",
           requestEnvelope: {
-            version: "runner_hosted_tool_approval_interaction_v3",
+            version: "runner_hosted_tool_approval_interaction_v4",
             approval: {
               toolCallId: "tool-call-2",
               toolName: "internet.research",
@@ -232,12 +232,12 @@ test("legacy V3 cards never advertise Remember Approval", () => {
     />,
   );
 
-  assert.match(html, />Decline</u);
-  assert.match(html, />Approve Once</u);
-  assert.doesNotMatch(html, />Remember Approval</u);
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.match(html, />Allow once</u);
+  assert.match(html, />Allow for thread</u);
   assert.doesNotMatch(html, />Always Approve</u);
   assert.doesNotMatch(html, /href="\/organization\/environments/u);
-  assert.match(html, /Environment Apps is configured to ask/u);
+  assert.match(html, /Your environment asks before this action runs/u);
 });
 
 test("Project Ask First V4 cards expose Remember Approval", () => {
@@ -278,12 +278,12 @@ test("Project Ask First V4 cards expose Remember Approval", () => {
       threadId="thread-1"
     />,
   );
-  assert.match(html, />Decline</u);
-  assert.match(html, />Approve Once</u);
-  assert.match(html, />Remember Approval</u);
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.match(html, />Allow once</u);
+  assert.match(html, />Allow for thread</u);
 });
 
-test("a refreshed V3 card hides Remember Approval after Project policy becomes Blocked", () => {
+test("a refreshed V4 card hides Remember Approval after Project policy becomes Blocked", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[{
@@ -291,7 +291,7 @@ test("a refreshed V3 card hides Remember Approval after Project policy becomes B
         kind: "approval",
         eventType: "user.approval",
         requestEnvelope: {
-          version: "runner_hosted_tool_approval_interaction_v3",
+          version: "runner_hosted_tool_approval_interaction_v4",
           approval: {
             toolName: "internet.research",
             presentation: {
@@ -321,9 +321,9 @@ test("a refreshed V3 card hides Remember Approval after Project policy becomes B
       threadId="thread-1"
     />,
   );
-  assert.match(html, />Decline</u);
-  assert.doesNotMatch(html, />Approve Once</u);
-  assert.doesNotMatch(html, />Remember Approval</u);
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.doesNotMatch(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
 });
 
 test("a refreshed built-in exec_command card hides Remember after Subject policy becomes Ask", () => {
@@ -334,7 +334,7 @@ test("a refreshed built-in exec_command card hides Remember after Subject policy
         kind: "approval",
         eventType: "user.approval",
         requestEnvelope: {
-          version: "runner_hosted_tool_approval_interaction_v3",
+          version: "runner_hosted_tool_approval_interaction_v4",
           approval: {
             toolName: "exec_command",
             presentation: {
@@ -365,9 +365,9 @@ test("a refreshed built-in exec_command card hides Remember after Subject policy
       threadId="thread-1"
     />,
   );
-  assert.match(html, />Decline</u);
-  assert.match(html, />Approve Once</u);
-  assert.doesNotMatch(html, />Remember Approval</u);
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.match(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
 });
 
 test("a refreshed built-in exec_command card exposes only Decline after Subject policy blocks it", () => {
@@ -378,7 +378,7 @@ test("a refreshed built-in exec_command card exposes only Decline after Subject 
         kind: "approval",
         eventType: "user.approval",
         requestEnvelope: {
-          version: "runner_hosted_tool_approval_interaction_v3",
+          version: "runner_hosted_tool_approval_interaction_v4",
           approval: {
             toolName: "exec_command",
             presentation: { policy: { rememberApprovalEligible: true } },
@@ -404,12 +404,12 @@ test("a refreshed built-in exec_command card exposes only Decline after Subject 
       threadId="thread-1"
     />,
   );
-  assert.match(html, />Decline</u);
-  assert.doesNotMatch(html, />Approve Once</u);
-  assert.doesNotMatch(html, />Remember Approval</u);
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.doesNotMatch(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
 });
 
-test("a refreshed V3 card exposes only Decline after its exact resource closes", () => {
+test("a refreshed V4 card exposes only Decline after its exact resource closes", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[{
@@ -417,7 +417,7 @@ test("a refreshed V3 card exposes only Decline after its exact resource closes",
         kind: "approval",
         eventType: "user.approval",
         requestEnvelope: {
-          version: "runner_hosted_tool_approval_interaction_v3",
+          version: "runner_hosted_tool_approval_interaction_v4",
           approval: {
             toolName: "internet.research",
             presentation: {
@@ -444,9 +444,9 @@ test("a refreshed V3 card exposes only Decline after its exact resource closes",
       threadId="thread-1"
     />,
   );
-  assert.match(html, />Decline</u);
-  assert.doesNotMatch(html, />Approve Once</u);
-  assert.doesNotMatch(html, />Remember Approval</u);
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.doesNotMatch(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
 });
 
 test("hosted approval lifecycle distinguishes recorded, accepted, and failed authorization", () => {
@@ -479,8 +479,8 @@ test("hosted approval lifecycle distinguishes recorded, accepted, and failed aut
       threadId="thread-1"
     />,
   );
-  assert.match(processing, /Decision recorded/u);
-  assert.doesNotMatch(processing, /Approve Once/u);
+  assert.match(processing, /Saving your choice/u);
+  assert.doesNotMatch(processing, /Allow once/u);
 
   const accepted = renderToStaticMarkup(
     <InteractionPanel
@@ -499,7 +499,7 @@ test("hosted approval lifecycle distinguishes recorded, accepted, and failed aut
       threadId="thread-1"
     />,
   );
-  assert.match(accepted, /Authorization accepted/u);
+  assert.match(accepted, /Allowed/u);
 
   const failed = renderToStaticMarkup(
     <InteractionPanel
@@ -520,12 +520,12 @@ test("hosted approval lifecycle distinguishes recorded, accepted, and failed aut
       threadId="thread-1"
     />,
   );
-  assert.match(failed, /Authorization failed — operation not executed/u);
-  assert.match(failed, /EXTERNAL_APPROVAL_IDENTITY_MISMATCH/u);
-  assert.match(failed, /Retry authorization/u);
+  assert.match(failed, /Not run/u);
+  assert.doesNotMatch(failed, /EXTERNAL_APPROVAL_IDENTITY_MISMATCH/u);
+  assert.match(failed, /Try again/u);
 });
 
-test("Remember Approval is unavailable for runtime-strict V3 approvals", () => {
+test("Remember Approval is unavailable for runtime-strict V4 approvals", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[
@@ -534,7 +534,7 @@ test("Remember Approval is unavailable for runtime-strict V3 approvals", () => {
           kind: "approval",
           eventType: "user.approval",
           requestEnvelope: {
-            version: "runner_hosted_tool_approval_interaction_v3",
+            version: "runner_hosted_tool_approval_interaction_v4",
             approval: {
               toolCallId: "tool-call-runtime-strict",
               toolName: "internet.research",
@@ -576,10 +576,10 @@ test("Remember Approval is unavailable for runtime-strict V3 approvals", () => {
     />,
   );
 
-  assert.doesNotMatch(html, />Remember Approval</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
   assert.doesNotMatch(html, />Always Approve</u);
   assert.doesNotMatch(html, /href="\/organization\/environments/u);
-  assert.match(html, /current runtime mode requires approval/u);
+  assert.match(html, /This action always needs your approval/u);
 });
 
 test("approval cards never render arbitrary raw tool input", () => {

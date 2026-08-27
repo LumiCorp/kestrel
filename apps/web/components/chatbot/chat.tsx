@@ -1355,7 +1355,7 @@ export function Chat({
             {
               id: messageId,
               role: "user",
-              parts: [{ type: "text", text: interaction.message }],
+              parts: [{ type: "text", text: interaction.message ?? "Approval response" }],
               metadata: turnId ? { kestrelTurnId: turnId } : undefined,
             },
             {
