@@ -1,3 +1,5 @@
+LOCK TABLE "member" IN SHARE ROW EXCLUSIVE MODE;
+--> statement-breakpoint
 WITH "disabled" AS (
 	UPDATE "project_email_triggers" AS "triggers"
 	SET

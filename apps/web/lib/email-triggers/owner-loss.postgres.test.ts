@@ -11,6 +11,10 @@ const ownerLossMigration = fs.readFileSync(
   ),
   "utf8",
 );
+const ownerLossMigrationStatements = ownerLossMigration
+  .split("--> statement-breakpoint")
+  .map((candidate) => candidate.trim())
+  .filter(Boolean);
 
 test("Organization owner loss disables Email Triggers before membership and user cascades", async (context) => {
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
@@ -31,6 +35,8 @@ test("Organization owner loss disables Email Triggers before membership and user
     raceMember: `trigger-owner-loss-race-member-${suffix}`,
     staleUser: `trigger-owner-loss-stale-user-${suffix}`,
     staleMember: `trigger-owner-loss-stale-member-${suffix}`,
+    cutoverUser: `trigger-owner-loss-cutover-user-${suffix}`,
+    cutoverMember: `trigger-owner-loss-cutover-member-${suffix}`,
     enabledTrigger: `trigger-owner-loss-enabled-${suffix}`,
     disabledTrigger: `trigger-owner-loss-disabled-${suffix}`,
     deletedTrigger: `trigger-owner-loss-deleted-${suffix}`,
@@ -39,13 +45,14 @@ test("Organization owner loss disables Email Triggers before membership and user
     staleEnabledTrigger: `trigger-owner-loss-stale-enabled-${suffix}`,
     staleDisabledTrigger: `trigger-owner-loss-stale-disabled-${suffix}`,
     staleDeletedTrigger: `trigger-owner-loss-stale-deleted-${suffix}`,
+    cutoverTrigger: `trigger-owner-loss-cutover-${suffix}`,
   };
 
   context.after(async () => {
     await sql`DELETE FROM "organization" WHERE "id" = ${ids.organization}`;
     await sql`
       DELETE FROM "user"
-      WHERE "id" IN (${ids.admin}, ${ids.genericUser}, ${ids.directUser}, ${ids.raceUser}, ${ids.staleUser})
+      WHERE "id" IN (${ids.admin}, ${ids.genericUser}, ${ids.directUser}, ${ids.raceUser}, ${ids.staleUser}, ${ids.cutoverUser})
     `;
     await sql.end({ timeout: 0 });
   });
@@ -333,10 +340,7 @@ test("Organization owner loss disables Email Triggers before membership and user
     `;
     assert.deepEqual(beforeMigration, { enabled: true, revision: 4 });
 
-    for (const statement of ownerLossMigration
-      .split("--> statement-breakpoint")
-      .map((candidate) => candidate.trim())
-      .filter(Boolean)) {
+    for (const statement of ownerLossMigrationStatements) {
       await transaction.unsafe(statement);
     }
 
@@ -439,4 +443,187 @@ test("Organization owner loss disables Email Triggers before membership and user
       revision: 5,
     });
   });
+
+  await sql.begin(async (transaction) => {
+    await transaction`
+      INSERT INTO "user" (
+        "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+      ) VALUES (
+        ${ids.cutoverUser}, 'Owner-loss Cutover', ${`${ids.cutoverUser}@example.test`},
+        true, ${now}, ${now}
+      )
+    `;
+    await transaction`
+      INSERT INTO "member" (
+        "id", "organizationId", "userId", "role", "createdAt"
+      ) VALUES (
+        ${ids.cutoverMember}, ${ids.organization}, ${ids.cutoverUser}, 'member', ${now}
+      )
+    `;
+    await transaction`
+      INSERT INTO "project_members" (
+        "project_id", "organization_member_id", "role"
+      ) VALUES (${ids.project}, ${ids.cutoverMember}, 'editor')
+    `;
+    await transaction`
+      INSERT INTO "project_email_triggers" (
+        "id", "organization_id", "project_id", "created_by_user_id",
+        "execution_owner_user_id", "name", "instruction", "model_id",
+        "address_local_part", "address_domain", "enabled", "disabled_reason",
+        "revision", "deleted_at", "created_at", "updated_at"
+      ) VALUES (
+        ${ids.cutoverTrigger}, ${ids.organization}, ${ids.project},
+        ${ids.cutoverUser}, ${ids.cutoverUser}, 'Cutover target', 'Process email.',
+        'openrouter/model', 'private-cutover-address', 'inbound.example.test',
+        true, NULL, 10, NULL, ${now}, ${now}
+      )
+    `;
+  });
+
+  await sql`DROP TRIGGER "member_delete_disable_project_email_triggers" ON "member"`;
+  await sql`DROP FUNCTION "disable_project_email_triggers_on_member_delete"()`;
+
+  const migrationSql = postgres(databaseUrl, { max: 1 });
+  const deleteSql = postgres(databaseUrl, { max: 1 });
+  const observerSql = postgres(databaseUrl, { max: 1 });
+  let boundaryInstalled = false;
+  let deleteResult:
+    | Promise<postgres.RowList<Array<{ id: string }>>>
+    | undefined;
+  try {
+    assert.equal(ownerLossMigrationStatements.length, 4);
+    await migrationSql.begin(async (migration) => {
+      const [migrationBackend] = await migration<Array<{ pid: number }>>`
+        SELECT pg_backend_pid()::int AS "pid"
+      `;
+      assert.ok(migrationBackend);
+
+      await migration.unsafe(ownerLossMigrationStatements[0] as string);
+      await migration.unsafe(ownerLossMigrationStatements[1] as string);
+
+      let announceDeletePid!: (pid: number) => void;
+      const deletePidReady = new Promise<number>((resolve) => {
+        announceDeletePid = resolve;
+      });
+      deleteResult = deleteSql.begin(async (deletion) => {
+        const [deleteBackend] = await deletion<Array<{ pid: number }>>`
+          SELECT pg_backend_pid()::int AS "pid"
+        `;
+        assert.ok(deleteBackend);
+        announceDeletePid(deleteBackend.pid);
+        return deletion<Array<{ id: string }>>`
+          DELETE FROM "member"
+          WHERE "id" = ${ids.cutoverMember}
+          RETURNING "id"
+        `;
+      });
+      const deletePid = await deletePidReady;
+      const blockedDelete = await waitForDatabaseBlock({
+        sql: observerSql,
+        blockedPid: deletePid,
+        blockerPid: migrationBackend.pid,
+      });
+      assert.equal(blockedDelete.state, "active");
+      assert.equal(blockedDelete.waitEventType, "Lock");
+      assert.match(blockedDelete.query, /DELETE FROM "member"/u);
+
+      await migration.unsafe(ownerLossMigrationStatements[2] as string);
+      await migration.unsafe(ownerLossMigrationStatements[3] as string);
+    });
+    boundaryInstalled = true;
+
+    assert.ok(deleteResult);
+    assert.deepEqual([...(await deleteResult)], [{ id: ids.cutoverMember }]);
+  } finally {
+    if (deleteResult) {
+      await deleteResult.catch(() => {});
+    }
+    if (!boundaryInstalled) {
+      await applyOwnerLossMigration(sql);
+    }
+    await Promise.all([
+      migrationSql.end({ timeout: 0 }),
+      deleteSql.end({ timeout: 0 }),
+      observerSql.end({ timeout: 0 }),
+    ]);
+  }
+
+  const [cutoverRow] = await sql<
+    Array<{
+      enabled: boolean;
+      reason: string | null;
+      revision: number;
+    }>
+  >`
+    SELECT "enabled", "disabled_reason" AS "reason", "revision"
+    FROM "project_email_triggers"
+    WHERE "id" = ${ids.cutoverTrigger}
+  `;
+  assert.deepEqual(cutoverRow, {
+    enabled: false,
+    reason: "execution_owner_access_lost",
+    revision: 11,
+  });
+  const cutoverAudit = await sql<
+    Array<{
+      targetId: string;
+      metadata: { reason: string; revision: number };
+    }>
+  >`
+    SELECT "target_id" AS "targetId", "metadata"
+    FROM "project_audit_events"
+    WHERE "target_type" = 'project_email_trigger'
+      AND "target_id" = ${ids.cutoverTrigger}
+  `;
+  assert.deepEqual(
+    [...cutoverAudit],
+    [
+      {
+        targetId: ids.cutoverTrigger,
+        metadata: { reason: "execution_owner_access_lost", revision: 11 },
+      },
+    ],
+  );
+  assert.doesNotMatch(
+    JSON.stringify(cutoverAudit),
+    /private-cutover-address|inbound\.example\.test/u,
+  );
 });
+
+async function waitForDatabaseBlock(input: {
+  sql: postgres.Sql;
+  blockedPid: number;
+  blockerPid: number;
+}) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const [activity] = await input.sql<
+      Array<{
+        state: string;
+        waitEventType: string | null;
+        blockingPids: number[];
+        query: string;
+      }>
+    >`
+      SELECT "state", "wait_event_type" AS "waitEventType",
+             pg_blocking_pids(${input.blockedPid}) AS "blockingPids", "query"
+      FROM pg_stat_activity
+      WHERE "pid" = ${input.blockedPid}
+    `;
+    if (activity?.blockingPids.includes(input.blockerPid)) {
+      return activity;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(
+    `Timed out waiting for backend ${input.blockedPid} to be blocked by migration backend ${input.blockerPid}.`,
+  );
+}
+
+async function applyOwnerLossMigration(sql: postgres.Sql) {
+  await sql.begin(async (transaction) => {
+    for (const statement of ownerLossMigrationStatements) {
+      await transaction.unsafe(statement);
+    }
+  });
+}

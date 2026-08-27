@@ -5,7 +5,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 ## Ready
 
 - [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
-- [Close the owner-loss migration cutover race](40-close-owner-loss-migration-cutover-race.md)
 
 ## In progress
 
@@ -29,6 +28,7 @@ None.
 - [Execute the Email Trigger route exports](37-execute-email-trigger-route-exports.md)
 - [Reconcile stale Trigger owners during migration](38-reconcile-stale-trigger-owners-during-migration.md)
 - [Keep route-export sessions live](39-keep-route-export-sessions-live.md)
+- [Close the owner-loss migration cutover race](40-close-owner-loss-migration-cutover-race.md)
 
 ## Done
 

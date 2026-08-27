@@ -23,13 +23,20 @@ const historyLock = JSON.parse(
 ) as Record<string, string>;
 
 test("Organization member deletion disables owned Email Triggers atomically", () => {
+  const memberWriteLock = migration.indexOf(
+    'LOCK TABLE "member" IN SHARE ROW EXCLUSIVE MODE',
+  );
   const reconciliation = migration.indexOf(
     'UPDATE "project_email_triggers" AS "triggers"',
   );
   const liveDeleteFunction = migration.indexOf(
     'CREATE FUNCTION "disable_project_email_triggers_on_member_delete"()',
   );
-  assert.ok(reconciliation >= 0 && reconciliation < liveDeleteFunction);
+  assert.ok(
+    memberWriteLock >= 0 &&
+      memberWriteLock < reconciliation &&
+      reconciliation < liveDeleteFunction,
+  );
   assert.match(
     migration,
     /"triggers"\."enabled" = true[\s\S]*"triggers"\."deleted_at" IS NULL[\s\S]*NOT EXISTS \([\s\S]*FROM "member"[\s\S]*"member"\."organizationId" = "triggers"\."organization_id"[\s\S]*"member"\."userId" = "triggers"\."execution_owner_user_id"/u,
