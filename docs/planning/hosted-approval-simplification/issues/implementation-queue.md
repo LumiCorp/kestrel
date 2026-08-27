@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-- [Make cleanup release state monotonic](06j-make-cleanup-release-state-monotonic.md)
+None.
 
 ## Blocked
 
@@ -23,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Make cleanup release state monotonic](06j-make-cleanup-release-state-monotonic.md)
 - [Recover completed cleanup with bounded reconciliation](06i-recover-completed-cleanup-with-backoff.md)
 - [Bridge the deployed preset-2 baseline](06h-bridge-the-deployed-preset2-baseline.md)
 - [Converge prepared cleanup across retry and lifecycle](06g-converge-cleanup-across-retry-and-lifecycle.md)
