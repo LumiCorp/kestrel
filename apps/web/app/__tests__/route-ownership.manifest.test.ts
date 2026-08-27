@@ -84,6 +84,7 @@ test(
         "/projects",
         "/schedules",
         "/workflows",
+        "/triggers",
       ],
     );
 

@@ -1470,6 +1470,88 @@ export const projectWorkflowStepRuns = pgTable(
   ],
 );
 
+/** =========================
+ *  Project Email Triggers
+ *  ========================= */
+
+export const projectEmailTriggers = pgTable(
+  "project_email_triggers",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    executionOwnerUserId: text("execution_owner_user_id").references(
+      () => users.id,
+      { onDelete: "set null" },
+    ),
+    name: text("name").notNull(),
+    instruction: text("instruction").notNull(),
+    modelId: text("model_id").notNull(),
+    claimedFromFilter: text("claimed_from_filter"),
+    accessMode: text("access_mode", { enum: ["private"] })
+      .notNull()
+      .default("private"),
+    addressLocalPart: text("address_local_part").notNull(),
+    addressDomain: text("address_domain").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    disabledReason: text("disabled_reason"),
+    revision: integer("revision").notNull().default(1),
+    rotatedAt: timestamp("rotated_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.projectId],
+      foreignColumns: [projects.organizationId, projects.id],
+      name: "project_email_triggers_organization_project_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("project_email_triggers_address_idx").on(
+      table.addressDomain,
+      table.addressLocalPart,
+    ),
+    index("project_email_triggers_project_idx").on(table.projectId),
+    index("project_email_triggers_execution_owner_idx").on(
+      table.executionOwnerUserId,
+    ),
+    index("project_email_triggers_admission_idx").on(
+      table.organizationId,
+      table.enabled,
+      table.deletedAt,
+    ),
+    check(
+      "project_email_triggers_private_access_check",
+      sql`${table.accessMode} = 'private'`,
+    ),
+    check(
+      "project_email_triggers_revision_check",
+      sql`${table.revision} >= 1`,
+    ),
+    check(
+      "project_email_triggers_enabled_owner_check",
+      sql`NOT ${table.enabled} OR ${table.executionOwnerUserId} IS NOT NULL`,
+    ),
+    check(
+      "project_email_triggers_deleted_disabled_check",
+      sql`${table.deletedAt} IS NULL OR NOT ${table.enabled}`,
+    ),
+  ],
+);
+
 export const threadTurnEvents = pgTable(
   "thread_turn_events",
   {

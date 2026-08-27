@@ -4,7 +4,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Let Project editors manage private Email Triggers](02-manage-private-project-email-triggers.md)
 - [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
 
 ## In progress
@@ -21,7 +20,7 @@ None.
 
 ## Implemented
 
-None.
+- [Let Project editors manage private Email Triggers](02-manage-private-project-email-triggers.md)
 
 ## Done
 
