@@ -26,6 +26,7 @@ import type {
   SessionStore,
   UpdateConversationTurnTerminalEnvelopeInput,
 } from "../../src/kestrel/contracts/store.js";
+import { validatePreparedApprovalCleanupDoneEvidence } from "../../src/kestrel/contracts/store.js";
 
 import {
   normalizeRuntimeStateForPersist,
@@ -712,7 +713,24 @@ export class InMemorySessionStore implements SessionStore {
       );
     }
     parseRunnerPreparedApprovalCleanupV1(payload.preparedApprovalCleanup);
-    if (this.effectResults.get(idempotencyKey)?.status !== "DONE") {
+    const suppliedEvidence = validatePreparedApprovalCleanupDoneEvidence({
+      effect,
+      result,
+    });
+    const existing = this.effectResults.get(idempotencyKey);
+    if (existing?.status === "DONE") {
+      const existingEvidence = validatePreparedApprovalCleanupDoneEvidence({
+        effect,
+        result: existing,
+      });
+      if (
+        existingEvidence.canonicalOutput !== suppliedEvidence.canonicalOutput
+      ) {
+        throw new Error(
+          "Cleanup DONE result conflicts with existing exact evidence",
+        );
+      }
+    } else {
       this.effectResults.set(idempotencyKey, structuredClone(result));
     }
     effect.status = "DONE";

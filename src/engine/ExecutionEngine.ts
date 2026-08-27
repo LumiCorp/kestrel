@@ -19,6 +19,7 @@ import type {
   PersistedEffect,
   SessionRecord,
 } from "../kestrel/contracts/store.js";
+import { validatePreparedApprovalCleanupDoneEvidence } from "../kestrel/contracts/store.js";
 import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
 import {
   createRunnerStructuredReviewInteractionV1,
@@ -3459,6 +3460,7 @@ export class ExecutionEngine {
           "cleanup recovery does not have an exact durable DONE effect and result",
         );
       }
+      validatePreparedApprovalCleanupDoneEvidence({ effect, result });
       return {
         status: "COMPLETED",
         errors: input.errors,

@@ -282,7 +282,15 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     assert.deepEqual(await store.claimExactEffectCancellation({
       sessionId, runId, idempotencyKey: binding.toolCallId, tenantId: binding.tenantId,
     }), { status: "completed" });
-    const cleanupEffectId = `cleanup-release-${suffix}`;
+    const cleanupPreparedToolCall = await prepareTestToolCall({
+      gateway,
+      toolName: "code.execute",
+      toolInput: { language: "javascript", code: "return 1" },
+      runId,
+      sessionId,
+      callId: `cleanup-prepared-${suffix}`,
+    });
+    const cleanupEffectId = `${cleanupPreparedToolCall.callId}:release`;
     await pool.query(
       `INSERT INTO effects
          (run_id, session_id, step_index, effect_type, payload_json,
@@ -294,6 +302,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         runId,
         sessionId,
         JSON.stringify({
+          preparedToolCall: cleanupPreparedToolCall,
           preparedApprovalCleanup: {
             version: "runner_prepared_approval_cleanup_v1",
             organizationId: binding.tenantId,
@@ -327,7 +336,9 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         {
           idempotencyKey: cleanupEffectId,
           status: "DONE",
-          output: { releasedPreparedInvocationId: `prepared-${suffix}` },
+          output: {
+            releasedPreparedInvocationId: cleanupPreparedToolCall.callId,
+          },
           timestamp: "2026-08-27T00:00:02.000Z",
         },
       ),
@@ -355,9 +366,162 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     assert.deepEqual(await store.getEffectResult(cleanupEffectId), {
       idempotencyKey: cleanupEffectId,
       status: "DONE",
-      output: { releasedPreparedInvocationId: `prepared-${suffix}` },
+      output: {
+        releasedPreparedInvocationId: cleanupPreparedToolCall.callId,
+      },
       timestamp: "2026-08-27T00:00:02.000Z",
     });
+    await Promise.all([
+      "2026-08-27T00:00:04.000Z",
+      "2026-08-27T00:00:05.000Z",
+    ].map((timestamp) =>
+      store.commitPreparedApprovalCleanupEffectDone(
+        cleanupEffectId,
+        cleanupOwner,
+        {
+          idempotencyKey: cleanupEffectId,
+          status: "DONE",
+          output: {
+            releasedPreparedInvocationId: cleanupPreparedToolCall.callId,
+          },
+          timestamp,
+        },
+      )
+    ));
+    assert.equal(
+      (await store.getEffectResult(cleanupEffectId))?.timestamp,
+      "2026-08-27T00:00:02.000Z",
+      "same-output success must preserve the first exact DONE evidence",
+    );
+    await assert.rejects(
+      store.commitPreparedApprovalCleanupEffectDone(
+        cleanupEffectId,
+        { runId: "wrong-run", sessionId },
+        {
+          idempotencyKey: cleanupEffectId,
+          status: "DONE",
+          output: {
+            releasedPreparedInvocationId: cleanupPreparedToolCall.callId,
+          },
+          timestamp: "2026-08-27T00:00:04.000Z",
+        },
+      ),
+      /exact durable authority/u,
+    );
+    await assert.rejects(
+      wrongTenantStore.commitPreparedApprovalCleanupEffectDone(
+        cleanupEffectId,
+        cleanupOwner,
+        {
+          idempotencyKey: cleanupEffectId,
+          status: "DONE",
+          output: {
+            releasedPreparedInvocationId: cleanupPreparedToolCall.callId,
+          },
+          timestamp: "2026-08-27T00:00:04.000Z",
+        },
+      ),
+      /tenant does not match/u,
+    );
+    await assert.rejects(
+      store.commitPreparedApprovalCleanupEffectDone(
+        cleanupEffectId,
+        cleanupOwner,
+        {
+          idempotencyKey: `${cleanupEffectId}:wrong`,
+          status: "DONE",
+          output: {
+            releasedPreparedInvocationId: cleanupPreparedToolCall.callId,
+          },
+          timestamp: "2026-08-27T00:00:04.000Z",
+        },
+      ),
+      /exact durable authority/u,
+    );
+    await assert.rejects(
+      store.commitPreparedApprovalCleanupEffectDone(
+        binding.toolCallId,
+        cleanupOwner,
+        {
+          idempotencyKey: binding.toolCallId,
+          status: "DONE",
+          output: {
+            releasedPreparedInvocationId: binding.toolCallId,
+          },
+          timestamp: "2026-08-27T00:00:04.000Z",
+        },
+      ),
+      /exact durable authority/u,
+    );
+    const conflictingPreparedToolCall = await prepareTestToolCall({
+      gateway,
+      toolName: "code.execute",
+      toolInput: { language: "javascript", code: "return 2" },
+      runId,
+      sessionId,
+      callId: `cleanup-conflict-${suffix}`,
+    });
+    const conflictingEffectId = `${conflictingPreparedToolCall.callId}:release`;
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json,
+          idempotency_key, failure_policy, status, created_at, tenant_id,
+          tenant_ownership_state)
+       VALUES ($1, $2, 3, 'release_prepared_tool_call', $3::jsonb, $4,
+               'STOP', 'FAILED', NOW(), $5, 'tenant_bound')`,
+      [
+        runId,
+        sessionId,
+        JSON.stringify({
+          preparedToolCall: conflictingPreparedToolCall,
+          preparedApprovalCleanup: {
+            version: "runner_prepared_approval_cleanup_v1",
+            organizationId: binding.tenantId,
+            threadId: sessionId,
+            turnId: `cleanup-conflict-turn-${suffix}`,
+            interactionId: `cleanup-conflict-interaction-${suffix}`,
+            requestId: `cleanup-conflict-request-${suffix}`,
+            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+            failureMessage: "Expired.",
+          },
+        }),
+        conflictingEffectId,
+        binding.tenantId,
+      ],
+    );
+    await pool.query(
+      `INSERT INTO effect_results
+         (run_id, session_id, idempotency_key, status, output_json,
+          error_json, created_at)
+       VALUES ($1, $2, $3, 'DONE', $4::jsonb, NULL, $5::timestamptz)`,
+      [
+        runId,
+        sessionId,
+        conflictingEffectId,
+        JSON.stringify({ releasedPreparedInvocationId: "wrong-call" }),
+        "2026-08-27T00:00:01.000Z",
+      ],
+    );
+    await assert.rejects(
+      store.commitPreparedApprovalCleanupEffectDone(
+        conflictingEffectId,
+        cleanupOwner,
+        {
+          idempotencyKey: conflictingEffectId,
+          status: "DONE",
+          output: {
+            releasedPreparedInvocationId: conflictingPreparedToolCall.callId,
+          },
+          timestamp: "2026-08-27T00:00:02.000Z",
+        },
+      ),
+      /exact prepared invocation release/u,
+    );
+    assert.equal(
+      (await store.getPersistedEffect(conflictingEffectId))?.status,
+      "FAILED",
+      "conflicting DONE evidence cannot terminalize cleanup",
+    );
     const cancelledToolCallId = `cancelled-call-${suffix}`;
     const cancelledLeaseId = `cancelled-lease-${suffix}`;
     const cancelledBinding = { ...binding, toolCallId: cancelledToolCallId };

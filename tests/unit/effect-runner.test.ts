@@ -304,11 +304,21 @@ test("Effect runner STOP policy halts on failure", async () => {
 test("two cleanup runners converge when FAILED commits before atomic release success", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: adaptLegacyTestToolGateway({
+      call: async () => ({ unreachable: true }),
+    }),
+    toolName: "exec_command",
+    toolInput: { cmd: "true" },
+    runId: "run-cleanup-retry",
+    sessionId: "thread-cleanup-retry",
+    callId: "prepared-cleanup",
+  });
   let calls = 0;
   registry.register("release_prepared_tool_call", async () => {
     calls += 1;
     if (calls === 1) throw new Error("transient release failure");
-    return { released: true };
+    return { releasedPreparedInvocationId: preparedToolCall.callId };
   });
   const effect = {
     runId: "run-cleanup-retry",
@@ -316,6 +326,7 @@ test("two cleanup runners converge when FAILED commits before atomic release suc
     stepIndex: 1,
     type: "release_prepared_tool_call",
     payload: {
+      preparedToolCall,
       preparedApprovalCleanup: {
         version: "runner_prepared_approval_cleanup_v1" as const,
         organizationId: "org-cleanup",
@@ -327,7 +338,7 @@ test("two cleanup runners converge when FAILED commits before atomic release suc
         failureMessage: "Expired.",
       },
     },
-    idempotencyKey: "prepared-cleanup:release",
+    idempotencyKey: `${preparedToolCall.callId}:release`,
     failurePolicy: "STOP" as const,
     status: "PENDING" as const,
     createdAt: "2026-08-26T00:00:00.000Z",
@@ -371,6 +382,37 @@ test("two cleanup runners converge when FAILED commits before atomic release suc
     (await store.getPersistedEffect(effect.idempotencyKey))?.status,
     "DONE",
   );
+  const exactDone = await store.getEffectResult(effect.idempotencyKey);
+  assert.equal(exactDone?.status, "DONE");
+  if (exactDone?.status !== "DONE") {
+    throw new Error("Expected exact cleanup DONE evidence.");
+  }
+  await store.commitPreparedApprovalCleanupEffectDone(
+    effect.idempotencyKey,
+    effect,
+    {
+      ...exactDone,
+      status: "DONE",
+      timestamp: "2026-08-27T00:00:03.000Z",
+    },
+  );
+  await assert.rejects(
+    store.commitPreparedApprovalCleanupEffectDone(
+      effect.idempotencyKey,
+      effect,
+      {
+        ...exactDone,
+        status: "DONE",
+        output: { releasedPreparedInvocationId: "wrong-prepared-call" },
+        timestamp: "2026-08-27T00:00:04.000Z",
+      },
+    ),
+    /exact prepared invocation|exact durable authority/u,
+  );
+  assert.deepEqual(
+    await store.getEffectResult(effect.idempotencyKey),
+    exactDone,
+  );
   assert.equal(
     store.operationLog.filter((entry) =>
       entry === `resetPreparedApprovalCleanupEffectExecution:${effect.idempotencyKey}`
@@ -382,7 +424,7 @@ test("two cleanup runners converge when FAILED commits before atomic release suc
       entry ===
         `commitPreparedApprovalCleanupEffectDone:${effect.idempotencyKey}`
     ).length,
-    1,
+    2,
   );
 });
 
@@ -423,10 +465,20 @@ test("ordinary failed release remains terminal and is never retried", async () =
 test("cleanup-only release recovers a crash after claim and before release", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: adaptLegacyTestToolGateway({
+      call: async () => ({ unreachable: true }),
+    }),
+    toolName: "exec_command",
+    toolInput: { cmd: "true" },
+    runId: "run-cleanup-claimed",
+    sessionId: "thread-cleanup-claimed",
+    callId: "prepared-cleanup-claimed",
+  });
   let calls = 0;
   registry.register("release_prepared_tool_call", async () => {
     calls += 1;
-    return { released: true };
+    return { releasedPreparedInvocationId: preparedToolCall.callId };
   });
   const effect = {
     runId: "run-cleanup-claimed",
@@ -434,6 +486,7 @@ test("cleanup-only release recovers a crash after claim and before release", asy
     stepIndex: 1,
     type: "release_prepared_tool_call",
     payload: {
+      preparedToolCall,
       preparedApprovalCleanup: {
         version: "runner_prepared_approval_cleanup_v1" as const,
         organizationId: "org-cleanup",
@@ -445,7 +498,7 @@ test("cleanup-only release recovers a crash after claim and before release", asy
         failureMessage: "Policy changed.",
       },
     },
-    idempotencyKey: "prepared-cleanup-claimed:release",
+    idempotencyKey: `${preparedToolCall.callId}:release`,
     failurePolicy: "STOP" as const,
     status: "CLAIMED" as const,
     createdAt: "2026-08-26T00:00:00.000Z",

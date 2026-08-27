@@ -37,7 +37,13 @@ import type {
   RuntimeEvent,
   RuntimeEventIntent,
 } from "./events.js";
-import { parseAgentToolResultV2, parsePreparedToolCallV1, type AgentToolResultV2 } from "./tool-invocation.js";
+import {
+  parseAgentToolResultV2,
+  parseDurablePreparedToolCallV1,
+  parsePreparedToolCallV1,
+  type AgentToolResultV2,
+  type PreparedToolCallV1,
+} from "./tool-invocation.js";
 import { canonicalJson } from "./tool-contract.js";
 
 export class SandboxCapabilityExactResultCancelledError extends Error {}
@@ -471,6 +477,57 @@ export interface EffectStore {
   claimNextRegionWorkItem(sessionId: string, cursor?: string): Promise<RegionWorkItem | null>;
   completeRegionWorkItem(itemId: number, outcome: "DONE" | "FAILED", error?: Record<string, unknown>): Promise<void>;
   spawnRegionWorkItems(sessionId: string, items: RegionWorkIntent[]): Promise<void>;
+}
+
+export function validatePreparedApprovalCleanupDoneEvidence(input: {
+  effect: PersistedEffect;
+  result: EffectResult;
+}): {
+  preparedToolCall: PreparedToolCallV1;
+  canonicalOutput: string;
+} {
+  if (input.effect.type !== "release_prepared_tool_call") {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE evidence requires a release effect",
+    );
+  }
+  let preparedToolCall: PreparedToolCallV1;
+  try {
+    preparedToolCall = parseDurablePreparedToolCallV1(
+      input.effect.payload.preparedToolCall,
+    );
+  } catch {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE evidence requires an exact durable prepared tool call",
+    );
+  }
+  if (
+    preparedToolCall.sessionId !== input.effect.sessionId ||
+    `${preparedToolCall.callId}:release` !== input.effect.idempotencyKey ||
+    input.result.idempotencyKey !== input.effect.idempotencyKey ||
+    input.result.status !== "DONE" ||
+    input.result.error !== undefined ||
+    typeof input.result.output !== "object" ||
+    input.result.output === null ||
+    Array.isArray(input.result.output)
+  ) {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE evidence does not match the exact prepared invocation",
+    );
+  }
+  const output = input.result.output as Record<string, unknown>;
+  if (
+    Object.keys(output).length !== 1 ||
+    output.releasedPreparedInvocationId !== preparedToolCall.callId
+  ) {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE output does not prove the exact prepared invocation release",
+    );
+  }
+  return {
+    preparedToolCall,
+    canonicalOutput: canonicalJson(output),
+  };
 }
 
 export type ExactEffectResultRead =

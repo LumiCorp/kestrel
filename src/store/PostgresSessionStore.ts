@@ -12,6 +12,7 @@ import {
   validateExactEffectCancellationTenantBinding,
   validateExactEffectResultRead,
   validateExactEffectResultTenantBinding,
+  validatePreparedApprovalCleanupDoneEvidence,
 } from "../kestrel/contracts/store.js";
 import type {
   RunEvent,
@@ -1979,6 +1980,10 @@ export class PostgresSessionStore implements SessionStore {
         status: row.status,
         createdAt: normalizeTimestampString(row.created_at),
       };
+      const suppliedEvidence = validatePreparedApprovalCleanupDoneEvidence({
+        effect,
+        result,
+      });
       if (
         !await this.hasTrustedPostgresEffectTenant(
           executor,
@@ -1996,8 +2001,11 @@ export class PostgresSessionStore implements SessionStore {
         run_id: string;
         session_id: string;
         status: "DONE" | "FAILED";
+        output_json: unknown;
+        error_json: RuntimeError | null;
+        created_at: string;
       }>(
-        `SELECT run_id, session_id, status
+        `SELECT run_id, session_id, status, output_json, error_json, created_at
            FROM effect_results
           WHERE idempotency_key = $1
           FOR UPDATE`,
@@ -2012,6 +2020,29 @@ export class PostgresSessionStore implements SessionStore {
         throw new SandboxCapabilityExactResultConflictError(
           "Cleanup effect result owner does not match durable authority",
         );
+      }
+      if (existing?.status === "DONE") {
+        const existingEvidence = validatePreparedApprovalCleanupDoneEvidence({
+          effect,
+          result: {
+            idempotencyKey,
+            status: "DONE",
+            ...(existing.output_json === null
+              ? {}
+              : { output: existing.output_json }),
+            ...(existing.error_json === null
+              ? {}
+              : { error: existing.error_json }),
+            timestamp: normalizeTimestampString(existing.created_at),
+          },
+        });
+        if (
+          existingEvidence.canonicalOutput !== suppliedEvidence.canonicalOutput
+        ) {
+          throw new SandboxCapabilityExactResultConflictError(
+            "Cleanup DONE result conflicts with existing exact evidence",
+          );
+        }
       }
       await executor.query(
         `INSERT INTO effect_results

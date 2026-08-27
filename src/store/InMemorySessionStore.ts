@@ -16,6 +16,7 @@ import {
   validateExactEffectCancellationTenantBinding,
   validateExactEffectResultRead,
   validateExactEffectResultTenantBinding,
+  validatePreparedApprovalCleanupDoneEvidence,
 } from "../kestrel/contracts/store.js";
 import type {
   ClaimConversationTurnExecutionInput,
@@ -1096,7 +1097,24 @@ export class InMemorySessionStore implements SessionStore {
         "Cleanup effect success does not match exact durable authority",
       );
     }
-    if (this.effectResults.get(idempotencyKey)?.status !== "DONE") {
+    const suppliedEvidence = validatePreparedApprovalCleanupDoneEvidence({
+      effect,
+      result,
+    });
+    const existing = this.effectResults.get(idempotencyKey);
+    if (existing?.status === "DONE") {
+      const existingEvidence = validatePreparedApprovalCleanupDoneEvidence({
+        effect,
+        result: existing,
+      });
+      if (
+        existingEvidence.canonicalOutput !== suppliedEvidence.canonicalOutput
+      ) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup DONE result conflicts with existing exact evidence",
+        );
+      }
+    } else {
       this.effectResults.set(idempotencyKey, structuredClone(result));
     }
     effect.status = "DONE";
