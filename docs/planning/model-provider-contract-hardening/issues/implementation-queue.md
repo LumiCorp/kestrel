@@ -10,8 +10,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Implemented
 
-- [Publish exact Local Core and Desktop model readiness](12-publish-local-core-model-readiness.md)
-
 ## Done
 
 - [Establish exact model and request contracts](01-establish-exact-model-contracts.md)
@@ -25,6 +23,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Admit effective model contracts before provider spend](09-admit-effective-model-contracts.md)
 - [Persist exact admission and response proof](10-persist-model-call-proof.md)
 - [Restore model readiness build validation](13-restore-model-readiness-build-validation.md)
+- [Publish exact Local Core and Desktop model readiness](12-publish-local-core-model-readiness.md)
 - [Show truthful hosted model readiness by role](11-show-truthful-hosted-model-readiness.md)
 - [Close hosted readiness admission and truth gaps](14-close-hosted-readiness-admission-and-truth-gaps.md)
 - [Make Environment default admission current and atomic](15-make-environment-default-admission-current-and-atomic.md)
