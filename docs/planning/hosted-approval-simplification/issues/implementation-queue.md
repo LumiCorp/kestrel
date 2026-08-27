@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-None.
+- [Quarantine invalid cleanup DONE evidence](06n-quarantine-invalid-cleanup-done-evidence.md)
 
 ## Blocked
 
