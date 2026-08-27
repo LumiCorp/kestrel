@@ -11,6 +11,9 @@ work; this queue does not reopen them.
 
 ## Ready
 
+- [Preserve exact cleanup success before evidence normalization](06y-preserve-exact-cleanup-success.md)
+- [Eliminate caller-asserted cleanup marker provenance](06z-eliminate-caller-asserted-marker-provenance.md)
+- [Preserve internally generated cleanup truncation diagnostics](06z1-preserve-generated-cleanup-diagnostics.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
