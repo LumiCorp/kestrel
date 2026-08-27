@@ -112,6 +112,7 @@ export class TurnOrchestrator {
 
     const request = await this.interactionManager.syncWaitState({
       threadId: thread.threadId,
+      sessionId: thread.sessionId,
       ...(readNonEmptyString(runningThread.metadata?.activeTurnId) !== undefined
         ? { turnId: readNonEmptyString(runningThread.metadata?.activeTurnId) }
         : {}),
@@ -261,6 +262,7 @@ function buildCanonicalRuntimeTurn(input: {
     sessionId: input.thread.sessionId,
     message: input.input.message,
     eventType: input.input.eventType,
+    ...(input.input.actor !== undefined ? { actor: input.input.actor } : {}),
     ...(input.input.attachments !== undefined ? { attachments: input.input.attachments } : {}),
     ...(input.input.stepAgent !== undefined ? { stepAgent: input.input.stepAgent } : {}),
     ...(input.input.interactionMode !== undefined ? { interactionMode: input.input.interactionMode } : {}),

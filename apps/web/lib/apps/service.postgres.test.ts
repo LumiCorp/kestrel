@@ -725,7 +725,7 @@ test(
       const requestId = `request-${runtimeApprovalId}`;
       const requestEnvelope = approval.preparedInvocationId
         ? {
-            version: "runner_hosted_tool_approval_interaction_v2",
+            version: "runner_hosted_tool_approval_interaction_v4",
             requestId,
             kind: "approval",
             eventType: "user.approval",
@@ -737,17 +737,20 @@ test(
               properties: {
                 decision: {
                   type: "string",
-                  enum: ["decline", "approve_once"],
+                  enum: ["decline", "approve_once", "remember_approval"],
                 },
               },
             },
             approval: {
               ...approval,
+              rememberedApprovalScope: { kind: "tool_identity" },
               requestingActor: {
                 actorType: "end_user",
                 actorId: userId,
                 tenantId: organizationId,
               },
+              requestedAt: new Date(now.getTime() - 1_000).toISOString(),
+              expiresAt: new Date(now.getTime() + 60_000).toISOString(),
             },
           }
         : { approval };
@@ -814,7 +817,7 @@ test(
         threadId,
         userId: isolatedUserId,
         runtimeApprovalId: approvalBinding.runtimeApprovalId,
-        approved: true,
+      approved: true,
       }),
       (error: unknown) =>
         error instanceof appApprovals.AppOperationApprovalError &&
@@ -1643,6 +1646,7 @@ test(
           actorId: userId,
           tenantId: organizationId,
         },
+        rememberedApprovalScope: { kind: "tool_identity" },
         requestedAt: now.toISOString(),
         expiresAt: rememberExpiresAt.toISOString(),
         presentation: {
@@ -1805,7 +1809,6 @@ test(
       label: string,
       sequence: number,
       timing: {
-        legacy?: boolean;
         requestedAt?: string;
         expiresAt?: string;
         requestingActorId?: string;
@@ -1821,9 +1824,7 @@ test(
         approvalAuthorityRevision: `sha256:${"8".repeat(64)}`,
       };
       const requestEnvelope = {
-        version: timing.legacy
-          ? "runner_hosted_tool_approval_interaction_v3"
-          : "runner_hosted_tool_approval_interaction_v4",
+        version: "runner_hosted_tool_approval_interaction_v4",
         requestId,
         kind: "approval",
         eventType: "user.approval",
@@ -1848,16 +1849,19 @@ test(
             actorId: timing.requestingActorId ?? userId,
             tenantId: organizationId,
           },
-          ...(timing.legacy
-            ? {}
-            : {
-                requestedAt:
-                  timing.requestedAt ??
-                  new Date(Date.now() - 1_000).toISOString(),
-                expiresAt:
-                  timing.expiresAt ??
-                  new Date(Date.now() + 60_000).toISOString(),
-              }),
+          rememberedApprovalScope: {
+            kind: "exec_command_exact",
+            command: "pnpm run demo",
+            cwd: ".",
+            envNames: [],
+            envMode: "inherit",
+          },
+          requestedAt:
+            timing.requestedAt ??
+            new Date(Date.now() - 1_000).toISOString(),
+          expiresAt:
+            timing.expiresAt ??
+            new Date(Date.now() + 60_000).toISOString(),
           presentation: {
             policy: {
               mode: "ask",
@@ -2017,158 +2021,13 @@ test(
         WHERE "key" = ${insertedWorkspaceProvider.key}
       `;
     }
-    const legacyExecApproveOnce = await createExecRememberInteraction(
-      "legacy-approve-once",
-      188,
-      { legacy: true },
-    );
-    const legacyExecApproveOnceResolution =
-      await turnStore.resolveDurableRuntimeInteraction({
-        threadId,
-        organizationId,
-        userId,
-        requestId: legacyExecApproveOnce.requestId,
-        eventType: "user.approval",
-        turnId: legacyExecApproveOnce.turnId,
-        message: "Approve once",
-        decision: "approve_once",
-        messageId: `exec-legacy-approve-once-message-${suffix}`,
-        source: "web",
-      });
-    assert.equal(legacyExecApproveOnceResolution.shouldDispatch, true);
-    const legacyExecRemember = await createExecRememberInteraction(
-      "legacy-remember",
-      187,
-      { legacy: true },
-    );
-    const legacyExecRememberResolution =
-      await turnStore.resolveDurableRuntimeInteraction({
-        threadId,
-        organizationId,
-        userId,
-        requestId: legacyExecRemember.requestId,
-        eventType: "user.approval",
-        turnId: legacyExecRemember.turnId,
-        message: "Remember approval",
-        decision: "remember_approval",
-        messageId: `exec-legacy-remember-message-${suffix}`,
-        source: "mobile",
-      });
-    assert.equal(legacyExecRememberResolution.shouldDispatch, true);
-    const [legacyExecRememberState] = await sql<
-      Array<{
-        cleanupFailureCode: string | null;
-        decision: string | null;
-        status: string;
-        failureCode: string | null;
-        rememberedCount: number;
-      }>
-    >`
-      SELECT
-        interaction."status",
-        interaction."response_envelope"->>'decision' AS "decision",
-        interaction."response_envelope"->'preparedApprovalCleanup'->>'failureCode'
-          AS "cleanupFailureCode",
-        interaction."response_failure_code" AS "failureCode",
-        (SELECT count(*)::int FROM "remembered_tool_approvals"
-          WHERE "source_interaction_id" = ${legacyExecRemember.interactionId})
-          AS "rememberedCount"
-      FROM "thread_interactions" interaction
-      WHERE interaction."id" = ${legacyExecRemember.interactionId}
-    `;
-    assert.deepEqual(legacyExecRememberState, {
-      cleanupFailureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-      decision: "remember_approval",
-      status: "processing",
-      failureCode: null,
-      rememberedCount: 0,
-    });
-    const legacyExecRememberClaim = await turnStore.claimDurableThreadTurn(
-      legacyExecRemember.turnId,
-    );
-    const legacyExecRememberCleanupResponse = {
-      requestId: legacyExecRemember.requestId,
-      eventType: "user.approval",
-      message: "Remember approval",
-      decision: "decline",
-      decidingActor: {
-        actorType: "end_user",
-        actorId: userId,
-        tenantId: organizationId,
-      },
-      preparedApprovalCleanupFailureCode:
-        "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-      preparedApprovalCleanupFailureMessage:
-        "The approval no longer matches the prepared tool invocation.",
-      preparedApprovalCleanup: {
-        version: "runner_prepared_approval_cleanup_v1",
-        organizationId,
-        threadId,
-        turnId: legacyExecRemember.turnId,
-        interactionId: legacyExecRemember.interactionId,
-        requestId: legacyExecRemember.requestId,
-        failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-        failureMessage:
-          "The approval no longer matches the prepared tool invocation.",
-      },
-    } as const;
-    assert.deepEqual(
-      legacyExecRememberClaim?.interactionResponse,
-      legacyExecRememberCleanupResponse,
-    );
-    const [cleanupWithoutDurableExecutionBinding] = await sql<
-      Array<{ environmentExecutionId: string | null; status: string }>
-    >`
-      SELECT "environment_execution_id" AS "environmentExecutionId", "status"
-      FROM "thread_turns"
-      WHERE "id" = ${legacyExecRemember.turnId}
-    `;
-    assert.deepEqual(cleanupWithoutDurableExecutionBinding, {
-      environmentExecutionId: null,
-      status: "running",
-    });
-    assert.equal(
-      await turnStore.reconcileDurablePreparedApprovalCleanupForRetry({
-        turnId: legacyExecRemember.turnId,
-      }),
-      true,
-    );
-    assert.equal(
-      (await turnStore.getDurableTurn(legacyExecRemember.turnId))?.status,
-      "waiting_for_input",
-    );
-    assert.deepEqual(
-      (await turnStore.claimDurableThreadTurn(legacyExecRemember.turnId))
-        ?.interactionResponse,
-      legacyExecRememberCleanupResponse,
-    );
-    await turnStore.completeDurableThreadTurn({
-      turnId: legacyExecRemember.turnId,
-      status: "failed",
-      failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-      failureMessage:
-        "The approval no longer matches the prepared tool invocation.",
-    });
-    const [legacyExecRememberFinal] = await sql<
-      Array<{ interactionStatus: string; turnStatus: string }>
-    >`
-      SELECT interaction."status" AS "interactionStatus",
-             turn."status" AS "turnStatus"
-      FROM "thread_interactions" interaction
-      JOIN "thread_turns" turn ON turn."id" = interaction."turn_id"
-      WHERE interaction."id" = ${legacyExecRemember.interactionId}
-    `;
-    assert.deepEqual(legacyExecRememberFinal, {
-      interactionStatus: "failed",
-      turnStatus: "failed",
-    });
     const mismatchedActorApproveOnce = await createExecRememberInteraction(
       "mismatched-actor",
       186,
       { requestingActorId: `other-user-${suffix}` },
     );
-    const mismatchedActorResolution =
-      await turnStore.resolveDurableRuntimeInteraction({
+    await assert.rejects(
+      turnStore.resolveDurableRuntimeInteraction({
         threadId,
         organizationId,
         userId,
@@ -2179,50 +2038,9 @@ test(
         decision: "approve_once",
         messageId: `exec-mismatched-actor-message-${suffix}`,
         source: "web",
-      });
-    assert.equal(mismatchedActorResolution.shouldDispatch, true);
-    const mismatchedActorClaim = await turnStore.claimDurableThreadTurn(
-      mismatchedActorApproveOnce.turnId,
-    );
-    assert.deepEqual(mismatchedActorClaim?.interactionResponse, {
-      requestId: mismatchedActorApproveOnce.requestId,
-      eventType: "user.approval",
-      message: "Approve once",
-      decision: "decline",
-      decidingActor: {
-        actorType: "end_user",
-        actorId: userId,
-        tenantId: organizationId,
-      },
-      preparedApprovalCleanupFailureCode:
-        "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-      preparedApprovalCleanupFailureMessage:
-        "The approval no longer matches the prepared tool invocation.",
-      preparedApprovalCleanup: {
-        version: "runner_prepared_approval_cleanup_v1",
-        organizationId,
-        threadId,
-        turnId: mismatchedActorApproveOnce.turnId,
-        interactionId: mismatchedActorApproveOnce.interactionId,
-        requestId: mismatchedActorApproveOnce.requestId,
-        failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-        failureMessage:
-          "The approval no longer matches the prepared tool invocation.",
-      },
-    });
-    assert.equal(
-      await turnStore.recordDurablePreparedApprovalCleanupCompleted({
-        turnId: mismatchedActorApproveOnce.turnId,
       }),
-      true,
+      /requesting actor does not match authenticated durable authority/u,
     );
-    await turnStore.completeDurableThreadTurn({
-      turnId: mismatchedActorApproveOnce.turnId,
-      status: "failed",
-      failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-      failureMessage:
-        "The approval no longer matches the prepared tool invocation.",
-    });
     const execRemember = await createExecRememberInteraction("eligible", 190);
     const execRememberResolution = await turnStore.resolveDurableRuntimeInteraction({
       threadId,
@@ -2337,7 +2155,7 @@ test(
       decisionEventCount: 1,
       failureCode: null,
       interactionStatus: "processing",
-      messageCount: 1,
+      messageCount: 0,
       queuePauseReason: null,
       queueState: "running",
       rememberedCount: 0,
@@ -2398,7 +2216,6 @@ test(
     const createAdditionalRememberInteraction = async (input: {
       label: string;
       sequence: number;
-      legacy?: boolean;
     }) => {
       const approvalId = `remember-${input.label}-approval-${suffix}`;
       const preparedInvocationId = `remember-${input.label}-prepared-${suffix}`;
@@ -2454,30 +2271,15 @@ test(
           },
         },
       });
-      const {
-        requestedAt: _requestedAt,
-        expiresAt: _expiresAt,
-        ...legacyApproval
-      } = rememberRequestEnvelope.approval;
-      const requestEnvelope = input.legacy
-        ? {
-            ...rememberRequestEnvelope,
-            version: "runner_hosted_tool_approval_interaction_v3",
-            requestId,
-            approval: {
-              ...legacyApproval,
-              preparedInvocationId,
-            },
-          }
-        : {
-            ...rememberRequestEnvelope,
-            requestId,
-            approval: {
-              ...rememberRequestEnvelope.approval,
-              preparedInvocationId,
-              expiresAt: expiresAt.toISOString(),
-            },
-          };
+      const requestEnvelope = {
+        ...rememberRequestEnvelope,
+        requestId,
+        approval: {
+          ...rememberRequestEnvelope.approval,
+          preparedInvocationId,
+          expiresAt: expiresAt.toISOString(),
+        },
+      };
       await sql.begin(async (transaction) => {
         await transaction`
             INSERT INTO "thread_turns" (
@@ -2736,47 +2538,6 @@ test(
       WHERE "thread_id" = ${threadId}
     `;
     await sql`UPDATE "threads" SET "archived_at" = NULL WHERE "id" = ${threadId}`;
-
-    const mixedClient = await createAdditionalRememberInteraction({
-      label: "mixed-client",
-      sequence: 100,
-      legacy: true,
-    });
-    const mixedClientResolution =
-      await turnStore.resolveDurableRuntimeInteraction({
-        threadId,
-        organizationId,
-        userId,
-        requestId: mixedClient.requestId,
-        eventType: "user.approval",
-        turnId: mixedClient.turnId,
-        message: "Approve",
-        approved: true,
-        messageId: `remember-mixed-client-message-${suffix}`,
-        source: "web",
-      });
-    assert.equal(mixedClientResolution.shouldDispatch, true);
-    const [mixedClientState] = await sql<
-      Array<{
-        approved: boolean | null;
-        decision: string | null;
-        rememberedCount: number;
-      }>
-    >`
-        SELECT
-          (interaction."response_envelope"->>'approved')::boolean AS "approved",
-          interaction."response_envelope"->>'decision' AS "decision",
-          (SELECT count(*)::int FROM "remembered_tool_approvals" remembered
-            WHERE remembered."source_interaction_id" = interaction."id")
-            AS "rememberedCount"
-        FROM "thread_interactions" interaction
-        WHERE interaction."id" = ${mixedClient.interactionId}
-      `;
-    assert.deepEqual(mixedClientState, {
-      approved: null,
-      decision: "approve_once",
-      rememberedCount: 0,
-    });
 
     const policyChanged = await createAdditionalRememberInteraction({
       label: "policy-changed",
@@ -3152,8 +2913,8 @@ test(
       WHERE
         "organization_id" = ${organizationId}
         AND "runtime_approval_id" IN (
-          ${mixedClient.approvalId}, ${policyChanged.approvalId},
-          ${subjectRestricted.approvalId}, ${expiredApproveOnce.approvalId},
+          ${policyChanged.approvalId}, ${subjectRestricted.approvalId},
+          ${expiredApproveOnce.approvalId},
           ${closedResourceApproveOnce.approvalId},
           ${backgroundExpired.approvalId}
         )

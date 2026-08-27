@@ -782,6 +782,7 @@ test("UnifiedToolRegistry applies exact remembered thread evidence to eligible A
     threadId: "thread-1",
     actorUserId: "user-1",
     toolIdentity,
+        scope: { kind: "tool_identity" as const },
     sourceInteractionId: "interaction-1",
   };
   const rememberedRegistry = new UnifiedToolRegistry({
@@ -904,6 +905,7 @@ test("UnifiedToolRegistry keeps stable approval identity across runs and preserv
       descriptorContractRevision: first.descriptorRef!.contractRevision,
       approvalAuthorityRevision: first.approvalAuthority!.revision,
     },
+        scope: { kind: "tool_identity" as const },
     sourceInteractionId: "interaction-1",
   };
   const rememberedRegistry = new UnifiedToolRegistry({
@@ -2526,6 +2528,11 @@ test("UnifiedToolRegistry carries source-write authority and write roots for def
   const registry = new UnifiedToolRegistry({
     allowlist: ["dev.shell.run"],
     context: {
+      fileSystem: {
+        workspaceRoot: "/workspace",
+        tempRoots: [],
+        readOnlyRoots: [],
+      },
       devShell: {
         enabled: true,
       },
@@ -2561,7 +2568,6 @@ test("UnifiedToolRegistry carries source-write authority and write roots for def
         sessionId: "session-1",
         payload: {
           workspace: {
-            workspaceRoot: "/workspace",
             managedWorktreeRequired: false,
             workspaceAuthority: {
               mode: "draft_workspace",

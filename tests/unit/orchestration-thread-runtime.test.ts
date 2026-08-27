@@ -28,6 +28,13 @@ import { buildCanonicalWaitingFor } from "../../src/runtime/waitState.js";
 import type { RuntimeWaitMatcher } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
+import {
+  createToolActivationRefV1,
+  fingerprintToolScopeV1,
+  hashCanonical,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
 
 
 class QueueTurnExecutor implements TurnExecutor {
@@ -130,6 +137,86 @@ class RunForeignKeyEnforcingStore extends InMemorySessionStore {
     await super.appendRunEvent(event);
   }
 }
+
+test("ThreadRuntime carries authenticated hosted approval authority into the canonical runtime turn", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    { output: buildOutput({ runId: "hosted-approval-turn", status: "COMPLETED" }) },
+  ]);
+  const runtime = new ThreadRuntime({ sessionStore, executor });
+  await runtime.startThread({ threadId: "hosted-approval-thread", title: "Hosted approval" });
+
+  await runtime.submitConversationMessage({
+    threadId: "hosted-approval-thread",
+    messageId: "hosted-approval-message",
+    message: "Run the command",
+    actor: {
+      actorType: "end_user",
+      actorId: "user-1",
+      tenantId: "org-1",
+    },
+    runtimeTurn: {
+      sessionId: "hosted-approval-thread",
+      message: "Run the command",
+      hostedApprovalAuthority: {
+        version: "runner_hosted_approval_authority_v1",
+        organizationId: "org-1",
+        environmentId: "environment-1",
+        projectId: "project-1",
+        threadId: "hosted-approval-thread",
+      },
+    },
+  });
+
+  assert.deepEqual(executor.inputs[0]?.runtimeTurn?.actor, {
+    actorType: "end_user",
+    actorId: "user-1",
+    tenantId: "org-1",
+  });
+  assert.deepEqual(executor.inputs[0]?.runtimeTurn?.hostedApprovalAuthority, {
+    version: "runner_hosted_approval_authority_v1",
+    organizationId: "org-1",
+    environmentId: "environment-1",
+    projectId: "project-1",
+    threadId: "hosted-approval-thread",
+  });
+});
+
+test("ThreadRuntime projects the hosted session identity into durable wait requests", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({
+        runId: "hosted-session-wait-run",
+        status: "WAITING",
+        waitFor: {
+          kind: "user",
+          eventType: "user.reply",
+          metadata: { prompt: "Continue?" },
+        },
+      }),
+    },
+  ]);
+  const runtime = new ThreadRuntime({ sessionStore, executor });
+  await runtime.startThread({
+    threadId: "thread-main:hosted-session",
+    sessionId: "hosted-session",
+    title: "Hosted session wait",
+  });
+
+  await runtime.submitTurn({
+    threadId: "thread-main:hosted-session",
+    message: "Wait for input",
+    eventType: "user.message",
+  });
+
+  const requests = await sessionStore.listInteractionRequests({
+    threadId: "thread-main:hosted-session",
+    status: "PENDING",
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.metadata?.sessionId, "hosted-session");
+});
 
 test("ThreadRuntime gives only fully equipped root turns the named collaborator instructions", async () => {
   const sessionStore = new InMemorySessionStore();
@@ -1808,20 +1895,19 @@ test("ThreadRuntime merges short continuation history with durable thread histor
   ]);
 });
 
-test("ThreadRuntime resolves approval requests and expires turn-scoped grants after resume", async () => {
+test("ThreadRuntime resolves prepared approval requests without broad turn-scoped grants", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
       output: buildOutput({
         runId: "run-approval-1",
         status: "WAITING",
-        waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
-          metadata: {
-            prompt: "Approve file changes",
-          },
-        },
+        waitFor: buildPreparedApprovalWait({
+          threadId: "thread-approval",
+          runId: "run-approval-1",
+          actorId: "operator",
+          prompt: "Approve file changes",
+        }),
       }),
     },
     {
@@ -1855,6 +1941,13 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
       sessionId: "session-thread-approval",
       message: "change files",
       eventType: "user.message",
+      hostedApprovalAuthority: {
+        version: "runner_hosted_approval_authority_v1",
+        organizationId: "organization-thread-approval",
+        environmentId: "environment-thread-approval",
+        projectId: "project-thread-approval",
+        threadId: "thread-approval",
+      },
       mcpContext: {
         gatewayUrl: "https://gateway.example.test",
         grantId: "11111111-1111-4111-8111-111111111111",
@@ -1869,21 +1962,6 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
   const requestId = waiting.wait?.request?.requestId;
   assert.ok(requestId);
   assert.ok(waiting.wait?.request);
-  await sessionStore.upsertInteractionRequest({
-    ...waiting.wait.request,
-    metadata: {
-      ...(waiting.wait.request.metadata ?? {}),
-      approvalId: "approval-thread-runtime",
-      toolName: "hosted.tool",
-      toolInput: {},
-      externalApprovalBinding: buildExternalApprovalBinding({
-        approvalId: "approval-thread-runtime",
-        threadId: "thread-approval",
-        runId: waiting.output.runId,
-        capabilities: ["filesystem.read"],
-      }),
-    },
-  });
 
   const resumed = await runtime.replyToRequest({
     threadId: "thread-approval",
@@ -1931,8 +2009,7 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
   const grants = await sessionStore.listApprovalGrants({
     threadId: "thread-approval",
   });
-  assert.equal(grants.length, 1);
-  assert.equal(grants[0]?.status, "EXPIRED");
+  assert.equal(grants.length, 0);
 
   const requests = await sessionStore.listInteractionRequests({
     threadId: "thread-approval",
@@ -1944,7 +2021,7 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
   });
   assert.equal(replay.some((event) => event.type === "interaction.requested"), true);
   assert.equal(replay.some((event) => event.type === "interaction.resolved"), true);
-  assert.equal(replay.some((event) => event.type === "approval.granted"), true);
+  assert.equal(replay.some((event) => event.type === "approval.granted"), false);
 });
 
 test("ThreadRuntime resumes the active blocked request and derives approval grants", async () => {
@@ -3174,13 +3251,12 @@ test("ThreadRuntime surfaces operator inbox items for pending requests and conte
       output: buildOutput({
         runId: "run-inbox-1",
         status: "WAITING",
-        waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
-          metadata: {
-            prompt: "Approve this action",
-          },
-        },
+        waitFor: buildPreparedApprovalWait({
+          threadId: "thread-inbox",
+          runId: "run-inbox-1",
+          actorId: "kestrel-local-operator",
+          prompt: "Approve this action",
+        }),
       }),
     },
   ]);
@@ -3197,6 +3273,18 @@ test("ThreadRuntime surfaces operator inbox items for pending requests and conte
     threadId: "thread-inbox",
     message: "needs approval",
     eventType: "user.message",
+    runtimeTurn: {
+      sessionId: "thread-inbox",
+      message: "needs approval",
+      eventType: "user.message",
+      hostedApprovalAuthority: {
+        version: "runner_hosted_approval_authority_v1",
+        organizationId: "organization-thread-approval",
+        environmentId: "environment-thread-approval",
+        projectId: "project-thread-approval",
+        threadId: "thread-inbox",
+      },
+    },
   });
 
   await sessionStore.upsertContextCheckpoint({
@@ -3778,8 +3866,8 @@ test("ThreadRuntime supervises multiple child launches and selects the dominant 
         runId: "run-supervision-child-2",
         status: "WAITING",
         waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
+          kind: "user",
+          eventType: "user.reply",
           metadata: { prompt: "Approve the parent action?" },
         },
       }),
@@ -4354,8 +4442,8 @@ test("ThreadRuntime surfaces split-created waiting children in supervision block
         runId: "run-split-supervision-child",
         status: "WAITING",
         waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
+          kind: "user",
+          eventType: "user.reply",
           metadata: {
             prompt: "Approve split child action",
           },
@@ -4487,8 +4575,8 @@ test("ThreadRuntime focusThread updates operator inbox focus deterministically",
         runId: "run-focus-parent",
         status: "WAITING",
         waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
+          kind: "user",
+          eventType: "user.reply",
           metadata: {
             prompt: "Approve parent work",
           },
@@ -4558,8 +4646,8 @@ test("ThreadRuntime persists focused thread across runtime recreation with share
         runId: "run-focus-persist-parent",
         status: "WAITING",
         waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
+          kind: "user",
+          eventType: "user.reply",
           metadata: { prompt: "Approve the parent focus action?" },
         },
       }),
@@ -5339,6 +5427,116 @@ function buildOutput(input: {
       toolCalls: 0,
       modelCalls: 0,
       durationMs: 1,
+    },
+  };
+}
+
+function buildPreparedApprovalWait(input: {
+  threadId: string;
+  runId: string;
+  actorId: string;
+  prompt: string;
+}): NonNullable<NormalizedOutput["waitFor"]> {
+  const descriptor = defaultToolCatalog.getDescriptorRef("fs.read_text");
+  if (descriptor === undefined) {
+    throw new Error("fs.read_text descriptor is required by the approval fixture");
+  }
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-thread-runtime",
+    scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
+  });
+  const effectiveInput = { path: "README.md" };
+  const policyRevision = hashCanonical({ policy: "ask" });
+  const requestingActor = {
+    actorType: "operator" as const,
+    actorId: input.actorId,
+  };
+  const stableToolIdentity = {
+    version: "stable_tool_approval_identity_v1" as const,
+    toolId: descriptor.toolId,
+    descriptorContractRevision: descriptor.contractRevision,
+    approvalAuthorityRevision: "approval-authority-thread-runtime",
+  };
+  const stableAuthorityPayload = {
+    version: "prepared_tool_stable_authority_v1" as const,
+    actor: requestingActor,
+    organizationId: "organization-thread-approval",
+    environmentId: "environment-thread-approval",
+    projectId: "project-thread-approval",
+    threadId: input.threadId,
+    resourceAuthority: {
+      toolSourceKind: descriptor.sourceKind,
+      toolSourceId: descriptor.sourceId,
+    },
+    policyRevision,
+    capabilities: ["filesystem.read"],
+    descriptorContractRevision: descriptor.contractRevision,
+    approvalAuthorityRevision: stableToolIdentity.approvalAuthorityRevision,
+    normalizedActionHash: hashCanonical({
+      toolId: descriptor.toolId,
+      effectiveInput,
+    }),
+  };
+  const stableAuthority = {
+    ...stableAuthorityPayload,
+    fingerprint: hashCanonical(stableAuthorityPayload),
+  };
+  const now = Date.now();
+  const approvalId = `approval:${input.runId}:${input.threadId}`;
+  const preparedToolCall = parsePreparedToolCallV1({
+    version: "v1",
+    runId: input.runId,
+    sessionId: input.threadId,
+    callId: approvalId,
+    activation,
+    origin: {
+      kind: "model",
+      snapshotId: hashCanonical({ threadId: input.threadId }),
+      modelToolCallId: `model-call:${input.threadId}`,
+    },
+    effectiveInput,
+    policy: {
+      decision: "approval_required",
+      policyRevision,
+      reasonCode: "environment_policy",
+    },
+    approval: {
+      approvalId,
+      authorityRevision: hashCanonical({ approvalId }),
+      externalApprovalBinding: {
+        version: "runner_external_approval_binding_v2",
+        approvalId,
+        preparedInvocationId: approvalId,
+        threadId: input.threadId,
+        actionKey: descriptor.toolId,
+        payloadHash: hashCanonical(effectiveInput),
+        stableAuthorityFingerprint: stableAuthority.fingerprint,
+        stableToolIdentity,
+        requestingActor,
+        toolClass: "external_side_effect",
+        capabilities: ["filesystem.read"],
+        authorityKind: "runtime_policy",
+        authorityRevision: stableToolIdentity.approvalAuthorityRevision,
+        requestedAt: new Date(now - 1_000).toISOString(),
+        expiresAt: new Date(now + 60_000).toISOString(),
+      },
+    },
+    stableAuthority,
+    stableToolIdentity,
+    executionRequirements: {
+      version: "prepared_tool_execution_requirements_v1",
+      credentials: ["continuation_run_segment", "live_handler_capability"],
+    },
+    preparedAt: new Date(now - 1_000).toISOString(),
+  });
+  return {
+    kind: "approval",
+    eventType: "user.approval",
+    metadata: {
+      prompt: input.prompt,
+      preparedToolCall,
+      reasonCode: "environment_policy",
     },
   };
 }

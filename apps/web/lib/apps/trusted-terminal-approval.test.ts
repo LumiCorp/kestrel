@@ -25,8 +25,8 @@ test("approval tool-name classification is available before strict hosted parsin
 test("trusted terminal approval preserves request, runtime approval, and runner run identities", () => {
   const event = waitingEvent();
   const parsed = parseTrustedTerminalApproval({ event, threadId: "thread-1" });
-  assert.equal(parsed?.requestId, "request-1");
-  assert.equal(parsed?.runtimeApprovalId, "run-1:0:approval");
+  assert.equal(parsed?.requestId, "request-v2");
+  assert.equal(parsed?.runtimeApprovalId, "request-v2");
   assert.equal(parsed?.runId, "run-1");
   assert.deepEqual(parsed?.toolInput, emailInput());
 });
@@ -111,61 +111,7 @@ test("hosted mutation registry normalizes all named provider payloads", () => {
 });
 
 function waitingEvent(): RunnerRunTerminalEvent {
-  const toolInput = emailInput();
-  const approvalId = "run-1:0:approval";
-  const toolName = "kestrel_one.email_send";
-  const now = Date.now();
-  const binding = {
-    version: RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION,
-    approvalId,
-    threadId: "thread-1",
-    runId: "run-1",
-    actionKey: toolName,
-    payloadHash: `sha256:${createHash("sha256").update(serializeCanonicalApprovalPayload(toolInput)).digest("hex")}`,
-    toolClass: "external_side_effect" as const,
-    capabilities: ["external.confirm", "network.call"],
-    authorityKind: "runtime_policy" as const,
-    authorityRevision: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    requestedAt: new Date(now - 1_000).toISOString(),
-    expiresAt: new Date(now + 60_000).toISOString(),
-  };
-  return {
-    id: "event-1",
-    type: "run.completed",
-    ts: new Date(now).toISOString(),
-    runId: "run-1",
-    sessionId: "session-1",
-    threadId: "thread-1",
-    payload: {
-      result: {
-        assistantText: "Approve send?",
-        output: {
-          status: "WAITING",
-          sessionId: "session-1",
-          runId: "run-1",
-          errors: [],
-          waitFor: {
-            kind: "approval",
-            eventType: "user.approval",
-            interaction: {
-              version: "v1",
-              requestId: "request-1",
-              kind: "approval",
-              eventType: "user.approval",
-              prompt: "Approve send?",
-              approval: { toolCallId: approvalId, toolName },
-            },
-            metadata: {
-              approvalId,
-              toolName,
-              toolInput,
-              externalApprovalBinding: binding,
-            },
-          },
-        },
-      },
-    },
-  };
+  return waitingV2Event();
 }
 
 function waitingV2Event(): RunnerRunTerminalEvent {
@@ -229,7 +175,7 @@ function waitingV2Event(): RunnerRunTerminalEvent {
             kind: "approval",
             eventType: "user.approval",
             interaction: {
-              version: "runner_hosted_tool_approval_interaction_v2",
+              version: "runner_hosted_tool_approval_interaction_v4",
               requestId: approvalId,
               kind: "approval",
               eventType: "user.approval",
@@ -241,7 +187,7 @@ function waitingV2Event(): RunnerRunTerminalEvent {
                 properties: {
                   decision: {
                     type: "string",
-                    enum: ["decline", "approve_once"],
+                    enum: ["decline", "approve_once", "remember_approval"],
                   },
                 },
               },
@@ -250,6 +196,9 @@ function waitingV2Event(): RunnerRunTerminalEvent {
                 toolName,
                 stableToolIdentity,
                 requestingActor: binding.requestingActor,
+                rememberedApprovalScope: { kind: "tool_identity" },
+                requestedAt: binding.requestedAt,
+                expiresAt: binding.expiresAt,
                 presentation: { title: "Approve send?" },
               },
             },

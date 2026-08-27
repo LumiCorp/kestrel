@@ -107,7 +107,7 @@ const durablePending: ThreadInteractionView = {
       stableToolIdentity: {
         version: "stable_tool_approval_identity_v1",
         toolId: "kestrel_one.github_issue_create",
-        descriptorContractRevision: "descriptor-1",
+        descriptorContractRevision: `sha256:${"a".repeat(64)}`,
         approvalAuthorityRevision: "authority-1",
       },
       requestingActor: {
@@ -115,6 +115,7 @@ const durablePending: ThreadInteractionView = {
         actorId: "user-1",
         tenantId: "org-1",
       },
+      rememberedApprovalScope: { kind: "tool_identity" },
       requestedAt: "2026-08-26T12:00:00.000Z",
       expiresAt: "2099-08-26T12:05:00.000Z",
       presentation: {
@@ -168,7 +169,7 @@ test("durable canary selects only the exact pending V4 prepared invocation", () 
     stableToolIdentity: {
       version: "stable_tool_approval_identity_v1",
       toolId: "kestrel_one.github_issue_create",
-      descriptorContractRevision: "descriptor-1",
+      descriptorContractRevision: `sha256:${"a".repeat(64)}`,
       approvalAuthorityRevision: "authority-1",
     },
     requestingActor: {

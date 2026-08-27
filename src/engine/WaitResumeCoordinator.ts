@@ -9,6 +9,7 @@ import {
   readActiveWaitState,
   type RuntimeWaitMatcher,
 } from "../runtime/waitState.js";
+import { toRuntimeWaitMatcher } from "./ExecutionEngineSupport.js";
 
 type RunEventLevel = "INFO" | "WARN" | "ERROR";
 
@@ -187,16 +188,4 @@ function readNonEmptyString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function toRuntimeWaitMatcher(waitFor: Transition["waitFor"]): RuntimeWaitMatcher | undefined {
-  if (waitFor === undefined || waitFor.kind === undefined) {
-    return ;
-  }
-  return {
-    kind: waitFor.kind,
-    eventType: waitFor.eventType,
-    ...(waitFor.timeoutMs !== undefined ? { timeoutMs: waitFor.timeoutMs } : {}),
-    ...(waitFor.metadata !== undefined ? { metadata: waitFor.metadata } : {}),
-  };
 }

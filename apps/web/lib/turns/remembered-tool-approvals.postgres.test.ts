@@ -68,6 +68,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
         actorId: userId,
         tenantId: organizationId,
       },
+      rememberedApprovalScope: { kind: "tool_identity" as const },
       requestedAt: new Date(now.getTime() - 1_000).toISOString(),
       expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     },
@@ -180,6 +181,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
     threadId,
     actorUserId: userId,
     toolIdentity,
+        scope: { kind: "tool_identity" as const },
     sourceInteractionId: interactionId,
     createdAt: now.toISOString(),
   };
@@ -226,6 +228,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
       decideAndInsert(declineInteractionId, "decline", {
         ...record,
         id: `decline-${suffix}`,
+        scope: { kind: "tool_identity" as const },
         sourceInteractionId: declineInteractionId,
       }),
     /exact remember decision/u,
@@ -235,6 +238,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
       decideAndInsert(approveOnceInteractionId, "approve_once", {
         ...record,
         id: `approve-once-${suffix}`,
+        scope: { kind: "tool_identity" as const },
         sourceInteractionId: approveOnceInteractionId,
       }),
     /exact remember decision/u,
@@ -262,6 +266,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
       decideAndInsert(emptySourceInteractionId, "remember_approval", {
         ...record,
         id: `empty-source-${suffix}`,
+        scope: { kind: "tool_identity" as const },
         sourceInteractionId: emptySourceInteractionId,
       }),
     /does not contain exact prepared tool identity/u,
@@ -271,6 +276,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
       decideAndInsert(malformedIdentityInteractionId, "remember_approval", {
         ...record,
         id: `arbitrary-source-${suffix}`,
+        scope: { kind: "tool_identity" as const },
         sourceInteractionId: malformedIdentityInteractionId,
         toolIdentity: {
           ...record.toolIdentity,
@@ -353,6 +359,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
       toolId: string;
       descriptorContractRevision: string;
       approvalAuthorityRevision: string;
+      scope: { kind: "tool_identity" };
       sourceInteractionId: string;
     }[]
   >`
@@ -364,6 +371,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
       "tool_id" AS "toolId",
       "descriptor_contract_revision" AS "descriptorContractRevision",
       "approval_authority_revision" AS "approvalAuthorityRevision",
+      "scope_payload" AS "scope",
       "source_interaction_id" AS "sourceInteractionId"
     FROM "remembered_tool_approvals"
     WHERE
@@ -382,6 +390,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
         toolId: toolIdentity.toolId,
         descriptorContractRevision: toolIdentity.descriptorContractRevision,
         approvalAuthorityRevision: toolIdentity.approvalAuthorityRevision,
+        scope: { kind: "tool_identity" as const },
         sourceInteractionId: interactionId,
       },
     ],
@@ -423,6 +432,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
         threadId,
         actorUserId: userId,
         toolIdentity: record.toolIdentity,
+        scope: { kind: "tool_identity" as const },
         sourceInteractionId: interactionId,
       },
     ],

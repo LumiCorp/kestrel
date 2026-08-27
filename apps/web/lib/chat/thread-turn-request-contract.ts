@@ -34,8 +34,7 @@ export const threadTurnBodySchema = z
         requestId: z.string().trim().min(1).max(200),
         eventType: z.string().trim().min(1).max(200),
         turnId: routeIdSchema,
-        message: z.string().trim().min(1).max(20_000),
-        approved: z.boolean().optional(),
+        message: z.string().trim().min(1).max(20_000).optional(),
         decision: z.enum([
           "decline",
           "approve_once",
@@ -47,9 +46,10 @@ export const threadTurnBodySchema = z
       })
       .strict()
       .refine(
-        (response) =>
-          response.approved === undefined || response.decision === undefined,
-        { message: "An interaction response cannot mix V1 and V2 decisions." }
+        (response) => response.eventType === "user.approval"
+          ? response.decision !== undefined && response.message === undefined
+          : response.message !== undefined && response.decision === undefined,
+        { message: "Approval responses require only a structured decision; other interactions require a message." }
       )
       .optional(),
   })

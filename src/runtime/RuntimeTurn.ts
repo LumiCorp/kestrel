@@ -53,6 +53,7 @@ export interface RuntimeTurnMissionControlExecution {
 }
 
 export interface RuntimeTurnInput {
+  hostedApprovalAuthority?: import("@kestrel-agents/protocol").RunnerHostedApprovalAuthorityV1;
   sessionId: string;
   runId?: string | undefined;
   eventId?: string | undefined;
@@ -216,6 +217,12 @@ export function materializeCompiledRuntimeTurn(
   const externalDeadlineMs = readExternalDeadlineMs(prepared.metadata);
   const payload: Record<string, unknown> = {
     message: prepared.input.message,
+    ...(prepared.input.hostedApprovalAuthority !== undefined
+      ? { hostedApprovalAuthority: prepared.input.hostedApprovalAuthority }
+      : {}),
+    ...(prepared.input.actor !== undefined
+      ? { actor: prepared.input.actor }
+      : {}),
     ...(prepared.input.attachments !== undefined
       ? { attachments: prepared.input.attachments }
       : {}),

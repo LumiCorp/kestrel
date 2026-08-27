@@ -1,4 +1,5 @@
-import { parseRunnerHostedToolApprovalInteractionV2 } from "@kestrel-agents/protocol";
+import { parseRunnerHostedToolApprovalInteractionV4 } from "@kestrel-agents/protocol";
+import { createHash } from "node:crypto";
 
 export type RuntimeWaitKind = "approval" | "effect" | "region_merge" | "tool" | "user";
 export type CanonicalRuntimeWaitKind = RuntimeWaitKind;
@@ -74,7 +75,7 @@ export function buildWaitResumeToken(input: {
   if (input.waitFor === undefined) {
     return "";
   }
-  return JSON.stringify({
+  const canonical = JSON.stringify({
     kind: input.waitFor.kind,
     eventType: input.waitFor.eventType,
     timeoutMs: input.waitFor.timeoutMs,
@@ -82,6 +83,7 @@ export function buildWaitResumeToken(input: {
     metadata: sortValue(input.waitFor.metadata),
     interaction: sortValue(input.waitFor.interaction),
   });
+  return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
 }
 
 export function buildCanonicalWaitingFor(input: {
@@ -154,23 +156,29 @@ function readRuntimeInteraction(
 ): import("../kestrel/contracts/execution.js").RuntimeInteractionRequest | undefined {
   const interaction = asRecord(value);
   const version = interaction?.version;
-  if (version === "runner_hosted_tool_approval_interaction_v2") {
+  if (version === "runner_hosted_tool_approval_interaction_v4") {
     if (waitKind !== "approval") {
       throw new Error(
         "hosted tool approval interaction requires an approval wait",
       );
     }
-    return parseRunnerHostedToolApprovalInteractionV2(
+    return parseRunnerHostedToolApprovalInteractionV4(
       interaction,
       waitEventType,
     );
+  }
+  if (
+    version === "runner_hosted_tool_approval_interaction_v2" ||
+    version === "runner_hosted_tool_approval_interaction_v3"
+  ) {
+    throw new Error("legacy hosted tool approval interactions are not supported");
   }
   const kind = interaction?.kind;
   const eventType = readNonEmptyString(interaction?.eventType);
   const prompt = readNonEmptyString(interaction?.prompt);
   if (
     version !== "v1" ||
-    (kind !== "user_input" && kind !== "approval") ||
+    kind !== "user_input" ||
     eventType === undefined ||
     prompt === undefined
   ) {

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   encodeConversationMessageCursor,
+  HOSTED_APPROVAL_PRODUCER_PROTOCOL,
   parseConversationMessageCursor,
   type RunnerActorMetadata,
 } from "@kestrel-agents/protocol";
@@ -49,7 +50,6 @@ import type {
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import type { ExactEffectResultStore } from "../../src/kestrel/contracts/store.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
-import { resolveHostedApprovalProtocolVersion } from "../../src/runtime/RuntimeTurnCoordinator.js";
 import { resolveKestrelHome } from "../config/kestrelHome.js";
 import { ProfileStore } from "../config/ProfileStore.js";
 import type { OperatorAssemblySummary, TuiProfile } from "../contracts.js";
@@ -4010,7 +4010,7 @@ function createDefaultProfileProvider(): RunnerProfileProvider {
         ...(payload.environmentPresetId === "workspace_hosted"
           ? {
               hostedApprovalProducerProtocol:
-                resolveHostedApprovalProtocolVersion(process.env),
+                HOSTED_APPROVAL_PRODUCER_PROTOCOL,
             }
           : {}),
         resolvedProfile: registered.profile,

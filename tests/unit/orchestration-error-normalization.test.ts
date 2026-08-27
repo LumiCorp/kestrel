@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import {
   createRunnerStructuredReviewInteractionV1,
   RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION,
+  RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   serializeCanonicalApprovalPayload,
 } from "@kestrel-agents/protocol";
 
@@ -198,6 +199,27 @@ test("InteractionManager grants only an exact, current, same-actor external appr
   );
 });
 
+test("InteractionManager persists the authoritative hosted session identity", async () => {
+  const store = new InMemorySessionStore();
+  const manager = new InteractionManager(store);
+  const request = await manager.syncWaitState({
+    threadId: "thread-main:product-thread",
+    sessionId: "product-thread",
+    runId: "run-hosted-session",
+    waitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      metadata: {
+        sessionId: "untrusted-wait-session",
+        prompt: "Continue?",
+      },
+    },
+  });
+
+  assert.equal(request?.threadId, "thread-main:product-thread");
+  assert.equal(request?.metadata?.sessionId, "product-thread");
+});
+
 test("InteractionManager replaces a pending approval when the exact approval identity changes", async () => {
   const store = new InMemorySessionStore();
   const manager = new InteractionManager(store);
@@ -345,6 +367,71 @@ test("InteractionManager rejects changed, expired, or unbound executable authori
     actor,
   });
   assert.equal(decision.grant, undefined);
+});
+
+test("InteractionManager parses canonical prepared bindings before checking durable identity", async () => {
+  const store = new InMemorySessionStore();
+  const manager = new InteractionManager(store);
+  const actor = {
+    actorType: "end_user" as const,
+    actorId: "user-v2",
+    tenantId: "org-v2",
+  };
+  const payload = { command: "pnpm run something", cwd: "." };
+  const approvalId = "approval:run-v2:call-v2";
+  const authorityRevision = `sha256:${"a".repeat(64)}`;
+  const binding = {
+    version: RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
+    approvalId,
+    preparedInvocationId: approvalId,
+    threadId: "product-thread-v2",
+    actionKey: "exec_command",
+    payloadHash: `sha256:${createHash("sha256")
+      .update(serializeCanonicalApprovalPayload(payload))
+      .digest("hex")}`,
+    stableAuthorityFingerprint: `sha256:${"b".repeat(64)}`,
+    stableToolIdentity: {
+      version: "stable_tool_approval_identity_v1" as const,
+      toolId: "exec_command",
+      descriptorContractRevision: `sha256:${"c".repeat(64)}`,
+      approvalAuthorityRevision: authorityRevision,
+    },
+    requestingActor: actor,
+    toolClass: "external_side_effect" as const,
+    capabilities: ["external.confirm", "shell.exec"],
+    authorityKind: "hosted_app_policy" as const,
+    authorityRevision,
+    requestedAt: new Date(Date.now() - 1_000).toISOString(),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  };
+  const request = await manager.syncWaitState({
+    threadId: "thread-main:product-thread-v2",
+    runId: "run-v2",
+    actor,
+    waitFor: {
+      kind: "approval",
+      eventType: "user.approval",
+      metadata: {
+        approvalId,
+        sessionId: "product-thread-v2",
+        toolName: "exec_command",
+        toolInput: payload,
+        externalApprovalBinding: binding,
+      },
+    },
+  });
+  assert.ok(request);
+  await assert.rejects(
+    () =>
+      manager.resolveRequest({
+        threadId: "thread-main:product-thread-v2",
+        requestId: request.requestId,
+        message: "approve",
+        approve: true,
+        actor,
+      }),
+    { code: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH" },
+  );
 });
 
 test("InteractionManager validates exact evaluation choices before consuming the request", async () => {

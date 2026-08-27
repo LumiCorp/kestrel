@@ -734,6 +734,37 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         inputValidator,
         this.builtInDescriptors.has(source.pinned.descriptor.toolId),
       );
+      const normalizedEffectiveInput = asRecord(effectiveInput);
+      const execCommandContinuation =
+        input.activation.descriptor.toolId === "exec_command" &&
+        typeof normalizedEffectiveInput?.sessionId === "string" &&
+        normalizedEffectiveInput.command === undefined;
+      const hostedApprovalScope = options.runContext === undefined
+        ? undefined
+        : readHostedStableApprovalContext(options.runContext);
+      const rememberedExecCommandMatch =
+        input.activation.descriptor.toolId === "exec_command" &&
+        !execCommandContinuation &&
+        hostedApprovalScope?.actor.actorType === "end_user" &&
+        this.resolveScopedContext(options.runContext).builtInContext.kestrelOne
+          ?.rememberedToolApprovalEvidence?.some((evidence) => {
+            const scope = evidence.scope;
+            const normalized = asRecord(effectiveInput);
+            return evidence.organizationId === hostedApprovalScope.organizationId &&
+              evidence.environmentId === hostedApprovalScope.environmentId &&
+              evidence.projectId === hostedApprovalScope.projectId &&
+              evidence.threadId === hostedApprovalScope.threadId &&
+              evidence.actorUserId === hostedApprovalScope.actor.actorId &&
+              evidence.toolIdentity.toolId === input.activation.descriptor.toolId &&
+              evidence.toolIdentity.descriptorContractRevision === input.activation.descriptor.contractRevision &&
+              evidence.toolIdentity.approvalAuthorityRevision === input.approval?.authorityRevision &&
+              scope.kind === "exec_command_exact" &&
+              scope.command === normalized?.command &&
+              scope.cwd === normalized?.cwd &&
+              scope.envMode === normalized?.envMode &&
+              JSON.stringify(scope.envNames) ===
+                JSON.stringify(Array.isArray(normalized?.envNames) ? [...normalized.envNames].sort() : []);
+          }) === true;
       if (budgeted.shortCircuitResult !== undefined) {
         source = {
           ...source,
@@ -745,6 +776,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       }
       const stableApproval =
         input.policy.decision === "approval_required" &&
+        !execCommandContinuation &&
         input.approval !== undefined &&
         options.runContext !== undefined
           ? createPreparedToolApprovalAuthorityV1({
@@ -763,7 +795,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         activation: input.activation,
         origin: input.origin,
         effectiveInput: asRecord(effectiveInput) ?? {},
-        policy: input.policy,
+        policy: rememberedExecCommandMatch || execCommandContinuation
+          ? { ...input.policy, decision: "allow" }
+          : input.policy,
         ...(input.approval === undefined ? {} : { approval: input.approval }),
         ...(stableApproval ?? {}),
         inputAdapters: [
@@ -1365,6 +1399,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           ? undefined
           : readHostedStableApprovalContext(options.runContext);
         const exactRememberedEvidenceMatch =
+          name !== "exec_command" &&
           hostedScope?.actor.actorType === "end_user" &&
           activeBuiltInContext.kestrelOne?.rememberedToolApprovalEvidence?.some(
             (evidence) =>
@@ -1738,6 +1773,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             descriptor.toolId,
             input,
             activeContext.fileSystem?.workspaceRoot,
+            {
+              workspaceAppRoot: activeContext.workspace?.appRoot,
+              devShellEnvMode: activeContext.devShell?.envMode,
+            },
           );
           validateBuiltInToolInputContract(descriptor.toolId, normalized);
           const record = asRecord(normalized);
@@ -2293,6 +2332,8 @@ function resolveScopedRunContext(
     workspace.workspaceRoot.trim().length > 0
       ? workspace.workspaceRoot
       : undefined;
+  const effectiveWorkspaceRoot =
+    workspaceRoot ?? baseContext.fileSystem?.workspaceRoot ?? process.cwd();
   const attachmentReadOnlyRoots = readAttachmentReadOnlyRoots(payload);
   const workspaceToolContext = {
     ...(typeof workspace?.appRoot === "string" &&
@@ -2324,7 +2365,7 @@ function resolveScopedRunContext(
   );
   const sourceWriteGuardAllowedWriteRoots =
     resolveDevShellSourceWriteAllowedWriteRoots(
-      workspaceRoot,
+      effectiveWorkspaceRoot,
       sourceWriteAuthority,
       trustedManagedWorktree,
     );
@@ -2381,9 +2422,7 @@ function resolveScopedRunContext(
       ...scopedBaseContext,
       fileSystem: {
         workspaceRoot:
-          workspaceRoot ??
-          scopedBaseContext.fileSystem?.workspaceRoot ??
-          process.cwd(),
+          effectiveWorkspaceRoot,
         tempRoots: scopedBaseContext.fileSystem?.tempRoots ?? [],
         readOnlyRoots: [
           ...(scopedBaseContext.fileSystem?.readOnlyRoots ?? []),

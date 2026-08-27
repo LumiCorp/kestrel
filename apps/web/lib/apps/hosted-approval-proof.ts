@@ -2,8 +2,6 @@ import "server-only";
 
 import {
   parseRunnerExternalApprovalBinding,
-  parseRunnerHostedToolApprovalInteractionV2,
-  parseRunnerHostedToolApprovalInteractionV3,
   parseRunnerHostedToolApprovalInteractionV4,
 } from "@kestrel-agents/protocol";
 import { and, eq, sql } from "drizzle-orm";
@@ -26,22 +24,10 @@ export async function readHostedApprovalProof(
     ),
   });
   if (!interaction) throw new Error("HOSTED_APPROVAL_INTERACTION_NOT_FOUND");
-  const requestVersion = readString(interaction.requestEnvelope.version);
-  const request =
-    requestVersion === "runner_hosted_tool_approval_interaction_v4"
-      ? parseRunnerHostedToolApprovalInteractionV4(
-          interaction.requestEnvelope,
-          interaction.eventType,
-        )
-      : requestVersion === "runner_hosted_tool_approval_interaction_v3"
-        ? parseRunnerHostedToolApprovalInteractionV3(
-          interaction.requestEnvelope,
-          interaction.eventType,
-        )
-        : parseRunnerHostedToolApprovalInteractionV2(
-          interaction.requestEnvelope,
-          interaction.eventType,
-        );
+  const request = parseRunnerHostedToolApprovalInteractionV4(
+    interaction.requestEnvelope,
+    interaction.eventType,
+  );
   const [thread, providerApproval, remembered, settledEvent] =
     await Promise.all([
       database.query.threads.findFirst({
@@ -133,13 +119,7 @@ export async function readHostedApprovalProof(
       status: interaction.status,
       resolvedByUserId: interaction.resolvedByUserId,
       version: request.version,
-      decision:
-        readString(interaction.responseEnvelope?.decision) ??
-        (interaction.responseEnvelope?.approved === true
-          ? "approve_once"
-          : interaction.responseEnvelope?.approved === false
-            ? "decline"
-            : null),
+      decision: readString(interaction.responseEnvelope?.decision) ?? null,
       effectState: interaction.effectStatus,
       failureCode: interaction.responseFailureCode,
       preparedInvocationId: request.approval.preparedInvocationId,

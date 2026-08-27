@@ -882,7 +882,7 @@ export async function processDurableThreadTurn(
         }
       },
       onUiChunk(chunk) {
-        if (workerInterrupted) {
+        if (workerInterrupted || preparedApprovalCleanup) {
           return;
         }
         const scaffold = readKestrelReplayScaffoldChunk(chunk);
@@ -919,11 +919,13 @@ export async function processDurableThreadTurn(
         terminal.interaction = meta.interaction;
         const messagesForPersistence =
           prepareKestrelRuntimeMessagesForPersistence(finishedMessages, meta);
-        const assistantMessages = messagesForPersistence.filter(
-          (message): message is UIMessage =>
-            message.role === "assistant" &&
-            isPersistableAssistantMessage(message),
-        );
+        const assistantMessages = preparedApprovalCleanup
+          ? []
+          : messagesForPersistence.filter(
+              (message): message is UIMessage =>
+                message.role === "assistant" &&
+                isPersistableAssistantMessage(message),
+            );
         terminal.messages = assistantMessages.map((message) => ({
           id: message.id,
           projectContextRevisionId: turn.projectContextRevisionId,

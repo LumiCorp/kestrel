@@ -264,6 +264,47 @@ test("Kestrel agent context builder seeds original task before bootstrapped repl
   assert.equal(nextContext.modelInput.taskInstruction, "keep going");
 });
 
+test("Kestrel agent context builder keeps approval decisions out of the model transcript", () => {
+  const originalTask = "Run exactly: printf 'approval-e2e\\n' > approval-e2e.txt.";
+  const context = buildKestrelAgentContext({
+    reactState: {
+      modelTranscript: {
+        version: 1,
+        windowId: 1,
+        items: [
+          {
+            id: "mt_1_0001_user",
+            createdAt: "2026-08-27T12:00:00.000Z",
+            kind: "user",
+            content: originalTask,
+          },
+        ],
+      },
+      activeTurnIntent: {
+        objective: originalTask,
+      },
+    },
+    eventPayload: {
+      message: "Approve once",
+      decision: "approve_once",
+      submissionKind: "resume",
+      resumeBlockedRun: true,
+    },
+    eventType: "user.approval",
+    goal: originalTask,
+    interactionMode: "build",
+  });
+
+  assert.equal(context.modelInput.taskInstruction, originalTask);
+  const transcript = context.modelInput.transcript as Record<string, unknown>;
+  const items = transcript.items as Array<Record<string, unknown>>;
+  assert.deepEqual(
+    items.filter((item) => item.kind === "user").map((item) => item.content),
+    [originalTask],
+  );
+  assert.doesNotMatch(JSON.stringify(context.messages), /Approve once/u);
+});
+
 test("Kestrel agent context builder promotes active exec_command process evidence", () => {
   const context = buildKestrelAgentContext({
     reactState: {

@@ -659,6 +659,13 @@
       "when": 1787940000000,
       "tag": "0093_platform_personal_oauth_authorization_broker",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1787943600000,
+      "tag": "0094_exact_exec_command_approval_scope",
+      "breakpoints": true
     }
   ]
 }

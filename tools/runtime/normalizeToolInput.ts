@@ -6,6 +6,10 @@ export function normalizeToolActionInput(
   name: string,
   input: Record<string, unknown>,
   workspaceRoot: string | undefined = ".",
+  context?: {
+    workspaceAppRoot?: string | undefined;
+    devShellEnvMode?: "inherit" | "allowlist" | undefined;
+  },
 ): Record<string, unknown> {
   if (name === "code.execute") {
     const allowed = new Set(["language", "code", "files", "timeoutMs", "network", "dependencies", "args", "capability"]);
@@ -553,30 +557,32 @@ export function normalizeToolActionInput(
     const sessionId = normalizeOptionalString(input.sessionId);
     if (command !== undefined) {
       const requestedCwd = normalizeOptionalString(input.cwd);
+      const effectiveCwd = requestedCwd ??
+        normalizeOptionalString(context?.workspaceAppRoot) ?? ".";
       const resolvedPaths = resolveDevShellPaths(
         workspaceRoot,
         undefined,
-        requestedCwd,
+        effectiveCwd,
       );
+      const requestedEnvMode = normalizeOptionalString(input.envMode);
+      const envMode = context?.devShellEnvMode === "allowlist" &&
+          requestedEnvMode === "inherit"
+        ? "allowlist"
+        : requestedEnvMode ?? context?.devShellEnvMode ?? "inherit";
+      const envNames = [
+        ...new Set(normalizeOptionalStringArray(input.envNames) ?? []),
+      ].sort();
       return {
         command,
-        ...(requestedCwd !== undefined
-          ? {
-              cwd: relativeWorkspacePath(
-                resolvedPaths.workspaceRoot,
-                resolvedPaths.cwd,
-              ),
-            }
-          : {}),
+        cwd: relativeWorkspacePath(
+          resolvedPaths.workspaceRoot,
+          resolvedPaths.cwd,
+        ),
         ...(normalizeOptionalStringArray(input.requiredTools) !== undefined
           ? { requiredTools: normalizeOptionalStringArray(input.requiredTools) }
           : {}),
-        ...(normalizeOptionalStringArray(input.envNames) !== undefined
-          ? { envNames: normalizeOptionalStringArray(input.envNames) }
-          : {}),
-        ...(normalizeOptionalString(input.envMode) !== undefined
-          ? { envMode: normalizeOptionalString(input.envMode) }
-          : {}),
+        envNames,
+        envMode,
         ...(normalizeOptionalString(input.sourceMutation) !== undefined
           ? { sourceMutation: normalizeOptionalString(input.sourceMutation) }
           : {}),
