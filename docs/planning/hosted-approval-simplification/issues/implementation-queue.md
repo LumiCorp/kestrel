@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-None.
+- [Recover completed cleanup with bounded reconciliation](06i-recover-completed-cleanup-with-backoff.md)
 
 ## Blocked
 
