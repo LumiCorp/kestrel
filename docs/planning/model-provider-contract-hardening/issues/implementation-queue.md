@@ -12,13 +12,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Implemented
 
-- [Show truthful hosted model readiness by role](11-show-truthful-hosted-model-readiness.md)
-- [Close hosted readiness admission and truth gaps](14-close-hosted-readiness-admission-and-truth-gaps.md)
-- [Make Environment default admission current and atomic](15-make-environment-default-admission-current-and-atomic.md)
-- [Prove Environment default admission behavior](16-prove-environment-default-admission-behavior.md)
-- [Make Environment default concurrency proof deterministic](17-make-environment-default-concurrency-proof-deterministic.md)
-- [Bind Environment default race proof to exact sessions](18-bind-environment-default-race-proof-to-exact-sessions.md)
-
 ## Done
 
 - [Establish exact model and request contracts](01-establish-exact-model-contracts.md)
@@ -32,3 +25,9 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Admit effective model contracts before provider spend](09-admit-effective-model-contracts.md)
 - [Persist exact admission and response proof](10-persist-model-call-proof.md)
 - [Restore model readiness build validation](13-restore-model-readiness-build-validation.md)
+- [Show truthful hosted model readiness by role](11-show-truthful-hosted-model-readiness.md)
+- [Close hosted readiness admission and truth gaps](14-close-hosted-readiness-admission-and-truth-gaps.md)
+- [Make Environment default admission current and atomic](15-make-environment-default-admission-current-and-atomic.md)
+- [Prove Environment default admission behavior](16-prove-environment-default-admission-behavior.md)
+- [Make Environment default concurrency proof deterministic](17-make-environment-default-concurrency-proof-deterministic.md)
+- [Bind Environment default race proof to exact sessions](18-bind-environment-default-race-proof-to-exact-sessions.md)
