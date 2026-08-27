@@ -79,6 +79,7 @@ import { internetSearchTool } from "./internet/search.js";
 import { internetSearchAdvancedTool } from "./internet/searchAdvanced.js";
 import { internetUsageTool } from "./internet/usage.js";
 import { kestrelOneSearchKnowledgeDocumentsTool } from "./kestrelOne/searchKnowledgeDocuments.js";
+import { kestrelOneEmailGetAttachmentTool } from "./kestrelOne/emailGetAttachment.js";
 import {
   kestrelOneGitHubIssueCreateTool,
   kestrelOneGitHubPullRequestCreateTool,
@@ -184,6 +185,7 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   delegateGetChildResultTool,
   projectTaskProposeTool,
   kestrelOneSearchKnowledgeDocumentsTool,
+  kestrelOneEmailGetAttachmentTool,
   kestrelOneGitHubRepositoryReadTool,
   kestrelOneGitHubPushAgentBranchTool,
   workspaceFilesShareTool,

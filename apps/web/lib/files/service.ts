@@ -43,6 +43,13 @@ export type FileScanner = (input: {
   sha256: string;
 }) => Promise<FileScanResult>;
 
+export class FileUploadVerificationError extends Error {
+  constructor(readonly code: "FILE_SIZE_EXCEEDED" | "FILE_SIZE_MISMATCH") {
+    super(code);
+    this.name = "FileUploadVerificationError";
+  }
+}
+
 export async function createPublishedFileFromBuffer(input: {
   organizationId: string;
   uploaderUserId: string;
@@ -262,7 +269,7 @@ export async function uploadThreadFile(input: {
   const file = await requireThreadFileForUser(input);
   if (!["draft", "failed"].includes(file.lifecycleState)) throw new Error("File is not available for upload.");
   if (input.contentLength !== undefined && input.contentLength !== file.sizeBytes) {
-    throw new Error("File Content-Length does not match the declared size.");
+    throw new FileUploadVerificationError("FILE_SIZE_MISMATCH");
   }
   const verifier = new FileVerificationTransform(file.sizeBytes);
   const storage = getManagedFileStorageProvider();
@@ -406,6 +413,51 @@ export async function getVisibleFileForThread(input: {
   const file = rows[0];
   if (!file || file.lifecycleState === "deleted") throw new Error("File not found.");
   return file;
+}
+
+/**
+ * Produces the single model-visible file representation used by both ordinary
+ * file open calls and receipt-scoped attachment import.  The file remains
+ * Thread-scoped; callers never receive the storage key.
+ */
+export async function openVisibleFileForThread(input: {
+  fileId: string;
+  threadId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  const file = await getVisibleFileForThread(input);
+  if (file.lifecycleState !== "ready") throw new Error("File is unavailable.");
+  await ensureEffectiveFileAvailability({
+    fileId: file.id,
+    lifecycleState: file.lifecycleState,
+    blobId: file.blobId,
+    objectKey: file.objectKey,
+    availabilityStatus: file.availabilityStatus,
+    blobDeletedAt: file.blobDeletedAt,
+  });
+  const storage = getManagedFileStorageProvider();
+  const sourceUrl = storage.signedReadUrl
+    ? await storage.signedReadUrl(file.objectKey, 900)
+    : undefined;
+  const metadataOnlyReason = modelVisibleMetadataOnlyReason(
+    file.representationStatus,
+    file.metadataOnlyReason,
+  );
+  return {
+    fileId: file.id,
+    filename: file.filename,
+    mediaType:
+      file.detectedMediaType ?? file.declaredMediaType ?? "application/octet-stream",
+    sizeBytes: file.sizeBytes,
+    sha256: file.sha256,
+    representation: file.representationStatus,
+    ...(file.representationText
+      ? { text: file.representationText, truncated: file.textTruncated }
+      : {}),
+    ...(metadataOnlyReason ? { metadataOnlyReason } : {}),
+    ...(sourceUrl ? { sourceUrl, sourceUrlExpiresInSeconds: 900 } : {}),
+  };
 }
 
 export async function deleteDraftThreadFile(input: {
@@ -1139,8 +1191,12 @@ function validateSelection(fileIds: string[]): void {
 }
 
 function validateFileSize(sizeBytes: number): void {
-  if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) throw new Error("File size is invalid.");
-  if (sizeBytes > CONVERSATION_ATTACHMENT_MAX_FILE_BYTES) throw new Error("File exceeds the 100 MiB limit.");
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+    throw new FileUploadVerificationError("FILE_SIZE_MISMATCH");
+  }
+  if (sizeBytes > CONVERSATION_ATTACHMENT_MAX_FILE_BYTES) {
+    throw new FileUploadVerificationError("FILE_SIZE_EXCEEDED");
+  }
 }
 
 class FileVerificationTransform extends Transform {
@@ -1153,7 +1209,7 @@ class FileVerificationTransform extends Transform {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     this.sizeBytes += bytes.byteLength;
     if (this.sizeBytes > CONVERSATION_ATTACHMENT_MAX_FILE_BYTES || this.sizeBytes > this.expectedSizeBytes) {
-      callback(new Error("File exceeds its declared or maximum size."));
+      callback(new FileUploadVerificationError("FILE_SIZE_EXCEEDED"));
       return;
     }
     if (this.header.length < 512) this.headerChunks.push(bytes.subarray(0, 512 - this.header.length));
@@ -1161,7 +1217,9 @@ class FileVerificationTransform extends Transform {
     callback(null, bytes);
   }
   result(): { sizeBytes: number; sha256: string } {
-    if (this.sizeBytes !== this.expectedSizeBytes) throw new Error("Uploaded bytes do not match the declared size.");
+    if (this.sizeBytes !== this.expectedSizeBytes) {
+      throw new FileUploadVerificationError("FILE_SIZE_MISMATCH");
+    }
     return { sizeBytes: this.sizeBytes, sha256: this.hash.digest("hex") };
   }
 }

@@ -140,6 +140,14 @@ test("app relay refreshes expired execution tickets and enforces workspace and p
 
 test("app relay allowlists only supported app methods and contracts", () => {
   assert.equal(isAllowedAppRequest(
+    "/api/kestrel/tools/email/get-attachment",
+    "POST",
+  ), true);
+  assert.equal(isAllowedAppRequest(
+    "/api/kestrel/tools/email/get-attachment",
+    "GET",
+  ), false);
+  assert.equal(isAllowedAppRequest(
     "/api/runtime/apps/built_in.previews/inspect/auto/ports/3000",
     "GET",
   ), true);

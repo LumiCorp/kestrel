@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { RunnerProfile } from "@kestrel-agents/sdk/runner";
 import {
+  resolveKestrelOneToolProfileConfiguration,
   resolveKestrelOneToolCapability,
   restrictKestrelOneProfileTools,
 } from "./kestrel-tool-profile";
@@ -158,6 +159,19 @@ test("calendar tools are removed when the user has no effective capability", () 
     effectiveCapabilities: [],
   });
   assert.deepEqual(restricted.toolAllowlist, []);
+});
+
+test("a materialized email receipt adds only the receipt-scoped automatic reader", () => {
+  const configuration = resolveKestrelOneToolProfileConfiguration({
+    availableToolNames: [],
+    effectiveCapabilities: [],
+    emailAttachmentReadAvailable: true,
+  });
+  assert.deepEqual(configuration.additionalToolNames, [
+    "kestrel_one.email_get_attachment",
+  ]);
+  assert.deepEqual(configuration.kestrelOneAppApprovalModes, {});
+  assert.deepEqual(configuration.kestrelOneAppApprovalPolicies, {});
 });
 
 test("Workspace preview tools follow Environment App approval capabilities", () => {

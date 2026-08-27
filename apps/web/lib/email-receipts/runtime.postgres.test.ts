@@ -612,7 +612,10 @@ function attachment(providerAttachmentId: string) {
 }
 
 function fixedProvider(value: ReceivedEmailHydration): ReceivedEmailProvider {
-  return { retrieve: async () => value };
+  return {
+    retrieve: async () => value,
+    downloadAttachment: unexpectedAttachmentDownload,
+  };
 }
 
 function temporaryThen(value: ReceivedEmailHydration): ReceivedEmailProvider {
@@ -628,6 +631,7 @@ function temporaryThen(value: ReceivedEmailHydration): ReceivedEmailProvider {
       }
       return value;
     },
+    downloadAttachment: unexpectedAttachmentDownload,
   };
 }
 
@@ -639,7 +643,12 @@ function failingProvider(
     async retrieve() {
       throw new EmailReceiptProviderError(code, retryable);
     },
+    downloadAttachment: unexpectedAttachmentDownload,
   };
+}
+
+async function unexpectedAttachmentDownload(): Promise<never> {
+  throw new Error("Attachment download is not expected during receipt hydration.");
 }
 
 async function expectTerminal(input: {

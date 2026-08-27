@@ -20,6 +20,7 @@ export type KestrelOneCapabilityDescriptor = {
   name:
     | "kestrel.files.search"
     | "kestrel.files.open"
+    | "kestrel_one.email_get_attachment"
     | "kestrel_one.search_knowledge_documents";
   description: string;
   endpoint: {
@@ -40,6 +41,7 @@ export type KestrelOneCapabilityDescriptor = {
 export function buildKestrelOneCapabilityDescriptors(input: {
   request: Request;
   threadId?: string | undefined;
+  emailAttachmentReadAvailable?: boolean | undefined;
 }): KestrelOneCapabilityDescriptor[] {
   const origin = new URL(input.request.url).origin;
 
@@ -83,7 +85,26 @@ export function buildKestrelOneCapabilityDescriptors(input: {
           fileId: { type: "string", minLength: 1, maxLength: 200 },
         },
       },
-    }] : []),
+    }, ...(input.emailAttachmentReadAvailable ? [{
+      name: "kestrel_one.email_get_attachment" as const,
+      description:
+        "Import one attachment from the email that created this Thread. Use only an opaque attachment ID from that email envelope.",
+      endpoint: {
+        method: "POST" as const,
+        url: `${origin}/api/kestrel/tools/email/get-attachment`,
+        auth: {
+          type: "bearer" as const,
+          tokenEnv: "KESTREL_ONE_TOOL_TOKEN" as const,
+        },
+      },
+      input: {
+        type: "object" as const,
+        required: ["attachmentId"],
+        properties: {
+          attachmentId: { type: "string", minLength: 1, maxLength: 200 },
+        },
+      },
+    }] : [])] : []),
     {
       name: "kestrel_one.search_knowledge_documents",
       description:
@@ -106,6 +127,35 @@ export function buildKestrelOneCapabilityDescriptors(input: {
       },
     },
   ];
+}
+
+export function parseEmailAttachmentCapabilityRequest(input: {
+  request: Request;
+  environmentTicketPublicKey?: string | undefined;
+}) {
+  const parsed = runnerKnowledgeCapabilityRequestSchema.parse({
+    authorization: input.request.headers.get("authorization") ?? "",
+    tenantId:
+      input.request.headers.get("x-kestrel-tenant-id") ??
+      input.request.headers.get("x-organization-id") ??
+      "",
+  });
+  try {
+    const ticket = verifyEnvironmentExecutionTicket({
+      token: parsed.authorization.replace(/^Bearer\s+/i, "").trim(),
+      publicKey: input.environmentTicketPublicKey ?? "",
+    });
+    if (
+      ticket.organizationId !== parsed.tenantId ||
+      !ticket.capabilities.includes("kestrel.tools.invoke")
+    ) {
+      throw new Error("Environment email attachment capability denied.");
+    }
+    return ticket;
+  } catch (error) {
+    if (error instanceof EnvironmentTicketError) throw error;
+    throw Object.assign(new Error("Unauthorized"), { code: "UNAUTHORIZED" });
+  }
 }
 
 export function parseRunnerKnowledgeCapabilityRequest(input: {

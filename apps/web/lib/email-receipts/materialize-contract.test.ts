@@ -79,3 +79,24 @@ test("normal Thread and Trigger surfaces expose receipt provenance without widen
   assert.match(triggerClient, /Latest delivery:/u);
   assert.doesNotMatch(threadStore, /origin:\s*"email"/u);
 });
+
+test("attachment import is receipt-scoped and returns through the canonical Thread file surface", async () => {
+  const [importer, route, profile] = await Promise.all([
+    readFile(new URL("./attachment-import.ts", import.meta.url), "utf8"),
+    readFile(
+      new URL("../../app/api/kestrel/tools/email/get-attachment/route.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../agent/kestrel-tool-profile.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(importer, /materializedThreadId, input\.ticket\.threadId/u);
+  assert.match(importer, /attachment\.projectId !== execution\.projectId/u);
+  assert.match(importer, /initializeThreadFile/u);
+  assert.match(importer, /uploadThreadFile/u);
+  assert.match(importer, /pg_advisory_xact_lock/u);
+  assert.doesNotMatch(importer, /console\.(?:log|info|warn|error)/u);
+  assert.match(route, /openVisibleFileForThread/u);
+  assert.match(route, /parseEmailAttachmentCapabilityRequest/u);
+  assert.match(profile, /emailAttachmentReadAvailable/u);
+});

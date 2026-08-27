@@ -29,8 +29,18 @@ export type ReceivedEmailHydration = {
   attachments: ReceivedEmailAttachment[];
 };
 
+export type ReceivedEmailAttachmentDownload = {
+  body: ReadableStream<Uint8Array>;
+  contentLength?: number | undefined;
+};
+
 export interface ReceivedEmailProvider {
   retrieve(apiKey: string, emailId: string): Promise<ReceivedEmailHydration>;
+  downloadAttachment(input: {
+    apiKey: string;
+    emailId: string;
+    providerAttachmentId: string;
+  }): Promise<ReceivedEmailAttachmentDownload>;
 }
 
 export type EmailReceiptProviderFailureCode =
@@ -137,6 +147,58 @@ export class ResendReceivedEmailProvider implements ReceivedEmailProvider {
     };
   }
 
+  async downloadAttachment(input: {
+    apiKey: string;
+    emailId: string;
+    providerAttachmentId: string;
+  }): Promise<ReceivedEmailAttachmentDownload> {
+    const encodedEmailId = encodeURIComponent(input.emailId);
+    const attachment = await this.#findAttachment(
+      input.apiKey,
+      encodedEmailId,
+      input.providerAttachmentId,
+    );
+    let response: Response;
+    try {
+      const deadline = this.#timeoutSignal(
+        RESEND_MANAGEMENT_REQUEST_TIMEOUT_MS,
+      );
+      response = await this.#fetch(attachment.download_url, {
+        signal: combineAbortSignals([this.#signal, deadline]),
+        cache: "no-store",
+      });
+    } catch {
+      throw new EmailReceiptProviderError(
+        "EMAIL_RECEIPT_PROVIDER_TEMPORARY",
+        true,
+      );
+    }
+    if (
+      response.status >= 500 ||
+      response.status === 408 ||
+      response.status === 429
+    ) {
+      throw new EmailReceiptProviderError(
+        "EMAIL_RECEIPT_PROVIDER_TEMPORARY",
+        true,
+      );
+    }
+    if (response.status >= 400 && response.status < 500) {
+      throw new EmailReceiptProviderError(
+        "EMAIL_RECEIPT_PROVIDER_PERMANENT",
+        false,
+      );
+    }
+    if (!(response.ok && response.body)) throw invalidProviderResponse();
+    const contentLength = Number(response.headers.get("content-length"));
+    return {
+      body: response.body,
+      ...(Number.isSafeInteger(contentLength) && contentLength >= 0
+        ? { contentLength }
+        : {}),
+    };
+  }
+
   async #listAttachments(apiKey: string, encodedEmailId: string) {
     const attachments: ReceivedEmailAttachment[] = [];
     const attachmentIds = new Set<string>();
@@ -171,6 +233,42 @@ export class ResendReceivedEmailProvider implements ReceivedEmailProvider {
         }
       }
       if (!pageResult.data.has_more) return attachments;
+      const nextCursor = pageResult.data.data.at(-1)?.id;
+      if (!nextCursor || nextCursor === after || cursors.has(nextCursor)) {
+        throw invalidProviderResponse();
+      }
+      cursors.add(nextCursor);
+      after = nextCursor;
+    }
+  }
+
+  async #findAttachment(
+    apiKey: string,
+    encodedEmailId: string,
+    providerAttachmentId: string,
+  ) {
+    const cursors = new Set<string>();
+    let after: string | undefined;
+    while (true) {
+      const pageResult = attachmentListSchema.safeParse(
+        await this.#request(
+          apiKey,
+          `/emails/receiving/${encodedEmailId}/attachments?limit=${EMAIL_ATTACHMENT_MAX_COUNT}${
+            after === undefined ? "" : `&after=${encodeURIComponent(after)}`
+          }`,
+        ),
+      );
+      if (!pageResult.success) throw invalidProviderResponse();
+      const attachment = pageResult.data.data.find(
+        (candidate) => candidate.id === providerAttachmentId,
+      );
+      if (attachment) return attachment;
+      if (!pageResult.data.has_more) {
+        throw new EmailReceiptProviderError(
+          "EMAIL_RECEIPT_PROVIDER_PERMANENT",
+          false,
+        );
+      }
       const nextCursor = pageResult.data.data.at(-1)?.id;
       if (!nextCursor || nextCursor === after || cursors.has(nextCursor)) {
         throw invalidProviderResponse();

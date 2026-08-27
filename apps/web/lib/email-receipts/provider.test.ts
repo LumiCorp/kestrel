@@ -100,6 +100,37 @@ test("provider status maps temporary and permanent failures distinctly", async (
   }
 });
 
+test("attachment download resolves a fresh provider URL and returns only a stream", async () => {
+  const requests: URL[] = [];
+  const provider = new ResendReceivedEmailProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async (input) => {
+      const url = requestUrl(input);
+      requests.push(url);
+      if (url.hostname === "signed.resend.test") {
+        return new Response(new TextEncoder().encode("invoice"), {
+          headers: { "content-length": "7" },
+        });
+      }
+      return jsonResponse(attachmentPage(false, [attachment("provider-1", "invoice.pdf")]));
+    },
+    timeoutSignal: () => new AbortController().signal,
+  });
+
+  const download = await provider.downloadAttachment({
+    apiKey: "secret",
+    emailId: "email-1",
+    providerAttachmentId: "provider-1",
+  });
+  assert.equal(download.contentLength, 7);
+  assert.equal(await new Response(download.body).text(), "invoice");
+  assert.deepEqual(requests.map((url) => url.hostname), [
+    "resend.test",
+    "signed.resend.test",
+  ]);
+  assert.equal(JSON.stringify(download).includes("signed.resend.test"), false);
+});
+
 function receivedEmail() {
   return {
     object: "email",

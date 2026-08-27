@@ -842,6 +842,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer",
   ),
   api(
+    "app/api/kestrel/tools/email/get-attachment/route.ts",
+    "/api/kestrel/tools/email/get-attachment",
+    "tool-boundary",
+    "service-boundary",
+    "service-bearer",
+  ),
+  api(
     "app/internal/turn-worker/[turnId]/attachments/resolve/route.ts",
     "/internal/turn-worker/:turnId/attachments/resolve",
     "credential-boundary",

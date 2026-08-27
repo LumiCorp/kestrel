@@ -118,6 +118,7 @@ export const KESTREL_ONE_INTERNAL_DELEGATION_TOOL_NAMES = Object.freeze([
 
 export const KESTREL_ONE_WORKSPACE_TOOL_NAMES = Object.freeze([
   "kestrel_one.search_knowledge_documents",
+  "kestrel_one.email_get_attachment",
   "kestrel_one.github_repository_read",
   "kestrel_one.github_push_agent_branch",
   "workspace.files.share",

@@ -77,6 +77,7 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "delegate.get_child_result": { mode: "schema-only" },
   "task.propose": { mode: "schema-only" },
   "kestrel_one.search_knowledge_documents": { mode: "schema-only" },
+  "kestrel_one.email_get_attachment": { mode: "schema-only" },
   "kestrel_one.github_repository_read": { mode: "schema-only" },
   "kestrel_one.github_push_agent_branch": { mode: "schema-only" },
   "workspace.preview.publish": { mode: "schema-only" },
