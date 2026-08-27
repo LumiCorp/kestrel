@@ -97,6 +97,14 @@ test("PostgresSessionStore persists model-call proof and marks older rows legacy
     terminal: "pending" as const,
     validation: "not_requested" as const,
   };
+  const untrustedProof = {
+    ...proof,
+    prompt: "prompt-content-must-not-persist",
+    schema: "schema-content-must-not-persist",
+    toolArguments: { path: "/secret" },
+    credential: "credential-must-not-persist",
+    providerPayload: "payload-must-not-persist",
+  } as unknown as ModelCallProofV1;
   await store.appendModelCallProvenance({
     callId: "call-proof",
     runId: "run-proof",
@@ -106,7 +114,7 @@ test("PostgresSessionStore persists model-call proof and marks older rows legacy
     responseFormat: "json",
     providerPayloadHash: "candidate-payload-hash",
     componentHash: "component-hash",
-    proof,
+    proof: untrustedProof,
     createdAt: "2026-08-26T12:00:00.000Z",
     status: "REQUESTED",
   });
@@ -124,6 +132,9 @@ test("PostgresSessionStore persists model-call proof and marks older rows legacy
   assert.equal(calls[0]?.proof.terminal, "completed");
   assert.equal(calls[0]?.proof.providerRequestId, "req-123");
   assert.equal(sql.queries[0]?.values?.[18], JSON.stringify(proof));
+  assert.equal(sql.queries[0]?.values?.length, 24);
+  assert.equal(sql.queries[0]?.values?.[20], "REQUESTED");
+  assert.equal(JSON.stringify(sql.queries[0]?.values?.[18]).includes("must-not-persist"), false);
   sql.assertExhausted();
 });
 

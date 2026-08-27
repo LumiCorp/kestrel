@@ -74,6 +74,7 @@ import type {
   ThreadAssemblyRecord,
   ThreadRecord,
 } from "../kestrel/contracts/orchestration.js";
+import { parseModelCallProofV1 } from "../kestrel/contracts/orchestration.js";
 import {
   assertSandboxCapabilityLeaseTransitionV1,
   fingerprintSandboxCapabilityLeaseBinding,
@@ -3610,7 +3611,7 @@ export class PostgresSessionStore implements SessionStore {
           template_ids_json, tool_manifest_hash, assembly_id, source_bucket_hashes_json,
           proof_json, metadata_json, status, latency_ms, created_at, completed_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-               $15::jsonb, $16, $17, $18::jsonb, $19::jsonb, $20::jsonb, $21::jsonb, $22, $23, $24::timestamptz, $25::timestamptz)
+               $15::jsonb, $16, $17, $18::jsonb, $19::jsonb, $20::jsonb, $21, $22, $23::timestamptz, $24::timestamptz)
        ON CONFLICT (call_id) DO NOTHING`,
       [
         record.callId,
@@ -3631,7 +3632,7 @@ export class PostgresSessionStore implements SessionStore {
         record.toolManifestHash ?? null,
         record.assemblyId ?? null,
         stringifySanitizedJson(record.sourceBucketHashes ?? null),
-        stringifySanitizedJson(record.proof),
+        stringifySanitizedJson(parseModelCallProofV1(record.proof)),
         stringifySanitizedJson(record.metadata ?? null),
         record.status,
         record.latencyMs ?? null,
@@ -3666,7 +3667,7 @@ export class PostgresSessionStore implements SessionStore {
         input.completedAt === undefined ? null : normalizeTimestampString(input.completedAt),
         input.latencyMs ?? null,
         input.providerPayloadHash ?? null,
-        input.proof === undefined ? null : stringifySanitizedJson(input.proof),
+        input.proof === undefined ? null : stringifySanitizedJson(parseModelCallProofV1(input.proof)),
         input.metadata === undefined ? null : stringifySanitizedJson(input.metadata),
       ],
     );
@@ -5930,7 +5931,7 @@ function mapModelCallProvenanceRow(row: ModelCallProvenanceRow): ModelCallProven
     ...(row.tool_manifest_hash !== null ? { toolManifestHash: row.tool_manifest_hash } : {}),
     ...(row.assembly_id !== null ? { assemblyId: row.assembly_id } : {}),
     ...(row.source_bucket_hashes_json !== null ? { sourceBucketHashes: row.source_bucket_hashes_json } : {}),
-    proof: row.proof_json ?? legacyModelCallProof(row),
+    proof: row.proof_json === null ? legacyModelCallProof(row) : parseModelCallProofV1(row.proof_json),
     ...(row.metadata_json !== null ? { metadata: row.metadata_json } : {}),
     createdAt: row.created_at,
     ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),

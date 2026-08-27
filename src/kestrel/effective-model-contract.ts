@@ -47,11 +47,24 @@ export interface EffectiveModelContractAdmissionV1 {
   contract: EffectiveModelContractV1;
 }
 
+/**
+ * Secret-free evidence available before a provider dispatch. A rejected
+ * admission keeps this attempt binding so operations can distinguish it from
+ * an upstream failure without consulting mutable registration state later.
+ */
+export interface EffectiveModelPreSpendEvidenceV1 {
+  request: ModelRequest;
+  contract?: EffectiveModelContractV1 | undefined;
+}
+
 /** Runtime dependencies supply immutable registration snapshots, never UI metadata. */
 export interface EffectiveModelContractResolverV1 {
   admit(input: { request: ModelRequest }):
     | EffectiveModelContractAdmissionV1
     | Promise<EffectiveModelContractAdmissionV1>;
+  describePreSpendAttempt?(input: { request: ModelRequest }):
+    | EffectiveModelPreSpendEvidenceV1
+    | Promise<EffectiveModelPreSpendEvidenceV1>;
 }
 
 export interface ExactEffectiveModelContractSnapshotV1 {
@@ -94,6 +107,14 @@ export function createExactEffectiveModelContractResolverV1(
   const endpoint = input.endpoint;
 
   return Object.freeze({
+    describePreSpendAttempt({ request }: { request: ModelRequest }): EffectiveModelPreSpendEvidenceV1 {
+      const normalized = normalizeModelRequestV2(request);
+      const evidenceRequest = createExactEvidenceRequest(normalized, registration, endpoint);
+      return Object.freeze({
+        request: evidenceRequest,
+        contract: createExactEffectiveModelContract(registration, input.routeBinding, endpoint, evidenceRequest),
+      });
+    },
     admit({ request }: { request: ModelRequest }): EffectiveModelContractAdmissionV1 {
       const normalized = normalizeModelRequestV2(request);
       if (
@@ -126,33 +147,11 @@ export function createExactEffectiveModelContractResolverV1(
         }
       }
 
-      const { fingerprints: _fingerprints, ...requestAuthoring } = normalized;
-      const admittedRequest = createModelRequestV2({
-        ...requestAuthoring,
-        model: registration.modelId,
-        requirements: { ...normalized.requirements, endpoint },
-      });
+      const admittedRequest = createExactEvidenceRequest(normalized, registration, endpoint);
       assertQualifiedRequirements(registration, admittedRequest);
       return Object.freeze({
         request: admittedRequest,
-        contract: createEffectiveModelContractV1({
-          status: "qualified",
-          providerId: registration.providerId,
-          modelId: registration.modelId,
-          registrationId: registration.registrationId,
-          registrationRevision: registration.revision,
-          registrationFingerprint: registration.fingerprint,
-          qualificationRevision: input.routeBinding.qualificationRevision,
-          credentialRevision: input.routeBinding.credentialRevision,
-          apiEndpoint: registration.route.apiEndpoint,
-          endpoint,
-          endpointCodec: registration.route.endpointCodec,
-          routingPolicyFingerprint: input.routeBinding.routingPolicyFingerprint,
-          runtimeRole: admittedRequest.requirements.runtimeRole,
-          requestFingerprint: admittedRequest.fingerprints.request,
-          schemaHash: admittedRequest.fingerprints.schema,
-          toolSurfaceHash: admittedRequest.fingerprints.toolSurface,
-        }),
+        contract: createExactEffectiveModelContract(registration, input.routeBinding, endpoint, admittedRequest),
       });
     },
   });
@@ -161,6 +160,9 @@ export function createExactEffectiveModelContractResolverV1(
 /** Explicit compatibility path for routes without exact evidence. */
 export const legacyEffectiveModelContractResolverV1: EffectiveModelContractResolverV1 =
   Object.freeze({
+    describePreSpendAttempt({ request }: { request: ModelRequest }): EffectiveModelPreSpendEvidenceV1 {
+      return { request: normalizeLegacyAdmissionRequest(request) };
+    },
     admit({ request }: { request: ModelRequest }): EffectiveModelContractAdmissionV1 {
       // Runtime metadata can carry established orchestration counters whose
       // field names are intentionally rejected from persisted V2 contract
@@ -183,6 +185,45 @@ export const legacyEffectiveModelContractResolverV1: EffectiveModelContractResol
       });
     },
   });
+
+function createExactEvidenceRequest(
+  normalized: ModelRequestV2,
+  registration: ModelRegistrationV2,
+  endpoint: ExactModelEndpointV1,
+): ModelRequestV2 {
+  const { fingerprints: _fingerprints, ...requestAuthoring } = normalized;
+  return createModelRequestV2({
+    ...requestAuthoring,
+    model: registration.modelId,
+    requirements: { ...normalized.requirements, endpoint },
+  });
+}
+
+function createExactEffectiveModelContract(
+  registration: ModelRegistrationV2,
+  routeBinding: QualifiedModelCredentialRouteBindingV2,
+  endpoint: ExactModelEndpointV1,
+  request: ModelRequestV2,
+): EffectiveModelContractV1 {
+  return createEffectiveModelContractV1({
+    status: "qualified",
+    providerId: registration.providerId,
+    modelId: registration.modelId,
+    registrationId: registration.registrationId,
+    registrationRevision: registration.revision,
+    registrationFingerprint: registration.fingerprint,
+    qualificationRevision: routeBinding.qualificationRevision,
+    credentialRevision: routeBinding.credentialRevision,
+    apiEndpoint: registration.route.apiEndpoint,
+    endpoint,
+    endpointCodec: registration.route.endpointCodec,
+    routingPolicyFingerprint: routeBinding.routingPolicyFingerprint,
+    runtimeRole: request.requirements.runtimeRole,
+    requestFingerprint: request.fingerprints.request,
+    schemaHash: request.fingerprints.schema,
+    toolSurfaceHash: request.fingerprints.toolSurface,
+  });
+}
 
 function normalizeLegacyAdmissionRequest(request: ModelRequest): ModelRequestV2 {
   const { metadata: _metadata, ...contractView } = request;

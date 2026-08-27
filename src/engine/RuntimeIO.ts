@@ -60,6 +60,7 @@ import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
 import {
   type EffectiveModelContractV1,
   type EffectiveModelContractResolverV1,
+  type EffectiveModelPreSpendEvidenceV1,
 } from "../kestrel/effective-model-contract.js";
 
 interface RuntimeIOProgressContext {
@@ -346,6 +347,10 @@ export class RuntimeIO {
       threadId,
     });
     const toolManifestHash = Array.isArray(request.tools) ? hashUnknown(request.tools) : undefined;
+    const preSpendEvidence = await describeModelPreSpendEvidence(
+      this.options.deps.effectiveModelContractResolver,
+      providerRequest,
+    );
     const requestEconomicsManifest = buildModelRequestEconomicsManifest({
       request: providerRequest,
       ...(economicsContextSections !== undefined
@@ -425,7 +430,7 @@ export class RuntimeIO {
       componentHash,
       ...(toolManifestHash !== undefined ? { toolManifestHash } : {}),
       ...(assemblyId !== undefined ? { assemblyId } : {}),
-      proof: createPendingModelCallProof(),
+      proof: createPendingModelCallProof(preSpendEvidence),
       metadata: {
         promptRetention: "hash_only",
         ...(modelRole !== undefined ? { modelRole } : {}),
@@ -469,7 +474,7 @@ export class RuntimeIO {
         status: "FAILED",
         completedAt,
         latencyMs: Date.now() - startedAt,
-        proof: createPreSpendRejectedModelCallProof(mappedAdmissionError),
+        proof: createPreSpendRejectedModelCallProof(mappedAdmissionError, preSpendEvidence?.contract, preSpendEvidence?.request),
         metadata: {
           promptRetention: "hash_only",
           ...(modelRole !== undefined ? { modelRole } : {}),
@@ -727,7 +732,9 @@ export class RuntimeIO {
         status: "FAILED",
         completedAt,
         latencyMs,
-        proof: createFailedModelCallProof(effectiveAdmission?.contract, providerRequest, mappedError),
+        proof: isPreSpendModelFailure(mappedError.code)
+          ? createPreSpendRejectedModelCallProof(mappedError, effectiveAdmission?.contract, providerRequest)
+          : createFailedModelCallProof(effectiveAdmission?.contract, providerRequest, mappedError),
         metadata: {
           promptRetention: "hash_only",
           ...(modelRole !== undefined ? { modelRole } : {}),
@@ -2155,12 +2162,30 @@ function redactModelResponseForDiagnostics(value: unknown): unknown {
       };
 }
 
-function createPendingModelCallProof(): ModelCallProofV1 {
+async function describeModelPreSpendEvidence(
+  resolver: EffectiveModelContractResolverV1 | undefined,
+  request: ModelRequest,
+): Promise<EffectiveModelPreSpendEvidenceV1 | undefined> {
+  if (resolver?.describePreSpendAttempt === undefined) return undefined;
+  try {
+    return await resolver.describePreSpendAttempt({ request });
+  } catch {
+    // Evidence generation must not replace the owning admission decision. The
+    // resulting row remains explicitly legacy/unknown if a resolver cannot
+    // describe the rejected attempt safely.
+    return undefined;
+  }
+}
+
+function createPendingModelCallProof(
+  preSpendEvidence: EffectiveModelPreSpendEvidenceV1 | undefined,
+): ModelCallProofV1 {
   return {
     version: "model_call_proof_v1",
-    evidence: "captured",
+    evidence: preSpendEvidence?.contract === undefined ? "legacy" : "captured",
     admission: "pending",
-    capabilities: [],
+    ...(preSpendEvidence?.contract !== undefined ? { effectiveContract: preSpendEvidence.contract } : {}),
+    capabilities: preSpendEvidence === undefined ? [] : readRequiredModelCapabilities(preSpendEvidence.request),
     terminal: "pending",
     validation: "not_requested",
   };
@@ -2170,24 +2195,31 @@ function createAdmittedModelCallProof(
   contract: EffectiveModelContractV1 | undefined,
   request: ModelRequest,
 ): ModelCallProofV1 {
+  const capturedContract = contract?.status === "qualified" ? contract : undefined;
   return {
     version: "model_call_proof_v1",
-    evidence: contract === undefined ? "legacy" : "captured",
+    evidence: capturedContract === undefined ? "legacy" : "captured",
     admission: "admitted",
-    ...(contract !== undefined ? { effectiveContract: contract } : {}),
+    ...(capturedContract !== undefined ? { effectiveContract: capturedContract } : {}),
     capabilities: readRequiredModelCapabilities(request),
     terminal: "pending",
     validation: "not_requested",
   };
 }
 
-function createPreSpendRejectedModelCallProof(error: RuntimeError): ModelCallProofV1 {
+function createPreSpendRejectedModelCallProof(
+  error: RuntimeError,
+  contract?: EffectiveModelContractV1 | undefined,
+  request?: ModelRequest | undefined,
+): ModelCallProofV1 {
   const failureCode = readNonEmptyString(error.code);
+  const capturedContract = contract?.status === "qualified" ? contract : undefined;
   return {
     version: "model_call_proof_v1",
-    evidence: "captured",
+    evidence: capturedContract === undefined ? "legacy" : "captured",
     admission: "pre_spend_rejected",
-    capabilities: [],
+    ...(capturedContract !== undefined ? { effectiveContract: capturedContract } : {}),
+    capabilities: request === undefined ? [] : readRequiredModelCapabilities(request),
     terminal: "pre_spend_rejected",
     validation: "failed",
     ...(failureCode !== undefined ? { failureCode } : {}),
@@ -2197,6 +2229,10 @@ function createPreSpendRejectedModelCallProof(error: RuntimeError): ModelCallPro
   };
 }
 
+function isPreSpendModelFailure(code: string): boolean {
+  return code === "HARNESS_ECONOMICS_CONTEXT_ADMISSION_BLOCKED";
+}
+
 function createCompletedModelCallProof(
   contract: EffectiveModelContractV1 | undefined,
   request: ModelRequest,
@@ -2204,11 +2240,12 @@ function createCompletedModelCallProof(
 ): ModelCallProofV1 {
   const providerRequestId = readProviderRequestId(response);
   const validation = asPlainRecord(asPlainRecord(response)?.validation)?.state;
+  const capturedContract = contract?.status === "qualified" ? contract : undefined;
   return {
     version: "model_call_proof_v1",
-    evidence: contract === undefined ? "legacy" : "captured",
+    evidence: capturedContract === undefined ? "legacy" : "captured",
     admission: "admitted",
-    ...(contract !== undefined ? { effectiveContract: contract } : {}),
+    ...(capturedContract !== undefined ? { effectiveContract: capturedContract } : {}),
     capabilities: readRequiredModelCapabilities(request),
     terminal: "completed",
     validation: validation === "passed" ? "passed" : "not_requested",
@@ -2224,11 +2261,12 @@ function createFailedModelCallProof(
   const failureCode = readNonEmptyString(error.code);
   const terminal = classifyModelCallFailure(failureCode, error);
   const providerRequestId = readProviderRequestId(error);
+  const capturedContract = contract?.status === "qualified" ? contract : undefined;
   return {
     version: "model_call_proof_v1",
-    evidence: contract === undefined ? "legacy" : "captured",
+    evidence: capturedContract === undefined ? "legacy" : "captured",
     admission: "admitted",
-    ...(contract !== undefined ? { effectiveContract: contract } : {}),
+    ...(capturedContract !== undefined ? { effectiveContract: capturedContract } : {}),
     capabilities: readRequiredModelCapabilities(request),
     terminal,
     validation: terminal === "verifier_rejected" ? "failed" : "not_requested",
@@ -2290,6 +2328,8 @@ function classifyModelCallFailure(
 
 const MODEL_RESPONSE_VERIFICATION_FAILURE_CODES = new Set([
   "MODEL_ENDPOINT_MISMATCH",
+  "MODEL_CONTINUATION_KIND_UNSUPPORTED",
+  "MODEL_CONTINUATION_PROVIDER_MISMATCH",
   "MODEL_MALFORMED_RESPONSE",
   "MODEL_NAMED_TOOL_CALL_MISSING",
   "MODEL_NAMED_TOOL_CALL_UNEXPECTED",

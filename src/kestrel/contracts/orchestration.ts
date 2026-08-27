@@ -14,7 +14,10 @@ import type {
   RunnerInteractionRequest,
 } from "@kestrel-agents/protocol";
 import type { RuntimeTurnActor } from "../../runtime/RuntimeTurn.js";
-import type { EffectiveModelContractV1 } from "../effective-model-contract.js";
+import {
+  parseEffectiveModelContractV1,
+  type EffectiveModelContractV1,
+} from "../effective-model-contract.js";
 
 export type ThreadStatus = "IDLE" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
 export type DelegationStatus = "PENDING" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED" | "CANCELLED";
@@ -474,6 +477,103 @@ export type ModelCallRequiredCapabilityV1 =
   | "required_tool_choice"
   | "strict_tool_inputs"
   | "streaming_terminal";
+
+/**
+ * Rebuilds the closed, secret-free proof shape before storage. Unknown fields
+ * are intentionally discarded so a caller cannot smuggle model content or
+ * credentials through the provenance ledger.
+ */
+export function parseModelCallProofV1(value: unknown): ModelCallProofV1 {
+  const record = asRecord(value, "model call proof");
+  const evidence = readEnum(record.evidence, ["captured", "legacy"] as const, "evidence");
+  const admission = readEnum(
+    record.admission,
+    ["pending", "admitted", "pre_spend_rejected", "unknown_legacy"] as const,
+    "admission",
+  );
+  const terminal = readEnum(
+    record.terminal,
+    ["pending", "completed", "pre_spend_rejected", "provider_rejected", "verifier_rejected", "interrupted", "unknown_legacy"] as const,
+    "terminal",
+  );
+  const validation = readEnum(
+    record.validation,
+    ["not_requested", "passed", "failed", "unknown_legacy"] as const,
+    "validation",
+  );
+  if (record.version !== MODEL_CALL_PROOF_V1) {
+    throw new Error("model call proof version is invalid");
+  }
+  const capabilities = readModelCallRequiredCapabilities(record.capabilities);
+  const effectiveContract = record.effectiveContract === undefined
+    ? undefined
+    : parseEffectiveModelContractV1(record.effectiveContract);
+  if (evidence === "legacy" && effectiveContract !== undefined) {
+    throw new Error("legacy model call proof must not claim an effective contract");
+  }
+  return {
+    version: MODEL_CALL_PROOF_V1,
+    evidence,
+    admission,
+    ...(effectiveContract !== undefined ? { effectiveContract } : {}),
+    capabilities,
+    terminal,
+    validation,
+    ...(readBoundedProofString(record.failureCode, "failureCode") !== undefined
+      ? { failureCode: readBoundedProofString(record.failureCode, "failureCode") }
+      : {}),
+    ...(readBoundedProofString(record.providerRequestId, "providerRequestId") !== undefined
+      ? { providerRequestId: readBoundedProofString(record.providerRequestId, "providerRequestId") }
+      : {}),
+  };
+}
+
+function readModelCallRequiredCapabilities(value: unknown): ModelCallRequiredCapabilityV1[] {
+  if (!Array.isArray(value)) throw new Error("model call proof capabilities are invalid");
+  const allowed = new Set<ModelCallRequiredCapabilityV1>([
+    "structured_output",
+    "strict_schema",
+    "tools",
+    "required_tool_choice",
+    "strict_tool_inputs",
+    "streaming_terminal",
+  ]);
+  const parsed = value.map((entry) => {
+    if (typeof entry !== "string" || !allowed.has(entry as ModelCallRequiredCapabilityV1)) {
+      throw new Error("model call proof capability is invalid");
+    }
+    return entry as ModelCallRequiredCapabilityV1;
+  });
+  return [...new Set(parsed)];
+}
+
+function asRecord(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function readEnum<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  label: string,
+): T {
+  if (typeof value !== "string" || allowed.includes(value as T) === false) {
+    throw new Error(`model call proof ${label} is invalid`);
+  }
+  return value as T;
+}
+
+function readBoundedProofString(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`model call proof ${label} is invalid`);
+  const normalized = value.trim();
+  if (normalized.length === 0 || normalized.length > 128) {
+    throw new Error(`model call proof ${label} is invalid`);
+  }
+  return normalized;
+}
 
 export interface RunTurnAttachment {
   fileId?: string | undefined;

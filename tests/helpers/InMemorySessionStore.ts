@@ -9,6 +9,7 @@ import type {
   ConversationTurnTerminalEnvelopeV1,
   ModelCallProvenanceRecord,
 } from "../../src/kestrel/contracts/orchestration.js";
+import { parseModelCallProofV1 } from "../../src/kestrel/contracts/orchestration.js";
 import type {
   ClaimConversationTurnExecutionInput,
   ClaimConversationTurnExecutionResult,
@@ -1431,7 +1432,10 @@ export class InMemorySessionStore implements SessionStore {
     if (this.modelCallProvenance.has(record.callId)) {
       return;
     }
-    this.modelCallProvenance.set(record.callId, structuredClone(record));
+    this.modelCallProvenance.set(record.callId, {
+      ...structuredClone(record),
+      proof: parseModelCallProofV1(record.proof),
+    });
     this.operationLog.push(`appendModelCallProvenance:${record.callId}:${record.status}`);
   }
 
@@ -1456,7 +1460,7 @@ export class InMemorySessionStore implements SessionStore {
       ...(input.providerPayloadHash !== undefined
         ? { providerPayloadHash: input.providerPayloadHash }
         : {}),
-      ...(input.proof !== undefined ? { proof: structuredClone(input.proof) } : {}),
+      ...(input.proof !== undefined ? { proof: parseModelCallProofV1(input.proof) } : {}),
       ...(input.metadata !== undefined
         ? { metadata: { ...(current.metadata ?? {}), ...structuredClone(input.metadata) } }
         : {}),

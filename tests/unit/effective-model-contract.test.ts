@@ -52,6 +52,14 @@ test("exact admission rejects stale capability evidence before a gateway can be 
     routeBinding: bindingFor(registration),
     endpoint: "responses",
   });
+  const preSpend = resolver.describePreSpendAttempt?.({ request: strictRequest() });
+  assert.ok(preSpend !== undefined && !(preSpend instanceof Promise));
+  assert.equal(preSpend?.contract?.endpointCodec, "openai.responses.v2");
+  assert.equal(preSpend?.contract?.runtimeRole, "agent.loop");
+  const preSpendRequest = normalizeModelRequestV2(preSpend!.request);
+  assert.equal(preSpendRequest.requirements.output.assurance, "provider_strict_schema");
+  assert.equal(preSpendRequest.requirements.tools.choice, "required");
+  assert.equal(preSpendRequest.requirements.tools.strictArguments, true);
   assert.throws(
     () => resolver.admit({ request: strictRequest() }),
     (error: unknown) => (error as { code?: string }).code === "MODEL_QUALIFICATION_STALE",

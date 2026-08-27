@@ -157,9 +157,9 @@ test("RuntimeIO rejects a legacy structured request before provider dispatch", a
   assert.equal(provenanceRecords.length, 1);
   assert.deepEqual(provenanceRecords[0]?.proof, {
     version: "model_call_proof_v1",
-    evidence: "captured",
+    evidence: "legacy",
     admission: "pending",
-    capabilities: [],
+    capabilities: ["structured_output"],
     terminal: "pending",
     validation: "not_requested",
   });
@@ -181,6 +181,12 @@ test("RuntimeIO records provider, verifier, and interrupted terminal proof disti
     {
       code: "MODEL_REQUIRED_TOOL_CALL_MISSING",
       details: { requestId: "provider-request-2" },
+      terminal: "verifier_rejected",
+      validation: "failed",
+    },
+    {
+      code: "MODEL_CONTINUATION_KIND_UNSUPPORTED",
+      details: { requestId: "provider-request-continuation" },
       terminal: "verifier_rejected",
       validation: "failed",
     },
@@ -213,6 +219,64 @@ test("RuntimeIO records provider, verifier, and interrupted terminal proof disti
     assert.equal(failed?.proof?.failureCode, expected.code);
     assert.equal(failed?.proof?.providerRequestId, expected.details.requestId);
   }
+});
+
+test("RuntimeIO records an economics admission block as pre-spend", async () => {
+  let providerCalled = false;
+  const provenanceUpdates: Array<
+    Parameters<NonNullable<RuntimeStore["updateModelCallProvenance"]>>[0]
+  > = [];
+  const policy = economicsPolicy({ mode: "enforce", exposure: "assembly_allowlist", maxToolTokens: 10_000 });
+  policy.context = {
+    outputReserveTokens: 1,
+    safetyReserveTokens: 1,
+    sections: [{ id: "task", priority: "required" }],
+  };
+  const control = economicsControl(policy);
+  control.modelProfiles[0]!.contextWindowTokens = 4;
+  control.modelProfiles[0]!.maxOutputTokens = 1;
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    provenanceUpdates,
+    runtimeMetadata: { runtimeAssembly: { harnessEconomics: control } },
+    modelCall: async () => {
+      providerCalled = true;
+      return { ok: true };
+    },
+  });
+
+  await assert.rejects(
+    () => io.model({
+      ...modelRequest(),
+      model: "model-a",
+      metadata: {
+        requestedProvider: "provider-a",
+        phase: "agent.loop",
+        contextSections: [{
+          id: "task",
+          origin: "test",
+          contentHash: "a".repeat(64),
+          count: {
+            version: 1,
+            tokens: 10,
+            bytes: 10,
+            method: "model_tokenizer",
+            confidence: "model_compatible",
+            counter: "tiktoken:o200k_base",
+            counterVersion: "1.0.21",
+          },
+        }],
+      },
+    }),
+    (error) => readErrorCode(error) === "HARNESS_ECONOMICS_CONTEXT_ADMISSION_BLOCKED",
+  );
+
+  assert.equal(providerCalled, false);
+  const failed = provenanceUpdates.find((update) => update.status === "FAILED");
+  assert.equal(failed?.proof?.admission, "pre_spend_rejected");
+  assert.equal(failed?.proof?.terminal, "pre_spend_rejected");
+  assert.equal(failed?.proof?.failureCode, "HARNESS_ECONOMICS_CONTEXT_ADMISSION_BLOCKED");
 });
 
 test("RuntimeIO disables gateway retries for maintenance calls only", async () => {
