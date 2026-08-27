@@ -1812,6 +1812,17 @@ export class PostgresSessionStore implements SessionStore {
       }, row.tenant_id, row.tenant_ownership_state, result)) {
         throw new SandboxCapabilityExactResultConflictError("Effect result tenant does not match durable authority");
       }
+      const persistedResult =
+        result.status === "DONE" &&
+        isPreparedApprovalCleanupReleaseEffect(
+          row.effect_type,
+          row.payload_json,
+        )
+          ? normalizePreparedApprovalCleanupDoneEvidence({
+              ...result,
+              status: "DONE",
+            })
+          : result;
       await executor.query(
         `INSERT INTO effect_results
            (run_id, session_id, idempotency_key, status, output_json, error_json, created_at)
@@ -1820,11 +1831,11 @@ export class PostgresSessionStore implements SessionStore {
         [
           runId,
           sessionId,
-          result.idempotencyKey,
-          result.status,
-          stringifySanitizedJson(result.output ?? null),
-          stringifySanitizedJson(result.error ?? null),
-          normalizeTimestampString(result.timestamp),
+          persistedResult.idempotencyKey,
+          persistedResult.status,
+          stringifySanitizedJson(persistedResult.output ?? null),
+          stringifySanitizedJson(persistedResult.error ?? null),
+          normalizeTimestampString(persistedResult.timestamp),
         ],
       );
     });
@@ -2034,7 +2045,9 @@ export class PostgresSessionStore implements SessionStore {
         return "done";
       } catch {
         const normalizedResult =
-          normalizePreparedApprovalCleanupDoneEvidence(result);
+          normalizePreparedApprovalCleanupDoneEvidence(result, {
+            representation: "normalized",
+          });
         const quarantined =
           quarantinePreparedApprovalCleanupDoneResult(normalizedResult);
         await this.appendRunEventsBatchWithExecutor(executor, [
@@ -2042,6 +2055,7 @@ export class PostgresSessionStore implements SessionStore {
             effect,
             invalidResult: normalizedResult,
             occurredAt: new Date().toISOString(),
+            evidenceRepresentation: "normalized",
           }),
         ]);
         await executor.query(

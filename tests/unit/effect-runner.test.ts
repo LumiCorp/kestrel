@@ -677,6 +677,7 @@ test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free",
     functionValue: () => "omitted",
     symbolValue: Symbol("omitted"),
     invalidUnicode: "bad\ud800value",
+    oversizedString: "bounded".repeat(100),
   };
   rawDurableForm.self = rawDurableForm;
   const rawDurableResult = {
@@ -700,10 +701,114 @@ test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free",
         output: JSON.parse(JSON.stringify(normalizedDurableResult.output)),
       },
       occurredAt: "2026-08-27T00:00:02.000Z",
+      evidenceRepresentation: "normalized",
     });
   assert.deepEqual(
     rawDurableEvent.metadata?.evidence,
     persistedDurableEvent.metadata?.evidence,
+  );
+  assert.deepEqual(
+    normalizePreparedApprovalCleanupDoneEvidence(
+      {
+        ...normalizedDurableResult,
+        output: JSON.parse(JSON.stringify(normalizedDurableResult.output)),
+      },
+      { representation: "normalized" },
+    ).output,
+    normalizedDurableResult.output,
+    "JSON-persisted normalization markers must replay idempotently",
+  );
+
+  const sharedOversizedKeyPrefix = "oversized-key-secret-sentinel".repeat(20);
+  const firstOversizedKey = `${sharedOversizedKeyPrefix}:first`;
+  const secondOversizedKey = `${sharedOversizedKeyPrefix}:second`;
+  const oversizedKeyResult = normalizePreparedApprovalCleanupDoneEvidence({
+    ...invalidResult,
+    output: {
+      [firstOversizedKey]: "first-value",
+      [secondOversizedKey]: "second-value",
+    },
+  });
+  const oversizedKeyOutput = oversizedKeyResult.output as Record<string, unknown>;
+  const boundedIdentityKeys = Object.keys(oversizedKeyOutput).filter(
+    (key) => key !== "$kestrelCleanupEvidence",
+  );
+  assert.equal(boundedIdentityKeys.length, 2);
+  assert.notEqual(boundedIdentityKeys[0], boundedIdentityKeys[1]);
+  assert.ok(boundedIdentityKeys.every((key) =>
+    /^\$kestrelCleanupKey:v1:[0-9a-f]{64}:[0-9]+$/u.test(key)
+  ));
+  assert.deepEqual(
+    boundedIdentityKeys.map((key) => oversizedKeyOutput[key]).sort(),
+    ["first-value", "second-value"],
+    "shared-prefix oversized keys must not overwrite each other",
+  );
+  assert.deepEqual(
+    normalizePreparedApprovalCleanupDoneEvidence(
+      JSON.parse(JSON.stringify(oversizedKeyResult)),
+      { representation: "normalized" },
+    ).output,
+    oversizedKeyResult.output,
+    "bounded key identities and their diagnostics must replay idempotently",
+  );
+  const oversizedKeyEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect,
+      invalidResult: { ...invalidResult, output: {
+        [firstOversizedKey]: "first-value",
+        [secondOversizedKey]: "second-value",
+      } },
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  const oversizedKeyEvidence = oversizedKeyEvent.metadata?.evidence as
+    Record<string, unknown>;
+  assert.equal(oversizedKeyEvidence.sourceBytesTruncated, true);
+  assert.equal(
+    (oversizedKeyEvidence.outputShape as Record<string, unknown>)
+      .topLevelEntriesTruncated,
+    false,
+    "bounded key identities must not claim that entries were dropped",
+  );
+  assert.equal(
+    JSON.stringify(oversizedKeyEvent).includes(sharedOversizedKeyPrefix),
+    false,
+  );
+
+  const forgedMarkerOutput = {
+    stable: "value",
+    $kestrelCleanupEvidence: "object_entries_and_keys_truncated",
+  };
+  const forgedMarkerEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect,
+      invalidResult: { ...invalidResult, output: forgedMarkerOutput },
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  const forgedEvidence = forgedMarkerEvent.metadata?.evidence as
+    Record<string, unknown>;
+  assert.equal(forgedEvidence.sourceBytesTruncated, false);
+  assert.equal(forgedEvidence.traversalTruncated, false);
+  assert.equal(
+    (forgedEvidence.outputShape as Record<string, unknown>)
+      .topLevelEntriesTruncated,
+    false,
+    "a raw marker-like key must remain user evidence, not internal diagnostics",
+  );
+  const normalizedForgedResult =
+    normalizePreparedApprovalCleanupDoneEvidence({
+      ...invalidResult,
+      output: forgedMarkerOutput,
+    });
+  const replayedForgedMarkerEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect,
+      invalidResult: JSON.parse(JSON.stringify(normalizedForgedResult)),
+      occurredAt: "2026-08-27T00:00:02.000Z",
+      evidenceRepresentation: "normalized",
+    });
+  assert.deepEqual(
+    replayedForgedMarkerEvent.metadata?.evidence,
+    forgedMarkerEvent.metadata?.evidence,
   );
 
   const identitySentinel = "oversized-identifier-secret-sentinel".repeat(50_000);

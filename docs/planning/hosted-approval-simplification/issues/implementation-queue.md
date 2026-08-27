@@ -11,9 +11,6 @@ work; this queue does not reopen them.
 
 ## Ready
 
-- [Normalize cleanup evidence before store-specific persistence](06v-normalize-cleanup-before-persistence.md)
-- [Preserve bounded identities for oversized cleanup evidence keys](06w-preserve-oversized-cleanup-key-identities.md)
-- [Prevent forged cleanup evidence normalization markers](06x-prevent-forged-cleanup-evidence-markers.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
@@ -26,6 +23,9 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Normalize cleanup evidence before store-specific persistence](06v-normalize-cleanup-before-persistence.md)
+- [Preserve bounded identities for oversized cleanup evidence keys](06w-preserve-oversized-cleanup-key-identities.md)
+- [Prevent forged cleanup evidence normalization markers](06x-prevent-forged-cleanup-evidence-markers.md)
 - [Normalize cleanup quarantine values across stores](06t-normalize-cleanup-quarantine-values.md)
 - [Bound cleanup quarantine audit timestamp](06u-bound-cleanup-audit-timestamp.md)
 - [Align hosted approval contract gates](06s-align-hosted-approval-contract-gates.md)

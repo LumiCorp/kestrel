@@ -18,7 +18,6 @@ import { PgSqlExecutor } from "../src/store/PgSqlExecutor.js";
 import { PostgresSessionStore } from "../src/store/PostgresSessionStore.js";
 import {
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
-  normalizePreparedApprovalCleanupDoneEvidence,
   PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
 } from "../src/runtime/preparedApprovalCleanupAudit.js";
 import { createTestToolGateway, prepareTestToolCall } from "./helpers/createTestToolGateway.js";
@@ -494,7 +493,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
           idempotency_key, failure_policy, status, created_at, tenant_id,
           tenant_ownership_state)
        VALUES ($1, $2, 3, 'release_prepared_tool_call', $3::jsonb, $4,
-               'STOP', 'FAILED', NOW(), $5, 'tenant_bound')`,
+               'STOP', 'PENDING', NOW(), $5, 'tenant_bound')`,
       [
         runId,
         sessionId,
@@ -523,27 +522,19 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       omitted: undefined,
       functionValue: () => "pg-function-secret-sentinel",
       invalidUnicode: "bad\ud800value",
+      throwingToJson: {
+        toJSON() {
+          throw new Error("pg-to-json-secret-sentinel");
+        },
+      },
     };
     rawEquivalentOutput.self = rawEquivalentOutput;
-    const normalizedPgResult = normalizePreparedApprovalCleanupDoneEvidence({
+    await store.saveEffectResult(runId, sessionId, {
       idempotencyKey: conflictingEffectId,
       status: "DONE",
       output: rawEquivalentOutput,
       timestamp: "2026-08-27T00:00:01.000Z",
     });
-    await pool.query(
-      `INSERT INTO effect_results
-         (run_id, session_id, idempotency_key, status, output_json,
-          error_json, created_at)
-       VALUES ($1, $2, $3, 'DONE', $4::jsonb, NULL, $5::timestamptz)`,
-      [
-        runId,
-        sessionId,
-        conflictingEffectId,
-        JSON.stringify(normalizedPgResult.output),
-        "2026-08-27T00:00:01.000Z",
-      ],
-    );
     assert.equal(
       await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
         conflictingEffectId,

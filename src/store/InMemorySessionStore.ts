@@ -1038,7 +1038,16 @@ export class InMemorySessionStore implements SessionStore {
       return;
     }
 
-    this.effectResults.set(result.idempotencyKey, { ...result });
+    const persistedResult =
+      result.status === "DONE" &&
+      effect.type === "release_prepared_tool_call" &&
+      hasPreparedApprovalCleanupMarker(effect.payload)
+        ? normalizePreparedApprovalCleanupDoneEvidence({
+            ...result,
+            status: "DONE",
+          })
+        : result;
+    this.effectResults.set(result.idempotencyKey, { ...persistedResult });
     this.operationLog.push(`saveEffectResult:${result.idempotencyKey}:${result.status}`);
   }
 
@@ -1134,12 +1143,15 @@ export class InMemorySessionStore implements SessionStore {
           return "done";
         } catch {
           const normalizedDoneResult =
-            normalizePreparedApprovalCleanupDoneEvidence(doneResult);
+            normalizePreparedApprovalCleanupDoneEvidence(doneResult, {
+              representation: "normalized",
+            });
           const auditEvent =
             buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
               effect,
               invalidResult: normalizedDoneResult,
               occurredAt: new Date().toISOString(),
+              evidenceRepresentation: "normalized",
             });
           const quarantinedResult =
             quarantinePreparedApprovalCleanupDoneResult(normalizedDoneResult);

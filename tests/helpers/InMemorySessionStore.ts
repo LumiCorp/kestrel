@@ -647,7 +647,19 @@ export class InMemorySessionStore implements SessionStore {
       return;
     }
 
-    this.effectResults.set(result.idempotencyKey, { ...result });
+    const effect = this.effects.find(
+      (candidate) => candidate.idempotencyKey === result.idempotencyKey,
+    );
+    const persistedResult =
+      result.status === "DONE" &&
+      effect?.type === "release_prepared_tool_call" &&
+      hasPreparedApprovalCleanupMarker(effect.payload)
+        ? normalizePreparedApprovalCleanupDoneEvidence({
+            ...result,
+            status: "DONE",
+          })
+        : result;
+    this.effectResults.set(result.idempotencyKey, { ...persistedResult });
     this.operationLog.push(`saveEffectResult:${result.idempotencyKey}:${result.status}`);
   }
 
@@ -749,12 +761,15 @@ export class InMemorySessionStore implements SessionStore {
           return "done";
         } catch {
           const normalizedDoneResult =
-            normalizePreparedApprovalCleanupDoneEvidence(doneResult);
+            normalizePreparedApprovalCleanupDoneEvidence(doneResult, {
+              representation: "normalized",
+            });
           const auditEvent =
             buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
               effect,
               invalidResult: normalizedDoneResult,
               occurredAt: new Date().toISOString(),
+              evidenceRepresentation: "normalized",
             });
           const quarantinedResult =
             quarantinePreparedApprovalCleanupDoneResult(normalizedDoneResult);
@@ -1951,6 +1966,17 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function hasPreparedApprovalCleanupMarker(value: unknown): boolean {
+  const marker = asRecord(value)?.preparedApprovalCleanup;
+  if (marker === undefined) return false;
+  try {
+    parseRunnerPreparedApprovalCleanupV1(marker);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readMissionControlRunCorrelation(value: unknown) {

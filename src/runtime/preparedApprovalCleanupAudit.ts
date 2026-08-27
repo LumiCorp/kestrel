@@ -10,6 +10,8 @@ const MAX_CONTAINER_ENTRIES = 16;
 const MAX_STRING_CODE_UNITS = 256;
 const OMIT_NORMALIZED_VALUE = Symbol("omit-cleanup-evidence-value");
 const NORMALIZATION_MARKER = "$kestrelCleanupEvidence";
+const NORMALIZED_KEY_PREFIX = "$kestrelCleanupKey:v1:";
+const NORMALIZED_KEY_PATTERN = /^\$kestrelCleanupKey:v1:[0-9a-f]{64}:[0-9]+$/u;
 
 export const PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES =
   4_096;
@@ -20,6 +22,7 @@ interface BoundedProjectionState {
   sourceBytesTruncated: boolean;
   traversalTruncated: boolean;
   ancestors: WeakSet<object>;
+  trustNormalizedMarkers?: boolean;
 }
 
 interface BoundedShapeSummary {
@@ -39,6 +42,7 @@ type NormalizedCleanupEvidenceValue =
 
 export function normalizePreparedApprovalCleanupDoneEvidence(
   result: EffectResult & { status: "DONE" },
+  options: { representation?: "raw" | "normalized" } = {},
 ): EffectResult & { status: "DONE" } {
   const state: BoundedProjectionState = {
     nodesVisited: 0,
@@ -46,6 +50,7 @@ export function normalizePreparedApprovalCleanupDoneEvidence(
     sourceBytesTruncated: false,
     traversalTruncated: false,
     ancestors: new WeakSet<object>(),
+    trustNormalizedMarkers: options.representation === "normalized",
   };
   const output = normalizeEvidenceValue(result.output, state, 0, "root");
   const error = normalizeEvidenceValue(result.error, state, 0, "root");
@@ -62,9 +67,11 @@ export function buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent(input: {
   effect: PersistedEffect;
   invalidResult: EffectResult & { status: "DONE" };
   occurredAt: string;
+  evidenceRepresentation?: "raw" | "normalized";
 }): RunEvent {
   const normalizedResult = normalizePreparedApprovalCleanupDoneEvidence(
     input.invalidResult,
+    { representation: input.evidenceRepresentation ?? "raw" },
   );
   const evidence = projectBoundedEvidence({
     output: normalizedResult.output,
@@ -168,6 +175,10 @@ function normalizeEvidenceValue(
     state.traversalTruncated = true;
     return normalizationMarker("uninspectable");
   }
+  if (!array && state.trustNormalizedMarkers) {
+    const marker = readNormalizationMarker(value as Record<string, unknown>);
+    if (marker !== undefined) return normalizationMarker(marker.kind, marker.evidence);
+  }
   if (depth >= MAX_DEPTH) {
     state.traversalTruncated = true;
     return normalizationMarker(`${array ? "array" : "object"}_depth_limit`);
@@ -225,18 +236,45 @@ function normalizeEvidenceObject(
   state: BoundedProjectionState,
   depth: number,
 ): NormalizedCleanupEvidenceValue {
-  let selection: { keys: string[]; truncated: boolean };
+  const persistedDiagnostics = state.trustNormalizedMarkers
+    ? readObjectNormalizationMarker(value)
+    : undefined;
+  let selection: {
+    keys: string[];
+    truncated: boolean;
+    keysTruncated: boolean;
+  };
   try {
     selection = selectCanonicalOwnKeys(value);
   } catch {
     state.traversalTruncated = true;
     return normalizationMarker("uninspectable_object");
   }
-  state.traversalTruncated ||= selection.truncated;
+  const selectedUserKeys = selection.keys.filter(
+    (key) => !(
+      key === NORMALIZATION_MARKER &&
+      isObjectNormalizationDiagnostic(persistedDiagnostics?.kind)
+    ),
+  );
+  const persistedEntriesTruncated =
+    persistedDiagnostics?.kind === "object_truncated" ||
+    persistedDiagnostics?.kind === "object_entries_and_keys_truncated";
+  const persistedKeysTruncated =
+    persistedDiagnostics?.kind === "object_keys_truncated" ||
+    persistedDiagnostics?.kind === "object_entries_and_keys_truncated";
+  const entriesTruncated =
+    persistedEntriesTruncated ||
+    selection.truncated ||
+    ((selection.keysTruncated || persistedKeysTruncated) &&
+      selectedUserKeys.length >= MAX_CONTAINER_ENTRIES);
+  const keysTruncated = selection.keysTruncated || persistedKeysTruncated;
+  state.traversalTruncated ||= entriesTruncated;
+  state.sourceBytesTruncated ||= keysTruncated;
   const normalized: Record<string, NormalizedCleanupEvidenceValue> = {};
-  const selectedKeys = selection.truncated
-    ? selection.keys.slice(0, MAX_CONTAINER_ENTRIES - 1)
-    : selection.keys;
+  const needsDiagnostics = entriesTruncated || keysTruncated;
+  const selectedKeys = needsDiagnostics
+    ? selectedUserKeys.slice(0, MAX_CONTAINER_ENTRIES - 1)
+    : selectedUserKeys;
   for (const key of selectedKeys) {
     let member: unknown;
     try {
@@ -247,7 +285,7 @@ function normalizeEvidenceObject(
     }
     const next = normalizeEvidenceValue(member, state, depth + 1, "object");
     if (next === OMIT_NORMALIZED_VALUE) continue;
-    const safeKey = sanitizeUtf16String(key.slice(0, MAX_STRING_CODE_UNITS));
+    const safeKey = normalizeEvidenceKey(key, state.trustNormalizedMarkers === true);
     Object.defineProperty(normalized, safeKey, {
       value: next,
       enumerable: true,
@@ -255,9 +293,13 @@ function normalizeEvidenceObject(
       writable: true,
     });
   }
-  if (selection.truncated) {
+  if (needsDiagnostics) {
     Object.defineProperty(normalized, NORMALIZATION_MARKER, {
-      value: "object_truncated",
+      value: entriesTruncated && keysTruncated
+        ? "object_entries_and_keys_truncated"
+        : entriesTruncated
+          ? "object_truncated"
+          : "object_keys_truncated",
       enumerable: true,
       configurable: true,
       writable: true,
@@ -272,6 +314,19 @@ function normalizationMarker(
 ): NormalizedCleanupEvidenceValue {
   return { [NORMALIZATION_MARKER]: kind, ...evidence } as
     NormalizedCleanupEvidenceValue;
+}
+
+function normalizeEvidenceKey(key: string, trustNormalizedKeys: boolean): string {
+  if (trustNormalizedKeys && NORMALIZED_KEY_PATTERN.test(key)) return key;
+  const safe = sanitizeUtf16String(key);
+  if (
+    safe === key &&
+    key.length <= MAX_STRING_CODE_UNITS &&
+    key !== NORMALIZATION_MARKER &&
+    !key.startsWith(NORMALIZED_KEY_PREFIX)
+  ) return key;
+  const identity = projectIdentifier(key);
+  return `${NORMALIZED_KEY_PREFIX}${identity.canonicalHash.slice("sha256:".length)}:${identity.utf8ByteSize}`;
 }
 
 function projectBoundedEvidence(input: {
@@ -402,18 +457,29 @@ function projectObject(
   state: BoundedProjectionState,
   depth: number,
 ): { canonical: unknown; summary: BoundedShapeSummary } {
-  const normalizationKind = readNormalizationKind(value);
+  const normalizationKind = readObjectNormalizationMarker(value)?.kind;
   if (normalizationKind === "truncated_string" || normalizationKind === "bigint") {
+    state.sourceBytesTruncated = true;
+  }
+  if (
+    normalizationKind === "object_keys_truncated" ||
+    normalizationKind === "object_entries_and_keys_truncated"
+  ) {
     state.sourceBytesTruncated = true;
   }
   if (
     normalizationKind !== undefined &&
     normalizationKind !== "truncated_string" &&
-    normalizationKind !== "bigint"
+    normalizationKind !== "bigint" &&
+    !isObjectNormalizationDiagnostic(normalizationKind)
   ) {
     state.traversalTruncated = true;
   }
-  let selection: { keys: string[]; truncated: boolean };
+  let selection: {
+    keys: string[];
+    truncated: boolean;
+    keysTruncated: boolean;
+  };
   try {
     selection = selectCanonicalOwnKeys(value);
   } catch {
@@ -436,7 +502,9 @@ function projectObject(
     entries.push({ key: keyEvidence.canonicalHash, value: projected.canonical });
     incrementType(types, projected.summary.type);
   }
-  const carriesTruncationMarker = normalizationKind === "object_truncated";
+  const carriesTruncationMarker =
+    normalizationKind === "object_truncated" ||
+    normalizationKind === "object_entries_and_keys_truncated";
   state.traversalTruncated ||= selection.truncated || carriesTruncationMarker;
   return {
     canonical: {
@@ -454,38 +522,124 @@ function projectObject(
   };
 }
 
-function readNormalizationKind(value: Record<string, unknown>): string | undefined {
+function readNormalizationMarker(value: Record<string, unknown>):
+  | { kind: string; evidence: Record<string, NormalizedCleanupEvidenceValue> }
+  | undefined {
+  let keys: string[];
   let marker: unknown;
   try {
+    keys = Object.keys(value);
     marker = value[NORMALIZATION_MARKER];
   } catch {
     return;
   }
-  return typeof marker === "string" ? marker : undefined;
+  if (typeof marker !== "string" || !isNormalizationKind(marker)) return;
+  if (marker !== "truncated_string") {
+    return keys.length === 1 && keys[0] === NORMALIZATION_MARKER
+      ? { kind: marker, evidence: {} }
+      : undefined;
+  }
+  if (
+    keys.length !== 3 ||
+    !keys.includes(NORMALIZATION_MARKER) ||
+    !keys.includes("canonicalHash") ||
+    !keys.includes("utf8ByteSize")
+  ) return;
+  const evidence = {
+    canonicalHash: value.canonicalHash,
+    utf8ByteSize: value.utf8ByteSize,
+  } as Record<string, NormalizedCleanupEvidenceValue>;
+  return isValidTruncatedStringEvidence(evidence)
+    ? { kind: marker, evidence }
+    : undefined;
+}
+
+function readObjectNormalizationMarker(
+  value: Record<string, unknown>,
+): { kind: string; evidence: Record<string, NormalizedCleanupEvidenceValue> }
+  | undefined {
+  const standalone = readNormalizationMarker(value);
+  if (standalone !== undefined) return standalone;
+  let payload: unknown;
+  try {
+    payload = value[NORMALIZATION_MARKER];
+  } catch {
+    return;
+  }
+  return typeof payload === "string" &&
+      isObjectNormalizationDiagnostic(payload)
+    ? { kind: payload, evidence: {} }
+    : undefined;
 }
 
 function isNormalizationMarker(value: unknown, kind: string): boolean {
   return typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    readNormalizationKind(value as Record<string, unknown>) === kind;
+    readNormalizationMarker(value as Record<string, unknown>)?.kind === kind;
+}
+
+function isNormalizationKind(kind: string): boolean {
+  return [
+    "node_limit",
+    "truncated_string",
+    "bigint",
+    "circular",
+    "uninspectable",
+    "array_depth_limit",
+    "object_depth_limit",
+    "uninspectable_array",
+    "unreadable",
+    "array_truncated",
+    "uninspectable_object",
+    "object_truncated",
+    "object_keys_truncated",
+    "object_entries_and_keys_truncated",
+  ].includes(kind);
+}
+
+function isObjectNormalizationDiagnostic(kind: string | undefined): boolean {
+  return kind === "object_truncated" ||
+    kind === "object_keys_truncated" ||
+    kind === "object_entries_and_keys_truncated";
+}
+
+function isValidTruncatedStringEvidence(
+  evidence: Record<string, NormalizedCleanupEvidenceValue>,
+): boolean {
+  const keys = Object.keys(evidence);
+  return keys.length === 2 &&
+    keys.includes("canonicalHash") &&
+    keys.includes("utf8ByteSize") &&
+    typeof evidence.canonicalHash === "string" &&
+    /^sha256:[0-9a-f]{64}$/u.test(evidence.canonicalHash) &&
+    typeof evidence.utf8ByteSize === "number" &&
+    Number.isSafeInteger(evidence.utf8ByteSize) &&
+    evidence.utf8ByteSize >= 0;
 }
 
 function selectCanonicalOwnKeys(value: Record<string, unknown>): {
   keys: string[];
   truncated: boolean;
+  keysTruncated: boolean;
 } {
   const selected: string[] = [];
   let ownKeyCount = 0;
+  let keysTruncated = false;
   for (const key in value) {
     if (!Object.hasOwn(value, key)) continue;
     ownKeyCount += 1;
+    keysTruncated ||= key.length > MAX_STRING_CODE_UNITS;
     let insertAt = selected.findIndex((candidate) => key < candidate);
     if (insertAt < 0) insertAt = selected.length;
     selected.splice(insertAt, 0, key);
     if (selected.length > MAX_CONTAINER_ENTRIES) selected.pop();
   }
-  return { keys: selected, truncated: ownKeyCount > selected.length };
+  return {
+    keys: selected,
+    truncated: ownKeyCount > selected.length,
+    keysTruncated,
+  };
 }
 
 function primitiveProjection(
