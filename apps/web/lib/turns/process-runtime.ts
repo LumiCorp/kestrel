@@ -62,6 +62,7 @@ import {
   isDurableTurnCancellationRequested,
   listMessagesForDurableTurn,
   persistDurableAssistantOutcome,
+  recordDurablePreparedApprovalCleanupCompleted,
   recordDurableRuntimeDeclineCompleted,
   recordDurableRuntimeStarted,
   recordDurableRuntimeToolOutcome,
@@ -956,14 +957,27 @@ export async function processDurableThreadTurn(
     // Once the runtime has produced a complete terminal presentation, that
     // result is authoritative even if the worker lease ends immediately after
     // it. Earlier worker loss reaches the failed/catch paths instead.
-    const completionStatus = terminalTurnStatus(terminal.status);
+    let completionStatus = terminalTurnStatus(terminal.status);
+    const preparedCleanupFailureCode =
+      turn.interactionResponse?.preparedApprovalCleanupFailureCode;
+    const preparedCleanupFailureMessage =
+      turn.interactionResponse?.preparedApprovalCleanupFailureMessage;
     if (
+      completionStatus === "completed" &&
+      preparedCleanupFailureCode !== undefined
+    ) {
+      await recordDurablePreparedApprovalCleanupCompleted({ turnId: turn.id });
+      completionStatus = "failed";
+    } else if (
       completionStatus === "completed" &&
       turn.interactionResponse?.decision === "decline"
     ) {
       await recordDurableRuntimeDeclineCompleted({ turnId: turn.id });
     }
-    const interactionFailure = completionStatus === "failed" && !runnerRunStartedObserved
+    const interactionFailure =
+      preparedCleanupFailureCode === undefined &&
+      completionStatus === "failed" &&
+      !runnerRunStartedObserved
       ? {
           failureCode: terminal.errorCode ?? "RUNTIME_FAILED",
           failureMessage:
@@ -983,13 +997,14 @@ export async function processDurableThreadTurn(
       replayChunks: terminal.replayChunks,
       failureCode:
         completionStatus === "failed"
-          ? workerInterrupted
+          ? preparedCleanupFailureCode ?? (workerInterrupted
             ? "TURN_WORKER_INTERRUPTED"
             : terminal.status === "contract_failure"
               ? "PRESENTATION_CONTRACT_FAILURE"
-              : terminal.errorCode ?? "RUNTIME_FAILED"
+              : terminal.errorCode ?? "RUNTIME_FAILED")
           : null,
-      failureMessage: terminal.error,
+      failureMessage:
+        preparedCleanupFailureMessage ?? terminal.error,
       interactionFailure,
     });
     return { processed: true, nextTurnId: completion.nextTurnId };

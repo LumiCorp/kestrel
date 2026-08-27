@@ -1034,9 +1034,9 @@ test(
     assert.deepEqual(expiredV2, {
       availabilityStatus: "expired",
       payload: { redacted: true, operation: "tavily.research" },
-      interactionStatus: "failed",
-      failureCode: "EXTERNAL_APPROVAL_EXPIRED",
-      effectStatus: "not_started",
+      interactionStatus: "processing",
+      failureCode: null,
+      effectStatus: null,
     });
 
     const orphanedV2Binding = {
@@ -1825,6 +1825,7 @@ test(
         legacy?: boolean;
         requestedAt?: string;
         expiresAt?: string;
+        requestingActorId?: string;
       } = {},
     ) => {
       const turnId = `exec-remember-${label}-turn-${suffix}`;
@@ -1861,7 +1862,7 @@ test(
           stableToolIdentity: toolIdentity,
           requestingActor: {
             actorType: "end_user",
-            actorId: userId,
+            actorId: timing.requestingActorId ?? userId,
             tenantId: organizationId,
           },
           ...(timing.legacy
@@ -2057,8 +2058,8 @@ test(
       187,
       { legacy: true },
     );
-    await assert.rejects(
-      () => turnStore.resolveDurableRuntimeInteraction({
+    const legacyExecRememberResolution =
+      await turnStore.resolveDurableRuntimeInteraction({
         threadId,
         organizationId,
         userId,
@@ -2069,12 +2070,12 @@ test(
         decision: "remember_approval",
         messageId: `exec-legacy-remember-message-${suffix}`,
         source: "mobile",
-      }),
-      (error: unknown) =>
-        (error as { code?: unknown }).code === "TURN_CONFLICT",
-    );
+      });
+    assert.equal(legacyExecRememberResolution.shouldDispatch, true);
     const [legacyExecRememberState] = await sql<
       Array<{
+        cleanupFailureCode: string | null;
+        decision: string | null;
         status: string;
         failureCode: string | null;
         rememberedCount: number;
@@ -2082,6 +2083,9 @@ test(
     >`
       SELECT
         interaction."status",
+        interaction."response_envelope"->>'decision' AS "decision",
+        interaction."response_envelope"->'preparedApprovalCleanup'->>'failureCode'
+          AS "cleanupFailureCode",
         interaction."response_failure_code" AS "failureCode",
         (SELECT count(*)::int FROM "remembered_tool_approvals"
           WHERE "source_interaction_id" = ${legacyExecRemember.interactionId})
@@ -2090,9 +2094,93 @@ test(
       WHERE interaction."id" = ${legacyExecRemember.interactionId}
     `;
     assert.deepEqual(legacyExecRememberState, {
-      status: "pending",
+      cleanupFailureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+      decision: "remember_approval",
+      status: "processing",
       failureCode: null,
       rememberedCount: 0,
+    });
+    assert.deepEqual(
+      (await turnStore.claimDurableThreadTurn(legacyExecRemember.turnId))
+        ?.interactionResponse,
+      {
+        requestId: legacyExecRemember.requestId,
+        eventType: "user.approval",
+        message: "Remember approval",
+        decision: "decline",
+        decidingActor: {
+          actorType: "end_user",
+          actorId: userId,
+          tenantId: organizationId,
+        },
+        preparedApprovalCleanupFailureCode:
+          "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+        preparedApprovalCleanupFailureMessage:
+          "The approval no longer matches the prepared tool invocation.",
+      },
+    );
+    assert.equal(
+      await turnStore.recordDurablePreparedApprovalCleanupCompleted({
+        turnId: legacyExecRemember.turnId,
+      }),
+      true,
+    );
+    await turnStore.completeDurableThreadTurn({
+      turnId: legacyExecRemember.turnId,
+      status: "failed",
+      failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+      failureMessage:
+        "The approval no longer matches the prepared tool invocation.",
+    });
+    const mismatchedActorApproveOnce = await createExecRememberInteraction(
+      "mismatched-actor",
+      186,
+      { requestingActorId: `other-user-${suffix}` },
+    );
+    const mismatchedActorResolution =
+      await turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: mismatchedActorApproveOnce.requestId,
+        eventType: "user.approval",
+        turnId: mismatchedActorApproveOnce.turnId,
+        message: "Approve once",
+        decision: "approve_once",
+        messageId: `exec-mismatched-actor-message-${suffix}`,
+        source: "web",
+      });
+    assert.equal(mismatchedActorResolution.shouldDispatch, true);
+    const mismatchedActorClaim = await turnStore.claimDurableThreadTurn(
+      mismatchedActorApproveOnce.turnId,
+    );
+    assert.deepEqual(mismatchedActorClaim?.interactionResponse, {
+      requestId: mismatchedActorApproveOnce.requestId,
+      eventType: "user.approval",
+      message: "Approve once",
+      decision: "decline",
+      decidingActor: {
+        actorType: "end_user",
+        actorId: userId,
+        tenantId: organizationId,
+      },
+      preparedApprovalCleanupFailureCode:
+        "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+      preparedApprovalCleanupFailureMessage:
+        "The approval no longer matches the prepared tool invocation.",
+    });
+    assert.equal(
+      await turnStore.recordDurablePreparedApprovalCleanupCompleted({
+        turnId: mismatchedActorApproveOnce.turnId,
+      }),
+      true,
+    );
+    await turnStore.completeDurableThreadTurn({
+      turnId: mismatchedActorApproveOnce.turnId,
+      status: "failed",
+      failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+      failureMessage:
+        "The approval no longer matches the prepared tool invocation.",
     });
     const execRemember = await createExecRememberInteraction("eligible", 190);
     const execRememberResolution = await turnStore.resolveDurableRuntimeInteraction({
@@ -2400,6 +2488,91 @@ test(
       return { approvalId, interactionId, requestId, turnId };
     };
 
+    const backgroundExpired = await createAdditionalRememberInteraction({
+      label: "background-expired",
+      sequence: 105,
+    });
+    const backgroundExpiryNow = new Date();
+    await sql`
+      UPDATE "app_operation_approvals"
+      SET "expires_at" = ${new Date(backgroundExpiryNow.getTime() - 1)}
+      WHERE "organization_id" = ${organizationId}
+        AND "runtime_approval_id" = ${backgroundExpired.approvalId}
+    `;
+    await Promise.all([
+      appApprovals.expireStaleAppOperationApprovals(backgroundExpiryNow),
+      appApprovals.expireStaleAppOperationApprovals(backgroundExpiryNow),
+    ]);
+    const [backgroundExpiredState] = await sql<
+      Array<{
+        availabilityStatus: string;
+        cleanupEventCount: number;
+        cleanupFailureCode: string | null;
+        decision: string | null;
+        interactionStatus: string;
+        payloadRedacted: boolean;
+        queueState: string;
+      }>
+    >`
+      SELECT
+        approval."availability_status" AS "availabilityStatus",
+        interaction."response_envelope"->>'decision' AS "decision",
+        interaction."response_envelope"->'preparedApprovalCleanup'->>'failureCode'
+          AS "cleanupFailureCode",
+        interaction."status" AS "interactionStatus",
+        (approval."payload"->>'redacted')::boolean AS "payloadRedacted",
+        queue."state" AS "queueState",
+        (SELECT count(*)::int FROM "thread_turn_events"
+          WHERE "turn_id" = ${backgroundExpired.turnId}
+            AND "type" = 'interaction.cleanup_requested')
+          AS "cleanupEventCount"
+      FROM "thread_interactions" interaction
+      JOIN "app_operation_approvals" approval
+        ON approval."interaction_id" = interaction."id"
+      JOIN "thread_turn_queue_state" queue
+        ON queue."thread_id" = interaction."thread_id"
+      WHERE interaction."id" = ${backgroundExpired.interactionId}
+    `;
+    assert.deepEqual(backgroundExpiredState, {
+      availabilityStatus: "expired",
+      cleanupEventCount: 1,
+      cleanupFailureCode: "EXTERNAL_APPROVAL_EXPIRED",
+      decision: null,
+      interactionStatus: "processing",
+      payloadRedacted: true,
+      queueState: "running",
+    });
+    const backgroundExpiredClaim = await turnStore.claimDurableThreadTurn(
+      backgroundExpired.turnId,
+    );
+    assert.deepEqual(backgroundExpiredClaim?.interactionResponse, {
+      requestId: backgroundExpired.requestId,
+      eventType: "user.approval",
+      message: "",
+      decision: "decline",
+      decidingActor: {
+        actorType: "end_user",
+        actorId: userId,
+        tenantId: organizationId,
+      },
+      preparedApprovalCleanupFailureCode: "EXTERNAL_APPROVAL_EXPIRED",
+      preparedApprovalCleanupFailureMessage:
+        "The prepared authorization expired before it could execute.",
+    });
+    assert.equal(
+      await turnStore.recordDurablePreparedApprovalCleanupCompleted({
+        turnId: backgroundExpired.turnId,
+      }),
+      true,
+    );
+    await turnStore.completeDurableThreadTurn({
+      turnId: backgroundExpired.turnId,
+      status: "failed",
+      failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+      failureMessage:
+        "The prepared authorization expired before it could execute.",
+    });
+
     const mixedClient = await createAdditionalRememberInteraction({
       label: "mixed-client",
       sequence: 100,
@@ -2674,11 +2847,20 @@ test(
         messageId: `remember-expired-approve-once-message-${suffix}`,
         source: "mobile",
       });
-    assert.equal(expiredApproveOnceResolution.shouldDispatch, false);
+    assert.equal(expiredApproveOnceResolution.shouldDispatch, true);
     const [expiredApproveOnceState] = await sql<
-      Array<{ failureCode: string | null; interactionStatus: string; turnStatus: string }>
+      Array<{
+        cleanupFailureCode: string | null;
+        decision: string | null;
+        failureCode: string | null;
+        interactionStatus: string;
+        turnStatus: string;
+      }>
     >`
       SELECT
+        interaction."response_envelope"->>'decision' AS "decision",
+        interaction."response_envelope"->'preparedApprovalCleanup'->>'failureCode'
+          AS "cleanupFailureCode",
         interaction."response_failure_code" AS "failureCode",
         interaction."status" AS "interactionStatus",
         turn."status" AS "turnStatus"
@@ -2687,9 +2869,33 @@ test(
       WHERE interaction."id" = ${expiredApproveOnce.interactionId}
     `;
     assert.deepEqual(expiredApproveOnceState, {
+      cleanupFailureCode: "EXTERNAL_APPROVAL_EXPIRED",
+      decision: "approve_once",
+      failureCode: null,
+      interactionStatus: "processing",
+      turnStatus: "waiting_for_input",
+    });
+    const expiredApproveOnceClaim = await turnStore.claimDurableThreadTurn(
+      expiredApproveOnce.turnId,
+    );
+    assert.equal(expiredApproveOnceClaim?.interactionResponse?.decision, "decline");
+    assert.equal(
+      expiredApproveOnceClaim?.interactionResponse
+        ?.preparedApprovalCleanupFailureCode,
+      "EXTERNAL_APPROVAL_EXPIRED",
+    );
+    assert.equal(
+      await turnStore.recordDurablePreparedApprovalCleanupCompleted({
+        turnId: expiredApproveOnce.turnId,
+      }),
+      true,
+    );
+    await turnStore.completeDurableThreadTurn({
+      turnId: expiredApproveOnce.turnId,
+      status: "failed",
       failureCode: "EXTERNAL_APPROVAL_EXPIRED",
-      interactionStatus: "failed",
-      turnStatus: "failed",
+      failureMessage:
+        "The prepared authorization expired before it could execute.",
     });
 
     const closedResourceApproveOnce = await createAdditionalRememberInteraction({
@@ -2734,7 +2940,29 @@ test(
         messageId: `remember-closed-resource-message-${suffix}`,
         source: "web",
       });
-    assert.equal(closedResourceResolution.shouldDispatch, false);
+    assert.equal(closedResourceResolution.shouldDispatch, true);
+    const [closedResourceCleanup] = await sql<
+      Array<{
+        availabilityStatus: string;
+        cleanupFailureCode: string | null;
+        payloadRedacted: boolean;
+      }>
+    >`
+      SELECT
+        approval."availability_status" AS "availabilityStatus",
+        interaction."response_envelope"->'preparedApprovalCleanup'->>'failureCode'
+          AS "cleanupFailureCode",
+        (approval."payload"->>'redacted')::boolean AS "payloadRedacted"
+      FROM "thread_interactions" interaction
+      JOIN "app_operation_approvals" approval
+        ON approval."interaction_id" = interaction."id"
+      WHERE interaction."id" = ${closedResourceApproveOnce.interactionId}
+    `;
+    assert.deepEqual(closedResourceCleanup, {
+      availabilityStatus: "expired",
+      cleanupFailureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED",
+      payloadRedacted: true,
+    });
     await sql`
       UPDATE "app_connection_resources"
       SET "enabled" = true
@@ -2747,7 +2975,8 @@ test(
         AND "runtime_approval_id" IN (
           ${mixedClient.approvalId}, ${policyChanged.approvalId},
           ${subjectRestricted.approvalId}, ${expiredApproveOnce.approvalId},
-          ${closedResourceApproveOnce.approvalId}
+          ${closedResourceApproveOnce.approvalId},
+          ${backgroundExpired.approvalId}
         )
     `;
     const [availabilitySharing] = await sql<

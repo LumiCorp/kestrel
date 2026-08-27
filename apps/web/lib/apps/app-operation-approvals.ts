@@ -11,7 +11,11 @@ import {
   type RunnerExternalApprovalBinding,
 } from "@kestrel-agents/protocol";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { setInteractionPresentationStatus } from "@/lib/turns/interaction-projection";
+import {
+  preparedApprovalCleanupFailure,
+  preparedApprovalQueueLockKey,
+  schedulePreparedApprovalCleanupInTransaction,
+} from "@/lib/turns/prepared-approval-cleanup";
 import {
   assertAppOperationApprovalBinding,
   createAppExternalApprovalBinding,
@@ -974,6 +978,7 @@ async function expireAppOperationApproval(input: {
       .select({
         id: schema.appOperationApprovals.id,
         interactionId: schema.appOperationApprovals.interactionId,
+        threadId: schema.appOperationApprovals.threadId,
       })
       .from(schema.appOperationApprovals)
       .where(
@@ -1011,6 +1016,7 @@ export async function expireStaleAppOperationApprovals(now = new Date()) {
       .select({
         id: schema.appOperationApprovals.id,
         interactionId: schema.appOperationApprovals.interactionId,
+        threadId: schema.appOperationApprovals.threadId,
       })
       .from(schema.appOperationApprovals)
       .where(
@@ -1040,15 +1046,53 @@ export async function expireStaleAppOperationApprovals(now = new Date()) {
 
 async function expireInteractionOwnedApprovals(
   tx: ApprovalTransaction,
-  approvals: Array<{ id: string; interactionId: string | null }>,
+  approvals: Array<{
+    id: string;
+    interactionId: string | null;
+    threadId: string;
+  }>,
   now: Date,
 ) {
-  for (const approval of approvals) {
+  for (const approval of approvals.sort((left, right) =>
+    left.threadId.localeCompare(right.threadId) || left.id.localeCompare(right.id)
+  )) {
+    const candidateInteraction = approval.interactionId
+      ? await tx.query.threadInteractions.findFirst({
+          where: eq(schema.threadInteractions.id, approval.interactionId),
+        })
+      : undefined;
+    if (candidateInteraction?.turnId) {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${preparedApprovalQueueLockKey(candidateInteraction.threadId)}, 0))`,
+      );
+      await tx
+        .select({ id: schema.threads.id })
+        .from(schema.threads)
+        .where(eq(schema.threads.id, candidateInteraction.threadId))
+        .limit(1)
+        .for("update");
+    }
     const [interaction] = approval.interactionId
       ? await tx
           .select()
           .from(schema.threadInteractions)
           .where(eq(schema.threadInteractions.id, approval.interactionId))
+          .limit(1)
+          .for("update")
+      : [];
+    const [turn] = interaction?.turnId
+      ? await tx
+          .select()
+          .from(schema.threadTurns)
+          .where(eq(schema.threadTurns.id, interaction.turnId))
+          .limit(1)
+          .for("update")
+      : [];
+    const [queueState] = interaction
+      ? await tx
+          .select()
+          .from(schema.threadTurnQueueState)
+          .where(eq(schema.threadTurnQueueState.threadId, interaction.threadId))
           .limit(1)
           .for("update")
       : [];
@@ -1065,6 +1109,36 @@ async function expireInteractionOwnedApprovals(
       lockedApproval.expiresAt.getTime() > now.getTime() ||
       lockedApproval.interactionId !== approval.interactionId
     ) continue;
+    if (
+      interaction &&
+      turn?.status === "waiting_for_input" &&
+      queueState?.activeTurnId === turn.id &&
+      (interaction.status === "pending" ||
+        (interaction.status === "processing" && interaction.resumedAt === null)) &&
+      ((queueState.state === "paused" &&
+        queueState.pauseReason === "interaction_required") ||
+        queueState.state === "running")
+    ) {
+      const existingResponse =
+        interaction.responseEnvelope &&
+        typeof interaction.responseEnvelope === "object" &&
+        !Array.isArray(interaction.responseEnvelope)
+          ? interaction.responseEnvelope as Record<string, unknown>
+          : {
+              requestId: interaction.requestId,
+              eventType: interaction.eventType,
+              message: "",
+            };
+      await schedulePreparedApprovalCleanupInTransaction(tx, {
+        interaction,
+        turn,
+        queueState,
+        cleanup: preparedApprovalCleanupFailure("EXTERNAL_APPROVAL_EXPIRED"),
+        responseEnvelope: existingResponse,
+        now,
+      });
+      continue;
+    }
     await tx
       .update(schema.appOperationApprovals)
       .set({
@@ -1073,45 +1147,5 @@ async function expireInteractionOwnedApprovals(
         updatedAt: now,
       })
       .where(eq(schema.appOperationApprovals.id, lockedApproval.id));
-    if (
-      !interaction ||
-      (interaction.status !== "pending" && interaction.status !== "processing")
-    ) continue;
-    await tx
-      .update(schema.threadInteractions)
-      .set({
-        status: "failed",
-        responseFailureCode: "EXTERNAL_APPROVAL_EXPIRED",
-        responseFailureMessage: "The provider authorization payload expired.",
-        effectStatus: "not_started",
-        responseRetryable: false,
-        updatedAt: now,
-      })
-      .where(eq(schema.threadInteractions.id, interaction.id));
-    if (!interaction.assistantMessageId) continue;
-    const message = await tx.query.threadMessages.findFirst({
-      where: eq(schema.threadMessages.id, interaction.assistantMessageId),
-      columns: { parts: true },
-    });
-    if (!message) continue;
-    await tx
-      .update(schema.threadMessages)
-      .set({
-        parts: setInteractionPresentationStatus(
-          message.parts,
-          interaction.requestId,
-          "failed",
-          {
-            decision: "expired",
-            authorizationState: "expired",
-            effectState: "not_started",
-            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
-            publicMessage:
-              "Authorization expired before it could be accepted. Request a fresh approval.",
-            retryEligible: false,
-          },
-        ),
-      })
-      .where(eq(schema.threadMessages.id, interaction.assistantMessageId));
   }
 }

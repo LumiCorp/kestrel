@@ -12,11 +12,10 @@ work; this queue does not reopen them.
 ## Ready
 
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
-- [Order the V4 compatibility rollout](06d-order-v4-compatibility-rollout.md)
 
 ## In progress
 
-- [Generalize prepared approval cleanup](06c-generalize-prepared-approval-cleanup.md)
+- [Order the V4 compatibility rollout](06d-order-v4-compatibility-rollout.md)
 
 ## Blocked
 
@@ -24,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Generalize prepared approval cleanup](06c-generalize-prepared-approval-cleanup.md)
 - [Release a Web-rejected prepared approval](06b-release-web-rejected-prepared-approval.md)
 - [Version trusted hosted approval timing](06a-version-trusted-hosted-approval-timing.md)
 - [Make hosted tool availability and approval one truthful decision](06-unify-hosted-tool-decision.md)
