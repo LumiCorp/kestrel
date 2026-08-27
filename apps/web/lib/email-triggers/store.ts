@@ -73,6 +73,12 @@ export type ProjectEmailTriggerSummary = {
   rotatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  latestReceipt: {
+    id: string;
+    state: "materialized" | "rejected" | "failed" | "admitted";
+    receivedAt: Date;
+    threadId: string | null;
+  } | null;
   readiness: {
     receiving: boolean;
     project: boolean;
@@ -376,7 +382,7 @@ export async function listProjectEmailTriggersForUser(input: {
         role,
         creatorName,
       }) => {
-        const [executionOwner, model] = await Promise.all([
+        const [executionOwner, model, latestReceipt] = await Promise.all([
           executionOwnerHasAccessInTransaction(tx, {
             organizationId: trigger.organizationId,
             projectId: trigger.projectId,
@@ -387,6 +393,27 @@ export async function listProjectEmailTriggersForUser(input: {
             environmentId: projectEnvironmentId,
             modelId: trigger.modelId,
           }),
+          tx
+            .select({
+              id: schema.emailDeliveryReceipts.id,
+              state: schema.emailDeliveryReceipts.state,
+              receivedAt: schema.emailDeliveryReceipts.eventAt,
+              threadId: schema.emailDeliveryReceipts.materializedThreadId,
+            })
+            .from(schema.emailDeliveryReceipts)
+            .where(
+              and(
+                eq(
+                  schema.emailDeliveryReceipts.organizationId,
+                  trigger.organizationId,
+                ),
+                eq(schema.emailDeliveryReceipts.triggerId, trigger.id),
+                sql`${schema.emailDeliveryReceipts.state} IN ('admitted', 'materialized', 'rejected', 'failed')`,
+              ),
+            )
+            .orderBy(sql`${schema.emailDeliveryReceipts.eventAt} DESC`)
+            .limit(1)
+            .then(([receipt]) => receipt ?? null),
         ]);
         const project = !projectArchivedAt;
         const reason = readinessReason({
@@ -421,6 +448,7 @@ export async function listProjectEmailTriggersForUser(input: {
           rotatedAt: trigger.rotatedAt,
           createdAt: trigger.createdAt,
           updatedAt: trigger.updatedAt,
+          latestReceipt: projectLatestEmailReceipt(latestReceipt),
           readiness: {
             receiving,
             project,
@@ -439,6 +467,30 @@ export async function listProjectEmailTriggersForUser(input: {
       }),
     );
   });
+}
+
+function projectLatestEmailReceipt(
+  receipt: {
+    id: string;
+    state: typeof schema.emailDeliveryReceipts.$inferSelect.state;
+    receivedAt: Date;
+    threadId: string | null;
+  } | null,
+): ProjectEmailTriggerSummary["latestReceipt"] {
+  if (!receipt) return null;
+  switch (receipt.state) {
+    case "admitted":
+      return { ...receipt, state: "admitted" };
+    case "materialized":
+      return { ...receipt, state: "materialized" };
+    case "rejected":
+      return { ...receipt, state: "rejected" };
+    case "failed":
+      return { ...receipt, state: "failed" };
+    case "queued":
+    case "hydrating":
+      return null;
+  }
 }
 
 export async function createProjectEmailTrigger(input: {

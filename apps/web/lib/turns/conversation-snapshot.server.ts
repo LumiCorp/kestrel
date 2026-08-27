@@ -19,6 +19,12 @@ type ConversationSnapshotRead = {
         authorEmail: string | null;
       }
     >;
+    emailReceipt: {
+      id: string;
+      state: "materialized";
+      receivedAt: Date;
+      trigger: { id: string; name: string } | null;
+    } | null;
     access: ThreadAccess;
   };
   snapshot: ThreadConversationSnapshot;
@@ -124,6 +130,39 @@ export async function readThreadConversationSnapshotForUser(input: {
         const authorsById = new Map(
           authors.map((author) => [author.id, author]),
         );
+        const [emailReceipt] = await tx
+          .select({
+            id: schema.emailDeliveryReceipts.id,
+            state: schema.emailDeliveryReceipts.state,
+            receivedAt: schema.emailDeliveryReceipts.eventAt,
+            triggerId: schema.projectEmailTriggers.id,
+            triggerName: schema.projectEmailTriggers.name,
+          })
+          .from(schema.emailDeliveryReceipts)
+          .leftJoin(
+            schema.projectEmailTriggers,
+            and(
+              eq(
+                schema.projectEmailTriggers.id,
+                schema.emailDeliveryReceipts.triggerId,
+              ),
+              eq(
+                schema.projectEmailTriggers.organizationId,
+                schema.emailDeliveryReceipts.organizationId,
+              ),
+            ),
+          )
+          .where(
+            and(
+              eq(
+                schema.emailDeliveryReceipts.organizationId,
+                input.organizationId,
+              ),
+              eq(schema.emailDeliveryReceipts.materializedThreadId, thread.id),
+              eq(schema.emailDeliveryReceipts.state, "materialized"),
+            ),
+          )
+          .limit(1);
         const messagesWithAuthors = messages.map((message) => ({
           ...message,
           authorName: message.authorUserId
@@ -239,7 +278,26 @@ export async function readThreadConversationSnapshotForUser(input: {
           },
         };
         return {
-          thread: { ...thread, messages: messagesWithAuthors, access },
+          thread: {
+            ...thread,
+            messages: messagesWithAuthors,
+            emailReceipt:
+              emailReceipt?.state === "materialized"
+                ? {
+                    id: emailReceipt.id,
+                    state: emailReceipt.state,
+                    receivedAt: emailReceipt.receivedAt,
+                    trigger:
+                      emailReceipt.triggerId && emailReceipt.triggerName
+                        ? {
+                            id: emailReceipt.triggerId,
+                            name: emailReceipt.triggerName,
+                          }
+                        : null,
+                  }
+                : null,
+            access,
+          },
           snapshot,
         };
       },

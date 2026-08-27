@@ -96,6 +96,12 @@ export type EmailTriggerSummary = {
   rotatedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  latestReceipt: {
+    id: string;
+    state: "materialized" | "rejected" | "failed" | "admitted";
+    receivedAt: string;
+    threadId: string | null;
+  } | null;
   readiness: {
     receiving: boolean;
     project: boolean;
@@ -474,6 +480,22 @@ export function EmailTriggersClient({
                         <span>Model: {trigger.modelId}</span>
                         <span aria-hidden="true">·</span>
                         <span>Runs as {trigger.executionOwner?.name ?? "Former member"}</span>
+                        {trigger.latestReceipt ? (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            {trigger.latestReceipt.threadId ? (
+                              <Link
+                                href={`/threads/${trigger.latestReceipt.threadId}`}
+                              >
+                                Latest delivery: {trigger.latestReceipt.state}
+                              </Link>
+                            ) : (
+                              <span>
+                                Latest delivery: {trigger.latestReceipt.state}
+                              </span>
+                            )}
+                          </>
+                        ) : null}
                         {trigger.claimedFromFilter ? (
                           <>
                             <span aria-hidden="true">·</span>

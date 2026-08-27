@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
+import { withGatewayModelEconomicsProfile } from "@/lib/ai/model-economics-profile";
 import { EmailReceiptProviderError } from "./provider";
 import type { ReceivedEmailHydration, ReceivedEmailProvider } from "./provider";
 
@@ -18,18 +19,25 @@ test("receipt hydration admits exactly one private Trigger and durably scrubs ev
     "test-key": randomBytes(32).toString("base64"),
   });
 
-  const [{ resetDbRuntimeForTests }, { encryptGatewayCredential }, runtime] =
-    await Promise.all([
-      import("@/lib/db/runtime"),
-      import("@/lib/ai/gateway-credential-crypto"),
-      import("./runtime"),
-    ]);
+  const [
+    { resetDbRuntimeForTests },
+    { encryptGatewayCredential },
+    runtime,
+    materializer,
+  ] = await Promise.all([
+    import("@/lib/db/runtime"),
+    import("@/lib/ai/gateway-credential-crypto"),
+    import("./runtime"),
+    import("./materialize"),
+  ]);
   const sql = postgres(databaseUrl, { max: 6 });
   const suffix = randomUUID();
   const ids = {
     organization: `hydration-org-${suffix}`,
     user: `hydration-user-${suffix}`,
     member: `hydration-member-${suffix}`,
+    fallbackOwner: `hydration-fallback-owner-${suffix}`,
+    fallbackMember: `hydration-fallback-member-${suffix}`,
     environment: `hydration-environment-${suffix}`,
     project: `hydration-project-${suffix}`,
     connection: `hydration-connection-${suffix}`,
@@ -37,16 +45,27 @@ test("receipt hydration admits exactly one private Trigger and durably scrubs ev
     triggerTwo: `hydration-trigger-two-${suffix}`,
     triggerDisabled: `hydration-trigger-disabled-${suffix}`,
     triggerRotated: `hydration-trigger-rotated-${suffix}`,
+    context: `hydration-context-${suffix}`,
+    gateway: `hydration-gateway-${suffix}`,
+    model: `hydration-model-${suffix}`,
   };
   const now = new Date("2026-08-27T14:00:00.000Z");
   const encryptedApiKey = encryptGatewayCredential({
     gatewayId: `organization-receiving-connection:${ids.organization}:api-key`,
     plaintext: "re_test_full_access",
   });
+  const modelMetadata = withGatewayModelEconomicsProfile({
+    metadata: { context_length: 32_768, max_completion_tokens: 8_192 },
+    provider: "openrouter",
+    model: "test-email-model",
+    approved: true,
+    modality: "language",
+  });
+  assert.ok(modelMetadata);
 
   context.after(async () => {
     await sql`DELETE FROM "organization" WHERE "id" = ${ids.organization}`;
-    await sql`DELETE FROM "user" WHERE "id" = ${ids.user}`;
+    await sql`DELETE FROM "user" WHERE "id" IN (${ids.user}, ${ids.fallbackOwner})`;
     await resetDbRuntimeForTests();
     if (previousDrizzleMaxConnections === undefined) {
       delete process.env.DB_DRIZZLE_MAX_CONNECTIONS;
@@ -60,10 +79,9 @@ test("receipt hydration admits exactly one private Trigger and durably scrubs ev
     await transaction`
       INSERT INTO "user" (
         "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
-      ) VALUES (
-        ${ids.user}, 'Hydration User', ${`${ids.user}@example.test`}, true,
-        ${now}, ${now}
-      )
+      ) VALUES
+        (${ids.user}, 'Hydration User', ${`${ids.user}@example.test`}, true, ${now}, ${now}),
+        (${ids.fallbackOwner}, 'Fallback Owner', ${`${ids.fallbackOwner}@example.test`}, true, ${now}, ${now})
     `;
     await transaction`
       INSERT INTO "organization" ("id", "name", "slug", "createdAt")
@@ -74,9 +92,9 @@ test("receipt hydration admits exactly one private Trigger and durably scrubs ev
     await transaction`
       INSERT INTO "member" (
         "id", "organizationId", "userId", "role", "createdAt"
-      ) VALUES (
-        ${ids.member}, ${ids.organization}, ${ids.user}, 'owner', ${now}
-      )
+      ) VALUES
+        (${ids.member}, ${ids.organization}, ${ids.user}, 'owner', ${now}),
+        (${ids.fallbackMember}, ${ids.organization}, ${ids.fallbackOwner}, 'owner', ${now})
     `;
     await transaction`
       INSERT INTO "environments" (
@@ -98,8 +116,34 @@ test("receipt hydration admits exactly one private Trigger and durably scrubs ev
     await transaction`
       INSERT INTO "project_members" (
         "project_id", "organization_member_id", "role"
+      ) VALUES
+        (${ids.project}, ${ids.member}, 'owner'),
+        (${ids.project}, ${ids.fallbackMember}, 'owner')
+    `;
+    await transaction`
+      INSERT INTO "project_context_revisions" (
+        "id", "project_id", "revision", "project_name", "instructions",
+        "created_by_user_id", "created_at"
       ) VALUES (
-        ${ids.project}, ${ids.member}, 'owner'
+        ${ids.context}, ${ids.project}, 1, 'Hydration Project',
+        'Use the current Project context.', ${ids.user}, ${now}
+      )
+    `;
+    await transaction`
+      INSERT INTO "ai_gateways" (
+        "id", "organization_id", "environment_id", "provider", "display_name"
+      ) VALUES (
+        ${ids.gateway}, ${ids.organization}, NULL, 'openrouter', 'Hydration Gateway'
+      )
+    `;
+    await transaction`
+      INSERT INTO "ai_gateway_models" (
+        "id", "organization_id", "gateway_id", "raw_model_id", "modality",
+        "approved", "is_default", "metadata"
+      ) VALUES (
+        ${ids.model}, ${ids.organization}, ${ids.gateway}, 'test-email-model',
+        'language', true, true,
+        ${transaction.json(JSON.parse(JSON.stringify(modelMetadata)))}
       )
     `;
     await transaction`
@@ -127,25 +171,25 @@ test("receipt hydration admits exactly one private Trigger and durably scrubs ev
       ) VALUES
         (
           ${ids.triggerOne}, ${ids.organization}, ${ids.project}, ${ids.user},
-          ${ids.user}, 'Invoice One', 'Process invoice', 'test-model',
+          ${ids.user}, 'Invoice One', 'Process invoice', 'openrouter/test-email-model',
           'customer@example.com', 'private', 'one', 'inbound.example.test',
           true, null, 1, null, ${now}, ${now}
         ),
         (
           ${ids.triggerTwo}, ${ids.organization}, ${ids.project}, ${ids.user},
-          ${ids.user}, 'Invoice Two', 'Process invoice', 'test-model', null,
+          ${ids.user}, 'Invoice Two', 'Process invoice', 'openrouter/test-email-model', null,
           'private', 'two', 'inbound.example.test', true, null, 1, null,
           ${now}, ${now}
         ),
         (
           ${ids.triggerDisabled}, ${ids.organization}, ${ids.project},
-          ${ids.user}, ${ids.user}, 'Disabled', 'Process invoice', 'test-model',
+          ${ids.user}, ${ids.user}, 'Disabled', 'Process invoice', 'openrouter/test-email-model',
           null, 'private', 'disabled', 'inbound.example.test', false, 'manual',
           2, null, ${now}, ${now}
         ),
         (
           ${ids.triggerRotated}, ${ids.organization}, ${ids.project},
-          ${ids.user}, ${ids.user}, 'Rotated', 'Process invoice', 'test-model',
+          ${ids.user}, ${ids.user}, 'Rotated', 'Process invoice', 'openrouter/test-email-model',
           null, 'private', 'new-address', 'inbound.example.test', true, null,
           2, ${now}, ${now}, ${now}
         )
@@ -224,6 +268,89 @@ test("receipt hydration admits exactly one private Trigger and durably scrubs ev
   assert.doesNotMatch(
     JSON.stringify(envelope),
     /provider-a|provider-b|resend|download_url|signed\.resend/u,
+  );
+
+  const [firstMaterialized, replayedMaterialization] = await Promise.all([
+    materializer.materializeAdmittedEmailDeliveryReceipt(interruptedId),
+    materializer.materializeAdmittedEmailDeliveryReceipt(interruptedId),
+  ]);
+  assert.ok(firstMaterialized?.turnId);
+  assert.equal(firstMaterialized.turnId, replayedMaterialization?.turnId);
+  const [materialized] = await sql<
+    Array<{
+      state: string;
+      receiptThreadId: string | null;
+      receiptMessageId: string | null;
+      receiptTurnId: string | null;
+      reservedThreadId: string;
+      reservedMessageId: string;
+      reservedTurnId: string;
+      workspaceMode: string | null;
+      isPublic: boolean | null;
+      authorUserId: string | null;
+      messageParts: unknown;
+      requestedEnvironmentId: string | null;
+      requestedModelId: string | null;
+      requestedInteractionMode: string | null;
+    }>
+  >`
+    SELECT
+      receipt."state", receipt."materialized_thread_id" AS "receiptThreadId",
+      receipt."materialized_message_id" AS "receiptMessageId",
+      receipt."materialized_turn_id" AS "receiptTurnId",
+      receipt."reserved_thread_id" AS "reservedThreadId",
+      receipt."reserved_message_id" AS "reservedMessageId",
+      receipt."reserved_turn_id" AS "reservedTurnId",
+      thread."workspace_mode" AS "workspaceMode", thread."is_public" AS "isPublic",
+      turn."author_user_id" AS "authorUserId", message."parts" AS "messageParts",
+      turn."requested_environment_id" AS "requestedEnvironmentId",
+      turn."requested_model_id" AS "requestedModelId",
+      turn."requested_interaction_mode" AS "requestedInteractionMode"
+    FROM "email_delivery_receipts" receipt
+    LEFT JOIN "threads" thread ON thread."id" = receipt."materialized_thread_id"
+    LEFT JOIN "thread_messages" message ON message."id" = receipt."materialized_message_id"
+    LEFT JOIN "thread_turns" turn ON turn."id" = receipt."materialized_turn_id"
+    WHERE receipt."id" = ${interruptedId}
+  `;
+  assert.ok(materialized);
+  assert.deepEqual(
+    {
+      state: materialized.state,
+      threadId: materialized.receiptThreadId,
+      messageId: materialized.receiptMessageId,
+      turnId: materialized.receiptTurnId,
+      workspaceMode: materialized.workspaceMode,
+      isPublic: materialized.isPublic,
+      authorUserId: materialized.authorUserId,
+      requestedEnvironmentId: materialized.requestedEnvironmentId,
+      requestedModelId: materialized.requestedModelId,
+      requestedInteractionMode: materialized.requestedInteractionMode,
+    },
+    {
+      state: "materialized",
+      threadId: materialized.reservedThreadId,
+      messageId: materialized.reservedMessageId,
+      turnId: materialized.reservedTurnId,
+      workspaceMode: "primary",
+      isPublic: false,
+      authorUserId: ids.user,
+      requestedEnvironmentId: ids.environment,
+      requestedModelId: "openrouter/test-email-model",
+      requestedInteractionMode: "build",
+    },
+  );
+  const materializedText = JSON.stringify(materialized.messageParts);
+  assert.match(materializedText, /untrusted external input/u);
+  assert.match(materializedText, /Kestrel received email envelope v1/u);
+  assert.match(materializedText, /Process invoice/u);
+  assert.match(materializedText, /Please process this invoice/u);
+  assert.match(
+    materializedText,
+    new RegExp(descriptorRows[0]?.id ?? "^$", "u"),
+  );
+  assert.doesNotMatch(
+    materializedText,
+    /provider-a|provider-b|resend|download_url/u,
   );
 
   const htmlOnlyId = await insertReceipt(sql, ids, "queued");
@@ -362,6 +489,61 @@ test("receipt hydration admits exactly one private Trigger and durably scrubs ev
     provider: failingProvider("EMAIL_RECEIPT_PROVIDER_PERMANENT", false),
     state: "failed",
     reason: "EMAIL_RECEIPT_PROVIDER_PERMANENT",
+  });
+
+  const disabledReceivingId = await insertReceipt(sql, ids, "queued");
+  await runtime.processEmailDeliveryReceipt(disabledReceivingId, {
+    provider: fixedProvider(email()),
+  });
+  await sql`
+    UPDATE "organization_receiving_connections"
+    SET "inbound_enabled" = false
+    WHERE "id" = ${ids.connection}
+  `;
+  assert.deepEqual(
+    await materializer.materializeAdmittedEmailDeliveryReceipt(
+      disabledReceivingId,
+    ),
+    { turnId: null, shouldDispatch: false },
+  );
+  assert.deepEqual(await receiptOutcome(sql, disabledReceivingId), {
+    state: "rejected",
+    reason: "EMAIL_RECEIPT_RECEIVING_UNAVAILABLE",
+    textBody: null,
+  });
+  await sql`
+    UPDATE "organization_receiving_connections"
+    SET "inbound_enabled" = true
+    WHERE "id" = ${ids.connection}
+  `;
+
+  const ownerLossId = await insertReceipt(sql, ids, "queued");
+  await runtime.processEmailDeliveryReceipt(ownerLossId, {
+    provider: fixedProvider(email()),
+  });
+  await sql`
+    DELETE FROM "project_members"
+    WHERE "project_id" = ${ids.project} AND "organization_member_id" = ${ids.member}
+  `;
+  assert.deepEqual(
+    await materializer.materializeAdmittedEmailDeliveryReceipt(ownerLossId),
+    { turnId: null, shouldDispatch: false },
+  );
+  assert.deepEqual(await receiptOutcome(sql, ownerLossId), {
+    state: "rejected",
+    reason: "EMAIL_RECEIPT_EXECUTION_OWNER_ACCESS_LOST",
+    textBody: null,
+  });
+  const [disabledTrigger] = await sql<
+    Array<{ enabled: boolean; disabledReason: string | null }>
+  >`
+    SELECT "enabled", "disabled_reason" AS "disabledReason"
+    FROM "project_email_triggers"
+    WHERE "id" = ${ids.triggerOne}
+  `;
+  assert.deepEqual(disabledTrigger, {
+    enabled: false,
+    disabledReason: "execution_owner_access_lost",
   });
 });
 

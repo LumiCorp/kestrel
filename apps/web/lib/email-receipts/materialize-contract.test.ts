@@ -1,0 +1,81 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import { formatEmailDeliveryEnvelope } from "./materialize";
+
+test("the versioned email envelope keeps every provider attachment identity out of model input", () => {
+  const envelope = formatEmailDeliveryEnvelope({
+    trigger: { name: "Invoice intake", instruction: "Process the invoice." },
+    receipt: {
+      receiptId: "receipt-1",
+      receivedAt: "2026-08-27T14:00:00.000Z",
+      claimedFrom: "customer@example.test",
+      to: ["intake@example.test"],
+      cc: [],
+      replyTo: [],
+      subject: "Invoice 123",
+      body: "Please process this invoice.",
+      attachments: [
+        {
+          id: "delivery-attachment-opaque-id",
+          order: 0,
+          filename: "invoice.pdf",
+          declaredMediaType: "application/pdf",
+          sizeBytes: 42,
+          disposition: "attachment",
+          contentId: null,
+        },
+      ],
+    },
+  });
+
+  assert.match(envelope, /^Kestrel received email envelope v1/mu);
+  assert.match(envelope, /untrusted external input/u);
+  assert.match(envelope, /delivery-attachment-opaque-id/u);
+  assert.doesNotMatch(envelope, /provider_attachment_id|download_url|resend/iu);
+});
+
+test("the ordinary receipt worker materializes admitted work through the existing durable turn queue", async () => {
+  const queue = await readFile(
+    new URL("../turns/queue.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(queue, /materializeAdmittedEmailDeliveryReceipt/u);
+  assert.match(queue, /processEmailDeliveryReceipt\(\s*receiptId\s*\)/u);
+  assert.match(
+    queue,
+    /materialized\?\.turnId && materialized\.shouldDispatch/u,
+  );
+  assert.match(queue, /\["queued",\s*"hydrating",\s*"admitted"\]/u);
+});
+
+test("normal Thread and Trigger surfaces expose receipt provenance without widening origins", async () => {
+  const [threadStore, snapshot, route, triggerStore, triggerClient] =
+    await Promise.all([
+      readFile(new URL("../threads/store.ts", import.meta.url), "utf8"),
+      readFile(
+        new URL("../turns/conversation-snapshot.server.ts", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL("../../app/api/threads/[id]/route.ts", import.meta.url),
+        "utf8",
+      ),
+      readFile(new URL("../email-triggers/store.ts", import.meta.url), "utf8"),
+      readFile(
+        new URL(
+          "../../components/email-triggers/email-triggers-client.tsx",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ]);
+
+  assert.match(threadStore, /EmailDeliveryReceiptProvenance/u);
+  assert.match(snapshot, /emailReceipt/u);
+  assert.match(route, /emailReceipt: thread\.emailReceipt/u);
+  assert.match(triggerStore, /latestReceipt/u);
+  assert.match(triggerClient, /Latest delivery:/u);
+  assert.doesNotMatch(threadStore, /origin:\s*"email"/u);
+});

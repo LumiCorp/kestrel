@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md)
+None.
 
 ## Blocked
 - [Let the triggered agent read an email attachment](06-read-email-attachments-on-demand.md) — blocked by [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md)
@@ -13,7 +13,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## In progress
 
-None.
+- [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md)
 
 ## Implemented
 

@@ -30,6 +30,12 @@ export default async function EmailTriggersPage() {
     rotatedAt: trigger.rotatedAt?.toISOString() ?? null,
     createdAt: trigger.createdAt.toISOString(),
     updatedAt: trigger.updatedAt.toISOString(),
+    latestReceipt: trigger.latestReceipt
+      ? {
+          ...trigger.latestReceipt,
+          receivedAt: trigger.latestReceipt.receivedAt.toISOString(),
+        }
+      : null,
   }));
   return (
     <AppPage>

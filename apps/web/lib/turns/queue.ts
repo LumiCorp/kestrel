@@ -217,7 +217,7 @@ async function dispatchEmailDeliveryReceiptOrReconcile(
       .from(schema.emailDeliveryReceipts)
       .where(eq(schema.emailDeliveryReceipts.id, receiptId))
       .limit(1);
-    if (!receipt || !["queued", "hydrating"].includes(receipt.state)) return;
+    if (!receipt || !["queued", "hydrating", "admitted"].includes(receipt.state)) return;
     if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)) return;
     try {
       await sendEmailDeliveryReceipt(boss, receiptId);
@@ -226,7 +226,7 @@ async function dispatchEmailDeliveryReceiptOrReconcile(
         if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId))
           return;
         const current = await readEmailDeliveryReceiptState(receiptId);
-        if (!current || !["queued", "hydrating"].includes(current.state))
+        if (!current || !["queued", "hydrating", "admitted"].includes(current.state))
           return;
       } catch {
         // The queued database record remains durable dispatch intent. Worker
@@ -371,7 +371,7 @@ async function recoverQueuedEmailDeliveryReceipts(boss: PgBoss) {
   for (const receiptId of receiptIds) {
     if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)) continue;
     const receipt = await readEmailDeliveryReceiptState(receiptId);
-    if (!receipt || !["queued", "hydrating"].includes(receipt.state)) continue;
+    if (!receipt || !["queued", "hydrating", "admitted"].includes(receipt.state)) continue;
     await dispatchEmailDeliveryReceiptOrReconcile(boss, receiptId);
   }
 }
@@ -580,9 +580,16 @@ export async function startDurableThreadTurnWorker() {
         for (const job of jobs) {
           const receiptId = job.data?.receiptId;
           if (typeof receiptId !== "string") continue;
+          const { materializeAdmittedEmailDeliveryReceipt } =
+            await import("@/lib/email-receipts/materialize");
           const { processEmailDeliveryReceipt } =
             await import("@/lib/email-receipts/runtime");
           await processEmailDeliveryReceipt(receiptId);
+          const materialized =
+            await materializeAdmittedEmailDeliveryReceipt(receiptId);
+          if (materialized?.turnId && materialized.shouldDispatch) {
+            await dispatchTurnOrReconcile(boss, materialized.turnId);
+          }
         }
       },
     );

@@ -756,6 +756,11 @@ async function findNextQueuedTurn(
 
 type DurableThreadTurnInput = {
   threadId: string;
+  /**
+   * Callers that reserve a durable result before admission may supply its
+   * identity. Ordinary interactive turns continue to allocate one here.
+   */
+  turnId?: string;
   organizationId: string;
   authorUserId: string;
   idempotencyKey: string;
@@ -976,7 +981,7 @@ export async function createDurableThreadTurnInTransaction(
     .limit(1)
     .for("update");
   const sequence = queueState?.nextSequence ?? 1;
-  const turnId = crypto.randomUUID();
+  const turnId = input.turnId ?? crypto.randomUUID();
   const now = new Date();
   const requestedInteractionMode = input.requestedInteractionMode ?? "chat";
   if (input.messageId) {

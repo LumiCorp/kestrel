@@ -72,6 +72,12 @@ export async function GET(
       mode: thread.mode,
       interactionMode: thread.interactionMode,
       origin: thread.origin,
+      emailReceipt: thread.emailReceipt
+        ? {
+            ...thread.emailReceipt,
+            receivedAt: thread.emailReceipt.receivedAt.toISOString(),
+          }
+        : null,
       visibility: thread.isPublic ? "public" : "private",
       shareToken: thread.shareToken,
       archivedAt: thread.archivedAt,
