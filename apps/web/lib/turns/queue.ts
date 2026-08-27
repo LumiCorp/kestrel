@@ -217,7 +217,7 @@ async function dispatchEmailDeliveryReceiptOrReconcile(
       .from(schema.emailDeliveryReceipts)
       .where(eq(schema.emailDeliveryReceipts.id, receiptId))
       .limit(1);
-    if (!receipt || receipt.state !== "queued") return;
+    if (!receipt || !["queued", "hydrating"].includes(receipt.state)) return;
     if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)) return;
     try {
       await sendEmailDeliveryReceipt(boss, receiptId);
@@ -226,7 +226,8 @@ async function dispatchEmailDeliveryReceiptOrReconcile(
         if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId))
           return;
         const current = await readEmailDeliveryReceiptState(receiptId);
-        if (!current || current.state !== "queued") return;
+        if (!current || !["queued", "hydrating"].includes(current.state))
+          return;
       } catch {
         // The queued database record remains durable dispatch intent. Worker
         // maintenance retries after either queue or database state is readable.
@@ -370,7 +371,7 @@ async function recoverQueuedEmailDeliveryReceipts(boss: PgBoss) {
   for (const receiptId of receiptIds) {
     if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)) continue;
     const receipt = await readEmailDeliveryReceiptState(receiptId);
-    if (!receipt || receipt.state !== "queued") continue;
+    if (!receipt || !["queued", "hydrating"].includes(receipt.state)) continue;
     await dispatchEmailDeliveryReceiptOrReconcile(boss, receiptId);
   }
 }
@@ -565,6 +566,23 @@ export async function startDurableThreadTurnWorker() {
             }
             throw error;
           }
+        }
+      },
+    );
+    await boss.work(
+      EMAIL_DELIVERY_RECEIPT_QUEUE,
+      {
+        batchSize: 1,
+        localConcurrency: turnWorkerConcurrency,
+        includeMetadata: true,
+      },
+      async (jobs: Array<JobWithMetadata<{ receiptId?: unknown }>>) => {
+        for (const job of jobs) {
+          const receiptId = job.data?.receiptId;
+          if (typeof receiptId !== "string") continue;
+          const { processEmailDeliveryReceipt } =
+            await import("@/lib/email-receipts/runtime");
+          await processEmailDeliveryReceipt(receiptId);
         }
       },
     );

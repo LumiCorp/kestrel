@@ -144,7 +144,7 @@ test("Resend ingress rejects invalid UTF-8 without a second body interpretation"
   assert.equal(invalidUtf8.cancelCount(), 0);
 });
 
-test("the receipt queue is reconciled but deliberately has no hydration consumer in Issue 03", () => {
+test("the receipt queue consumes and recovers queued or interrupted hydration", () => {
   const directory = path.dirname(fileURLToPath(import.meta.url));
   const queue = fs.readFileSync(
     path.resolve(directory, "../turns/queue.ts"),
@@ -153,14 +153,13 @@ test("the receipt queue is reconciled but deliberately has no hydration consumer
   assert.match(queue, /email\.delivery-receipt\.hydrate/u);
   assert.match(queue, /singletonKey:\s*receiptId/u);
   assert.match(queue, /recoverQueuedEmailDeliveryReceipts/u);
+  assert.match(queue, /boss\.work\(\s*EMAIL_DELIVERY_RECEIPT_QUEUE/u);
+  assert.match(queue, /processEmailDeliveryReceipt/u);
   const store = fs.readFileSync(path.resolve(directory, "store.ts"), "utf8");
+  assert.match(store, /\["queued", "hydrating"\]/u);
   assert.match(
     store,
     /orderBy\(asc\(schema\.emailDeliveryReceipts\.createdAt\)\)[\s\S]*?\.limit\(100\)/u,
-  );
-  assert.doesNotMatch(
-    queue,
-    /boss\.work\(\s*EMAIL_DELIVERY_RECEIPT_QUEUE/u,
   );
 });
 

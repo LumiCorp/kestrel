@@ -1674,6 +1674,10 @@ export const emailDeliveryReceipts = pgTable(
       table.receivingConnectionId,
       table.resendEmailId,
     ),
+    uniqueIndex("email_delivery_receipts_organization_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
     uniqueIndex("email_delivery_receipts_reserved_thread_idx").on(
       table.reservedThreadId,
     ),
@@ -1708,6 +1712,88 @@ export const emailDeliveryReceipts = pgTable(
     check(
       "email_delivery_receipts_materialized_state_check",
       sql`(${table.state} = 'materialized') = (${table.materializedThreadOrganizationId} IS NOT NULL AND ${table.materializedThreadId} IS NOT NULL AND ${table.materializedAt} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const emailDeliveryAttachments = pgTable(
+  "email_delivery_attachments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    receiptId: text("receipt_id").notNull(),
+    providerAttachmentId: text("provider_attachment_id").notNull(),
+    providerOrder: integer("provider_order").notNull(),
+    filename: text("filename"),
+    declaredMediaType: text("declared_media_type"),
+    providerSizeBytes: bigint("provider_size_bytes", { mode: "number" })
+      .notNull(),
+    disposition: text("disposition"),
+    contentId: text("content_id"),
+    importState: text("import_state", {
+      enum: ["available", "importing", "ready", "failed"],
+    })
+      .notNull()
+      .default("available"),
+    failureCode: text("failure_code"),
+    fileId: text("file_id").references(() => kestrelFiles.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.receiptId],
+      foreignColumns: [
+        emailDeliveryReceipts.organizationId,
+        emailDeliveryReceipts.id,
+      ],
+      name: "email_delivery_attachments_organization_receipt_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("email_delivery_attachments_receipt_provider_idx").on(
+      table.receiptId,
+      table.providerAttachmentId,
+    ),
+    uniqueIndex("email_delivery_attachments_receipt_order_idx").on(
+      table.receiptId,
+      table.providerOrder,
+    ),
+    uniqueIndex("email_delivery_attachments_file_idx")
+      .on(table.fileId)
+      .where(sql`${table.fileId} IS NOT NULL`),
+    index("email_delivery_attachments_receipt_idx").on(table.receiptId),
+    index("email_delivery_attachments_import_state_idx").on(
+      table.importState,
+      table.updatedAt,
+    ),
+    check(
+      "email_delivery_attachments_provider_order_check",
+      sql`${table.providerOrder} >= 0`,
+    ),
+    check(
+      "email_delivery_attachments_provider_size_check",
+      sql`${table.providerSizeBytes} >= 0`,
+    ),
+    check(
+      "email_delivery_attachments_import_state_check",
+      sql`${table.importState} IN ('available', 'importing', 'ready', 'failed')`,
+    ),
+    check(
+      "email_delivery_attachments_failure_check",
+      sql`(${table.importState} = 'failed') = (${table.failureCode} IS NOT NULL)`,
+    ),
+    check(
+      "email_delivery_attachments_ready_file_check",
+      sql`(${table.importState} = 'ready') = (${table.fileId} IS NOT NULL)`,
     ),
   ],
 );

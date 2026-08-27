@@ -138,7 +138,7 @@ export async function listDispatchableEmailDeliveryReceiptIds() {
   const rows = await knowledgeDb
     .select({ id: schema.emailDeliveryReceipts.id })
     .from(schema.emailDeliveryReceipts)
-    .where(inArray(schema.emailDeliveryReceipts.state, ["queued"]))
+    .where(inArray(schema.emailDeliveryReceipts.state, ["queued", "hydrating"]))
     .orderBy(asc(schema.emailDeliveryReceipts.createdAt))
     .limit(100);
   return rows.map(({ id }) => id);

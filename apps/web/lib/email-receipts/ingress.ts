@@ -9,16 +9,31 @@ import {
   EmailDeliveryReceiptConflictError,
   EmailDeliveryReceiptUnavailableError,
 } from "./store";
+import {
+  EMAIL_ATTACHMENT_FILENAME_MAX_LENGTH,
+  EMAIL_ATTACHMENT_MAX_COUNT,
+  EMAIL_CONTENT_ID_MAX_LENGTH,
+  EMAIL_DISPOSITION_MAX_LENGTH,
+  EMAIL_MAILBOX_LIST_MAX_COUNT,
+  EMAIL_MAILBOX_MAX_LENGTH,
+  EMAIL_MEDIA_TYPE_MAX_LENGTH,
+  EMAIL_MODEL_VISIBLE_MAX_BYTES,
+  EMAIL_PROVIDER_ID_MAX_LENGTH,
+  EMAIL_SUBJECT_MAX_LENGTH,
+} from "./bounds";
 
-const mailbox = z.string().min(1).max(320);
-const mailboxList = z.array(mailbox).max(100);
+const mailbox = z.string().min(1).max(EMAIL_MAILBOX_MAX_LENGTH);
+const mailboxList = z.array(mailbox).max(EMAIL_MAILBOX_LIST_MAX_COUNT);
 const attachmentSchema = z
   .object({
-    id: z.string().min(1).max(512),
-    filename: z.string().max(1024).nullable(),
-    content_type: z.string().min(1).max(255),
-    content_disposition: z.string().max(255).nullable(),
-    content_id: z.string().max(998).nullable(),
+    id: z.string().min(1).max(EMAIL_PROVIDER_ID_MAX_LENGTH),
+    filename: z.string().max(EMAIL_ATTACHMENT_FILENAME_MAX_LENGTH).nullable(),
+    content_type: z.string().min(1).max(EMAIL_MEDIA_TYPE_MAX_LENGTH),
+    content_disposition: z
+      .string()
+      .max(EMAIL_DISPOSITION_MAX_LENGTH)
+      .nullable(),
+    content_id: z.string().max(EMAIL_CONTENT_ID_MAX_LENGTH).nullable(),
   })
   .strict();
 
@@ -28,16 +43,16 @@ export const resendEmailReceivedEventSchema = z
     created_at: z.iso.datetime({ offset: true }),
     data: z
       .object({
-        email_id: z.string().min(1).max(512),
+        email_id: z.string().min(1).max(EMAIL_PROVIDER_ID_MAX_LENGTH),
         created_at: z.iso.datetime({ offset: true }),
         from: mailbox,
         to: mailboxList,
         bcc: mailboxList,
         cc: mailboxList,
-        message_id: z.string().min(1).max(998),
+        message_id: z.string().min(1).max(EMAIL_CONTENT_ID_MAX_LENGTH),
         received_for: mailboxList.optional().default([]),
-        subject: z.string().max(998),
-        attachments: z.array(attachmentSchema).max(100),
+        subject: z.string().max(EMAIL_SUBJECT_MAX_LENGTH),
+        attachments: z.array(attachmentSchema).max(EMAIL_ATTACHMENT_MAX_COUNT),
       })
       .strict(),
   })
@@ -53,7 +68,7 @@ type IngressOutcome =
   | "receipt_conflict"
   | "internal_failure";
 
-export const RESEND_WEBHOOK_MAX_BODY_BYTES = 2 * 1024 * 1024;
+export const RESEND_WEBHOOK_MAX_BODY_BYTES = EMAIL_MODEL_VISIBLE_MAX_BYTES;
 
 class ResendWebhookBodyTooLargeError extends Error {
   constructor() {
