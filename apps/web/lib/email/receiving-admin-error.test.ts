@@ -5,16 +5,20 @@ import { z } from "zod";
 import { DesktopUserAuthorizationError } from "@/lib/desktop-account";
 import { ReceivingConfigError } from "./receiving-config";
 import {
+  createDesktopReceivingDomainsPostHandler,
+  createDesktopReceivingPutHandler,
+  createOneReceivingDomainsPostHandler,
+  createOneReceivingPutHandler,
+} from "./receiving-admin-route-handlers";
+import {
   getSafeReceivingAdminError,
   parseReceivingAdminJson,
 } from "./receiving-admin-error";
 
-const receivingRoutes = [
-  "../../app/api/organization/email/receiving/route.ts",
-  "../../app/api/organization/email/receiving/domains/route.ts",
-  "../../app/api/desktop/v1/organizations/[organizationId]/email/receiving/route.ts",
-  "../../app/api/desktop/v1/organizations/[organizationId]/email/receiving/domains/route.ts",
-].map((path) => fs.readFileSync(new URL(path, import.meta.url), "utf8"));
+const receivingHandlers = fs.readFileSync(
+  new URL("./receiving-admin-route-handlers.ts", import.meta.url),
+  "utf8",
+);
 
 test("Desktop authorization failures retain the stable receiving 401 contract", () => {
   assert.deepEqual(
@@ -98,20 +102,12 @@ test("receiving provider failures have stable actionable HTTP status classes", (
   }
 });
 
-test("One and Desktop receiving routes use the same safe status boundary", () => {
-  for (const route of receivingRoutes) {
-    assert.match(route, /getSafeReceivingAdminError/u);
-  }
-});
-
 test("One records the receiving update audit only after the save succeeds", () => {
-  const oneReceivingRoute = receivingRoutes[0];
-  assert.ok(oneReceivingRoute);
-  const save = oneReceivingRoute.indexOf(
+  const save = receivingHandlers.indexOf(
     "const connection = await saveReceivingConnection",
   );
-  const audit = oneReceivingRoute.indexOf("await logAdminEvent", save);
-  const success = oneReceivingRoute.indexOf(
+  const audit = receivingHandlers.indexOf("await logAdminEvent", save);
+  const success = receivingHandlers.indexOf(
     "return NextResponse.json({ connection })",
     audit,
   );
@@ -191,19 +187,52 @@ test("only Kestrel's explicit JSON parsing syntax errors use the invalid-request
   });
 });
 
-test("all four receiving mutations authorize before using the shared JSON parser", () => {
-  for (const route of receivingRoutes) {
-    assert.equal(
-      route.match(/parseReceivingAdminJson\(request\)/gu)?.length,
-      1,
-    );
-    const authorizationOffset = Math.max(
-      route.indexOf("await requireOrganizationAdmin()"),
-      route.indexOf("await requireDesktopReceivingAdmin(request, organizationId)"),
-    );
-    const parsingOffset = route.indexOf("parseReceivingAdminJson(request)");
-    assert.ok(authorizationOffset >= 0);
-    assert.ok(parsingOffset > authorizationOffset);
+test("all four receiving mutations return the exact invalid-request response for authorized malformed JSON", async () => {
+  const cases = receivingMutationCases({
+    requireOneAdmin: async () => ({
+      organizationId: "organization-route-contract",
+      session: { user: { id: "user-route-contract" } },
+    }),
+    requireDesktopAdmin: async () => ({ id: "user-route-contract" }),
+  });
+
+  for (const mutation of cases) {
+    const response = await mutation.invoke(malformedRequest(mutation.url));
+    assert.equal(response.status, 422, mutation.name);
+    assert.deepEqual(await response.json(), invalidRequestBody, mutation.name);
+  }
+});
+
+test("all four receiving mutations reject unauthenticated and non-Admin callers before reading malformed JSON", async () => {
+  const authorizationCases = [
+    {
+      message: "Unauthorized",
+      status: 401,
+      body: { code: "UNAUTHORIZED", error: "Unauthorized" },
+    },
+    {
+      message: "Forbidden",
+      status: 403,
+      body: { code: "FORBIDDEN", error: "Forbidden" },
+    },
+  ] as const;
+
+  for (const authorization of authorizationCases) {
+    const reject = async () => {
+      throw new Error(authorization.message);
+    };
+    const cases = receivingMutationCases({
+      requireOneAdmin: reject,
+      requireDesktopAdmin: reject,
+    });
+
+    for (const mutation of cases) {
+      const { request, readCount } = trackedMalformedRequest(mutation.url);
+      const response = await mutation.invoke(request);
+      assert.equal(response.status, authorization.status, mutation.name);
+      assert.deepEqual(await response.json(), authorization.body, mutation.name);
+      assert.equal(readCount(), 0, `${mutation.name} must authorize first`);
+    }
   }
 });
 
@@ -219,3 +248,77 @@ test("unknown receiving config errors fail closed without leaking details", () =
     error: "Inbound receiving operation failed.",
   });
 });
+
+const invalidRequestBody = {
+  code: "RESEND_RECEIVING_REQUEST_INVALID",
+  error: "Invalid inbound receiving request.",
+};
+
+function receivingMutationCases(input: {
+  requireOneAdmin: () => Promise<{
+    organizationId: string;
+    session: { user: { id: string } };
+  }>;
+  requireDesktopAdmin: () => Promise<{ id: string }>;
+}) {
+  const organizationId = "organization-route-contract";
+  const oneReceivingUrl =
+    "http://localhost/api/organization/email/receiving";
+  const desktopReceivingUrl = `http://localhost/api/desktop/v1/organizations/${organizationId}/email/receiving`;
+  const desktopContext = {
+    params: Promise.resolve({ organizationId }),
+  };
+
+  return [
+    {
+      name: "One receiving PUT",
+      url: oneReceivingUrl,
+      invoke: (request: Request) =>
+        createOneReceivingPutHandler({
+          requireAdmin: input.requireOneAdmin,
+        })(request),
+    },
+    {
+      name: "One domains POST",
+      url: `${oneReceivingUrl}/domains`,
+      invoke: (request: Request) =>
+        createOneReceivingDomainsPostHandler({
+          requireAdmin: input.requireOneAdmin,
+        })(request),
+    },
+    {
+      name: "Desktop receiving PUT",
+      url: desktopReceivingUrl,
+      invoke: (request: Request) =>
+        createDesktopReceivingPutHandler({
+          requireAdmin: input.requireDesktopAdmin,
+        })(request, desktopContext),
+    },
+    {
+      name: "Desktop domains POST",
+      url: `${desktopReceivingUrl}/domains`,
+      invoke: (request: Request) =>
+        createDesktopReceivingDomainsPostHandler({
+          requireAdmin: input.requireDesktopAdmin,
+        })(request, desktopContext),
+    },
+  ];
+}
+
+function malformedRequest(url: string) {
+  return new Request(url, {
+    method: url.endsWith("/domains") ? "POST" : "PUT",
+    body: "{",
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function trackedMalformedRequest(url: string) {
+  const request = malformedRequest(url);
+  let reads = 0;
+  request.text = async () => {
+    reads += 1;
+    return "{";
+  };
+  return { request, readCount: () => reads };
+}
