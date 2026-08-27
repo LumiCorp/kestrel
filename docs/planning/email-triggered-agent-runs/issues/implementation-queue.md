@@ -7,6 +7,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Keep receiving health evidence truthful after failed checks](10-persist-and-present-receiving-health.md)
 - [Distinguish provider outages from invalid receiving configuration](13-classify-receiving-provider-failures.md)
 - [Show redacted receiving status to non-Admin Organization members](14-show-redacted-receiving-status-to-members.md)
+- [Recover an ambiguous Resend webhook create without creating another webhook](15-recover-ambiguous-resend-webhook-creates.md)
 
 ## In progress
 
@@ -25,10 +26,9 @@ None.
 ## Implemented
 
 - [Configure Organization Resend receiving in One and Desktop](01-prepare-organization-resend-receiving.md)
-- [Prevent a concurrent receiving save from restoring a stale key](09-prevent-stale-receiving-key-rollback.md)
 - [Make Resend webhook staging recoverable after every provider step](11-stage-resend-webhooks-recoverably.md)
-- [Return authentication errors for invalid Desktop receiving credentials](12-return-desktop-receiving-auth-errors.md)
 
 ## Done
 
-None.
+- [Prevent a concurrent receiving save from restoring a stale key](09-prevent-stale-receiving-key-rollback.md)
+- [Return authentication errors for invalid Desktop receiving credentials](12-return-desktop-receiving-auth-errors.md)
