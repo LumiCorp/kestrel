@@ -6,6 +6,9 @@ import {
   desktopStandardAppToolRequiresApproval,
   getDesktopStandardAppConnection,
 } from "../../src/desktopShell/standardAppConnections.js";
+import { GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS } from "../../src/apps/googleWorkspace.js";
+import { MICROSOFT_365_OPERATION_DESCRIPTORS } from "../../src/apps/microsoft365.js";
+import { hostedMutationOperationKey } from "../../apps/web/lib/apps/hosted-app-operation-identity.js";
 import { MICROSOFT_365_PACKS, scopesForMicrosoft365Packs } from "../../apps/web/lib/integrations/microsoft-365-contract.js";
 import { GOOGLE_CALENDAR_SCOPES } from "../../apps/web/lib/integrations/google-calendar-contract.js";
 
@@ -65,6 +68,27 @@ test("Desktop and Kestrel One share the Google Workspace Calendar scope contract
   const desktopScopes = desktop.capabilityPackScopes?.calendar ?? [];
   for (const scope of GOOGLE_CALENDAR_SCOPES) assert.ok(desktopScopes.includes(scope));
   assert.deepEqual(Object.keys(desktop.capabilityPackScopes ?? {}), ["calendar"]);
+  assert.deepEqual(
+    desktop.capabilityPackTools?.calendar,
+    GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.map(
+      (operation) => operation.desktopToolName,
+    ),
+  );
+  for (const operation of GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS) {
+    assert.equal(
+      desktopStandardAppToolRequiresApproval(
+        "google_workspace",
+        operation.desktopToolName,
+      ),
+      operation.minimumApprovalMode === "ask",
+    );
+    if (operation.minimumApprovalMode === "ask") {
+      assert.equal(
+        hostedMutationOperationKey(operation.hostedToolName),
+        operation.serviceOperation,
+      );
+    }
+  }
 });
 
 test(
@@ -80,6 +104,27 @@ test(
         new Set(desktop.capabilityPackScopes?.[pack]),
         new Set(scopesForMicrosoft365Packs([pack])),
       );
+    }
+    assert.deepEqual(
+      desktop.capabilityPackTools?.teams,
+      MICROSOFT_365_OPERATION_DESCRIPTORS.map(
+        (operation) => operation.desktopToolName,
+      ),
+    );
+    for (const operation of MICROSOFT_365_OPERATION_DESCRIPTORS) {
+      assert.equal(
+        desktopStandardAppToolRequiresApproval(
+          "microsoft_365",
+          operation.desktopToolName,
+        ),
+        operation.minimumApprovalMode === "ask",
+      );
+      if (operation.minimumApprovalMode === "ask") {
+        assert.equal(
+          hostedMutationOperationKey(operation.hostedToolName),
+          operation.serviceOperation,
+        );
+      }
     }
   },
 );

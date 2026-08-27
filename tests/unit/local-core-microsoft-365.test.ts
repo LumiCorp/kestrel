@@ -89,6 +89,26 @@ test("Microsoft 365 activation fails closed when the stored grant lacks a select
   );
 });
 
+test("Microsoft 365 rejects Teams send before Graph when ChatMessage.Send is absent", async () => {
+  const store = new MemoryLocalCoreCredentialStore();
+  await store.set("mcp.standard.microsoft_365.oauth.tokens", JSON.stringify({
+    accessToken: "access",
+    refreshToken: "refresh",
+    expiresAt: Date.now() + 3_600_000,
+    scope: "openid profile email offline_access User.Read Chat.Read",
+  }));
+  const service = new LocalCoreMicrosoft365Service({
+    credentialStore: store,
+    fetchImpl: (async () => {
+      throw new Error("provider should not be called");
+    }) as typeof fetch,
+  });
+  await assert.rejects(
+    service.invoke("chat.send", { chatId: "chat-1", content: "Hello" }),
+    /has not granted this operation/u,
+  );
+});
+
 test("Microsoft 365 OAuth exchanges a callback only once", async () => {
   let releaseTokenExchange!: () => void;
   const tokenExchangeReleased = new Promise<void>((resolve) => { releaseTokenExchange = resolve; });

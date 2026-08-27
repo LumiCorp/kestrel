@@ -4,6 +4,7 @@ import {
 import type {
   Microsoft365Operation,
 } from "../../src/apps/microsoft365.js";
+import { microsoft365OperationDescriptor } from "../../src/apps/microsoft365.js";
 import type {
   SharedToolContext,
   SharedToolDefinition,
@@ -20,6 +21,22 @@ function createMicrosoft365DesktopTool(options: {
   inputSchema: Record<string, unknown>;
   readOnly: boolean;
 }): SharedToolModule {
+  const canonicalOperation =
+    options.operation === "chats.list" || options.operation === "chat.send"
+      ? microsoft365OperationDescriptor(options.operation)
+      : undefined;
+  const readOnly = canonicalOperation === undefined
+    ? options.readOnly
+    : canonicalOperation.sideEffect === "read";
+  if (
+    canonicalOperation !== undefined &&
+    (options.name !== canonicalOperation.desktopToolName ||
+      options.readOnly !== readOnly)
+  ) {
+    throw new Error(
+      `Microsoft 365 tool '${options.name}' must match its canonical operation descriptor.`,
+    );
+  }
   const definition: SharedToolDefinition = {
     name: options.name,
     description: options.description,
@@ -28,12 +45,12 @@ function createMicrosoft365DesktopTool(options: {
       freshnessClass: "live",
       latencyClass: "medium",
       costClass: "free",
-      executionClass: options.readOnly ? "read_only" : "external_side_effect",
-      ...(options.readOnly ? {} : { allowedInteractionModes: ["chat", "build"] }),
+      executionClass: readOnly ? "read_only" : "external_side_effect",
+      ...(readOnly ? {} : { allowedInteractionModes: ["chat", "build"] }),
       capabilityClasses: [`microsoft.${options.family}`, "network.call"],
       approvalCapabilities: [
         "network.call",
-        ...(options.readOnly ? [] : (["external.confirm"] as const)),
+        ...(readOnly ? [] : (["external.confirm"] as const)),
       ],
     },
     presentation: {
@@ -60,7 +77,7 @@ function createMicrosoft365DesktopTool(options: {
           );
         }
         return await context.microsoft365Service.invoke(
-          options.operation,
+          canonicalOperation?.serviceOperation ?? options.operation,
           parseObjectInput(options.name, input),
         );
       };

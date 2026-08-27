@@ -1,15 +1,25 @@
-import type { GoogleWorkspaceOperation } from "../../src/apps/googleWorkspace.js";
+import {
+  googleWorkspaceOperationDescriptor,
+  type GoogleWorkspaceOperation,
+} from "../../src/apps/googleWorkspace.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type { SharedToolContext, SharedToolDefinition, SharedToolModule } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
 
 function createGoogleWorkspaceTool(options: { name: string; displayName: string; description: string; operation: GoogleWorkspaceOperation; inputSchema: Record<string, unknown>; readOnly: boolean }): SharedToolModule {
+  const operation = googleWorkspaceOperationDescriptor(options.operation);
+  const readOnly = operation.sideEffect === "read";
+  if (options.name !== operation.desktopToolName || options.readOnly !== readOnly) {
+    throw new Error(
+      `Google Workspace tool '${options.name}' must match its canonical operation descriptor.`,
+    );
+  }
   const definition: SharedToolDefinition = {
     name: options.name, description: options.description, inputSchema: options.inputSchema,
-    capability: { freshnessClass: "live", latencyClass: "medium", costClass: "free", executionClass: options.readOnly ? "read_only" : "external_side_effect", ...(options.readOnly ? {} : { allowedInteractionModes: ["chat", "build"] }), capabilityClasses: ["google.calendar", "network.call"], approvalCapabilities: ["network.call", ...(options.readOnly ? [] : (["external.confirm"] as const))] },
+    capability: { freshnessClass: "live", latencyClass: "medium", costClass: "free", executionClass: readOnly ? "read_only" : "external_side_effect", ...(readOnly ? {} : { allowedInteractionModes: ["chat", "build"] }), capabilityClasses: ["google.calendar", "network.call"], approvalCapabilities: ["network.call", ...(readOnly ? [] : (["external.confirm"] as const))] },
     presentation: { displayName: options.displayName, aliases: [options.displayName.toLowerCase()], keywords: ["google workspace", "calendar", options.operation], provider: "google-calendar", toolFamily: "calendar" },
   };
-  return { definition, createHandler(context: SharedToolContext) { return async (input: unknown) => { if (!context.googleWorkspaceService) throw createRuntimeFailure("GOOGLE_WORKSPACE_NOT_CONNECTED", "Google Workspace is not connected in Kestrel Desktop.", { subsystem: "tooling", classification: "configuration", recoverable: true }); return await context.googleWorkspaceService.invoke(options.operation, parseObjectInput(options.name, input)); }; } };
+  return { definition, createHandler(context: SharedToolContext) { return async (input: unknown) => { if (!context.googleWorkspaceService) throw createRuntimeFailure("GOOGLE_WORKSPACE_NOT_CONNECTED", "Google Workspace is not connected in Kestrel Desktop.", { subsystem: "tooling", classification: "configuration", recoverable: true }); return await context.googleWorkspaceService.invoke(operation.serviceOperation, parseObjectInput(options.name, input)); }; } };
 }
 
 const eventTime = { oneOf: [{ type: "object", properties: { dateTime: { type: "string", format: "date-time" }, timeZone: { type: "string" } }, required: ["dateTime"], additionalProperties: false }, { type: "object", properties: { date: { type: "string", format: "date" } }, required: ["date"], additionalProperties: false }] };

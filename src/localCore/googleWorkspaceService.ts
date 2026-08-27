@@ -1,4 +1,10 @@
-import { scopesForGoogleWorkspacePacks, type GoogleWorkspaceOperation, type GoogleWorkspacePack, type GoogleWorkspaceServicePort } from "../apps/googleWorkspace.js";
+import {
+  googleWorkspaceOperationHasRequiredScopes,
+  scopesForGoogleWorkspacePacks,
+  type GoogleWorkspaceOperation,
+  type GoogleWorkspacePack,
+  type GoogleWorkspaceServicePort,
+} from "../apps/googleWorkspace.js";
 import type { LocalCoreCredentialId, LocalCoreCredentialStore } from "./credentialStore.js";
 
 const CLIENT_ID = "mcp.standard.google_workspace.oauth.client" as LocalCoreCredentialId;
@@ -27,6 +33,13 @@ export class LocalCoreGoogleWorkspaceService implements GoogleWorkspaceServicePo
   }
 
   async invoke(operation: GoogleWorkspaceOperation, input: Record<string, unknown>): Promise<unknown> {
+    const tokens = await readGoogleTokens(this.#store);
+    if (!googleWorkspaceOperationHasRequiredScopes({
+      operation,
+      grantedScopes: tokens.scope.split(/\s+/u).filter(Boolean),
+    })) {
+      throw new Error("Google Workspace has not granted this operation.");
+    }
     const accessToken = await this.#accessToken();
     if (operation === "events.list") {
       const url = eventUrl();

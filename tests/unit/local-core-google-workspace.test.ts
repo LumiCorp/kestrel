@@ -49,6 +49,29 @@ test("Google Workspace Calendar refresh and API calls stay inside Local Core", a
   assert.equal(requests.some((url) => url.includes("refresh-secret")), false);
 });
 
+test("Google Workspace rejects an operation before a provider call when its grant is incomplete", async () => {
+  const store = new MemoryLocalCoreCredentialStore();
+  await store.set("mcp.standard.google_workspace.oauth.tokens", JSON.stringify({
+    accessToken: "access",
+    refreshToken: "refresh",
+    expiresAt: Date.now() + 3_600_000,
+    scope: "openid email profile https://www.googleapis.com/auth/calendar.events.owned",
+  }));
+  const service = new LocalCoreGoogleWorkspaceService({
+    credentialStore: store,
+    fetchImpl: (async () => {
+      throw new Error("provider should not be called");
+    }) as typeof fetch,
+  });
+  await assert.rejects(
+    service.invoke("events.list", {
+      timeMin: "2026-07-22T00:00:00Z",
+      timeMax: "2026-07-23T00:00:00Z",
+    }),
+    /has not granted this operation/u,
+  );
+});
+
 test("Google Workspace OAuth exchanges a callback only once", async () => {
   let releaseTokenExchange!: () => void;
   const tokenExchangeReleased = new Promise<void>((resolve) => { releaseTokenExchange = resolve; });

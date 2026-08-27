@@ -1,4 +1,12 @@
 import { KESTREL_APP_IDS, type KestrelAppId } from "@kestrel-agents/protocol";
+import {
+  GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS,
+  scopesForGoogleWorkspacePacks,
+} from "../apps/googleWorkspace.js";
+import {
+  MICROSOFT_365_OPERATION_DESCRIPTORS,
+  scopesForMicrosoft365Packs,
+} from "../apps/microsoft365.js";
 
 interface DesktopStandardAppConnectionBase {
   appId: KestrelAppId;
@@ -39,6 +47,27 @@ export type DesktopStandardAppConnectionDefinition =
   | DesktopStandardAppTokenConnectionDefinition
   | DesktopStandardAppAuthorizationConnectionDefinition;
 
+const GOOGLE_CALENDAR_DESKTOP_TOOLS = Object.freeze(
+  GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.map(
+    (operation) => operation.desktopToolName,
+  ),
+);
+const GOOGLE_CALENDAR_APPROVAL_TOOLS = Object.freeze(
+  GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.filter(
+    (operation) => operation.minimumApprovalMode === "ask",
+  ).map((operation) => operation.desktopToolName),
+);
+const MICROSOFT_TEAMS_DESKTOP_TOOLS = Object.freeze(
+  MICROSOFT_365_OPERATION_DESCRIPTORS.map(
+    (operation) => operation.desktopToolName,
+  ),
+);
+const MICROSOFT_TEAMS_APPROVAL_TOOLS = Object.freeze(
+  MICROSOFT_365_OPERATION_DESCRIPTORS.filter(
+    (operation) => operation.minimumApprovalMode === "ask",
+  ).map((operation) => operation.desktopToolName),
+);
+
 const DESKTOP_STANDARD_APP_CONNECTIONS: readonly DesktopStandardAppConnectionDefinition[] =
   Object.freeze([
     Object.freeze({
@@ -49,36 +78,15 @@ const DESKTOP_STANDARD_APP_CONNECTIONS: readonly DesktopStandardAppConnectionDef
       credentialPrefix: "mcp.standard.google_workspace",
       clientIdEnvironmentVariable: "KESTREL_GOOGLE_WORKSPACE_CLIENT_ID",
       capabilityPackScopes: Object.freeze({
-        calendar: Object.freeze([
-          "openid",
-          "email",
-          "profile",
-          "https://www.googleapis.com/auth/calendar.events.owned",
-          "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
-          "https://www.googleapis.com/auth/calendar.events.freebusy",
-        ]),
+        calendar: Object.freeze(scopesForGoogleWorkspacePacks(["calendar"])),
       }),
       capabilityPackTools: Object.freeze({
-        calendar: Object.freeze([
-          "google_workspace.list_events",
-          "google_workspace.create_event",
-          "google_workspace.update_event",
-          "google_workspace.delete_event",
-        ]),
+        calendar: GOOGLE_CALENDAR_DESKTOP_TOOLS,
       }),
       capabilityPackRequiredTools: Object.freeze({
-        calendar: Object.freeze([
-          "google_workspace.list_events",
-          "google_workspace.create_event",
-          "google_workspace.update_event",
-          "google_workspace.delete_event",
-        ]),
+        calendar: GOOGLE_CALENDAR_DESKTOP_TOOLS,
       }),
-      approvalRequiredTools: Object.freeze([
-        "google_workspace.create_event",
-        "google_workspace.update_event",
-        "google_workspace.delete_event",
-      ]),
+      approvalRequiredTools: GOOGLE_CALENDAR_APPROVAL_TOOLS,
     }),
     Object.freeze({
       appId: KESTREL_APP_IDS.MICROSOFT_365,
@@ -88,23 +96,23 @@ const DESKTOP_STANDARD_APP_CONNECTIONS: readonly DesktopStandardAppConnectionDef
       credentialPrefix: "mcp.standard.microsoft_365",
       clientIdEnvironmentVariable: "KESTREL_MICROSOFT_365_CLIENT_ID",
       capabilityPackScopes: Object.freeze({
-        outlook: Object.freeze(["openid", "profile", "email", "offline_access", "User.Read", "Mail.Read", "Mail.Send", "Calendars.Read"]),
-        teams: Object.freeze(["openid", "profile", "email", "offline_access", "User.Read", "Chat.Read", "ChatMessage.Send"]),
-        sharepoint: Object.freeze(["openid", "profile", "email", "offline_access", "User.Read", "Sites.Read.All"]),
+        outlook: Object.freeze(scopesForMicrosoft365Packs(["outlook"])),
+        teams: Object.freeze(scopesForMicrosoft365Packs(["teams"])),
+        sharepoint: Object.freeze(scopesForMicrosoft365Packs(["sharepoint"])),
       }),
       capabilityPackTools: Object.freeze({
         outlook: Object.freeze(["microsoft_365.list_mail", "microsoft_365.send_mail", "microsoft_365.list_events"]),
-        teams: Object.freeze(["microsoft_365.list_chats", "microsoft_365.send_chat_message"]),
+        teams: MICROSOFT_TEAMS_DESKTOP_TOOLS,
         sharepoint: Object.freeze(["microsoft_365.search_sites"]),
       }),
       capabilityPackRequiredTools: Object.freeze({
         outlook: Object.freeze(["microsoft_365.list_mail", "microsoft_365.send_mail", "microsoft_365.list_events"]),
-        teams: Object.freeze(["microsoft_365.list_chats", "microsoft_365.send_chat_message"]),
+        teams: MICROSOFT_TEAMS_DESKTOP_TOOLS,
         sharepoint: Object.freeze(["microsoft_365.search_sites"]),
       }),
       approvalRequiredTools: Object.freeze([
         "microsoft_365.send_mail",
-        "microsoft_365.send_chat_message",
+        ...MICROSOFT_TEAMS_APPROVAL_TOOLS,
       ]),
     }),
     Object.freeze({

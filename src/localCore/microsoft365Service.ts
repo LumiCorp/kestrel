@@ -3,6 +3,7 @@ import type {
   Microsoft365ServicePort,
 } from "../apps/microsoft365.js";
 import {
+  microsoft365OperationHasRequiredScopes,
   resourceScopesForMicrosoft365Packs,
   type Microsoft365Pack,
 } from "../apps/microsoft365.js";
@@ -42,6 +43,13 @@ export class LocalCoreMicrosoft365Service implements Microsoft365ServicePort {
     operation: Microsoft365Operation,
     input: Record<string, unknown>,
   ): Promise<unknown> {
+    const tokens = await readTokens(this.#credentialStore);
+    if (!microsoft365OperationHasRequiredScopes({
+      operation,
+      grantedScopes: tokens.scope.split(/\s+/u).filter(Boolean),
+    })) {
+      throw new Error("Microsoft 365 has not granted this operation.");
+    }
     const accessToken = await this.#accessToken();
     if (operation === "mail.list") {
       const url = graphUrl("/me/messages");
