@@ -150,3 +150,21 @@ test("only a current exact qualification enables the product-owned agent role", 
     /stale/u,
   );
 });
+
+test("a retained registration with another exact identity remains inspectable and unavailable", () => {
+  const registration = fullyQualifiedRegistration();
+  const { fingerprint: _fingerprint, ...authoring } = registration;
+  const mismatched = createModelRegistrationV2({
+    ...authoring,
+    modelId: "z-ai/other-model",
+  });
+  const readiness = readinessFor({ kestrelModelRegistrationV2: mismatched });
+  assert.equal(readiness.identity, "invalid");
+  assert.equal(readiness.declaration, "present");
+  assert.equal(readiness.registration?.revision, mismatched.revision);
+  assert.equal(isHostedModelRoleReady(readiness, "agent.loop"), false);
+  assert.match(
+    hostedModelRoleUnavailableReason(readiness, "agent.loop") ?? "",
+    /does not match/u,
+  );
+});

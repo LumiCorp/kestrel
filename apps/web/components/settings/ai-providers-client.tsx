@@ -215,6 +215,9 @@ function HostedModelReadinessSummary({
           Admin {readiness.approval}
         </Badge>
         <span>
+          Reachability: {formatReadinessValue(readiness.reachability)}
+        </span>
+        <span>
           Registration: {formatReadinessValue(readiness.identity)} ·{" "}
           {formatReadinessValue(readiness.declaration)}
         </span>

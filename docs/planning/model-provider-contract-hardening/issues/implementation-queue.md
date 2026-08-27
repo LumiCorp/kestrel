@@ -7,13 +7,13 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 ## Ready
 
 - [Publish exact Local Core and Desktop model readiness](12-publish-local-core-model-readiness.md)
-- [Close hosted readiness admission and truth gaps](14-close-hosted-readiness-admission-and-truth-gaps.md)
 
 ## Blocked
 
 ## Implemented
 
 - [Show truthful hosted model readiness by role](11-show-truthful-hosted-model-readiness.md)
+- [Close hosted readiness admission and truth gaps](14-close-hosted-readiness-admission-and-truth-gaps.md)
 - [Restore model readiness build validation](13-restore-model-readiness-build-validation.md)
 
 ## Done

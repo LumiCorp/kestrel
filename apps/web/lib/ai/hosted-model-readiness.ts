@@ -83,8 +83,6 @@ export function readHostedModelReadiness(input: {
       : String(input.credentialRevision);
   const registration = readExactRegistration({
     metadata: input.metadata,
-    provider,
-    modelId: input.modelId,
   });
   const qualification = provider
     ? readHostedModelRegistrationState({
@@ -214,19 +212,15 @@ export function currentHostedModelAdapterRevision(
 
 function readExactRegistration(input: {
   metadata: unknown;
-  provider: HostedModelRegistrationProvider | undefined;
-  modelId: string;
 }) {
-  if (!input.provider || !input.metadata || typeof input.metadata !== "object" || Array.isArray(input.metadata)) {
+  if (!input.metadata || typeof input.metadata !== "object" || Array.isArray(input.metadata)) {
     return;
   }
   try {
     const registration = parseModelRegistrationV2(
       (input.metadata as Record<string, unknown>).kestrelModelRegistrationV2,
     );
-    return registration.providerId === input.provider && registration.modelId === input.modelId
-      ? registration
-      : undefined;
+    return registration;
   } catch {
     return;
   }

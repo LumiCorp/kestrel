@@ -369,6 +369,8 @@ export async function setEnvironmentDefaultModel(input: {
     !isEligibleHostedLanguageModel({
       gatewayProvider: row.gateway.provider as import("./gateways").GatewayProvider,
       gatewayEnabled: row.gateway.enabled,
+      gatewayReachable: row.gateway.credentialStatus === "ready",
+      credentialRevision: row.gateway.credentialRevision,
       approved: row.model.approved,
       modality: row.model.modality as import("./gateways").GatewayModality,
       metadata: row.model.metadata,
