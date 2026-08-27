@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-None.
+- [Validate before cleanup DONE repair](06m-validate-before-cleanup-done-repair.md)
 
 ## Blocked
 
