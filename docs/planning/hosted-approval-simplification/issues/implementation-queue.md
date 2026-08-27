@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-- [Validate before cleanup DONE repair](06m-validate-before-cleanup-done-repair.md)
+None.
 
 ## Blocked
 
@@ -23,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Validate before cleanup DONE repair](06m-validate-before-cleanup-done-repair.md)
 - [Validate exact cleanup DONE evidence](06l-validate-exact-cleanup-done-evidence.md)
 - [Atomically commit cleanup release success](06k-atomically-commit-cleanup-release-success.md)
 - [Make cleanup release state monotonic](06j-make-cleanup-release-state-monotonic.md)
