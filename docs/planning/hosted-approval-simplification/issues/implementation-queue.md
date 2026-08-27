@@ -11,7 +11,7 @@ work; this queue does not reopen them.
 
 ## Ready
 
-- None.
+- [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md) — implementation dependencies are complete; production qualification, drain evidence, and cleanup remain the next boundary.
 
 ## In progress
 
@@ -19,9 +19,13 @@ work; this queue does not reopen them.
 
 ## Blocked
 
-- [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md) — rollout proof and compatibility controls are already implemented; final production qualification, drain evidence, and cleanup are blocked by [truthful cancellation telemetry](07-preserve-cancellation-telemetry.md).
+- None.
 
 ## Implemented
+
+- None.
+
+## Done
 
 - [Latch the first cancellation source](07f-latch-first-cancellation-source.md)
 - [Capture completed model usage before cancellation](07a-capture-completed-model-usage-before-cancellation.md)
@@ -29,9 +33,7 @@ work; this queue does not reopen them.
 - [Project a safe cancellation terminal result](07c-project-safe-cancellation-terminal-result.md)
 - [Preserve the cancellation source](07d-preserve-cancellation-source.md)
 - [Preserve zero-dollar priced cost evidence](07e-preserve-zero-priced-cost-evidence.md)
-- [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md) — blocked by [first-source latching](07f-latch-first-cancellation-source.md).
-
-## Done
+- [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 - [Bind PostgreSQL result insertion to the locked effect identity](06z7-bind-postgres-result-to-locked-effect.md)
 - [Require immutable cleanup intent for all result statuses](06z6-require-cleanup-intent-for-all-results.md)
