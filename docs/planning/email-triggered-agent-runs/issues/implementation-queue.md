@@ -4,7 +4,12 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Prevent a concurrent receiving save from restoring a stale key](09-prevent-stale-receiving-key-rollback.md)
+- [Keep receiving health evidence truthful after failed checks](10-persist-and-present-receiving-health.md)
+- [Make Resend webhook staging recoverable after every provider step](11-stage-resend-webhooks-recoverably.md)
+- [Return authentication errors for invalid Desktop receiving credentials](12-return-desktop-receiving-auth-errors.md)
+- [Distinguish provider outages from invalid receiving configuration](13-classify-receiving-provider-failures.md)
+- [Show redacted receiving status to non-Admin Organization members](14-show-redacted-receiving-status-to-members.md)
 
 ## In progress
 
