@@ -4,7 +4,10 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Fence receiving throughout Organization deletion](46-fence-receiving-during-organization-deletion.md)
+- [Prove Resend key replacement through One and Desktop routes](47-prove-resend-key-replacement-through-management-routes.md)
+- [Bound Resend management requests](48-bound-resend-management-requests.md)
+- [Complete deletion after a webhook create is verified absent](49-complete-deletion-after-verified-absent-create.md)
 
 ## In progress
 
