@@ -8,7 +8,10 @@ import {
   getSafeReceivingAdminError,
   parseReceivingAdminJson,
 } from "@/lib/email/receiving-admin-error";
-import { requireDesktopReceivingAdmin } from "@/lib/email/desktop-receiving-auth";
+import {
+  requireDesktopReceivingAdmin,
+  requireDesktopReceivingMember,
+} from "@/lib/email/desktop-receiving-auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 
 const bodySchema = z.object({
@@ -23,7 +26,7 @@ export async function GET(request: Request, context: Context) {
     const organizationId = routeIdSchema.parse(
       (await context.params).organizationId,
     );
-    await requireDesktopReceivingAdmin(request, organizationId);
+    await requireDesktopReceivingMember(request, organizationId);
     return NextResponse.json(
       { connection: await getPublicReceivingConnection(organizationId) },
       { headers: { "cache-control": "no-store" } },

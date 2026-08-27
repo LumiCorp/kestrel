@@ -156,12 +156,13 @@ export async function saveReceivingConnection(input: {
   } catch (error) {
     const normalized = normalizeProviderError(error);
     if (storedHealthCheck) {
-      await persistStoredCredentialHealth({
+      const persistence = await persistStoredCredentialHealth({
         organizationId: input.organizationId,
         expectedEncryptedApiKey: storedHealthCheck.expectedEncryptedApiKey,
         healthCheckSequence: storedHealthCheck.healthCheckSequence,
         outcome: credentialFailureOutcome(normalized),
       });
+      rejectSupersededStoredSave(persistence);
     }
     throw normalized;
   }
@@ -171,7 +172,7 @@ export async function saveReceivingConnection(input: {
     domain.mxStatus !== "verified"
   ) {
     if (storedHealthCheck) {
-      await persistStoredCredentialHealth({
+      const persistence = await persistStoredCredentialHealth({
         organizationId: input.organizationId,
         expectedEncryptedApiKey: storedHealthCheck.expectedEncryptedApiKey,
         healthCheckSequence: storedHealthCheck.healthCheckSequence,
@@ -180,6 +181,7 @@ export async function saveReceivingConnection(input: {
           ? { checkedDomains: [domain] }
           : {}),
       });
+      rejectSupersededStoredSave(persistence);
     }
     throw new ReceivingConfigError(
       "RESEND_RECEIVING_DOMAIN_NOT_READY",
@@ -330,7 +332,7 @@ async function persistStoredCredentialHealth(input: {
   checkedDomains?: readonly ReceivingDomainOption[] | undefined;
 }) {
   const now = new Date();
-  await knowledgeDb.transaction(async (transaction) => {
+  return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
     );
@@ -346,7 +348,7 @@ async function persistStoredCredentialHealth(input: {
       );
     }
     if (lockedExisting.healthCheckSequence !== input.healthCheckSequence) {
-      return;
+      return "superseded" as const;
     }
     const checkedDomain = lockedExisting.receivingDomainId
       ? input.checkedDomains?.find(
@@ -380,7 +382,19 @@ async function persistStoredCredentialHealth(input: {
           input.organizationId,
         ),
       );
+    return "persisted" as const;
   });
+}
+
+function rejectSupersededStoredSave(
+  persistence: Awaited<ReturnType<typeof persistStoredCredentialHealth>>,
+) {
+  if (persistence === "superseded") {
+    throw new ReceivingConfigError(
+      "RESEND_RECEIVING_SAVE_SUPERSEDED",
+      "The receiving configuration changed while receiving was being saved. Refresh and try again.",
+    );
+  }
 }
 
 async function beginStoredCredentialHealthCheck(input: {

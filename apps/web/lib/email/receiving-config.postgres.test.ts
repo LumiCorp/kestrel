@@ -847,7 +847,7 @@ test("same-key stored receiving checks persist in invocation order across invert
   );
 });
 
-test("a stored-key receiving save rejects when a newer same-key check supersedes it", async (context) => {
+test("every stored-key receiving save outcome rejects when a newer same-key check supersedes it", async (context) => {
   assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");
   process.env.DATABASE_URL = databaseUrl;
   process.env.POSTGRES_URL = databaseUrl;
@@ -895,6 +895,34 @@ test("a stored-key receiving save rejects when a newer same-key check supersedes
     provider: fakeProvider(),
   });
 
+  const readPersisted = () =>
+    sql<
+      Array<{
+        receivingDomainId: string | null;
+        receivingDomain: string | null;
+        receivingDomainStatus: string;
+        mxStatus: string;
+        domainCheckedAt: Date | null;
+        credentialStatus: string;
+        healthCheckSequence: string;
+        lastHealthCheckedAt: Date | null;
+        lastErrorCode: string | null;
+      }>
+    >`
+      SELECT
+        "receiving_domain_id" AS "receivingDomainId",
+        "receiving_domain" AS "receivingDomain",
+        "receiving_domain_status" AS "receivingDomainStatus",
+        "mx_status" AS "mxStatus",
+        "domain_checked_at" AS "domainCheckedAt",
+        "credential_status" AS "credentialStatus",
+        "health_check_sequence" AS "healthCheckSequence",
+        "last_health_checked_at" AS "lastHealthCheckedAt",
+        "last_error_code" AS "lastErrorCode"
+      FROM "organization_receiving_connections"
+      WHERE "organization_id" = ${organizationId}
+    `;
+
   const staleSaveStarted = deferred();
   const releaseStaleSave = deferred();
   const staleSave = receiving.saveReceivingConnection({
@@ -925,33 +953,173 @@ test("a stored-key receiving save rejects when a newer same-key check supersedes
     return true;
   });
 
-  const [persisted] = await sql<
-    Array<{
-      receivingDomainId: string | null;
-      receivingDomain: string | null;
-      credentialStatus: string;
-      healthCheckSequence: string;
-      lastErrorCode: string | null;
-    }>
-  >`
-    SELECT
-      "receiving_domain_id" AS "receivingDomainId",
-      "receiving_domain" AS "receivingDomain",
-      "credential_status" AS "credentialStatus",
-      "health_check_sequence" AS "healthCheckSequence",
-      "last_error_code" AS "lastErrorCode"
-    FROM "organization_receiving_connections"
-    WHERE "organization_id" = ${organizationId}
-  `;
+  const [persisted] = await readPersisted();
   assert.ok(persisted);
   assert.equal(persisted.receivingDomainId, "domain-original");
   assert.equal(persisted.receivingDomain, "domain-original.example.test");
   assert.equal(persisted.credentialStatus, "full_access");
   assert.equal(persisted.lastErrorCode, null);
   assert.equal(persisted.healthCheckSequence, "2");
+
+  const staleFailureStarted = deferred();
+  const releaseStaleFailure = deferred();
+  const staleFailure = receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    receivingDomainId: "domain-failed-provider",
+    provider: coordinatedProvider({
+      async getDomain(apiKey, id) {
+        assert.equal(apiKey, "re_save_order_stored_key");
+        assert.equal(id, "domain-failed-provider");
+        staleFailureStarted.resolve();
+        await releaseStaleFailure.promise;
+        throw new ResendReceivingProviderError(
+          "RESEND_RECEIVING_PROVIDER_UNAVAILABLE",
+          "Resend receiving is temporarily unavailable.",
+        );
+      },
+    }),
+  });
+  await staleFailureStarted.promise;
+  await receiving.inspectReceivingDomains({
+    organizationId,
+    provider: healthyListProvider("domain-original"),
+  });
+  const [afterNewerCheck] = await readPersisted();
+  assert.ok(afterNewerCheck);
+
+  releaseStaleFailure.resolve();
+  await assert.rejects(staleFailure, (error: unknown) => {
+    assert.ok(error instanceof receiving.ReceivingConfigError);
+    assert.equal(error.code, "RESEND_RECEIVING_SAVE_SUPERSEDED");
+    return true;
+  });
+  assert.deepEqual((await readPersisted())[0], afterNewerCheck);
+
+  const staleUnreadyStarted = deferred();
+  const releaseStaleUnready = deferred();
+  const staleUnready = receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    receivingDomainId: "domain-original",
+    provider: coordinatedProvider({
+      async getDomain(apiKey, id) {
+        assert.equal(apiKey, "re_save_order_stored_key");
+        assert.equal(id, "domain-original");
+        staleUnreadyStarted.resolve();
+        await releaseStaleUnready.promise;
+        return {
+          ...verifiedReceivingDomain(id),
+          status: "failed",
+          mxStatus: "failed",
+        };
+      },
+    }),
+  });
+  await staleUnreadyStarted.promise;
+  await receiving.inspectReceivingDomains({
+    organizationId,
+    provider: healthyListProvider("domain-original"),
+  });
+  const [afterNewerUnreadyCheck] = await readPersisted();
+  assert.ok(afterNewerUnreadyCheck);
+
+  releaseStaleUnready.resolve();
+  await assert.rejects(staleUnready, (error: unknown) => {
+    assert.ok(error instanceof receiving.ReceivingConfigError);
+    assert.equal(error.code, "RESEND_RECEIVING_SAVE_SUPERSEDED");
+    return true;
+  });
+  assert.deepEqual((await readPersisted())[0], afterNewerUnreadyCheck);
+
+  await assert.rejects(
+    receiving.saveReceivingConnection({
+      organizationId,
+      actorUserId: userId,
+      receivingDomainId: "domain-ordinary-provider-failure",
+      provider: coordinatedProvider({
+        async getDomain() {
+          throw new ResendReceivingProviderError(
+            "RESEND_RECEIVING_PROVIDER_UNAVAILABLE",
+            "Resend receiving is temporarily unavailable.",
+          );
+        },
+      }),
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof receiving.ReceivingConfigError);
+      assert.equal(error.code, "RESEND_RECEIVING_PROVIDER_UNAVAILABLE");
+      return true;
+    },
+  );
+
+  await receiving.inspectReceivingDomains({
+    organizationId,
+    provider: healthyListProvider("domain-original"),
+  });
+  await assert.rejects(
+    receiving.saveReceivingConnection({
+      organizationId,
+      actorUserId: userId,
+      receivingDomainId: "domain-original",
+      provider: coordinatedProvider({
+        async getDomain(_apiKey, id) {
+          return {
+            ...verifiedReceivingDomain(id),
+            status: "failed",
+            mxStatus: "failed",
+          };
+        },
+      }),
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof receiving.ReceivingConfigError);
+      assert.equal(error.code, "RESEND_RECEIVING_DOMAIN_NOT_READY");
+      return true;
+    },
+  );
+
+  const staleRotatedFailureStarted = deferred();
+  const releaseStaleRotatedFailure = deferred();
+  const staleRotatedFailure = receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    receivingDomainId: "domain-before-rotation",
+    provider: coordinatedProvider({
+      async getDomain(apiKey) {
+        assert.equal(apiKey, "re_save_order_stored_key");
+        staleRotatedFailureStarted.resolve();
+        await releaseStaleRotatedFailure.promise;
+        throw new ResendReceivingProviderError(
+          "RESEND_RECEIVING_PROVIDER_UNAVAILABLE",
+          "Resend receiving is temporarily unavailable.",
+        );
+      },
+    }),
+  });
+  await staleRotatedFailureStarted.promise;
+  await receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    apiKey: "re_save_order_rotated_key",
+    receivingDomainId: "domain-after-rotation",
+    provider: fakeProvider(),
+  });
+
+  releaseStaleRotatedFailure.resolve();
+  await assert.rejects(staleRotatedFailure, (error: unknown) => {
+    assert.ok(error instanceof receiving.ReceivingConfigError);
+    assert.equal(error.code, "RESEND_RECEIVING_CREDENTIAL_CHANGED");
+    return true;
+  });
+  const [afterRotation] = await readPersisted();
+  assert.ok(afterRotation);
+  assert.equal(afterRotation.receivingDomainId, "domain-after-rotation");
+  assert.equal(afterRotation.credentialStatus, "full_access");
+  assert.equal(afterRotation.lastErrorCode, null);
 });
 
-test("Desktop receiving routes preserve authentication and Organization Admin failures", async (context) => {
+test("Desktop receiving GET permits only members while inspection and mutation remain Admin-only", async (context) => {
   assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");
   process.env.DATABASE_URL = databaseUrl;
   process.env.POSTGRES_URL = databaseUrl;
@@ -1089,17 +1257,59 @@ test("Desktop receiving routes preserve authentication and Organization Admin fa
   assert.equal(revokedResponse.status, 401);
   assert.deepEqual(await revokedResponse.json(), unauthorized);
 
-  for (const credential of [member, crossOrganizationAdmin]) {
-    const response = await receivingRoute.GET(
-      desktopRequest(receivingUrl, "GET", credential.value),
-      contextFor(targetOrganizationId),
-    );
-    assert.equal(response.status, 403);
-    assert.deepEqual(await response.json(), {
-      code: "FORBIDDEN",
-      error: "Forbidden",
-    });
-  }
+  const memberReadResponse = await receivingRoute.GET(
+    desktopRequest(receivingUrl, "GET", member.value),
+    contextFor(targetOrganizationId),
+  );
+  assert.equal(memberReadResponse.status, 200);
+  assert.equal(memberReadResponse.headers.get("cache-control"), "no-store");
+  const memberRead = await memberReadResponse.json();
+  assert.deepEqual(Object.keys(memberRead.connection).sort(), [
+    "configured",
+    "credentialStatus",
+    "credentialValidatedAt",
+    "domainCheckedAt",
+    "inboundEnabled",
+    "lastErrorCode",
+    "lastHealthCheckedAt",
+    "lastTestedAt",
+    "mxStatus",
+    "provider",
+    "readiness",
+    "receivingDomain",
+    "receivingDomainStatus",
+    "webhookStatus",
+  ]);
+
+  const crossOrganizationReadResponse = await receivingRoute.GET(
+    desktopRequest(receivingUrl, "GET", crossOrganizationAdmin.value),
+    contextFor(targetOrganizationId),
+  );
+  assert.equal(crossOrganizationReadResponse.status, 403);
+  assert.deepEqual(await crossOrganizationReadResponse.json(), {
+    code: "FORBIDDEN",
+    error: "Forbidden",
+  });
+
+  const memberMutationResponse = await receivingRoute.PUT(
+    desktopRequest(receivingUrl, "PUT", member.value),
+    contextFor(targetOrganizationId),
+  );
+  assert.equal(memberMutationResponse.status, 403);
+  assert.deepEqual(await memberMutationResponse.json(), {
+    code: "FORBIDDEN",
+    error: "Forbidden",
+  });
+
+  const memberInspectionResponse = await domainsRoute.POST(
+    desktopRequest(domainsUrl, "POST", member.value),
+    contextFor(targetOrganizationId),
+  );
+  assert.equal(memberInspectionResponse.status, 403);
+  assert.deepEqual(await memberInspectionResponse.json(), {
+    code: "FORBIDDEN",
+    error: "Forbidden",
+  });
 });
 
 function fakeProvider(): ResendReceivingProvider {

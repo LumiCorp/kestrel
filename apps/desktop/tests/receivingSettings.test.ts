@@ -15,7 +15,8 @@ test("Desktop receiving UX is tenant-explicit, role-gated, and hosted", async ()
   assert.match(source, /Choose an Organization/u);
   assert.match(source, /organizationRole === "owner"/u);
   assert.match(source, /organizationRole === "admin"/u);
-  assert.match(source, /Organization Admin access required/u);
+  assert.match(source, /Read-only receiving status/u);
+  assert.match(source, /ReceivingConnectionStatus/u);
   assert.match(source, /Kestrel One keeps receiving when Desktop is closed or offline/u);
   assert.match(source, /setReceivingApiKey\(""\)/u);
 });

@@ -37,8 +37,9 @@ test("receiving projection excludes provider and routing secrets", () => {
   assert.match(config, /pg_advisory_xact_lock/u);
 });
 
-test("browser and Desktop receiving APIs enforce Organization Admin authority", () => {
+test("receiving mutations stay Admin-only while Desktop members can read the public projection", () => {
   assert.match(browserRoute, /requireOrganizationAdmin/u);
+  assert.match(desktopRoute, /GET[\s\S]*requireDesktopReceivingMember/u);
   assert.match(desktopRoute, /requireDesktopReceivingAdmin/u);
   assert.match(desktopRoute, /organizationId/u);
 });

@@ -20,6 +20,24 @@ export type CreatedResendWebhook = {
   signingSecret: string;
 };
 
+/**
+ * Serializable provider intent that must be durably stored before create is
+ * attempted. It deliberately excludes credentials and provider evidence.
+ */
+export type ResendWebhookCreateIntent = {
+  endpoint: string;
+  events: ["email.received"];
+};
+
+export function prepareResendWebhookCreateIntent(
+  endpoint: string,
+): ResendWebhookCreateIntent {
+  return {
+    endpoint: exactText(endpoint),
+    events: ["email.received"],
+  };
+}
+
 export type ResendWebhookUpdateEvidence = {
   id: string;
   applied: {
@@ -34,8 +52,7 @@ export interface ResendReceivingProvider {
   /** Create only; the caller must persist this evidence before disabling it. */
   createWebhook(input: {
     apiKey: string;
-    endpoint: string;
-    events: ["email.received"];
+    intent: ResendWebhookCreateIntent;
   }): Promise<CreatedResendWebhook>;
   /** Retrieve separately so creation and mutation evidence can be persisted first. */
   getWebhook(
@@ -50,6 +67,19 @@ export interface ResendReceivingProvider {
     enabled?: boolean;
   }): Promise<ResendWebhookUpdateEvidence>;
   removeWebhook(apiKey: string, webhookId: string): Promise<void>;
+}
+
+/** Adopt this stronger contract only with durable webhook staging storage. */
+export interface ResendWebhookCreateRecoveryProvider
+  extends ResendReceivingProvider {
+  /**
+   * Recover an ambiguous create from its previously persisted intent. This
+   * operation only lists and retrieves; it never creates another webhook.
+   */
+  reconcileWebhookCreate(input: {
+    apiKey: string;
+    intent: ResendWebhookCreateIntent;
+  }): Promise<CreatedResendWebhook>;
 }
 
 type ReceivingFetch = (
@@ -72,7 +102,9 @@ export class ResendReceivingProviderError extends Error {
   }
 }
 
-export class ResendHttpReceivingProvider implements ResendReceivingProvider {
+export class ResendHttpReceivingProvider
+  implements ResendWebhookCreateRecoveryProvider
+{
   readonly #fetch: ReceivingFetch;
   readonly #baseUrl: URL;
 
@@ -106,15 +138,15 @@ export class ResendHttpReceivingProvider implements ResendReceivingProvider {
 
   async createWebhook(input: {
     apiKey: string;
-    endpoint: string;
-    events: ["email.received"];
+    intent: ResendWebhookCreateIntent;
   }): Promise<CreatedResendWebhook> {
+    const intent = parseWebhookCreateIntent(input.intent);
     const body = record(
       await this.#request(input.apiKey, "/webhooks", {
         method: "POST",
         body: JSON.stringify({
-          endpoint: input.endpoint,
-          events: input.events,
+          endpoint: intent.endpoint,
+          events: intent.events,
         }),
       }),
     );
@@ -123,6 +155,40 @@ export class ResendHttpReceivingProvider implements ResendReceivingProvider {
     return {
       id,
       signingSecret,
+    };
+  }
+
+  async reconcileWebhookCreate(input: {
+    apiKey: string;
+    intent: ResendWebhookCreateIntent;
+  }): Promise<CreatedResendWebhook> {
+    const intent = parseWebhookCreateIntent(input.intent);
+    const matches = parseCompleteList(
+      await this.#request(input.apiKey, "/webhooks"),
+    )
+      .map(parseWebhook)
+      .filter((webhook) => webhookMatchesCreateIntent(webhook, intent));
+    if (matches.length !== 1) throw invalidResponse();
+
+    const match = matches[0];
+    if (!match) throw invalidResponse();
+    const retrieved = record(
+      await this.#request(
+        input.apiKey,
+        `/webhooks/${encodeURIComponent(match.id)}`,
+      ),
+    );
+    const projection = parseWebhook(retrieved);
+    if (
+      projection.id !== match.id ||
+      projection.status !== "enabled" ||
+      !webhookMatchesCreateIntent(projection, intent)
+    ) {
+      throw invalidResponse();
+    }
+    return {
+      id: projection.id,
+      signingSecret: text(retrieved.signing_secret),
     };
   }
 
@@ -296,10 +362,38 @@ function parseWebhook(value: unknown): ResendWebhookProjection {
   if (!Array.isArray(webhook.events)) throw invalidResponse();
   return {
     id: text(webhook.id),
-    endpoint: text(webhook.endpoint),
+    endpoint: exactText(webhook.endpoint),
     status: enumValue(webhook.status, ["enabled", "disabled"]),
-    events: webhook.events.map(text),
+    events: webhook.events.map(exactText),
   };
+}
+
+function parseWebhookCreateIntent(
+  value: ResendWebhookCreateIntent,
+): ResendWebhookCreateIntent {
+  const intent = record(value);
+  if (
+    !Array.isArray(intent.events) ||
+    intent.events.length !== 1 ||
+    intent.events[0] !== "email.received"
+  ) {
+    throw invalidResponse();
+  }
+  return {
+    endpoint: exactText(intent.endpoint),
+    events: ["email.received"],
+  };
+}
+
+function webhookMatchesCreateIntent(
+  webhook: ResendWebhookProjection,
+  intent: ResendWebhookCreateIntent,
+): boolean {
+  return (
+    webhook.endpoint === intent.endpoint &&
+    webhook.events.length === 1 &&
+    webhook.events[0] === "email.received"
+  );
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -312,6 +406,17 @@ function record(value: unknown): Record<string, unknown> {
 function text(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) throw invalidResponse();
   return value.trim();
+}
+
+function exactText(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !value.length ||
+    value !== value.trim()
+  ) {
+    throw invalidResponse();
+  }
+  return value;
 }
 
 function enumValue<T extends string>(value: unknown, allowed: readonly T[]): T {

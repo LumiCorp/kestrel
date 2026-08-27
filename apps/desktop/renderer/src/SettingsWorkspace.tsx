@@ -212,13 +212,14 @@ export function SettingsWorkspace({
 
   useEffect(() => {
     receivingSelectionVersionRef.current += 1;
+    setReceivingConnection(undefined);
+    setReceivingDomains([]);
+    setReceivingApiKey("");
+    setReceivingDomainId("");
+    setReceivingError(undefined);
+    setReceivingBusy(false);
     if (kestrelOneAccount?.status !== "signed_in") {
       setReceivingOrganizationId("");
-      setReceivingConnection(undefined);
-      setReceivingDomains([]);
-      setReceivingApiKey("");
-      setReceivingDomainId("");
-      setReceivingBusy(false);
       return;
     }
     const organizations = kestrelOneAccount.projection.organizations;
@@ -226,16 +227,16 @@ export function SettingsWorkspace({
       setReceivingOrganizationId(organizations[0]?.organizationId ?? "");
       return;
     }
-    if (
-      receivingOrganizationId &&
-      !organizations.some(
+    setReceivingOrganizationId((currentOrganizationId) =>
+      currentOrganizationId &&
+      organizations.some(
         (organization) =>
-          organization.organizationId === receivingOrganizationId,
+          organization.organizationId === currentOrganizationId,
       )
-    ) {
-      setReceivingOrganizationId("");
-    }
-  }, [kestrelOneAccount, receivingOrganizationId]);
+        ? currentOrganizationId
+        : "",
+    );
+  }, [kestrelOneAccount]);
 
   useEffect(() => {
     const organization =
@@ -245,11 +246,7 @@ export function SettingsWorkspace({
               candidate.organizationId === receivingOrganizationId,
           )
         : undefined;
-    if (
-      !organization ||
-      (organization.organizationRole !== "owner" &&
-        organization.organizationRole !== "admin")
-    ) {
+    if (!organization) {
       setReceivingConnection(undefined);
       setReceivingDomains([]);
       setReceivingBusy(false);
@@ -1321,12 +1318,21 @@ export function SettingsWorkspace({
                   if (!canManage) {
                     return (
                       <div className="settings-form">
-                        <strong>Organization Admin access required</strong>
+                        <strong>Read-only receiving status</strong>
                         <p>
-                          Your {organization.organizationRole} role is read-only for
-                          inbound receiving. Ask an Organization owner or admin to
-                          configure it.
+                          Your {organization.organizationRole} role can view this
+                          Organization's receiving readiness. Ask an Organization
+                          owner or admin to configure it.
                         </p>
+                        <ReceivingConnectionStatus
+                          connection={receivingConnection}
+                        />
+                        {receivingError ? (
+                          <div className="capability-detail" role="alert">
+                            <strong>Receiving status is unavailable</strong>
+                            <p>{receivingError}</p>
+                          </div>
+                        ) : null}
                       </div>
                     );
                   }
@@ -1342,35 +1348,7 @@ export function SettingsWorkspace({
                       className="settings-form"
                       onSubmit={(event) => void saveReceivingConnection(event)}
                     >
-                      <div className="capability-detail">
-                        <strong>
-                          {receivingConnection?.receivingDomain ?? "Not configured"}
-                        </strong>
-                        <small>
-                          Credential: {receivingConnection?.credentialStatus.replaceAll("_", " ") ?? "loading"}
-                          {" · "}MX: {receivingConnection?.mxStatus ?? "unknown"}
-                          {" · "}Webhook: {receivingConnection?.webhookStatus.replaceAll("_", " ") ?? "not staged"}
-                        </small>
-                        <small>
-                          Overall readiness: {receivingConnection?.readiness.replaceAll("_", " ") ?? "loading"}
-                          {" · "}Inbound: {receivingConnection?.inboundEnabled ? "enabled" : "disabled"}
-                        </small>
-                        <small>
-                          Credential validated: {formatReceivingEvidenceTime(receivingConnection?.credentialValidatedAt)}
-                          {" · "}Domain checked: {formatReceivingEvidenceTime(receivingConnection?.domainCheckedAt)}
-                        </small>
-                        <small>
-                          Health checked: {formatReceivingEvidenceTime(receivingConnection?.lastHealthCheckedAt)}
-                          {" · "}Last test: {formatReceivingEvidenceTime(receivingConnection?.lastTestedAt)}
-                        </small>
-                        <small>
-                          Last failure: {receivingConnection?.lastErrorCode ?? "None"}
-                        </small>
-                        <p>
-                          Delivery is disabled until the full email-to-agent path is
-                          ready. Outbound email is unchanged.
-                        </p>
-                      </div>
+                      <ReceivingConnectionStatus connection={receivingConnection} />
                       {receivingError ? (
                         <div className="capability-detail" role="alert">
                           <strong>Receiving setup needs attention</strong>
@@ -2477,6 +2455,44 @@ export function SettingsWorkspace({
         </div>
       ) : null}
     </main>
+  );
+}
+
+function ReceivingConnectionStatus({
+  connection,
+}: {
+  connection: KestrelOneReceivingConnection | undefined;
+}) {
+  return (
+    <div className="capability-detail">
+      <strong>
+        {connection === undefined
+          ? "Loading receiving status…"
+          : (connection.receivingDomain ?? "Not configured")}
+      </strong>
+      <small>
+        Credential: {connection?.credentialStatus.replaceAll("_", " ") ?? "loading"}
+        {" · "}MX: {connection?.mxStatus ?? "unknown"}
+        {" · "}Webhook: {connection?.webhookStatus.replaceAll("_", " ") ?? "not staged"}
+      </small>
+      <small>
+        Overall readiness: {connection?.readiness.replaceAll("_", " ") ?? "loading"}
+        {" · "}Inbound: {connection?.inboundEnabled ? "enabled" : "disabled"}
+      </small>
+      <small>
+        Credential validated: {formatReceivingEvidenceTime(connection?.credentialValidatedAt)}
+        {" · "}Domain checked: {formatReceivingEvidenceTime(connection?.domainCheckedAt)}
+      </small>
+      <small>
+        Health checked: {formatReceivingEvidenceTime(connection?.lastHealthCheckedAt)}
+        {" · "}Last test: {formatReceivingEvidenceTime(connection?.lastTestedAt)}
+      </small>
+      <small>Last failure: {connection?.lastErrorCode ?? "None"}</small>
+      <p>
+        Delivery is disabled until the full email-to-agent path is ready. Outbound
+        email is unchanged.
+      </p>
+    </div>
   );
 }
 
