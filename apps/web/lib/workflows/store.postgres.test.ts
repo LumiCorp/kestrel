@@ -1,13 +1,120 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import postgres from "postgres";
+import { createModelRegistrationV2 } from "../../../../src/kestrel/contracts/model-registration";
 import { withGatewayModelEconomicsProfile } from "@/lib/ai/model-economics-profile";
+import {
+  createHostedModelQualificationProjection,
+  createHostedModelRegistration,
+  withHostedModelRegistration,
+} from "@/lib/ai/hosted-model-registration";
 import {
   createStarterWorkflowDefinition,
   type WorkflowDefinition,
 } from "./contracts";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
+
+function qualifiedOpenRouterModelMetadata(input: {
+  modelId: string;
+  metadata: Record<string, unknown>;
+}) {
+  const pending = createHostedModelRegistration({
+    registrationId: `workflow-registration:${input.modelId}`,
+    revision: "workflow-registration-v1",
+    observedAt: "2026-08-26T16:00:00.000Z",
+    modelId: input.modelId,
+    credentialRevision: "1",
+    providerConfiguration: {
+      version: "provider_runtime_configuration_v1",
+      providerId: "openrouter",
+      protocol: "openrouter",
+      authentication: {
+        mode: "required",
+        credentialReference: {
+          source: "gateway",
+          id: "provider.openrouter.default",
+        },
+      },
+      endpoint: "https://openrouter.ai/api/v1",
+      timeoutMs: 15_000,
+      allowedHeaders: [],
+      dataHandling: "provider_managed",
+    },
+    providerEvidence: {
+      provider: "openrouter",
+      details: {
+        id: input.modelId,
+        supported_parameters: [
+          "response_format",
+          "structured_outputs",
+          "tools",
+          "tool_choice",
+          "strict_tool_inputs",
+        ],
+        endpoints: [
+          {
+            id: "openrouter",
+            supported_parameters: [
+              "response_format",
+              "structured_outputs",
+              "tools",
+              "tool_choice",
+              "strict_tool_inputs",
+            ],
+          },
+        ],
+      },
+    },
+  });
+  const { fingerprint: _fingerprint, ...authoring } = pending.registration;
+  const evidence = {
+    source: "qualification" as const,
+    observedRevision: authoring.revision,
+    observedAt: "2026-08-26T16:01:00.000Z",
+    adapterRevision: authoring.adapterRevision,
+    credentialRevision: "1",
+    qualificationRevision: "hosted-agent-loop-v1",
+    retainedPayloadHash: `sha256:${"a".repeat(64)}`,
+  };
+  const qualified = <T extends { evidence: readonly unknown[] }>(claim: T) => ({
+    ...claim,
+    state: "qualified" as const,
+    evidence: [...claim.evidence, evidence],
+  });
+  const registration = createModelRegistrationV2({
+    ...authoring,
+    qualification: {
+      state: "qualified",
+      revision: "hosted-agent-loop-v1",
+      checkedAt: "2026-08-26T16:01:00.000Z",
+      probeHash: `sha256:${"b".repeat(64)}`,
+    },
+    capabilities: {
+      ...authoring.capabilities,
+      providerStrictSchema: qualified(
+        authoring.capabilities.providerStrictSchema,
+      ),
+      nativeTools: qualified(authoring.capabilities.nativeTools),
+      requiredToolChoice: qualified(
+        authoring.capabilities.requiredToolChoice,
+      ),
+      strictToolInputs: qualified(authoring.capabilities.strictToolInputs),
+    },
+  });
+  return withHostedModelRegistration({
+    metadata: input.metadata,
+    registration,
+    evidence: pending.evidence,
+    qualification: createHostedModelQualificationProjection({
+      registration,
+      credentialRevision: "1",
+      state: "qualified",
+      checkedAt: "2026-08-26T16:01:00.000Z",
+      probeRevision: "hosted-agent-loop-v1",
+    }),
+  });
+}
 
 function toolDefinition(schedule = false): WorkflowDefinition {
   const starter = createStarterWorkflowDefinition();
@@ -115,10 +222,10 @@ test("workflow persistence enforces policy and resolves one latest run", async (
     member: `workflow-member-${suffix}`,
   };
   const now = new Date("2026-08-26T16:00:00.000Z");
-  const safeMetadata = withGatewayModelEconomicsProfile({
+  const safeEconomicsMetadata = withGatewayModelEconomicsProfile({
     metadata: { context_length: 32_768, max_completion_tokens: 8192 },
     provider: "openrouter",
-    model: "safe-workflow-model",
+    model: "openai/safe-workflow-model",
     approved: true,
     modality: "language",
   });
@@ -129,8 +236,12 @@ test("workflow persistence enforces policy and resolves one latest run", async (
     approved: true,
     modality: "language",
   });
-  assert.ok(safeMetadata);
+  assert.ok(safeEconomicsMetadata);
   assert.ok(glmMetadata);
+  const safeMetadata = qualifiedOpenRouterModelMetadata({
+    modelId: "openai/safe-workflow-model",
+    metadata: safeEconomicsMetadata,
+  });
 
   context.after(async () => {
     await sql`DELETE FROM "organization" WHERE "id" = ${ids.organization}`;
@@ -190,9 +301,11 @@ test("workflow persistence enforces policy and resolves one latest run", async (
     `;
     await transaction`
       INSERT INTO "ai_gateways" (
-        "id", "organization_id", "environment_id", "provider", "display_name"
+        "id", "organization_id", "environment_id", "provider", "display_name",
+        "credential_revision", "credential_status", "credential_validated_at"
       ) VALUES (
-        ${ids.gateway}, ${ids.organization}, NULL, 'openrouter', 'Workflow Gateway'
+        ${ids.gateway}, ${ids.organization}, NULL, 'openrouter', 'Workflow Gateway',
+        1, 'ready', ${now}
       )
     `;
     await transaction`
@@ -201,7 +314,7 @@ test("workflow persistence enforces policy and resolves one latest run", async (
         "approved", "is_default", "metadata"
       ) VALUES
         (
-          ${ids.safeModel}, ${ids.organization}, ${ids.gateway}, 'safe-workflow-model',
+          ${ids.safeModel}, ${ids.organization}, ${ids.gateway}, 'openai/safe-workflow-model',
           'language', true, true,
           ${transaction.json(JSON.parse(JSON.stringify(safeMetadata)))}
         ),
@@ -236,7 +349,7 @@ test("workflow persistence enforces policy and resolves one latest run", async (
       projectId: ids.project,
       userId: ids.user,
       title: "Unavailable tool",
-      modelId: "openrouter/safe-workflow-model",
+      modelId: "openrouter/openai/safe-workflow-model",
       definition: toolDefinition(),
     }),
     (error: unknown) =>
@@ -253,7 +366,7 @@ test("workflow persistence enforces policy and resolves one latest run", async (
     projectId: ids.project,
     userId: ids.user,
     title: "Safe workflow",
-    modelId: "openrouter/safe-workflow-model",
+    modelId: "openrouter/openai/safe-workflow-model",
     definition: createStarterWorkflowDefinition(),
   });
   assert.ok(workflow);
@@ -269,10 +382,10 @@ test("workflow persistence enforces policy and resolves one latest run", async (
       "model_id_snapshot", "status", "created_at", "updated_at"
     ) VALUES
       (${`older-${suffix}`}, ${workflow.id}, ${version.id}, ${ids.user}, 'manual',
-       ${ids.environment}, ${ids.context}, 'openrouter/safe-workflow-model',
+       ${ids.environment}, ${ids.context}, 'openrouter/openai/safe-workflow-model',
        'completed', ${new Date(now.getTime() - 1000)}, ${now}),
       (${`newer-${suffix}`}, ${workflow.id}, ${version.id}, ${ids.user}, 'manual',
-       ${ids.environment}, ${ids.context}, 'openrouter/safe-workflow-model',
+       ${ids.environment}, ${ids.context}, 'openrouter/openai/safe-workflow-model',
        'failed', ${now}, ${now})
   `;
   const direct = await workflows.getProjectWorkflowForUser({
@@ -288,7 +401,7 @@ test("workflow persistence enforces policy and resolves one latest run", async (
     projectId: ids.project,
     userId: ids.user,
     title: "Joined workflow",
-    modelId: "openrouter/safe-workflow-model",
+    modelId: "openrouter/openai/safe-workflow-model",
     definition: joinedDefinition(),
   });
   const joinedRun = await workflows.createProjectWorkflowRun({

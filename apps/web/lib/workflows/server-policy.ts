@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  isKestrelRuntimeModelSelectionAvailableInTransaction,
   type RuntimeModelSelectionTransaction,
   resolveKestrelRuntimeModelIdentityInTransaction,
 } from "@/lib/ai/runtime-model-selection";
@@ -53,6 +54,17 @@ export async function assertWorkflowModelSupportedInTransaction(
     throw Object.assign(
       new Error("GLM-5.2 is not supported for Kestrel workflows. Choose another model."),
       { code: "WORKFLOW_MODEL_UNSUPPORTED" },
+    );
+  }
+  const available =
+    await isKestrelRuntimeModelSelectionAvailableInTransaction(transaction, {
+      ...input,
+      requiredRole: "agent.loop",
+    });
+  if (!available) {
+    throw Object.assign(
+      new Error("The selected model is not available in this Project Environment."),
+      { code: "WORKFLOW_MODEL_UNAVAILABLE" },
     );
   }
   return identity;
