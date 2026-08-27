@@ -789,3 +789,161 @@ test("recorded RunPod cleanup connections remain usable after disablement", asyn
   await client.listEndpoints();
   assert.equal(authorization, "Bearer runpod-cleanup-secret");
 });
+
+test("Environment default admission excludes stale hosted evidence across a credential rotation", async (context) => {
+  assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
+  process.env.DATABASE_URL = databaseUrl;
+  process.env.POSTGRES_URL = databaseUrl;
+  const [
+    { resetDbRuntimeForTests },
+    { saveGatewayModel },
+    { getEnvironmentPrivateInference, setEnvironmentDefaultModel },
+  ] = await Promise.all([
+    import("@/lib/db/runtime"),
+    import("./gateways"),
+    import("./environment-inference"),
+  ]);
+  const sql = postgres(databaseUrl, { max: 1 });
+  const rotation = postgres(databaseUrl, { max: 1 });
+  const suffix = crypto.randomUUID();
+  const organizationId = `environment-default-org-${suffix}`;
+  const userId = `environment-default-user-${suffix}`;
+  const environmentId = `environment-default-environment-${suffix}`;
+  const gatewayId = `environment-default-gateway-${suffix}`;
+  const now = new Date();
+  const metadata = withGatewayModelEconomicsProfile({
+    metadata: {
+      context_length: 32_768,
+      max_completion_tokens: 8_192,
+    },
+    provider: "openai",
+    model: "gpt-4.1-mini",
+    approved: true,
+    modality: "language",
+  });
+  assert.ok(metadata);
+
+  context.after(async () => {
+    await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+    await resetDbRuntimeForTests();
+    await Promise.all([
+      sql.end({ timeout: 0 }),
+      rotation.end({ timeout: 0 }),
+    ]);
+  });
+  await sql.begin(async (transaction) => {
+    await transaction`
+      INSERT INTO "user" (
+        "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+      ) VALUES (
+        ${userId}, 'Environment Default User',
+        ${`environment-default-${suffix}@example.test`}, true, ${now}, ${now}
+      )
+    `;
+    await transaction`
+      INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+      VALUES (
+        ${organizationId}, 'Environment Default Org',
+        ${`environment-default-${suffix}`}, ${now}
+      )
+    `;
+    await transaction`
+      INSERT INTO "environments" (
+        "id", "organization_id", "created_by_user_id", "name", "slug",
+        "region", "status", "is_default"
+      ) VALUES (
+        ${environmentId}, ${organizationId}, ${userId}, 'Environment Default',
+        'environment-default', 'iad', 'ready', true
+      )
+    `;
+    await transaction`
+      INSERT INTO "ai_gateways" (
+        "id", "organization_id", "environment_id", "provider", "display_name",
+        "credential_revision", "credential_status", "credential_validated_at"
+      ) VALUES (
+        ${gatewayId}, ${organizationId}, ${environmentId}, 'openai',
+        'Environment Default Gateway', 1, 'ready', now()
+      )
+    `;
+  });
+  const model = await saveGatewayModel({
+    organizationId,
+    gatewayId,
+    rawModelId: "gpt-4.1-mini",
+    modality: "language",
+    approved: true,
+    metadata,
+    providerEvidence: {
+      provider: "openai",
+      catalogRecord: { id: "gpt-4.1-mini" },
+    },
+    qualificationRunner,
+  });
+  const list = async () =>
+    getEnvironmentPrivateInference({ organizationId, environmentId });
+  const selectDefault = async () =>
+    setEnvironmentDefaultModel({
+      organizationId,
+      environmentId,
+      modelId: model.id,
+      actorUserId: userId,
+    });
+  const listed = await list();
+  assert.equal(
+    listed.models.find((candidate) => candidate.id === model.id)?.runtimeEligible,
+    true,
+  );
+
+  await sql`
+    UPDATE "ai_gateways"
+    SET "credential_status" = 'invalid', "credential_validated_at" = NULL
+    WHERE "id" = ${gatewayId}
+  `;
+  assert.equal(
+    (await list()).models.find((candidate) => candidate.id === model.id)
+      ?.runtimeEligible,
+    false,
+  );
+  await assert.rejects(selectDefault(), /Model is unavailable/u);
+
+  await sql`
+    UPDATE "ai_gateways"
+    SET "credential_status" = 'ready', "credential_validated_at" = now(),
+      "credential_revision" = 1
+    WHERE "id" = ${gatewayId}
+  `;
+  let releaseRotation!: () => void;
+  const rotationRelease = new Promise<void>((resolve) => {
+    releaseRotation = resolve;
+  });
+  let rotationStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    rotationStarted = resolve;
+  });
+  const rotating = rotation.begin(async (transaction) => {
+    await transaction`
+      UPDATE "ai_gateways"
+      SET "credential_revision" = 2
+      WHERE "id" = ${gatewayId}
+    `;
+    rotationStarted();
+    await rotationRelease;
+  });
+  await started;
+  const selection = selectDefault();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  releaseRotation();
+  await rotating;
+  await assert.rejects(selection, /Model is unavailable/u);
+  assert.equal(
+    (await list()).models.find((candidate) => candidate.id === model.id)
+      ?.runtimeEligible,
+    false,
+  );
+  const [defaultCount] = await sql<Array<{ count: number }>>`
+    SELECT count(*)::int AS "count"
+    FROM "environment_ai_model_defaults"
+    WHERE "environment_id" = ${environmentId}
+  `;
+  assert.equal(defaultCount?.count, 0);
+});
