@@ -29,6 +29,13 @@ export type ThreadAccess = {
   canPublish: boolean;
 };
 
+export type EmailDeliveryReceiptProvenance = {
+  id: string;
+  state: "materialized";
+  receivedAt: Date;
+  trigger: { id: string; name: string } | null;
+};
+
 export async function listThreadsForUser(
   userId: string,
   organizationId: string,
@@ -277,6 +284,11 @@ export async function getThreadWithMessagesForUser(
           .where(inArray(schema.users.id, authorIds))
       : [];
   const authorsById = new Map(authors.map((author) => [author.id, author]));
+  const emailReceipt = await readEmailDeliveryReceiptProvenance(
+    knowledgeDb,
+    id,
+    organizationId,
+  );
   return {
     ...access.thread,
     messages: messages.map((message) => ({
@@ -288,7 +300,55 @@ export async function getThreadWithMessagesForUser(
         ? (authorsById.get(message.authorUserId)?.email ?? null)
         : null,
     })),
+    emailReceipt,
     access,
+  };
+}
+
+export async function readEmailDeliveryReceiptProvenance(
+  db: Pick<typeof knowledgeDb, "select">,
+  threadId: string,
+  organizationId: string,
+): Promise<EmailDeliveryReceiptProvenance | null> {
+  const [receipt] = await db
+    .select({
+      id: schema.emailDeliveryReceipts.id,
+      state: schema.emailDeliveryReceipts.state,
+      receivedAt: schema.emailDeliveryReceipts.eventAt,
+      triggerId: schema.projectEmailTriggers.id,
+      triggerName: schema.projectEmailTriggers.name,
+    })
+    .from(schema.emailDeliveryReceipts)
+    .leftJoin(
+      schema.projectEmailTriggers,
+      and(
+        eq(
+          schema.projectEmailTriggers.id,
+          schema.emailDeliveryReceipts.triggerId,
+        ),
+        eq(
+          schema.projectEmailTriggers.organizationId,
+          schema.emailDeliveryReceipts.organizationId,
+        ),
+      ),
+    )
+    .where(
+      and(
+        eq(schema.emailDeliveryReceipts.organizationId, organizationId),
+        eq(schema.emailDeliveryReceipts.materializedThreadId, threadId),
+        eq(schema.emailDeliveryReceipts.state, "materialized"),
+      ),
+    )
+    .limit(1);
+  if (!(receipt && receipt.state === "materialized")) return null;
+  return {
+    id: receipt.id,
+    state: receipt.state,
+    receivedAt: receipt.receivedAt,
+    trigger:
+      receipt.triggerId && receipt.triggerName
+        ? { id: receipt.triggerId, name: receipt.triggerName }
+        : null,
   };
 }
 

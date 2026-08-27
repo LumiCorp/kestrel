@@ -735,6 +735,10 @@ export const threads = pgTable(
   (table) => [
     index("threads_created_by_user_id_idx").on(table.createdByUserId),
     index("threads_org_id_idx").on(table.organizationId),
+    uniqueIndex("threads_organization_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
     index("threads_project_id_idx").on(table.projectId),
     index("threads_origin_idx").on(table.origin),
     index("threads_external_thread_id_idx").on(table.externalThreadId),
@@ -827,6 +831,10 @@ export const threadMessages = pgTable(
     index("thread_messages_thread_created_id_idx").on(
       table.threadId,
       table.createdAt,
+      table.id,
+    ),
+    uniqueIndex("thread_messages_thread_identity_idx").on(
+      table.threadId,
       table.id,
     ),
     uniqueIndex("thread_messages_external_message_idx").on(
@@ -1138,6 +1146,10 @@ export const threadTurns = pgTable(
     uniqueIndex("thread_turns_thread_idempotency_idx").on(
       table.threadId,
       table.idempotencyKey,
+    ),
+    uniqueIndex("thread_turns_thread_identity_idx").on(
+      table.threadId,
+      table.id,
     ),
     uniqueIndex("thread_turns_input_message_idx").on(table.inputMessageId),
     index("thread_turns_org_status_idx").on(table.organizationId, table.status),
@@ -1467,6 +1479,322 @@ export const projectWorkflowStepRuns = pgTable(
       table.status,
     ),
     index("project_workflow_step_runs_turn_idx").on(table.turnId),
+  ],
+);
+
+/** =========================
+ *  Project Email Triggers
+ *  ========================= */
+
+export const projectEmailTriggers = pgTable(
+  "project_email_triggers",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    executionOwnerUserId: text("execution_owner_user_id").references(
+      () => users.id,
+      { onDelete: "set null" },
+    ),
+    name: text("name").notNull(),
+    instruction: text("instruction").notNull(),
+    modelId: text("model_id").notNull(),
+    claimedFromFilter: text("claimed_from_filter"),
+    accessMode: text("access_mode", { enum: ["private"] })
+      .notNull()
+      .default("private"),
+    addressLocalPart: text("address_local_part").notNull(),
+    addressDomain: text("address_domain").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    disabledReason: text("disabled_reason"),
+    revision: integer("revision").notNull().default(1),
+    rotatedAt: timestamp("rotated_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.projectId],
+      foreignColumns: [projects.organizationId, projects.id],
+      name: "project_email_triggers_organization_project_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("project_email_triggers_address_idx").on(
+      table.addressDomain,
+      table.addressLocalPart,
+    ),
+    uniqueIndex("project_email_triggers_organization_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+    index("project_email_triggers_project_idx").on(table.projectId),
+    index("project_email_triggers_execution_owner_idx").on(
+      table.executionOwnerUserId,
+    ),
+    index("project_email_triggers_admission_idx").on(
+      table.organizationId,
+      table.enabled,
+      table.deletedAt,
+    ),
+    check(
+      "project_email_triggers_private_access_check",
+      sql`${table.accessMode} = 'private'`,
+    ),
+    check(
+      "project_email_triggers_revision_check",
+      sql`${table.revision} >= 1`,
+    ),
+    check(
+      "project_email_triggers_enabled_owner_check",
+      sql`NOT ${table.enabled} OR ${table.executionOwnerUserId} IS NOT NULL`,
+    ),
+    check(
+      "project_email_triggers_deleted_disabled_check",
+      sql`${table.deletedAt} IS NULL OR NOT ${table.enabled}`,
+    ),
+  ],
+);
+
+export const emailDeliveryReceipts = pgTable(
+  "email_delivery_receipts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    receivingConnectionId: text("receiving_connection_id").notNull(),
+    triggerOrganizationId: text("trigger_organization_id"),
+    triggerId: text("trigger_id"),
+    svixId: text("svix_id").notNull(),
+    resendEmailId: text("resend_email_id").notNull(),
+    eventAt: timestamp("event_at", { withTimezone: true }).notNull(),
+    state: text("state", {
+      enum: [
+        "queued",
+        "hydrating",
+        "admitted",
+        "materialized",
+        "rejected",
+        "failed",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    reason: text("reason"),
+    claimedFrom: text("claimed_from"),
+    toMailboxes: jsonb("to_mailboxes").$type<string[]>(),
+    ccMailboxes: jsonb("cc_mailboxes").$type<string[]>(),
+    bccMailboxes: jsonb("bcc_mailboxes").$type<string[]>(),
+    receivedForMailboxes: jsonb("received_for_mailboxes").$type<string[]>(),
+    replyToMailboxes: jsonb("reply_to_mailboxes").$type<string[]>(),
+    subject: text("subject"),
+    textBody: text("text_body"),
+    htmlBody: text("html_body"),
+    triggerRevision: integer("trigger_revision"),
+    reservedThreadId: text("reserved_thread_id").notNull(),
+    reservedMessageId: text("reserved_message_id").notNull(),
+    reservedTurnId: text("reserved_turn_id").notNull(),
+    materializedThreadOrganizationId: text(
+      "materialized_thread_organization_id",
+    ),
+    materializedThreadId: text("materialized_thread_id"),
+    materializedMessageThreadId: text("materialized_message_thread_id"),
+    materializedMessageId: text("materialized_message_id"),
+    materializedTurnThreadId: text("materialized_turn_thread_id"),
+    materializedTurnId: text("materialized_turn_id"),
+    hydratedAt: timestamp("hydrated_at", { withTimezone: true }),
+    admittedAt: timestamp("admitted_at", { withTimezone: true }),
+    materializedAt: timestamp("materialized_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.receivingConnectionId],
+      foreignColumns: [
+        organizationReceivingConnections.organizationId,
+        organizationReceivingConnections.id,
+      ],
+      name: "email_delivery_receipts_organization_connection_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.triggerOrganizationId, table.triggerId],
+      foreignColumns: [
+        projectEmailTriggers.organizationId,
+        projectEmailTriggers.id,
+      ],
+      name: "email_delivery_receipts_organization_trigger_fk",
+    }).onDelete("set null"),
+    foreignKey({
+      columns: [
+        table.materializedThreadOrganizationId,
+        table.materializedThreadId,
+      ],
+      foreignColumns: [threads.organizationId, threads.id],
+      name: "email_delivery_receipts_organization_thread_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [
+        table.materializedMessageThreadId,
+        table.materializedMessageId,
+      ],
+      foreignColumns: [threadMessages.threadId, threadMessages.id],
+      name: "email_delivery_receipts_thread_message_fk",
+    }).onDelete("set null"),
+    foreignKey({
+      columns: [table.materializedTurnThreadId, table.materializedTurnId],
+      foreignColumns: [threadTurns.threadId, threadTurns.id],
+      name: "email_delivery_receipts_thread_turn_fk",
+    }).onDelete("set null"),
+    uniqueIndex("email_delivery_receipts_connection_svix_idx").on(
+      table.receivingConnectionId,
+      table.svixId,
+    ),
+    uniqueIndex("email_delivery_receipts_connection_email_idx").on(
+      table.receivingConnectionId,
+      table.resendEmailId,
+    ),
+    uniqueIndex("email_delivery_receipts_organization_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+    uniqueIndex("email_delivery_receipts_reserved_thread_idx").on(
+      table.reservedThreadId,
+    ),
+    uniqueIndex("email_delivery_receipts_reserved_message_idx").on(
+      table.reservedMessageId,
+    ),
+    uniqueIndex("email_delivery_receipts_reserved_turn_idx").on(
+      table.reservedTurnId,
+    ),
+    index("email_delivery_receipts_state_idx").on(table.state, table.updatedAt),
+    index("email_delivery_receipts_trigger_idx").on(table.triggerId),
+    check(
+      "email_delivery_receipts_trigger_organization_check",
+      sql`(${table.triggerOrganizationId} IS NULL) = (${table.triggerId} IS NULL) AND (${table.triggerOrganizationId} IS NULL OR ${table.triggerOrganizationId} = ${table.organizationId})`,
+    ),
+    check(
+      "email_delivery_receipts_thread_organization_check",
+      sql`(${table.materializedThreadOrganizationId} IS NULL) = (${table.materializedThreadId} IS NULL) AND (${table.materializedThreadOrganizationId} IS NULL OR ${table.materializedThreadOrganizationId} = ${table.organizationId})`,
+    ),
+    check(
+      "email_delivery_receipts_materialized_children_check",
+      sql`(${table.materializedMessageThreadId} IS NULL) = (${table.materializedMessageId} IS NULL) AND (${table.materializedTurnThreadId} IS NULL) = (${table.materializedTurnId} IS NULL) AND (${table.materializedMessageThreadId} IS NULL OR ${table.materializedMessageThreadId} = ${table.materializedThreadId}) AND (${table.materializedTurnThreadId} IS NULL OR ${table.materializedTurnThreadId} = ${table.materializedThreadId})`,
+    ),
+    check(
+      "email_delivery_receipts_reason_check",
+      sql`((${table.state} IN ('rejected', 'failed')) AND ${table.reason} IS NOT NULL AND ${table.finishedAt} IS NOT NULL) OR ((${table.state} NOT IN ('rejected', 'failed')) AND ${table.reason} IS NULL AND ${table.finishedAt} IS NULL)`,
+    ),
+    check(
+      "email_delivery_receipts_state_check",
+      sql`${table.state} IN ('queued', 'hydrating', 'admitted', 'materialized', 'rejected', 'failed')`,
+    ),
+    check(
+      "email_delivery_receipts_materialized_state_check",
+      sql`(${table.state} = 'materialized') = (${table.materializedThreadOrganizationId} IS NOT NULL AND ${table.materializedThreadId} IS NOT NULL AND ${table.materializedAt} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const emailDeliveryAttachments = pgTable(
+  "email_delivery_attachments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    receiptId: text("receipt_id").notNull(),
+    providerAttachmentId: text("provider_attachment_id").notNull(),
+    providerOrder: integer("provider_order").notNull(),
+    filename: text("filename"),
+    declaredMediaType: text("declared_media_type"),
+    providerSizeBytes: bigint("provider_size_bytes", { mode: "number" })
+      .notNull(),
+    disposition: text("disposition"),
+    contentId: text("content_id"),
+    importState: text("import_state", {
+      enum: ["available", "importing", "ready", "failed"],
+    })
+      .notNull()
+      .default("available"),
+    failureCode: text("failure_code"),
+    fileId: text("file_id").references(() => kestrelFiles.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.receiptId],
+      foreignColumns: [
+        emailDeliveryReceipts.organizationId,
+        emailDeliveryReceipts.id,
+      ],
+      name: "email_delivery_attachments_organization_receipt_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("email_delivery_attachments_receipt_provider_idx").on(
+      table.receiptId,
+      table.providerAttachmentId,
+    ),
+    uniqueIndex("email_delivery_attachments_receipt_order_idx").on(
+      table.receiptId,
+      table.providerOrder,
+    ),
+    uniqueIndex("email_delivery_attachments_file_idx")
+      .on(table.fileId)
+      .where(sql`${table.fileId} IS NOT NULL`),
+    index("email_delivery_attachments_receipt_idx").on(table.receiptId),
+    index("email_delivery_attachments_import_state_idx").on(
+      table.importState,
+      table.updatedAt,
+    ),
+    check(
+      "email_delivery_attachments_provider_order_check",
+      sql`${table.providerOrder} >= 0`,
+    ),
+    check(
+      "email_delivery_attachments_provider_size_check",
+      sql`${table.providerSizeBytes} >= 0`,
+    ),
+    check(
+      "email_delivery_attachments_import_state_check",
+      sql`${table.importState} IN ('available', 'importing', 'ready', 'failed')`,
+    ),
+    check(
+      "email_delivery_attachments_failure_check",
+      sql`(${table.importState} = 'failed') = (${table.failureCode} IS NOT NULL)`,
+    ),
+    check(
+      "email_delivery_attachments_ready_file_check",
+      sql`(${table.importState} = 'ready') = (${table.fileId} IS NOT NULL)`,
+    ),
   ],
 );
 
@@ -6466,6 +6794,96 @@ export const organizationEmailConfig = pgTable("organization_email_config", {
     .notNull()
     .defaultNow(),
 });
+
+export const organizationReceivingConnections = pgTable(
+  "organization_receiving_connections",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["resend"] })
+      .notNull()
+      .default("resend"),
+    encryptedApiKey: text("encrypted_api_key"),
+    credentialStatus: text("credential_status", {
+      enum: ["not_configured", "full_access", "insufficient", "error"],
+    })
+      .notNull()
+      .default("not_configured"),
+    credentialValidatedAt: timestamp("credential_validated_at", {
+      withTimezone: true,
+    }),
+    receivingDomainId: text("receiving_domain_id"),
+    receivingDomain: text("receiving_domain"),
+    receivingDomainStatus: text("receiving_domain_status", {
+      enum: ["not_selected", "pending", "verified", "failed"],
+    })
+      .notNull()
+      .default("not_selected"),
+    mxStatus: text("mx_status", {
+      enum: ["unknown", "pending", "verified", "failed"],
+    })
+      .notNull()
+      .default("unknown"),
+    domainCheckedAt: timestamp("domain_checked_at", { withTimezone: true }),
+    routeLocator: text("route_locator").notNull(),
+    providerWebhookId: text("provider_webhook_id"),
+    encryptedSigningSecret: text("encrypted_signing_secret"),
+    webhookCreateIntent: jsonb("webhook_create_intent").$type<{
+      endpoint: string;
+      events: ["email.received"];
+    }>(),
+    webhookCreateAttemptedAt: timestamp("webhook_create_attempted_at", {
+      withTimezone: true,
+    }),
+    webhookStagingSequence: bigint("webhook_staging_sequence", {
+      mode: "number",
+    })
+      .notNull()
+      .default(0),
+    webhookStatus: text("webhook_status", {
+      enum: ["not_staged", "staged", "active", "disabled", "error"],
+    })
+      .notNull()
+      .default("not_staged"),
+    inboundEnabled: boolean("inbound_enabled").notNull().default(false),
+    lastHealthCheckedAt: timestamp("last_health_checked_at", {
+      withTimezone: true,
+    }),
+    healthCheckSequence: bigint("health_check_sequence", { mode: "number" })
+      .notNull()
+      .default(0),
+    lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+    lastErrorCode: text("last_error_code"),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("organization_receiving_connections_org_idx").on(
+      table.organizationId,
+    ),
+    uniqueIndex("organization_receiving_connections_organization_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+    uniqueIndex("organization_receiving_connections_route_locator_idx").on(
+      table.routeLocator,
+    ),
+    uniqueIndex("organization_receiving_connections_webhook_idx")
+      .on(table.providerWebhookId)
+      .where(sql`${table.providerWebhookId} IS NOT NULL`),
+  ],
+);
 
 export const organizationInfrastructureSettings = pgTable(
   "organization_infrastructure_settings",

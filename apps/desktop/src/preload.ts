@@ -122,6 +122,24 @@ const desktopBridge: DesktopBridge = {
   signOutKestrelOneAccount() {
     return ipcRenderer.invoke("desktop:sign-out-kestrel-one-account");
   },
+  getKestrelOneReceivingConnection(organizationId) {
+    return ipcRenderer.invoke(
+      "desktop:get-kestrel-one-receiving-connection",
+      organizationId,
+    );
+  },
+  inspectKestrelOneReceivingDomains(input) {
+    return ipcRenderer.invoke(
+      "desktop:inspect-kestrel-one-receiving-domains",
+      input,
+    );
+  },
+  saveKestrelOneReceivingConnection(input) {
+    return ipcRenderer.invoke(
+      "desktop:save-kestrel-one-receiving-connection",
+      input,
+    );
+  },
   getKestrelOneThread(threadId) {
     return ipcRenderer.invoke("desktop:get-kestrel-one-thread", threadId);
   },

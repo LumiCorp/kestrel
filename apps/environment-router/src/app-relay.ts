@@ -7,6 +7,7 @@ const MAX_APP_REQUEST_BYTES = 2 * 1024 * 1024;
 export const APP_RELAY_REQUEST_TIMEOUT_MS = 30_000;
 const APP_RELAY_PATH = /^\/internal\/apps\/([^/]+)(\/api\/.*)$/u;
 const LEGACY_APP_PATHS = new Set([
+  "/api/kestrel/tools/email/get-attachment",
   "/api/kestrel/tools/search-knowledge-documents",
   "/api/runtime/github/action",
   "/api/runtime/github/credentials",

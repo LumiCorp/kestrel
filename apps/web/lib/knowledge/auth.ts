@@ -1,5 +1,4 @@
 import { headers } from "next/headers";
-import { forbidden, redirect, unauthorized } from "next/navigation";
 import { auth as betterAuth } from "@/lib/auth";
 import type { OrganizationSnapshot, Session } from "@/lib/auth-types";
 import { ensureOrganizationDefaultEnvironment } from "@/lib/environments/store";
@@ -19,9 +18,26 @@ type SessionWithOrg = SessionLike & {
   } | null;
 };
 
-async function getServerSessionStrict(): Promise<Session | null> {
+async function unauthorizedNavigation(): Promise<never> {
+  const { unauthorized } = await import("next/navigation");
+  return unauthorized();
+}
+
+async function forbiddenNavigation(): Promise<never> {
+  const { forbidden } = await import("next/navigation");
+  return forbidden();
+}
+
+async function redirectNavigation(path: string): Promise<never> {
+  const { redirect } = await import("next/navigation");
+  return redirect(path);
+}
+
+async function getServerSessionStrict(
+  request?: Request,
+): Promise<Session | null> {
   return (await betterAuth.api.getSession({
-    headers: await headers(),
+    headers: request?.headers ?? (await headers()),
   })) as Session | null;
 }
 
@@ -31,7 +47,7 @@ export async function requireSession(request?: Request) {
   if (request && new URL(request.url).pathname.startsWith("/api/mobile/v2/")) {
     return (await requireMobileSession(request)).session;
   }
-  const session = await getServerSessionStrict();
+  const session = await getServerSessionStrict(request);
   if (!session?.user?.id) {
     throw Object.assign(new Error("Unauthorized"), { code: "UNAUTHORIZED" });
   }
@@ -46,8 +62,9 @@ export function getActiveOrganizationId(session: SessionLike): string | null {
 
 async function getRequestedOrganizationId(
   session: NonNullable<SessionLike>,
+  request?: Request,
 ): Promise<string | null> {
-  const headerStore = await headers();
+  const headerStore = request?.headers ?? (await headers());
   const requestedOrganizationId =
     headerStore.get("x-active-organization-id") ??
     headerStore.get("x-organization-id");
@@ -74,9 +91,9 @@ export async function requireActiveOrganization(request?: Request) {
   if (request && new URL(request.url).pathname.startsWith("/api/mobile/v2/")) {
     return requireMobileSession(request);
   }
-  const session = await requireSession();
+  const session = await requireSession(request);
   const requestedOrganizationId =
-    (await getRequestedOrganizationId(session)) ??
+    (await getRequestedOrganizationId(session, request)) ??
     getActiveOrganizationId(session);
   const requestedOrganization = requestedOrganizationId
     ? await knowledgeDb.query.organizations.findFirst({
@@ -207,8 +224,8 @@ export async function requireAdminOrganization() {
 
 export { canManageOrganization } from "@/lib/knowledge/organization-access";
 
-export async function requireOrganizationAdmin() {
-  const { organizationId, session } = await requireActiveOrganization();
+export async function requireOrganizationAdmin(request?: Request) {
+  const { organizationId, session } = await requireActiveOrganization(request);
   if (
     !(await canManageOrganization({
       organizationId,
@@ -259,7 +276,7 @@ export async function requireAuthenticatedShell(input?: {
   const session = await getServerSessionStrict();
 
   if (!session?.user) {
-    unauthorized();
+    return unauthorizedNavigation();
   }
 
   const onboarding = await getSignupOnboardingState({
@@ -268,13 +285,13 @@ export async function requireAuthenticatedShell(input?: {
     emailVerified: session.user.emailVerified,
   });
   if (onboarding.state !== "not_applicable" && onboarding.state !== "complete") {
-    redirect("/onboarding");
+    return redirectNavigation("/onboarding");
   }
 
   const isAdmin = isAdminUser(session.user);
 
   if (input?.requireAdmin && !isAdmin) {
-    forbidden();
+    return forbiddenNavigation();
   }
 
   const activeOrganization = await getActiveOrganizationSnapshot(session);
@@ -286,7 +303,7 @@ export async function requireAuthenticatedShell(input?: {
     : false;
 
   if (input?.requireActiveOrganization && !activeOrganization) {
-    redirect("/dashboard");
+    return redirectNavigation("/dashboard");
   }
 
   return {

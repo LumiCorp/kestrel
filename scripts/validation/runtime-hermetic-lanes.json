@@ -392,7 +392,8 @@
         "tests/unit/web-tool-provider-registry-parity.test.ts",
         "tests/unit/word-document-tool.test.ts",
         "tests/unit/workspace-preview-tools.test.ts",
-        "tools/internet/kestrel-one-provider.test.ts"
+        "tools/internet/kestrel-one-provider.test.ts",
+        "tools/kestrelOne/emailGetAttachment.test.ts"
       ]
     }
   }

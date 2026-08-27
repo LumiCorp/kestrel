@@ -22,6 +22,7 @@ import {
 } from "@kestrel-agents/sdk/runner";
 import type { InferUIMessageChunk, UIMessage } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
+import { hasMaterializedEmailReceiptThread } from "@/lib/email-receipts/attachment-import";
 import { createRecoveredKestrelOneCompletion } from "@/lib/agent/kestrel-reconnect-stream";
 import { generateKestrelOneExternalReplyFromAgent } from "@/lib/agent/kestrel-external-runtime-core";
 import {
@@ -560,6 +561,10 @@ function createModelAwareKestrelOneAgent(input: {
               reasoningPolicy: route.reasoningPolicy,
               ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
               rememberedToolApprovalEvidence,
+              emailAttachmentReadAvailable: await hasMaterializedEmailReceiptThread({
+                organizationId: input.organizationId,
+                threadId: input.threadId,
+              }),
             },
             ...(runtimeModel !== undefined
               ? { runtimeModels: [runtimeModel] }
@@ -733,6 +738,7 @@ export async function resolveHostedKestrelExecutionProfile(input: {
     rememberedToolApprovalEvidence?:
       | import("@kestrel-agents/protocol").RememberedToolApprovalEvidenceV1[]
       | undefined;
+    emailAttachmentReadAvailable?: boolean | undefined;
   };
   runtimeModels?:
     | readonly [
@@ -752,6 +758,7 @@ export async function resolveHostedKestrelExecutionProfile(input: {
     availableToolNames: [...KESTREL_ONE_HOSTED_RUNTIME_TOOL_NAMES],
     effectiveCapabilities: input.route.effectiveCapabilities,
     approvalPolicies: input.route.approvalPolicies,
+    emailAttachmentReadAvailable: input.route.emailAttachmentReadAvailable,
   });
   try {
     const resolution = await input.client.resolveExecutionProfile(
@@ -1098,6 +1105,10 @@ export async function generateKestrelOneExternalReply(input: {
         reasoningPolicy: route.reasoningPolicy,
         ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
         rememberedToolApprovalEvidence,
+        emailAttachmentReadAvailable: await hasMaterializedEmailReceiptThread({
+          organizationId: input.organizationId,
+          threadId: input.sessionId,
+        }),
       },
       runtimeModels: [runtimeModel],
     });
@@ -1159,6 +1170,11 @@ export async function generateKestrelOneExternalReply(input: {
           tenantId: input.organizationId,
           capabilities: buildKestrelOneCapabilityDescriptors({
             request: new Request(new URL("/", input.apiUrl)),
+            threadId: input.sessionId,
+            emailAttachmentReadAvailable: await hasMaterializedEmailReceiptThread({
+              organizationId: input.organizationId,
+              threadId: input.sessionId,
+            }),
           }),
         },
       },

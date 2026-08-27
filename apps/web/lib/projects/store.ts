@@ -493,6 +493,43 @@ export async function removeProjectMember(input: {
           })),
         );
       }
+      const disabledEmailTriggers = await tx
+        .update(schema.projectEmailTriggers)
+        .set({
+          enabled: false,
+          disabledReason: "execution_owner_access_lost",
+          revision: sql`${schema.projectEmailTriggers.revision} + 1`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.projectEmailTriggers.projectId, input.projectId),
+            eq(schema.projectEmailTriggers.executionOwnerUserId, member.userId),
+            eq(schema.projectEmailTriggers.enabled, true),
+            isNull(schema.projectEmailTriggers.deletedAt),
+          ),
+        )
+        .returning({
+          id: schema.projectEmailTriggers.id,
+          revision: schema.projectEmailTriggers.revision,
+        });
+      if (disabledEmailTriggers.length > 0) {
+        await tx.insert(schema.projectAuditEvents).values(
+          disabledEmailTriggers.map((trigger) => ({
+            id: crypto.randomUUID(),
+            projectId: input.projectId,
+            actorUserId: input.actorUserId,
+            action: "project.email_trigger.disabled",
+            targetType: "project_email_trigger",
+            targetId: trigger.id,
+            metadata: {
+              reason: "execution_owner_access_lost",
+              revision: trigger.revision,
+            },
+            createdAt: now,
+          })),
+        );
+      }
     }
     await tx.insert(schema.projectAuditEvents).values({
       id: crypto.randomUUID(),
@@ -564,6 +601,42 @@ export async function setProjectArchived(input: {
             targetType: "project_prompt_schedule",
             targetId: schedule.id,
             metadata: { reason: "project_archived" },
+            createdAt: now,
+          })),
+        );
+      }
+      const disabledEmailTriggers = await tx
+        .update(schema.projectEmailTriggers)
+        .set({
+          enabled: false,
+          disabledReason: "project_archived",
+          revision: sql`${schema.projectEmailTriggers.revision} + 1`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.projectEmailTriggers.projectId, input.projectId),
+            eq(schema.projectEmailTriggers.enabled, true),
+            isNull(schema.projectEmailTriggers.deletedAt),
+          ),
+        )
+        .returning({
+          id: schema.projectEmailTriggers.id,
+          revision: schema.projectEmailTriggers.revision,
+        });
+      if (disabledEmailTriggers.length > 0) {
+        await tx.insert(schema.projectAuditEvents).values(
+          disabledEmailTriggers.map((trigger) => ({
+            id: crypto.randomUUID(),
+            projectId: input.projectId,
+            actorUserId: input.userId,
+            action: "project.email_trigger.disabled",
+            targetType: "project_email_trigger",
+            targetId: trigger.id,
+            metadata: {
+              reason: "project_archived",
+              revision: trigger.revision,
+            },
             createdAt: now,
           })),
         );

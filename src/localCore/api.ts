@@ -81,7 +81,10 @@ import {
 } from "./connection.js";
 import { LocalCoreClient } from "./client.js";
 import { LocalCoreDesktopEnvironmentManager } from "./desktopEnvironmentConnector.js";
-import { LocalCoreKestrelOneAccountManager } from "./kestrelOneAccount.js";
+import {
+  KestrelOneReceivingAuthorizationError,
+  LocalCoreKestrelOneAccountManager,
+} from "./kestrelOneAccount.js";
 import {
   createDesktopProjectRunLedger,
   DesktopProjectRunRegistry,
@@ -1342,6 +1345,55 @@ async function handleRequest(input: {
       writeJson(input.response, 200, {
         ok: true,
         account: await input.kestrelOneAccount.signOut(),
+      });
+      return;
+    }
+    const kestrelOneReceiving = url.pathname.match(
+      /^\/v1\/kestrel-one\/organizations\/([^/]+)\/email\/receiving$/u,
+    );
+    if (method === "GET" && kestrelOneReceiving) {
+      writeJson(input.response, 200, {
+        ok: true,
+        connection: await input.kestrelOneAccount.receivingConnection(
+          decodeURIComponent(kestrelOneReceiving[1] ?? ""),
+        ),
+      });
+      return;
+    }
+    if (method === "PUT" && kestrelOneReceiving) {
+      const body = await readJsonBody(input.request);
+      const record = requireObjectBody(body, "Kestrel One receiving configuration");
+      writeJson(input.response, 200, {
+        ok: true,
+        connection: await input.kestrelOneAccount.saveReceivingConnection({
+          organizationId: decodeURIComponent(kestrelOneReceiving[1] ?? ""),
+          receivingDomainId: normalizeRequiredStringField(
+            record,
+            "receivingDomainId",
+          ),
+          ...(typeof record.apiKey === "string" && record.apiKey.trim()
+            ? { apiKey: record.apiKey.trim() }
+            : {}),
+        }),
+      });
+      return;
+    }
+    const kestrelOneReceivingDomains = url.pathname.match(
+      /^\/v1\/kestrel-one\/organizations\/([^/]+)\/email\/receiving\/domains$/u,
+    );
+    if (method === "POST" && kestrelOneReceivingDomains) {
+      const body = await readJsonBody(input.request);
+      const record = requireObjectBody(body, "Kestrel One receiving domain request");
+      writeJson(input.response, 200, {
+        ok: true,
+        domains: await input.kestrelOneAccount.inspectReceivingDomains({
+          organizationId: decodeURIComponent(
+            kestrelOneReceivingDomains[1] ?? "",
+          ),
+          ...(typeof record.apiKey === "string" && record.apiKey.trim()
+            ? { apiKey: record.apiKey.trim() }
+            : {}),
+        }),
       });
       return;
     }
@@ -2753,13 +2805,20 @@ async function handleRequest(input: {
   } catch (error) {
     const requestError =
       error instanceof LocalCoreApiRequestError ? error : undefined;
+    const receivingAuthorizationError =
+      error instanceof KestrelOneReceivingAuthorizationError
+        ? error
+        : undefined;
     const runtimeConfigurationError =
       error instanceof LocalCoreRuntimeConfigurationError ? error : undefined;
     writeJson(
       input.response,
-      requestError?.statusCode ?? 500,
+      requestError?.statusCode ?? receivingAuthorizationError?.statusCode ?? 500,
       errorBody(
         requestError?.code ??
+          (receivingAuthorizationError
+            ? "KESTREL_ONE_RECEIVING_AUTHORIZATION_REJECTED"
+            : undefined) ??
           runtimeConfigurationError?.code ??
           "LOCAL_CORE_API_ERROR",
         error instanceof Error ? error.message : String(error),
@@ -2867,6 +2926,13 @@ function normalizeRequiredStringField(value: unknown, field: string): string {
     throw new Error(`Request body field '${field}' must be a string.`);
   }
   return candidate;
+}
+
+function requireObjectBody(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return value as Record<string, unknown>;
 }
 
 function normalizeRequiredIntegerField(value: unknown, field: string): number {

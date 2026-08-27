@@ -107,6 +107,8 @@ import type {
   KestrelOneAccountStatus,
   KestrelOneAuthorizationSessionView,
   KestrelOneDesktopPreview,
+  KestrelOneReceivingConnection,
+  KestrelOneReceivingDomain,
   KestrelOneSubmittedTurn,
   KestrelOneThreadSnapshot,
 } from "../../../src/localCore/kestrelOneAccount.js";
@@ -275,9 +277,21 @@ export type {
   KestrelOneAccountStatus,
   KestrelOneAuthorizationSessionView,
   KestrelOneDesktopPreview,
+  KestrelOneReceivingConnection,
+  KestrelOneReceivingDomain,
   KestrelOneSubmittedTurn,
   KestrelOneThreadSnapshot,
 } from "../../../src/localCore/kestrelOneAccount.js";
+
+export type DesktopKestrelOneReceivingConnectionReadResult =
+  | {
+      status: "ok";
+      connection: KestrelOneReceivingConnection;
+    }
+  | {
+      status: "authorization_rejected";
+      httpStatus: 401 | 403;
+    };
 export type {
   KestrelUninstallApplyResultV1,
   KestrelUninstallPlanOptions,
@@ -486,6 +500,18 @@ export interface DesktopBridge {
     sessionId: string,
   ): Promise<KestrelOneAuthorizationSessionView>;
   signOutKestrelOneAccount(): Promise<KestrelOneAccountStatus>;
+  getKestrelOneReceivingConnection(
+    organizationId: string,
+  ): Promise<DesktopKestrelOneReceivingConnectionReadResult>;
+  inspectKestrelOneReceivingDomains(input: {
+    organizationId: string;
+    apiKey?: string | undefined;
+  }): Promise<KestrelOneReceivingDomain[]>;
+  saveKestrelOneReceivingConnection(input: {
+    organizationId: string;
+    receivingDomainId: string;
+    apiKey?: string | undefined;
+  }): Promise<KestrelOneReceivingConnection>;
   getKestrelOneThread(threadId: string): Promise<KestrelOneThreadSnapshot>;
   submitKestrelOneTurn(input: {
     threadId: string;

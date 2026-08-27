@@ -42,7 +42,10 @@ import {
   type LocalCoreDaemonReady,
 } from "../../../src/localCore/daemon.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "../../../src/localCore/home.js";
-import type { LocalCoreClient } from "../../../src/localCore/client.js";
+import {
+  LocalCoreApiError,
+  type LocalCoreClient,
+} from "../../../src/localCore/client.js";
 import {
   LocalCoreConnectionManager,
   type LocalCoreConnectionState,
@@ -1667,6 +1670,57 @@ function registerIpcHandlers(
       await requireLocalCoreConnectionManager().executeOnce(
         async (client) => await client.signOutKestrelOneAccount(),
       ),
+  );
+  ipcMain.handle(
+    "desktop:get-kestrel-one-receiving-connection",
+    async (_event, organizationId: unknown) => {
+      if (typeof organizationId !== "string" || !organizationId.trim()) {
+        throw new Error("Kestrel One Organization ID is required.");
+      }
+      try {
+        return {
+          status: "ok",
+          connection:
+            await requireLocalCoreConnectionManager().executeIdempotent(
+              async (client) =>
+                await client.kestrelOneReceivingConnection(
+                  organizationId.trim(),
+                ),
+            ),
+        };
+      } catch (error) {
+        if (
+          error instanceof LocalCoreApiError &&
+          (error.statusCode === 401 || error.statusCode === 403) &&
+          error.code === "KESTREL_ONE_RECEIVING_AUTHORIZATION_REJECTED"
+        ) {
+          return {
+            status: "authorization_rejected",
+            httpStatus: error.statusCode,
+          };
+        }
+        throw error;
+      }
+    },
+  );
+  ipcMain.handle(
+    "desktop:inspect-kestrel-one-receiving-domains",
+    async (_event, input: unknown) => {
+      const parsed = parseDesktopReceivingInput(input, false);
+      return await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) =>
+          await client.inspectKestrelOneReceivingDomains(parsed),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:save-kestrel-one-receiving-connection",
+    async (_event, input: unknown) => {
+      const parsed = parseDesktopReceivingInput(input, true);
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) => await client.saveKestrelOneReceivingConnection(parsed),
+      );
+    },
   );
   ipcMain.handle(
     "desktop:get-kestrel-one-thread",
@@ -4369,6 +4423,54 @@ function parseDesktopKestrelOneAuthorization(value: unknown): string {
     throw new Error("Kestrel One URL is required.");
   }
   return baseUrl.trim();
+}
+
+function parseDesktopReceivingInput(
+  value: unknown,
+  requireDomain: true,
+): {
+  organizationId: string;
+  receivingDomainId: string;
+  apiKey?: string | undefined;
+};
+function parseDesktopReceivingInput(
+  value: unknown,
+  requireDomain: false,
+): { organizationId: string; apiKey?: string | undefined };
+function parseDesktopReceivingInput(
+  value: unknown,
+  requireDomain: boolean,
+): {
+  organizationId: string;
+  receivingDomainId: string;
+  apiKey?: string | undefined;
+} | {
+  organizationId: string;
+  apiKey?: string | undefined;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Kestrel One receiving request must be an object.");
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.organizationId !== "string" || !record.organizationId.trim()) {
+    throw new Error("Kestrel One Organization ID is required.");
+  }
+  if (
+    requireDomain &&
+    (typeof record.receivingDomainId !== "string" ||
+      !record.receivingDomainId.trim())
+  ) {
+    throw new Error("A Resend receiving domain is required.");
+  }
+  return {
+    organizationId: record.organizationId.trim(),
+    ...(requireDomain
+      ? { receivingDomainId: (record.receivingDomainId as string).trim() }
+      : {}),
+    ...(typeof record.apiKey === "string" && record.apiKey.trim()
+      ? { apiKey: record.apiKey.trim() }
+      : {}),
+  };
 }
 
 function applyDesktopProfileOverride(settings: DesktopSettings): void {

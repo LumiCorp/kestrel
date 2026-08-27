@@ -180,6 +180,7 @@ export type KestrelOneAgentResponseInput = {
   modelId?: string;
   interactionMode: KestrelOneInteractionMode;
   runtimeModel?: EnvironmentRuntimeModelSelection;
+  emailAttachmentReadAvailable?: boolean | undefined;
   projectContext?: {
     projectId: string;
     contextRevisionId: string;
@@ -345,6 +346,8 @@ export function createKestrelOneAgentResponseFromAgent(
                   capabilities: buildKestrelOneCapabilityDescriptors({
                     request: input.request,
                     threadId: input.threadId,
+                    emailAttachmentReadAvailable:
+                      input.emailAttachmentReadAvailable,
                   }),
                 },
               },

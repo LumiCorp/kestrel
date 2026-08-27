@@ -74,6 +74,8 @@ import type {
   KestrelOneAccountStatus,
   KestrelOneAuthorizationSessionView,
   KestrelOneDesktopPreview,
+  KestrelOneReceivingConnection,
+  KestrelOneReceivingDomain,
   KestrelOneSubmittedTurn,
   KestrelOneThreadSnapshot,
 } from "./kestrelOneAccount.js";
@@ -242,6 +244,50 @@ export class LocalCoreClient {
       await this.delete("/v1/kestrel-one/account"),
       "account",
       "Kestrel One account",
+    );
+  }
+
+  async kestrelOneReceivingConnection(
+    organizationId: string,
+  ): Promise<KestrelOneReceivingConnection> {
+    return readObjectField<KestrelOneReceivingConnection>(
+      await this.get(
+        `/v1/kestrel-one/organizations/${encodeURIComponent(organizationId)}/email/receiving`,
+      ),
+      "connection",
+      "Kestrel One receiving connection",
+    );
+  }
+
+  async inspectKestrelOneReceivingDomains(input: {
+    organizationId: string;
+    apiKey?: string | undefined;
+  }): Promise<KestrelOneReceivingDomain[]> {
+    return readObjectField<KestrelOneReceivingDomain[]>(
+      await this.post(
+        `/v1/kestrel-one/organizations/${encodeURIComponent(input.organizationId)}/email/receiving/domains`,
+        { ...(input.apiKey ? { apiKey: input.apiKey } : {}) },
+      ),
+      "domains",
+      "Kestrel One receiving domains",
+    );
+  }
+
+  async saveKestrelOneReceivingConnection(input: {
+    organizationId: string;
+    receivingDomainId: string;
+    apiKey?: string | undefined;
+  }): Promise<KestrelOneReceivingConnection> {
+    return readObjectField<KestrelOneReceivingConnection>(
+      await this.put(
+        `/v1/kestrel-one/organizations/${encodeURIComponent(input.organizationId)}/email/receiving`,
+        {
+          receivingDomainId: input.receivingDomainId,
+          ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+        },
+      ),
+      "connection",
+      "Kestrel One receiving connection",
     );
   }
 

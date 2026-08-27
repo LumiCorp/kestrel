@@ -217,6 +217,7 @@ export function resolveKestrelOneToolProfileConfiguration(input: {
   availableToolNames: string[];
   effectiveCapabilities: string[];
   approvalPolicies?: KestrelOneCapabilityApprovalPolicyEvidence[] | undefined;
+  emailAttachmentReadAvailable?: boolean | undefined;
 }): {
   additionalToolNames: string[];
   kestrelOneAppApprovalModes: Record<string, "auto" | "ask">;
@@ -225,7 +226,12 @@ export function resolveKestrelOneToolProfileConfiguration(input: {
     Omit<KestrelOneCapabilityApprovalPolicyEvidence, "appKey" | "capabilityKey">
   >;
 } {
-  const availableToolNames = [...new Set(input.availableToolNames)];
+  const availableToolNames = [...new Set([
+    ...input.availableToolNames,
+    ...(input.emailAttachmentReadAvailable
+      ? ["kestrel_one.email_get_attachment"]
+      : []),
+  ])];
   if (
     availableToolNames.includes("kestrel_one.search_knowledge_documents")
   ) {

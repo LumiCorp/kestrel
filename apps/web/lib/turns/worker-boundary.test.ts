@@ -173,6 +173,7 @@ test("the turn worker owns scheduled prompt dispatch, execution, and recovery", 
   assert.match(queueSource, /recoverQueuedProjectPromptScheduleRuns/u);
   assert.match(queueSource, /hasNonterminalProjectPromptScheduleJob/u);
   assert.match(queueSource, /failProjectPromptScheduleRun/u);
+  assert.match(queueSource, /reconcileConfiguredReceivingWebhooks/u);
 });
 
 test("scheduled prompt materialization stays on its locked database transaction", async () => {
@@ -270,15 +271,12 @@ test(
       new URL("./queue.ts", import.meta.url),
       "utf8",
     );
-    const directDrainCalls = queueSource.match(
-      /await drainMobilePushOutbox\(\)\.catch\(reportPushFailure\);/gu,
-    );
-
-    assert.equal(directDrainCalls?.length, 1);
     assert.match(
       queueSource,
       /const runWorkerMaintenance = createWorkerMaintenance/u,
     );
+    assert.match(queueSource, /drainMobilePush: drainMobilePushOutbox/u);
+    assert.match(queueSource, /reportMobilePushFailure: reportPushFailure/u);
     assert.match(queueSource, /await runWorkerMaintenance\(\);/u);
   },
 );
@@ -470,6 +468,25 @@ test(
     assert.match(queueSource, /if \(!jobId\)/u);
   },
 );
+
+test("terminal receipt jobs retain evidence without blocking a new attempt", async () => {
+  const queueSource = await readFile(
+    new URL("./queue.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(queueSource, /id:\s*receiptId/u);
+  assert.match(queueSource, /singletonKey: receiptId/u);
+  assert.match(queueSource, /kestrel:email-receipt-dispatch:/u);
+  assert.match(
+    queueSource,
+    /\["queued", "hydrating", "admitted"\]\.includes/u,
+  );
+  assert.match(
+    queueSource,
+    /boss\.work\(\s*EMAIL_DELIVERY_RECEIPT_QUEUE/u,
+  );
+});
 
 test(
   "the worker entrypoint starts without top-level await",
