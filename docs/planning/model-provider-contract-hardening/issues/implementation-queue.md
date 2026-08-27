@@ -7,6 +7,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 ## Ready
 
 - [Publish exact Local Core and Desktop model readiness](12-publish-local-core-model-readiness.md)
+- [Close hosted readiness admission and truth gaps](14-close-hosted-readiness-admission-and-truth-gaps.md)
 
 ## Blocked
 
@@ -27,3 +28,4 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Persist exact hosted model registrations](08-persist-exact-hosted-registrations.md)
 - [Admit effective model contracts before provider spend](09-admit-effective-model-contracts.md)
 - [Persist exact admission and response proof](10-persist-model-call-proof.md)
+- [Restore model readiness build validation](13-restore-model-readiness-build-validation.md)
