@@ -1,0 +1,38 @@
+name: Production Promotion Policy
+
+on:
+  pull_request_target:
+    branches:
+      - production
+    types:
+      - edited
+      - opened
+      - ready_for_review
+      - reopened
+      - synchronize
+
+permissions: {}
+
+jobs:
+  production-promotion-policy:
+    name: production-promotion-policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a same-repository main promotion
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [[ "${BASE_REF}" != "production" \
+            || "${BASE_REPOSITORY}" != "${EXPECTED_REPOSITORY}" \
+            || "${HEAD_REF}" != "main" \
+            || "${HEAD_REPOSITORY}" != "${EXPECTED_REPOSITORY}" ]]; then
+            echo "::error::Production promotions must be same-repository main to production pull requests."
+            exit 1
+          fi
+
+          echo "Production promotion source is the repository main branch."
