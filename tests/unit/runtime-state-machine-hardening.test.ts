@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
+import type { EffectResult } from "../../src/kestrel/contracts/execution.js";
 import type { RuntimeWorkspaceCheckpointService, SessionRecord } from "../../src/kestrel/contracts/store.js";
 
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
@@ -228,6 +229,158 @@ test("completed cleanup release survives Web requeue without scheduler or duplic
     ).length,
     2,
   );
+});
+
+test("malformed cleanup DONE evidence stays FAILED until reset-race evidence becomes exact", async () => {
+  const store = new InMemorySessionStore();
+  const sessionId = "prepared-cleanup-invalid-done";
+  const runId = "prepared-cleanup-invalid-run";
+  const preparedCallId = "prepared-cleanup-invalid-call";
+  const idempotencyKey = `${preparedCallId}:release`;
+  const cleanup = {
+    version: "runner_prepared_approval_cleanup_v1" as const,
+    organizationId: "org-cleanup",
+    threadId: sessionId,
+    turnId: "turn-cleanup-invalid",
+    interactionId: "interaction-cleanup-invalid",
+    requestId: "approval-cleanup-invalid",
+    failureCode: "EXTERNAL_APPROVAL_EXPIRED" as const,
+    failureMessage: "Expired.",
+  };
+  const initialSession = await store.ensureSession(sessionId);
+  await store.patchSessionState({
+    sessionId,
+    expectedVersion: initialSession.version,
+    statePatch: {
+      agent: {
+        terminal: {
+          status: "COMPLETED",
+          finalStepAgent: "agent.exec.wait_approval",
+          finalizedAt: "2026-08-27T00:00:02.000Z",
+          reasonCode: cleanup.failureCode,
+          message: cleanup.failureMessage,
+          preparedApprovalCleanup: {
+            version: "prepared_approval_cleanup_terminal_v1",
+            releaseEffectIdempotencyKey: idempotencyKey,
+            cleanup,
+          },
+        },
+      },
+    },
+  });
+  let releaseCalls = 0;
+  const gateway = {
+    ...adaptLegacyTestToolGateway({
+      call: async () => {
+        throw new Error("cleanup must not execute the prepared tool");
+      },
+    }),
+    releasePreparedToolCall: async () => {
+      releaseCalls += 1;
+    },
+  };
+  const preparedToolCall = await prepareTestToolCall({
+    gateway,
+    toolName: "exec_command",
+    toolInput: { cmd: "true" },
+    runId,
+    sessionId,
+    callId: preparedCallId,
+  });
+  const effect = {
+    runId,
+    sessionId,
+    stepIndex: 1,
+    type: "release_prepared_tool_call",
+    payload: { preparedToolCall, preparedApprovalCleanup: cleanup },
+    idempotencyKey,
+    failurePolicy: "STOP" as const,
+    status: "FAILED" as const,
+    createdAt: "2026-08-27T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push(
+    structuredClone(effect),
+  );
+  const effectResults = (
+    store as unknown as { effectResults: Map<string, EffectResult> }
+  ).effectResults;
+  const setDoneOutput = (output: Record<string, unknown>) => {
+    effectResults.set(idempotencyKey, {
+      idempotencyKey,
+      status: "DONE",
+      output,
+      timestamp: "2026-08-27T00:00:01.000Z",
+    });
+  };
+  const kestrel = createRuntime(store, {}, { toolGateway: gateway });
+  const run = (id: string) => kestrel.run({
+    id,
+    type: "user.approval",
+    sessionId,
+    payload: { preparedApprovalCleanup: cleanup },
+  });
+
+  setDoneOutput({ releasedPreparedInvocationId: "wrong-call" });
+  const wrongCall = await run("evt-cleanup-wrong-call");
+  assert.equal(wrongCall.status, "FAILED");
+  assert.equal(
+    wrongCall.errors[0]?.code,
+    "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+  );
+  assert.equal((await store.getPersistedEffect(idempotencyKey))?.status, "FAILED");
+
+  setDoneOutput({
+    releasedPreparedInvocationId: preparedCallId,
+    unexpected: true,
+  });
+  const extraField = await run("evt-cleanup-extra-field");
+  assert.equal(extraField.status, "FAILED");
+  assert.equal(
+    extraField.errors[0]?.code,
+    "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+  );
+  assert.equal((await store.getPersistedEffect(idempotencyKey))?.status, "FAILED");
+
+  effectResults.set(idempotencyKey, {
+    idempotencyKey,
+    status: "FAILED",
+    error: {
+      code: "EFFECT_EXECUTION_FAILED",
+      message: "retryable cleanup failure",
+    },
+    timestamp: "2026-08-27T00:00:03.000Z",
+  });
+  store.resetPreparedApprovalCleanupEffectExecution = async () => {
+    setDoneOutput({ releasedPreparedInvocationId: "reset-raced-wrong-call" });
+    return "done";
+  };
+  const malformedResetRace = await run("evt-cleanup-reset-raced-invalid");
+  assert.equal(malformedResetRace.status, "FAILED");
+  assert.equal(
+    malformedResetRace.errors[0]?.code,
+    "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+  );
+  assert.equal((await store.getPersistedEffect(idempotencyKey))?.status, "FAILED");
+
+  effectResults.set(idempotencyKey, {
+    idempotencyKey,
+    status: "FAILED",
+    error: {
+      code: "EFFECT_EXECUTION_FAILED",
+      message: "retryable cleanup failure after reset race",
+    },
+    timestamp: "2026-08-27T00:00:04.000Z",
+  });
+  store.resetPreparedApprovalCleanupEffectExecution = async () => {
+    setDoneOutput({ releasedPreparedInvocationId: preparedCallId });
+    return "done";
+  };
+  const corrected = await run("evt-cleanup-reset-raced-done");
+  assert.equal(corrected.status, "COMPLETED", JSON.stringify(corrected));
+  assert.equal((await store.getPersistedEffect(idempotencyKey))?.status, "DONE");
+  const recovered = await run("evt-cleanup-corrected-recovery");
+  assert.equal(recovered.status, "COMPLETED", JSON.stringify(recovered));
+  assert.equal(releaseCalls, 0);
 });
 
 test("managed mutation tools capture pre/post workspace checkpoints and expose changed files", async () => {

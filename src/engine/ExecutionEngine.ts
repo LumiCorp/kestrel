@@ -3399,6 +3399,10 @@ export class ExecutionEngine {
         evidence.effect.idempotencyKey,
       );
       if (result?.status === "DONE") {
+        validatePreparedApprovalCleanupDoneEvidence({
+          effect: evidence.effect,
+          result,
+        });
         await this.deps.store.markEffectStatus(
           evidence.effect.idempotencyKey,
           "DONE",
@@ -3412,10 +3416,29 @@ export class ExecutionEngine {
           evidence.effect,
         );
       if (reset === "done") {
+        const currentEvidence =
+          await this.readPreparedApprovalCleanupRecoveryEvidence(input);
+        if (currentEvidence === undefined) {
+          throw new Error(
+            "cleanup reset completion lost its exact recovery identity",
+          );
+        }
+        const currentResult = await this.deps.store.getEffectResult(
+          currentEvidence.effect.idempotencyKey,
+        );
+        if (currentResult?.status !== "DONE") {
+          throw new Error(
+            "cleanup reset completion has no exact durable DONE result",
+          );
+        }
+        validatePreparedApprovalCleanupDoneEvidence({
+          effect: currentEvidence.effect,
+          result: currentResult,
+        });
         await this.deps.store.markEffectStatus(
-          evidence.effect.idempotencyKey,
+          currentEvidence.effect.idempotencyKey,
           "DONE",
-          evidence.effect,
+          currentEvidence.effect,
         );
         return;
       }
