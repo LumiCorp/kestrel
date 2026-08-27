@@ -24,6 +24,7 @@ import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js"
 import { CodeExecutionService } from "../../src/code/CodeExecutionService.js";
 import { SandboxCapabilityLeaseCoordinator } from "../../src/code/SandboxCapabilityLeaseCoordinator.js";
 import { DEFAULT_CODE_MODE_ENABLED_CONFIG } from "../../src/code/contracts.js";
+import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { fingerprintSandboxCapabilityCatalogV2, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
@@ -132,9 +133,15 @@ test("RuntimeIO.model does not emit completion when aborted after provider retur
 
 test("RuntimeIO rejects a legacy structured request before provider dispatch", async () => {
   let providerCalled = false;
+  const provenanceRecords: ModelCallProvenanceRecord[] = [];
+  const provenanceUpdates: Array<
+    Parameters<NonNullable<RuntimeStore["updateModelCallProvenance"]>>[0]
+  > = [];
   const io = createRuntimeIO({
     signal: new AbortController().signal,
     emitted: [],
+    provenanceRecords,
+    provenanceUpdates,
     effectiveModelContractResolver: legacyEffectiveModelContractResolverV1,
     modelCall: async () => {
       providerCalled = true;
@@ -147,6 +154,65 @@ test("RuntimeIO rejects a legacy structured request before provider dispatch", a
     (error) => readErrorCode(error) === "MODEL_LEGACY_CONTRACT_UNSUPPORTED",
   );
   assert.equal(providerCalled, false);
+  assert.equal(provenanceRecords.length, 1);
+  assert.deepEqual(provenanceRecords[0]?.proof, {
+    version: "model_call_proof_v1",
+    evidence: "captured",
+    admission: "pending",
+    capabilities: [],
+    terminal: "pending",
+    validation: "not_requested",
+  });
+  assert.equal(provenanceUpdates.length, 1);
+  assert.equal(provenanceUpdates[0]?.status, "FAILED");
+  assert.equal(provenanceUpdates[0]?.proof?.admission, "pre_spend_rejected");
+  assert.equal(provenanceUpdates[0]?.proof?.terminal, "pre_spend_rejected");
+  assert.equal(provenanceUpdates[0]?.proof?.failureCode, "MODEL_LEGACY_CONTRACT_UNSUPPORTED");
+});
+
+test("RuntimeIO records provider, verifier, and interrupted terminal proof distinctly", async () => {
+  const cases = [
+    {
+      code: "MODEL_REFUSED",
+      details: { terminalState: "refused", requestId: "provider-request-1" },
+      terminal: "provider_rejected",
+      validation: "not_requested",
+    },
+    {
+      code: "MODEL_REQUIRED_TOOL_CALL_MISSING",
+      details: { requestId: "provider-request-2" },
+      terminal: "verifier_rejected",
+      validation: "failed",
+    },
+    {
+      code: "IO_MODEL_TIMEOUT",
+      details: { requestId: "provider-request-3" },
+      terminal: "interrupted",
+      validation: "not_requested",
+    },
+  ] as const;
+
+  for (const expected of cases) {
+    const provenanceUpdates: Array<
+      Parameters<NonNullable<RuntimeStore["updateModelCallProvenance"]>>[0]
+    > = [];
+    const io = createRuntimeIO({
+      signal: new AbortController().signal,
+      emitted: [],
+      provenanceUpdates,
+      modelCall: async () => {
+        throw createRuntimeFailure(expected.code, "test model failure", expected.details);
+      },
+    });
+
+    await assert.rejects(() => io.model(modelRequest()));
+    const failed = provenanceUpdates.find((update) => update.status === "FAILED");
+    assert.equal(failed?.proof?.admission, "admitted");
+    assert.equal(failed?.proof?.terminal, expected.terminal);
+    assert.equal(failed?.proof?.validation, expected.validation);
+    assert.equal(failed?.proof?.failureCode, expected.code);
+    assert.equal(failed?.proof?.providerRequestId, expected.details.requestId);
+  }
 });
 
 test("RuntimeIO disables gateway retries for maintenance calls only", async () => {
@@ -224,11 +290,11 @@ test("RuntimeIO persists bounded compaction lifecycle metadata", async () => {
     expected,
   );
   assert.deepEqual(
-    Object.fromEntries(Object.keys(expected).map((key) => [key, provenanceUpdates[0]?.metadata?.[key]])),
+    Object.fromEntries(Object.keys(expected).map((key) => [key, provenanceUpdates.find((update) => update.status === "COMPLETED")?.metadata?.[key]])),
     expected,
   );
   assert.equal(provenanceRecords[0]?.metadata?.unapprovedMetadata, undefined);
-  assert.equal(provenanceUpdates[0]?.metadata?.unapprovedMetadata, undefined);
+  assert.equal(provenanceUpdates.find((update) => update.status === "COMPLETED")?.metadata?.unapprovedMetadata, undefined);
 });
 
 test("RuntimeIO persists provider-boundary decisions and redacts requests and responses", async () => {
@@ -1337,6 +1403,9 @@ function createRuntimeIO(input: {
     mapError: (error) => ({
       code: readErrorCode(error) ?? "TEST_ERROR",
       message: error instanceof Error ? error.message : String(error),
+      ...(readRecord(error)?.details !== undefined
+        ? { details: readRecord(error)?.details as Record<string, unknown> }
+        : {}),
     }),
     buildModelTimeoutMetadata: () => ({}),
     summarizePromptInput: () => ({}),

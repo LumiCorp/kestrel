@@ -1438,8 +1438,10 @@ export class InMemorySessionStore implements SessionStore {
   async updateModelCallProvenance(input: {
     callId: string;
     status: ModelCallProvenanceRecord["status"];
-    completedAt: string;
+    completedAt?: string | undefined;
     latencyMs?: number | undefined;
+    providerPayloadHash?: string | undefined;
+    proof?: ModelCallProvenanceRecord["proof"] | undefined;
     metadata?: Record<string, unknown> | undefined;
   }): Promise<void> {
     const current = this.modelCallProvenance.get(input.callId);
@@ -1449,8 +1451,12 @@ export class InMemorySessionStore implements SessionStore {
     this.modelCallProvenance.set(input.callId, {
       ...current,
       status: input.status,
-      completedAt: input.completedAt,
+      ...(input.completedAt !== undefined ? { completedAt: input.completedAt } : {}),
       ...(input.latencyMs !== undefined ? { latencyMs: input.latencyMs } : {}),
+      ...(input.providerPayloadHash !== undefined
+        ? { providerPayloadHash: input.providerPayloadHash }
+        : {}),
+      ...(input.proof !== undefined ? { proof: structuredClone(input.proof) } : {}),
       ...(input.metadata !== undefined
         ? { metadata: { ...(current.metadata ?? {}), ...structuredClone(input.metadata) } }
         : {}),

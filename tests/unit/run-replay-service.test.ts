@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { createEffectiveModelContractV1 } from "../../src/kestrel/effective-model-contract.js";
 import { RunReplayService } from "../../src/replay/RunReplayService.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 
@@ -260,6 +261,14 @@ test("RunReplayService reports action and maintenance model call counts", async 
     model: "mock",
     providerPayloadHash: "hash-action",
     componentHash: "component-action",
+    proof: {
+      version: "model_call_proof_v1",
+      evidence: "captured",
+      admission: "admitted",
+      capabilities: [],
+      terminal: "completed",
+      validation: "passed",
+    },
     metadata: {
       modelBudgetClass: "action",
       promptRetention: "hash_only",
@@ -280,6 +289,14 @@ test("RunReplayService reports action and maintenance model call counts", async 
     model: "mock",
     providerPayloadHash: "hash-maintenance",
     componentHash: "component-maintenance",
+    proof: {
+      version: "model_call_proof_v1",
+      evidence: "captured",
+      admission: "admitted",
+      capabilities: [],
+      terminal: "completed",
+      validation: "passed",
+    },
     metadata: {
       modelRole: "compaction",
       modelBudgetClass: "maintenance",
@@ -355,6 +372,158 @@ test("RunReplayService preserves compaction lifecycle metadata from event-only p
     maxSummaryAttempts: 2,
     compactionAttemptKind: "initial",
   });
+  assert.deepEqual(replay.modelProvenance.calls[0]?.proof, {
+    version: "model_call_proof_v1",
+    evidence: "legacy",
+    admission: "unknown_legacy",
+    capabilities: [],
+    terminal: "unknown_legacy",
+    validation: "unknown_legacy",
+  });
+});
+
+test("RunReplayService projects captured model call proof without raw model content", async () => {
+  const store = new InMemorySessionStore();
+  const hash = (character: string) => `sha256:${character.repeat(64)}`;
+  const effectiveContract = createEffectiveModelContractV1({
+    status: "qualified",
+    providerId: "openai",
+    modelId: "gpt-5",
+    registrationId: "openai-gpt-5",
+    registrationRevision: "registration-r7",
+    registrationFingerprint: hash("a"),
+    qualificationRevision: "qualification-r3",
+    credentialRevision: 4,
+    apiEndpoint: "https://api.openai.com/v1/responses",
+    endpoint: "responses",
+    endpointCodec: "openai.responses.v2",
+    routingPolicyFingerprint: hash("b"),
+    runtimeRole: "agent.loop",
+    requestFingerprint: hash("c"),
+    schemaHash: hash("d"),
+    toolSurfaceHash: hash("e"),
+  });
+  await store.appendModelCallProvenance({
+    callId: "call-captured-proof",
+    runId: "run-captured-proof",
+    sessionId: "session-captured-proof",
+    model: "gpt-5",
+    provider: "openai",
+    providerPayloadHash: "hash-provider-payload-only",
+    componentHash: "component-captured-proof",
+    proof: {
+      version: "model_call_proof_v1",
+      evidence: "captured",
+      admission: "admitted",
+      effectiveContract,
+      capabilities: ["structured_output", "strict_schema", "tools", "strict_tool_inputs"],
+      terminal: "verifier_rejected",
+      validation: "failed",
+      failureCode: "MODEL_REQUIRED_TOOL_CALL_MISSING",
+      providerRequestId: "req-captured-proof",
+      prompt: "prompt-content-must-not-leak",
+      schema: "schema-content-must-not-leak",
+      toolArguments: "tool-content-must-not-leak",
+      credential: "credential-content-must-not-leak",
+      providerPayload: "provider-payload-content-must-not-leak",
+    } as unknown as {
+      version: "model_call_proof_v1";
+      evidence: "captured";
+      admission: "admitted";
+      effectiveContract: typeof effectiveContract;
+      capabilities: Array<"structured_output" | "strict_schema" | "tools" | "strict_tool_inputs">;
+      terminal: "verifier_rejected";
+      validation: "failed";
+      failureCode: string;
+      providerRequestId: string;
+    },
+    createdAt: "2026-08-26T12:00:00.000Z",
+    status: "FAILED",
+  });
+
+  const replay = await new RunReplayService(store).replay({ runId: "run-captured-proof" });
+  const call = replay.modelProvenance.calls[0];
+
+  assert.deepEqual(call?.proof, {
+    version: "model_call_proof_v1",
+    evidence: "captured",
+    admission: "admitted",
+    effectiveContract,
+    capabilities: ["structured_output", "strict_schema", "tools", "strict_tool_inputs"],
+    terminal: "verifier_rejected",
+    validation: "failed",
+    failureCode: "MODEL_REQUIRED_TOOL_CALL_MISSING",
+    providerRequestId: "req-captured-proof",
+  });
+  assert.deepEqual(replay.modelProvenance.metrics, {
+    admitted: 1,
+    preSpendRejected: 0,
+    verifierRejected: 1,
+    interrupted: 0,
+    requiredToolCallMissing: 1,
+    byDimension: [
+      {
+        provider: "openai",
+        model: "gpt-5",
+        runtimeRole: "agent.loop",
+        endpointCodec: "openai.responses.v2",
+        admitted: 1,
+        preSpendRejected: 0,
+        verifierRejected: 1,
+        interrupted: 0,
+        requiredToolCallMissing: 1,
+      },
+      ...["strict_schema", "strict_tool_inputs", "structured_output", "tools"].map((capability) => ({
+        provider: "openai",
+        model: "gpt-5",
+        runtimeRole: "agent.loop",
+        endpointCodec: "openai.responses.v2",
+        capability,
+        admitted: 1,
+        preSpendRejected: 0,
+        verifierRejected: 1,
+        interrupted: 0,
+        requiredToolCallMissing: 1,
+      })),
+    ],
+  });
+  const serializedReplay = JSON.stringify(replay);
+  for (const value of [
+    "prompt-content-must-not-leak",
+    "schema-content-must-not-leak",
+    "tool-content-must-not-leak",
+    "credential-content-must-not-leak",
+    "provider-payload-content-must-not-leak",
+  ]) {
+    assert.equal(serializedReplay.includes(value), false);
+  }
+});
+
+test("RunReplayService preserves pre-spend rejection proof", async () => {
+  const store = new InMemorySessionStore();
+  await store.appendModelCallProvenance({
+    callId: "call-pre-spend-rejected",
+    runId: "run-pre-spend-rejected",
+    sessionId: "session-pre-spend-rejected",
+    providerPayloadHash: "hash-pre-spend-rejected",
+    componentHash: "component-pre-spend-rejected",
+    proof: {
+      version: "model_call_proof_v1",
+      evidence: "captured",
+      admission: "pre_spend_rejected",
+      capabilities: ["strict_schema"],
+      terminal: "pre_spend_rejected",
+      validation: "not_requested",
+      failureCode: "MODEL_CAPABILITY_REQUIRED",
+    },
+    createdAt: "2026-08-26T12:01:00.000Z",
+    status: "FAILED",
+  });
+
+  const replay = await new RunReplayService(store).replay({ runId: "run-pre-spend-rejected" });
+
+  assert.equal(replay.modelProvenance.calls[0]?.proof.admission, "pre_spend_rejected");
+  assert.equal(replay.modelProvenance.calls[0]?.proof.terminal, "pre_spend_rejected");
 });
 
 test("RunReplayService includes thread/delegation lineage and orchestration milestones", async () => {

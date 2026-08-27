@@ -54,9 +54,11 @@ import {
   type LiveExecutionBoundaryStream,
 } from "../security/ExecutionBoundaryPolicy.js";
 import type { ExecutionBoundaryDecisionV1 } from "../kestrel/contracts/execution-boundary-policy.js";
+import type { ModelCallProofV1 } from "../kestrel/contracts/orchestration.js";
 import { deleteTextArtifact } from "../../tools/runtime/artifactStore.js";
 import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
 import {
+  type EffectiveModelContractV1,
   type EffectiveModelContractResolverV1,
 } from "../kestrel/effective-model-contract.js";
 
@@ -321,19 +323,10 @@ export class RuntimeIO {
             ),
           })
         : undefined;
-    const effectiveAdmission =
-      this.options.deps.effectiveModelContractResolver === undefined
-        ? undefined
-        : await this.options.deps.effectiveModelContractResolver.admit({
-            request: providerRequest,
-          });
-    if (effectiveAdmission !== undefined) {
-      providerRequest = effectiveAdmission.request;
-    }
     const assemblyId =
       readNonEmptyString(runtimeAssembly?.effectiveAssemblyId) ??
       readNonEmptyString(runtimeAssembly?.bundleId);
-    const providerPayloadHash = hashUnknown(providerRequest);
+    let providerPayloadHash = hashUnknown(providerRequest);
     const componentHash = hashUnknown({
       model: requestedModel,
       provider: requestedProvider,
@@ -432,6 +425,7 @@ export class RuntimeIO {
       componentHash,
       ...(toolManifestHash !== undefined ? { toolManifestHash } : {}),
       ...(assemblyId !== undefined ? { assemblyId } : {}),
+      proof: createPendingModelCallProof(),
       metadata: {
         promptRetention: "hash_only",
         ...(modelRole !== undefined ? { modelRole } : {}),
@@ -447,6 +441,45 @@ export class RuntimeIO {
       createdAt: new Date(startedAt).toISOString(),
       status: "REQUESTED",
     });
+    let effectiveAdmission:
+      | { request: ModelRequest; contract: EffectiveModelContractV1 }
+      | undefined;
+    try {
+      effectiveAdmission =
+        this.options.deps.effectiveModelContractResolver === undefined
+          ? undefined
+          : await this.options.deps.effectiveModelContractResolver.admit({
+              request: providerRequest,
+            });
+      if (effectiveAdmission !== undefined) {
+        providerRequest = effectiveAdmission.request;
+        providerPayloadHash = hashUnknown(providerRequest);
+      }
+      await this.options.deps.store.updateModelCallProvenance?.({
+        callId,
+        status: "REQUESTED",
+        providerPayloadHash,
+        proof: createAdmittedModelCallProof(effectiveAdmission?.contract, providerRequest),
+      });
+    } catch (error) {
+      const mappedAdmissionError = this.options.mapError(error);
+      const completedAt = new Date().toISOString();
+      await this.options.deps.store.updateModelCallProvenance?.({
+        callId,
+        status: "FAILED",
+        completedAt,
+        latencyMs: Date.now() - startedAt,
+        proof: createPreSpendRejectedModelCallProof(mappedAdmissionError),
+        metadata: {
+          promptRetention: "hash_only",
+          ...(modelRole !== undefined ? { modelRole } : {}),
+          modelBudgetClass,
+          ...lifecycleMetadata,
+          error: mappedAdmissionError.code,
+        },
+      });
+      throw error;
+    }
     await this.options.appendRunEvent(
       progress.runId,
       progress.sessionId,
@@ -601,6 +634,7 @@ export class RuntimeIO {
         status: "COMPLETED",
         completedAt,
         latencyMs,
+        proof: createCompletedModelCallProof(effectiveAdmission?.contract, providerRequest, result),
         metadata: {
           promptRetention: "hash_only",
           ...(modelRole !== undefined ? { modelRole } : {}),
@@ -693,6 +727,7 @@ export class RuntimeIO {
         status: "FAILED",
         completedAt,
         latencyMs,
+        proof: createFailedModelCallProof(effectiveAdmission?.contract, providerRequest, mappedError),
         metadata: {
           promptRetention: "hash_only",
           ...(modelRole !== undefined ? { modelRole } : {}),
@@ -2118,6 +2153,168 @@ function redactModelResponseForDiagnostics(value: unknown): unknown {
         ...safe,
         reasoning: "[PROVIDER_REASONING_NOT_RETAINED]",
       };
+}
+
+function createPendingModelCallProof(): ModelCallProofV1 {
+  return {
+    version: "model_call_proof_v1",
+    evidence: "captured",
+    admission: "pending",
+    capabilities: [],
+    terminal: "pending",
+    validation: "not_requested",
+  };
+}
+
+function createAdmittedModelCallProof(
+  contract: EffectiveModelContractV1 | undefined,
+  request: ModelRequest,
+): ModelCallProofV1 {
+  return {
+    version: "model_call_proof_v1",
+    evidence: contract === undefined ? "legacy" : "captured",
+    admission: "admitted",
+    ...(contract !== undefined ? { effectiveContract: contract } : {}),
+    capabilities: readRequiredModelCapabilities(request),
+    terminal: "pending",
+    validation: "not_requested",
+  };
+}
+
+function createPreSpendRejectedModelCallProof(error: RuntimeError): ModelCallProofV1 {
+  const failureCode = readNonEmptyString(error.code);
+  return {
+    version: "model_call_proof_v1",
+    evidence: "captured",
+    admission: "pre_spend_rejected",
+    capabilities: [],
+    terminal: "pre_spend_rejected",
+    validation: "failed",
+    ...(failureCode !== undefined ? { failureCode } : {}),
+    ...(readProviderRequestId(error) !== undefined
+      ? { providerRequestId: readProviderRequestId(error) }
+      : {}),
+  };
+}
+
+function createCompletedModelCallProof(
+  contract: EffectiveModelContractV1 | undefined,
+  request: ModelRequest,
+  response: unknown,
+): ModelCallProofV1 {
+  const providerRequestId = readProviderRequestId(response);
+  const validation = asPlainRecord(asPlainRecord(response)?.validation)?.state;
+  return {
+    version: "model_call_proof_v1",
+    evidence: contract === undefined ? "legacy" : "captured",
+    admission: "admitted",
+    ...(contract !== undefined ? { effectiveContract: contract } : {}),
+    capabilities: readRequiredModelCapabilities(request),
+    terminal: "completed",
+    validation: validation === "passed" ? "passed" : "not_requested",
+    ...(providerRequestId !== undefined ? { providerRequestId } : {}),
+  };
+}
+
+function createFailedModelCallProof(
+  contract: EffectiveModelContractV1 | undefined,
+  request: ModelRequest,
+  error: RuntimeError,
+): ModelCallProofV1 {
+  const failureCode = readNonEmptyString(error.code);
+  const terminal = classifyModelCallFailure(failureCode, error);
+  const providerRequestId = readProviderRequestId(error);
+  return {
+    version: "model_call_proof_v1",
+    evidence: contract === undefined ? "legacy" : "captured",
+    admission: "admitted",
+    ...(contract !== undefined ? { effectiveContract: contract } : {}),
+    capabilities: readRequiredModelCapabilities(request),
+    terminal,
+    validation: terminal === "verifier_rejected" ? "failed" : "not_requested",
+    ...(failureCode !== undefined ? { failureCode } : {}),
+    ...(providerRequestId !== undefined ? { providerRequestId } : {}),
+  };
+}
+
+function readRequiredModelCapabilities(request: ModelRequest): ModelCallProofV1["capabilities"] {
+  const requestRecord = asPlainRecord(request);
+  const requirements = asPlainRecord(requestRecord?.requirements);
+  const output = asPlainRecord(requirements?.output);
+  const tools = asPlainRecord(requirements?.tools);
+  const streaming = asPlainRecord(requirements?.streaming);
+  const capabilities: ModelCallProofV1["capabilities"] = [];
+  if (output?.kind === "json_object" || output?.kind === "json_schema") {
+    capabilities.push("structured_output");
+  }
+  if (output?.assurance === "provider_strict_schema") capabilities.push("strict_schema");
+  if (tools?.choice !== undefined && tools.choice !== "none") capabilities.push("tools");
+  if (tools?.choice === "required" || tools?.choice === "named") {
+    capabilities.push("required_tool_choice");
+  }
+  if (tools?.strictArguments === true) capabilities.push("strict_tool_inputs");
+  if (streaming?.terminalBehavior === "required") capabilities.push("streaming_terminal");
+  return capabilities;
+}
+
+function classifyModelCallFailure(
+  code: string | undefined,
+  error: RuntimeError,
+): ModelCallProofV1["terminal"] {
+  const terminalState = readNonEmptyString(asPlainRecord(error.details)?.terminalState);
+  if (
+    code === "RUN_CANCELLED" ||
+    code === "IO_MODEL_TIMEOUT" ||
+    code === "MODEL_TIMEOUT" ||
+    code === "MODEL_NETWORK_DNS" ||
+    code === "MODEL_NETWORK_ERROR" ||
+    terminalState === "interrupted"
+  ) {
+    return "interrupted";
+  }
+  if (
+    terminalState === "refused" ||
+    terminalState === "incomplete" ||
+    terminalState === "truncated" ||
+    terminalState === "malformed" ||
+    code === "MODEL_AUTH_ERROR" ||
+    code === "MODEL_RATE_LIMITED"
+  ) {
+    return "provider_rejected";
+  }
+  if (code !== undefined && MODEL_RESPONSE_VERIFICATION_FAILURE_CODES.has(code)) {
+    return "verifier_rejected";
+  }
+  return "provider_rejected";
+}
+
+const MODEL_RESPONSE_VERIFICATION_FAILURE_CODES = new Set([
+  "MODEL_ENDPOINT_MISMATCH",
+  "MODEL_MALFORMED_RESPONSE",
+  "MODEL_NAMED_TOOL_CALL_MISSING",
+  "MODEL_NAMED_TOOL_CALL_UNEXPECTED",
+  "MODEL_OUTPUT_NOT_JSON_OBJECT",
+  "MODEL_OUTPUT_SCHEMA_INVALID",
+  "MODEL_REQUIRED_TOOL_CALL_MISSING",
+  "MODEL_RESPONSE_SCHEMA_INVALID",
+  "MODEL_RESPONSE_SCHEMA_MISSING",
+  "MODEL_STREAM_TERMINAL_EVIDENCE_MISSING",
+  "MODEL_STRUCTURED_OUTPUT_MISSING",
+  "MODEL_TOOL_ARGUMENTS_INVALID",
+  "MODEL_TOOL_CALL_ID_DUPLICATE",
+  "MODEL_TOOL_CALL_ID_MISSING",
+  "MODEL_TOOL_CALL_UNEXPECTED",
+  "MODEL_TOOL_PARALLELISM_FORBIDDEN",
+  "MODEL_TOOL_PARALLELISM_REQUIRED",
+  "MODEL_TOOL_SCHEMA_INVALID",
+  "MODEL_TOOL_UNKNOWN",
+]);
+
+function readProviderRequestId(value: unknown): string | undefined {
+  const record = asPlainRecord(value);
+  const details = asPlainRecord(record?.details);
+  const provider = asPlainRecord(record?.provider);
+  return readBoundedMetadataString(details?.requestId) ?? readBoundedMetadataString(provider?.requestId);
 }
 
 function readProviderReasoningRetention(value: unknown): ProviderReasoningRetentionPolicy {

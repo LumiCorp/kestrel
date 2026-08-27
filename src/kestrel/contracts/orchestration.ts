@@ -14,6 +14,7 @@ import type {
   RunnerInteractionRequest,
 } from "@kestrel-agents/protocol";
 import type { RuntimeTurnActor } from "../../runtime/RuntimeTurn.js";
+import type { EffectiveModelContractV1 } from "../effective-model-contract.js";
 
 export type ThreadStatus = "IDLE" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
 export type DelegationStatus = "PENDING" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED" | "CANCELLED";
@@ -427,12 +428,52 @@ export interface ModelCallProvenanceRecord {
   toolManifestHash?: string | undefined;
   assemblyId?: string | undefined;
   sourceBucketHashes?: Record<string, string> | undefined;
+  /**
+   * Immutable, secret-free admission and terminal proof for this specific
+   * call. Readers must use this captured binding rather than resolving the
+   * model against the current registration catalog.
+   */
+  proof: ModelCallProofV1;
   metadata?: Record<string, unknown> | undefined;
   createdAt: string;
   completedAt?: string | undefined;
   latencyMs?: number | undefined;
   status: "REQUESTED" | "COMPLETED" | "FAILED";
 }
+
+export const MODEL_CALL_PROOF_V1 = "model_call_proof_v1" as const;
+
+export interface ModelCallProofV1 {
+  version: typeof MODEL_CALL_PROOF_V1;
+  evidence: "captured" | "legacy";
+  admission: "pending" | "admitted" | "pre_spend_rejected" | "unknown_legacy";
+  /** The contract is only retained after a successful admission. */
+  effectiveContract?: EffectiveModelContractV1 | undefined;
+  /**
+   * Directly derived from the admitted request requirements. These names are
+   * an inspectable contract dimension, never an inferred model capability.
+   */
+  capabilities: ModelCallRequiredCapabilityV1[];
+  terminal:
+    | "pending"
+    | "completed"
+    | "pre_spend_rejected"
+    | "provider_rejected"
+    | "verifier_rejected"
+    | "interrupted"
+    | "unknown_legacy";
+  validation: "not_requested" | "passed" | "failed" | "unknown_legacy";
+  failureCode?: string | undefined;
+  providerRequestId?: string | undefined;
+}
+
+export type ModelCallRequiredCapabilityV1 =
+  | "structured_output"
+  | "strict_schema"
+  | "tools"
+  | "required_tool_choice"
+  | "strict_tool_inputs"
+  | "streaming_terminal";
 
 export interface RunTurnAttachment {
   fileId?: string | undefined;

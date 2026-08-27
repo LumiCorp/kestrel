@@ -773,8 +773,10 @@ export interface EventStore {
   updateModelCallProvenance?(input: {
     callId: string;
     status: ModelCallProvenanceRecord["status"];
-    completedAt: string;
+    completedAt?: string | undefined;
     latencyMs?: number | undefined;
+    providerPayloadHash?: string | undefined;
+    proof?: ModelCallProvenanceRecord["proof"] | undefined;
     metadata?: Record<string, unknown> | undefined;
   }): Promise<void>;
   listModelCallProvenance?(input?: {
