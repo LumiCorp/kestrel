@@ -23,12 +23,13 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Latch the first cancellation source](07f-latch-first-cancellation-source.md)
 - [Capture completed model usage before cancellation](07a-capture-completed-model-usage-before-cancellation.md)
 - [Preserve cancellation telemetry through persistence retry](07b-preserve-cancellation-telemetry-through-persistence-retry.md)
 - [Project a safe cancellation terminal result](07c-project-safe-cancellation-terminal-result.md)
 - [Preserve the cancellation source](07d-preserve-cancellation-source.md)
 - [Preserve zero-dollar priced cost evidence](07e-preserve-zero-priced-cost-evidence.md)
-- [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md) — blocked by [post-response usage capture](07a-capture-completed-model-usage-before-cancellation.md), [persistence retry preservation](07b-preserve-cancellation-telemetry-through-persistence-retry.md), [safe cancellation projection](07c-project-safe-cancellation-terminal-result.md), [truthful cancellation source](07d-preserve-cancellation-source.md), and [zero-dollar priced evidence](07e-preserve-zero-priced-cost-evidence.md).
+- [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md) — blocked by [first-source latching](07f-latch-first-cancellation-source.md).
 
 ## Done
 

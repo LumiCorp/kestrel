@@ -1513,9 +1513,7 @@ export class RunnerHost {
             return this.emitRunCancelNotFound(commandId, payload, active.runId);
           }
         }
-        active.cancelRequested = true;
-        active.cancellationReason = "user_requested";
-        active.abortController.abort();
+        requestActiveRunCancellation(active, "user_requested");
         cancelledRunId = active.runId;
         cancelled = true;
       }
@@ -3054,9 +3052,7 @@ export class RunnerHost {
     this.closing = true;
     if (options.abortActiveRuns === true) {
       for (const active of this.activeRuns.values()) {
-        active.cancelRequested = true;
-        active.cancellationReason = "runner_shutdown";
-        active.abortController.abort();
+        requestActiveRunCancellation(active, "runner_shutdown");
       }
     }
     await Promise.allSettled([...this.activeExecutions]);
@@ -3880,6 +3876,16 @@ function buildCancelledTerminalResult(
 }
 
 type CancellationReason = "user_requested" | "runner_shutdown";
+
+function requestActiveRunCancellation(
+  active: ActiveRunEntry,
+  reason: CancellationReason,
+): void {
+  if (active.cancelRequested === true) return;
+  active.cancelRequested = true;
+  active.cancellationReason = reason;
+  active.abortController.abort();
+}
 
 function projectCancellationTelemetry(
   telemetry: RunTurnResult["output"]["telemetry"],

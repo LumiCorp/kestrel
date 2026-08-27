@@ -2679,3 +2679,122 @@ test("runner shutdown cancellation preserves its lifecycle source", async () => 
     }
   }
 });
+
+test("runner shutdown cannot overwrite an earlier user cancellation source", async () => {
+  let resolveStarted!: () => void;
+  let resolveAborted!: () => void;
+  let releaseRuntime!: () => void;
+  const started = new Promise<void>((resolve) => {
+    resolveStarted = resolve;
+  });
+  const aborted = new Promise<void>((resolve) => {
+    resolveAborted = resolve;
+  });
+  const runtimeReleased = new Promise<void>((resolve) => {
+    releaseRuntime = resolve;
+  });
+  const server = await createRunnerServiceServer({
+    runtimeFactory: () => ({
+      runTurn: async (input, options) => {
+        resolveStarted();
+        await new Promise<void>((resolve) => {
+          options?.signal?.addEventListener("abort", () => {
+            resolveAborted();
+            resolve();
+          }, { once: true });
+        });
+        await runtimeReleased;
+        return {
+          assistantText: null,
+          output: {
+            status: "FAILED",
+            sessionId: input.sessionId,
+            runId: input.runId ?? "run-overlapping-cancel",
+            quality: {
+              citationCoverage: 0,
+              unresolvedClaims: 0,
+              reworkRate: 0,
+              thrashIndex: 0,
+            },
+            errors: [],
+            telemetry: {
+              stepsExecuted: 0,
+              toolCalls: 0,
+              modelCalls: 1,
+              durationMs: 25,
+            },
+          },
+        };
+      },
+      close: async () => {},
+    }),
+  });
+  let closed = false;
+
+  try {
+    const streamResponsePromise = fetch(`${server.url}/commands/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json", connection: "close" },
+      body: JSON.stringify({
+        id: "cmd-run-overlapping-cancel",
+        type: "run.start",
+        metadata: {
+          actor: {
+            actorId: "runner-service",
+            actorType: "service",
+            tenantId: "internal",
+          },
+          tenantId: "internal",
+          profile,
+        },
+        payload: {
+          profile,
+          turn: {
+            sessionId: "session-overlapping-cancel",
+            runId: "run-overlapping-cancel",
+            message: "wait while cancellation and shutdown overlap",
+            eventType: "user.message",
+          },
+        },
+      }),
+    });
+    await started;
+    const cancelResponse = await fetch(`${server.url}/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json", connection: "close" },
+      body: JSON.stringify({
+        id: "cmd-cancel-overlapping-cancel",
+        type: "run.cancel",
+        metadata: {
+          actor: {
+            actorId: "runner-service",
+            actorType: "service",
+            tenantId: "internal",
+          },
+          tenantId: "internal",
+        },
+        payload: {
+          sessionId: "session-overlapping-cancel",
+          runId: "run-overlapping-cancel",
+        },
+      }),
+    });
+    assert.equal(cancelResponse.status, 200);
+    await aborted;
+    const closePromise = server.gracefulClose().then(() => {
+      closed = true;
+    });
+    releaseRuntime();
+    const response = await streamResponsePromise;
+    const body = await response.text();
+    await closePromise;
+    assert.match(body, /"type":"run\.cancelled"/u);
+    assert.match(body, /"cancellationReason":"user_requested"/u);
+    assert.doesNotMatch(body, /"cancellationReason":"runner_shutdown"/u);
+  } finally {
+    releaseRuntime();
+    if (!closed) {
+      await server.forceClose();
+    }
+  }
+});

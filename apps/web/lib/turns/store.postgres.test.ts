@@ -2220,9 +2220,9 @@ test(
       ORDER BY "meter"
     `;
     assert.deepEqual(cancellationUsage, [
-      { meter: "cached_input_tokens", quantity: "5.000000000" },
-      { meter: "input_tokens", quantity: "8.000000000" },
-      { meter: "output_tokens", quantity: "7.000000000" },
+      { meter: "cached_input_tokens", quantity: "5.00000000" },
+      { meter: "input_tokens", quantity: "8.00000000" },
+      { meter: "output_tokens", quantity: "7.00000000" },
     ]);
     assert.deepEqual(await eventTypes(cancelled.turn.id), [
       "turn.queued",
