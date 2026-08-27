@@ -478,7 +478,10 @@ test("terminal receipt jobs retain evidence without blocking a new attempt", asy
   assert.doesNotMatch(queueSource, /id:\s*receiptId/u);
   assert.match(queueSource, /singletonKey: receiptId/u);
   assert.match(queueSource, /kestrel:email-receipt-dispatch:/u);
-  assert.match(queueSource, /\["queued", "hydrating"\]\.includes/u);
+  assert.match(
+    queueSource,
+    /\["queued", "hydrating", "admitted"\]\.includes/u,
+  );
   assert.match(
     queueSource,
     /boss\.work\(\s*EMAIL_DELIVERY_RECEIPT_QUEUE/u,

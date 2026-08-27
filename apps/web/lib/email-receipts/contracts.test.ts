@@ -156,7 +156,7 @@ test("the receipt queue consumes and recovers queued or interrupted hydration", 
   assert.match(queue, /boss\.work\(\s*EMAIL_DELIVERY_RECEIPT_QUEUE/u);
   assert.match(queue, /processEmailDeliveryReceipt/u);
   const store = fs.readFileSync(path.resolve(directory, "store.ts"), "utf8");
-  assert.match(store, /\["queued", "hydrating"\]/u);
+  assert.match(store, /\["queued", "hydrating", "admitted"\]/u);
   assert.match(
     store,
     /orderBy\(asc\(schema\.emailDeliveryReceipts\.createdAt\)\)[\s\S]*?\.limit\(100\)/u,
