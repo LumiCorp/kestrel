@@ -158,6 +158,34 @@ test("prepared calls accept only exact model or trusted-runtime origins", () => 
   );
 });
 
+test("prepared invocation identifiers must round-trip through durable JSON", () => {
+  const fixture = {
+    version: "v1",
+    runId: "run-1",
+    sessionId: "session-1",
+    callId: `call-${"valid-😀".repeat(200)}`,
+    activation,
+    origin: {
+      kind: "trusted_runtime",
+      producerId: "runtime",
+      adapterId: "direct",
+    },
+    effectiveInput: { message: "done" },
+    policy: {
+      decision: "allow",
+      policyRevision: hashCanonical({ policy: "v1" }),
+    },
+    preparedAt: timestamp,
+  };
+  assert.equal(parsePreparedToolCallV1(fixture).callId, fixture.callId);
+  for (const callId of ["call-high-\ud800", "call-low-\udc00", "call-null-\u0000"]) {
+    assert.throws(
+      () => parsePreparedToolCallV1({ ...fixture, callId }),
+      /valid UTF-16|round-trip through durable JSON/u,
+    );
+  }
+});
+
 test("prepared approval authority rejects retired recovery adapters", () => {
   assert.throws(
     () => parsePreparedToolCallV1({

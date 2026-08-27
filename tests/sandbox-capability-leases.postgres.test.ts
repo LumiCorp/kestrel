@@ -557,9 +557,16 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
     );
     assert.equal(quarantinedConflict?.output, undefined);
+    assert.equal(typeof quarantinedConflict?.timestamp, "string");
     assert.equal(
+      new Date(quarantinedConflict!.timestamp).toISOString(),
+      quarantinedConflict!.timestamp,
+      "quarantine replacement uses one trusted canonical occurrence time",
+    );
+    assert.notEqual(
       quarantinedConflict?.timestamp,
       "2026-08-27T00:00:01.000Z",
+      "the untrusted result timestamp must not become the replacement timestamp",
     );
     assert.equal(
       await store.resetPreparedApprovalCleanupEffectExecution(
@@ -634,6 +641,14 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       return resultIdentity?.originalTimestamp ===
         "2026-08-27T00:00:01.000Z";
     });
+    const conflictingAuditTimestamp = conflictingAudit?.timestamp as unknown;
+    assert.equal(
+      conflictingAuditTimestamp instanceof Date
+        ? conflictingAuditTimestamp.toISOString()
+        : conflictingAuditTimestamp,
+      quarantinedConflict?.timestamp,
+      "the audit and replacement must share the same trusted occurrence time",
+    );
     const conflictingEffect = await store.getPersistedEffect(conflictingEffectId);
     assert.ok(conflictingEffect);
     const expectedRawAudit =
@@ -704,7 +719,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       toolInput: { language: "javascript", code: "return 4" },
       runId,
       sessionId,
-      callId: `cleanup-long-${"long-id".repeat(100)}-${suffix}`,
+      callId: `cleanup-long-${"valid-😀".repeat(100)}-${suffix}`,
     });
     const longEffectId = `${longPreparedToolCall.callId}:release`;
     await pool.query(
@@ -742,7 +757,10 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       },
       timestamp: "2026-08-27T00:00:06.000Z",
     };
-    await store.saveEffectResult(runId, sessionId, longResult);
+    const expectedLongResult = structuredClone(longResult);
+    const longResultSave = store.saveEffectResult(runId, sessionId, longResult);
+    longResult.output.releasedPreparedInvocationId = "post-save-mutation";
+    await longResultSave;
     assert.equal(
       await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
         longEffectId,
@@ -750,7 +768,11 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       ),
       "done",
     );
-    assert.deepEqual(await store.getEffectResult(longEffectId), longResult);
+    assert.deepEqual(
+      await store.getEffectResult(longEffectId),
+      expectedLongResult,
+      "the synchronous cleanup snapshot must isolate post-save mutation",
+    );
 
     const upgradePreparedToolCall = await prepareTestToolCall({
       gateway,
@@ -788,12 +810,16 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         binding.tenantId,
       ],
     );
-    const invalidUpgradeOutput: Record<string, unknown> = {
-      releasedPreparedInvocationId: upgradePreparedToolCall.callId,
-    };
-    Object.defineProperty(invalidUpgradeOutput, "extra", {
-      value: () => "must-not-disappear",
+    let upgradeGetterReads = 0;
+    const invalidUpgradeOutput: Record<string, unknown> = {};
+    Object.defineProperty(invalidUpgradeOutput, "releasedPreparedInvocationId", {
       enumerable: true,
+      get() {
+        upgradeGetterReads += 1;
+        return upgradeGetterReads === 1
+          ? upgradePreparedToolCall.callId
+          : "stateful-getter-drift";
+      },
     });
     await store.saveEffectResult(runId, sessionId, {
       idempotencyKey: upgradeEffectId,
@@ -802,6 +828,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       timestamp: "2026-08-27T00:00:07.000Z",
     });
     assert.equal((await store.getEffectResult(upgradeEffectId))?.status, "FAILED");
+    assert.ok(upgradeGetterReads <= 1);
     assert.equal(
       (await store.getPersistedEffect(upgradeEffectId))?.status,
       "PENDING",
@@ -813,6 +840,136 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       ),
       "conflict",
       "lossy JSON serialization must never upgrade malformed exact-looking output",
+    );
+
+    const timestampPreparedToolCall = await prepareTestToolCall({
+      gateway,
+      toolName: "code.execute",
+      toolInput: { language: "javascript", code: "return 5.5" },
+      runId,
+      sessionId,
+      callId: `cleanup-timestamp-${suffix}`,
+    });
+    const timestampEffectId = `${timestampPreparedToolCall.callId}:release`;
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json,
+          idempotency_key, failure_policy, status, created_at, tenant_id,
+          tenant_ownership_state)
+       VALUES ($1, $2, 33, 'release_prepared_tool_call', $3::jsonb, $4,
+               'STOP', 'PENDING', NOW(), $5, 'tenant_bound')`,
+      [
+        runId,
+        sessionId,
+        JSON.stringify({
+          preparedToolCall: timestampPreparedToolCall,
+          preparedApprovalCleanup: {
+            version: "runner_prepared_approval_cleanup_v1",
+            organizationId: binding.tenantId,
+            threadId: sessionId,
+            turnId: `cleanup-timestamp-turn-${suffix}`,
+            interactionId: `cleanup-timestamp-interaction-${suffix}`,
+            requestId: `cleanup-timestamp-request-${suffix}`,
+            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+            failureMessage: "Expired.",
+          },
+        }),
+        timestampEffectId,
+        binding.tenantId,
+      ],
+    );
+    await store.saveEffectResult(runId, sessionId, {
+      idempotencyKey: timestampEffectId,
+      status: "DONE",
+      output: {
+        releasedPreparedInvocationId: timestampPreparedToolCall.callId,
+      },
+      timestamp: (() => "pg-hostile-timestamp-secret") as never,
+    });
+    const quarantinedTimestamp = await store.getEffectResult(timestampEffectId);
+    assert.equal(quarantinedTimestamp?.status, "FAILED");
+    const timestampEvents = await store.getReplayStream({
+      runId,
+      eventTypes: ["prepared_approval_cleanup.done_evidence_quarantined"],
+    });
+    const timestampAudit = timestampEvents.find((event) => {
+      const effectIdentity = event.metadata?.effectIdentity as
+        Record<string, unknown> | undefined;
+      return (
+        (effectIdentity?.idempotencyKey as Record<string, unknown> | undefined)
+          ?.canonicalHash === hashCanonical({ value: timestampEffectId })
+      );
+    });
+    assert.ok(timestampAudit);
+    const timestampAuditOccurredAt = timestampAudit.timestamp as unknown;
+    assert.equal(
+      timestampAuditOccurredAt instanceof Date
+        ? timestampAuditOccurredAt.toISOString()
+        : timestampAuditOccurredAt,
+      quarantinedTimestamp?.timestamp,
+    );
+    assert.equal(
+      JSON.stringify(timestampAudit).includes("pg-hostile-timestamp-secret"),
+      false,
+    );
+
+    const corruptEffectId = `cleanup-corrupt-${suffix}:release`;
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json,
+          idempotency_key, failure_policy, status, created_at, tenant_id,
+          tenant_ownership_state)
+       VALUES ($1, $2, 34, 'release_prepared_tool_call', $3::jsonb, $4,
+               'STOP', 'PENDING', NOW(), $5, 'tenant_bound')`,
+      [
+        runId,
+        sessionId,
+        JSON.stringify({
+          preparedToolCall: { version: "v1", callId: `cleanup-corrupt-${suffix}` },
+          preparedApprovalCleanup: {
+            version: "runner_prepared_approval_cleanup_v1",
+            organizationId: binding.tenantId,
+            threadId: sessionId,
+            turnId: `cleanup-corrupt-turn-${suffix}`,
+            interactionId: `cleanup-corrupt-interaction-${suffix}`,
+            requestId: `cleanup-corrupt-request-${suffix}`,
+            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+            failureMessage: "Expired.",
+          },
+        }),
+        corruptEffectId,
+        binding.tenantId,
+      ],
+    );
+    const eventsBeforeCorruptSave = (await store.getReplayStream({
+      runId,
+      eventTypes: ["prepared_approval_cleanup.done_evidence_quarantined"],
+    })).length;
+    await assert.rejects(
+      store.saveEffectResult(runId, sessionId, {
+        idempotencyKey: corruptEffectId,
+        status: "DONE",
+        output: { releasedPreparedInvocationId: `cleanup-corrupt-${suffix}` },
+        timestamp: "2026-08-27T00:00:09.000Z",
+      }),
+      /exact durable prepared tool call/u,
+    );
+    assert.equal(await store.getEffectResult(corruptEffectId), null);
+    assert.equal((await store.getReplayStream({
+      runId,
+      eventTypes: ["prepared_approval_cleanup.done_evidence_quarantined"],
+    })).length, eventsBeforeCorruptSave);
+
+    await assert.rejects(
+      prepareTestToolCall({
+        gateway,
+        toolName: "code.execute",
+        toolInput: { language: "javascript", code: "return 7" },
+        runId,
+        sessionId,
+        callId: `cleanup-invalid-\ud800-${suffix}`,
+      }),
+      /valid UTF-16/u,
     );
 
     const legacyPreparedToolCall = await prepareTestToolCall({

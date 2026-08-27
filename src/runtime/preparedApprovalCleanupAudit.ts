@@ -38,6 +38,123 @@ type NormalizedCleanupEvidenceValue =
   | NormalizedCleanupEvidenceValue[]
   | { [key: string]: NormalizedCleanupEvidenceValue };
 
+export function snapshotPreparedApprovalCleanupDoneResult(input: {
+  result: EffectResult & { status: "DONE" };
+  expectedIdempotencyKey: string;
+}): {
+  snapshot: (EffectResult & { status: "DONE" }) | null;
+  auditResult: EffectResult & { status: "DONE" };
+} {
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(input.result);
+  } catch {
+    return {
+      snapshot: null,
+      auditResult: {
+        idempotencyKey: input.expectedIdempotencyKey,
+        status: "DONE",
+        output: unreadableAuditValue(),
+        timestamp: Symbol("unreadable-cleanup-result-timestamp") as never,
+      },
+    };
+  }
+  const idempotencyKey = readDataDescriptor(descriptors.idempotencyKey);
+  const status = readDataDescriptor(descriptors.status);
+  const output = readDataDescriptor(descriptors.output);
+  const error = readDataDescriptor(descriptors.error);
+  const timestamp = readDataDescriptor(descriptors.timestamp);
+  const auditResult: EffectResult & { status: "DONE" } = {
+    idempotencyKey: typeof idempotencyKey === "string"
+      ? idempotencyKey
+      : input.expectedIdempotencyKey,
+    status: "DONE",
+    ...(output === UNREADABLE_DESCRIPTOR
+      ? { output: unreadableAuditValue() }
+      : output === undefined ? {} : { output }),
+    ...(error === UNREADABLE_DESCRIPTOR || error === undefined
+      ? {}
+      : { error: error as never }),
+    timestamp: timestamp === UNREADABLE_DESCRIPTOR
+      ? Symbol("unreadable-cleanup-result-timestamp") as never
+      : timestamp as never,
+  };
+  if (
+    idempotencyKey !== input.expectedIdempotencyKey ||
+    status !== "DONE" ||
+    error !== undefined ||
+    typeof timestamp !== "string" ||
+    !isCanonicalTimestamp(timestamp) ||
+    typeof output !== "object" ||
+    output === null ||
+    Array.isArray(output)
+  ) return { snapshot: null, auditResult };
+  let outputDescriptors: PropertyDescriptorMap;
+  try {
+    outputDescriptors = Object.getOwnPropertyDescriptors(output);
+  } catch {
+    return {
+      snapshot: null,
+      auditResult: { ...auditResult, output: unreadableAuditValue() },
+    };
+  }
+  const outputKeys = Reflect.ownKeys(outputDescriptors);
+  if (outputKeys.some((key) => {
+    const descriptor = outputDescriptors[key as keyof PropertyDescriptorMap];
+    return descriptor !== undefined && !("value" in descriptor);
+  })) {
+    return {
+      snapshot: null,
+      auditResult: { ...auditResult, output: unreadableAuditValue() },
+    };
+  }
+  const releasedDescriptor = outputDescriptors.releasedPreparedInvocationId;
+  if (
+    outputKeys.length !== 1 ||
+    outputKeys[0] !== "releasedPreparedInvocationId" ||
+    releasedDescriptor === undefined ||
+    releasedDescriptor.enumerable !== true ||
+    !("value" in releasedDescriptor) ||
+    typeof releasedDescriptor.value !== "string"
+  ) return { snapshot: null, auditResult };
+  return {
+    snapshot: {
+      idempotencyKey,
+      status: "DONE",
+      output: {
+        releasedPreparedInvocationId: releasedDescriptor.value,
+      },
+      timestamp,
+    },
+    auditResult,
+  };
+}
+
+const UNREADABLE_DESCRIPTOR = Symbol("unreadable-cleanup-result-descriptor");
+
+function readDataDescriptor(
+  descriptor: PropertyDescriptor | undefined,
+): unknown | typeof UNREADABLE_DESCRIPTOR {
+  if (descriptor === undefined) return undefined;
+  return "value" in descriptor ? descriptor.value : UNREADABLE_DESCRIPTOR;
+}
+
+function unreadableAuditValue(): Record<string, unknown> {
+  const value: Record<string, unknown> = {};
+  Object.defineProperty(value, "unreadable", {
+    enumerable: true,
+    get() {
+      throw new Error("cleanup evidence was unreadable");
+    },
+  });
+  return value;
+}
+
+function isCanonicalTimestamp(value: string): boolean {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
 export function normalizePreparedApprovalCleanupDoneEvidence(
   result: EffectResult & { status: "DONE" },
 ): EffectResult & { status: "DONE" } {

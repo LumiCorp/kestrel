@@ -309,6 +309,44 @@ test("explicit prepared-call release is idempotent and prevents later execution"
   await registry.close();
 });
 
+test("non-durable prepared identifiers fail before retaining a pinned handle", async () => {
+  const provider = new VersionedMcpProvider();
+  const registry = new UnifiedToolRegistry({
+    allowlist: [TOOL_ID],
+    mcpManager: provider,
+  });
+  await registry.refresh();
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    toolNames: [TOOL_ID],
+  });
+  const activation = snapshot.tools[0];
+  assert.ok(activation);
+  const referencesBeforePrepare = provider.references;
+  await assert.rejects(
+    registry.prepareToolCall({
+      runId: "invalid-id-run",
+      sessionId: "invalid-id-session",
+      callId: "invalid-prepared-\ud800-id",
+      activation,
+      origin: {
+        kind: "trusted_runtime",
+        producerId: "test",
+        adapterId: "direct",
+      },
+      rawInput: { query: "test" },
+      policy: {
+        decision: "allow",
+        policyRevision: hashCanonical({ policy: "allow" }),
+      },
+    }),
+    /valid UTF-16/u,
+  );
+  assert.equal(provider.references, referencesBeforePrepare);
+  await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
+  await registry.close();
+  assert.equal(provider.references, 0);
+});
+
 test("explicit release prevents same-process static built-in rehydration", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["free.time.current"],

@@ -911,7 +911,7 @@ test("production in-memory quarantine is total through public store APIs", async
   const throwingProxy = new Proxy({}, {
     ownKeys: () => { throw new Error("proxy-secret-sentinel"); },
   });
-  const cases: Array<[string, unknown, string?]> = [
+  const cases: Array<[string, unknown, unknown?]> = [
     ["bigint", 1n],
     ["throwing-getter", throwingGetter],
     ["throwing-to-json", throwingToJson],
@@ -926,6 +926,13 @@ test("production in-memory quarantine is total through public store APIs", async
       "oversized-timestamp",
       "value",
       "timestamp-secret-sentinel".repeat(50_000),
+    ],
+    ["function-timestamp", "value", () => "timestamp-secret-sentinel"],
+    ["symbol-timestamp", "value", Symbol("timestamp-secret-sentinel")],
+    [
+      "proxy-timestamp",
+      "value",
+      new Proxy({}, { ownKeys() { throw new Error("timestamp-secret-sentinel"); } }),
     ],
   ];
 
@@ -947,15 +954,15 @@ test("production in-memory quarantine is total through public store APIs", async
         releasedPreparedInvocationId: "wrong-call-secret-sentinel",
         unusualValue,
       },
-      timestamp: timestamp ?? "2026-08-27T00:00:01.000Z",
+      timestamp: (timestamp ?? "2026-08-27T00:00:01.000Z") as string,
     });
     assert.equal(
       await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
         effect.idempotencyKey,
         effect,
       ),
-      "quarantined",
-      suffix,
+      "conflict",
+      `${suffix}: persistence owns atomic quarantine`,
     );
     assert.equal(store.getRunEvents().length, 1, suffix);
     assert.equal(
@@ -981,6 +988,11 @@ test("production in-memory quarantine is total through public store APIs", async
       (await store.getEffectResult(effect.idempotencyKey))?.output,
       undefined,
       suffix,
+    );
+    assert.equal(
+      (await store.getEffectResult(effect.idempotencyKey))?.timestamp,
+      store.getRunEvents()[0]?.timestamp,
+      `${suffix}: audit and FAILED replacement share one trusted timestamp`,
     );
     assert.equal(
       await store.resetPreparedApprovalCleanupEffectExecution(
@@ -1017,7 +1029,7 @@ test("production in-memory quarantine is total through public store APIs", async
 test("production in-memory validates exact cleanup evidence before projection", async () => {
   const exactIds = [
     `prepared-cleanup-${"long-id".repeat(100)}`,
-    "prepared-cleanup-invalid-\ud800-id",
+    `prepared-cleanup-${"valid-unicode-😀".repeat(100)}`,
   ];
   for (const [index, callId] of exactIds.entries()) {
     const store = new DurableInMemorySessionStore();
@@ -1042,6 +1054,67 @@ test("production in-memory validates exact cleanup evidence before projection", 
       "done",
     );
     assert.deepEqual(await store.getEffectResult(effect.idempotencyKey), exactResult);
+  }
+
+  await assert.rejects(
+    buildPreparedApprovalCleanupEffect({
+      suffix: "invalid-identifier",
+      status: "PENDING",
+      callId: "prepared-cleanup-invalid-\ud800-id",
+    }),
+    /valid UTF-16/u,
+  );
+
+  {
+    const store = new DurableInMemorySessionStore();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: "post-save-mutation",
+      status: "PENDING",
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+    const output = { releasedPreparedInvocationId: built.preparedCallId };
+    await store.saveEffectResult(effect.runId, effect.sessionId, {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE",
+      output,
+      timestamp: "2026-08-27T00:00:01.000Z",
+    });
+    output.releasedPreparedInvocationId = "mutated-after-save";
+    assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+      releasedPreparedInvocationId: built.preparedCallId,
+    });
+  }
+
+  for (const outputKind of ["getter", "proxy"] as const) {
+    const store = new DurableInMemorySessionStore();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: `unstable-${outputKind}`,
+      status: "PENDING",
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+    let getterReads = 0;
+    const statefulOutput: Record<string, unknown> = {};
+    Object.defineProperty(statefulOutput, "releasedPreparedInvocationId", {
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        return getterReads === 1 ? built.preparedCallId : "state-drift";
+      },
+    });
+    const output = outputKind === "getter"
+      ? statefulOutput
+      : new Proxy(
+          { releasedPreparedInvocationId: built.preparedCallId },
+          { ownKeys() { throw new Error("unstable output proxy"); } },
+        );
+    await store.saveEffectResult(effect.runId, effect.sessionId, {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE",
+      output,
+      timestamp: "2026-08-27T00:00:01.000Z",
+    });
+    assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "FAILED");
+    assert.equal(getterReads, 0, "stateful accessors must never supply authority");
   }
 
   for (const [index, invalidValue] of [
@@ -1074,7 +1147,7 @@ test("production in-memory validates exact cleanup evidence before projection", 
         effect.idempotencyKey,
         effect,
       ),
-      "quarantined",
+      "conflict",
     );
     assert.equal(
       await store.resetPreparedApprovalCleanupEffectExecution(

@@ -94,6 +94,7 @@ import { normalizeOptionalTimestampString, normalizeTimestampString } from "../r
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
 import {
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  snapshotPreparedApprovalCleanupDoneResult,
 } from "../runtime/preparedApprovalCleanupAudit.js";
 import {
   buildCanonicalWaitingFor,
@@ -1784,6 +1785,14 @@ export class PostgresSessionStore implements SessionStore {
     sessionId: string,
     result: EffectResult,
   ): Promise<void> {
+    const resultIdempotencyKey = result.idempotencyKey;
+    const resultStatus = result.status;
+    const cleanupDoneMaterializedCandidate = resultStatus === "DONE"
+      ? snapshotPreparedApprovalCleanupDoneResult({
+          result: result as EffectResult & { status: "DONE" },
+          expectedIdempotencyKey: resultIdempotencyKey,
+        })
+      : null;
     await this.ensureSchemaV3();
     await this.withTransaction(async (executor) => {
       const effect = await executor.query<{
@@ -1795,18 +1804,18 @@ export class PostgresSessionStore implements SessionStore {
         `SELECT run_id, session_id, status, tenant_id, tenant_ownership_state, effect_type, payload_json,
                 step_index, failure_policy, created_at
            FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
-        [result.idempotencyKey],
+        [resultIdempotencyKey],
       );
       const row = effect.rows[0];
       if (row === undefined || row.run_id !== runId || row.session_id !== sessionId) {
         throw new SandboxCapabilityExactResultConflictError("Effect result owner does not match the locked effect");
       }
-      if (result.status === "DONE" && row.status === "FAILED") {
+      if (resultStatus === "DONE" && row.status === "FAILED") {
         throw new SandboxCapabilityExactResultCancelledError("Completed effect-result persistence lost to durable cancellation");
       }
       const persistedEffect: PersistedEffect = {
         runId: row.run_id, sessionId: row.session_id, stepIndex: row.step_index,
-        type: row.effect_type, payload: row.payload_json, idempotencyKey: result.idempotencyKey,
+        type: row.effect_type, payload: row.payload_json, idempotencyKey: resultIdempotencyKey,
         failurePolicy: row.failure_policy, status: row.status, createdAt: normalizeTimestampString(row.created_at),
       };
       if (!await this.hasTrustedPostgresEffectTenant(executor, persistedEffect,
@@ -1818,31 +1827,41 @@ export class PostgresSessionStore implements SessionStore {
           row.effect_type,
           row.payload_json,
         );
-      if (preparedApprovalCleanup && result.status === "DONE") {
+      let resultToPersist = result;
+      if (preparedApprovalCleanup && resultStatus === "DONE") {
+        validatePreparedApprovalCleanupEffectIdentity(persistedEffect);
         const existing = await executor.query(
           `SELECT 1 FROM effect_results
             WHERE idempotency_key = $1
             FOR UPDATE`,
-          [result.idempotencyKey],
+          [resultIdempotencyKey],
         );
         if (existing.rows[0] !== undefined) return;
-        const doneResult: EffectResult & { status: "DONE" } = {
-          ...result,
-          status: "DONE",
-        };
-        try {
-          validatePreparedApprovalCleanupDoneEvidence({
-            effect: persistedEffect,
-            result: doneResult,
-          });
-        } catch {
+        const occurredAt = new Date().toISOString();
+        const materialized = cleanupDoneMaterializedCandidate!;
+        let validSnapshot = false;
+        if (materialized.snapshot !== null) {
+          try {
+            validatePreparedApprovalCleanupDoneEvidence({
+              effect: persistedEffect,
+              result: materialized.snapshot,
+            });
+            validSnapshot = true;
+            resultToPersist = materialized.snapshot;
+          } catch {
+            // Invalid result evidence is quarantined below in this transaction.
+          }
+        }
+        if (!validSnapshot) {
           const quarantined =
-            quarantinePreparedApprovalCleanupDoneResult(doneResult);
+            quarantinePreparedApprovalCleanupDoneResult(
+              materialized.auditResult,
+            );
           await this.appendRunEventsBatchWithExecutor(executor, [
             buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
               effect: persistedEffect,
-              invalidResult: doneResult,
-              occurredAt: new Date().toISOString(),
+              invalidResult: materialized.auditResult,
+              occurredAt,
             }),
           ]);
           await executor.query(
@@ -1853,15 +1872,15 @@ export class PostgresSessionStore implements SessionStore {
             [
               runId,
               sessionId,
-              doneResult.idempotencyKey,
+              persistedEffect.idempotencyKey,
               stringifySanitizedJson(quarantined.error),
-              normalizeTimestampString(doneResult.timestamp),
+              occurredAt,
             ],
           );
           await executor.query(
             `UPDATE effects SET status = 'PENDING'
               WHERE idempotency_key = $1`,
-            [doneResult.idempotencyKey],
+            [persistedEffect.idempotencyKey],
           );
           return;
         }
@@ -1874,11 +1893,11 @@ export class PostgresSessionStore implements SessionStore {
         [
           runId,
           sessionId,
-          result.idempotencyKey,
-          result.status,
-          stringifySanitizedJson(result.output ?? null),
-          stringifySanitizedJson(result.error ?? null),
-          normalizeTimestampString(result.timestamp),
+          resultToPersist.idempotencyKey,
+          resultToPersist.status,
+          stringifySanitizedJson(resultToPersist.output ?? null),
+          stringifySanitizedJson(resultToPersist.error ?? null),
+          normalizeTimestampString(resultToPersist.timestamp),
         ],
       );
     });
@@ -2087,20 +2106,22 @@ export class PostgresSessionStore implements SessionStore {
         );
         return "done";
       } catch {
+        const occurredAt = new Date().toISOString();
         const quarantined =
           quarantinePreparedApprovalCleanupDoneResult(result);
         await this.appendRunEventsBatchWithExecutor(executor, [
           buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
             effect,
             invalidResult: result,
-            occurredAt: new Date().toISOString(),
+            occurredAt,
           }),
         ]);
         await executor.query(
           `UPDATE effect_results
-              SET status = 'FAILED', output_json = NULL, error_json = $2::jsonb
+              SET status = 'FAILED', output_json = NULL, error_json = $2::jsonb,
+                  created_at = $3::timestamptz
             WHERE idempotency_key = $1`,
-          [idempotencyKey, stringifySanitizedJson(quarantined.error)],
+          [idempotencyKey, stringifySanitizedJson(quarantined.error), occurredAt],
         );
         await executor.query(
           `UPDATE effects SET status = 'PENDING' WHERE idempotency_key = $1`,

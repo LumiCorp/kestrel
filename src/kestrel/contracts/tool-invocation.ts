@@ -311,6 +311,10 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
   if (input.version !== PREPARED_TOOL_CALL_VERSION) {
     throw new Error("prepared tool call.version must be 'v1'");
   }
+  const callId = parseDurablePreparedInvocationId(
+    input.callId,
+    "prepared tool call.callId",
+  );
   const originInput = record(input.origin, "prepared tool call.origin");
   rejectUnknown(originInput, ORIGIN_KEYS, "prepared tool call.origin");
   const origin: PreparedToolCallOriginV1 =
@@ -407,7 +411,7 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
       "runner_external_approval_binding_v2"
   ) {
     assertPreparedV2ApprovalAuthorityConsistent({
-      callId: stringValue(input.callId, "prepared tool call.callId"),
+      callId,
       approvalId: approval.approvalId,
       activation: parseToolActivationRefV1(input.activation),
       effectiveInput: jsonRecord(
@@ -451,7 +455,7 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
     version: PREPARED_TOOL_CALL_VERSION,
     runId: stringValue(input.runId, "prepared tool call.runId"),
     sessionId: stringValue(input.sessionId, "prepared tool call.sessionId"),
-    callId: stringValue(input.callId, "prepared tool call.callId"),
+    callId,
     activation: parseToolActivationRefV1(input.activation),
     origin,
     effectiveInput: jsonRecord(
@@ -466,6 +470,40 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
     ...(executionRequirements === undefined ? {} : { executionRequirements }),
     preparedAt: timestamp(input.preparedAt, "prepared tool call.preparedAt"),
   });
+}
+
+export function parseDurablePreparedInvocationId(
+  value: unknown,
+  path = "prepared invocation id",
+): string {
+  const parsed = stringValue(value, path);
+  for (let index = 0; index < parsed.length; index += 1) {
+    const codeUnit = parsed.charCodeAt(index);
+    if (codeUnit === 0) {
+      throw new Error(`${path} must round-trip through durable JSON unchanged`);
+    }
+    if (codeUnit >= 0xd8_00 && codeUnit <= 0xdb_ff) {
+      const following = index + 1 < parsed.length
+        ? parsed.charCodeAt(index + 1)
+        : undefined;
+      if (
+        following === undefined ||
+        following < 0xdc_00 ||
+        following > 0xdf_ff
+      ) {
+        throw new Error(`${path} must contain valid UTF-16`);
+      }
+      index += 1;
+      continue;
+    }
+    if (codeUnit >= 0xdc_00 && codeUnit <= 0xdf_ff) {
+      throw new Error(`${path} must contain valid UTF-16`);
+    }
+  }
+  if (JSON.parse(JSON.stringify(parsed)) !== parsed) {
+    throw new Error(`${path} must round-trip through durable JSON unchanged`);
+  }
+  return parsed;
 }
 
 /**

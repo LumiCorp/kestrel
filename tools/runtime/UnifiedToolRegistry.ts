@@ -23,10 +23,11 @@ import {
   type ToolSurfaceSnapshotV1,
   type ToolDescriptorV1,
 } from "../../src/kestrel/contracts/tool-contract.js";
-import type {
-  AgentToolResultV2,
-  PreparedToolCallV1,
-  ResolvedModelToolIntentV1,
+import {
+  parseDurablePreparedInvocationId,
+  type AgentToolResultV2,
+  type PreparedToolCallV1,
+  type ResolvedModelToolIntentV1,
 } from "../../src/kestrel/contracts/tool-invocation.js";
 import {
   createPreparedToolCallV1,
@@ -625,6 +626,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     input: Parameters<ToolGateway["prepareToolCall"]>[0],
     options: ToolGatewayCallOptions = {},
   ): Promise<PreparedToolCallV1> {
+    // Validate before resolving or retaining the pinned execution source.
+    parseDurablePreparedInvocationId(input.callId, "prepared tool call.callId");
     const authorizationProvider = await this.ensureExecutionAuthorization(
       options.runContext,
     );

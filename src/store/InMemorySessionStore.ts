@@ -55,6 +55,7 @@ import {
 import { SessionBusyError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import {
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  snapshotPreparedApprovalCleanupDoneResult,
 } from "../runtime/preparedApprovalCleanupAudit.js";
 import {
   buildCanonicalWaitingFor,
@@ -1023,22 +1024,80 @@ export class InMemorySessionStore implements SessionStore {
   }
 
   async saveEffectResult(runId: string, sessionId: string, result: EffectResult): Promise<void> {
-    const effect = this.effects.find((candidate) => candidate.idempotencyKey === result.idempotencyKey);
+    const resultIdempotencyKey = result.idempotencyKey;
+    const resultStatus = result.status;
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === resultIdempotencyKey);
     if (effect === undefined || effect.runId !== runId || effect.sessionId !== sessionId) {
       throw new SandboxCapabilityExactResultConflictError("Effect result owner does not match the locked effect");
     }
     if (!this.hasTrustedEffectTenant(effect, result)) {
       throw new SandboxCapabilityExactResultConflictError("Effect result tenant does not match durable authority");
     }
-    if (result.status === "DONE" && effect?.status === "FAILED") {
+    if (resultStatus === "DONE" && effect?.status === "FAILED") {
       throw new SandboxCapabilityExactResultCancelledError("Completed effect-result persistence lost to durable cancellation");
     }
-    if (this.effectResults.has(result.idempotencyKey)) {
+    if (this.effectResults.has(resultIdempotencyKey)) {
       return;
     }
 
-    this.effectResults.set(result.idempotencyKey, { ...result });
-    this.operationLog.push(`saveEffectResult:${result.idempotencyKey}:${result.status}`);
+    if (
+      resultStatus === "DONE" &&
+      effect.type === "release_prepared_tool_call" &&
+      hasPreparedApprovalCleanupMarker(effect.payload)
+    ) {
+      validatePreparedApprovalCleanupEffectIdentity(effect);
+      const occurredAt = new Date().toISOString();
+      const materialized = snapshotPreparedApprovalCleanupDoneResult({
+        result: result as EffectResult & { status: "DONE" },
+        expectedIdempotencyKey: effect.idempotencyKey,
+      });
+      if (materialized.snapshot !== null) {
+        try {
+          validatePreparedApprovalCleanupDoneEvidence({
+            effect,
+            result: materialized.snapshot,
+          });
+          this.effectResults.set(
+            resultIdempotencyKey,
+            structuredClone(materialized.snapshot),
+          );
+          this.operationLog.push(
+            `saveEffectResult:${resultIdempotencyKey}:${resultStatus}`,
+          );
+          return;
+        } catch {
+          // Invalid result evidence is quarantined below while the effect is owned.
+        }
+      }
+      const auditEvent =
+        buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+          effect,
+          invalidResult: materialized.auditResult,
+          occurredAt,
+        });
+      const quarantinedResult = {
+        ...quarantinePreparedApprovalCleanupDoneResult(
+          materialized.auditResult,
+        ),
+        timestamp: occurredAt,
+      };
+      const preparedAuditEvent = structuredClone(auditEvent);
+      const preparedQuarantinedResult = structuredClone(quarantinedResult);
+      this.runEvents.push(preparedAuditEvent);
+      this.operationLog.push(`runEvent:${auditEvent.type}`);
+      this.effectResults.set(
+        resultIdempotencyKey,
+        preparedQuarantinedResult,
+      );
+      effect.status = "PENDING";
+      this.operationLog.push(
+        `quarantineInvalidPreparedApprovalCleanupDoneEvidence:${resultIdempotencyKey}`,
+      );
+      return;
+    }
+
+    this.effectResults.set(resultIdempotencyKey, { ...result });
+    this.operationLog.push(`saveEffectResult:${resultIdempotencyKey}:${resultStatus}`);
   }
 
   async claimEffectExecution(
@@ -1132,14 +1191,17 @@ export class InMemorySessionStore implements SessionStore {
           effect.status = "DONE";
           return "done";
         } catch {
+          const occurredAt = new Date().toISOString();
           const auditEvent =
             buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
               effect,
               invalidResult: doneResult,
-              occurredAt: new Date().toISOString(),
+              occurredAt,
             });
-          const quarantinedResult =
-            quarantinePreparedApprovalCleanupDoneResult(doneResult);
+          const quarantinedResult = {
+            ...quarantinePreparedApprovalCleanupDoneResult(doneResult),
+            timestamp: occurredAt,
+          };
           const preparedAuditEvent = structuredClone(auditEvent);
           const preparedQuarantinedResult = structuredClone(quarantinedResult);
           this.runEvents.push(preparedAuditEvent);
