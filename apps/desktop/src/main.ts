@@ -211,6 +211,7 @@ import {
   prepareDesktopMcpVerification,
 } from "./mcpVerification.js";
 import { DesktopProjectFileIndex } from "./projectFileIndex.js";
+import { resolveProjectScopedDesktopAppIds } from "./projectPersonalApps.js";
 import {
   getEffectiveDesktopEnabledAppIds,
   toDesktopRendererSettings,
@@ -390,8 +391,14 @@ const linkPreviewService = new LinkPreviewService();
 
 function resolveAuthoritativeDesktopExecutionSelection(
   requested: DesktopExecutionSelection,
+  projectPath?: string | undefined,
 ): DesktopExecutionSelection {
-  const authoritativeIds = getEffectiveDesktopEnabledAppIds(desktopSettings);
+  const authoritativeIds = resolveProjectScopedDesktopAppIds({
+    ...(projectPath !== undefined ? { projectPath } : {}),
+    projects: desktopSettings.projects,
+    requested,
+    enabledAppIds: getEffectiveDesktopEnabledAppIds(desktopSettings),
+  });
   return {
     modelConfiguration: requested.modelConfiguration,
     apps: authoritativeIds.flatMap((id) => {
@@ -2150,7 +2157,10 @@ function registerIpcHandlers(
         message: "Desktop conversation thread does not match its Local Core session.",
       });
     }
-    const globalExecutionSelection = resolveAuthoritativeDesktopExecutionSelection(executionSelection);
+    const globalExecutionSelection = resolveAuthoritativeDesktopExecutionSelection(
+      executionSelection,
+      projectPath,
+    );
     const executionProfile = await requireLocalCoreConnectionManager().executeIdempotent(
       async (client) => await client.resolveExecutionProfile({
         client: "desktop",
@@ -2241,7 +2251,10 @@ function registerIpcHandlers(
       executionSelection,
       ...turnRequest
     } = request;
-    const globalExecutionSelection = resolveAuthoritativeDesktopExecutionSelection(executionSelection);
+    const globalExecutionSelection = resolveAuthoritativeDesktopExecutionSelection(
+      executionSelection,
+      projectPath,
+    );
     const executionProfile =
       await requireLocalCoreConnectionManager().executeIdempotent(
         async (client) =>
@@ -3858,12 +3871,67 @@ function registerIpcHandlers(
     "desktop:execute-mission-control-action",
     async (_event, intent: unknown) =>
       executeDesktopMissionControlAction({
-        adapter: requireDesktopRunnerAdapter(runnerTransport),
         intent,
         registeredProjectIds: desktopSettings.projects.flatMap((project) =>
           project.id === undefined ? [] : [project.id],
         ),
-        profileId: requireDefaultDesktopRunnerProfileId(),
+        profileForProject: async (projectId) => {
+          const project = desktopSettings.projects.find(
+            (candidate) => candidate.id === projectId,
+          );
+          if (project === undefined) {
+            throw createDesktopError({
+              code: "desktop.unregistered_mission_control_project",
+              message: "Desktop Mission Control commands require a registered project.",
+            });
+          }
+          const configuration =
+            desktopSettings.modelConfigurations.find(
+              (candidate) =>
+                candidate.id === desktopSettings.defaultModelConfigurationId,
+            ) ?? desktopSettings.modelConfigurations[0];
+          if (configuration === undefined) {
+            throw createDesktopError({
+              code: "desktop.model_configuration_not_found",
+              message: "Desktop has no default model configuration.",
+            });
+          }
+          const requested: DesktopExecutionSelection = {
+            modelConfiguration: currentDesktopModelConfigurationRef(configuration),
+            apps: getEffectiveDesktopEnabledAppIds(desktopSettings).flatMap(
+              (appId) => {
+                const definition = getDesktopAppDefinition(
+                  appId,
+                  undefined,
+                  desktopSettings.mcpServers,
+                );
+                return definition === undefined
+                  ? []
+                  : [{ id: definition.id, contractVersion: definition.contractVersion }];
+              },
+            ),
+          };
+          const resolution = (
+            await requireLocalCoreConnectionManager().executeIdempotent(
+              async (client) =>
+                await client.resolveExecutionProfile({
+                  client: "desktop",
+                  selection: resolveAuthoritativeDesktopExecutionSelection(
+                    requested,
+                    project.path,
+                  ),
+                }),
+            )
+          );
+          return {
+            profileId: resolution.profileId,
+            adapter: requireDesktopRunnerAdapter(
+              runnerTransport,
+              resolution.profileId,
+              resolution.resolvedProfile,
+            ),
+          };
+        },
         actionId: randomUUID(),
         actionTs: new Date().toISOString(),
         context: DESKTOP_RUNNER_REQUEST_CONTEXT,
