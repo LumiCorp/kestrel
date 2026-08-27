@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Execute the configured receiving route exports](32-execute-configured-receiving-route-exports.md)
 
 ## In progress
 
