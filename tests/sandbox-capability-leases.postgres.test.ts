@@ -557,22 +557,182 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       "reset",
     );
     assert.equal(await store.getEffectResult(conflictingEffectId), null);
-    await store.commitPreparedApprovalCleanupEffectDone(
-      conflictingEffectId,
-      cleanupOwner,
-      {
+    assert.equal(
+      await store.claimEffectExecution(conflictingEffectId, cleanupOwner),
+      "claimed",
+    );
+    let releaseStarted!: () => void;
+    const startedRelease = new Promise<void>((resolve) => {
+      releaseStarted = resolve;
+    });
+    let permitRelease!: () => void;
+    const releaseGate = new Promise<void>((resolve) => {
+      permitRelease = resolve;
+    });
+    let concurrentReleaseCalls = 0;
+    const executeRelease = async () => {
+      concurrentReleaseCalls += 1;
+      releaseStarted();
+      await releaseGate;
+      return {
         idempotencyKey: conflictingEffectId,
-        status: "DONE",
+        status: "DONE" as const,
         output: {
           releasedPreparedInvocationId: conflictingPreparedToolCall.callId,
         },
         timestamp: "2026-08-27T00:00:02.000Z",
-      },
+      };
+    };
+    const firstCleanupExecution =
+      store.executePreparedApprovalCleanupInCriticalSection(
+        conflictingEffectId,
+        cleanupOwner,
+        executeRelease,
+      );
+    await startedRelease;
+    const secondCleanupExecution =
+      store.executePreparedApprovalCleanupInCriticalSection(
+        conflictingEffectId,
+        cleanupOwner,
+        executeRelease,
+      );
+    permitRelease();
+    const serializedCleanup = await Promise.all([
+      firstCleanupExecution,
+      secondCleanupExecution,
+    ]);
+    assert.deepEqual(
+      serializedCleanup.map((outcome) => outcome.status).sort(),
+      ["done", "executed"],
     );
+    assert.equal(concurrentReleaseCalls, 1);
     assert.equal(
       (await store.getPersistedEffect(conflictingEffectId))?.status,
       "DONE",
     );
+    const quarantineEvents = await store.getReplayStream({
+      runId,
+      eventTypes: [
+        "prepared_approval_cleanup.done_evidence_quarantined",
+      ],
+    });
+    const conflictingAudit = quarantineEvents.find((event) =>
+      event.metadata?.effectIdentity !== undefined &&
+      (event.metadata.effectIdentity as { idempotencyKey?: string })
+        .idempotencyKey === conflictingEffectId
+    );
+    assert.deepEqual(conflictingAudit?.metadata?.invalidResult, {
+      idempotencyKey: conflictingEffectId,
+      status: "DONE",
+      output: { releasedPreparedInvocationId: "wrong-call" },
+      error: null,
+      originalTimestamp: "2026-08-27T00:00:01.000Z",
+    });
+    assert.equal(
+      (await store.executePreparedApprovalCleanupInCriticalSection(
+        conflictingEffectId,
+        cleanupOwner,
+        executeRelease,
+      )).status,
+      "done",
+    );
+    assert.equal(
+      concurrentReleaseCalls,
+      1,
+      "exact DONE recheck must skip the cleanup handler",
+    );
+    let ordinaryCriticalSectionCalls = 0;
+    assert.deepEqual(
+      await store.executePreparedApprovalCleanupInCriticalSection(
+        binding.toolCallId,
+        { runId, sessionId },
+        async () => {
+          ordinaryCriticalSectionCalls += 1;
+          throw new Error("ordinary effect must not enter cleanup execution");
+        },
+      ),
+      { status: "conflict" },
+    );
+    assert.equal(ordinaryCriticalSectionCalls, 0);
+
+    const crashPreparedToolCall = await prepareTestToolCall({
+      gateway,
+      toolName: "code.execute",
+      toolInput: { language: "javascript", code: "return 3" },
+      runId,
+      sessionId,
+      callId: `cleanup-crash-${suffix}`,
+    });
+    const crashEffectId = `${crashPreparedToolCall.callId}:release`;
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json,
+          idempotency_key, failure_policy, status, created_at, tenant_id,
+          tenant_ownership_state)
+       VALUES ($1, $2, 4, 'release_prepared_tool_call', $3::jsonb, $4,
+               'STOP', 'CLAIMED', NOW(), $5, 'tenant_bound')`,
+      [
+        runId,
+        sessionId,
+        JSON.stringify({
+          preparedToolCall: crashPreparedToolCall,
+          preparedApprovalCleanup: {
+            version: "runner_prepared_approval_cleanup_v1",
+            organizationId: binding.tenantId,
+            threadId: sessionId,
+            turnId: `cleanup-crash-turn-${suffix}`,
+            interactionId: `cleanup-crash-interaction-${suffix}`,
+            requestId: `cleanup-crash-request-${suffix}`,
+            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+            failureMessage: "Expired.",
+          },
+        }),
+        crashEffectId,
+        binding.tenantId,
+      ],
+    );
+    await assert.rejects(
+      store.executePreparedApprovalCleanupInCriticalSection(
+        crashEffectId,
+        cleanupOwner,
+        async () => {
+          throw new Error("injected cleanup handler crash");
+        },
+      ),
+      /injected cleanup handler crash/u,
+    );
+    assert.equal(
+      (await store.getPersistedEffect(crashEffectId))?.status,
+      "CLAIMED",
+      "a thrown handler must roll back while releasing the transaction lock",
+    );
+    assert.equal(await store.getEffectResult(crashEffectId), null);
+    assert.equal(
+      await store.resetPreparedApprovalCleanupEffectExecution(
+        crashEffectId,
+        cleanupOwner,
+      ),
+      "reset",
+    );
+    assert.equal(
+      await store.claimEffectExecution(crashEffectId, cleanupOwner),
+      "claimed",
+    );
+    const crashRetry =
+      await store.executePreparedApprovalCleanupInCriticalSection(
+        crashEffectId,
+        cleanupOwner,
+        async () => ({
+          idempotencyKey: crashEffectId,
+          status: "DONE",
+          output: {
+            releasedPreparedInvocationId: crashPreparedToolCall.callId,
+          },
+          timestamp: "2026-08-27T00:00:03.000Z",
+        }),
+      );
+    assert.equal(crashRetry.status, "executed");
+    assert.equal((await store.getPersistedEffect(crashEffectId))?.status, "DONE");
     const cancelledToolCallId = `cancelled-call-${suffix}`;
     const cancelledLeaseId = `cancelled-lease-${suffix}`;
     const cancelledBinding = { ...binding, toolCallId: cancelledToolCallId };

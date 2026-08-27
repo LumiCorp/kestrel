@@ -119,13 +119,12 @@ export class InlineEffectRunner implements EffectRunner {
         if (
           claim === "already_claimed" &&
           isPreparedApprovalCleanupRelease(effect) &&
-          (await this.store.getEffectResult(effect.idempotencyKey)) === null &&
-          (await this.store.resetPreparedApprovalCleanupEffectExecution(
-            effect.idempotencyKey,
-            effect,
-          )) === "reset"
+          (await this.store.getEffectResult(effect.idempotencyKey)) === null
         ) {
-          claim = await this.store.claimEffectExecution(effect.idempotencyKey, effect);
+          // A cleanup critical section is the execution lease. It re-reads the
+          // claimed effect under its lock, so recovery never steals a live
+          // CLAIMED cleanup merely because its result is not written yet.
+          claim = "claimed";
         }
         if (claim !== "claimed") {
           const racedResult = await this.store.getEffectResult(effect.idempotencyKey);
@@ -260,12 +259,44 @@ export class InlineEffectRunner implements EffectRunner {
           readSandboxCapabilityReplayEvidence(output) === undefined
             ? Promise.resolve()
             : persistCompletedResult(output);
-        let output = await handler(effect, {
-          ...context,
-          session,
-          persistCompletedCapabilityResult,
-        });
-        await persistCompletedResult(output);
+        let output: unknown;
+        if (isPreparedApprovalCleanupRelease(effect)) {
+          const criticalSection =
+            await this.store.executePreparedApprovalCleanupInCriticalSection(
+              effect.idempotencyKey,
+              effect,
+              async () => {
+                const handlerOutput = await handler(effect, {
+                  ...context,
+                  session,
+                  persistCompletedCapabilityResult: async () => {
+                    throw new Error(
+                      "Cleanup release handlers cannot persist capability results",
+                    );
+                  },
+                });
+                return {
+                  idempotencyKey: effect.idempotencyKey,
+                  status: "DONE",
+                  output: snapshotCanonicalEffectOutput(handlerOutput),
+                  timestamp: new Date().toISOString(),
+                };
+              },
+            );
+          if (criticalSection.status === "conflict") {
+            throw new Error(
+              "Prepared approval cleanup execution lost its exact critical-section authority",
+            );
+          }
+          output = criticalSection.result.output;
+        } else {
+          output = await handler(effect, {
+            ...context,
+            session,
+            persistCompletedCapabilityResult,
+          });
+          await persistCompletedResult(output);
+        }
         if (
           readSandboxCapabilityReplayEvidence(output) === undefined &&
           !isPreparedApprovalCleanupRelease(effect)

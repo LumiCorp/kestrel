@@ -466,6 +466,15 @@ export interface EffectStore {
     idempotencyKey: string,
     owner: { runId: string; sessionId: string },
   ): Promise<"done" | "quarantined" | "conflict">;
+  executePreparedApprovalCleanupInCriticalSection(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+    execute: () => Promise<EffectResult & { status: "DONE" }>,
+  ): Promise<
+    | { status: "executed"; result: EffectResult & { status: "DONE" } }
+    | { status: "done"; result: EffectResult & { status: "DONE" } }
+    | { status: "conflict" }
+  >;
   commitPreparedApprovalCleanupEffectDone(
     idempotencyKey: string,
     owner: { runId: string; sessionId: string },
@@ -563,6 +572,36 @@ export function quarantinePreparedApprovalCleanupDoneResult(
       details: { retryable: true, quarantined: true },
     },
     timestamp: result.timestamp,
+  };
+}
+
+export function buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent(input: {
+  effect: PersistedEffect;
+  invalidResult: EffectResult & { status: "DONE" };
+  occurredAt: string;
+}): RunEvent {
+  return {
+    runId: input.effect.runId,
+    sessionId: input.effect.sessionId,
+    stepIndex: input.effect.stepIndex,
+    type: "prepared_approval_cleanup.done_evidence_quarantined",
+    level: "WARN",
+    timestamp: input.occurredAt,
+    metadata: {
+      version: "prepared_approval_cleanup_done_evidence_quarantine_v1",
+      effectIdentity: {
+        runId: input.effect.runId,
+        sessionId: input.effect.sessionId,
+        idempotencyKey: input.effect.idempotencyKey,
+      },
+      invalidResult: {
+        idempotencyKey: input.invalidResult.idempotencyKey,
+        status: input.invalidResult.status,
+        output: input.invalidResult.output ?? null,
+        error: input.invalidResult.error ?? null,
+        originalTimestamp: input.invalidResult.timestamp,
+      },
+    },
   };
 }
 

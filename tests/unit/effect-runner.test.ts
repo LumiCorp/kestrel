@@ -729,6 +729,171 @@ test("effect runner validates and quarantines malformed cleanup DONE from a rese
   });
 });
 
+test("two cleanup runners serialize release and retain quarantine audit after convergence", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "serialized-convergence",
+    status: "PENDING",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  const originalTimestamp = "2026-08-27T00:00:01.000Z";
+  await store.saveEffectResult(effect.runId, effect.sessionId, {
+    idempotencyKey: effect.idempotencyKey,
+    status: "DONE",
+    output: {
+      releasedPreparedInvocationId: "wrong-call",
+      malformedText: "invalid\u0000audit",
+    },
+    timestamp: originalTimestamp,
+  });
+  assert.equal(
+    await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+      effect.idempotencyKey,
+      effect,
+    ),
+    "quarantined",
+  );
+  assert.equal(
+    await store.resetPreparedApprovalCleanupEffectExecution(
+      effect.idempotencyKey,
+      effect,
+    ),
+    "reset",
+  );
+  let releaseHandler!: () => void;
+  const handlerGate = new Promise<void>((resolve) => {
+    releaseHandler = resolve;
+  });
+  let handlerStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    handlerStarted = resolve;
+  });
+  let releases = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    releases += 1;
+    handlerStarted();
+    await handlerGate;
+    return { releasedPreparedInvocationId: preparedCallId };
+  });
+  const context = {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  };
+  const first = new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    context,
+  );
+  await started;
+  const second = new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    context,
+  );
+  await Promise.resolve();
+  releaseHandler();
+  const outcomes = await Promise.all([first, second]);
+
+  assert.deepEqual(outcomes.map((outcome) => outcome.stop), [false, false]);
+  assert.equal(releases, 1);
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
+  const quarantineEvents = store.getRunEvents().filter((event) =>
+    event.type === "prepared_approval_cleanup.done_evidence_quarantined"
+  );
+  assert.equal(quarantineEvents.length, 1);
+  assert.deepEqual(quarantineEvents[0]?.metadata?.invalidResult, {
+    idempotencyKey: effect.idempotencyKey,
+    status: "DONE",
+    output: {
+      releasedPreparedInvocationId: "wrong-call",
+      malformedText: "invalid\uFFFDaudit",
+    },
+    error: null,
+    originalTimestamp,
+  });
+
+  const replay = await new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    context,
+  );
+  assert.equal(replay.stop, false);
+  assert.equal(releases, 1, "exact DONE recheck must skip the handler");
+  assert.equal(
+    store.getRunEvents().filter((event) =>
+      event.type === "prepared_approval_cleanup.done_evidence_quarantined"
+    ).length,
+    1,
+  );
+});
+
+test("cleanup critical section releases after a thrown handler and permits retry", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "critical-section-throw",
+    status: "PENDING",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  let attempts = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("injected cleanup handler crash");
+    return { releasedPreparedInvocationId: preparedCallId };
+  });
+  const runner = new InlineEffectRunner(store, registry);
+  const context = {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  };
+
+  const crashed = await runner.runEffects([effect], context);
+  const retried = await runner.runEffects([effect], context);
+
+  assert.equal(crashed.stop, true);
+  assert.equal(retried.stop, false);
+  assert.equal(attempts, 2);
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
+});
+
+test("cleanup critical section refuses ordinary effects without invoking the handler", async () => {
+  const store = new InMemorySessionStore();
+  const { effect } = await buildPreparedApprovalCleanupEffect({
+    suffix: "ordinary-isolation",
+    status: "CLAIMED",
+  });
+  const ordinary = {
+    ...effect,
+    payload: { preparedToolCall: effect.payload.preparedToolCall },
+  };
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(ordinary),
+  );
+  let handlerCalls = 0;
+  const outcome = await store.executePreparedApprovalCleanupInCriticalSection(
+    ordinary.idempotencyKey,
+    ordinary,
+    async () => {
+      handlerCalls += 1;
+      throw new Error("ordinary handler must not run");
+    },
+  );
+
+  assert.deepEqual(outcome, { status: "conflict" });
+  assert.equal(handlerCalls, 0);
+  assert.equal((await store.getPersistedEffect(ordinary.idempotencyKey))?.status, "CLAIMED");
+});
+
 test("ordinary failed release remains terminal and is never retried", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();

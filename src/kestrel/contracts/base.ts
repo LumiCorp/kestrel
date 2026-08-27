@@ -59,6 +59,7 @@ export type RunEventType =
   | "step.contract_failed"
   | "effects.resumed"
   | "effects.executed"
+  | "prepared_approval_cleanup.done_evidence_quarantined"
   | "outbox.dispatched"
   | "policy.checkpoint"
   | "quality.computed"
