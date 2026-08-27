@@ -44,11 +44,11 @@ export interface PreparedApprovalCleanupDoneAuditSnapshot {
   releasedPreparedInvocationId?: Record<string, unknown> | undefined;
 }
 
-export function snapshotPreparedApprovalCleanupDoneResult(input: {
+export function snapshotPreparedApprovalCleanupResult(input: {
   result: unknown;
   expectedIdempotencyKey: string;
 }): {
-  snapshot: (EffectResult & { status: "DONE" }) | null;
+  snapshot: EffectResult | null;
   auditSnapshot: PreparedApprovalCleanupDoneAuditSnapshot;
 } {
   let descriptors: PropertyDescriptorMap;
@@ -85,10 +85,42 @@ export function snapshotPreparedApprovalCleanupDoneResult(input: {
   });
   if (
     idempotencyKey !== input.expectedIdempotencyKey ||
+    typeof timestamp !== "string" ||
+    !isCanonicalTimestamp(timestamp)
+  ) return { snapshot: null, auditSnapshot };
+  if (status === "FAILED") {
+    const normalized = normalizePreparedApprovalCleanupDoneEvidence({
+      idempotencyKey,
+      status: "DONE",
+      ...(materializedOutput.auditValue === undefined
+        ? {}
+        : { output: materializedOutput.auditValue }),
+      ...(error === UNREADABLE_DESCRIPTOR
+        ? { error: unreadableAuditValue() as never }
+        : error === undefined ? {} : { error: error as never }),
+      timestamp,
+    });
+    return {
+      snapshot: {
+        idempotencyKey,
+        status: "FAILED",
+        ...(normalized.output === undefined
+          ? {}
+          : { output: normalized.output }),
+        ...(normalized.error === undefined
+          ? {}
+          : { error: materializeCleanupFailureError(
+              normalized.error,
+              auditSnapshot,
+            ) }),
+        timestamp,
+      },
+      auditSnapshot,
+    };
+  }
+  if (
     status !== "DONE" ||
     error !== undefined ||
-    typeof timestamp !== "string" ||
-    !isCanonicalTimestamp(timestamp) ||
     materializedOutput.exactReleasedPreparedInvocationId === undefined
   ) return { snapshot: null, auditSnapshot };
   return {
@@ -102,6 +134,46 @@ export function snapshotPreparedApprovalCleanupDoneResult(input: {
       timestamp,
     },
     auditSnapshot,
+  };
+}
+
+export function snapshotPreparedApprovalCleanupDoneResult(input: {
+  result: unknown;
+  expectedIdempotencyKey: string;
+}): {
+  snapshot: (EffectResult & { status: "DONE" }) | null;
+  auditSnapshot: PreparedApprovalCleanupDoneAuditSnapshot;
+} {
+  const materialized = snapshotPreparedApprovalCleanupResult(input);
+  return {
+    snapshot: materialized.snapshot?.status === "DONE"
+      ? materialized.snapshot as EffectResult & { status: "DONE" }
+      : null,
+    auditSnapshot: materialized.auditSnapshot,
+  };
+}
+
+function materializeCleanupFailureError(
+  value: unknown,
+  auditSnapshot: PreparedApprovalCleanupDoneAuditSnapshot,
+): EffectResult["error"] {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as Record<string, unknown>).code === "string" &&
+    typeof (value as Record<string, unknown>).message === "string"
+  ) return value as EffectResult["error"];
+  return {
+    code: "PREPARED_APPROVAL_CLEANUP_FAILED_EVIDENCE_INVALID",
+    message: "Prepared approval cleanup failure evidence was unreadable or malformed.",
+    details: {
+      retryable: true,
+      evidence: {
+        canonicalHash: auditSnapshot.evidence.canonicalHash,
+        errorShape: auditSnapshot.evidence.errorShape,
+      },
+    },
   };
 }
 

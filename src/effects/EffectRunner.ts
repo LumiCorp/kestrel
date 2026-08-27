@@ -11,6 +11,7 @@ import {
 import {
   validateExactEffectResultRead,
   validatePreparedApprovalCleanupDoneEvidence,
+  type EffectResultPersistenceIntent,
   type EffectStore,
   type PersistedEffect,
   type SandboxCapabilityLeaseStore,
@@ -185,7 +186,7 @@ export class InlineEffectRunner implements EffectRunner {
             ...(unknownOutput === undefined ? {} : { output: unknownOutput }),
             error: runtimeError,
             timestamp: new Date().toISOString(),
-          });
+          }, preparedApprovalCleanupPersistenceIntent(effect));
           await this.store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
           if (toolActivity !== undefined) {
             await notifyToolActivity(context.onToolActivity, {
@@ -352,7 +353,7 @@ export class InlineEffectRunner implements EffectRunner {
           status: "FAILED",
           error: runtimeError,
           timestamp: new Date().toISOString(),
-        });
+        }, preparedApprovalCleanupPersistenceIntent(effect));
         await this.store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
         if (toolActivity !== undefined) {
           await notifyToolActivity(context.onToolActivity, {
@@ -507,6 +508,17 @@ export function isPreparedApprovalCleanupRelease(
   } catch {
     return false;
   }
+}
+
+function preparedApprovalCleanupPersistenceIntent(
+  effect: PersistedEffect,
+): EffectResultPersistenceIntent | undefined {
+  return isPreparedApprovalCleanupRelease(effect)
+    ? {
+        version: "prepared_approval_cleanup_result_persistence_v1",
+        idempotencyKey: effect.idempotencyKey,
+      }
+    : undefined;
 }
 
 function validatePreparedEffectForExecution(

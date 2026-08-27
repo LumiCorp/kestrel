@@ -17,6 +17,7 @@ import {
   validateExactEffectResultRead,
   validateExactEffectResultTenantBinding,
   quarantinePreparedApprovalCleanupDoneResult,
+  snapshotEffectResultPersistenceIntent,
   validatePreparedApprovalCleanupEffectIdentity,
   validatePreparedApprovalCleanupDoneEvidence,
 } from "../kestrel/contracts/store.js";
@@ -57,7 +58,7 @@ import { SessionBusyError, createRuntimeFailure } from "../runtime/RuntimeFailur
 import {
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot,
-  snapshotPreparedApprovalCleanupDoneResult,
+  snapshotPreparedApprovalCleanupResult,
 } from "../runtime/preparedApprovalCleanupAudit.js";
 import {
   buildCanonicalWaitingFor,
@@ -1031,14 +1032,24 @@ export class InMemorySessionStore implements SessionStore {
     result: EffectResult,
     intent?: EffectResultPersistenceIntent | undefined,
   ): Promise<void> {
-    const cleanupMaterialized = intent === undefined
+    const materializedIntent = intent === undefined
       ? null
-      : snapshotPreparedApprovalCleanupDoneResult({
+      : snapshotEffectResultPersistenceIntent(intent);
+    if (intent !== undefined && materializedIntent === null) {
+      throw new SandboxCapabilityExactResultConflictError(
+        "Cleanup persistence intent was unreadable or malformed",
+      );
+    }
+    const cleanupMaterialized = materializedIntent === null
+      ? null
+      : snapshotPreparedApprovalCleanupResult({
           result,
-          expectedIdempotencyKey: intent.idempotencyKey,
+          expectedIdempotencyKey: materializedIntent.idempotencyKey,
         });
-    const resultIdempotencyKey = intent?.idempotencyKey ?? result.idempotencyKey;
-    const resultStatus = intent === undefined ? result.status : "DONE";
+    const resultIdempotencyKey = materializedIntent?.idempotencyKey ??
+      result.idempotencyKey;
+    const resultStatus = cleanupMaterialized?.snapshot?.status ??
+      (materializedIntent === null ? result.status : null);
     const effect = this.effects.find((candidate) => candidate.idempotencyKey === resultIdempotencyKey);
     if (effect === undefined || effect.runId !== runId || effect.sessionId !== sessionId) {
       throw new SandboxCapabilityExactResultConflictError("Effect result owner does not match the locked effect");
@@ -1046,20 +1057,16 @@ export class InMemorySessionStore implements SessionStore {
     const preparedApprovalCleanup =
       effect.type === "release_prepared_tool_call" &&
       hasPreparedApprovalCleanupMarker(effect.payload);
-    if (intent !== undefined) {
-      if (
-        intent.version !==
-          "prepared_approval_cleanup_result_persistence_v1" ||
-        !preparedApprovalCleanup
-      ) {
+    if (materializedIntent !== null) {
+      if (!preparedApprovalCleanup) {
         throw new SandboxCapabilityExactResultConflictError(
           "Cleanup persistence intent does not match the locked durable effect",
         );
       }
       validatePreparedApprovalCleanupEffectIdentity(effect);
-    } else if (preparedApprovalCleanup && resultStatus === "DONE") {
+    } else if (preparedApprovalCleanup) {
       throw new SandboxCapabilityExactResultConflictError(
-        "Cleanup DONE persistence requires explicit cleanup intent",
+        "Cleanup result persistence requires explicit cleanup intent",
       );
     }
     const tenantResult = cleanupMaterialized?.snapshot ?? {
@@ -1067,23 +1074,23 @@ export class InMemorySessionStore implements SessionStore {
       status: "FAILED" as const,
       timestamp: new Date().toISOString(),
     };
-    if (!this.hasTrustedEffectTenant(effect, intent === undefined ? result : tenantResult)) {
+    if (!this.hasTrustedEffectTenant(
+      effect,
+      materializedIntent === null ? result : tenantResult,
+    )) {
       throw new SandboxCapabilityExactResultConflictError("Effect result tenant does not match durable authority");
     }
-    if (resultStatus === "DONE" && effect?.status === "FAILED") {
+    if (resultStatus === "DONE" && effect.status === "FAILED") {
       throw new SandboxCapabilityExactResultCancelledError("Completed effect-result persistence lost to durable cancellation");
     }
     if (this.effectResults.has(resultIdempotencyKey)) {
       return;
     }
 
-    if (
-      resultStatus === "DONE" &&
-      cleanupMaterialized !== null
-    ) {
+    if (cleanupMaterialized !== null) {
       const occurredAt = new Date().toISOString();
       const materialized = cleanupMaterialized;
-      if (materialized.snapshot !== null) {
+      if (materialized.snapshot?.status === "DONE") {
         try {
           validatePreparedApprovalCleanupDoneEvidence({
             effect,
@@ -1100,6 +1107,16 @@ export class InMemorySessionStore implements SessionStore {
         } catch {
           // Invalid result evidence is quarantined below while the effect is owned.
         }
+      }
+      if (materialized.snapshot?.status === "FAILED") {
+        this.effectResults.set(
+          resultIdempotencyKey,
+          structuredClone(materialized.snapshot),
+        );
+        this.operationLog.push(
+          `saveEffectResult:${resultIdempotencyKey}:FAILED`,
+        );
+        return;
       }
       const auditEvent =
         buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot({

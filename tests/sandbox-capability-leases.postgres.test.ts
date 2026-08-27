@@ -341,7 +341,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         message: "first runner failed",
       },
       timestamp: "2026-08-27T00:00:01.000Z",
-    });
+    }, cleanupResultPersistenceIntent(cleanupEffectId));
     await store.markEffectStatus(cleanupEffectId, "FAILED", cleanupOwner);
     await Promise.all([
       store.commitPreparedApprovalCleanupEffectDone(
@@ -365,7 +365,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
             message: "stale runner failed",
           },
           timestamp: "2026-08-27T00:00:03.000Z",
-        });
+        }, cleanupResultPersistenceIntent(cleanupEffectId));
         await store.markEffectStatus(
           cleanupEffectId,
           "FAILED",
@@ -955,6 +955,93 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       cleanupResultPersistenceIntent(upgradeEffectId),
     );
     assert.equal((await store.getEffectResult(upgradeEffectId))?.status, "FAILED");
+    assert.equal(
+      await store.resetPreparedApprovalCleanupEffectExecution(
+        upgradeEffectId,
+        cleanupOwner,
+      ),
+      "reset",
+    );
+    const stableFailedCleanup = {
+      idempotencyKey: upgradeEffectId,
+      status: "FAILED" as const,
+      error: {
+        code: "EFFECT_EXECUTION_FAILED",
+        message: "stable cleanup failure",
+        details: { state: "before-save" },
+      },
+      timestamp: "2026-08-27T00:00:08.600Z",
+    };
+    await assert.rejects(
+      store.saveEffectResult(runId, sessionId, stableFailedCleanup),
+      /requires explicit cleanup intent/u,
+    );
+    let intentGetterReads = 0;
+    const statefulIntent: Record<string, unknown> = {};
+    for (const key of ["version", "idempotencyKey"] as const) {
+      Object.defineProperty(statefulIntent, key, {
+        enumerable: true,
+        get() {
+          intentGetterReads += 1;
+          return key === "version"
+            ? "prepared_approval_cleanup_result_persistence_v1"
+            : upgradeEffectId;
+        },
+      });
+    }
+    await assert.rejects(
+      store.saveEffectResult(
+        runId,
+        sessionId,
+        stableFailedCleanup,
+        statefulIntent as never,
+      ),
+      /intent was unreadable or malformed/u,
+    );
+    assert.equal(intentGetterReads, 0);
+    let resultIdentityReads = 0;
+    const statefulFailedResult: Record<string, unknown> = {
+      error: { code: "EFFECT_EXECUTION_FAILED", message: "failed" },
+      timestamp: "2026-08-27T00:00:08.700Z",
+    };
+    for (const key of ["idempotencyKey", "status"] as const) {
+      Object.defineProperty(statefulFailedResult, key, {
+        enumerable: true,
+        get() {
+          resultIdentityReads += 1;
+          return key === "idempotencyKey" ? upgradeEffectId : "FAILED";
+        },
+      });
+    }
+    await store.saveEffectResult(
+      runId,
+      sessionId,
+      statefulFailedResult as never,
+      cleanupResultPersistenceIntent(upgradeEffectId),
+    );
+    assert.equal(resultIdentityReads, 0);
+    assert.equal((await store.getEffectResult(upgradeEffectId))?.status, "FAILED");
+    assert.equal(
+      await store.resetPreparedApprovalCleanupEffectExecution(
+        upgradeEffectId,
+        cleanupOwner,
+      ),
+      "reset",
+    );
+    const stableFailedSave = store.saveEffectResult(
+      runId,
+      sessionId,
+      stableFailedCleanup,
+      cleanupResultPersistenceIntent(upgradeEffectId),
+    );
+    stableFailedCleanup.error.details.state = "mutated-after-save";
+    await stableFailedSave;
+    const persistedStableFailure = await store.getEffectResult(upgradeEffectId);
+    assert.equal(persistedStableFailure?.status, "FAILED");
+    assert.equal(
+      (persistedStableFailure?.error?.details as Record<string, unknown>).state,
+      "before-save",
+    );
 
     const timestampPreparedToolCall = await prepareTestToolCall({
       gateway,

@@ -13,6 +13,7 @@ import {
   validateExactEffectResultRead,
   validateExactEffectResultTenantBinding,
   quarantinePreparedApprovalCleanupDoneResult,
+  snapshotEffectResultPersistenceIntent,
   validatePreparedApprovalCleanupEffectIdentity,
   validatePreparedApprovalCleanupDoneEvidence,
 } from "../kestrel/contracts/store.js";
@@ -96,7 +97,7 @@ import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
 import {
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot,
-  snapshotPreparedApprovalCleanupDoneResult,
+  snapshotPreparedApprovalCleanupResult,
 } from "../runtime/preparedApprovalCleanupAudit.js";
 import {
   buildCanonicalWaitingFor,
@@ -1788,14 +1789,24 @@ export class PostgresSessionStore implements SessionStore {
     result: EffectResult,
     intent?: EffectResultPersistenceIntent | undefined,
   ): Promise<void> {
-    const cleanupDoneMaterializedCandidate = intent === undefined
+    const materializedIntent = intent === undefined
       ? null
-      : snapshotPreparedApprovalCleanupDoneResult({
+      : snapshotEffectResultPersistenceIntent(intent);
+    if (intent !== undefined && materializedIntent === null) {
+      throw new SandboxCapabilityExactResultConflictError(
+        "Cleanup persistence intent was unreadable or malformed",
+      );
+    }
+    const cleanupMaterializedCandidate = materializedIntent === null
+      ? null
+      : snapshotPreparedApprovalCleanupResult({
           result,
-          expectedIdempotencyKey: intent.idempotencyKey,
+          expectedIdempotencyKey: materializedIntent.idempotencyKey,
         });
-    const resultIdempotencyKey = intent?.idempotencyKey ?? result.idempotencyKey;
-    const resultStatus = intent === undefined ? result.status : "DONE";
+    const resultIdempotencyKey = materializedIntent?.idempotencyKey ??
+      result.idempotencyKey;
+    const resultStatus = cleanupMaterializedCandidate?.snapshot?.status ??
+      (materializedIntent === null ? result.status : null);
     await this.ensureSchemaV3();
     await this.withTransaction(async (executor) => {
       const effect = await executor.query<{
@@ -1823,37 +1834,33 @@ export class PostgresSessionStore implements SessionStore {
           row.effect_type,
           row.payload_json,
         );
-      if (intent !== undefined) {
-        if (
-          intent.version !==
-            "prepared_approval_cleanup_result_persistence_v1" ||
-          !preparedApprovalCleanup
-        ) {
+      if (materializedIntent !== null) {
+        if (!preparedApprovalCleanup) {
           throw new SandboxCapabilityExactResultConflictError(
             "Cleanup persistence intent does not match the locked durable effect",
           );
         }
         validatePreparedApprovalCleanupEffectIdentity(persistedEffect);
-      } else if (preparedApprovalCleanup && resultStatus === "DONE") {
+      } else if (preparedApprovalCleanup) {
         throw new SandboxCapabilityExactResultConflictError(
-          "Cleanup DONE persistence requires explicit cleanup intent",
+          "Cleanup result persistence requires explicit cleanup intent",
         );
       }
       if (resultStatus === "DONE" && row.status === "FAILED") {
         throw new SandboxCapabilityExactResultCancelledError("Completed effect-result persistence lost to durable cancellation");
       }
-      const tenantResult = cleanupDoneMaterializedCandidate?.snapshot ?? {
+      const tenantResult = cleanupMaterializedCandidate?.snapshot ?? {
         idempotencyKey: resultIdempotencyKey,
         status: "FAILED" as const,
         timestamp: new Date().toISOString(),
       };
       if (!await this.hasTrustedPostgresEffectTenant(executor, persistedEffect,
         row.tenant_id, row.tenant_ownership_state,
-        intent === undefined ? result : tenantResult)) {
+        materializedIntent === null ? result : tenantResult)) {
         throw new SandboxCapabilityExactResultConflictError("Effect result tenant does not match durable authority");
       }
       let resultToPersist = result;
-      if (cleanupDoneMaterializedCandidate !== null) {
+      if (cleanupMaterializedCandidate !== null) {
         const existing = await executor.query(
           `SELECT 1 FROM effect_results
             WHERE idempotency_key = $1
@@ -1862,9 +1869,9 @@ export class PostgresSessionStore implements SessionStore {
         );
         if (existing.rows[0] !== undefined) return;
         const occurredAt = new Date().toISOString();
-        const materialized = cleanupDoneMaterializedCandidate;
+        const materialized = cleanupMaterializedCandidate;
         let validSnapshot = false;
-        if (materialized.snapshot !== null) {
+        if (materialized.snapshot?.status === "DONE") {
           try {
             validatePreparedApprovalCleanupDoneEvidence({
               effect: persistedEffect,
@@ -1875,6 +1882,10 @@ export class PostgresSessionStore implements SessionStore {
           } catch {
             // Invalid result evidence is quarantined below in this transaction.
           }
+        }
+        if (materialized.snapshot?.status === "FAILED") {
+          resultToPersist = materialized.snapshot;
+          validSnapshot = true;
         }
         if (!validSnapshot) {
           const quarantined =

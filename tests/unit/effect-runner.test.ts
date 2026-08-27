@@ -467,7 +467,7 @@ test("two cleanup runners converge when FAILED commits before atomic release suc
       message: "stale failing runner",
     },
     timestamp: "2026-08-27T00:00:02.000Z",
-  });
+  }, cleanupResultPersistenceIntent(effect.idempotencyKey));
   await store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
   assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "DONE");
   assert.equal(
@@ -547,7 +547,7 @@ test("cleanup DONE quarantine preserves malformed audit evidence across effect s
         effect.idempotencyKey,
         effect,
       ),
-      "quarantined",
+      "conflict",
     );
     assert.equal(
       (await store.getPersistedEffect(effect.idempotencyKey))?.status,
@@ -555,7 +555,7 @@ test("cleanup DONE quarantine preserves malformed audit evidence across effect s
     );
     const quarantined = await store.getEffectResult(effect.idempotencyKey);
     assert.equal(quarantined?.status, "FAILED");
-    assert.equal(quarantined?.timestamp, timestamp);
+    assert.notEqual(quarantined?.timestamp, timestamp);
     assert.equal(quarantined?.output, undefined);
     assert.equal(
       quarantined?.error?.code,
@@ -1303,6 +1303,135 @@ test("explicit cleanup persistence snapshots hostile top-level evidence and isol
   );
 });
 
+test("cleanup intent and FAILED results are immutable in production and shared stores", async () => {
+  const built = await buildPreparedApprovalCleanupEffect({
+    suffix: "all-status-intent",
+    status: "PENDING",
+  });
+  const store = new DurableInMemorySessionStore();
+  const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+  let resultIdentityReads = 0;
+  const statefulIdentityResult: Record<string, unknown> = {
+    error: { code: "EFFECT_EXECUTION_FAILED", message: "failed" },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  };
+  for (const key of ["idempotencyKey", "status"] as const) {
+    Object.defineProperty(statefulIdentityResult, key, {
+      enumerable: true,
+      get() {
+        resultIdentityReads += 1;
+        return key === "idempotencyKey" ? effect.idempotencyKey : "FAILED";
+      },
+    });
+  }
+  await store.saveEffectResult(
+    effect.runId,
+    effect.sessionId,
+    statefulIdentityResult as never,
+    cleanupResultPersistenceIntent(effect.idempotencyKey),
+  );
+  assert.equal(resultIdentityReads, 0);
+  assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "FAILED");
+  assert.equal(
+    await store.resetPreparedApprovalCleanupEffectExecution(
+      effect.idempotencyKey,
+      effect,
+    ),
+    "reset",
+  );
+
+  const failedResult = {
+    idempotencyKey: effect.idempotencyKey,
+    status: "FAILED" as const,
+    error: {
+      code: "EFFECT_EXECUTION_FAILED",
+      message: "stable failure",
+      details: { state: "before-save" },
+    },
+    timestamp: "2026-08-27T00:00:02.000Z",
+  };
+  await assert.rejects(
+    store.saveEffectResult(effect.runId, effect.sessionId, failedResult),
+    /requires explicit cleanup intent/u,
+  );
+  let intentGetterReads = 0;
+  const statefulIntent: Record<string, unknown> = {};
+  for (const key of ["version", "idempotencyKey"] as const) {
+    Object.defineProperty(statefulIntent, key, {
+      enumerable: true,
+      get() {
+        intentGetterReads += 1;
+        return key === "version"
+          ? "prepared_approval_cleanup_result_persistence_v1"
+          : effect.idempotencyKey;
+      },
+    });
+  }
+  await assert.rejects(
+    store.saveEffectResult(
+      effect.runId,
+      effect.sessionId,
+      failedResult,
+      statefulIntent as never,
+    ),
+    /intent was unreadable or malformed/u,
+  );
+  assert.equal(intentGetterReads, 0);
+  const failedSave = store.saveEffectResult(
+    effect.runId,
+    effect.sessionId,
+    failedResult,
+    cleanupResultPersistenceIntent(effect.idempotencyKey),
+  );
+  failedResult.error.details.state = "mutated-after-save";
+  await failedSave;
+  const persistedFailure = await store.getEffectResult(effect.idempotencyKey);
+  assert.equal(persistedFailure?.status, "FAILED");
+  assert.equal(
+    (persistedFailure?.error?.details as Record<string, unknown>).state,
+    "before-save",
+  );
+
+  const sharedStore = new InMemorySessionStore();
+  (sharedStore as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(built.effect),
+  );
+  const sharedFailure = {
+    idempotencyKey: built.effect.idempotencyKey,
+    status: "FAILED" as const,
+    error: {
+      code: "EFFECT_EXECUTION_FAILED",
+      message: "shared stable failure",
+      details: { state: "before-save" },
+    },
+    timestamp: "2026-08-27T00:00:03.000Z",
+  };
+  await assert.rejects(
+    sharedStore.saveEffectResult(
+      built.effect.runId,
+      built.effect.sessionId,
+      sharedFailure,
+    ),
+    /requires explicit cleanup intent/u,
+  );
+  const sharedSave = sharedStore.saveEffectResult(
+    built.effect.runId,
+    built.effect.sessionId,
+    sharedFailure,
+    cleanupResultPersistenceIntent(built.effect.idempotencyKey),
+  );
+  sharedFailure.error.details.state = "mutated-after-save";
+  await sharedSave;
+  const sharedPersisted = await sharedStore.getEffectResult(
+    built.effect.idempotencyKey,
+  );
+  assert.equal(sharedPersisted?.status, "FAILED");
+  assert.equal(
+    (sharedPersisted?.error?.details as Record<string, unknown>).state,
+    "before-save",
+  );
+});
+
 test("cleanup DONE quarantine preserves exact evidence and refuses ordinary effects", async () => {
   const store = new InMemorySessionStore();
   const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
@@ -1430,7 +1559,14 @@ test("effect runner quarantines malformed cleanup DONE from a claim race", async
         output: { releasedPreparedInvocationId: "claim-race-wrong-call" },
         timestamp: "2026-08-27T00:00:01.000Z",
       }, cleanupResultPersistenceIntent(idempotencyKey));
-      return "terminal";
+      assert.equal(
+        await store.resetPreparedApprovalCleanupEffectExecution(
+          idempotencyKey,
+          owner,
+        ),
+        "reset",
+      );
+      return claimEffectExecution(idempotencyKey, owner);
     }
     return claimEffectExecution(idempotencyKey, owner);
   };
@@ -1472,7 +1608,7 @@ test("effect runner validates and quarantines malformed cleanup DONE from a rese
     status: "FAILED",
     error: { code: "EFFECT_EXECUTION_FAILED", message: "retryable failure" },
     timestamp: "2026-08-27T00:00:01.000Z",
-  });
+  }, cleanupResultPersistenceIntent(effect.idempotencyKey));
   const resetPreparedApprovalCleanupEffectExecution =
     store.resetPreparedApprovalCleanupEffectExecution.bind(store);
   let injectRace = true;
@@ -1493,7 +1629,14 @@ test("effect runner validates and quarantines malformed cleanup DONE from a rese
         output: { releasedPreparedInvocationId: "reset-race-wrong-call" },
         timestamp: "2026-08-27T00:00:02.000Z",
       }, cleanupResultPersistenceIntent(idempotencyKey));
-      return "done";
+      assert.equal(
+        await resetPreparedApprovalCleanupEffectExecution(
+          idempotencyKey,
+          owner,
+        ),
+        "reset",
+      );
+      return "reset";
     }
     return reset;
   };
@@ -1545,7 +1688,7 @@ test("two cleanup runners serialize release and retain quarantine audit after co
       effect.idempotencyKey,
       effect,
     ),
-    "quarantined",
+    "conflict",
   );
   assert.equal(
     await store.resetPreparedApprovalCleanupEffectExecution(

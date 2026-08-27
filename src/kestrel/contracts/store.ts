@@ -502,6 +502,36 @@ export interface EffectResultPersistenceIntent {
   idempotencyKey: string;
 }
 
+export function snapshotEffectResultPersistenceIntent(
+  value: unknown,
+): EffectResultPersistenceIntent | null {
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return null;
+  }
+  const keys = Reflect.ownKeys(descriptors);
+  const version = descriptors.version;
+  const idempotencyKey = descriptors.idempotencyKey;
+  if (
+    keys.length !== 2 ||
+    !keys.includes("version") ||
+    !keys.includes("idempotencyKey") ||
+    version?.enumerable !== true ||
+    !("value" in version) ||
+    version.value !== "prepared_approval_cleanup_result_persistence_v1" ||
+    idempotencyKey?.enumerable !== true ||
+    !("value" in idempotencyKey) ||
+    typeof idempotencyKey.value !== "string" ||
+    idempotencyKey.value.length === 0
+  ) return null;
+  return {
+    version: "prepared_approval_cleanup_result_persistence_v1",
+    idempotencyKey: idempotencyKey.value,
+  };
+}
+
 export function validatePreparedApprovalCleanupDoneEvidence(input: {
   effect: PersistedEffect;
   result: EffectResult;

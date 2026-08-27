@@ -19,6 +19,7 @@ import type {
   OutboxEventRecord,
   PersistedArtifact,
   PersistedClaim,
+  PersistedEffect,
   PersistedRunRecord,
   PersistedRunStateRecord,
   PersistedRunSummaryRecord,
@@ -29,11 +30,14 @@ import type {
 } from "../../src/kestrel/contracts/store.js";
 import {
   quarantinePreparedApprovalCleanupDoneResult,
+  snapshotEffectResultPersistenceIntent,
   validatePreparedApprovalCleanupDoneEvidence,
   validatePreparedApprovalCleanupEffectIdentity,
 } from "../../src/kestrel/contracts/store.js";
 import {
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot,
+  snapshotPreparedApprovalCleanupResult,
 } from "../../src/runtime/preparedApprovalCleanupAudit.js";
 
 import {
@@ -85,6 +89,18 @@ interface InMemoryRun {
   startedAt: string;
   completedAt: string | undefined;
   error: RuntimeError | undefined;
+}
+
+function isPreparedApprovalCleanupEffect(effect: PersistedEffect): boolean {
+  if (effect.type !== "release_prepared_tool_call") return false;
+  const marker = effect.payload.preparedApprovalCleanup;
+  if (marker === undefined) return false;
+  try {
+    parseRunnerPreparedApprovalCleanupV1(marker);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 interface InMemoryEffect {
@@ -643,17 +659,95 @@ export class InMemorySessionStore implements SessionStore {
   }
 
   async saveEffectResult(
-    _runId: string,
-    _sessionId: string,
+    runId: string,
+    sessionId: string,
     result: EffectResult,
-    _intent?: EffectResultPersistenceIntent | undefined,
+    intent?: EffectResultPersistenceIntent | undefined,
   ): Promise<void> {
-    if (this.effectResults.has(result.idempotencyKey)) {
+    const materializedIntent = intent === undefined
+      ? null
+      : snapshotEffectResultPersistenceIntent(intent);
+    if (intent !== undefined && materializedIntent === null) {
+      throw new Error("Cleanup persistence intent was unreadable or malformed");
+    }
+    const materialized = materializedIntent === null
+      ? null
+      : snapshotPreparedApprovalCleanupResult({
+          result,
+          expectedIdempotencyKey: materializedIntent.idempotencyKey,
+        });
+    const idempotencyKey = materializedIntent?.idempotencyKey ??
+      result.idempotencyKey;
+    const effect = this.effects.find(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    const cleanup = effect !== undefined && isPreparedApprovalCleanupEffect(effect);
+    if (materializedIntent !== null) {
+      if (
+        !cleanup ||
+        effect.runId !== runId ||
+        effect.sessionId !== sessionId
+      ) {
+        throw new Error(
+          "Cleanup persistence intent does not match the locked durable effect",
+        );
+      }
+      validatePreparedApprovalCleanupEffectIdentity(effect);
+    } else if (cleanup) {
+      throw new Error("Cleanup result persistence requires explicit cleanup intent");
+    }
+    if (this.effectResults.has(idempotencyKey)) {
       return;
     }
-
-    this.effectResults.set(result.idempotencyKey, { ...result });
-    this.operationLog.push(`saveEffectResult:${result.idempotencyKey}:${result.status}`);
+    if (materialized !== null && effect !== undefined) {
+      if (materialized.snapshot?.status === "DONE") {
+        try {
+          validatePreparedApprovalCleanupDoneEvidence({
+            effect,
+            result: materialized.snapshot,
+          });
+          this.effectResults.set(
+            idempotencyKey,
+            structuredClone(materialized.snapshot),
+          );
+          this.operationLog.push(`saveEffectResult:${idempotencyKey}:DONE`);
+          return;
+        } catch {
+          // Invalid cleanup success is quarantined below.
+        }
+      }
+      if (materialized.snapshot?.status === "FAILED") {
+        this.effectResults.set(
+          idempotencyKey,
+          structuredClone(materialized.snapshot),
+        );
+        this.operationLog.push(`saveEffectResult:${idempotencyKey}:FAILED`);
+        return;
+      }
+      const occurredAt = new Date().toISOString();
+      this.runEvents.push(structuredClone(
+        buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot({
+          effect,
+          auditSnapshot: materialized.auditSnapshot,
+          occurredAt,
+        }),
+      ));
+      this.effectResults.set(idempotencyKey, {
+        ...quarantinePreparedApprovalCleanupDoneResult({
+          idempotencyKey,
+          status: "DONE",
+          timestamp: occurredAt,
+        }),
+        timestamp: occurredAt,
+      });
+      effect.status = "PENDING";
+      this.operationLog.push(
+        `quarantineInvalidPreparedApprovalCleanupDoneEvidence:${idempotencyKey}`,
+      );
+      return;
+    }
+    this.effectResults.set(idempotencyKey, { ...result });
+    this.operationLog.push(`saveEffectResult:${idempotencyKey}:${result.status}`);
   }
 
   async claimEffectExecution(
