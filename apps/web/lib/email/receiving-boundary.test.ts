@@ -2,13 +2,29 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const config = fs.readFileSync(new URL("./receiving-config.ts", import.meta.url), "utf8");
+const config = fs.readFileSync(
+  new URL("./receiving-config.ts", import.meta.url),
+  "utf8",
+);
 const browserRoute = fs.readFileSync(
-  new URL("../../app/api/organization/email/receiving/route.ts", import.meta.url),
+  new URL(
+    "../../app/api/organization/email/receiving/route.ts",
+    import.meta.url,
+  ),
   "utf8",
 );
 const activationRoute = fs.readFileSync(
-  new URL("../../app/api/organization/email/receiving/activation/route.ts", import.meta.url),
+  new URL(
+    "../../app/api/organization/email/receiving/activation/route.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const readinessRoute = fs.readFileSync(
+  new URL(
+    "../../app/api/organization/email/receiving/activation/readiness/route.ts",
+    import.meta.url,
+  ),
   "utf8",
 );
 const desktopRoute = fs.readFileSync(
@@ -18,13 +34,19 @@ const desktopRoute = fs.readFileSync(
   ),
   "utf8",
 );
-const outbound = fs.readFileSync(new URL("./organization-config.ts", import.meta.url), "utf8");
+const outbound = fs.readFileSync(
+  new URL("./organization-config.ts", import.meta.url),
+  "utf8",
+);
 const onePresentation = fs.readFileSync(
   new URL("../../components/settings/receiving-client.tsx", import.meta.url),
   "utf8",
 );
 const desktopPresentation = fs.readFileSync(
-  new URL("../../../desktop/renderer/src/SettingsWorkspace.tsx", import.meta.url),
+  new URL(
+    "../../../desktop/renderer/src/SettingsWorkspace.tsx",
+    import.meta.url,
+  ),
   "utf8",
 );
 
@@ -47,18 +69,26 @@ test("receiving mutations stay Admin-only while Desktop members can read the pub
   assert.match(desktopRoute, /requireDesktopReceivingAdmin/u);
   assert.match(desktopRoute, /organizationId/u);
   assert.match(activationRoute, /requireOrganizationAdmin/u);
+  assert.match(readinessRoute, /requireOrganizationAdmin/u);
   assert.doesNotMatch(activationRoute, /desktop/u);
 });
 
 test("only Kestrel One can request inbound activation", () => {
   assert.match(activationRoute, /createOneReceivingActivationPostHandler/u);
   assert.match(activationRoute, /POST/u);
+  assert.match(readinessRoute, /createOneReceivingReadinessPostHandler/u);
   assert.doesNotMatch(desktopRoute, /activation/u);
 });
 
 test("inbound configuration remains separate from outbound Email App state", () => {
-  assert.doesNotMatch(outbound, /organizationReceivingConnections|receivingDomain|webhookStatus/u);
-  assert.doesNotMatch(config, /syncOrganizationEmailAppConnection|email\.send/u);
+  assert.doesNotMatch(
+    outbound,
+    /organizationReceivingConnections|receivingDomain|webhookStatus/u,
+  );
+  assert.doesNotMatch(
+    config,
+    /syncOrganizationEmailAppConnection|email\.send/u,
+  );
 });
 
 test("One and Desktop present the same server-owned receiving health evidence", () => {

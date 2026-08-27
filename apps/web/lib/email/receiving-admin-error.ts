@@ -195,6 +195,15 @@ function safeConfigError(error: ReceivingConfigError) {
           error: "Inbound receiving is not ready to enable.",
         },
       };
+    case "RESEND_RECEIVING_RELEASE_NOT_READY":
+      return {
+        status: 409,
+        body: {
+          code: error.code,
+          error:
+            "Run the current inbound receiving release readiness check before enabling.",
+        },
+      };
     case "RESEND_RECEIVING_WEBHOOK_ACTIVATION_FAILED":
       return {
         status: 503,
@@ -208,7 +217,8 @@ function safeConfigError(error: ReceivingConfigError) {
         status: 503,
         body: {
           code: error.code,
-          error: "Inbound receiving remains closed while Resend disablement is retried.",
+          error:
+            "Inbound receiving remains closed while Resend disablement is retried.",
         },
       };
     default:

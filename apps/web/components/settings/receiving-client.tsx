@@ -113,29 +113,43 @@ export function OrganizationReceivingClient() {
           <SettingsRow label="Credential">
             <SettingsStatusSummary
               detail="Resend Full access is required; Sending access is not sufficient."
-              status={connection?.credentialStatus.replaceAll("_", " ") ?? "Loading"}
-              tone={connection?.credentialStatus === "full_access" ? "positive" : "warning"}
+              status={
+                connection?.credentialStatus.replaceAll("_", " ") ?? "Loading"
+              }
+              tone={
+                connection?.credentialStatus === "full_access"
+                  ? "positive"
+                  : "warning"
+              }
             />
           </SettingsRow>
           <SettingsRow label="Receiving domain">
             <SettingsStatusSummary
               detail={`MX: ${connection?.mxStatus ?? "unknown"}`}
               status={connection?.receivingDomain ?? "Not selected"}
-              tone={connection?.receivingDomainStatus === "verified" ? "positive" : "neutral"}
+              tone={
+                connection?.receivingDomainStatus === "verified"
+                  ? "positive"
+                  : "neutral"
+              }
             />
           </SettingsRow>
           <SettingsRow label="Webhook">
             <SettingsStatusSummary
               detail="Delivery stays disabled until the complete email-to-agent path is ready."
-              status={connection?.webhookStatus.replaceAll("_", " ") ?? "Not staged"}
+              status={
+                connection?.webhookStatus.replaceAll("_", " ") ?? "Not staged"
+              }
               tone="neutral"
             />
           </SettingsRow>
           <SettingsRow label="Activation">
             <SettingsStatusSummary
-              detail={connection?.inboundEnabled
-                ? "New email can create work through enabled private Triggers."
-                : activationBlocker(connection?.readiness)}
+              detail={
+                connection?.inboundEnabled
+                  ? "New email can create work through enabled private Triggers."
+                  : activationBlocker(connection?.readiness)
+              }
               status={connection?.inboundEnabled ? "Enabled" : "Disabled"}
               tone={connection?.inboundEnabled ? "positive" : "warning"}
             />
@@ -157,12 +171,18 @@ export function OrganizationReceivingClient() {
         </SettingsRows>
         <div className="grid max-w-3xl gap-5 pt-5">
           <div className="grid gap-2">
-            <Label htmlFor="receiving-api-key">Resend Full access API key</Label>
+            <Label htmlFor="receiving-api-key">
+              Resend Full access API key
+            </Label>
             <Input
               autoComplete="off"
               id="receiving-api-key"
               onChange={(event) => setApiKey(event.target.value)}
-              placeholder={connection?.configured ? "Configured — enter a new key to rotate" : "re_..."}
+              placeholder={
+                connection?.configured
+                  ? "Configured — enter a new key to rotate"
+                  : "re_..."
+              }
               type="password"
               value={apiKey}
             />
@@ -182,9 +202,13 @@ export function OrganizationReceivingClient() {
           </div>
           {domains.length ? (
             <div className="grid gap-2">
-              <Label htmlFor="receiving-domain">Verified receiving subdomain</Label>
+              <Label htmlFor="receiving-domain">
+                Verified receiving subdomain
+              </Label>
               <Select onValueChange={setDomainId} value={domainId}>
-                <SelectTrigger id="receiving-domain"><SelectValue placeholder="Choose a domain" /></SelectTrigger>
+                <SelectTrigger id="receiving-domain">
+                  <SelectValue placeholder="Choose a domain" />
+                </SelectTrigger>
                 <SelectContent>
                   {domains.map((domain) => {
                     const ready =
@@ -192,8 +216,15 @@ export function OrganizationReceivingClient() {
                       domain.status === "verified" &&
                       domain.mxStatus === "verified";
                     return (
-                      <SelectItem disabled={!ready} key={domain.id} value={domain.id}>
-                        {domain.name} · {ready ? "ready" : `${domain.status}, MX ${domain.mxStatus}`}
+                      <SelectItem
+                        disabled={!ready}
+                        key={domain.id}
+                        value={domain.id}
+                      >
+                        {domain.name} ·{" "}
+                        {ready
+                          ? "ready"
+                          : `${domain.status}, MX ${domain.mxStatus}`}
                       </SelectItem>
                     );
                   })}
@@ -202,7 +233,10 @@ export function OrganizationReceivingClient() {
             </div>
           ) : null}
           <div>
-            <Button disabled={busy || !selectedReady} onClick={() => void save()}>
+            <Button
+              disabled={busy || !selectedReady}
+              onClick={() => void save()}
+            >
               {busy ? "Saving…" : "Save inbound receiving"}
             </Button>
           </div>
@@ -233,6 +267,24 @@ export function OrganizationReceivingClient() {
                 : "Kestrel One enables the staged Resend webhook only after it rechecks current receiving health."}
             </p>
           </div>
+          {!connection?.inboundEnabled ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  void controllerRef.current?.runReleaseReadiness()
+                }
+                type="button"
+                variant="outline"
+              >
+                Run release readiness
+              </Button>
+              <p className="text-muted-foreground text-sm">
+                A current deployment and Security review evidence check is
+                required before enablement.
+              </p>
+            </div>
+          ) : null}
         </div>
       </SettingsSection>
     </>
@@ -251,10 +303,14 @@ function canActivate(connection: ReceivingConnection | undefined) {
 }
 
 function shouldRetryDisable(connection: ReceivingConnection | undefined) {
-  return connection?.lastErrorCode === "RESEND_RECEIVING_WEBHOOK_DISABLE_FAILED";
+  return (
+    connection?.lastErrorCode === "RESEND_RECEIVING_WEBHOOK_DISABLE_FAILED"
+  );
 }
 
-function activationBlocker(readiness: ReceivingConnection["readiness"] | undefined) {
+function activationBlocker(
+  readiness: ReceivingConnection["readiness"] | undefined,
+) {
   switch (readiness) {
     case "staged":
       return "The staged webhook is ready for Kestrel One to verify and enable.";

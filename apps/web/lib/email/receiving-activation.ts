@@ -1,14 +1,19 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { insertAdminEvent } from "@/lib/admin/logs";
+import { getPgPool } from "@/lib/db/runtime";
+import type { KestrelBuildIdentity } from "@/lib/deployment/build-identity";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   decryptReceivingApiKey,
   ReceivingConfigError,
   receivingOrganizationUnavailable,
 } from "./receiving-config";
+import { assertReceivingReleaseReadiness } from "./receiving-release-readiness";
 import {
   ResendHttpReceivingProvider,
+  type ResendReceivingDomain,
   type ResendReceivingProvider,
   type ResendWebhookProjection,
 } from "./receiving-provider";
@@ -17,9 +22,11 @@ const ACTIVATION_FAILURE = "RESEND_RECEIVING_WEBHOOK_ACTIVATION_FAILED";
 const DISABLE_FAILURE = "RESEND_RECEIVING_WEBHOOK_DISABLE_FAILED";
 
 type ActivationAuthority = {
+  actorUserId: string;
   organizationId: string;
   connectionId: string;
   encryptedApiKey: string;
+  receivingDomainId: string;
   providerWebhookId: string;
   endpoint: string;
   stagingSequence: number;
@@ -31,55 +38,72 @@ type ActivationAuthority = {
  */
 export async function setReceivingInboundEnabled(input: {
   organizationId: string;
+  actorUserId: string;
   enabled: boolean;
   provider?: ResendReceivingProvider;
   env?: NodeJS.ProcessEnv;
+  buildIdentity?: KestrelBuildIdentity;
 }) {
-  if (!input.enabled) {
-    return disableReceivingInbound(input);
-  }
+  return withReceivingLifecycleLock(input.organizationId, async () => {
+    if (!input.enabled) return disableReceivingInbound(input);
 
-  const authority = await prepareEnableAuthority(input.organizationId);
-  if (authority === null) return;
-  const provider = input.provider ?? new ResendHttpReceivingProvider();
-  try {
-    const apiKey = decryptReceivingApiKey({
-      organizationId: input.organizationId,
-      encryptedApiKey: authority.encryptedApiKey,
-      env: input.env,
-    });
-    let webhook = await provider.getWebhook(apiKey, authority.providerWebhookId);
-    assertExpectedWebhook(webhook, authority, "disabled", "enabled");
-    if (webhook.status === "disabled") {
-      await provider.updateWebhook({
-        apiKey,
-        webhookId: authority.providerWebhookId,
-        enabled: true,
+    const authority = await prepareEnableAuthority(input);
+    if (authority === null) return;
+    const provider = input.provider ?? new ResendHttpReceivingProvider();
+    try {
+      const apiKey = decryptReceivingApiKey({
+        organizationId: input.organizationId,
+        encryptedApiKey: authority.encryptedApiKey,
+        env: input.env,
       });
-      webhook = await provider.getWebhook(apiKey, authority.providerWebhookId);
-      assertExpectedWebhook(webhook, authority, "enabled");
+      const domain = await provider.getDomain(
+        apiKey,
+        authority.receivingDomainId,
+      );
+      assertReadyDomain(domain);
+      let webhook = await provider.getWebhook(
+        apiKey,
+        authority.providerWebhookId,
+      );
+      assertExpectedWebhook(webhook, authority, "disabled", "enabled");
+      if (webhook.status === "disabled") {
+        await provider.updateWebhook({
+          apiKey,
+          webhookId: authority.providerWebhookId,
+          enabled: true,
+        });
+        webhook = await provider.getWebhook(
+          apiKey,
+          authority.providerWebhookId,
+        );
+        assertExpectedWebhook(webhook, authority, "enabled");
+      }
+      await persistWebhookState({
+        ...authority,
+        inboundEnabled: true,
+        webhookStatus: "active",
+        lastErrorCode: null,
+        auditAction: "enable-inbound-receiving",
+        providerConfirmed: true,
+      });
+    } catch (error) {
+      await persistLifecycleFailure({
+        authority,
+        errorCode: ACTIVATION_FAILURE,
+        auditAction: "enable-inbound-receiving",
+      });
+      throw normalizeLifecycleError(error, ACTIVATION_FAILURE);
     }
-    await persistWebhookState({
-      ...authority,
-      inboundEnabled: true,
-      webhookStatus: "active",
-      lastErrorCode: null,
-    });
-  } catch (error) {
-    await persistLifecycleFailure({
-      authority,
-      errorCode: ACTIVATION_FAILURE,
-    });
-    throw normalizeLifecycleError(error, ACTIVATION_FAILURE);
-  }
+  });
 }
 
 async function disableReceivingInbound(input: {
   organizationId: string;
+  actorUserId: string;
   provider?: ResendReceivingProvider;
   env?: NodeJS.ProcessEnv;
 }) {
-  const authority = await closeIngressAndPrepareDisable(input.organizationId);
+  const authority = await closeIngressAndPrepareDisable(input);
   if (authority === null) return;
   const provider = input.provider ?? new ResendHttpReceivingProvider();
   try {
@@ -88,7 +112,10 @@ async function disableReceivingInbound(input: {
       encryptedApiKey: authority.encryptedApiKey,
       env: input.env,
     });
-    let webhook = await provider.getWebhook(apiKey, authority.providerWebhookId);
+    let webhook = await provider.getWebhook(
+      apiKey,
+      authority.providerWebhookId,
+    );
     assertExpectedWebhook(webhook, authority, "enabled", "disabled");
     if (webhook.status === "enabled") {
       await provider.updateWebhook({
@@ -104,16 +131,27 @@ async function disableReceivingInbound(input: {
       inboundEnabled: false,
       webhookStatus: "disabled",
       lastErrorCode: null,
+      auditAction: "disable-inbound-receiving",
+      providerConfirmed: true,
     });
   } catch (error) {
-    await persistLifecycleFailure({ authority, errorCode: DISABLE_FAILURE });
+    await persistLifecycleFailure({
+      authority,
+      errorCode: DISABLE_FAILURE,
+      auditAction: "disable-inbound-receiving",
+    });
     throw normalizeLifecycleError(error, DISABLE_FAILURE);
   }
 }
 
-async function prepareEnableAuthority(organizationId: string) {
+async function prepareEnableAuthority(input: {
+  organizationId: string;
+  actorUserId: string;
+  env?: NodeJS.ProcessEnv;
+  buildIdentity?: KestrelBuildIdentity;
+}) {
   return knowledgeDb.transaction(async (transaction) => {
-    await lockReceiving(transaction, organizationId);
+    const organizationId = input.organizationId;
     const organization = await transaction.query.organizations.findFirst({
       columns: { lifecycleState: true },
       where: (table, { eq: equals }) => equals(table.id, organizationId),
@@ -121,13 +159,18 @@ async function prepareEnableAuthority(organizationId: string) {
     if (organization?.lifecycleState !== "active") {
       throw receivingOrganizationUnavailable();
     }
-    const row = await transaction.query.organizationReceivingConnections.findFirst({
-      where: (table, { eq: equals }) => equals(table.organizationId, organizationId),
-    });
-    if (!row) throw unavailable("Configure Resend receiving before enabling it.");
+    const row =
+      await transaction.query.organizationReceivingConnections.findFirst({
+        where: (table, { eq: equals }) =>
+          equals(table.organizationId, organizationId),
+      });
+    if (!row)
+      throw unavailable("Configure Resend receiving before enabling it.");
     if (row.inboundEnabled && row.webhookStatus === "active") return null;
     if (row.lastErrorCode === DISABLE_FAILURE) {
-      throw unavailable("Retry disabling inbound receiving before enabling it.");
+      throw unavailable(
+        "Retry disabling inbound receiving before enabling it.",
+      );
     }
     if (
       row.credentialStatus !== "full_access" ||
@@ -137,6 +180,7 @@ async function prepareEnableAuthority(organizationId: string) {
       !row.domainCheckedAt ||
       !row.lastHealthCheckedAt ||
       !row.encryptedApiKey ||
+      !row.receivingDomainId ||
       !row.providerWebhookId ||
       !row.encryptedSigningSecret ||
       !row.webhookCreateIntent
@@ -146,10 +190,18 @@ async function prepareEnableAuthority(organizationId: string) {
     if (!["staged", "disabled", "error"].includes(row.webhookStatus)) {
       throw unavailable("Inbound receiving is not ready to enable.");
     }
+    await assertReceivingReleaseReadiness({
+      organizationId,
+      stagingSequence: row.webhookStagingSequence,
+      env: input.env,
+      buildIdentity: input.buildIdentity,
+    });
     return {
+      actorUserId: input.actorUserId,
       organizationId,
       connectionId: row.id,
       encryptedApiKey: row.encryptedApiKey,
+      receivingDomainId: row.receivingDomainId,
       providerWebhookId: row.providerWebhookId,
       endpoint: row.webhookCreateIntent.endpoint,
       stagingSequence: row.webhookStagingSequence,
@@ -157,12 +209,17 @@ async function prepareEnableAuthority(organizationId: string) {
   });
 }
 
-async function closeIngressAndPrepareDisable(organizationId: string) {
+async function closeIngressAndPrepareDisable(input: {
+  organizationId: string;
+  actorUserId: string;
+}) {
   return knowledgeDb.transaction(async (transaction) => {
-    await lockReceiving(transaction, organizationId);
-    const row = await transaction.query.organizationReceivingConnections.findFirst({
-      where: (table, { eq: equals }) => equals(table.organizationId, organizationId),
-    });
+    const organizationId = input.organizationId;
+    const row =
+      await transaction.query.organizationReceivingConnections.findFirst({
+        where: (table, { eq: equals }) =>
+          equals(table.organizationId, organizationId),
+      });
     if (!row) return null;
     const stagingSequence = row.webhookStagingSequence + 1;
     const closed = await transaction
@@ -176,13 +233,17 @@ async function closeIngressAndPrepareDisable(organizationId: string) {
       .where(eq(schema.organizationReceivingConnections.id, row.id))
       .returning({ id: schema.organizationReceivingConnections.id });
     if (closed.length !== 1) throw superseded();
-    if (!(row.encryptedApiKey && row.providerWebhookId && row.webhookCreateIntent)) {
+    if (
+      !(row.encryptedApiKey && row.providerWebhookId && row.webhookCreateIntent)
+    ) {
       return null;
     }
     return {
+      actorUserId: input.actorUserId,
       organizationId,
       connectionId: row.id,
       encryptedApiKey: row.encryptedApiKey,
+      receivingDomainId: row.receivingDomainId ?? "",
       providerWebhookId: row.providerWebhookId,
       endpoint: row.webhookCreateIntent.endpoint,
       stagingSequence,
@@ -209,14 +270,17 @@ function assertExpectedWebhook(
   }
 }
 
-async function persistWebhookState(input: ActivationAuthority & {
-  inboundEnabled: boolean;
-  webhookStatus: "active" | "disabled";
-  lastErrorCode: string | null;
-}) {
+async function persistWebhookState(
+  input: ActivationAuthority & {
+    inboundEnabled: boolean;
+    webhookStatus: "active" | "disabled";
+    lastErrorCode: string | null;
+    auditAction: "enable-inbound-receiving" | "disable-inbound-receiving";
+    providerConfirmed: true;
+  },
+) {
   const persisted = await knowledgeDb.transaction(async (transaction) => {
-    await lockReceiving(transaction, input.organizationId);
-    return transaction
+    const updated = await transaction
       .update(schema.organizationReceivingConnections)
       .set({
         inboundEnabled: input.inboundEnabled,
@@ -242,6 +306,26 @@ async function persistWebhookState(input: ActivationAuthority & {
         ),
       )
       .returning({ id: schema.organizationReceivingConnections.id });
+    if (updated.length === 1) {
+      await insertAdminEvent(transaction, {
+        organizationId: input.organizationId,
+        actorUserId: input.actorUserId,
+        category: "email",
+        action: input.auditAction,
+        targetType: "organization_receiving_connection",
+        targetId: input.organizationId,
+        message: input.inboundEnabled
+          ? "Enabled Organization inbound email receiving."
+          : "Disabled Organization inbound email receiving.",
+        metadata: {
+          provider: "resend",
+          inboundEnabled: input.inboundEnabled,
+          webhookStatus: input.webhookStatus,
+          providerConfirmed: input.providerConfirmed,
+        },
+      });
+    }
+    return updated;
   });
   if (persisted.length !== 1) throw superseded();
 }
@@ -249,12 +333,12 @@ async function persistWebhookState(input: ActivationAuthority & {
 async function persistLifecycleFailure(input: {
   authority: ActivationAuthority | null;
   errorCode: string;
+  auditAction: "enable-inbound-receiving" | "disable-inbound-receiving";
 }) {
   const authority = input.authority;
   if (!authority) return;
   await knowledgeDb.transaction(async (transaction) => {
-    await lockReceiving(transaction, authority.organizationId);
-    await transaction
+    const updated = await transaction
       .update(schema.organizationReceivingConnections)
       .set({
         inboundEnabled: false,
@@ -264,7 +348,10 @@ async function persistLifecycleFailure(input: {
       })
       .where(
         and(
-          eq(schema.organizationReceivingConnections.id, authority.connectionId),
+          eq(
+            schema.organizationReceivingConnections.id,
+            authority.connectionId,
+          ),
           eq(
             schema.organizationReceivingConnections.encryptedApiKey,
             authority.encryptedApiKey,
@@ -278,21 +365,64 @@ async function persistLifecycleFailure(input: {
             authority.stagingSequence,
           ),
         ),
-      );
+      )
+      .returning({ id: schema.organizationReceivingConnections.id });
+    if (updated.length === 1) {
+      await insertAdminEvent(transaction, {
+        organizationId: authority.organizationId,
+        actorUserId: authority.actorUserId,
+        category: "email",
+        action: input.auditAction,
+        targetType: "organization_receiving_connection",
+        targetId: authority.organizationId,
+        message:
+          "Closed Organization inbound email receiving after provider verification failed.",
+        metadata: {
+          provider: "resend",
+          inboundEnabled: false,
+          webhookStatus: "error",
+          providerConfirmed: false,
+          errorCode: input.errorCode,
+        },
+      });
+    }
   });
 }
 
-async function lockReceiving(
-  transaction: Parameters<Parameters<typeof knowledgeDb.transaction>[0]>[0],
+async function withReceivingLifecycleLock<T>(
   organizationId: string,
+  operation: () => Promise<T>,
 ) {
-  await transaction.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${organizationId}`}, 0))`,
-  );
+  const client = await getPgPool().connect();
+  const lockKey = `kestrel:receiving:${organizationId}`;
+  try {
+    await client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [
+      lockKey,
+    ]);
+    return await operation();
+  } finally {
+    await client
+      .query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [lockKey])
+      .catch(() => undefined);
+    client.release();
+  }
+}
+
+function assertReadyDomain(domain: ResendReceivingDomain) {
+  if (
+    domain.receiving !== "enabled" ||
+    domain.status !== "verified" ||
+    domain.mxStatus !== "verified"
+  ) {
+    throw unavailable("Inbound receiving is not ready to enable.");
+  }
 }
 
 function unavailable(message: string) {
-  return new ReceivingConfigError("RESEND_RECEIVING_WEBHOOK_NOT_READY", message);
+  return new ReceivingConfigError(
+    "RESEND_RECEIVING_WEBHOOK_NOT_READY",
+    message,
+  );
 }
 
 function superseded() {

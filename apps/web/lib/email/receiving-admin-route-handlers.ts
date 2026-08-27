@@ -8,6 +8,7 @@ import {
 } from "@/lib/email/receiving-config";
 import type { ResendReceivingProvider } from "@/lib/email/receiving-provider";
 import { setReceivingInboundEnabled } from "@/lib/email/receiving-activation";
+import { runReceivingReleaseReadiness } from "@/lib/email/receiving-release-readiness";
 import {
   getSafeReceivingAdminError,
   parseReceivingAdminJson,
@@ -108,31 +109,33 @@ export function createOneReceivingActivationPostHandler(options: {
       );
       await setReceivingInboundEnabled({
         organizationId,
+        actorUserId: session.user.id,
         enabled,
         provider: options.provider,
       });
       const connection = await getPublicReceivingConnection(organizationId);
-      await logAdminEvent({
-        organizationId,
-        actorUserId: session.user.id,
-        category: "email",
-        action: enabled ? "enable-inbound-receiving" : "disable-inbound-receiving",
-        targetType: "organization_receiving_connection",
-        targetId: organizationId,
-        message: enabled
-          ? "Enabled Organization inbound email receiving."
-          : "Disabled Organization inbound email receiving.",
-        metadata: {
-          provider: "resend",
-          readiness: connection.readiness,
-          inboundEnabled: connection.inboundEnabled,
-        },
-      }).catch(() => {
-        console.error(
-          "[organization:email:receiving] Activation completed, but its audit event could not be recorded.",
-        );
-      });
       return NextResponse.json({ connection });
+    } catch (error) {
+      return errorResponse(error);
+    }
+  };
+}
+
+export function createOneReceivingReadinessPostHandler(options: {
+  requireAdmin: (request: Request) => Promise<OrganizationAdminAuthority>;
+  provider?: ResendReceivingProvider;
+}) {
+  return async function postOneReceivingReadiness(request: Request) {
+    try {
+      const { organizationId, session } = await options.requireAdmin(request);
+      await parseReceivingAdminJson(request);
+      return NextResponse.json({
+        readiness: await runReceivingReleaseReadiness({
+          organizationId,
+          actorUserId: session.user.id,
+          provider: options.provider,
+        }),
+      });
     } catch (error) {
       return errorResponse(error);
     }

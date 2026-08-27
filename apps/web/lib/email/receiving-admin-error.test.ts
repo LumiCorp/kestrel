@@ -8,6 +8,7 @@ import {
   createDesktopReceivingDomainsPostHandler,
   createDesktopReceivingPutHandler,
   createOneReceivingActivationPostHandler,
+  createOneReceivingReadinessPostHandler,
   createOneReceivingDomainsPostHandler,
   createOneReceivingPutHandler,
 } from "./receiving-admin-route-handlers";
@@ -121,6 +122,12 @@ test("receiving provider failures have stable actionable HTTP status classes", (
       error: "Inbound receiving is not ready to enable.",
     },
     {
+      code: "RESEND_RECEIVING_RELEASE_NOT_READY",
+      status: 409,
+      error:
+        "Run the current inbound receiving release readiness check before enabling.",
+    },
+    {
       code: "RESEND_RECEIVING_WEBHOOK_ACTIVATION_FAILED",
       status: 503,
       error: "Inbound receiving could not be enabled. It remains disabled.",
@@ -128,7 +135,8 @@ test("receiving provider failures have stable actionable HTTP status classes", (
     {
       code: "RESEND_RECEIVING_WEBHOOK_DISABLE_FAILED",
       status: 503,
-      error: "Inbound receiving remains closed while Resend disablement is retried.",
+      error:
+        "Inbound receiving remains closed while Resend disablement is retried.",
     },
   ] as const;
   const secret = "re_provider_detail_must_not_escape";
@@ -230,7 +238,7 @@ test("only Kestrel's explicit JSON parsing syntax errors use the invalid-request
   });
 });
 
-test("all five receiving mutations return the exact invalid-request response for authorized malformed JSON", async () => {
+test("all six receiving mutations return the exact invalid-request response for authorized malformed JSON", async () => {
   const cases = receivingMutationCases({
     requireOneAdmin: async () => ({
       organizationId: "organization-route-contract",
@@ -246,7 +254,7 @@ test("all five receiving mutations return the exact invalid-request response for
   }
 });
 
-test("all five receiving mutations reject unauthenticated and non-Admin callers before reading malformed JSON", async () => {
+test("all six receiving mutations reject unauthenticated and non-Admin callers before reading malformed JSON", async () => {
   const authorizationCases = [
     {
       message: "Unauthorized",
@@ -337,6 +345,14 @@ function receivingMutationCases(input: {
       url: `${oneReceivingUrl}/activation`,
       invoke: (request: Request) =>
         createOneReceivingActivationPostHandler({
+          requireAdmin: input.requireOneAdmin,
+        })(request),
+    },
+    {
+      name: "One release readiness POST",
+      url: `${oneReceivingUrl}/activation/readiness`,
+      invoke: (request: Request) =>
+        createOneReceivingReadinessPostHandler({
           requireAdmin: input.requireOneAdmin,
         })(request),
     },

@@ -37,7 +37,11 @@ test("a delayed failed check cannot repaint a newer successful recovery", async 
   newerCheck.resolve(jsonResponse({ domains: [readyDomain("newer-domain")] }));
   await settled();
 
-  assert.equal(state.busy, true, "busy remains set while the winning refresh is pending");
+  assert.equal(
+    state.busy,
+    true,
+    "busy remains set while the winning refresh is pending",
+  );
   assert.deepEqual(state.domains, []);
 
   newerRefresh.resolve(jsonResponse({ connection: connection("active") }));
@@ -62,7 +66,9 @@ test("a delayed successful check cannot clear a newer failure or replace its cho
   const newer = controller.inspectDomains("newer-key");
   newerCheck.resolve(jsonResponse({ error: "Newest key is invalid." }, 401));
   await settled();
-  newerRefresh.resolve(jsonResponse({ connection: connection("domain_unready") }));
+  newerRefresh.resolve(
+    jsonResponse({ connection: connection("domain_unready") }),
+  );
   await newer;
 
   olderCheck.resolve(jsonResponse({ domains: [readyDomain("stale-domain")] }));
@@ -99,7 +105,9 @@ test("a winning save commits the cleared form only after reconciliation", async 
   state.domainId = "ready-domain";
 
   const save = controller.save(state.apiKey, state.domainId);
-  saveResponse.resolve(jsonResponse({ connection: connection("ready_inactive") }));
+  saveResponse.resolve(
+    jsonResponse({ connection: connection("ready_inactive") }),
+  );
   await settled();
 
   assert.equal(state.apiKey, "replacement-key");
@@ -134,17 +142,42 @@ test("activation reconciles the redacted hosted connection before reporting succ
   assert.deepEqual(state.successes, ["Inbound receiving enabled."]);
 });
 
-test("failed disablement preserves the prior view and does not claim work stopped", async () => {
+test("failed disablement refreshes the ingress-closed state without claiming success", async () => {
   const disable = deferredResponse();
-  const { controller, state } = fixture([disable]);
+  const refresh = deferredResponse();
+  const { controller, state } = fixture([disable, refresh]);
   state.connection = connection("active", true);
 
   const disabling = controller.setInboundEnabled(false);
-  disable.resolve(jsonResponse({ error: "Inbound receiving remains closed while Resend disablement is retried." }, 503));
+  disable.resolve(
+    jsonResponse(
+      {
+        error:
+          "Inbound receiving remains closed while Resend disablement is retried.",
+      },
+      503,
+    ),
+  );
+  await settled();
+  refresh.resolve(
+    jsonResponse({
+      connection: {
+        ...connection("error", false),
+        lastErrorCode: "RESEND_RECEIVING_WEBHOOK_DISABLE_FAILED",
+      },
+    }),
+  );
   await disabling;
 
-  assert.equal(state.connection?.inboundEnabled, true);
-  assert.equal(state.error, "Inbound receiving remains closed while Resend disablement is retried.");
+  assert.equal(state.connection?.inboundEnabled, false);
+  assert.equal(
+    state.connection?.lastErrorCode,
+    "RESEND_RECEIVING_WEBHOOK_DISABLE_FAILED",
+  );
+  assert.equal(
+    state.error,
+    "Inbound receiving remains closed while Resend disablement is retried.",
+  );
   assert.deepEqual(state.successes, []);
 });
 
@@ -220,9 +253,7 @@ test("a domain check with malformed reconciliation preserves old domain choices"
   seedPresentation(state);
 
   const check = controller.inspectDomains(state.apiKey);
-  checkResponse.resolve(
-    jsonResponse({ domains: [readyDomain("new-domain")] }),
-  );
+  checkResponse.resolve(jsonResponse({ domains: [readyDomain("new-domain")] }));
   await settled();
   reconcileResponse.resolve(
     jsonResponse({
@@ -296,31 +327,39 @@ function fixture(requests: DeferredResponse[]) {
   };
   const controller = new OrganizationReceivingController(
     {
-      setApiKey: (value) => write(() => {
-        state.apiKey = value;
-      }),
-      setBusy: (value) => write(() => {
-        state.busy = value;
-        state.busyTransitions.push(value);
-      }),
-      setConnection: (value) => write(() => {
-        state.connection = value;
-      }),
-      setDomainId: (value) => write(() => {
-        state.domainId = value;
-      }),
-      setDomains: (value) => write(() => {
-        state.domains = value;
-      }),
-      setError: (value) => write(() => {
-        state.error = value;
-      }),
-      showInfo: (message) => write(() => {
-        state.infos.push(message);
-      }),
-      showSuccess: (message) => write(() => {
-        state.successes.push(message);
-      }),
+      setApiKey: (value) =>
+        write(() => {
+          state.apiKey = value;
+        }),
+      setBusy: (value) =>
+        write(() => {
+          state.busy = value;
+          state.busyTransitions.push(value);
+        }),
+      setConnection: (value) =>
+        write(() => {
+          state.connection = value;
+        }),
+      setDomainId: (value) =>
+        write(() => {
+          state.domainId = value;
+        }),
+      setDomains: (value) =>
+        write(() => {
+          state.domains = value;
+        }),
+      setError: (value) =>
+        write(() => {
+          state.error = value;
+        }),
+      showInfo: (message) =>
+        write(() => {
+          state.infos.push(message);
+        }),
+      showSuccess: (message) =>
+        write(() => {
+          state.successes.push(message);
+        }),
     },
     request,
   );

@@ -20,12 +20,23 @@ test("receiving activation verifies the staged webhook, fails closed, and recove
   process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS = JSON.stringify({
     "test-key": randomBytes(32).toString("base64"),
   });
+  const buildIdentity = {
+    revision: "a".repeat(40),
+    source: "git" as const,
+    version: "0.8.5",
+  };
+  process.env.KESTREL_EMAIL_RECEIVING_RELEASE_EVIDENCE_REVISION =
+    buildIdentity.revision;
+  process.env.KESTREL_EMAIL_RECEIVING_SECURITY_REVIEW_REVISION =
+    buildIdentity.revision;
 
-  const [{ resetDbRuntimeForTests }, receiving, activation] = await Promise.all([
-    import("@/lib/db/runtime"),
-    import("./receiving-config"),
-    import("./receiving-activation"),
-  ]);
+  const [{ resetDbRuntimeForTests }, receiving, activation, release] =
+    await Promise.all([
+      import("@/lib/db/runtime"),
+      import("./receiving-config"),
+      import("./receiving-activation"),
+      import("./receiving-release-readiness"),
+    ]);
   const sql = postgres(databaseUrl, { max: 6 });
   const suffix = randomUUID();
   const organizationId = `activation-org-${suffix}`;
@@ -62,13 +73,42 @@ test("receiving activation verifies the staged webhook, fails closed, and recove
     lastErrorCode: null,
   });
   assert.equal(provider.webhook.status, "disabled");
+  await release.runReceivingReleaseReadiness({
+    organizationId,
+    actorUserId: userId,
+    provider,
+    buildIdentity,
+  });
+
+  provider.domainReady = false;
+  await assert.rejects(
+    activation.setReceivingInboundEnabled({
+      organizationId,
+      actorUserId: userId,
+      enabled: true,
+      provider,
+      buildIdentity,
+    }),
+    (error: unknown) =>
+      error instanceof receiving.ReceivingConfigError &&
+      error.code === "RESEND_RECEIVING_WEBHOOK_NOT_READY",
+  );
+  assert.equal(provider.webhook.status, "disabled");
+  assert.deepEqual(await readState(sql, organizationId), {
+    inboundEnabled: false,
+    webhookStatus: "error",
+    lastErrorCode: "RESEND_RECEIVING_WEBHOOK_ACTIVATION_FAILED",
+  });
+  provider.domainReady = true;
 
   provider.failEnableAfterAcceptance = true;
   await assert.rejects(
     activation.setReceivingInboundEnabled({
       organizationId,
+      actorUserId: userId,
       enabled: true,
       provider,
+      buildIdentity,
     }),
     (error: unknown) =>
       error instanceof receiving.ReceivingConfigError &&
@@ -83,8 +123,10 @@ test("receiving activation verifies the staged webhook, fails closed, and recove
 
   await activation.setReceivingInboundEnabled({
     organizationId,
+    actorUserId: userId,
     enabled: true,
     provider,
+    buildIdentity,
   });
   assert.deepEqual(await readState(sql, organizationId), {
     inboundEnabled: true,
@@ -97,6 +139,7 @@ test("receiving activation verifies the staged webhook, fails closed, and recove
   await assert.rejects(
     activation.setReceivingInboundEnabled({
       organizationId,
+      actorUserId: userId,
       enabled: false,
       provider,
     }),
@@ -112,8 +155,10 @@ test("receiving activation verifies the staged webhook, fails closed, and recove
   await assert.rejects(
     activation.setReceivingInboundEnabled({
       organizationId,
+      actorUserId: userId,
       enabled: true,
       provider,
+      buildIdentity,
     }),
     (error: unknown) =>
       error instanceof receiving.ReceivingConfigError &&
@@ -122,6 +167,7 @@ test("receiving activation verifies the staged webhook, fails closed, and recove
 
   await activation.setReceivingInboundEnabled({
     organizationId,
+    actorUserId: userId,
     enabled: false,
     provider,
   });
@@ -136,6 +182,7 @@ test("receiving activation verifies the staged webhook, fails closed, and recove
 
 class ActivationProvider implements ResendWebhookCreateRecoveryProvider {
   createCalls = 0;
+  domainReady = true;
   failDisable = false;
   failEnableAfterAcceptance = false;
   webhook: ResendWebhookProjection & { signingSecret: string } = {
@@ -151,10 +198,16 @@ class ActivationProvider implements ResendWebhookCreateRecoveryProvider {
   }
 
   async getDomain(_apiKey: string, id: string): Promise<ResendReceivingDomain> {
-    return domain(id);
+    return {
+      ...domain(id),
+      ...(this.domainReady ? {} : { mxStatus: "failed" as const }),
+    };
   }
 
-  async createWebhook(input: { apiKey: string; intent: ResendWebhookCreateIntent }) {
+  async createWebhook(input: {
+    apiKey: string;
+    intent: ResendWebhookCreateIntent;
+  }) {
     this.createCalls += 1;
     this.webhook.endpoint = input.intent.endpoint;
     return { id: this.webhook.id, signingSecret: this.webhook.signingSecret };
@@ -197,7 +250,11 @@ class ActivationProvider implements ResendWebhookCreateRecoveryProvider {
         ...(input.endpoint ? { endpoint: input.endpoint } : {}),
         ...(input.enabled === undefined
           ? {}
-          : { status: input.enabled ? ("enabled" as const) : ("disabled" as const) }),
+          : {
+              status: input.enabled
+                ? ("enabled" as const)
+                : ("disabled" as const),
+            }),
       },
     };
   }
@@ -218,11 +275,13 @@ function domain(id = "domain-one"): ResendReceivingDomain {
 }
 
 async function readState(sql: postgres.Sql, organizationId: string) {
-  const [row] = await sql<Array<{
-    inboundEnabled: boolean;
-    webhookStatus: string;
-    lastErrorCode: string | null;
-  }>>`
+  const [row] = await sql<
+    Array<{
+      inboundEnabled: boolean;
+      webhookStatus: string;
+      lastErrorCode: string | null;
+    }>
+  >`
     SELECT "inbound_enabled" AS "inboundEnabled",
       "webhook_status" AS "webhookStatus",
       "last_error_code" AS "lastErrorCode"

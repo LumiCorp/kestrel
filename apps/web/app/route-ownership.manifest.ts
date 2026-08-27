@@ -2426,6 +2426,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "admin-denied",
   ),
   api(
+    "app/api/organization/email/receiving/activation/readiness/route.ts",
+    "/api/organization/email/receiving/activation/readiness",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  api(
     "app/api/organization/setup/route.ts",
     "/api/organization/setup",
     "models",

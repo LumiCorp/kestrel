@@ -190,7 +190,10 @@ export class OrganizationReceivingController {
         const body = await readBody(response);
         if (!operation.isCurrent()) return;
         if (!response.ok) {
+          const connection =
+            await this.#readReconciledConnectionSafely(operation);
           operation.commit(() => {
+            if (connection) this.#present.setConnection(connection);
             this.#present.setError(
               readError(body) ||
                 (enabled
@@ -216,13 +219,48 @@ export class OrganizationReceivingController {
     );
   }
 
+  async runReleaseReadiness(): Promise<void> {
+    await this.#run(
+      "Could not verify inbound receiving readiness.",
+      async (operation) => {
+        const response = await this.#request(
+          "/api/organization/email/receiving/activation/readiness",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: "{}",
+          },
+        );
+        const body = await readBody(response);
+        if (!operation.isCurrent()) return;
+        if (!response.ok) {
+          operation.commit(() => {
+            this.#present.setError(
+              readError(body) ||
+                "Could not verify inbound receiving readiness.",
+            );
+          });
+          return;
+        }
+        const connection = await this.#readReconciledConnection(operation);
+        if (!connection) return;
+        operation.commit(() => {
+          this.#present.setConnection(connection);
+          this.#present.setError(undefined);
+          this.#present.showSuccess(
+            "Inbound receiving release readiness passed.",
+          );
+        });
+      },
+    );
+  }
+
   async #readReconciledConnection(
     operation: Operation,
   ): Promise<ReceivingConnection | undefined> {
-    const response = await this.#request(
-      "/api/organization/email/receiving",
-      { cache: "no-store" },
-    );
+    const response = await this.#request("/api/organization/email/receiving", {
+      cache: "no-store",
+    });
     const body = await readBody(response);
     if (!operation.isCurrent()) {
       return;
@@ -231,6 +269,16 @@ export class OrganizationReceivingController {
       throw new Error(readError(body) || "Could not load inbound receiving.");
     }
     return readConnection(body);
+  }
+
+  async #readReconciledConnectionSafely(
+    operation: Operation,
+  ): Promise<ReceivingConnection | undefined> {
+    try {
+      return await this.#readReconciledConnection(operation);
+    } catch {
+      return;
+    }
   }
 
   async #run(

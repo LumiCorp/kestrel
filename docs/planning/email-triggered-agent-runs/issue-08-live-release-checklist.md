@@ -8,6 +8,10 @@ release proof.
 
 - Record the deployed application revision and the completed `pnpm validate`,
   `pnpm validate:postgres`, and `pnpm validate:process` results.
+- Bind both `KESTREL_EMAIL_RECEIVING_RELEASE_EVIDENCE_REVISION` and
+  `KESTREL_EMAIL_RECEIVING_SECURITY_REVIEW_REVISION` to that exact deployment
+  revision. Kestrel One will not enable inbound receiving without these
+  server-owned gates and a current readiness run for the staged webhook.
 - Confirm the turn worker is running, receipt reconciliation is current, and
   the configured Resend domain, credential, and staged webhook are healthy.
 - Record the Security review for private-address capability handling, raw-body
@@ -20,8 +24,8 @@ release proof.
 
 ## Live proof
 
-1. An Organization Admin enables inbound receiving in Kestrel One. Record the
-   redacted status and Admin audit event.
+1. An Organization Admin runs **Run release readiness** in Kestrel One, then
+   enables inbound receiving. Record the redacted status and Admin audit event.
 2. With Desktop closed, deliver one signed email with a text-extractable PDF
    to the private Trigger. Record one receipt, private Thread, message, and
    noninteractive turn with current Project context.
