@@ -17,6 +17,9 @@ const runtimeActivation = source(
 const vercel = source("apps/web/vercel.json");
 const webPackage = JSON.parse(source("apps/web/package.json"));
 const docsPackage = JSON.parse(source("apps/docs/package.json"));
+const productionPromotionPolicy = source(
+  ".github/workflows/production-promotion-policy.yml",
+);
 
 test("production pushes have no Fly, RunPod, runtime, or migration workflow", () => {
   for (const path of [
@@ -27,6 +30,32 @@ test("production pushes have no Fly, RunPod, runtime, or migration workflow", ()
   ]) {
     assert.equal(existsSync(path), false, path);
   }
+});
+
+test("production promotions require a trusted same-repository main source", () => {
+  assert.match(productionPromotionPolicy, /pull_request_target:/u);
+  assert.match(productionPromotionPolicy, /branches:\s*\n\s*- production/u);
+  assert.match(productionPromotionPolicy, /permissions: \{\}/u);
+  assert.match(
+    productionPromotionPolicy,
+    /HEAD_REF: \$\{\{ github\.event\.pull_request\.head\.ref \}\}/u,
+  );
+  assert.match(
+    productionPromotionPolicy,
+    /HEAD_REPOSITORY: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/u,
+  );
+  assert.match(
+    productionPromotionPolicy,
+    /"\$\{HEAD_REF\}" != "main"/u,
+  );
+  assert.match(
+    productionPromotionPolicy,
+    /"\$\{HEAD_REPOSITORY\}" != "\$\{EXPECTED_REPOSITORY\}"/u,
+  );
+  assert.doesNotMatch(
+    productionPromotionPolicy,
+    /actions\/checkout|pull_request\.head\.sha|refs\/pull/u,
+  );
 });
 
 test("Vercel production build retains configuration validation and migration", () => {
