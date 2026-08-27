@@ -62,6 +62,7 @@ export class ResendReceivingProviderError extends Error {
     readonly code:
       | "RESEND_RECEIVING_CREDENTIAL_INSUFFICIENT"
       | "RESEND_RECEIVING_DOMAIN_INVALID"
+      | "RESEND_RECEIVING_REQUEST_INVALID"
       | "RESEND_RECEIVING_PROVIDER_UNAVAILABLE"
       | "RESEND_RECEIVING_RESPONSE_INVALID",
     message: string,
@@ -205,16 +206,29 @@ export class ResendHttpReceivingProvider implements ResendReceivingProvider {
         "Resend receiving requires a Full access API key.",
       );
     }
-    if (!response.ok) {
+    if (
+      response.status >= 500 ||
+      response.status === 408 ||
+      response.status === 429
+    ) {
       throw new ResendReceivingProviderError(
-        response.status === 404
-          ? "RESEND_RECEIVING_DOMAIN_INVALID"
-          : "RESEND_RECEIVING_PROVIDER_UNAVAILABLE",
-        response.status === 404
-          ? "The selected Resend resource is unavailable."
-          : "Resend receiving is temporarily unavailable.",
+        "RESEND_RECEIVING_PROVIDER_UNAVAILABLE",
+        "Resend receiving is temporarily unavailable.",
       );
     }
+    if (response.status === 404) {
+      throw new ResendReceivingProviderError(
+        "RESEND_RECEIVING_DOMAIN_INVALID",
+        "The selected Resend resource is unavailable.",
+      );
+    }
+    if (response.status >= 400 && response.status < 500) {
+      throw new ResendReceivingProviderError(
+        "RESEND_RECEIVING_REQUEST_INVALID",
+        "Resend rejected the receiving request.",
+      );
+    }
+    if (!response.ok) throw invalidResponse();
     if (response.status === 204) return {};
     try {
       return await response.json();

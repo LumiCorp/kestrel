@@ -81,11 +81,13 @@ export function OrganizationReceivingClient() {
     const body = await response.json().catch(() => ({}));
     setBusy(false);
     if (!response.ok) {
+      await load();
       setError(body.error || "Could not inspect Resend receiving domains.");
       return;
     }
     setDomains(body.domains || []);
     setError(undefined);
+    await load();
     if (!(body.domains || []).length) {
       toast.info("No Resend receiving domains are available for this key.");
     }
@@ -136,6 +138,13 @@ export function OrganizationReceivingClient() {
           />
         ) : null}
         <SettingsRows>
+          <SettingsRow label="Overall readiness">
+            <SettingsStatusSummary
+              detail={`Inbound: ${connection?.inboundEnabled ? "enabled" : "disabled"}`}
+              status={connection?.readiness.replaceAll("_", " ") ?? "Loading"}
+              tone="neutral"
+            />
+          </SettingsRow>
           <SettingsRow label="Credential">
             <SettingsStatusSummary
               detail="Resend Full access is required; Sending access is not sufficient."
@@ -155,6 +164,20 @@ export function OrganizationReceivingClient() {
               detail="Delivery stays disabled until the complete email-to-agent path is ready."
               status={connection?.webhookStatus.replaceAll("_", " ") ?? "Not staged"}
               tone="neutral"
+            />
+          </SettingsRow>
+          <SettingsRow label="Health evidence">
+            <SettingsStatusSummary
+              detail={`Credential validated: ${formatEvidenceTime(connection?.credentialValidatedAt)} · Domain checked: ${formatEvidenceTime(connection?.domainCheckedAt)}`}
+              status={`Health checked: ${formatEvidenceTime(connection?.lastHealthCheckedAt)}`}
+              tone="neutral"
+            />
+          </SettingsRow>
+          <SettingsRow label="Test and failure evidence">
+            <SettingsStatusSummary
+              detail={`Last failure: ${connection?.lastErrorCode ?? "None"}`}
+              status={`Last test: ${formatEvidenceTime(connection?.lastTestedAt)}`}
+              tone={connection?.lastErrorCode ? "warning" : "neutral"}
             />
           </SettingsRow>
         </SettingsRows>
@@ -213,4 +236,8 @@ export function OrganizationReceivingClient() {
       </SettingsSection>
     </>
   );
+}
+
+function formatEvidenceTime(value: string | null | undefined): string {
+  return value ? new Date(value).toLocaleString() : "Never";
 }

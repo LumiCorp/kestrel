@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   decryptGatewayCredential,
   encryptGatewayCredential,
@@ -63,20 +63,49 @@ export async function inspectReceivingDomains(input: {
   env?: NodeJS.ProcessEnv;
   provider?: ResendReceivingProvider;
 }): Promise<ReceivingDomainOption[]> {
-  const key = input.apiKey?.trim() || (await loadStoredApiKey(input));
+  const suppliedApiKey = input.apiKey?.trim() || undefined;
+  const existing = suppliedApiKey
+    ? undefined
+    : await findConnection(input.organizationId);
+  const storedEncryptedApiKey = existing?.encryptedApiKey ?? null;
+  const key =
+    suppliedApiKey ??
+    decryptStoredApiKey({
+      organizationId: input.organizationId,
+      encryptedApiKey: storedEncryptedApiKey,
+      env: input.env,
+    });
   if (!key) {
     throw new ReceivingConfigError(
       "RESEND_RECEIVING_CREDENTIAL_REQUIRED",
       "Enter a Resend Full access API key.",
     );
   }
+  let domains: ReceivingDomainOption[];
   try {
-    return await (input.provider ?? new ResendHttpReceivingProvider()).listDomains(
-      key,
-    );
+    domains = await (
+      input.provider ?? new ResendHttpReceivingProvider()
+    ).listDomains(key);
   } catch (error) {
-    throw normalizeProviderError(error);
+    const normalized = normalizeProviderError(error);
+    if (!suppliedApiKey && storedEncryptedApiKey) {
+      await persistStoredCredentialHealth({
+        organizationId: input.organizationId,
+        expectedEncryptedApiKey: storedEncryptedApiKey,
+        outcome: credentialFailureOutcome(normalized),
+      });
+    }
+    throw normalized;
   }
+  if (!suppliedApiKey && storedEncryptedApiKey) {
+    await persistStoredCredentialHealth({
+      organizationId: input.organizationId,
+      expectedEncryptedApiKey: storedEncryptedApiKey,
+      outcome: { credentialStatus: "full_access", errorCode: null },
+      checkedDomains: domains,
+    });
+  }
+  return domains;
 }
 
 export async function saveReceivingConnection(input: {
@@ -109,13 +138,31 @@ export async function saveReceivingConnection(input: {
       input.provider ?? new ResendHttpReceivingProvider()
     ).getDomain(apiKey, input.receivingDomainId.trim());
   } catch (error) {
-    throw normalizeProviderError(error);
+    const normalized = normalizeProviderError(error);
+    if (!suppliedApiKey && storedEncryptedApiKey) {
+      await persistStoredCredentialHealth({
+        organizationId: input.organizationId,
+        expectedEncryptedApiKey: storedEncryptedApiKey,
+        outcome: credentialFailureOutcome(normalized),
+      });
+    }
+    throw normalized;
   }
   if (
     domain.receiving !== "enabled" ||
     domain.status !== "verified" ||
     domain.mxStatus !== "verified"
   ) {
+    if (!suppliedApiKey && storedEncryptedApiKey) {
+      await persistStoredCredentialHealth({
+        organizationId: input.organizationId,
+        expectedEncryptedApiKey: storedEncryptedApiKey,
+        outcome: { credentialStatus: "full_access", errorCode: null },
+        ...(domain.id === existing?.receivingDomainId
+          ? { checkedDomains: [domain] }
+          : {}),
+      });
+    }
     throw new ReceivingConfigError(
       "RESEND_RECEIVING_DOMAIN_NOT_READY",
       "Choose a verified Resend receiving domain with healthy MX records.",
@@ -230,17 +277,6 @@ export function decryptReceivingSigningSecret(input: {
   });
 }
 
-async function loadStoredApiKey(input: {
-  organizationId: string;
-  env?: NodeJS.ProcessEnv;
-}) {
-  const existing = await findConnection(input.organizationId);
-  return decryptStoredApiKey({
-    ...input,
-    encryptedApiKey: existing?.encryptedApiKey,
-  });
-}
-
 function decryptStoredApiKey(input: {
   organizationId: string;
   encryptedApiKey?: string | null;
@@ -253,6 +289,79 @@ function decryptStoredApiKey(input: {
         env: input.env,
       })
     : undefined;
+}
+
+async function persistStoredCredentialHealth(input: {
+  organizationId: string;
+  expectedEncryptedApiKey: string;
+  outcome: {
+    credentialStatus: "full_access" | "insufficient" | "error";
+    errorCode: string | null;
+  };
+  checkedDomains?: readonly ReceivingDomainOption[] | undefined;
+}) {
+  const now = new Date();
+  await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
+    );
+    const lockedExisting =
+      await transaction.query.organizationReceivingConnections.findFirst({
+        where: (table, { eq: equals }) =>
+          equals(table.organizationId, input.organizationId),
+      });
+    if (lockedExisting?.encryptedApiKey !== input.expectedEncryptedApiKey) {
+      throw new ReceivingConfigError(
+        "RESEND_RECEIVING_CREDENTIAL_CHANGED",
+        "The Resend credential changed while receiving was being checked. Refresh and try again.",
+      );
+    }
+    const checkedDomain = lockedExisting.receivingDomainId
+      ? input.checkedDomains?.find(
+          (domain) => domain.id === lockedExisting.receivingDomainId,
+        )
+      : undefined;
+    const checkedConfiguredDomain =
+      input.checkedDomains && lockedExisting.receivingDomainId
+        ? {
+            ...(checkedDomain ? { receivingDomain: checkedDomain.name } : {}),
+            receivingDomainStatus: checkedDomain?.status ?? ("failed" as const),
+            mxStatus: checkedDomain?.mxStatus ?? ("unknown" as const),
+            domainCheckedAt: now,
+          }
+        : {};
+    await transaction
+      .update(schema.organizationReceivingConnections)
+      .set({
+        credentialStatus: input.outcome.credentialStatus,
+        ...(input.outcome.credentialStatus === "full_access"
+          ? { credentialValidatedAt: now }
+          : {}),
+        lastHealthCheckedAt: now,
+        lastErrorCode: input.outcome.errorCode,
+        ...checkedConfiguredDomain,
+        updatedAt: now,
+      })
+      .where(
+        eq(
+          schema.organizationReceivingConnections.organizationId,
+          input.organizationId,
+        ),
+      );
+  });
+}
+
+function credentialFailureOutcome(error: ReceivingConfigError): {
+  credentialStatus: "insufficient" | "error";
+  errorCode: string;
+} {
+  return {
+    credentialStatus:
+      error.code === "RESEND_RECEIVING_CREDENTIAL_INSUFFICIENT"
+        ? "insufficient"
+        : "error",
+    errorCode: error.code,
+  };
 }
 
 async function findConnection(organizationId: string) {

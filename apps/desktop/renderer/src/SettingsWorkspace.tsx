@@ -526,9 +526,13 @@ export function SettingsWorkspace({
       if (selectionVersion !== receivingSelectionVersionRef.current) return;
       setReceivingDomains(domains);
       setReceivingDomainId("");
+      await refreshReceivingConnection(receivingOrganizationId);
     } catch (error) {
       if (selectionVersion !== receivingSelectionVersionRef.current) return;
-      setReceivingError(errorMessage(error));
+      const message = errorMessage(error);
+      await refreshReceivingConnection(receivingOrganizationId);
+      if (selectionVersion !== receivingSelectionVersionRef.current) return;
+      setReceivingError(message);
     } finally {
       if (selectionVersion === receivingSelectionVersionRef.current) {
         setReceivingBusy(false);
@@ -1346,6 +1350,21 @@ export function SettingsWorkspace({
                           Credential: {receivingConnection?.credentialStatus.replaceAll("_", " ") ?? "loading"}
                           {" · "}MX: {receivingConnection?.mxStatus ?? "unknown"}
                           {" · "}Webhook: {receivingConnection?.webhookStatus.replaceAll("_", " ") ?? "not staged"}
+                        </small>
+                        <small>
+                          Overall readiness: {receivingConnection?.readiness.replaceAll("_", " ") ?? "loading"}
+                          {" · "}Inbound: {receivingConnection?.inboundEnabled ? "enabled" : "disabled"}
+                        </small>
+                        <small>
+                          Credential validated: {formatReceivingEvidenceTime(receivingConnection?.credentialValidatedAt)}
+                          {" · "}Domain checked: {formatReceivingEvidenceTime(receivingConnection?.domainCheckedAt)}
+                        </small>
+                        <small>
+                          Health checked: {formatReceivingEvidenceTime(receivingConnection?.lastHealthCheckedAt)}
+                          {" · "}Last test: {formatReceivingEvidenceTime(receivingConnection?.lastTestedAt)}
+                        </small>
+                        <small>
+                          Last failure: {receivingConnection?.lastErrorCode ?? "None"}
                         </small>
                         <p>
                           Delivery is disabled until the full email-to-agent path is
@@ -2550,4 +2569,10 @@ function summarizeTools(toolNames: string[]): string {
 
 function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
+}
+
+function formatReceivingEvidenceTime(
+  value: string | null | undefined,
+): string {
+  return value ? new Date(value).toLocaleString() : "Never";
 }

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ResendHttpReceivingProvider } from "./receiving-provider";
+import {
+  ResendHttpReceivingProvider,
+  ResendReceivingProviderError,
+} from "./receiving-provider";
 
 test("domain inspection retrieves receiving DNS details and accepts partially verified sending state", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
@@ -254,4 +257,65 @@ test("Sending-only credentials return the specific inbound readiness failure", a
       error.code === "RESEND_RECEIVING_CREDENTIAL_INSUFFICIENT" &&
       !error.message.includes("re_sending_only"),
   );
+});
+
+test("network and retryable HTTP failures are provider-unavailable without credential disclosure", async () => {
+  const secret = "re_network_secret_must_not_escape";
+  for (const fetchImpl of [
+    async () => {
+      throw new Error(`network failure for ${secret}`);
+    },
+    async () => new Response(`upstream detail ${secret}`, { status: 503 }),
+    async () => new Response(`rate limit detail ${secret}`, { status: 429 }),
+  ]) {
+    const provider = new ResendHttpReceivingProvider({
+      baseUrl: "https://resend.test",
+      fetchImpl,
+    });
+    await assert.rejects(
+      provider.listDomains(secret),
+      (error: unknown) =>
+        error instanceof ResendReceivingProviderError &&
+        error.code === "RESEND_RECEIVING_PROVIDER_UNAVAILABLE" &&
+        !error.message.includes(secret),
+    );
+  }
+});
+
+test("malformed successful payload is an invalid upstream response", async () => {
+  const provider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async () => Response.json({ unexpected: "shape" }),
+  });
+  await assert.rejects(
+    provider.listDomains("re_full_access"),
+    (error: unknown) =>
+      error instanceof ResendReceivingProviderError &&
+      error.code === "RESEND_RECEIVING_RESPONSE_INVALID",
+  );
+});
+
+test("provider client failures distinguish invalid resources and request state", async () => {
+  const cases = [
+    {
+      status: 404,
+      code: "RESEND_RECEIVING_DOMAIN_INVALID",
+    },
+    {
+      status: 422,
+      code: "RESEND_RECEIVING_REQUEST_INVALID",
+    },
+  ] as const;
+  for (const expected of cases) {
+    const provider = new ResendHttpReceivingProvider({
+      baseUrl: "https://resend.test",
+      fetchImpl: async () => new Response(null, { status: expected.status }),
+    });
+    await assert.rejects(
+      provider.getDomain("re_full_access", "domain-1"),
+      (error: unknown) =>
+        error instanceof ResendReceivingProviderError &&
+        error.code === expected.code,
+    );
+  }
 });
