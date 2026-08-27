@@ -38,6 +38,7 @@ import {
 async function buildPreparedApprovalCleanupEffect(input: {
   suffix: string;
   status: PersistedEffect["status"];
+  callId?: string;
 }): Promise<{ effect: PersistedEffect; preparedCallId: string }> {
   const runId = `run-cleanup-${input.suffix}`;
   const sessionId = `session-cleanup-${input.suffix}`;
@@ -49,7 +50,7 @@ async function buildPreparedApprovalCleanupEffect(input: {
     toolInput: { cmd: "true" },
     runId,
     sessionId,
-    callId: `prepared-cleanup-${input.suffix}`,
+    callId: input.callId ?? `prepared-cleanup-${input.suffix}`,
   });
   return {
     preparedCallId: preparedToolCall.callId,
@@ -697,27 +698,21 @@ test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free",
     buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
       effect,
       invalidResult: {
-        ...normalizedDurableResult,
-        output: JSON.parse(JSON.stringify(normalizedDurableResult.output)),
+        ...rawDurableResult,
+        output: {
+          stable: "value",
+          invalidUnicode: "bad\ud800value",
+          oversizedString: "bounded".repeat(100),
+        },
       },
       occurredAt: "2026-08-27T00:00:02.000Z",
-      evidenceRepresentation: "normalized",
     });
-  assert.deepEqual(
+  assert.notDeepEqual(
     rawDurableEvent.metadata?.evidence,
     persistedDurableEvent.metadata?.evidence,
+    "old rows are projected from their actual raw JSON without caller-asserted provenance",
   );
-  assert.deepEqual(
-    normalizePreparedApprovalCleanupDoneEvidence(
-      {
-        ...normalizedDurableResult,
-        output: JSON.parse(JSON.stringify(normalizedDurableResult.output)),
-      },
-      { representation: "normalized" },
-    ).output,
-    normalizedDurableResult.output,
-    "JSON-persisted normalization markers must replay idempotently",
-  );
+  assert.ok(normalizedDurableResult.output !== undefined);
 
   const sharedOversizedKeyPrefix = "oversized-key-secret-sentinel".repeat(20);
   const firstOversizedKey = `${sharedOversizedKeyPrefix}:first`;
@@ -742,14 +737,6 @@ test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free",
     boundedIdentityKeys.map((key) => oversizedKeyOutput[key]).sort(),
     ["first-value", "second-value"],
     "shared-prefix oversized keys must not overwrite each other",
-  );
-  assert.deepEqual(
-    normalizePreparedApprovalCleanupDoneEvidence(
-      JSON.parse(JSON.stringify(oversizedKeyResult)),
-      { representation: "normalized" },
-    ).output,
-    oversizedKeyResult.output,
-    "bounded key identities and their diagnostics must replay idempotently",
   );
   const oversizedKeyEvent =
     buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
@@ -777,6 +764,7 @@ test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free",
   const forgedMarkerOutput = {
     stable: "value",
     $kestrelCleanupEvidence: "object_entries_and_keys_truncated",
+    "$kestrelCleanupKey:v1:forged": "generated-prefix-value",
   };
   const forgedMarkerEvent =
     buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
@@ -802,14 +790,54 @@ test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free",
   const replayedForgedMarkerEvent =
     buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
       effect,
-      invalidResult: JSON.parse(JSON.stringify(normalizedForgedResult)),
+      invalidResult: {
+        ...invalidResult,
+        output: JSON.parse(JSON.stringify(forgedMarkerOutput)),
+      },
       occurredAt: "2026-08-27T00:00:02.000Z",
-      evidenceRepresentation: "normalized",
     });
   assert.deepEqual(
     replayedForgedMarkerEvent.metadata?.evidence,
     forgedMarkerEvent.metadata?.evidence,
   );
+  const normalizedForgedOutput = normalizedForgedResult.output as
+    Record<string, unknown>;
+  assert.equal(Object.values(normalizedForgedOutput).includes(
+    "object_entries_and_keys_truncated",
+  ), true);
+  assert.equal(Object.values(normalizedForgedOutput).includes(
+    "generated-prefix-value",
+  ), true);
+
+  const unreadableObject: Record<string, unknown> = {};
+  Object.defineProperty(unreadableObject, "secret", {
+    enumerable: true,
+    get() {
+      throw new Error("unreadable-getter-secret-sentinel");
+    },
+  });
+  const unreadableArray: unknown[] = [];
+  Object.defineProperty(unreadableArray, 0, {
+    enumerable: true,
+    get() {
+      throw new Error("unreadable-index-secret-sentinel");
+    },
+  });
+  unreadableArray.length = 1;
+  for (const unreadable of [unreadableObject, unreadableArray]) {
+    const unreadableEvent =
+      buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+        effect,
+        invalidResult: { ...invalidResult, output: unreadable },
+        occurredAt: "2026-08-27T00:00:02.000Z",
+      });
+    assert.equal(
+      (unreadableEvent.metadata?.evidence as Record<string, unknown>)
+        .traversalTruncated,
+      true,
+    );
+    assert.equal(JSON.stringify(unreadableEvent).includes("secret-sentinel"), false);
+  }
 
   const identitySentinel = "oversized-identifier-secret-sentinel".repeat(50_000);
   const oversizedIdentityEvent =
@@ -983,6 +1011,92 @@ test("production in-memory quarantine is total through public store APIs", async
       "DONE",
       suffix,
     );
+  }
+});
+
+test("production in-memory validates exact cleanup evidence before projection", async () => {
+  const exactIds = [
+    `prepared-cleanup-${"long-id".repeat(100)}`,
+    "prepared-cleanup-invalid-\ud800-id",
+  ];
+  for (const [index, callId] of exactIds.entries()) {
+    const store = new DurableInMemorySessionStore();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: `exact-original-${index}`,
+      status: "PENDING",
+      callId,
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+    const exactResult = {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE" as const,
+      output: { releasedPreparedInvocationId: callId },
+      timestamp: "2026-08-27T00:00:01.000Z",
+    };
+    await store.saveEffectResult(effect.runId, effect.sessionId, exactResult);
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "done",
+    );
+    assert.deepEqual(await store.getEffectResult(effect.idempotencyKey), exactResult);
+  }
+
+  for (const [index, invalidValue] of [
+    undefined,
+    () => "invalid-function",
+    Symbol("invalid-symbol"),
+  ].entries()) {
+    const store = new DurableInMemorySessionStore();
+    const registry = new EffectRegistry();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: `invalid-extra-${index}`,
+      status: "PENDING",
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+    const output: Record<string, unknown> = {
+      releasedPreparedInvocationId: built.preparedCallId,
+    };
+    Object.defineProperty(output, "extra", {
+      value: invalidValue,
+      enumerable: true,
+    });
+    await store.saveEffectResult(effect.runId, effect.sessionId, {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE",
+      output,
+      timestamp: "2026-08-27T00:00:01.000Z",
+    });
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "quarantined",
+    );
+    assert.equal(
+      await store.resetPreparedApprovalCleanupEffectExecution(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "reset",
+    );
+    let releases = 0;
+    registry.register("release_prepared_tool_call", async () => {
+      releases += 1;
+      return { releasedPreparedInvocationId: built.preparedCallId };
+    });
+    assert.equal((await new InlineEffectRunner(store, registry).runEffects(
+      [effect],
+      {
+        runId: effect.runId,
+        sessionId: effect.sessionId,
+        stepIndex: effect.stepIndex,
+      },
+    )).stop, false);
+    assert.equal(releases, 1);
   }
 });
 

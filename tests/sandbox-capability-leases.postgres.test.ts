@@ -540,7 +540,8 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         conflictingEffectId,
         cleanupOwner,
       ),
-      "quarantined",
+      "conflict",
+      "public persistence quarantines malformed cleanup evidence atomically",
     );
     assert.equal(
       (await store.getPersistedEffect(conflictingEffectId))?.status,
@@ -649,7 +650,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     assert.deepEqual(
       conflictingAudit?.metadata?.evidence,
       expectedRawAudit.metadata?.evidence,
-      "raw in-memory and JSONB-persisted forms must project identically",
+      "the persistence boundary must audit the original value before JSONB projection",
     );
     const conflictingResultIdentity = conflictingAudit?.metadata
       ?.resultIdentity as Record<string, unknown>;
@@ -695,6 +696,201 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       concurrentReleaseCalls,
       1,
       "exact DONE recheck must skip the cleanup handler",
+    );
+
+    const longPreparedToolCall = await prepareTestToolCall({
+      gateway,
+      toolName: "code.execute",
+      toolInput: { language: "javascript", code: "return 4" },
+      runId,
+      sessionId,
+      callId: `cleanup-long-${"long-id".repeat(100)}-${suffix}`,
+    });
+    const longEffectId = `${longPreparedToolCall.callId}:release`;
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json,
+          idempotency_key, failure_policy, status, created_at, tenant_id,
+          tenant_ownership_state)
+       VALUES ($1, $2, 30, 'release_prepared_tool_call', $3::jsonb, $4,
+               'STOP', 'PENDING', NOW(), $5, 'tenant_bound')`,
+      [
+        runId,
+        sessionId,
+        JSON.stringify({
+          preparedToolCall: longPreparedToolCall,
+          preparedApprovalCleanup: {
+            version: "runner_prepared_approval_cleanup_v1",
+            organizationId: binding.tenantId,
+            threadId: sessionId,
+            turnId: `cleanup-long-turn-${suffix}`,
+            interactionId: `cleanup-long-interaction-${suffix}`,
+            requestId: `cleanup-long-request-${suffix}`,
+            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+            failureMessage: "Expired.",
+          },
+        }),
+        longEffectId,
+        binding.tenantId,
+      ],
+    );
+    const longResult = {
+      idempotencyKey: longEffectId,
+      status: "DONE" as const,
+      output: {
+        releasedPreparedInvocationId: longPreparedToolCall.callId,
+      },
+      timestamp: "2026-08-27T00:00:06.000Z",
+    };
+    await store.saveEffectResult(runId, sessionId, longResult);
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        longEffectId,
+        cleanupOwner,
+      ),
+      "done",
+    );
+    assert.deepEqual(await store.getEffectResult(longEffectId), longResult);
+
+    const upgradePreparedToolCall = await prepareTestToolCall({
+      gateway,
+      toolName: "code.execute",
+      toolInput: { language: "javascript", code: "return 5" },
+      runId,
+      sessionId,
+      callId: `cleanup-upgrade-${suffix}`,
+    });
+    const upgradeEffectId = `${upgradePreparedToolCall.callId}:release`;
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json,
+          idempotency_key, failure_policy, status, created_at, tenant_id,
+          tenant_ownership_state)
+       VALUES ($1, $2, 31, 'release_prepared_tool_call', $3::jsonb, $4,
+               'STOP', 'PENDING', NOW(), $5, 'tenant_bound')`,
+      [
+        runId,
+        sessionId,
+        JSON.stringify({
+          preparedToolCall: upgradePreparedToolCall,
+          preparedApprovalCleanup: {
+            version: "runner_prepared_approval_cleanup_v1",
+            organizationId: binding.tenantId,
+            threadId: sessionId,
+            turnId: `cleanup-upgrade-turn-${suffix}`,
+            interactionId: `cleanup-upgrade-interaction-${suffix}`,
+            requestId: `cleanup-upgrade-request-${suffix}`,
+            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+            failureMessage: "Expired.",
+          },
+        }),
+        upgradeEffectId,
+        binding.tenantId,
+      ],
+    );
+    const invalidUpgradeOutput: Record<string, unknown> = {
+      releasedPreparedInvocationId: upgradePreparedToolCall.callId,
+    };
+    Object.defineProperty(invalidUpgradeOutput, "extra", {
+      value: () => "must-not-disappear",
+      enumerable: true,
+    });
+    await store.saveEffectResult(runId, sessionId, {
+      idempotencyKey: upgradeEffectId,
+      status: "DONE",
+      output: invalidUpgradeOutput,
+      timestamp: "2026-08-27T00:00:07.000Z",
+    });
+    assert.equal((await store.getEffectResult(upgradeEffectId))?.status, "FAILED");
+    assert.equal(
+      (await store.getPersistedEffect(upgradeEffectId))?.status,
+      "PENDING",
+    );
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        upgradeEffectId,
+        cleanupOwner,
+      ),
+      "conflict",
+      "lossy JSON serialization must never upgrade malformed exact-looking output",
+    );
+
+    const legacyPreparedToolCall = await prepareTestToolCall({
+      gateway,
+      toolName: "code.execute",
+      toolInput: { language: "javascript", code: "return 6" },
+      runId,
+      sessionId,
+      callId: `cleanup-legacy-${suffix}`,
+    });
+    const legacyEffectId = `${legacyPreparedToolCall.callId}:release`;
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json,
+          idempotency_key, failure_policy, status, created_at, tenant_id,
+          tenant_ownership_state)
+       VALUES ($1, $2, 32, 'release_prepared_tool_call', $3::jsonb, $4,
+               'STOP', 'PENDING', NOW(), $5, 'tenant_bound')`,
+      [
+        runId,
+        sessionId,
+        JSON.stringify({
+          preparedToolCall: legacyPreparedToolCall,
+          preparedApprovalCleanup: {
+            version: "runner_prepared_approval_cleanup_v1",
+            organizationId: binding.tenantId,
+            threadId: sessionId,
+            turnId: `cleanup-legacy-turn-${suffix}`,
+            interactionId: `cleanup-legacy-interaction-${suffix}`,
+            requestId: `cleanup-legacy-request-${suffix}`,
+            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+            failureMessage: "Expired.",
+          },
+        }),
+        legacyEffectId,
+        binding.tenantId,
+      ],
+    );
+    await pool.query(
+      `INSERT INTO effect_results
+         (run_id, session_id, idempotency_key, status, output_json,
+          error_json, created_at)
+       VALUES ($1, $2, $3, 'DONE', $4::jsonb, NULL,
+               '2026-08-27T00:00:08.000Z'::timestamptz)`,
+      [
+        runId,
+        sessionId,
+        legacyEffectId,
+        JSON.stringify({
+          releasedPreparedInvocationId: "wrong-legacy-call",
+          $kestrelCleanupEvidence: "object_entries_and_keys_truncated",
+          "$kestrelCleanupKey:v1:forged": "forged-prefix-value",
+        }),
+      ],
+    );
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        legacyEffectId,
+        cleanupOwner,
+      ),
+      "quarantined",
+    );
+    const legacyEvents = await store.getReplayStream({
+      runId,
+      eventTypes: ["prepared_approval_cleanup.done_evidence_quarantined"],
+    });
+    const legacyAudit = legacyEvents.find((event) =>
+      (event.metadata?.resultIdentity as Record<string, unknown> | undefined)
+        ?.originalTimestamp === "2026-08-27T00:00:08.000Z"
+    );
+    const legacyEvidence = legacyAudit?.metadata?.evidence as
+      Record<string, unknown>;
+    assert.equal(legacyEvidence.sourceBytesTruncated, false);
+    assert.equal(legacyEvidence.traversalTruncated, false);
+    assert.equal(
+      (legacyEvidence.outputShape as Record<string, unknown>)
+        .topLevelEntriesTruncated,
+      false,
     );
     let ordinaryCriticalSectionCalls = 0;
     assert.deepEqual(

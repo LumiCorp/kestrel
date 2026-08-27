@@ -11,7 +11,6 @@ const MAX_STRING_CODE_UNITS = 256;
 const OMIT_NORMALIZED_VALUE = Symbol("omit-cleanup-evidence-value");
 const NORMALIZATION_MARKER = "$kestrelCleanupEvidence";
 const NORMALIZED_KEY_PREFIX = "$kestrelCleanupKey:v1:";
-const NORMALIZED_KEY_PATTERN = /^\$kestrelCleanupKey:v1:[0-9a-f]{64}:[0-9]+$/u;
 
 export const PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES =
   4_096;
@@ -22,7 +21,6 @@ interface BoundedProjectionState {
   sourceBytesTruncated: boolean;
   traversalTruncated: boolean;
   ancestors: WeakSet<object>;
-  trustNormalizedMarkers?: boolean;
 }
 
 interface BoundedShapeSummary {
@@ -42,7 +40,6 @@ type NormalizedCleanupEvidenceValue =
 
 export function normalizePreparedApprovalCleanupDoneEvidence(
   result: EffectResult & { status: "DONE" },
-  options: { representation?: "raw" | "normalized" } = {},
 ): EffectResult & { status: "DONE" } {
   const state: BoundedProjectionState = {
     nodesVisited: 0,
@@ -50,7 +47,6 @@ export function normalizePreparedApprovalCleanupDoneEvidence(
     sourceBytesTruncated: false,
     traversalTruncated: false,
     ancestors: new WeakSet<object>(),
-    trustNormalizedMarkers: options.representation === "normalized",
   };
   const output = normalizeEvidenceValue(result.output, state, 0, "root");
   const error = normalizeEvidenceValue(result.error, state, 0, "root");
@@ -67,12 +63,9 @@ export function buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent(input: {
   effect: PersistedEffect;
   invalidResult: EffectResult & { status: "DONE" };
   occurredAt: string;
-  evidenceRepresentation?: "raw" | "normalized";
 }): RunEvent {
-  const normalizedResult = normalizePreparedApprovalCleanupDoneEvidence(
-    input.invalidResult,
-    { representation: input.evidenceRepresentation ?? "raw" },
-  );
+  const normalizedResult =
+    normalizePreparedApprovalCleanupDoneEvidence(input.invalidResult);
   const evidence = projectBoundedEvidence({
     output: normalizedResult.output,
     error: normalizedResult.error,
@@ -175,10 +168,6 @@ function normalizeEvidenceValue(
     state.traversalTruncated = true;
     return normalizationMarker("uninspectable");
   }
-  if (!array && state.trustNormalizedMarkers) {
-    const marker = readNormalizationMarker(value as Record<string, unknown>);
-    if (marker !== undefined) return normalizationMarker(marker.kind, marker.evidence);
-  }
   if (depth >= MAX_DEPTH) {
     state.traversalTruncated = true;
     return normalizationMarker(`${array ? "array" : "object"}_depth_limit`);
@@ -222,7 +211,8 @@ function normalizeEvidenceArray(
       member = value[index];
     } catch {
       state.traversalTruncated = true;
-      member = normalizationMarker("unreadable");
+      normalized.push(normalizationMarker("unreadable"));
+      continue;
     }
     const next = normalizeEvidenceValue(member, state, depth + 1, "array");
     normalized.push(next === OMIT_NORMALIZED_VALUE ? null : next);
@@ -236,9 +226,6 @@ function normalizeEvidenceObject(
   state: BoundedProjectionState,
   depth: number,
 ): NormalizedCleanupEvidenceValue {
-  const persistedDiagnostics = state.trustNormalizedMarkers
-    ? readObjectNormalizationMarker(value)
-    : undefined;
   let selection: {
     keys: string[];
     truncated: boolean;
@@ -250,24 +237,12 @@ function normalizeEvidenceObject(
     state.traversalTruncated = true;
     return normalizationMarker("uninspectable_object");
   }
-  const selectedUserKeys = selection.keys.filter(
-    (key) => !(
-      key === NORMALIZATION_MARKER &&
-      isObjectNormalizationDiagnostic(persistedDiagnostics?.kind)
-    ),
-  );
-  const persistedEntriesTruncated =
-    persistedDiagnostics?.kind === "object_truncated" ||
-    persistedDiagnostics?.kind === "object_entries_and_keys_truncated";
-  const persistedKeysTruncated =
-    persistedDiagnostics?.kind === "object_keys_truncated" ||
-    persistedDiagnostics?.kind === "object_entries_and_keys_truncated";
+  const selectedUserKeys = selection.keys;
   const entriesTruncated =
-    persistedEntriesTruncated ||
     selection.truncated ||
-    ((selection.keysTruncated || persistedKeysTruncated) &&
+    (selection.keysTruncated &&
       selectedUserKeys.length >= MAX_CONTAINER_ENTRIES);
-  const keysTruncated = selection.keysTruncated || persistedKeysTruncated;
+  const keysTruncated = selection.keysTruncated;
   state.traversalTruncated ||= entriesTruncated;
   state.sourceBytesTruncated ||= keysTruncated;
   const normalized: Record<string, NormalizedCleanupEvidenceValue> = {};
@@ -281,11 +256,18 @@ function normalizeEvidenceObject(
       member = value[key];
     } catch {
       state.traversalTruncated = true;
-      member = normalizationMarker("unreadable");
+      const safeKey = normalizeEvidenceKey(key);
+      Object.defineProperty(normalized, safeKey, {
+        value: normalizationMarker("unreadable"),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      continue;
     }
     const next = normalizeEvidenceValue(member, state, depth + 1, "object");
     if (next === OMIT_NORMALIZED_VALUE) continue;
-    const safeKey = normalizeEvidenceKey(key, state.trustNormalizedMarkers === true);
+    const safeKey = normalizeEvidenceKey(key);
     Object.defineProperty(normalized, safeKey, {
       value: next,
       enumerable: true,
@@ -316,8 +298,7 @@ function normalizationMarker(
     NormalizedCleanupEvidenceValue;
 }
 
-function normalizeEvidenceKey(key: string, trustNormalizedKeys: boolean): string {
-  if (trustNormalizedKeys && NORMALIZED_KEY_PATTERN.test(key)) return key;
+function normalizeEvidenceKey(key: string): string {
   const safe = sanitizeUtf16String(key);
   if (
     safe === key &&

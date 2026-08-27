@@ -94,7 +94,6 @@ import { normalizeOptionalTimestampString, normalizeTimestampString } from "../r
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
 import {
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
-  normalizePreparedApprovalCleanupDoneEvidence,
 } from "../runtime/preparedApprovalCleanupAudit.js";
 import {
   buildCanonicalWaitingFor,
@@ -1805,24 +1804,68 @@ export class PostgresSessionStore implements SessionStore {
       if (result.status === "DONE" && row.status === "FAILED") {
         throw new SandboxCapabilityExactResultCancelledError("Completed effect-result persistence lost to durable cancellation");
       }
-      if (!await this.hasTrustedPostgresEffectTenant(executor, {
+      const persistedEffect: PersistedEffect = {
         runId: row.run_id, sessionId: row.session_id, stepIndex: row.step_index,
         type: row.effect_type, payload: row.payload_json, idempotencyKey: result.idempotencyKey,
         failurePolicy: row.failure_policy, status: row.status, createdAt: normalizeTimestampString(row.created_at),
-      }, row.tenant_id, row.tenant_ownership_state, result)) {
+      };
+      if (!await this.hasTrustedPostgresEffectTenant(executor, persistedEffect,
+        row.tenant_id, row.tenant_ownership_state, result)) {
         throw new SandboxCapabilityExactResultConflictError("Effect result tenant does not match durable authority");
       }
-      const persistedResult =
-        result.status === "DONE" &&
+      const preparedApprovalCleanup =
         isPreparedApprovalCleanupReleaseEffect(
           row.effect_type,
           row.payload_json,
-        )
-          ? normalizePreparedApprovalCleanupDoneEvidence({
-              ...result,
-              status: "DONE",
-            })
-          : result;
+        );
+      if (preparedApprovalCleanup && result.status === "DONE") {
+        const existing = await executor.query(
+          `SELECT 1 FROM effect_results
+            WHERE idempotency_key = $1
+            FOR UPDATE`,
+          [result.idempotencyKey],
+        );
+        if (existing.rows[0] !== undefined) return;
+        const doneResult: EffectResult & { status: "DONE" } = {
+          ...result,
+          status: "DONE",
+        };
+        try {
+          validatePreparedApprovalCleanupDoneEvidence({
+            effect: persistedEffect,
+            result: doneResult,
+          });
+        } catch {
+          const quarantined =
+            quarantinePreparedApprovalCleanupDoneResult(doneResult);
+          await this.appendRunEventsBatchWithExecutor(executor, [
+            buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+              effect: persistedEffect,
+              invalidResult: doneResult,
+              occurredAt: new Date().toISOString(),
+            }),
+          ]);
+          await executor.query(
+            `INSERT INTO effect_results
+               (run_id, session_id, idempotency_key, status, output_json,
+                error_json, created_at)
+             VALUES ($1, $2, $3, 'FAILED', NULL, $4::jsonb, $5::timestamptz)`,
+            [
+              runId,
+              sessionId,
+              doneResult.idempotencyKey,
+              stringifySanitizedJson(quarantined.error),
+              normalizeTimestampString(doneResult.timestamp),
+            ],
+          );
+          await executor.query(
+            `UPDATE effects SET status = 'PENDING'
+              WHERE idempotency_key = $1`,
+            [doneResult.idempotencyKey],
+          );
+          return;
+        }
+      }
       await executor.query(
         `INSERT INTO effect_results
            (run_id, session_id, idempotency_key, status, output_json, error_json, created_at)
@@ -1831,11 +1874,11 @@ export class PostgresSessionStore implements SessionStore {
         [
           runId,
           sessionId,
-          persistedResult.idempotencyKey,
-          persistedResult.status,
-          stringifySanitizedJson(persistedResult.output ?? null),
-          stringifySanitizedJson(persistedResult.error ?? null),
-          normalizeTimestampString(persistedResult.timestamp),
+          result.idempotencyKey,
+          result.status,
+          stringifySanitizedJson(result.output ?? null),
+          stringifySanitizedJson(result.error ?? null),
+          normalizeTimestampString(result.timestamp),
         ],
       );
     });
@@ -2044,18 +2087,13 @@ export class PostgresSessionStore implements SessionStore {
         );
         return "done";
       } catch {
-        const normalizedResult =
-          normalizePreparedApprovalCleanupDoneEvidence(result, {
-            representation: "normalized",
-          });
         const quarantined =
-          quarantinePreparedApprovalCleanupDoneResult(normalizedResult);
+          quarantinePreparedApprovalCleanupDoneResult(result);
         await this.appendRunEventsBatchWithExecutor(executor, [
           buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
             effect,
-            invalidResult: normalizedResult,
+            invalidResult: result,
             occurredAt: new Date().toISOString(),
-            evidenceRepresentation: "normalized",
           }),
         ]);
         await executor.query(

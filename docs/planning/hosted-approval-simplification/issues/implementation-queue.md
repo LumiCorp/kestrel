@@ -11,9 +11,6 @@ work; this queue does not reopen them.
 
 ## Ready
 
-- [Preserve exact cleanup success before evidence normalization](06y-preserve-exact-cleanup-success.md)
-- [Eliminate caller-asserted cleanup marker provenance](06z-eliminate-caller-asserted-marker-provenance.md)
-- [Preserve internally generated cleanup truncation diagnostics](06z1-preserve-generated-cleanup-diagnostics.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
@@ -26,6 +23,9 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Preserve exact cleanup success before evidence normalization](06y-preserve-exact-cleanup-success.md)
+- [Eliminate caller-asserted cleanup marker provenance](06z-eliminate-caller-asserted-marker-provenance.md)
+- [Preserve internally generated cleanup truncation diagnostics](06z1-preserve-generated-cleanup-diagnostics.md)
 - [Normalize cleanup evidence before store-specific persistence](06v-normalize-cleanup-before-persistence.md)
 - [Preserve bounded identities for oversized cleanup evidence keys](06w-preserve-oversized-cleanup-key-identities.md)
 - [Prevent forged cleanup evidence normalization markers](06x-prevent-forged-cleanup-evidence-markers.md)
