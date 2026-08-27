@@ -958,10 +958,9 @@ test("persistent dialogs support multi-turn exchange, lifetime name ownership, a
   assert.equal(updates[0]?.parentRunId, "run-dialog-1");
   assert.equal(emittedMessages.find((message) => message.sender === "kestrel")?.dialogActivity, "working");
   assert.equal(updates[0]?.dialogActivity, "idle");
-  await assert.rejects(
-    () => supervisor.open({ parentSessionId: "root", name: "peregrine", message: "duplicate" }),
-    { code: "DIALOG_NAME_IN_USE" },
-  );
+  const repeated = await supervisor.open({ parentSessionId: "root", name: "peregrine", message: "duplicate" });
+  assert.equal(repeated.dialogId, opened.dialogId);
+  assert.equal(repeated.created, false);
 
   const sent = await supervisor.send({
     parentSessionId: "root",
@@ -987,10 +986,10 @@ test("persistent dialogs support multi-turn exchange, lifetime name ownership, a
     () => supervisor.send({ parentSessionId: "root", dialogId: opened.dialogId, message: "late" }),
     { code: "DIALOG_CLOSED" },
   );
-  await assert.rejects(
-    () => supervisor.open({ parentSessionId: "root", name: "Peregrine", message: "new" }),
-    { code: "DIALOG_NAME_IN_USE" },
-  );
+  const closedRepeat = await supervisor.open({ parentSessionId: "root", name: "Peregrine", message: "new" });
+  assert.equal(closedRepeat.dialogId, opened.dialogId);
+  assert.equal(closedRepeat.status, "closed");
+  assert.equal(closedRepeat.created, false);
   assert.equal(childCount, 1);
 });
 
@@ -1121,6 +1120,17 @@ test("dialog read and list return only saved local state with scoped cursors", a
   assert.equal(recent.messages.length, 2);
   assert.equal(recent.messages[0]?.text, "second");
   assert.equal(recent.messages[1]?.text, "reply:second");
+  assert.equal(recent.hasEarlier, true);
+  const earlier = await supervisor.read({ parentSessionId: "root", dialogId: first.dialogId, beforeCursor: recent.previousCursor, limit: 2 });
+  assert.deepEqual(earlier.messages.map((message) => message.text), ["first", "reply:first"]);
+  assert.equal(earlier.hasEarlier, false);
+  const beforeReply = await supervisor.read({ parentSessionId: "root", dialogId: first.dialogId, beforeCursor: recent.previousCursor, limit: 1 });
+  const firstOnly = await supervisor.read({ parentSessionId: "root", dialogId: first.dialogId, beforeCursor: beforeReply.previousCursor, limit: 1 });
+  const afterFirst = await supervisor.read({ parentSessionId: "root", dialogId: first.dialogId, afterCursor: firstOnly.nextCursor, limit: 2 });
+  assert.equal(afterFirst.hasEarlier, true);
+  assert.notEqual(afterFirst.previousCursor, undefined);
+  const beforeAfterFirst = await supervisor.read({ parentSessionId: "root", dialogId: first.dialogId, beforeCursor: afterFirst.previousCursor, limit: 2 });
+  assert.equal(beforeAfterFirst.messages[0]?.text, "first");
   const empty = await supervisor.read({ parentSessionId: "root", dialogId: first.dialogId, afterCursor: recent.nextCursor });
   assert.deepEqual(empty.messages, []);
   assert.equal(empty.nextCursor, recent.nextCursor);
@@ -1134,6 +1144,10 @@ test("dialog read and list return only saved local state with scoped cursors", a
   );
   await assert.rejects(
     () => supervisor.read({ parentSessionId: "root", dialogId: first.dialogId, limit: 101 }),
+    { code: "TOOL_INPUT_INVALID" },
+  );
+  await assert.rejects(
+    () => supervisor.read({ parentSessionId: "root", dialogId: first.dialogId, afterCursor: recent.nextCursor, beforeCursor: recent.previousCursor }),
     { code: "TOOL_INPUT_INVALID" },
   );
 
@@ -1150,9 +1164,68 @@ test("dialog read and list return only saved local state with scoped cursors", a
   );
 });
 
+test("dialog open reserves one child thread and returns the existing collaborator for concurrent calls", async () => {
+  const store = new InMemorySessionStore();
+  const supervisor = createDialogSupervisor({
+    store,
+    submitChildTurn: async (input) => ({
+      assistantText: "ready",
+      thread: (await store.getThread(input.threadId))!,
+      output: buildOutput({ runId: "concurrent-open", status: "COMPLETED" }),
+    }),
+  });
+
+  const [first, second] = await Promise.all([
+    supervisor.open({ parentSessionId: "root", name: "Researcher", message: "first request" }),
+    supervisor.open({ parentSessionId: "root", name: "researcher", message: "second request" }),
+  ]);
+
+  assert.equal(first.dialogId, second.dialogId);
+  assert.deepEqual([first.created, second.created].sort(), [false, true]);
+  assert.equal((await store.listDelegations({ parentThreadId: "root" })).length, 1);
+  assert.equal((await store.listThreads({ parentThreadId: "root" })).length, 1);
+});
+
+test("dialog open records a failed child-thread start and retries the reservation", async () => {
+  const store = new InMemorySessionStore();
+  let attempts = 0;
+  const supervisor = createDialogSupervisor({
+    store,
+    submitChildTurn: async (input) => ({
+      assistantText: "recovered",
+      thread: (await store.getThread(input.threadId))!,
+      output: buildOutput({ runId: "recovered-dialog", status: "COMPLETED" }),
+    }),
+    startChildThread: async (child) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("temporary child-thread failure");
+      const thread: ThreadRecord = {
+        threadId: child.threadId!, sessionId: child.threadId!, title: child.title,
+        parentThreadId: child.parentThreadId, status: "IDLE",
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      await store.ensureSession(thread.sessionId);
+      await store.upsertThread(thread);
+      return thread;
+    },
+  });
+
+  await assert.rejects(() => supervisor.open({ parentSessionId: "root", name: "Scout", message: "Inspect this." }));
+  const [reserved] = (await supervisor.list({ parentSessionId: "root" })).dialogs;
+  assert.equal(reserved?.activity, "interrupted");
+  assert.match(reserved?.errorMessage ?? "", /temporary child-thread failure/u);
+
+  const recovered = await supervisor.open({ parentSessionId: "root", name: "Scout", message: "Do not send this again." });
+  assert.equal(recovered.created, false);
+  assert.equal(attempts, 2);
+  for (let attempt = 0; attempt < 20 && (await supervisor.read({ parentSessionId: "root", dialogId: recovered.dialogId })).messages.at(-1)?.text !== "recovered"; attempt += 1) await tick();
+  assert.equal((await supervisor.read({ parentSessionId: "root", dialogId: recovered.dialogId })).messages.at(-1)?.text, "recovered");
+});
+
 function createDialogSupervisor(input: {
   store: InMemorySessionStore;
   submitChildTurn: (input: SubmitTurnInput) => Promise<SubmitTurnResult>;
+  startChildThread?: (input: { threadId?: string | undefined; title: string; parentThreadId: string; metadata?: Record<string, unknown> | undefined }) => Promise<ThreadRecord>;
   onDialogReply?: ((input: { message: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord }) => void | Promise<void>) | undefined;
 }): DelegationSupervisor {
   let childCount = 0;
@@ -1169,11 +1242,12 @@ function createDialogSupervisor(input: {
     runtimeStore: input.store,
     orchestrationStore: input.store,
     submitChildTurn: input.submitChildTurn,
-    startChildThread: async (child) => {
+    startChildThread: input.startChildThread ?? (async (child) => {
       childCount += 1;
+      const threadId = child.threadId ?? `race-child-${childCount}`;
       const thread: ThreadRecord = {
-        threadId: `race-child-${childCount}`,
-        sessionId: `race-child-${childCount}`,
+        threadId,
+        sessionId: threadId,
         title: child.title,
         parentThreadId: child.parentThreadId,
         status: "IDLE",
@@ -1183,7 +1257,7 @@ function createDialogSupervisor(input: {
       await input.store.ensureSession(thread.sessionId);
       await input.store.upsertThread(thread);
       return thread;
-    },
+    }),
     ...(input.onDialogReply === undefined
       ? {}
       : { onDialogReply: ({ message }) => input.onDialogReply?.({ message }) }),

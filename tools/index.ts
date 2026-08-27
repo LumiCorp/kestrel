@@ -1,6 +1,7 @@
 export type {
   DelegationServicePort,
   DialogServicePort,
+  DialogOpenResult,
   DialogSnapshot,
   DelegationTaskResult,
   DelegationTaskSnapshot,

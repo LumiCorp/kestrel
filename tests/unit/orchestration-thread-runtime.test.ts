@@ -188,15 +188,63 @@ test("ThreadRuntime delivers a saved collaborator reply once with current dialog
   assert.equal(followUp?.runtimeTurn?.metadata?.dialogStatus, "closed");
   assert.equal(followUp?.runtimeTurn?.metadata?.dialogActivity, "idle");
   assert.match(followUp?.runtimeTurn?.systemInstructions?.join("\n") ?? "", /This is not a message from the user\./);
+  assert.equal(followUp?.runtimeTurn?.runId, `run-dialog-follow-up-${followUp?.metadata?.sourceMessageId}`);
   for (let attempt = 0; attempt < 50 && ((asRecord(asRecord((await sessionStore.getDelegation(opened.dialogId))?.policy)?.dialog)?.messages as Array<Record<string, unknown>> | undefined) ?? []).find((message) => message.sender === "collaborator")?.delivery !== "delivered"; attempt += 1) {
     await tick();
   }
   const messages = (asRecord(asRecord((await sessionStore.getDelegation(opened.dialogId))?.policy)?.dialog)?.messages as Array<Record<string, unknown>> | undefined) ?? [];
   assert.equal(messages.find((message) => message.sender === "collaborator")?.delivery, "delivered");
 
-  const restartedAfterDelivery = new ThreadRuntime({ sessionStore, executor, profile });
-  await restartedAfterDelivery.startThread({ threadId: parent.threadId, title: parent.title });
-  await tick();
+  const reply = messages.find((message) => message.sender === "collaborator")!;
+  const delegation = await sessionStore.getDelegation(opened.dialogId);
+  const storedDialog = asRecord(delegation?.policy?.dialog)!;
+  await sessionStore.upsertDelegation({
+    ...delegation!,
+    policy: {
+      ...(delegation!.policy ?? {}),
+      dialog: {
+        ...storedDialog,
+        messages: messages.map((message) => message.messageId === reply.messageId
+          ? { ...message, delivery: "enqueued" }
+          : message),
+      },
+    },
+  });
+  const completedParent = await sessionStore.getThread(parent.threadId);
+  await sessionStore.upsertThread({
+    ...completedParent!,
+    status: "COMPLETED",
+    activeRunId: undefined,
+    metadata: {
+      ...(completedParent!.metadata ?? {}),
+      operatorControl: {
+        ...asRecord(completedParent!.metadata?.operatorControl),
+        followUpQueue: {
+          state: "ready",
+          items: [{
+            followUpId: reply.messageId,
+            message: `Reviewer: ${reply.text}`,
+            attachmentIds: [],
+            createdAt: reply.createdAt,
+            state: "starting",
+            source: "dialog",
+            dialogId: opened.dialogId,
+            dialogName: "Reviewer",
+            sourceMessageId: reply.messageId,
+            dialogStatus: "closed",
+            dialogActivity: "idle",
+          }],
+        },
+      },
+    },
+    updatedAt: new Date().toISOString(),
+  });
+
+  const restartedAfterParentCompleted = new ThreadRuntime({ sessionStore, executor, profile });
+  await restartedAfterParentCompleted.startThread({ threadId: parent.threadId, title: parent.title });
+  for (let attempt = 0; attempt < 50 && ((asRecord(asRecord((await sessionStore.getDelegation(opened.dialogId))?.policy)?.dialog)?.messages as Array<Record<string, unknown>> | undefined) ?? []).find((message) => message.messageId === reply.messageId)?.delivery !== "delivered"; attempt += 1) {
+    await tick();
+  }
   assert.equal(executor.inputs.length, 2);
 });
 

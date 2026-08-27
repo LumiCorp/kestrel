@@ -107,9 +107,11 @@ Do not open a collaborator only to repeat work you can finish now. Do not open o
 
 Give each collaborator a short, memorable name and a clear first message. Include the context they need. A collaborator's name cannot be changed or reused in this task.
 
+If you call dialog.open with a name that already exists, it returns that saved collaborator and does not send the opening message again. Use dialog.read to check it, or dialog.send only when it is open and idle.
+
 After you open or message a collaborator, keep working. Kestrel will bring their reply back to you. Do not repeatedly check for a reply.
 
-Use dialog.send when an existing collaborator needs another instruction, an answer, a correction, or more work. Use dialog.read when you want to see their status, messages, or results without asking them to do more. Use dialog.list when you need to see who is available or recover a dialog ID.
+Use dialog.send when an existing collaborator needs another instruction, an answer, a correction, or more work. Use dialog.read when you want to see their status, messages, or results without asking them to do more. Use afterCursor to check newer messages and beforeCursor to read older history. Use dialog.list when you need to see who is available or recover a dialog ID.
 
 Close a collaborator only when you are sure you will not need them again. Closing stops their work and cannot be undone. You can still read the conversation after closing it.
 
@@ -118,6 +120,14 @@ Collaborators cannot open other collaborators. Do not ask a collaborator to do a
 const PARENT_DIALOG_TOOL_NAMES = ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"] as const;
 
 const COLLABORATOR_REPLY_INSTRUCTIONS = "A named collaborator sent you a message. This is not a message from the user.\n\nUse the collaborator's message in your work. Check the supplied collaborator status before choosing what to do next. If the collaborator is open, use dialog.send to reply or give them more work. Use dialog.read to see more of the private conversation. Use dialog.close only when you are sure you will not need this collaborator again.";
+
+function dialogFollowUpTurnId(followUpId: string): string {
+  return `turn-dialog-follow-up-${followUpId}`;
+}
+
+function dialogFollowUpRunId(followUpId: string): string {
+  return `run-dialog-follow-up-${followUpId}`;
+}
 import { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 
 export interface ThreadRuntimeOptions {
@@ -234,6 +244,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
         submitChildTurn: (input) => this.submitTurn(input),
         startChildThread: async (input) =>
           this.startThread({
+            ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
             title: input.title,
             parentThreadId: input.parentThreadId,
             ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
@@ -2167,6 +2178,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
             ...(next.runtimeActor !== undefined ? { actor: next.runtimeActor } : {}),
             metadata: {
               followUpId: next.followUpId,
+              ...(next.source === "dialog" ? { turnId: dialogFollowUpTurnId(next.followUpId) } : {}),
               enqueuedAt: next.createdAt,
               ...(promotedIdentity !== undefined ? { turnId: promotedIdentity.turnId } : {}),
               ...(next.source !== undefined ? { source: next.source } : {}),
@@ -2178,6 +2190,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
             ...(next.source === "dialog" ? {
               runtimeTurn: {
                 sessionId: threadId,
+                runId: dialogFollowUpRunId(next.followUpId),
                 message: next.message,
                 eventType: "dialog.message",
                 actor: { actorType: "service", actorId: next.dialogId ?? "dialog", ...(next.dialogName !== undefined ? { displayName: next.dialogName } : {}) },

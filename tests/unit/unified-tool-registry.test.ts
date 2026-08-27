@@ -2984,6 +2984,7 @@ test("dialog.open uses active thread identity and forbids nested dialogs", async
           requests.push(input);
           return {
             dialogId: "dialog-child",
+            created: true,
             name: input.name,
             parentSessionId: input.parentSessionId,
             status: "open",

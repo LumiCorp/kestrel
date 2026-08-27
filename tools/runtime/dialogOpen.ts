@@ -5,10 +5,10 @@ import { parseObjectInput, requireStringField } from "../helpers.js";
 export const dialogOpenTool: SharedToolModule = {
   definition: {
     name: "dialog.open",
-    description: "Start a private conversation with a new named collaborator and send the first message. Use this when another collaborator can research, review, investigate, compare choices, or work on a different part of the task while you continue. Their reply will come back to you later. The name cannot be changed or reused in this task, even after you close the collaborator.",
+    description: "Start a private conversation with a named collaborator and send the first message. Use this when another collaborator can research, review, investigate, compare choices, or work on a different part of the task while you continue. Their reply will come back to you later. If that name already exists, this returns the saved collaborator without sending the message again. The name cannot be changed or reused in this task, even after you close the collaborator.",
     inputSchema: {
       type: "object",
-      properties: { name: { type: "string", maxLength: 40, description: "A short, memorable, immutable, unique name." }, message: { type: "string", description: "The work or question, with needed context." } },
+      properties: { name: { type: "string", maxLength: 40, description: "A short, memorable, immutable name. An existing name returns that collaborator instead of creating another one." }, message: { type: "string", description: "The work or question, with needed context. It is sent only when this call creates the collaborator." } },
       required: ["name", "message"],
       additionalProperties: false,
     },

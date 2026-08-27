@@ -187,6 +187,11 @@ export interface DialogSnapshot {
   updatedAt: string;
 }
 
+export interface DialogOpenResult extends DialogSnapshot {
+  /** True only when this call created the collaborator. */
+  created: boolean;
+}
+
 export interface DialogReadResult extends DialogSnapshot {
   messages: Array<{
     messageId: string;
@@ -196,6 +201,7 @@ export interface DialogReadResult extends DialogSnapshot {
     status?: "failed" | "cancelled" | undefined;
   }>;
   nextCursor?: string | undefined;
+  previousCursor?: string | undefined;
   hasEarlier: boolean;
   hasMore: boolean;
 }
@@ -212,7 +218,7 @@ export interface DialogServicePort {
     parentRunId?: string | undefined;
     name: string;
     message: string;
-  }): Promise<DialogSnapshot>;
+  }): Promise<DialogOpenResult>;
   send(input: {
     parentSessionId: string;
     parentRunId?: string | undefined;
@@ -223,6 +229,7 @@ export interface DialogServicePort {
     parentSessionId: string;
     dialogId: string;
     afterCursor?: string | undefined;
+    beforeCursor?: string | undefined;
     limit?: number | undefined;
   }): Promise<DialogReadResult>;
   list(input: {

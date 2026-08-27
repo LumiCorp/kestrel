@@ -20,6 +20,7 @@ import type {
   DelegationServicePort,
   DialogServicePort,
   DialogListResult,
+  DialogOpenResult,
   DialogReadResult,
   DialogSnapshot,
   DelegationTaskResult,
@@ -73,6 +74,7 @@ export interface DelegationSupervisorOptions {
   orchestrationStore: OrchestrationStore;
   submitChildTurn: (input: SubmitTurnInput) => Promise<SubmitTurnResult>;
   startChildThread: (input: {
+    threadId?: string | undefined;
     title: string;
     parentThreadId: string;
     metadata?: Record<string, unknown> | undefined;
@@ -132,35 +134,45 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
     this.onHandoffCompleted = options.onHandoffCompleted;
   }
 
-  async open(input: { parentSessionId: string; parentRunId?: string | undefined; name: string; message: string }): Promise<DialogSnapshot> {
+  async open(input: { parentSessionId: string; parentRunId?: string | undefined; name: string; message: string }): Promise<DialogOpenResult> {
     const name = normalizeDialogName(input.name);
     const existing = await this.store.listDelegations({ parentThreadId: input.parentSessionId });
-    if (existing.some((record) => readDialogState(record)?.normalizedName === name.toLocaleLowerCase())) {
-      throw createRuntimeFailure(
-        "DIALOG_NAME_IN_USE",
-        `A collaborator named '${name}' already exists in this task. Use dialog.list to find it. Names cannot be reused after close.`,
-        { dialogName: name },
-      );
+    const existingDialog = findDialogByNormalizedName(existing, name);
+    if (existingDialog !== undefined) {
+      const recovered = await this.ensureDialogChildThread(existingDialog);
+      if (recovered.started) void this.runDelegation(recovered.record);
+      return { ...toDialogSnapshot(recovered.record), created: false };
     }
-    const handle = await this.spawnDelegation({
-      parentThreadId: input.parentSessionId,
-      ...(input.parentRunId !== undefined ? { parentRunId: input.parentRunId } : {}),
-      title: name,
-      prompt: input.message,
-      launchedBy: "agent",
-      resultContract: "persistent_dialog_v1",
-      policy: {
-        depth: 1,
-        maxDepth: 1,
-        dialog: createStoredDialogState({
-          name,
-          activity: "working",
-          profileId: this.profile.id,
-        }),
-      },
-    });
-    const record = await this.requireDialog(handle.delegationId, input.parentSessionId);
-    return toDialogSnapshot(record);
+    try {
+      const handle = await this.spawnDelegation({
+        parentThreadId: input.parentSessionId,
+        ...(input.parentRunId !== undefined ? { parentRunId: input.parentRunId } : {}),
+        title: name,
+        prompt: input.message,
+        launchedBy: "agent",
+        resultContract: "persistent_dialog_v1",
+        policy: {
+          depth: 1,
+          maxDepth: 1,
+          dialog: createStoredDialogState({
+            name,
+            activity: "working",
+            profileId: this.profile.id,
+          }),
+        },
+      });
+      const record = await this.requireDialog(handle.delegationId, input.parentSessionId);
+      return { ...toDialogSnapshot(record), created: true };
+    } catch (error) {
+      const code = asRuntimeError(error).code;
+      if (code !== "DIALOG_NAME_IN_USE" && code !== "DELEGATION_LIMIT_REACHED") throw error;
+      const reserved = findDialogByNormalizedName(
+        await this.store.listDelegations({ parentThreadId: input.parentSessionId }),
+        name,
+      );
+      if (reserved === undefined) throw error;
+      return { ...toDialogSnapshot(reserved), created: false };
+    }
   }
 
   async send(input: { parentSessionId: string; parentRunId?: string | undefined; dialogId: string; message: string }): Promise<DialogSnapshot> {
@@ -200,33 +212,53 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
     parentSessionId: string;
     dialogId: string;
     afterCursor?: string | undefined;
+    beforeCursor?: string | undefined;
     limit?: number | undefined;
   }): Promise<DialogReadResult> {
     const record = await this.requireDialog(input.dialogId, input.parentSessionId);
     const dialog = readDialogState(record)!;
     const limit = normalizeDialogPageLimit(input.limit, 20);
     const messages = dialog.messages;
-    if (input.afterCursor === undefined) {
+    if (input.afterCursor !== undefined && input.beforeCursor !== undefined) {
+      throw createRuntimeFailure("TOOL_INPUT_INVALID", "Use either afterCursor or beforeCursor, not both.");
+    }
+    if (input.afterCursor === undefined && input.beforeCursor === undefined) {
       const start = Math.max(0, messages.length - limit);
       const page = messages.slice(start);
       return {
         ...toDialogSnapshot(record),
         messages: page.map(toDialogReadMessage),
         ...(page.at(-1) === undefined ? {} : { nextCursor: createDialogMessageCursor(record, page.at(-1)!) }),
+        ...(start === 0 || page[0] === undefined ? {} : { previousCursor: createDialogMessageCursor(record, page[0]) }),
         hasEarlier: start > 0,
         hasMore: false,
       };
     }
-    const cursor = parseDialogCursor(input.afterCursor, input.parentSessionId, input.dialogId);
+    const cursorValue = input.afterCursor ?? input.beforeCursor!;
+    const cursor = parseDialogCursor(cursorValue, input.parentSessionId, input.dialogId);
     const index = messages.findIndex((message) => message.messageId === cursor.messageId);
     if (index < 0) throw dialogCursorFailure();
+    if (input.beforeCursor !== undefined) {
+      const end = index;
+      const start = Math.max(0, end - limit);
+      const page = messages.slice(start, end);
+      return {
+        ...toDialogSnapshot(record),
+        messages: page.map(toDialogReadMessage),
+        ...(page.at(-1) === undefined ? {} : { nextCursor: createDialogMessageCursor(record, page.at(-1)!) }),
+        ...(start === 0 || page[0] === undefined ? {} : { previousCursor: createDialogMessageCursor(record, page[0]) }),
+        hasEarlier: start > 0,
+        hasMore: end < messages.length,
+      };
+    }
     const available = messages.slice(index + 1);
     const page = available.slice(0, limit);
     return {
       ...toDialogSnapshot(record),
       messages: page.map(toDialogReadMessage),
       nextCursor: page.length > 0 ? createDialogMessageCursor(record, page.at(-1)!) : input.afterCursor,
-      hasEarlier: index >= 0,
+      ...(page[0] === undefined ? {} : { previousCursor: createDialogMessageCursor(record, page[0]) }),
+      hasEarlier: page.length > 0 || index > 0,
       hasMore: available.length > page.length,
     };
   }
@@ -447,13 +479,14 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
     assertDelegationDepth(policy);
     await this.assertCapacity(input.parentThreadId);
 
-    const childThread = await this.startChildThread({
-      title: buildChildTitle(input.title),
-      parentThreadId: input.parentThreadId,
-      metadata: {
-        delegationPrompt: input.prompt,
-      },
-    });
+    const dialogChildThreadId = input.policy?.dialog === undefined ? undefined : `thread-${randomUUID()}`;
+    const childThread = dialogChildThreadId === undefined
+      ? await this.startChildThread({
+          title: buildChildTitle(input.title),
+          parentThreadId: input.parentThreadId,
+          metadata: { delegationPrompt: input.prompt },
+        })
+      : { threadId: dialogChildThreadId };
     const now = new Date().toISOString();
     let record: DelegationRecord = {
       delegationId,
@@ -500,6 +533,9 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       }
     } else {
       await this.store.upsertDelegation(record);
+    }
+    if (dialog !== undefined) {
+      record = (await this.ensureDialogChildThread(record)).record;
     }
     await this.appendDelegationEvent("delegation.requested", record);
     await this.appendDelegationEvent("delegation.spawned", record);
@@ -669,6 +705,57 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       this.results.set(failed.delegationId, { record: failed });
       await this.onDelegationUpdated?.({ record: failed });
     }
+  }
+
+  private async ensureDialogChildThread(record: DelegationRecord): Promise<{
+    record: DelegationRecord;
+    started: boolean;
+  }> {
+    const dialog = readDialogState(record);
+    if (dialog === undefined || dialog.status === "closed" || dialog.childThreadStarted !== false) {
+      return { record, started: false };
+    }
+    try {
+      await this.startChildThread({
+        threadId: record.childThreadId,
+        title: buildChildTitle(record.title),
+        parentThreadId: record.parentThreadId,
+        metadata: { delegationPrompt: record.prompt },
+      });
+    } catch (error) {
+      await this.recordDialogChildThreadFailure(record, error);
+      throw error;
+    }
+
+    const started = writeDialogState(
+      { ...record, status: "RUNNING", errorMessage: undefined, updatedAt: new Date().toISOString() },
+      { ...dialog, activity: "working", childThreadStarted: true, revision: dialog.revision + 1 },
+    );
+    if (await this.store.compareAndSetDialog(started, dialog.revision)) {
+      return { record: started, started: true };
+    }
+    return { record: await this.requireDialog(record.delegationId, record.parentThreadId), started: false };
+  }
+
+  private async recordDialogChildThreadFailure(record: DelegationRecord, error: unknown): Promise<void> {
+    const latest = await this.store.getDelegation(record.delegationId);
+    const current = latest ?? record;
+    const dialog = readDialogState(current);
+    if (dialog === undefined || dialog.status === "closed" || dialog.childThreadStarted !== false) return;
+    const runtimeError = asRuntimeError(error);
+    const failedRecord = writeDialogState(
+      { ...current, status: "WAITING", errorMessage: runtimeError.message, updatedAt: new Date().toISOString() },
+      { ...dialog, activity: "interrupted", revision: dialog.revision + 1 },
+    );
+    const failure = {
+      ...createDialogMessage(failedRecord, "system", `Could not start ${dialog.name}. Opening this collaborator again will retry.`),
+      status: "failed" as const,
+    };
+    const updated = appendDialogMessage(failedRecord, failure);
+    if (!await this.store.compareAndSetDialog(updated, dialog.revision)) return;
+    await this.appendDialogEvent("dialog.execution_failed", updated, failure);
+    this.emit({ task: toTaskSnapshot(updated, this.profile), kind: "failed", assistantText: null, dialogMessage: failure });
+    await this.onDelegationUpdated?.({ record: updated });
   }
 
   private async runDialogTurn(record: DelegationRecord): Promise<void> {
@@ -903,6 +990,8 @@ interface StoredDialogState extends Record<string, unknown> {
   status: "open" | "closed";
   activity: "idle" | "working" | "waiting" | "interrupted";
   revision: number;
+  /** False only while a newly reserved dialog still needs its child Thread. */
+  childThreadStarted?: boolean | undefined;
   closedAt?: string | undefined;
   profileId?: string | undefined;
   capabilityCeiling?: {
@@ -978,6 +1067,7 @@ function readDialogState(record: DelegationRecord): StoredDialogState | undefine
     revision: typeof dialog.revision === "number" && Number.isInteger(dialog.revision) && dialog.revision >= 0
       ? dialog.revision
       : 0,
+    ...(dialog.childThreadStarted === false ? { childThreadStarted: false } : { childThreadStarted: true }),
     ...(typeof dialog.closedAt === "string" ? { closedAt: dialog.closedAt } : {}),
     ...(typeof dialog.profileId === "string" ? { profileId: dialog.profileId } : {}),
     ...(readCapabilityCeiling(dialog.capabilityCeiling) !== undefined ? { capabilityCeiling: readCapabilityCeiling(dialog.capabilityCeiling) } : {}),
@@ -999,6 +1089,7 @@ function createStoredDialogState(input: {
     status: "open",
     activity: input.activity,
     revision: 0,
+    childThreadStarted: false,
     profileId: input.profileId,
     capabilityCeiling: {
       allowedToolClasses: [...(input.allowedToolClasses ?? [])],
@@ -1063,6 +1154,10 @@ function appendDialogMessage(record: DelegationRecord, message: DialogMessageRec
 
 function lastDialogMessage(record: DelegationRecord): DialogMessageRecord | undefined {
   return readDialogState(record)?.messages.at(-1);
+}
+
+function findDialogByNormalizedName(records: DelegationRecord[], name: string): DelegationRecord | undefined {
+  return records.find((record) => readDialogState(record)?.normalizedName === name.toLocaleLowerCase());
 }
 
 function toDialogSnapshot(record: DelegationRecord): DialogSnapshot {
