@@ -11,11 +11,12 @@ work; this queue does not reopen them.
 
 ## Ready
 
+- [Bridge the deployed preset-2 baseline](06h-bridge-the-deployed-preset2-baseline.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
 
-None.
+- [Converge prepared cleanup across retry and lifecycle](06g-converge-cleanup-across-retry-and-lifecycle.md)
 
 ## Blocked
 
