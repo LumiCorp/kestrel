@@ -6,6 +6,9 @@ import type {
   EffectRunner,
 } from "../kestrel/contracts/execution.js";
 import {
+  parseRunnerPreparedApprovalCleanupV1,
+} from "@kestrel-agents/protocol";
+import {
   validateExactEffectResultRead,
   type EffectStore,
   type PersistedEffect,
@@ -55,7 +58,17 @@ export class InlineEffectRunner implements EffectRunner {
 
     for (const effect of effects) {
       const session = await this.store.getSession(context.sessionId);
-      const existingResult = await this.store.getEffectResult(effect.idempotencyKey);
+      let existingResult = await this.store.getEffectResult(effect.idempotencyKey);
+      if (
+        existingResult?.status === "FAILED" &&
+        isPreparedApprovalCleanupRelease(effect)
+      ) {
+        const reset = await this.store.resetPreparedApprovalCleanupEffectExecution(
+          effect.idempotencyKey,
+          effect,
+        );
+        if (reset === "reset") existingResult = null;
+      }
       if (existingResult !== null) {
         if (existingResult.status === "DONE") {
           assertExactRecordedToolResult(effect, existingResult);
@@ -84,7 +97,18 @@ export class InlineEffectRunner implements EffectRunner {
       try {
         const handler = this.registry.resolve(effect.type);
         const prepared = validatePreparedEffectForExecution(effect, context);
-        const claim = await this.store.claimEffectExecution(effect.idempotencyKey, effect);
+        let claim = await this.store.claimEffectExecution(effect.idempotencyKey, effect);
+        if (
+          claim === "already_claimed" &&
+          isPreparedApprovalCleanupRelease(effect) &&
+          (await this.store.getEffectResult(effect.idempotencyKey)) === null &&
+          (await this.store.resetPreparedApprovalCleanupEffectExecution(
+            effect.idempotencyKey,
+            effect,
+          )) === "reset"
+        ) {
+          claim = await this.store.claimEffectExecution(effect.idempotencyKey, effect);
+        }
         if (claim !== "claimed") {
           const racedResult = await this.store.getEffectResult(effect.idempotencyKey);
           if (racedResult?.status === "DONE") {
@@ -335,6 +359,18 @@ export class InlineEffectRunner implements EffectRunner {
       result,
       signal,
     });
+  }
+}
+
+function isPreparedApprovalCleanupRelease(effect: PersistedEffect): boolean {
+  if (effect.type !== "release_prepared_tool_call") return false;
+  const payload = parseOptionalRecord(effect.payload);
+  if (payload?.preparedApprovalCleanup === undefined) return false;
+  try {
+    parseRunnerPreparedApprovalCleanupV1(payload.preparedApprovalCleanup);
+    return true;
+  } catch {
+    return false;
   }
 }
 

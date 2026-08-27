@@ -452,6 +452,10 @@ export interface EffectStore {
     idempotencyKey: string,
     owner: { runId: string; sessionId: string },
   ): Promise<"claimed" | "already_claimed" | "terminal">;
+  resetPreparedApprovalCleanupEffectExecution(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"reset" | "done" | "conflict">;
   saveEffectResult(runId: string, sessionId: string, result: EffectResult): Promise<void>;
   markEffectStatus(
     idempotencyKey: string,

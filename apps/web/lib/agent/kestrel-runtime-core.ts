@@ -19,6 +19,7 @@ import type {
 } from "@kestrel-agents/sdk";
 import type {
   RunnerActorMetadata,
+  RunnerPreparedApprovalCleanupV1,
   RunnerTurnAttachment,
 } from "@kestrel-agents/protocol";
 import {
@@ -171,6 +172,7 @@ export type KestrelOneAgentResponseInput = {
         approved?: boolean | undefined;
         decision?: "decline" | "approve_once" | "remember_approval" | undefined;
         decidingActor?: RunnerActorMetadata | undefined;
+        preparedApprovalCleanup?: RunnerPreparedApprovalCleanupV1 | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;
       }
@@ -303,6 +305,12 @@ export function createKestrelOneAgentResponseFromAgent(
                       : {}),
                     ...(interactionResponse.decidingActor !== undefined
                       ? { decidingActor: interactionResponse.decidingActor }
+                      : {}),
+                    ...(interactionResponse.preparedApprovalCleanup !== undefined
+                      ? {
+                          preparedApprovalCleanup:
+                            interactionResponse.preparedApprovalCleanup,
+                        }
                       : {}),
                     ...(interactionResponse.recoveryOptionId !== undefined
                       ? { recoveryOptionId: interactionResponse.recoveryOptionId }

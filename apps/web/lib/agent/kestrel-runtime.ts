@@ -4,6 +4,7 @@ import { readRequestCorrelation } from "@kestrel-agents/next";
 import type { KestrelAgent, RunnerActorMetadata } from "@kestrel-agents/sdk";
 import {
   WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+  type RunnerPreparedApprovalCleanupV1,
   type RunnerTurnAttachment,
 } from "@kestrel-agents/protocol";
 import {
@@ -368,6 +369,8 @@ export type KestrelOneAgentResponseInput = {
         message: string;
         approved?: boolean | undefined;
         decision?: "decline" | "approve_once" | "remember_approval" | undefined;
+        decidingActor?: RunnerActorMetadata | undefined;
+        preparedApprovalCleanup?: RunnerPreparedApprovalCleanupV1 | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;
       }

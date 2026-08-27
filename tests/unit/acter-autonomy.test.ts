@@ -1723,6 +1723,56 @@ test("GitHub external confirmation resumes the exact mutation and releases rejec
   assert.equal(declined.effects?.[0]?.type, "release_prepared_tool_call");
   assert.equal(approvalReleases, 0);
 
+  const cleanup = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: structuredClone(waitingAgent) },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-github-cleanup",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          decision: "decline",
+          approvalId: pendingApproval.approvalId,
+          preparedApprovalCleanup: {
+            version: "runner_prepared_approval_cleanup_v1",
+            organizationId: "org-1",
+            threadId: "session-1",
+            turnId: "turn-cleanup",
+            interactionId: "interaction-cleanup",
+            requestId: pendingApproval.approvalId,
+            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+            failureMessage: "The prepared authorization expired.",
+          },
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("cleanup must not use a model");
+      },
+      inspectTool,
+      prepareToolForApproval,
+      releasePreparedToolCall,
+      useTool: async () => {
+        throw new Error("cleanup must not execute the prepared tool");
+      },
+    },
+  );
+  assert.equal(cleanup.status, "COMPLETED");
+  assert.equal(cleanup.nextStepAgent, undefined);
+  assert.equal(cleanup.effects?.length, 1);
+  assert.equal(cleanup.effects?.[0]?.type, "release_prepared_tool_call");
+  assert.equal(
+    cleanup.effects?.[0]?.payload.preparedApprovalCleanup &&
+      (cleanup.effects[0].payload.preparedApprovalCleanup as Record<string, unknown>).requestId,
+    pendingApproval.approvalId,
+  );
+
   const resumed = await waitApprovalStep(
     buildContext({
       session: {

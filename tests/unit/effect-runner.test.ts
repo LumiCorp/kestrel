@@ -248,6 +248,138 @@ test("Effect runner STOP policy halts on failure", async () => {
   assert.equal(outcome.errors.length, 1);
 });
 
+test("cleanup-only prepared release retries a transient failure under the same idempotency identity", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  let calls = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    calls += 1;
+    if (calls === 1) throw new Error("transient release failure");
+    return { released: true };
+  });
+  const effect = {
+    runId: "run-cleanup-retry",
+    sessionId: "thread-cleanup-retry",
+    stepIndex: 1,
+    type: "release_prepared_tool_call",
+    payload: {
+      preparedApprovalCleanup: {
+        version: "runner_prepared_approval_cleanup_v1" as const,
+        organizationId: "org-cleanup",
+        threadId: "thread-cleanup-retry",
+        turnId: "turn-cleanup",
+        interactionId: "interaction-cleanup",
+        requestId: "approval-cleanup",
+        failureCode: "EXTERNAL_APPROVAL_EXPIRED" as const,
+        failureMessage: "Expired.",
+      },
+    },
+    idempotencyKey: "prepared-cleanup:release",
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+  const runner = new InlineEffectRunner(store, registry);
+
+  const failed = await runner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  assert.equal(failed.stop, true);
+  assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "FAILED");
+
+  const retried = await runner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  assert.equal(retried.stop, false);
+  assert.equal(calls, 2);
+  assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "DONE");
+  assert.equal(
+    store.operationLog.filter((entry) =>
+      entry === `resetPreparedApprovalCleanupEffectExecution:${effect.idempotencyKey}`
+    ).length,
+    1,
+  );
+});
+
+test("ordinary failed release remains terminal and is never retried", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  let calls = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    calls += 1;
+    throw new Error("ordinary release failure");
+  });
+  const effect = {
+    runId: "run-ordinary-release",
+    sessionId: "session-ordinary-release",
+    stepIndex: 1,
+    type: "release_prepared_tool_call",
+    payload: {},
+    idempotencyKey: "ordinary:release",
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+  const runner = new InlineEffectRunner(store, registry);
+  await runner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  await runner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  assert.equal(calls, 1);
+});
+
+test("cleanup-only release recovers a crash after claim and before release", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  let calls = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    calls += 1;
+    return { released: true };
+  });
+  const effect = {
+    runId: "run-cleanup-claimed",
+    sessionId: "thread-cleanup-claimed",
+    stepIndex: 1,
+    type: "release_prepared_tool_call",
+    payload: {
+      preparedApprovalCleanup: {
+        version: "runner_prepared_approval_cleanup_v1" as const,
+        organizationId: "org-cleanup",
+        threadId: "thread-cleanup-claimed",
+        turnId: "turn-cleanup",
+        interactionId: "interaction-cleanup",
+        requestId: "approval-cleanup",
+        failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED" as const,
+        failureMessage: "Policy changed.",
+      },
+    },
+    idempotencyKey: "prepared-cleanup-claimed:release",
+    failurePolicy: "STOP" as const,
+    status: "CLAIMED" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+  const outcome = await new InlineEffectRunner(store, registry).runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  assert.equal(outcome.stop, false);
+  assert.equal(calls, 1);
+});
+
 test("Effect runner CONTINUE policy keeps running", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();

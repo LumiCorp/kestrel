@@ -3,6 +3,7 @@ import type {
   RuntimeError,
   TransitionStatus,
 } from "../kestrel/contracts/base.js";
+import { parseRunnerPreparedApprovalCleanupV1 } from "@kestrel-agents/protocol";
 import {
   SandboxCapabilityExactResultCancelledError,
   SandboxCapabilityExactResultConflictError,
@@ -1862,6 +1863,62 @@ export class PostgresSessionStore implements SessionStore {
         throw new SandboxCapabilityExactResultConflictError("Effect execution claim lost its serialized authority");
       }
       return "claimed";
+    });
+  }
+
+  async resetPreparedApprovalCleanupEffectExecution(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"reset" | "done" | "conflict"> {
+    await this.ensureSchemaV3();
+    return this.withTransaction(async (executor) => {
+      const effect = await executor.query<{
+        run_id: string; session_id: string; status: PersistedEffect["status"];
+        effect_type: string; payload_json: Record<string, unknown>;
+        step_index: number; failure_policy: PersistedEffect["failurePolicy"];
+        created_at: string; tenant_id: string | null;
+        tenant_ownership_state: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
+      }>(
+        `SELECT run_id, session_id, status, effect_type, payload_json, step_index,
+                failure_policy, created_at, tenant_id, tenant_ownership_state
+           FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const row = effect.rows[0];
+      if (
+        row === undefined ||
+        row.run_id !== owner.runId ||
+        row.session_id !== owner.sessionId ||
+        !isPreparedApprovalCleanupReleaseEffect(row.effect_type, row.payload_json)
+      ) return "conflict";
+      if (!await this.hasTrustedPostgresEffectTenant(executor, {
+        runId: row.run_id,
+        sessionId: row.session_id,
+        stepIndex: row.step_index,
+        type: row.effect_type,
+        payload: row.payload_json,
+        idempotencyKey,
+        failurePolicy: row.failure_policy,
+        status: row.status,
+        createdAt: normalizeTimestampString(row.created_at),
+      }, row.tenant_id, row.tenant_ownership_state)) return "conflict";
+      const result = await executor.query<{ status: "DONE" | "FAILED" }>(
+        `SELECT status FROM effect_results WHERE idempotency_key = $1 FOR UPDATE`,
+        [idempotencyKey],
+      );
+      if (result.rows[0]?.status === "DONE") return "done";
+      if (result.rows[0]?.status === "FAILED") {
+        await executor.query(
+          `DELETE FROM effect_results WHERE idempotency_key = $1 AND status = 'FAILED'`,
+          [idempotencyKey],
+        );
+      }
+      if (row.status === "DONE") return "conflict";
+      await executor.query(
+        `UPDATE effects SET status = 'PENDING' WHERE idempotency_key = $1`,
+        [idempotencyKey],
+      );
+      return "reset";
     });
   }
 
@@ -5330,6 +5387,21 @@ function throwIfSandboxCapabilityResultPersistenceCancelled(signal: AbortSignal 
 
 function readNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function isPreparedApprovalCleanupReleaseEffect(
+  effectType: string,
+  payload: unknown,
+): boolean {
+  if (effectType !== "release_prepared_tool_call") return false;
+  const record = readRecord(payload);
+  if (record?.preparedApprovalCleanup === undefined) return false;
+  try {
+    parseRunnerPreparedApprovalCleanupV1(record.preparedApprovalCleanup);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readConversationTurnTerminalEnvelope(

@@ -1,4 +1,5 @@
 import type { EffectExecutionStatus, RuntimeError, TransitionStatus } from "../../src/kestrel/contracts/base.js";
+import { parseRunnerPreparedApprovalCleanupV1 } from "@kestrel-agents/protocol";
 import type { RunEvent, RunLogEntry, RuntimeEvent } from "../../src/kestrel/contracts/events.js";
 import type { EffectResult, RegionWorkIntent, RegionWorkItem } from "../../src/kestrel/contracts/execution.js";
 import type {
@@ -645,6 +646,35 @@ export class InMemorySessionStore implements SessionStore {
       return "claimed";
     }
     return effect.status === "CLAIMED" ? "already_claimed" : "terminal";
+  }
+
+  async resetPreparedApprovalCleanupEffectExecution(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"reset" | "done" | "conflict"> {
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+    const payload = effect?.payload && typeof effect.payload === "object" && !Array.isArray(effect.payload)
+      ? effect.payload as Record<string, unknown>
+      : undefined;
+    try {
+      if (
+        effect === undefined ||
+        effect.runId !== owner.runId ||
+        effect.sessionId !== owner.sessionId ||
+        effect.type !== "release_prepared_tool_call" ||
+        payload?.preparedApprovalCleanup === undefined
+      ) return "conflict";
+      parseRunnerPreparedApprovalCleanupV1(payload.preparedApprovalCleanup);
+    } catch {
+      return "conflict";
+    }
+    const result = this.effectResults.get(idempotencyKey);
+    if (result?.status === "DONE") return "done";
+    if (result?.status === "FAILED") this.effectResults.delete(idempotencyKey);
+    if (effect.status === "DONE") return "conflict";
+    effect.status = "PENDING";
+    this.operationLog.push(`resetPreparedApprovalCleanupEffectExecution:${idempotencyKey}`);
+    return "reset";
   }
 
   async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, _owner: { runId: string; sessionId: string }): Promise<void> {

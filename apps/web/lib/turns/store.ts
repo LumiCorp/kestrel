@@ -14,6 +14,7 @@ import {
   parseRunnerHostedToolApprovalInteractionV2,
   parseRunnerHostedToolApprovalInteractionV3,
   parseRunnerHostedToolApprovalInteractionV4,
+  RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION,
   parseRunnerStructuredReviewInteractionV1,
   resolveToolApprovalDispositionV1,
   serializeCanonicalApprovalPayload,
@@ -290,6 +291,72 @@ async function lockAccessibleThread(
     throw new DurableTurnError("TURN_NOT_FOUND", "Thread not found.");
   }
   return thread;
+}
+
+async function lockPreparedApprovalCleanupThread(
+  tx: TurnTransaction,
+  input: { threadId: string; organizationId: string },
+) {
+  const [thread] = await tx
+    .select()
+    .from(schema.threads)
+    .where(
+      and(
+        eq(schema.threads.id, input.threadId),
+        eq(schema.threads.organizationId, input.organizationId),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  if (!thread || thread.archivedAt) {
+    throw new DurableTurnError("TURN_NOT_FOUND", "Thread not found.");
+  }
+  return thread;
+}
+
+function buildPreparedApprovalCleanupResponse(
+  turn: typeof schema.threadTurns.$inferSelect,
+  interaction: typeof schema.threadInteractions.$inferSelect,
+  cleanup: PreparedApprovalCleanupV1,
+) {
+  const response = readPlainRecord(interaction.responseEnvelope);
+  if (
+    response === null ||
+    typeof response.eventType !== "string" ||
+    typeof response.message !== "string"
+  ) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "Prepared approval cleanup response is invalid.",
+    );
+  }
+  return {
+    requestId: interaction.requestId,
+    eventType: response.eventType,
+    message: response.message,
+    ...(typeof response.approved === "boolean"
+      ? { approved: response.approved }
+      : {}),
+    decision: "decline" as const,
+    decidingActor: {
+      actorType: "end_user" as const,
+      actorId: turn.authorUserId,
+      tenantId: interaction.organizationId,
+    },
+    preparedApprovalCleanup: {
+      version: RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION,
+      organizationId: interaction.organizationId,
+      threadId: interaction.threadId,
+      turnId: turn.id,
+      interactionId: interaction.id,
+      requestId: interaction.requestId,
+      failureCode: cleanup.failureCode,
+      failureMessage: cleanup.failureMessage,
+    },
+    preparedApprovalCleanupFailureCode: cleanup.failureCode,
+    preparedApprovalCleanupFailureMessage: cleanup.failureMessage,
+    ...(typeof response.reason === "string" ? { reason: response.reason } : {}),
+  };
 }
 
 async function validateRememberApprovalEligibilityInTransaction(
@@ -1417,11 +1484,46 @@ export async function claimDurableThreadTurn(
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${queueLockKey(candidate.threadId)}, 0))`,
     );
-    const thread = await lockAccessibleThread(tx, {
-      threadId: candidate.threadId,
-      organizationId: candidate.organizationId,
-      userId: candidate.authorUserId,
-    });
+    const maintenanceInteraction = candidate.resumeInteractionId
+      ? await tx.query.threadInteractions.findFirst({
+          where: and(
+            eq(schema.threadInteractions.id, candidate.resumeInteractionId),
+            eq(schema.threadInteractions.source, "runtime"),
+            eq(schema.threadInteractions.status, "processing"),
+          ),
+        })
+      : candidate.status === "waiting_for_input" ||
+          (options.resumeRunning && candidate.status === "running")
+        ? await tx.query.threadInteractions.findFirst({
+            where: and(
+              eq(schema.threadInteractions.turnId, candidate.id),
+              eq(schema.threadInteractions.source, "runtime"),
+              eq(schema.threadInteractions.status, "processing"),
+              options.resumeRunning && candidate.status === "running"
+                ? undefined
+                : isNull(schema.threadInteractions.resumedAt),
+            ),
+            orderBy: (table, { asc }) => [asc(table.resolvedAt)],
+          })
+        : null;
+    const maintenanceCleanup = readPreparedApprovalCleanupFromResponse(
+      maintenanceInteraction?.responseEnvelope,
+    );
+    const isCanonicalMaintenanceClaim =
+      maintenanceCleanup !== null &&
+      maintenanceInteraction?.organizationId === candidate.organizationId &&
+      maintenanceInteraction.threadId === candidate.threadId &&
+      maintenanceInteraction.turnId === candidate.id;
+    const thread = isCanonicalMaintenanceClaim
+      ? await lockPreparedApprovalCleanupThread(tx, {
+          threadId: candidate.threadId,
+          organizationId: candidate.organizationId,
+        })
+      : await lockAccessibleThread(tx, {
+          threadId: candidate.threadId,
+          organizationId: candidate.organizationId,
+          userId: candidate.authorUserId,
+        });
     const [turn] = await tx
       .select()
       .from(schema.threadTurns)
@@ -1442,31 +1544,63 @@ export async function claimDurableThreadTurn(
       return null;
     }
     const isInitialClaim = turn.status === "queued";
-    const interaction = turn.resumeInteractionId
-      ? await tx.query.threadInteractions.findFirst({
-          where: and(
-            eq(schema.threadInteractions.id, turn.resumeInteractionId),
+    const interactionWhere = turn.resumeInteractionId
+      ? and(
+          eq(schema.threadInteractions.id, turn.resumeInteractionId),
+          eq(schema.threadInteractions.source, "runtime"),
+          eq(schema.threadInteractions.status, "processing"),
+          options.resumeRunning && turn.status === "running"
+            ? undefined
+            : isNull(schema.threadInteractions.resumedAt),
+        )
+      : turn.status === "waiting_for_input" ||
+          (options.resumeRunning && turn.status === "running")
+        ? and(
+            eq(schema.threadInteractions.turnId, turn.id),
+            eq(schema.threadInteractions.source, "runtime"),
             eq(schema.threadInteractions.status, "processing"),
-            isNull(schema.threadInteractions.resumedAt),
-          ),
-        })
-      : turn.status === "waiting_for_input"
-        ? await tx.query.threadInteractions.findFirst({
-            where: and(
-              eq(schema.threadInteractions.turnId, turn.id),
-              eq(schema.threadInteractions.source, "runtime"),
-              eq(schema.threadInteractions.status, "processing"),
-              isNull(schema.threadInteractions.resumedAt),
-            ),
-            orderBy: (table, { asc }) => [asc(table.resolvedAt)],
-          })
-        : null;
+            options.resumeRunning && turn.status === "running"
+              ? undefined
+              : isNull(schema.threadInteractions.resumedAt),
+          )
+        : undefined;
+    const [interaction] = interactionWhere
+      ? await tx
+          .select()
+          .from(schema.threadInteractions)
+          .where(interactionWhere)
+          .orderBy(asc(schema.threadInteractions.resolvedAt))
+          .limit(1)
+          .for("update")
+      : [];
     const isRunningResume = options.resumeRunning && turn.status === "running";
     if (!(isInitialClaim || interaction || isRunningResume)) {
       return null;
     }
+    const resumedCleanup = readPreparedApprovalCleanupFromResponse(
+      interaction?.responseEnvelope,
+    );
+    if (
+      isCanonicalMaintenanceClaim &&
+      (interaction?.id !== maintenanceInteraction?.id ||
+        resumedCleanup === null ||
+        interaction.organizationId !== turn.organizationId ||
+        interaction.threadId !== turn.threadId ||
+        interaction.turnId !== turn.id)
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "Prepared approval cleanup binding changed during claim.",
+      );
+    }
     if (isRunningResume) {
-      return { ...turn, interactionResponse: null };
+      return {
+        ...turn,
+        interactionResponse:
+          interaction && resumedCleanup
+            ? buildPreparedApprovalCleanupResponse(turn, interaction, resumedCleanup)
+            : null,
+      };
     }
     const concurrencyGroupKey =
       turn.concurrencyGroupKey ?? resolveTurnConcurrencyGroup(thread);
@@ -1514,9 +1648,7 @@ export async function claimDurableThreadTurn(
         .where(eq(schema.threadInteractions.id, interaction.id));
     }
     const response = readPlainRecord(interaction?.responseEnvelope);
-    const preparedApprovalCleanup = readPreparedApprovalCleanupFromResponse(
-      interaction?.responseEnvelope,
-    );
+    const preparedApprovalCleanup = resumedCleanup;
     const hostedApproval =
       interaction && preparedApprovalCleanup === null
         ? parseHostedPreparedApprovalInteraction(interaction)
@@ -1580,14 +1712,13 @@ export async function claimDurableThreadTurn(
                         },
                       }
                     : {}),
-                  ...(preparedApprovalCleanup === null
+                  ...(preparedApprovalCleanup === null || !interaction
                     ? {}
-                    : {
-                        preparedApprovalCleanupFailureCode:
-                          preparedApprovalCleanup.failureCode,
-                        preparedApprovalCleanupFailureMessage:
-                          preparedApprovalCleanup.failureMessage,
-                      }),
+                    : buildPreparedApprovalCleanupResponse(
+                        turn,
+                        interaction,
+                        preparedApprovalCleanup,
+                      )),
                   ...(typeof response.reason === "string"
                     ? { reason: response.reason }
                     : {}),
@@ -2896,9 +3027,16 @@ export async function recordDurablePreparedApprovalCleanupCompleted(input: {
   return knowledgeDb.transaction(async (tx) => {
     const currentTurn = await tx.query.threadTurns.findFirst({
       where: eq(schema.threadTurns.id, input.turnId),
-      columns: { resumeInteractionId: true },
     });
     if (!currentTurn) return false;
+    return completePreparedApprovalCleanupInTransaction(tx, currentTurn);
+  });
+}
+
+async function completePreparedApprovalCleanupInTransaction(
+  tx: TurnTransaction,
+  currentTurn: typeof schema.threadTurns.$inferSelect,
+) {
     const [interaction] = await tx
       .select()
       .from(schema.threadInteractions)
@@ -2909,7 +3047,7 @@ export async function recordDurablePreparedApprovalCleanupCompleted(input: {
                 schema.threadInteractions.id,
                 currentTurn.resumeInteractionId,
               )
-            : eq(schema.threadInteractions.turnId, input.turnId),
+            : eq(schema.threadInteractions.turnId, currentTurn.id),
           eq(schema.threadInteractions.source, "runtime"),
           eq(schema.threadInteractions.status, "processing"),
           isNotNull(schema.threadInteractions.resumedAt),
@@ -2951,7 +3089,7 @@ export async function recordDurablePreparedApprovalCleanupCompleted(input: {
       retryEligible: false,
     });
     await appendTurnEvent(tx, {
-      turnId: input.turnId,
+      turnId: currentTurn.id,
       type: "interaction.authorization_failed",
       data: {
         requestId: interaction.requestId,
@@ -2960,6 +3098,89 @@ export async function recordDurablePreparedApprovalCleanupCompleted(input: {
         retryable: false,
         cleanupCompleted: true,
       },
+    });
+    return true;
+}
+
+export async function resetDurablePreparedApprovalCleanupForRetry(input: {
+  turnId: string;
+}) {
+  return knowledgeDb.transaction(async (tx) => {
+    const [candidate] = await tx
+      .select()
+      .from(schema.threadTurns)
+      .where(eq(schema.threadTurns.id, input.turnId))
+      .limit(1);
+    if (!candidate) return false;
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${queueLockKey(candidate.threadId)}, 0))`,
+    );
+    await lockPreparedApprovalCleanupThread(tx, {
+      threadId: candidate.threadId,
+      organizationId: candidate.organizationId,
+    });
+    const [turn] = await tx
+      .select()
+      .from(schema.threadTurns)
+      .where(eq(schema.threadTurns.id, input.turnId))
+      .limit(1)
+      .for("update");
+    if (!turn || turn.status !== "running") return false;
+    const [interaction] = await tx
+      .select()
+      .from(schema.threadInteractions)
+      .where(
+        and(
+          turn.resumeInteractionId
+            ? eq(schema.threadInteractions.id, turn.resumeInteractionId)
+            : eq(schema.threadInteractions.turnId, turn.id),
+          eq(schema.threadInteractions.organizationId, turn.organizationId),
+          eq(schema.threadInteractions.threadId, turn.threadId),
+          eq(schema.threadInteractions.turnId, turn.id),
+          eq(schema.threadInteractions.source, "runtime"),
+          eq(schema.threadInteractions.status, "processing"),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (
+      !interaction ||
+      readPreparedApprovalCleanupFromResponse(interaction.responseEnvelope) === null
+    ) return false;
+    const [queueState] = await tx
+      .select()
+      .from(schema.threadTurnQueueState)
+      .where(eq(schema.threadTurnQueueState.threadId, turn.threadId))
+      .limit(1)
+      .for("update");
+    if (queueState?.activeTurnId !== turn.id) return false;
+    assertThreadTurnTransition(turn.status, "waiting_for_input");
+    const now = new Date();
+    await tx
+      .update(schema.threadTurns)
+      .set({
+        status: "waiting_for_input",
+        environmentExecutionId: null,
+        updatedAt: now,
+      })
+      .where(eq(schema.threadTurns.id, turn.id));
+    await tx
+      .update(schema.threadInteractions)
+      .set({ resumedAt: null, updatedAt: now })
+      .where(eq(schema.threadInteractions.id, interaction.id));
+    await tx
+      .update(schema.threadTurnQueueState)
+      .set({
+        state: "running",
+        pauseReason: null,
+        version: queueState.version + 1,
+        updatedAt: now,
+      })
+      .where(eq(schema.threadTurnQueueState.threadId, turn.threadId));
+    await appendTurnEvent(tx, {
+      turnId: turn.id,
+      type: "interaction.cleanup_retry_scheduled",
+      data: { requestId: interaction.requestId },
     });
     return true;
   });
@@ -3785,6 +4006,9 @@ export async function completeDurableThreadTurn(input: {
         turn.id,
         input.interactionFailure,
       );
+    }
+    if (input.status === "failed") {
+      await completePreparedApprovalCleanupInTransaction(tx, turn);
     }
     await terminalizeTurnEnvironmentExecution(tx, turn, input.status, now, {
       code: input.failureCode,

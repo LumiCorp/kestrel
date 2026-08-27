@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   parseRunnerExternalApprovalBindingV1,
   parseRunnerExternalApprovalBindingV2,
+  parseRunnerPreparedApprovalCleanupV1,
   RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION,
   RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   serializeCanonicalApprovalPayload,
@@ -669,6 +670,24 @@ async function maybeRequireToolApproval(input: {
           eventPayload: input.eventPayload,
           requiredCapabilities: input.requiredApprovalCapabilities ?? [],
         });
+        if (input.eventPayload.preparedApprovalCleanup !== undefined) {
+          const cleanup = parseRunnerPreparedApprovalCleanupV1(
+            input.eventPayload.preparedApprovalCleanup,
+          );
+          if (
+            cleanup.organizationId !== cleanupRequestOrganizationId(input.eventPayload) ||
+            cleanup.threadId !== input.sessionId ||
+            cleanup.requestId !== asString(currentPendingApproval.approvalId)
+          ) {
+            throw new Error("prepared approval cleanup does not match its exact runtime authority");
+          }
+          return toPreparedApprovalCleanupTransition({
+            ...input,
+            approvalId: asString(currentPendingApproval.approvalId)!,
+            preparedToolCall: persistedPreparedToolCall,
+            cleanup,
+          });
+        }
         return toToolApprovalDeniedTransition({
           ...input,
           approvalId: asString(currentPendingApproval.approvalId)!,
@@ -1039,6 +1058,73 @@ async function maybeRequireToolApproval(input: {
       },
     },
   });
+}
+
+function cleanupRequestOrganizationId(
+  eventPayload: Record<string, unknown>,
+): string | undefined {
+  return asString(asRecord(eventPayload.decidingActor)?.tenantId) ??
+    asString(asRecord(eventPayload.hostedApprovalAuthority)?.organizationId);
+}
+
+function toPreparedApprovalCleanupTransition(input: {
+  reactState: Record<string, unknown>;
+  currentStepAgent: string;
+  deliberationStepId: string;
+  stepIndex: number;
+  activeRegion: string | undefined;
+  approvalId: string;
+  toolName: string;
+  toolClass: ToolExecutionClass;
+  preparedToolCall: PreparedToolCallV1;
+  cleanup: ReturnType<typeof parseRunnerPreparedApprovalCleanupV1>;
+}): Transition {
+  const lastActionResult = {
+    ok: false,
+    kind: "prepared_approval_cleanup",
+    status: "released",
+    approvalId: input.approvalId,
+    toolName: input.toolName,
+    toolClass: input.toolClass,
+    failureCode: input.cleanup.failureCode,
+    ts: new Date().toISOString(),
+  };
+  const checkpoint = createReferenceReactEffectCollectCheckpoint({
+    reactState: input.reactState,
+    currentStepAgent: input.currentStepAgent,
+    nextStepAgent: input.deliberationStepId,
+    stepIndex: input.stepIndex,
+    activeRegion: input.activeRegion,
+    phase: "THINK",
+    effects: [
+      {
+        type: "release_prepared_tool_call",
+        payload: {
+          preparedToolCall: input.preparedToolCall,
+          preparedApprovalCleanup: input.cleanup,
+        },
+        idempotencyKey: `${input.preparedToolCall.callId}:release`,
+        failurePolicy: "STOP",
+      },
+    ],
+    reactPatch: {
+      lastActionResult,
+      terminal: {
+        status: "COMPLETED",
+        reasonCode: input.cleanup.failureCode,
+        message: input.cleanup.failureMessage,
+      },
+      observations: appendAgentObservation(input.reactState, lastActionResult),
+    },
+    execPatch: { pendingApproval: undefined },
+    regionExecPatch: { pendingApproval: undefined },
+  });
+  return {
+    ...checkpoint,
+    status: "COMPLETED",
+    nextStepAgent: undefined,
+    outboxDelivery: "after_terminal",
+  };
 }
 
 function toToolApprovalDeniedTransition(input: {

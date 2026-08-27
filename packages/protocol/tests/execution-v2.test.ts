@@ -111,6 +111,62 @@ test("run.start carries only strict hosted approval decisions", () => {
   }), /decision/u);
 });
 
+test("run.start accepts cleanup only for the exact declined approval request", () => {
+  const cleanup = {
+    version: "runner_prepared_approval_cleanup_v1" as const,
+    organizationId: "org-1",
+    threadId: "session-1",
+    turnId: "turn-1",
+    interactionId: "interaction-1",
+    requestId: "approval-request",
+    failureCode: "EXTERNAL_APPROVAL_EXPIRED" as const,
+    failureMessage: "Expired.",
+  };
+  const command = {
+    id: "command-cleanup",
+    type: "run.start" as const,
+    payload: {
+      profileId: "kestrel",
+      turn: {
+        ...turn,
+        eventType: "user.approval",
+        resumeRequestId: cleanup.requestId,
+        decision: "decline" as const,
+        decidingActor: {
+          actorType: "end_user" as const,
+          actorId: "user-1",
+          tenantId: "org-1",
+        },
+        preparedApprovalCleanup: cleanup,
+      },
+    },
+  };
+  assert.deepEqual(
+    parseRunnerCommandV2(command).payload.turn.preparedApprovalCleanup,
+    cleanup,
+  );
+  assert.throws(
+    () => parseRunnerCommandV2({
+      ...command,
+      payload: {
+        ...command.payload,
+        turn: { ...command.payload.turn, decision: "approve_once" },
+      },
+    }),
+    /preparedApprovalCleanup requires the exact declined approval request/u,
+  );
+  assert.throws(
+    () => parseRunnerCommandV2({
+      ...command,
+      payload: {
+        ...command.payload,
+        turn: { ...command.payload.turn, resumeRequestId: "other-request" },
+      },
+    }),
+    /preparedApprovalCleanup requires the exact declined approval request/u,
+  );
+});
+
 test("execution protocol v4 accepts canonical attachments and rejects v3 payloads", () => {
   const canonicalAttachment = {
     attachmentId: "attachment-1",

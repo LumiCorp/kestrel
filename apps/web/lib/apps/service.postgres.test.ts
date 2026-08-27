@@ -2117,6 +2117,17 @@ test(
           "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
         preparedApprovalCleanupFailureMessage:
           "The approval no longer matches the prepared tool invocation.",
+        preparedApprovalCleanup: {
+          version: "runner_prepared_approval_cleanup_v1",
+          organizationId,
+          threadId,
+          turnId: legacyExecRemember.turnId,
+          interactionId: legacyExecRemember.interactionId,
+          requestId: legacyExecRemember.requestId,
+          failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+          failureMessage:
+            "The approval no longer matches the prepared tool invocation.",
+        },
       },
     );
     assert.equal(
@@ -2168,6 +2179,17 @@ test(
         "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
       preparedApprovalCleanupFailureMessage:
         "The approval no longer matches the prepared tool invocation.",
+      preparedApprovalCleanup: {
+        version: "runner_prepared_approval_cleanup_v1",
+        organizationId,
+        threadId,
+        turnId: mismatchedActorApproveOnce.turnId,
+        interactionId: mismatchedActorApproveOnce.interactionId,
+        requestId: mismatchedActorApproveOnce.requestId,
+        failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+        failureMessage:
+          "The approval no longer matches the prepared tool invocation.",
+      },
     });
     assert.equal(
       await turnStore.recordDurablePreparedApprovalCleanupCompleted({
@@ -2542,6 +2564,25 @@ test(
       payloadRedacted: true,
       queueState: "running",
     });
+    const maintenanceOwnerMemberId = `apps-maintenance-owner-${suffix}`;
+    await sql`
+      INSERT INTO "member" (
+        "id", "organizationId", "userId", "role", "createdAt"
+      ) VALUES (
+        ${maintenanceOwnerMemberId}, ${organizationId}, ${isolatedUserId},
+        'owner', ${now}
+      )
+    `;
+    await sql`
+      INSERT INTO "project_members" (
+        "project_id", "organization_member_id", "role"
+      ) VALUES (${projectId}, ${maintenanceOwnerMemberId}, 'owner')
+    `;
+    await sql`
+      DELETE FROM "project_members"
+      WHERE "project_id" = ${projectId}
+        AND "organization_member_id" = ${memberId}
+    `;
     const backgroundExpiredClaim = await turnStore.claimDurableThreadTurn(
       backgroundExpired.turnId,
     );
@@ -2558,19 +2599,58 @@ test(
       preparedApprovalCleanupFailureCode: "EXTERNAL_APPROVAL_EXPIRED",
       preparedApprovalCleanupFailureMessage:
         "The prepared authorization expired before it could execute.",
-    });
-    assert.equal(
-      await turnStore.recordDurablePreparedApprovalCleanupCompleted({
+      preparedApprovalCleanup: {
+        version: "runner_prepared_approval_cleanup_v1",
+        organizationId,
+        threadId,
         turnId: backgroundExpired.turnId,
-      }),
-      true,
+        interactionId: backgroundExpired.interactionId,
+        requestId: backgroundExpired.requestId,
+        failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+        failureMessage:
+          "The prepared authorization expired before it could execute.",
+      },
+    });
+    assert.deepEqual(
+      (await turnStore.claimDurableThreadTurn(backgroundExpired.turnId, {
+        resumeRunning: true,
+      }))?.interactionResponse,
+      backgroundExpiredClaim?.interactionResponse,
     );
+    await sql`
+      INSERT INTO "project_members" (
+        "project_id", "organization_member_id", "role"
+      ) VALUES (${projectId}, ${memberId}, 'owner')
+    `;
+    await sql`
+      DELETE FROM "project_members"
+      WHERE "project_id" = ${projectId}
+        AND "organization_member_id" = ${maintenanceOwnerMemberId}
+    `;
+    await sql`
+      DELETE FROM "member" WHERE "id" = ${maintenanceOwnerMemberId}
+    `;
     await turnStore.completeDurableThreadTurn({
       turnId: backgroundExpired.turnId,
       status: "failed",
       failureCode: "EXTERNAL_APPROVAL_EXPIRED",
       failureMessage:
         "The prepared authorization expired before it could execute.",
+    });
+    const [backgroundExpiredFinal] = await sql<
+      Array<{ interactionStatus: string; turnStatus: string; failureCode: string | null }>
+    >`
+      SELECT interaction."status" AS "interactionStatus",
+             interaction."response_failure_code" AS "failureCode",
+             turn."status" AS "turnStatus"
+      FROM "thread_interactions" interaction
+      JOIN "thread_turns" turn ON turn."id" = ${backgroundExpired.turnId}
+      WHERE interaction."id" = ${backgroundExpired.interactionId}
+    `;
+    assert.deepEqual(backgroundExpiredFinal, {
+      interactionStatus: "failed",
+      turnStatus: "failed",
+      failureCode: "EXTERNAL_APPROVAL_EXPIRED",
     });
 
     const mixedClient = await createAdditionalRememberInteraction({

@@ -62,13 +62,13 @@ import {
   isDurableTurnCancellationRequested,
   listMessagesForDurableTurn,
   persistDurableAssistantOutcome,
-  recordDurablePreparedApprovalCleanupCompleted,
   recordDurableRuntimeDeclineCompleted,
   recordDurableRuntimeStarted,
   recordDurableRuntimeToolOutcome,
   type DurableRuntimeToolOutcomeEvidence,
   recordMobileTurnActivity,
   recordMobileTurnRuntimeActivity,
+  resetDurablePreparedApprovalCleanupForRetry,
 } from "@/lib/turns/store";
 import {
   convertToUIMessages,
@@ -76,6 +76,13 @@ import {
 } from "@/lib/utils";
 
 const TITLE_FAILURE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,119}$/u;
+
+class PreparedApprovalCleanupRetryError extends Error {
+  constructor() {
+    super("Prepared approval cleanup release will retry.");
+    this.name = "PreparedApprovalCleanupRetryError";
+  }
+}
 
 function readDurableRuntimeToolOutcome(
   value: unknown,
@@ -418,6 +425,12 @@ export async function processDurableThreadTurn(
         interruptedTerminalStatus !== "failed";
       const terminalFailed = interruptedTerminalStatus === "failed";
       if (
+        terminalFailed &&
+        await resetDurablePreparedApprovalCleanupForRetry({ turnId })
+      ) {
+        throw new PreparedApprovalCleanupRetryError();
+      }
+      if (
         !(
           stopped ||
           terminalFailed ||
@@ -481,6 +494,8 @@ export async function processDurableThreadTurn(
   if (!turn) {
     return { processed: false, nextTurnId: null };
   }
+  const preparedApprovalCleanup =
+    turn.interactionResponse?.preparedApprovalCleanup;
 
   let projectContext: Awaited<ReturnType<typeof loadBoundProjectContext>> =
     null;
@@ -625,18 +640,26 @@ export async function processDurableThreadTurn(
       stage: "reading_context",
       milestoneId: `turn:${turn.id}:context`,
     });
-    projectContext = await loadBoundProjectContext(
-      turn,
-      reattachExecutionId ?? recoveredCompletedExecutionId,
-    );
-    const threadFileInventory = await listThreadFileInventory({
-      threadId: turn.threadId,
-      organizationId: turn.organizationId,
-      userId: turn.authorUserId,
-      checkAvailability: false,
-    });
+    projectContext = preparedApprovalCleanup
+      ? null
+      : await loadBoundProjectContext(
+          turn,
+          reattachExecutionId ?? recoveredCompletedExecutionId,
+        );
+    const threadFileInventory = preparedApprovalCleanup
+      ? []
+      : await listThreadFileInventory({
+          threadId: turn.threadId,
+          organizationId: turn.organizationId,
+          userId: turn.authorUserId,
+          checkAvailability: false,
+        });
     let resolvedAttachments: RunnerTurnAttachment[] | null = null;
-    if (!reattachExecutionId && !recoveredCompletedExecutionId) {
+    if (
+      !preparedApprovalCleanup &&
+      !reattachExecutionId &&
+      !recoveredCompletedExecutionId
+    ) {
       const attachmentIds = attachmentParts(submittedUserMessage?.parts).map(
         (attachment) => attachment.fileId,
       );
@@ -685,7 +708,7 @@ export async function processDurableThreadTurn(
         resolvedAttachments = [];
       }
     }
-    transientTitle = turn.approvalId
+    transientTitle = preparedApprovalCleanup || turn.approvalId
       ? null
       : submittedUserMessage
         ? generateTitleForOrganization({
@@ -947,10 +970,12 @@ export async function processDurableThreadTurn(
     ) {
       throw new Error("The durable turn worker lease ended during execution.");
     }
-    assertVisibleCompletedOutcome(
-      terminal.status,
-      persistedAssistantMessageCount,
-    );
+    if (!preparedApprovalCleanup) {
+      assertVisibleCompletedOutcome(
+        terminal.status,
+        persistedAssistantMessageCount,
+      );
+    }
     if (terminal.status === "waiting" && terminal.interaction) {
       return { processed: true, nextTurnId: null };
     }
@@ -958,16 +983,18 @@ export async function processDurableThreadTurn(
     // result is authoritative even if the worker lease ends immediately after
     // it. Earlier worker loss reaches the failed/catch paths instead.
     let completionStatus = terminalTurnStatus(terminal.status);
-    const preparedCleanupFailureCode =
-      turn.interactionResponse?.preparedApprovalCleanupFailureCode;
-    const preparedCleanupFailureMessage =
-      turn.interactionResponse?.preparedApprovalCleanupFailureMessage;
+    const preparedCleanupFailureCode = preparedApprovalCleanup?.failureCode;
+    const preparedCleanupFailureMessage = preparedApprovalCleanup?.failureMessage;
     if (
       completionStatus === "completed" &&
       preparedCleanupFailureCode !== undefined
     ) {
-      await recordDurablePreparedApprovalCleanupCompleted({ turnId: turn.id });
       completionStatus = "failed";
+    } else if (
+      preparedCleanupFailureCode !== undefined &&
+      await resetDurablePreparedApprovalCleanupForRetry({ turnId: turn.id })
+    ) {
+      throw new PreparedApprovalCleanupRetryError();
     } else if (
       completionStatus === "completed" &&
       turn.interactionResponse?.decision === "decline"
@@ -1009,6 +1036,7 @@ export async function processDurableThreadTurn(
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
   } catch (error) {
+    if (error instanceof PreparedApprovalCleanupRetryError) throw error;
     await transientTitle;
     await eventWrites.catch(() => {});
     if (runnerRunStartedObserved && !runtimeStartedRecorded) {

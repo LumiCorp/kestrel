@@ -164,6 +164,19 @@ export function createReferenceReactAgentDefinitionFromResolvedOptions(
         createStep: () => createExecWaitEffectStep(execConfig),
         contract: ({ transition }) => {
           const next = transition.nextStepAgent;
+          if (transition.status === "COMPLETED") {
+            const effects = transition.effects ?? [];
+            const payload = asRecord(effects[0]?.payload);
+            const cleanup = asRecord(payload?.preparedApprovalCleanup);
+            if (
+              effects.length !== 1 ||
+              effects[0]?.type !== "release_prepared_tool_call" ||
+              cleanup?.version !== "runner_prepared_approval_cleanup_v1"
+            ) {
+              throw contractError("agent.exec.wait_approval cleanup completion is invalid");
+            }
+            return;
+          }
           if (transition.status === "WAITING") {
             if (next !== AGENT_STEP_IDS.execWaitEffect) {
               throw contractError("agent.exec.wait_effect WAITING transitions must resume at agent.exec.wait_effect");

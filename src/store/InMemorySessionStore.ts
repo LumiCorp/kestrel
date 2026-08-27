@@ -1,4 +1,5 @@
 import type { EffectExecutionStatus, RuntimeError, TransitionStatus } from "../kestrel/contracts/base.js";
+import { parseRunnerPreparedApprovalCleanupV1 } from "@kestrel-agents/protocol";
 import type { RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { EffectResult, RegionWorkIntent, RegionWorkItem } from "../kestrel/contracts/execution.js";
 import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
@@ -1049,6 +1050,28 @@ export class InMemorySessionStore implements SessionStore {
       return "claimed";
     }
     return effect.status === "CLAIMED" ? "already_claimed" : "terminal";
+  }
+
+  async resetPreparedApprovalCleanupEffectExecution(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"reset" | "done" | "conflict"> {
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+    if (
+      effect === undefined ||
+      effect.runId !== owner.runId ||
+      effect.sessionId !== owner.sessionId ||
+      effect.type !== "release_prepared_tool_call" ||
+      !hasPreparedApprovalCleanupMarker(effect.payload) ||
+      !this.hasTrustedEffectStatusTenant(effect)
+    ) return "conflict";
+    const result = this.effectResults.get(idempotencyKey);
+    if (result?.status === "DONE") return "done";
+    if (result?.status === "FAILED") this.effectResults.delete(idempotencyKey);
+    if (effect.status === "DONE") return "conflict";
+    effect.status = "PENDING";
+    this.operationLog.push(`resetPreparedApprovalCleanupEffectExecution:${idempotencyKey}`);
+    return "reset";
   }
 
   async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, owner: { runId: string; sessionId: string }): Promise<void> {
@@ -2469,6 +2492,17 @@ function readMissionControlRunCorrelation(value: unknown) {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function hasPreparedApprovalCleanupMarker(value: unknown): boolean {
+  const marker = asRecord(value)?.preparedApprovalCleanup;
+  if (marker === undefined) return false;
+  try {
+    parseRunnerPreparedApprovalCleanupV1(marker);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readTerminalEnvelope(

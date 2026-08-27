@@ -517,6 +517,60 @@ export interface RunnerHostedApprovalAuthorityV1 {
   threadId: string;
 }
 
+export const RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION =
+  "runner_prepared_approval_cleanup_v1" as const;
+
+export interface RunnerPreparedApprovalCleanupV1 {
+  version: typeof RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION;
+  organizationId: string;
+  threadId: string;
+  turnId: string;
+  interactionId: string;
+  requestId: string;
+  failureCode:
+    | "EXTERNAL_APPROVAL_EXPIRED"
+    | "EXTERNAL_APPROVAL_IDENTITY_MISMATCH"
+    | "EXTERNAL_APPROVAL_POLICY_CHANGED";
+  failureMessage: string;
+}
+
+export function parseRunnerPreparedApprovalCleanupV1(
+  value: unknown,
+  label = "preparedApprovalCleanup",
+): RunnerPreparedApprovalCleanupV1 {
+  const cleanup = requireRecord(value, label);
+  rejectUnknownFields(cleanup, label, [
+    "version",
+    "organizationId",
+    "threadId",
+    "turnId",
+    "interactionId",
+    "requestId",
+    "failureCode",
+    "failureMessage",
+  ]);
+  if (cleanup.version !== RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION) {
+    throw new RunnerProtocolContractError(`${label}.version is invalid`);
+  }
+  if (
+    cleanup.failureCode !== "EXTERNAL_APPROVAL_EXPIRED" &&
+    cleanup.failureCode !== "EXTERNAL_APPROVAL_IDENTITY_MISMATCH" &&
+    cleanup.failureCode !== "EXTERNAL_APPROVAL_POLICY_CHANGED"
+  ) {
+    throw new RunnerProtocolContractError(`${label}.failureCode is invalid`);
+  }
+  return {
+    version: RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION,
+    organizationId: requireNonEmptyString(cleanup.organizationId, `${label}.organizationId`),
+    threadId: requireNonEmptyString(cleanup.threadId, `${label}.threadId`),
+    turnId: requireNonEmptyString(cleanup.turnId, `${label}.turnId`),
+    interactionId: requireNonEmptyString(cleanup.interactionId, `${label}.interactionId`),
+    requestId: requireNonEmptyString(cleanup.requestId, `${label}.requestId`),
+    failureCode: cleanup.failureCode,
+    failureMessage: requireNonEmptyString(cleanup.failureMessage, `${label}.failureMessage`),
+  };
+}
+
 export interface RunnerTurnInput {
   sessionId: string;
   runId?: string | undefined;
@@ -530,6 +584,7 @@ export interface RunnerTurnInput {
   recoveryOptionId?: string | undefined;
   decision?: HostedToolApprovalDecision | undefined;
   decidingActor?: RunnerActorMetadata | undefined;
+  preparedApprovalCleanup?: RunnerPreparedApprovalCleanupV1 | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: RunnerInteractionMode | undefined;
@@ -1402,6 +1457,7 @@ export type OrdinaryConversationTurn = Omit<
   | "recoveryOptionId"
   | "decision"
   | "decidingActor"
+  | "preparedApprovalCleanup"
   | "stepAgent"
 >;
 
@@ -2826,6 +2882,7 @@ function parseRunnerCommandPayloadV2(
         "recoveryOptionId",
         "decision",
         "decidingActor",
+        "preparedApprovalCleanup",
         "stepAgent",
       ]) {
         if (Object.hasOwn(turn, forbidden)) {
@@ -3737,6 +3794,12 @@ function validateRunTurn(value: unknown, label: string): void {
   const decidingActor = turn.decidingActor === undefined
     ? undefined
     : parseRunnerActorMetadata(turn.decidingActor, `${label}.decidingActor`);
+  const preparedApprovalCleanup = turn.preparedApprovalCleanup === undefined
+    ? undefined
+    : parseRunnerPreparedApprovalCleanupV1(
+        turn.preparedApprovalCleanup,
+        `${label}.preparedApprovalCleanup`,
+      );
   if (turn.resumeBlockedRun === true && turn.resumeRequestId === undefined) {
     throw new RunnerProtocolContractError(
       `${label}.resumeRequestId is required when resumeBlockedRun is true`,
@@ -3766,6 +3829,16 @@ function validateRunTurn(value: unknown, label: string): void {
   if (decidingActor !== undefined && turn.decision === undefined) {
     throw new RunnerProtocolContractError(
       `${label}.decidingActor requires an approval decision`,
+    );
+  }
+  if (
+    preparedApprovalCleanup !== undefined &&
+    (turn.decision !== "decline" ||
+      turn.eventType !== "user.approval" ||
+      turn.resumeRequestId !== preparedApprovalCleanup.requestId)
+  ) {
+    throw new RunnerProtocolContractError(
+      `${label}.preparedApprovalCleanup requires the exact declined approval request`,
     );
   }
   validateOptionalNonEmptyString(turn.stepAgent, `${label}.stepAgent`);
