@@ -5,6 +5,8 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 ## Ready
 
 - [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
+- [Reconcile stale Trigger owners during migration](38-reconcile-stale-trigger-owners-during-migration.md)
+- [Keep route-export sessions live](39-keep-route-export-sessions-live.md)
 
 ## In progress
 
