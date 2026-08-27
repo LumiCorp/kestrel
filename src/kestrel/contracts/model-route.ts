@@ -21,6 +21,11 @@ export interface ModelCredentialReferenceV1 {
   rawModelId: string;
   provider: Exclude<ModelRouteProviderV1, "lmstudio">;
   routeBinding?: ModelCredentialRouteBindingV2 | undefined;
+  /**
+   * Immutable, secret-free registration snapshot carried only for a qualified
+   * hosted route. Runtime admission consumes this rather than web metadata.
+   */
+  registration?: ModelRegistrationV2 | undefined;
 }
 
 /**
@@ -75,6 +80,7 @@ export function parseModelCredentialReferenceV1(
     "rawModelId",
     "provider",
     "routeBinding",
+    "registration",
   ]);
   for (const field of Object.keys(record)) {
     if (!fields.has(field)) {
@@ -112,7 +118,41 @@ export function parseModelCredentialReferenceV1(
       "Model credential route binding must match its credential provider and model.",
     );
   }
-  return routeBinding === undefined ? parsed : { ...parsed, routeBinding };
+  const registration =
+    record.registration === undefined
+      ? undefined
+      : parseModelRegistrationV2(record.registration);
+  if (routeBinding?.status === "qualified") {
+    if (registration === undefined) {
+      throw new Error(
+        "Qualified model credential routes require an exact registration snapshot.",
+      );
+    }
+    if (
+      registration.providerId !== routeBinding.provider ||
+      registration.modelId !== routeBinding.rawModelId ||
+      registration.registrationId !== routeBinding.registrationId ||
+      registration.revision !== routeBinding.registrationRevision ||
+      registration.fingerprint !== routeBinding.registrationFingerprint ||
+      registration.qualification.revision !== routeBinding.qualificationRevision ||
+      registration.route.apiEndpoint !== routeBinding.apiEndpoint ||
+      registration.route.endpointCodec !== routeBinding.endpointCodec ||
+      registration.credentialRevision !== String(routeBinding.credentialRevision)
+    ) {
+      throw new Error(
+        "Qualified model credential registration does not match its route binding.",
+      );
+    }
+  } else if (registration !== undefined) {
+    throw new Error(
+      "Legacy model credential routes cannot carry a qualified registration snapshot.",
+    );
+  }
+  return {
+    ...parsed,
+    ...(routeBinding === undefined ? {} : { routeBinding }),
+    ...(registration === undefined ? {} : { registration }),
+  };
 }
 
 export function parseModelCredentialRouteBindingV2(
@@ -258,3 +298,7 @@ function requireProvider(value: unknown): ModelRouteProviderV1 {
   }
   return value;
 }
+import {
+  parseModelRegistrationV2,
+  type ModelRegistrationV2,
+} from "./model-registration.js";

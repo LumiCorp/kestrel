@@ -17,6 +17,11 @@ import type {
   ModelGatewayCallOptions,
   ModelRequest,
 } from "../../src/kestrel/contracts/model-io.js";
+import {
+  MODEL_REQUEST_V2_VERSION,
+  createModelRequestV2,
+} from "../../src/kestrel/contracts/model-registration.js";
+import { createEffectiveModelContractV1 } from "../../src/kestrel/effective-model-contract.js";
 
 const reference = {
   source: "kestrel-one" as const,
@@ -115,7 +120,7 @@ test("broker rejects a qualified route mismatch before provider creation", async
     gateway.call({ input: "do not substitute", model: "other-model" }),
     (error: unknown) =>
       error instanceof GatewayCredentialBrokerError &&
-      error.code === "GATEWAY_CREDENTIAL_ROUTE_MISMATCH",
+      error.code === "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
   );
   assert.equal(providerCreations, 0);
 });
@@ -146,14 +151,144 @@ test("broker rejects a tampered qualified lease before provider creation", async
     },
   });
 
+  const request = qualifiedRequest();
   await assert.rejects(
-    gateway.call({ input: "reject tampering" }),
+    gateway.call(request, { effectiveModelContract: qualifiedContract(request) }),
     (error: unknown) =>
       error instanceof GatewayCredentialBrokerError &&
       error.code === "GATEWAY_CREDENTIAL_ROUTE_MISMATCH",
   );
   assert.equal(providerCreations, 0);
 });
+
+test("broker rejects a mismatched effective contract before acquiring a credential lease", async () => {
+  let loads = 0;
+  let providerCreations = 0;
+  const request = qualifiedRequest();
+  const contract = createEffectiveModelContractV1({
+    ...qualifiedContractInput(request),
+    runtimeRole: "different-role",
+  });
+  const cache = new GatewayCredentialLeaseCache({
+    random: () => 0,
+    load: async () => {
+      loads += 1;
+      return { ...lease({ leaseId: "should-not-load", expiresAtMs: Date.now() + 60_000 }), routeBinding: qualifiedRouteBinding };
+    },
+  });
+  const gateway = new BrokeredModelGateway({
+    reference: { ...reference, routeBinding: qualifiedRouteBinding },
+    cache,
+    createProvider: () => {
+      providerCreations += 1;
+      return { async call<T>() { return {} as T; } };
+    },
+  });
+
+  await assert.rejects(
+    gateway.call(request, { effectiveModelContract: contract }),
+    (error: unknown) => error instanceof GatewayCredentialBrokerError && error.code === "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
+  );
+  assert.equal(loads, 0);
+  assert.equal(providerCreations, 0);
+});
+
+test("broker blocks structured legacy routes before acquiring a credential lease", async () => {
+  let loads = 0;
+  const cache = new GatewayCredentialLeaseCache({
+    random: () => 0,
+    load: async () => {
+      loads += 1;
+      return lease({
+        leaseId: "legacy-structured-should-not-load",
+        expiresAtMs: Date.now() + 60_000,
+      });
+    },
+  });
+  const gateway = new BrokeredModelGateway({
+    reference: {
+      ...reference,
+      routeBinding: {
+        version: "model_credential_route_binding_v2",
+        status: "legacy_unqualified",
+        provider: reference.provider,
+        rawModelId: reference.rawModelId,
+      },
+    },
+    cache,
+    createProvider: () => ({ async call<T>() { return {} as T; } }),
+  });
+
+  await assert.rejects(
+    gateway.call(structuredRequest()),
+    (error: unknown) =>
+      error instanceof GatewayCredentialBrokerError &&
+      error.code === "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
+  );
+  assert.equal(loads, 0);
+});
+
+function qualifiedRequest() {
+  return createModelRequestV2({
+    version: MODEL_REQUEST_V2_VERSION,
+    model: reference.rawModelId,
+    input: "do not lease",
+    requirements: {
+      runtimeRole: "agent.loop",
+      output: { kind: "text", assurance: "none" },
+      tools: { choice: "none", strictArguments: false, parallelism: "forbidden" },
+      reasoning: { mode: "off", continuationKinds: [] },
+      streaming: { required: false, terminalBehavior: "not_required" },
+      inputModalities: ["text"],
+      endpoint: "chat",
+    },
+  });
+}
+
+function structuredRequest() {
+  return createModelRequestV2({
+    version: MODEL_REQUEST_V2_VERSION,
+    model: reference.rawModelId,
+    input: "return JSON",
+    responseFormat: "json",
+    requirements: {
+      runtimeRole: "agent.loop",
+      output: { kind: "json_object", assurance: "json_syntax" },
+      tools: { choice: "none", strictArguments: false, parallelism: "forbidden" },
+      reasoning: { mode: "off", continuationKinds: [] },
+      streaming: { required: false, terminalBehavior: "not_required" },
+      inputModalities: ["text"],
+      endpoint: "chat",
+    },
+  });
+}
+
+function qualifiedContract(request: ReturnType<typeof qualifiedRequest>) {
+  return createEffectiveModelContractV1(qualifiedContractInput(request));
+}
+
+function qualifiedContractInput(
+  request: ReturnType<typeof qualifiedRequest>,
+): Parameters<typeof createEffectiveModelContractV1>[0] {
+  return {
+    status: "qualified" as const,
+    providerId: "openrouter" as const,
+    modelId: reference.rawModelId,
+    registrationId: qualifiedRouteBinding.registrationId,
+    registrationRevision: qualifiedRouteBinding.registrationRevision,
+    registrationFingerprint: qualifiedRouteBinding.registrationFingerprint,
+    qualificationRevision: qualifiedRouteBinding.qualificationRevision,
+    credentialRevision: qualifiedRouteBinding.credentialRevision,
+    apiEndpoint: qualifiedRouteBinding.apiEndpoint,
+    endpoint: "chat" as const,
+    endpointCodec: qualifiedRouteBinding.endpointCodec,
+    routingPolicyFingerprint: qualifiedRouteBinding.routingPolicyFingerprint,
+    runtimeRole: qualifiedRouteBinding.requiredRole,
+    requestFingerprint: request.fingerprints.request,
+    schemaHash: request.fingerprints.schema,
+    toolSurfaceHash: request.fingerprints.toolSurface,
+  };
+}
 
 test("credential cache isolates otherwise identical references by organization", async () => {
   let loads = 0;

@@ -16,6 +16,7 @@ import {
 import {
   fingerprintModelRoutingPolicyV2,
   parseModelRegistrationV2,
+  type ModelRegistrationV2,
 } from "../../../../src/kestrel/contracts/model-registration";
 
 type RunnerModelProvider = NonNullable<RunnerProfile["modelProvider"]>;
@@ -28,6 +29,7 @@ export type KestrelOneRuntimeModelSelection = {
   model: string;
   provider: RunnerModelProvider;
   routeBinding?: ModelCredentialRouteBindingV2 | undefined;
+  registration?: ModelRegistrationV2 | undefined;
   economicsProfile?: GatewayModelEconomicsProfile | undefined;
 };
 
@@ -102,7 +104,7 @@ export function toKestrelOneRuntimeModelSelection(input: {
     throw error;
   }
 
-  const routeBinding = readQualifiedRouteBinding({
+  const qualifiedRoute = readQualifiedRoute({
     metadata: input.metadata,
     provider: provider as ModelCredentialRouteBindingV2["provider"],
     rawModelId: input.rawModelId,
@@ -117,7 +119,12 @@ export function toKestrelOneRuntimeModelSelection(input: {
     environmentId: input.environmentId,
     model: input.rawModelId,
     provider: provider as RunnerModelProvider,
-    ...(routeBinding !== undefined ? { routeBinding } : {}),
+    ...(qualifiedRoute === undefined
+      ? {}
+      : {
+          routeBinding: qualifiedRoute.routeBinding,
+          registration: qualifiedRoute.registration,
+        }),
     economicsProfile,
   };
 }
@@ -189,17 +196,25 @@ export function applyKestrelOneModelsToProfile(
           provider: selection.provider,
           rawModelId: selection.model,
         }),
+      ...(selection.registration === undefined
+        ? {}
+        : { registration: selection.registration }),
     },
   };
 }
 
-function readQualifiedRouteBinding(input: {
+function readQualifiedRoute(input: {
   metadata: unknown;
   provider: ModelCredentialRouteBindingV2["provider"];
   rawModelId: string;
   credentialRevision: number | undefined;
   requiredRole: string;
-}): ModelCredentialRouteBindingV2 | undefined {
+}):
+  | {
+      routeBinding: ModelCredentialRouteBindingV2;
+      registration: ModelRegistrationV2;
+    }
+  | undefined {
   if (
     !(input.metadata && typeof input.metadata === "object") ||
     Array.isArray(input.metadata) ||
@@ -223,21 +238,24 @@ function readQualifiedRouteBinding(input: {
     );
   }
   return {
-    version: "model_credential_route_binding_v2",
-    status: "qualified",
-    provider: input.provider,
-    rawModelId: input.rawModelId,
-    registrationId: parsed.registrationId,
-    registrationRevision: parsed.revision,
-    registrationFingerprint: parsed.fingerprint,
-    qualificationRevision: parsed.qualification.revision,
-    apiEndpoint: parsed.route.apiEndpoint,
-    endpointCodec: parsed.route.endpointCodec,
-    routingPolicyFingerprint: fingerprintModelRoutingPolicyV2(
-      parsed.route.routing,
-    ),
-    requiredRole: input.requiredRole,
-    credentialRevision: input.credentialRevision,
+    registration: parsed,
+    routeBinding: {
+      version: "model_credential_route_binding_v2",
+      status: "qualified",
+      provider: input.provider,
+      rawModelId: input.rawModelId,
+      registrationId: parsed.registrationId,
+      registrationRevision: parsed.revision,
+      registrationFingerprint: parsed.fingerprint,
+      qualificationRevision: parsed.qualification.revision,
+      apiEndpoint: parsed.route.apiEndpoint,
+      endpointCodec: parsed.route.endpointCodec,
+      routingPolicyFingerprint: fingerprintModelRoutingPolicyV2(
+        parsed.route.routing,
+      ),
+      requiredRole: input.requiredRole,
+      credentialRevision: input.credentialRevision,
+    },
   };
 }
 

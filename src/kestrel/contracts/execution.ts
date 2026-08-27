@@ -416,6 +416,7 @@ export interface RuntimeDependencies {
   workspaceCheckpointService?: RuntimeWorkspaceCheckpointService | undefined;
   managedTaskWorktreeService?: ManagedTaskWorktreeService | undefined;
   modelGateway: ModelGateway;
+  effectiveModelContractResolver?: import("../effective-model-contract.js").EffectiveModelContractResolverV1 | undefined;
   continuationCheckpointModel?: string | undefined;
   providerReasoningVault?: ProviderReasoningVault | undefined;
   effectRunner: EffectRunner;

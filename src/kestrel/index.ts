@@ -1,5 +1,20 @@
 export { Kestrel } from "./Kestrel.js";
 export {
+  EFFECTIVE_MODEL_CONTRACT_V1,
+  createEffectiveModelContractV1,
+  createExactEffectiveModelContractResolverV1,
+  legacyEffectiveModelContractResolverV1,
+  parseEffectiveModelContractV1,
+  resolveExactModelEndpointV1,
+} from "./effective-model-contract.js";
+export type {
+  EffectiveModelContractAdmissionV1,
+  EffectiveModelContractResolverV1,
+  EffectiveModelContractV1,
+  ExactEffectiveModelContractSnapshotV1,
+  ExactModelEndpointV1,
+} from "./effective-model-contract.js";
+export {
   MODEL_QUALIFICATION_CAPABILITIES,
   ModelQualificationService,
   createModelQualificationBinding,

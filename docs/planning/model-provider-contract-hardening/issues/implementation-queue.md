@@ -2,16 +2,20 @@
 
 Each issue appears in one state. `Ready` is the current dependency-free frontier. Move issues between states as implementation and review change the graph.
 
-## Ready
+## In progress
 
-- [Persist exact hosted model registrations](08-persist-exact-hosted-registrations.md)
-- [Admit effective model contracts before provider spend](09-admit-effective-model-contracts.md)
+## Ready
 
 ## Blocked
 
 - [Persist exact admission and response proof](10-persist-model-call-proof.md) — depends on issue 09.
 - [Show truthful hosted model readiness by role](11-show-truthful-hosted-model-readiness.md) — depends on issues 08, 09, and 10.
 - [Publish exact Local Core and Desktop model readiness](12-publish-local-core-model-readiness.md) — depends on issues 06, 09, and 10.
+
+## Implemented
+
+- [Persist exact hosted model registrations](08-persist-exact-hosted-registrations.md)
+- [Admit effective model contracts before provider spend](09-admit-effective-model-contracts.md)
 
 ## Done
 

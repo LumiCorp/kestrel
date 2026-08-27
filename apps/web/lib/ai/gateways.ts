@@ -31,9 +31,7 @@ import {
   GatewayModelInUseError,
   GatewayModelProviderResolutionError,
 } from "./gateway-lifecycle-error";
-import {
-  normalizeGatewayStoredCredential,
-} from "./gateway-credential-source";
+import { normalizeGatewayStoredCredential } from "./gateway-credential-source";
 import {
   buildRunPodServerlessBaseUrl,
   GATEWAY_MODALITIES,
@@ -65,6 +63,16 @@ import {
   withGatewayModelEconomicsProfile,
 } from "./model-economics-profile";
 import { fetchOpenRouterModelDetailsWithCredentials } from "./openrouter-model-resolution";
+import {
+  createHostedModelRegistration,
+  hostedModelRegistrationRevision,
+  preserveHostedModelCapabilityMetadata,
+  removeHostedModelCapabilityMetadata,
+  withHostedModelRegistration,
+  type HostedModelProviderEvidence,
+  type HostedModelRegistrationProvider,
+} from "./hosted-model-registration";
+import type { ProviderRuntimeConfigurationV1 } from "../../../../src/kestrel/contracts/model-registration";
 
 export { fetchOpenRouterModelDetailsWithCredentials } from "./openrouter-model-resolution";
 
@@ -149,7 +157,7 @@ function getDefaultBaseUrl(provider: GatewayProvider) {
 }
 
 export function getGatewayApiKey(
-  gateway: Pick<GatewayRecord, "apiKey" | "apiKeyEnvVar" | "id" | "provider">
+  gateway: Pick<GatewayRecord, "apiKey" | "apiKeyEnvVar" | "id" | "provider">,
 ) {
   if (gateway.apiKey?.trim()) {
     return decryptGatewayCredential({
@@ -163,7 +171,7 @@ export function getGatewayApiKey(
 
 function getOpenAICompatibleBaseUrl(gateway: GatewayRecord) {
   return normalizeOpenAICompatibleBaseUrl(
-    gateway.baseUrl?.trim() || getDefaultBaseUrl(gateway.provider)
+    gateway.baseUrl?.trim() || getDefaultBaseUrl(gateway.provider),
   );
 }
 
@@ -206,7 +214,9 @@ function getGatewayModelEconomicsAdmission(
   const profile = readGatewayModelEconomicsProfile(model.metadata, base);
   if (!profile) return { ...base, status: "needs_profile" };
   const metadata =
-    model.metadata && typeof model.metadata === "object" && !Array.isArray(model.metadata)
+    model.metadata &&
+    typeof model.metadata === "object" &&
+    !Array.isArray(model.metadata)
       ? (model.metadata as Record<string, unknown>)
       : {};
   return {
@@ -232,17 +242,25 @@ export function isEligibleHostedLanguageModel(input: {
   metadata: unknown;
   rawModelId: string;
 }) {
-  if (!input.approved || input.gatewayEnabled === false || input.modality !== "language") return false;
+  if (
+    !input.approved ||
+    input.gatewayEnabled === false ||
+    input.modality !== "language"
+  )
+    return false;
   if (!isKestrelRuntimeLanguageProvider(input.gatewayProvider)) return false;
   const provider = getGatewayModelEconomicsProvider({
     gatewayProvider: input.gatewayProvider,
     modality: input.modality,
     metadata: input.metadata,
   });
-  return provider !== undefined && readGatewayModelEconomicsProfile(input.metadata, {
-    provider,
-    model: input.rawModelId,
-  }) !== undefined;
+  return (
+    provider !== undefined &&
+    readGatewayModelEconomicsProfile(input.metadata, {
+      provider,
+      model: input.rawModelId,
+    }) !== undefined
+  );
 }
 
 function getComparableModelName(rawModelId: string) {
@@ -259,7 +277,7 @@ function getOpenAICompatibleAuthHeaders(apiKey: string | null) {
 
 async function fetchProviderJson<T>(
   url: string,
-  init?: RequestInit
+  init?: RequestInit,
 ): Promise<T> {
   const response = await fetch(url, init);
   const json = await response.json().catch(() => ({}));
@@ -279,7 +297,8 @@ async function fetchOpenRouterModelDetails(
   const baseUrl = getOpenAICompatibleBaseUrl(gateway);
   if (!apiKey || !baseUrl) {
     throw new GatewayModelProviderResolutionError({
-      message: "OpenRouter gateway credentials are required to resolve a model.",
+      message:
+        "OpenRouter gateway credentials are required to resolve a model.",
     });
   }
   return fetchOpenRouterModelDetailsWithCredentials({
@@ -287,6 +306,145 @@ async function fetchOpenRouterModelDetails(
     apiKey,
     rawModelId,
   });
+}
+
+function asHostedRegistrationProvider(
+  provider: GatewayProvider | undefined,
+): HostedModelRegistrationProvider | undefined {
+  return provider === "openai" ||
+    provider === "openrouter" ||
+    provider === "anthropic"
+    ? provider
+    : undefined;
+}
+
+function createHostedProviderRuntimeConfiguration(input: {
+  gateway: GatewayRecord;
+  provider: HostedModelRegistrationProvider;
+}): ProviderRuntimeConfigurationV1 {
+  const endpoint =
+    input.provider === "anthropic"
+      ? input.gateway.baseUrl?.trim() || "https://api.anthropic.com/v1"
+      : getOpenAICompatibleBaseUrl(input.gateway);
+  if (!endpoint) {
+    throw new GatewayModelProviderResolutionError({
+      message: `${getProviderDisplayName(input.provider)} gateway base URL is missing.`,
+    });
+  }
+  return {
+    version: "provider_runtime_configuration_v1",
+    providerId: input.provider,
+    protocol:
+      input.provider === "anthropic"
+        ? "anthropic"
+        : input.provider === "openrouter"
+          ? "openrouter"
+          : "openai",
+    authentication: {
+      mode: "required",
+      credentialReference: {
+        source: "hosted-gateway",
+        id: `provider.${input.provider}.hosted`,
+      },
+    },
+    endpoint,
+    timeoutMs: 15_000,
+    allowedHeaders:
+      input.provider === "openai"
+        ? ["openai-organization", "openai-project"]
+        : [],
+    dataHandling: "provider_managed",
+  };
+}
+
+function createHostedRegistrationOrThrow(input: {
+  gateway: GatewayRecord;
+  provider: HostedModelRegistrationProvider;
+  modelRecordId: string;
+  rawModelId: string;
+  providerEvidence: HostedModelProviderEvidence;
+}) {
+  try {
+    return createHostedModelRegistration({
+      registrationId: `hosted:${input.gateway.id}:${input.modelRecordId}`,
+      revision: hostedModelRegistrationRevision({
+        providerEvidence: input.providerEvidence,
+        modelId: input.rawModelId,
+        credentialRevision: String(input.gateway.credentialRevision),
+      }),
+      observedAt: new Date().toISOString(),
+      modelId: input.rawModelId,
+      credentialRevision: String(input.gateway.credentialRevision),
+      providerConfiguration: createHostedProviderRuntimeConfiguration({
+        gateway: input.gateway,
+        provider: input.provider,
+      }),
+      providerEvidence: input.providerEvidence,
+    });
+  } catch (error) {
+    if (error instanceof GatewayModelProviderResolutionError) throw error;
+    throw new GatewayModelProviderResolutionError({
+      message:
+        error instanceof Error
+          ? error.message
+          : "Hosted provider model evidence could not be validated.",
+      status: 422,
+      retryable: false,
+    });
+  }
+}
+
+async function resolveHostedProviderEvidence(input: {
+  gateway: GatewayRecord;
+  provider: HostedModelRegistrationProvider;
+  rawModelId: string;
+  resolvedOpenRouterMetadata?: Record<string, unknown>;
+  fallbackCatalogMetadata: Record<string, unknown> | null;
+  injectedEvidence?: HostedModelProviderEvidence;
+}): Promise<HostedModelProviderEvidence> {
+  if (input.injectedEvidence !== undefined) {
+    if (input.injectedEvidence.provider !== input.provider) {
+      throw new GatewayModelProviderResolutionError({
+        message:
+          "Hosted model evidence does not match the selected gateway provider.",
+      });
+    }
+    return input.injectedEvidence;
+  }
+  if (input.provider === "openrouter") {
+    const details =
+      input.resolvedOpenRouterMetadata ??
+      (await fetchOpenRouterModelDetails(input.gateway, input.rawModelId));
+    return { provider: "openrouter", details };
+  }
+  let catalogRecord = input.fallbackCatalogMetadata;
+  if (catalogRecord === null) {
+    try {
+      catalogRecord = (await fetchGatewayModels(input.gateway)).find(
+        (candidate) => candidate.rawModelId === input.rawModelId,
+      )?.metadata ?? null;
+    } catch {
+      throw new GatewayModelProviderResolutionError({
+        message: `Unable to verify ${input.provider} model '${input.rawModelId}' against the provider catalog. Retry after the provider is available.`,
+        status: 503,
+        retryable: true,
+      });
+    }
+  }
+  if (
+    !(
+      catalogRecord &&
+      typeof catalogRecord === "object" &&
+      !Array.isArray(catalogRecord)
+    )
+  ) {
+    throw new GatewayModelProviderResolutionError({
+      message: `${getProviderDisplayName(input.provider)} did not advertise the exact model '${input.rawModelId}'. Refresh the provider catalog and try again.`,
+    });
+  }
+  return input.provider === "openai"
+    ? { provider: "openai", catalogRecord }
+    : { provider: "anthropic", modelsApiRecord: catalogRecord };
 }
 
 function inferOpenAICompatibleModality(rawModelId: string): GatewayModality {
@@ -328,7 +486,7 @@ function inferOpenRouterModality(model: {
 }): GatewayModality {
   const outputModalities =
     model.architecture?.output_modalities?.map((value) =>
-      value.toLowerCase()
+      value.toLowerCase(),
     ) ?? [];
 
   if (outputModalities.includes("video")) {
@@ -373,19 +531,19 @@ function inferReplicateModality(rawModelId: string): GatewayModality {
 }
 
 async function fetchOpenAICompatibleModels(
-  gateway: GatewayRecord
+  gateway: GatewayRecord,
 ): Promise<SyncedGatewayModel[]> {
   const apiKey = getGatewayApiKey(gateway);
   if (!apiKey && gateway.provider !== "ollama") {
     throw new Error(
-      `${getProviderDisplayName(gateway.provider)} API key is required.`
+      `${getProviderDisplayName(gateway.provider)} API key is required.`,
     );
   }
 
   const baseUrl = getOpenAICompatibleBaseUrl(gateway);
   if (!baseUrl) {
     throw new Error(
-      `${getProviderDisplayName(gateway.provider)} base URL is missing.`
+      `${getProviderDisplayName(gateway.provider)} base URL is missing.`,
     );
   }
 
@@ -421,7 +579,7 @@ async function fetchOpenAICompatibleModels(
 }
 
 async function fetchAnthropicModels(
-  gateway: GatewayRecord
+  gateway: GatewayRecord,
 ): Promise<SyncedGatewayModel[]> {
   const apiKey = getGatewayApiKey(gateway);
   if (!apiKey) {
@@ -459,7 +617,7 @@ async function fetchAnthropicModels(
 }
 
 async function fetchOllamaModels(
-  gateway: GatewayRecord
+  gateway: GatewayRecord,
 ): Promise<SyncedGatewayModel[]> {
   const baseUrl = gateway.baseUrl?.trim() || getDefaultBaseUrl("ollama")!;
   const url = new URL(baseUrl);
@@ -491,7 +649,7 @@ async function fetchOllamaModels(
 }
 
 async function fetchReplicateModels(
-  gateway: GatewayRecord
+  gateway: GatewayRecord,
 ): Promise<SyncedGatewayModel[]> {
   const apiKey = getGatewayApiKey(gateway);
   if (!apiKey) {
@@ -569,8 +727,8 @@ async function markGatewayCredentialInvalidIfCurrent(input: {
       and(
         eq(schema.aiGateways.id, input.gatewayId),
         eq(schema.aiGateways.organizationId, input.organizationId),
-        eq(schema.aiGateways.credentialRevision, input.credentialRevision)
-      )
+        eq(schema.aiGateways.credentialRevision, input.credentialRevision),
+      ),
     )
     .returning({ id: schema.aiGateways.id });
   if (invalidated) {
@@ -604,8 +762,8 @@ async function markGatewayCredentialReadyIfCurrent(input: {
       and(
         eq(schema.aiGateways.id, input.gatewayId),
         eq(schema.aiGateways.organizationId, input.organizationId),
-        eq(schema.aiGateways.credentialRevision, input.credentialRevision)
-      )
+        eq(schema.aiGateways.credentialRevision, input.credentialRevision),
+      ),
     )
     .returning();
   return gateway ?? null;
@@ -619,7 +777,7 @@ export async function listAIGatewaysWithModels(organizationId: string) {
       .where(eq(schema.aiGateways.organizationId, organizationId))
       .orderBy(
         asc(schema.aiGateways.provider),
-        asc(schema.aiGateways.displayName)
+        asc(schema.aiGateways.displayName),
       ),
     knowledgeDb
       .select()
@@ -628,7 +786,7 @@ export async function listAIGatewaysWithModels(organizationId: string) {
       .orderBy(
         asc(schema.aiGatewayModels.modality),
         asc(schema.aiGatewayModels.alias),
-        asc(schema.aiGatewayModels.rawModelId)
+        asc(schema.aiGatewayModels.rawModelId),
       ),
   ]);
 
@@ -640,7 +798,7 @@ export async function listAIGatewaysWithModels(organizationId: string) {
       accumulator[model.gatewayId].push(model);
       return accumulator;
     },
-    {}
+    {},
   );
 
   return gateways.map((gateway) => ({
@@ -658,7 +816,7 @@ export async function listAIGatewaysWithModels(organizationId: string) {
 export async function listApprovedModels(
   modality: GatewayModality,
   organizationId: string,
-  environmentId?: string
+  environmentId?: string,
 ) {
   const [rows, environmentDefault] = await Promise.all([
     knowledgeDb
@@ -669,7 +827,7 @@ export async function listApprovedModels(
       .from(schema.aiGatewayModels)
       .innerJoin(
         schema.aiGateways,
-        eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId)
+        eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId),
       )
       .where(
         and(
@@ -680,23 +838,26 @@ export async function listApprovedModels(
           environmentId
             ? or(
                 isNull(schema.aiGateways.environmentId),
-                eq(schema.aiGateways.environmentId, environmentId)
+                eq(schema.aiGateways.environmentId, environmentId),
               )
-            : isNull(schema.aiGateways.environmentId)
-        )
+            : isNull(schema.aiGateways.environmentId),
+        ),
       )
       .orderBy(
         desc(schema.aiGatewayModels.isDefault),
         asc(schema.aiGateways.displayName),
         asc(schema.aiGatewayModels.alias),
-        asc(schema.aiGatewayModels.rawModelId)
+        asc(schema.aiGatewayModels.rawModelId),
       ),
     environmentId
       ? knowledgeDb.query.environmentAiModelDefaults.findFirst({
           where: and(
             eq(schema.environmentAiModelDefaults.environmentId, environmentId),
-            eq(schema.environmentAiModelDefaults.organizationId, organizationId),
-            eq(schema.environmentAiModelDefaults.modality, modality)
+            eq(
+              schema.environmentAiModelDefaults.organizationId,
+              organizationId,
+            ),
+            eq(schema.environmentAiModelDefaults.modality, modality),
           ),
           columns: { modelId: true },
         })
@@ -704,61 +865,62 @@ export async function listApprovedModels(
   ]);
 
   return rows
-    .filter(({ gateway, model }) =>
-      modality !== "language" ||
-      isEligibleHostedLanguageModel({
-        gatewayProvider: gateway.provider as GatewayProvider,
-        approved: model.approved,
-        modality: model.modality as GatewayModality,
-        metadata: model.metadata,
-        rawModelId: model.rawModelId,
-      }),
+    .filter(
+      ({ gateway, model }) =>
+        modality !== "language" ||
+        isEligibleHostedLanguageModel({
+          gatewayProvider: gateway.provider as GatewayProvider,
+          approved: model.approved,
+          modality: model.modality as GatewayModality,
+          metadata: model.metadata,
+          rawModelId: model.rawModelId,
+        }),
     )
     .map(({ gateway, model }) => ({
-    gatewayModelId: model.id,
-    id: model.alias?.trim() || `${gateway.provider}/${model.rawModelId}`,
-    name: normalizeModelLabel(model),
-    provider: gateway.provider,
-    description:
-      model.description || `${gateway.displayName} ${modality} model`,
-    alias: model.alias,
-    rawModelId: model.rawModelId,
-    modality: model.modality as GatewayModality,
-    gatewayId: gateway.id,
-    gatewayProvider: gateway.provider as GatewayProvider,
-    isDefault: isGatewayModelDefault({
-      environmentDefaultModelId: environmentDefault?.modelId,
-      modelId: model.id,
-      modelIsDefault: model.isDefault,
-    }),
-    environmentId: gateway.environmentId,
-    scope: gateway.environmentId
-      ? "environment"
-      : gateway.organizationId
-        ? "organization"
-        : "platform",
-    metadata: normalizeGatewayModelMetadata({
-      gatewayProvider: gateway.provider as GatewayProvider,
+      gatewayModelId: model.id,
+      id: model.alias?.trim() || `${gateway.provider}/${model.rawModelId}`,
+      name: normalizeModelLabel(model),
+      provider: gateway.provider,
+      description:
+        model.description || `${gateway.displayName} ${modality} model`,
+      alias: model.alias,
+      rawModelId: model.rawModelId,
       modality: model.modality as GatewayModality,
-      metadata: model.metadata,
-    }),
+      gatewayId: gateway.id,
+      gatewayProvider: gateway.provider as GatewayProvider,
+      isDefault: isGatewayModelDefault({
+        environmentDefaultModelId: environmentDefault?.modelId,
+        modelId: model.id,
+        modelIsDefault: model.isDefault,
+      }),
+      environmentId: gateway.environmentId,
+      scope: gateway.environmentId
+        ? "environment"
+        : gateway.organizationId
+          ? "organization"
+          : "platform",
+      metadata: normalizeGatewayModelMetadata({
+        gatewayProvider: gateway.provider as GatewayProvider,
+        modality: model.modality as GatewayModality,
+        metadata: model.metadata,
+      }),
     })) as GatewayCatalogModel[];
 }
 
 export async function getApprovedLanguageModels(
   organizationId: string,
-  environmentId?: string
+  environmentId?: string,
 ) {
   return listApprovedModels("language", organizationId, environmentId);
 }
 
 export async function getApprovedKestrelRuntimeLanguageModels(
   organizationId: string,
-  environmentId?: string
+  environmentId?: string,
 ) {
   const models = await getApprovedLanguageModels(organizationId, environmentId);
   return models.filter((model) =>
-    isKestrelRuntimeLanguageProvider(model.gatewayProvider)
+    isKestrelRuntimeLanguageProvider(model.gatewayProvider),
   );
 }
 
@@ -766,17 +928,17 @@ export async function resolvePreferredLanguageModelId(
   selectedModelId: string | null | undefined,
   fallbackModelId: string | null | undefined,
   organizationId: string,
-  environmentId?: string
+  environmentId?: string,
 ) {
   const languageModels = await getApprovedKestrelRuntimeLanguageModels(
     organizationId,
-    environmentId
+    environmentId,
   );
   return (
     selectPreferredGatewayModelId(
       languageModels,
       selectedModelId,
-      fallbackModelId
+      fallbackModelId,
     ) || getDefaultAIModel()
   );
 }
@@ -784,16 +946,16 @@ export async function resolvePreferredLanguageModelId(
 export async function getSpeechModelForLanguageSelection(
   languageModelId: string | null | undefined,
   organizationId: string,
-  environmentId?: string
+  environmentId?: string,
 ) {
   const languageModels = await getApprovedLanguageModels(
     organizationId,
-    environmentId
+    environmentId,
   );
   const speechModels = await listApprovedModels(
     "speech",
     organizationId,
-    environmentId
+    environmentId,
   );
 
   if (speechModels.length === 0) {
@@ -805,7 +967,7 @@ export async function getSpeechModelForLanguageSelection(
         (model) =>
           model.id === languageModelId ||
           model.alias === languageModelId ||
-          `${model.gatewayProvider}/${model.rawModelId}` === languageModelId
+          `${model.gatewayProvider}/${model.rawModelId}` === languageModelId,
       )
     : null;
   const provider = selectedLanguageModel?.gatewayProvider;
@@ -819,7 +981,7 @@ export async function getSpeechModelForLanguageSelection(
 
 export async function getGenerationModelsByKind(
   kind: "image" | "video",
-  organizationId: string
+  organizationId: string,
 ) {
   return listApprovedModels(kind, organizationId);
 }
@@ -833,7 +995,7 @@ export async function resolveGatewayModelSelection(input: {
   const models = await listApprovedModels(
     input.modality,
     input.organizationId,
-    input.environmentId
+    input.environmentId,
   );
 
   return selectGatewayModelSelection(models, input.selection);
@@ -881,7 +1043,8 @@ export async function createGateway(input: {
     credentialRevision: 1,
     enabled: input.enabled ?? true,
     supportedModalities:
-      input.supportedModalities || getProviderSupportedModalities(input.provider),
+      input.supportedModalities ||
+      getProviderSupportedModalities(input.provider),
     metadata: input.metadata ?? getDefaultGatewayMetadata(input.provider),
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -889,7 +1052,7 @@ export async function createGateway(input: {
   const gateway = environmentId
     ? await knowledgeDb.transaction(async (transaction) => {
         await transaction.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environmentId)}, 0))`
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environmentId)}, 0))`,
         );
         const environment = await transaction.query.environments.findFirst({
           where: (table, { and, eq, isNull, notInArray }) =>
@@ -897,12 +1060,14 @@ export async function createGateway(input: {
               eq(table.id, environmentId),
               eq(table.organizationId, input.organizationId),
               isNull(table.archivedAt),
-              notInArray(table.status, ["deleting", "deleted"])
+              notInArray(table.status, ["deleting", "deleted"]),
             ),
           columns: { id: true },
         });
         if (!environment) {
-          throw new Error("Environment is not available for gateway configuration.");
+          throw new Error(
+            "Environment is not available for gateway configuration.",
+          );
         }
         const [created] = await transaction
           .insert(schema.aiGateways)
@@ -911,10 +1076,7 @@ export async function createGateway(input: {
         return created;
       })
     : (
-        await knowledgeDb
-          .insert(schema.aiGateways)
-          .values(values)
-          .returning()
+        await knowledgeDb.insert(schema.aiGateways).values(values).returning()
       )[0];
 
   return sanitizeGateway(gateway);
@@ -930,7 +1092,7 @@ export async function updateGateway(
     enabled: boolean;
     supportedModalities: GatewayModality[];
     metadata: Record<string, unknown> | null;
-  }>
+  }>,
 ) {
   const apiKey = normalizeGatewayStoredCredential(input.apiKey);
   const [gateway] = await knowledgeDb
@@ -942,25 +1104,22 @@ export async function updateGateway(
       ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
       apiKeyEnvVar: null,
       ...(apiKey !== undefined
+        ? {
+            apiKey: apiKey
+              ? encryptGatewayCredential({
+                  gatewayId,
+                  plaintext: apiKey,
+                })
+              : null,
+            credentialStatus: sql`CASE WHEN ${schema.aiGateways.provider} = 'ollama' THEN 'not_required' ELSE 'unverified' END`,
+            credentialValidatedAt: null,
+            credentialRevision: sql`${schema.aiGateways.credentialRevision} + 1`,
+          }
+        : input.baseUrl !== undefined
           ? {
-              apiKey: apiKey
-                ? encryptGatewayCredential({
-                    gatewayId,
-                    plaintext: apiKey,
-                  })
-                : null,
-              credentialStatus:
-                sql`CASE WHEN ${schema.aiGateways.provider} = 'ollama' THEN 'not_required' ELSE 'unverified' END`,
-              credentialValidatedAt: null,
-              credentialRevision:
-                sql`${schema.aiGateways.credentialRevision} + 1`,
+              credentialRevision: sql`${schema.aiGateways.credentialRevision} + 1`,
             }
-          : input.baseUrl !== undefined
-            ? {
-                credentialRevision:
-                  sql`${schema.aiGateways.credentialRevision} + 1`,
-              }
-            : {}),
+          : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
       ...(input.supportedModalities !== undefined
         ? { supportedModalities: input.supportedModalities }
@@ -971,8 +1130,8 @@ export async function updateGateway(
     .where(
       and(
         eq(schema.aiGateways.id, gatewayId),
-        eq(schema.aiGateways.organizationId, organizationId)
-      )
+        eq(schema.aiGateways.organizationId, organizationId),
+      ),
     )
     .returning();
 
@@ -981,13 +1140,13 @@ export async function updateGateway(
 
 export async function syncGatewayModels(
   organizationId: string,
-  gatewayId: string
+  gatewayId: string,
 ) {
   const gateway = await knowledgeDb.query.aiGateways.findFirst({
     where: (table, operators) =>
       operators.and(
         operators.eq(table.id, gatewayId),
-        operators.eq(table.organizationId, organizationId)
+        operators.eq(table.organizationId, organizationId),
       ),
   });
 
@@ -1014,7 +1173,7 @@ export async function syncGatewayModels(
   }
 
   const existingByRawModelId = new Map(
-    existingModels.map((model) => [model.rawModelId, model] as const)
+    existingModels.map((model) => [model.rawModelId, model] as const),
   );
 
   const uniqueSyncedModels = new Map<string, SyncedGatewayModel>();
@@ -1028,7 +1187,9 @@ export async function syncGatewayModels(
     const incomingMetadata = syncedModel.metadata ?? null;
     const existingMetadata = existing?.metadata;
     const preservedProfile =
-      existingMetadata && typeof existingMetadata === "object" && !Array.isArray(existingMetadata)
+      existingMetadata &&
+      typeof existingMetadata === "object" &&
+      !Array.isArray(existingMetadata)
         ? (existingMetadata as Record<string, unknown>).kestrelEconomicsProfile
         : undefined;
     const savedModel = await saveGatewayModel({
@@ -1046,16 +1207,32 @@ export async function syncGatewayModels(
         modality: (existing?.modality ??
           syncedModel.modality) as GatewayModality,
         metadata:
-          preservedProfile && incomingMetadata && typeof incomingMetadata === "object"
-            ? { ...(incomingMetadata as Record<string, unknown>), kestrelEconomicsProfile: preservedProfile,
-                ...((existingMetadata as Record<string, unknown>).kestrelEconomicsProfileSource
-                  ? { kestrelEconomicsProfileSource: (existingMetadata as Record<string, unknown>).kestrelEconomicsProfileSource }
-                  : {}) }
-            : incomingMetadata ?? (existing?.metadata as Record<string, unknown> | null) ?? null,
+          preservedProfile &&
+          incomingMetadata &&
+          typeof incomingMetadata === "object"
+            ? {
+                ...(incomingMetadata as Record<string, unknown>),
+                kestrelEconomicsProfile: preservedProfile,
+                ...((existingMetadata as Record<string, unknown>)
+                  .kestrelEconomicsProfileSource
+                  ? {
+                      kestrelEconomicsProfileSource: (
+                        existingMetadata as Record<string, unknown>
+                      ).kestrelEconomicsProfileSource,
+                    }
+                  : {}),
+              }
+            : (incomingMetadata ??
+              (existing?.metadata as Record<string, unknown> | null) ??
+              null),
       }),
       gatewayProvider: gateway.provider,
       gatewayBaseUrl: gateway.baseUrl,
       requireEconomicsProfile: false,
+      // Catalog synchronization preserves an existing registration or legacy
+      // state. An administrator-triggered approval/refresh is the operation
+      // that may create a new exact hosted registration.
+      preserveHostedRegistration: true,
       allowProviderEconomicsFallback: true,
       resolveOpenRouterModel:
         gateway.provider === "openrouter" &&
@@ -1066,7 +1243,7 @@ export async function syncGatewayModels(
   }
 
   const discoveredModalities = Array.from(
-    new Set(savedModels.map((model) => model.modality as GatewayModality))
+    new Set(savedModels.map((model) => model.modality as GatewayModality)),
   );
 
   const supportedModalities =
@@ -1090,9 +1267,9 @@ export async function syncGatewayModels(
                 eq(schema.aiGateways.organizationId, organizationId),
                 eq(
                   schema.aiGateways.credentialRevision,
-                  gateway.credentialRevision
-                )
-              )
+                  gateway.credentialRevision,
+                ),
+              ),
             )
             .returning()
         )[0]
@@ -1103,7 +1280,9 @@ export async function syncGatewayModels(
           supportedModalities,
         });
   if (!updatedGateway) {
-    throw new Error("Gateway credential changed during model sync. Retry sync.");
+    throw new Error(
+      "Gateway credential changed during model sync. Retry sync.",
+    );
   }
 
   return {
@@ -1130,20 +1309,19 @@ export async function saveGatewayModel(input: {
   resolveOpenRouterModel?: boolean;
   allowProviderEconomicsFallback?: boolean;
   expectedModelUpdatedAt?: Date | null;
+  /** Server-only test/operation seam. The browser API never accepts this. */
+  providerEvidence?: HostedModelProviderEvidence;
+  /** Catalog sync must not turn unknown legacy rows into implicit approvals. */
+  preserveHostedRegistration?: boolean;
 }) {
   const [gateway, storedModel] = await Promise.all([
-    input.gatewayProvider && input.gatewayProvider !== "openrouter"
-      ? Promise.resolve({
-          provider: input.gatewayProvider,
-          baseUrl: input.gatewayBaseUrl ?? null,
-        })
-      : knowledgeDb.query.aiGateways.findFirst({
-          where: (table, operators) =>
-            operators.and(
-              operators.eq(table.id, input.gatewayId),
-              operators.eq(table.organizationId, input.organizationId)
-            ),
-        }),
+    knowledgeDb.query.aiGateways.findFirst({
+      where: (table, operators) =>
+        operators.and(
+          operators.eq(table.id, input.gatewayId),
+          operators.eq(table.organizationId, input.organizationId),
+        ),
+    }),
     input.id
       ? knowledgeDb.query.aiGatewayModels.findFirst({
           columns: {
@@ -1156,7 +1334,7 @@ export async function saveGatewayModel(input: {
             operators.and(
               operators.eq(table.id, input.id!),
               operators.eq(table.gatewayId, input.gatewayId),
-              operators.eq(table.organizationId, input.organizationId)
+              operators.eq(table.organizationId, input.organizationId),
             ),
         })
       : Promise.resolve(undefined),
@@ -1170,7 +1348,11 @@ export async function saveGatewayModel(input: {
     gatewayProvider === "openrouter" &&
     approved &&
     input.modality === "language";
-  if (requiresOpenRouterResolution && !input.resolveOpenRouterModel) {
+  if (
+    requiresOpenRouterResolution &&
+    !input.resolveOpenRouterModel &&
+    input.providerEvidence === undefined
+  ) {
     throw new GatewayModelProviderResolutionError({
       message:
         "OpenRouter language models must be resolved through the exact provider detail endpoint before approval.",
@@ -1184,10 +1366,12 @@ export async function saveGatewayModel(input: {
       : null;
   const resolvedOpenRouterMetadata =
     input.resolveOpenRouterModel &&
+    input.providerEvidence === undefined &&
     gatewayProvider === "openrouter" &&
     approved &&
     input.modality === "language" &&
-    gateway && "credentialRevision" in gateway
+    gateway &&
+    "credentialRevision" in gateway
       ? await fetchOpenRouterModelDetails(gateway, input.rawModelId)
       : undefined;
   const inputMetadata =
@@ -1217,11 +1401,13 @@ export async function saveGatewayModel(input: {
   let fallbackCatalogMetadata: Record<string, unknown> | null = null;
   if (
     input.allowProviderEconomicsFallback &&
+    input.providerEvidence === undefined &&
     gateway &&
     "credentialRevision" in gateway &&
     gatewayProvider &&
     gatewayProvider !== "runpod" &&
-    getProviderEconomicsFallbackCapability(gatewayProvider).supportsConservativeFallback
+    getProviderEconomicsFallbackCapability(gatewayProvider)
+      .supportsConservativeFallback
   ) {
     try {
       fallbackCatalogMetadata =
@@ -1242,11 +1428,13 @@ export async function saveGatewayModel(input: {
           gatewayProvider: gatewayProvider as GatewayProvider,
           modality: input.modality,
           metadata: fallbackCatalogMetadata ?? inputMetadata,
-      })
+        })
       : (fallbackCatalogMetadata ?? inputMetadata ?? null);
   const fallbackProvider =
-    gatewayProvider && gatewayProvider !== "openrouter" &&
-    getProviderEconomicsFallbackCapability(gatewayProvider).supportsConservativeFallback
+    gatewayProvider &&
+    gatewayProvider !== "openrouter" &&
+    getProviderEconomicsFallbackCapability(gatewayProvider)
+      .supportsConservativeFallback
       ? getGatewayModelEconomicsProvider({
           gatewayProvider,
           modality: input.modality,
@@ -1266,22 +1454,30 @@ export async function saveGatewayModel(input: {
     });
   }
   const fallbackIdentity = (() => {
-    if (!input.allowProviderEconomicsFallback || !fallbackProvider || !normalizedMetadata) return false;
+    if (
+      !input.allowProviderEconomicsFallback ||
+      !fallbackProvider ||
+      !normalizedMetadata
+    )
+      return false;
     if (gatewayProvider === "runpod") {
       return Boolean(
         runPodBaseUrl &&
-          getMatchingRunPodValidationEvidence({
-            metadata: normalizedMetadata,
-            rawModelId: input.rawModelId,
-            baseUrl: runPodBaseUrl,
-          }),
+        getMatchingRunPodValidationEvidence({
+          metadata: normalizedMetadata,
+          rawModelId: input.rawModelId,
+          baseUrl: runPodBaseUrl,
+        }),
       );
     }
     const catalog = normalizedMetadata as Record<string, unknown>;
-    return catalog.id === input.rawModelId || catalog.model === input.rawModelId;
+    return (
+      catalog.id === input.rawModelId || catalog.model === input.rawModelId
+    );
   })();
   const fallbackMetadata =
-    fallbackIdentity && fallbackProvider &&
+    fallbackIdentity &&
+    fallbackProvider &&
     readGatewayModelEconomicsProfile(normalizedMetadata, {
       provider: fallbackProvider,
       model: input.rawModelId,
@@ -1305,7 +1501,7 @@ export async function saveGatewayModel(input: {
           })(),
         }
       : normalizedMetadata;
-  const metadata =
+  let metadata =
     resolvedOpenRouterMetadata && normalizedMetadata
       ? {
           ...normalizedMetadata,
@@ -1327,7 +1523,7 @@ export async function saveGatewayModel(input: {
           modality: input.modality,
           metadata,
         });
-  const economicsMetadata =
+  let economicsMetadata =
     economicsProvider != null &&
     isKestrelRuntimeLanguageProvider(gatewayProvider as GatewayProvider)
       ? withGatewayModelEconomicsProfile({
@@ -1358,7 +1554,8 @@ export async function saveGatewayModel(input: {
   if (
     input.isDefault &&
     input.modality === "language" &&
-    (!approved || economicsProvider == null ||
+    (!approved ||
+      economicsProvider == null ||
       readGatewayModelEconomicsProfile(economicsMetadata, {
         provider: economicsProvider,
         model: input.rawModelId,
@@ -1385,13 +1582,60 @@ export async function saveGatewayModel(input: {
     throw new Error("RunPod model validation is required before approval.");
   }
 
+  const modelRecordId = input.id ?? crypto.randomUUID();
+  const hostedRegistrationProvider =
+    asHostedRegistrationProvider(gatewayProvider);
+  const hostedGateway =
+    gateway && "credentialRevision" in gateway ? gateway : undefined;
+  const requiresHostedRegistration =
+    approved &&
+    input.modality === "language" &&
+    hostedRegistrationProvider !== undefined &&
+    hostedGateway !== undefined &&
+    input.preserveHostedRegistration !== true;
+  const hostedProviderEvidence = requiresHostedRegistration
+    ? await resolveHostedProviderEvidence({
+        gateway: hostedGateway!,
+        provider: hostedRegistrationProvider!,
+        rawModelId: input.rawModelId,
+        resolvedOpenRouterMetadata,
+        fallbackCatalogMetadata,
+        injectedEvidence: input.providerEvidence,
+      })
+    : undefined;
+  const hostedRegistration =
+    hostedProviderEvidence !== undefined
+      ? createHostedRegistrationOrThrow({
+          gateway: hostedGateway!,
+          provider: hostedRegistrationProvider!,
+          modelRecordId,
+          rawModelId: input.rawModelId,
+          providerEvidence: hostedProviderEvidence,
+        })
+      : undefined;
+  if (hostedRegistration !== undefined) {
+    economicsMetadata = withHostedModelRegistration({
+      metadata: economicsMetadata,
+      ...hostedRegistration,
+    });
+  } else if (hostedRegistrationProvider !== undefined) {
+    // Never retain a capability-shaped object supplied by the browser on a
+    // hosted provider row that has not yet acquired server evidence.
+    economicsMetadata = preserveHostedModelCapabilityMetadata({
+      incoming: removeHostedModelCapabilityMetadata(economicsMetadata),
+      stored: storedModel?.metadata,
+    });
+  }
+
   return knowledgeDb.transaction(async (transaction) => {
     if (
-      input.resolveOpenRouterModel &&
-      gatewayProvider === "openrouter" &&
-      gateway && "credentialRevision" in gateway
+      hostedRegistration !== undefined &&
+      gateway &&
+      "credentialRevision" in gateway
     ) {
-      if (input.expectedModelUpdatedAt !== undefined) {
+      if (input.id) {
+        const expectedModelUpdatedAt =
+          input.expectedModelUpdatedAt ?? storedModel?.updatedAt;
         const [currentModel] = await transaction
           .select({ updatedAt: schema.aiGatewayModels.updatedAt })
           .from(schema.aiGatewayModels)
@@ -1404,9 +1648,13 @@ export async function saveGatewayModel(input: {
           )
           .limit(1)
           .for("update");
-        if (currentModel?.updatedAt?.getTime() !== input.expectedModelUpdatedAt?.getTime()) {
+        if (
+          currentModel?.updatedAt?.getTime() !==
+          expectedModelUpdatedAt?.getTime()
+        ) {
           throw new GatewayModelProviderResolutionError({
-            message: "The gateway model changed while provider details were resolving. Retry the repair.",
+            message:
+              "The gateway model changed while provider evidence was resolving. Retry the approval.",
             status: 409,
             retryable: true,
           });
@@ -1414,6 +1662,7 @@ export async function saveGatewayModel(input: {
       }
       const [currentGateway] = await transaction
         .select({
+          provider: schema.aiGateways.provider,
           credentialRevision: schema.aiGateways.credentialRevision,
           baseUrl: schema.aiGateways.baseUrl,
         })
@@ -1432,13 +1681,13 @@ export async function saveGatewayModel(input: {
         .for("update");
       if (
         !currentGateway ||
-        normalizeOpenAICompatibleBaseUrl(
-          currentGateway.baseUrl?.trim() || getDefaultBaseUrl("openrouter")
-        ) !== getOpenAICompatibleBaseUrl(gateway)
+        currentGateway.provider !== gateway.provider ||
+        currentGateway.credentialRevision !== gateway.credentialRevision ||
+        currentGateway.baseUrl !== gateway.baseUrl
       ) {
         throw new GatewayModelProviderResolutionError({
           message:
-            "OpenRouter gateway configuration changed while the model was resolving. Try again.",
+            "Gateway configuration changed while provider evidence was resolving. Try again.",
           status: 409,
           retryable: true,
         });
@@ -1447,7 +1696,7 @@ export async function saveGatewayModel(input: {
     if (input.isDefault) {
       const lockKey = `kestrel:ai-model-default:${input.organizationId}:${input.modality}`;
       await transaction.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+        sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
       );
       await transaction
         .update(schema.aiGatewayModels)
@@ -1455,8 +1704,8 @@ export async function saveGatewayModel(input: {
         .where(
           and(
             eq(schema.aiGatewayModels.organizationId, input.organizationId),
-            eq(schema.aiGatewayModels.modality, input.modality)
-          )
+            eq(schema.aiGatewayModels.modality, input.modality),
+          ),
         );
     }
 
@@ -1477,8 +1726,8 @@ export async function saveGatewayModel(input: {
           and(
             eq(schema.aiGatewayModels.id, input.id),
             eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
-            eq(schema.aiGatewayModels.organizationId, input.organizationId)
-          )
+            eq(schema.aiGatewayModels.organizationId, input.organizationId),
+          ),
         )
         .returning();
 
@@ -1491,7 +1740,7 @@ export async function saveGatewayModel(input: {
     const [created] = await transaction
       .insert(schema.aiGatewayModels)
       .values({
-        id: crypto.randomUUID(),
+        id: modelRecordId,
         organizationId: input.organizationId,
         gatewayId: input.gatewayId,
         rawModelId: input.rawModelId,
@@ -1523,14 +1772,14 @@ export async function validateRunPodGatewayModel(input: {
     .from(schema.aiGatewayModels)
     .innerJoin(
       schema.aiGateways,
-      eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId)
+      eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId),
     )
     .where(
       and(
         eq(schema.aiGateways.id, input.gatewayId),
         eq(schema.aiGateways.organizationId, input.organizationId),
-        eq(schema.aiGatewayModels.id, input.modelId)
-      )
+        eq(schema.aiGatewayModels.id, input.modelId),
+      ),
     )
     .limit(1);
   const selected = row[0];
@@ -1571,8 +1820,8 @@ export async function validateRunPodGatewayModel(input: {
         eq(schema.aiGatewayModels.organizationId, input.organizationId),
         eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
         eq(schema.aiGatewayModels.rawModelId, selected.model.rawModelId),
-        eq(schema.aiGatewayModels.modality, selected.model.modality)
-      )
+        eq(schema.aiGatewayModels.modality, selected.model.modality),
+      ),
     )
     .returning();
   if (!updated) {
@@ -1602,7 +1851,7 @@ export async function validateRunPodGatewayModelByRawId(input: {
     where: (table, operators) =>
       operators.and(
         operators.eq(table.id, input.gatewayId),
-        operators.eq(table.organizationId, input.organizationId)
+        operators.eq(table.organizationId, input.organizationId),
       ),
   });
   if (gateway?.provider !== "runpod") {
@@ -1623,7 +1872,7 @@ export async function validateRunPodGatewayModelByRawId(input: {
       operators.and(
         operators.eq(table.gatewayId, gateway.id),
         operators.eq(table.organizationId, input.organizationId),
-        operators.eq(table.rawModelId, rawModelId)
+        operators.eq(table.rawModelId, rawModelId),
       ),
   });
   const candidate =
@@ -1682,7 +1931,7 @@ async function getResolvedGatewayModel(input: {
 }
 
 async function hydrateResolvedGatewayModel(
-  selection: GatewayCatalogModel | null | undefined
+  selection: GatewayCatalogModel | null | undefined,
 ): Promise<ResolvedGatewayModel | null> {
   if (!selection?.gatewayId) {
     return null;
@@ -1718,12 +1967,12 @@ export async function getResolvedKestrelRuntimeExecutionModel(input: {
 }) {
   const models = await getApprovedKestrelRuntimeLanguageModels(
     input.organizationId,
-    input.environmentId
+    input.environmentId,
   );
   return hydrateResolvedGatewayModel(
     input.selection
       ? selectGatewayModelSelection(models, input.selection)
-      : (models.find((model) => model.isDefault) ?? null)
+      : (models.find((model) => model.isDefault) ?? null),
   );
 }
 
@@ -1784,7 +2033,7 @@ function createGatewayProvider(input: {
       });
     case "replicate":
       throw new Error(
-        "Replicate gateways are used through the media adapter, not the language/image/speech provider registry."
+        "Replicate gateways are used through the media adapter, not the language/image/speech provider registry.",
       );
   }
 }
@@ -1832,7 +2081,7 @@ export async function resolveLanguageModelHandle(input: {
 export async function resolveLanguageModelRetryFallback(
   selection: string | null | undefined,
   organizationId: string,
-  environmentId?: string
+  environmentId?: string,
 ) {
   const resolved = await getResolvedGatewayModel({
     selection,
@@ -1847,29 +2096,36 @@ export async function resolveLanguageModelRetryFallback(
 
   const currentAlias = resolved.model.alias?.trim().toLowerCase() || null;
   const comparableCurrentModel = getComparableModelName(
-    resolved.model.rawModelId
+    resolved.model.rawModelId,
   );
 
-  const languageModels = await getApprovedLanguageModels(organizationId, environmentId);
+  const languageModels = await getApprovedLanguageModels(
+    organizationId,
+    environmentId,
+  );
   const candidates = languageModels.filter(
     (model) =>
       model.gatewayId !== resolved.gateway.id &&
-      model.gatewayProvider !== "openrouter"
+      model.gatewayProvider !== "openrouter",
   );
 
   return (
     candidates.find(
-      (model) => model.alias?.trim().toLowerCase() === currentAlias
+      (model) => model.alias?.trim().toLowerCase() === currentAlias,
     ) ||
     candidates.find(
       (model) =>
-        getComparableModelName(model.rawModelId) === comparableCurrentModel
+        getComparableModelName(model.rawModelId) === comparableCurrentModel,
     ) ||
     null
   );
 }
 
-export async function resolveSpeechModelHandle(input: { selection?: string | null; organizationId: string; environmentId?: string }) {
+export async function resolveSpeechModelHandle(input: {
+  selection?: string | null;
+  organizationId: string;
+  environmentId?: string;
+}) {
   const resolved = await getResolvedGatewayModel({
     selection: input.selection,
     modality: "speech",
@@ -1884,7 +2140,7 @@ export async function resolveSpeechModelHandle(input: { selection?: string | nul
   const provider = createGatewayProvider(resolved);
   if (!provider.speechModel) {
     throw new Error(
-      `${resolved.gateway.displayName} does not expose speech models in this runtime.`
+      `${resolved.gateway.displayName} does not expose speech models in this runtime.`,
     );
   }
 
@@ -1895,7 +2151,11 @@ export async function resolveSpeechModelHandle(input: { selection?: string | nul
   };
 }
 
-export async function resolveImageModelHandle(input: { selection?: string | null; organizationId: string; environmentId?: string }) {
+export async function resolveImageModelHandle(input: {
+  selection?: string | null;
+  organizationId: string;
+  environmentId?: string;
+}) {
   const resolved = await getResolvedGatewayModel({
     selection: input.selection,
     modality: "image",
@@ -1918,13 +2178,13 @@ export async function resolveImageModelHandle(input: { selection?: string | null
 
 export async function getGatewayById(
   organizationId: string,
-  gatewayId: string
+  gatewayId: string,
 ) {
   const gateway = await knowledgeDb.query.aiGateways.findFirst({
     where: (table, operators) =>
       operators.and(
         operators.eq(table.id, gatewayId),
-        operators.eq(table.organizationId, organizationId)
+        operators.eq(table.organizationId, organizationId),
       ),
   });
 
@@ -1933,7 +2193,7 @@ export async function getGatewayById(
 
 export async function listModelsForGateway(
   organizationId: string,
-  gatewayId: string
+  gatewayId: string,
 ) {
   return knowledgeDb
     .select()
@@ -1941,20 +2201,17 @@ export async function listModelsForGateway(
     .where(
       and(
         eq(schema.aiGatewayModels.organizationId, organizationId),
-        eq(schema.aiGatewayModels.gatewayId, gatewayId)
-      )
+        eq(schema.aiGatewayModels.gatewayId, gatewayId),
+      ),
     )
     .orderBy(
       asc(schema.aiGatewayModels.modality),
       asc(schema.aiGatewayModels.alias),
-      asc(schema.aiGatewayModels.rawModelId)
+      asc(schema.aiGatewayModels.rawModelId),
     );
 }
 
-export async function deleteGateway(
-  organizationId: string,
-  gatewayId: string
-) {
+export async function deleteGateway(organizationId: string, gatewayId: string) {
   return knowledgeDb.transaction(async (transaction) => {
     const [gateway] = await transaction
       .select({ id: schema.aiGateways.id })
@@ -1998,7 +2255,7 @@ export async function deleteGateway(
 export async function deleteGatewayModel(
   organizationId: string,
   gatewayId: string,
-  modelId: string
+  modelId: string,
 ) {
   return knowledgeDb.transaction(async (transaction) => {
     const [model] = await transaction
@@ -2033,7 +2290,7 @@ export async function deleteGatewayModel(
 }
 
 export async function hasApprovedModelsForModalities(
-  modalities: GatewayModality[]
+  modalities: GatewayModality[],
 ) {
   const rows = await knowledgeDb
     .select({ modality: schema.aiGatewayModels.modality })
@@ -2041,8 +2298,8 @@ export async function hasApprovedModelsForModalities(
     .where(
       and(
         inArray(schema.aiGatewayModels.modality, modalities),
-        eq(schema.aiGatewayModels.approved, true)
-      )
+        eq(schema.aiGatewayModels.approved, true),
+      ),
     );
 
   return new Set(rows.map((row) => row.modality as GatewayModality));

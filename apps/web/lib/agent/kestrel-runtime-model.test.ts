@@ -4,6 +4,8 @@ import {
   applyKestrelOneModelsToProfile,
   toKestrelOneRuntimeModelSelection,
 } from "./kestrel-runtime-model";
+import { translateOpenAiManifestModel } from "../../../../models/openai/OpenAiModelManifest";
+import { createModelRegistrationV2 } from "../../../../src/kestrel/contracts/model-registration";
 
 
 test("eligible native gateway models become runner model selections", () => {
@@ -100,6 +102,70 @@ test("legacy approved catalog metadata is upgraded at runtime", () => {
     environmentId: "env-1",
   });
   assert.equal(selection.economicsProfile?.contextWindowTokens, 202_752);
+});
+
+test("qualified hosted selections carry their exact registration into the runner profile", () => {
+  const pending = translateOpenAiManifestModel({
+    registrationId: "openai:gpt-4.1-mini:responses",
+    revision: "catalog-1",
+    modelId: "gpt-4.1-mini",
+    endpoint: "responses",
+    credentialRevision: "7",
+    providerConfiguration: {
+      version: "provider_runtime_configuration_v1",
+      providerId: "openai",
+      protocol: "openai",
+      authentication: {
+        mode: "required",
+        credentialReference: { source: "gateway", id: "provider.openai.default" },
+      },
+      endpoint: "https://api.openai.com/v1",
+      timeoutMs: 60_000,
+      allowedHeaders: [],
+      dataHandling: "provider_managed",
+    },
+  });
+  const { fingerprint: _fingerprint, ...authoring } = pending;
+  const registration = createModelRegistrationV2({
+    ...authoring,
+    qualification: {
+      state: "qualified",
+      revision: "qualification-1",
+      checkedAt: "2026-08-26T12:00:00.000Z",
+      probeHash: `sha256:${"a".repeat(64)}`,
+    },
+  });
+  const selection = toKestrelOneRuntimeModelSelection({
+    id: "qualified-openai",
+    gatewayId: "gateway-openai",
+    rawModelId: "gpt-4.1-mini",
+    gatewayProvider: "openai",
+    credentialRevision: 7,
+    metadata: {
+      kestrelModelRegistrationV2: registration,
+      kestrelEconomicsProfile: {
+        version: 1,
+        profileId: "openai:gpt-4.1-mini:v1",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 16_384,
+        counting: { counter: "utf8-byte-upper-bound", counterVersion: "1", method: "conservative_estimate", confidence: "conservative" },
+        cache: { behavior: "none" },
+      },
+    },
+    organizationId: "org-1",
+    environmentId: "env-1",
+  });
+  const profile = applyKestrelOneModelsToProfile(
+    { id: "base", label: "Base", agent: "reference-react", sessionPrefix: "base" },
+    [selection],
+    "run-qualified",
+  );
+
+  assert.equal(selection.registration?.fingerprint, registration.fingerprint);
+  assert.equal(profile.modelCredential?.registration?.fingerprint, registration.fingerprint);
+  assert.equal(profile.modelCredential?.routeBinding?.status, "qualified");
 });
 
 test("runtime model selection preserves the base profile contract", () => {

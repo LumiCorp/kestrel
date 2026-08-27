@@ -81,6 +81,9 @@ import {
   type ExecutionBoundaryDecisionV1,
   createDefaultRuntimeEvaluatorRegistry,
   RuntimeEvaluationFailure,
+  createExactEffectiveModelContractResolverV1,
+  legacyEffectiveModelContractResolverV1,
+  resolveExactModelEndpointV1,
 } from "../../src/index.js";
 import type {
   OperatorCompactionState,
@@ -3552,6 +3555,8 @@ function createRuntimeWithStore(
       });
     },
   });
+  const effectiveModelContractResolver =
+    createEffectiveModelContractResolverForProfile(profile);
   const evaluationRuntime =
     profile.evaluationPolicy === undefined
       ? undefined
@@ -3588,6 +3593,11 @@ function createRuntimeWithStore(
         ? { continuationCheckpointModel: profile.model }
         : {}),
     executionBoundaryRuntime,
+    ...(effectiveModelContractResolver === undefined
+      ? {}
+      : {
+          effectiveModelContractResolver,
+        }),
     ...(evaluationRuntime !== undefined ? { evaluationRuntime } : {}),
     providerReasoningVault,
     toolGateway: toolRegistry,
@@ -3960,6 +3970,30 @@ export function createModelGatewayForProfile(
             ? createLmStudioModelGatewayFromEnv(gatewayOptions)
             : createOpenRouterModelGatewayFromEnv(gatewayOptions),
   );
+}
+
+/**
+ * Build admission only from the parsed profile credential snapshot. The web
+ * metadata used to compose that profile never reaches this boundary.
+ */
+export function createEffectiveModelContractResolverForProfile(
+  profile: Pick<TuiProfile, "modelCredential">,
+) {
+  const credential = profile.modelCredential;
+  if (credential?.routeBinding === undefined) return;
+  if (credential.routeBinding.status === "legacy_unqualified") {
+    return legacyEffectiveModelContractResolverV1;
+  }
+  if (credential.registration === undefined) {
+    throw new Error(
+      "Qualified gateway-managed profiles require an exact registration snapshot.",
+    );
+  }
+  return createExactEffectiveModelContractResolverV1({
+    registration: credential.registration,
+    routeBinding: credential.routeBinding,
+    endpoint: resolveExactModelEndpointV1(credential.registration.route.endpointCodec),
+  });
 }
 
 export function createRuntimeEvaluationConfiguration(

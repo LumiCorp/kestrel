@@ -56,6 +56,9 @@ import {
 import type { ExecutionBoundaryDecisionV1 } from "../kestrel/contracts/execution-boundary-policy.js";
 import { deleteTextArtifact } from "../../tools/runtime/artifactStore.js";
 import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
+import {
+  type EffectiveModelContractResolverV1,
+} from "../kestrel/effective-model-contract.js";
 
 interface RuntimeIOProgressContext {
   runId: string;
@@ -120,7 +123,7 @@ interface RuntimeIOOptions {
   deps: Pick<
     RuntimeDependencies,
     "store" | "modelGateway" | "toolGateway" | "consoleReporter"
-  > & Partial<Pick<RuntimeDependencies, "reasoningReporter" | "providerReasoningVault">>;
+  > & Partial<Pick<RuntimeDependencies, "reasoningReporter" | "providerReasoningVault" | "effectiveModelContractResolver">>;
   guardrailConfig: GuardrailConfig;
   toolJobQueue: ToolJobQueue;
   toolQueueEnabled: boolean;
@@ -318,6 +321,15 @@ export class RuntimeIO {
             ),
           })
         : undefined;
+    const effectiveAdmission =
+      this.options.deps.effectiveModelContractResolver === undefined
+        ? undefined
+        : await this.options.deps.effectiveModelContractResolver.admit({
+            request: providerRequest,
+          });
+    if (effectiveAdmission !== undefined) {
+      providerRequest = effectiveAdmission.request;
+    }
     const assemblyId =
       readNonEmptyString(runtimeAssembly?.effectiveAssemblyId) ??
       readNonEmptyString(runtimeAssembly?.bundleId);
@@ -510,6 +522,7 @@ export class RuntimeIO {
         },
         () => this.callModelWithRecovery<T>({
           request: providerRequest,
+          effectiveModelContract: effectiveAdmission?.contract,
           callId,
           requestedProvider,
           requestedModel,
@@ -720,12 +733,16 @@ export class RuntimeIO {
 
   private async callModelWithRecovery<T>(input: {
     request: ModelRequest;
+    effectiveModelContract?: import("../kestrel/effective-model-contract.js").EffectiveModelContractV1 | undefined;
     callId: string;
     requestedProvider: string | undefined;
     requestedModel: string | undefined;
   }): Promise<T> {
     try {
       return await this.options.deps.modelGateway.call<T>(input.request, {
+        ...(input.effectiveModelContract !== undefined
+          ? { effectiveModelContract: input.effectiveModelContract }
+          : {}),
         ...(this.options.progress.signal !== undefined
           ? { signal: this.options.progress.signal }
           : {}),

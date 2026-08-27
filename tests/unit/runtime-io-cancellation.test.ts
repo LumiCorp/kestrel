@@ -27,6 +27,11 @@ import { DEFAULT_CODE_MODE_ENABLED_CONFIG } from "../../src/code/contracts.js";
 import { fingerprintSandboxCapabilityCatalogV2, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
+import {
+  createEffectiveModelContractV1,
+  legacyEffectiveModelContractResolverV1,
+  type EffectiveModelContractResolverV1,
+} from "../../src/kestrel/effective-model-contract.js";
 
 const guardrailConfig = {
   maxStepsPerRun: 10,
@@ -123,6 +128,25 @@ test("RuntimeIO.model does not emit completion when aborted after provider retur
       pricedCostUsd: 0.0018,
     },
   );
+});
+
+test("RuntimeIO rejects a legacy structured request before provider dispatch", async () => {
+  let providerCalled = false;
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    effectiveModelContractResolver: legacyEffectiveModelContractResolverV1,
+    modelCall: async () => {
+      providerCalled = true;
+      return { ok: true };
+    },
+  });
+
+  await assert.rejects(
+    () => io.model(modelRequest()),
+    (error) => readErrorCode(error) === "MODEL_LEGACY_CONTRACT_UNSUPPORTED",
+  );
+  assert.equal(providerCalled, false);
 });
 
 test("RuntimeIO disables gateway retries for maintenance calls only", async () => {
@@ -1189,6 +1213,7 @@ function createRuntimeIO(input: {
     Parameters<NonNullable<RuntimeStore["updateModelCallProvenance"]>>[0]
   > | undefined;
   guardrails?: Guardrails | undefined;
+  effectiveModelContractResolver?: EffectiveModelContractResolverV1 | undefined;
 }): RuntimeIO {
   let seq = 0;
   const store = {
@@ -1218,6 +1243,20 @@ function createRuntimeIO(input: {
         },
       },
       toolGateway,
+      effectiveModelContractResolver: input.effectiveModelContractResolver ?? {
+        admit: ({ request }) => ({
+          request,
+          contract: createEffectiveModelContractV1({
+            status: "legacy_compatibility",
+            endpoint: "legacy",
+            endpointCodec: "test-passthrough",
+            runtimeRole: "test",
+            requestFingerprint: `sha256:${"a".repeat(64)}`,
+            schemaHash: `sha256:${"b".repeat(64)}`,
+            toolSurfaceHash: `sha256:${"c".repeat(64)}`,
+          }),
+        }),
+      },
       consoleReporter: input.consoleUpdates === undefined
         ? undefined
         : {
