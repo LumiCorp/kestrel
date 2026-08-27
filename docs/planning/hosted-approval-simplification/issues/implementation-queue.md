@@ -11,6 +11,8 @@ work; this queue does not reopen them.
 
 ## Ready
 
+- [Normalize cleanup quarantine values across stores](06t-normalize-cleanup-quarantine-values.md)
+- [Bound cleanup quarantine audit timestamp](06u-bound-cleanup-audit-timestamp.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
