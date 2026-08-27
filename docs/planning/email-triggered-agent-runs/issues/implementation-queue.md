@@ -4,7 +4,8 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Let Project editors manage private Email Triggers](02-manage-private-project-email-triggers.md)
+- [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
 
 ## In progress
 
@@ -12,8 +13,6 @@ None.
 
 ## Blocked
 
-- [Let Project editors manage private Email Triggers](02-manage-private-project-email-triggers.md) — blocked by [Configure Organization Resend receiving in One and Desktop](01-prepare-organization-resend-receiving.md)
-- [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md) — blocked by [Configure Organization Resend receiving in One and Desktop](01-prepare-organization-resend-receiving.md)
 - [Hydrate and admit one received email](04-hydrate-and-admit-received-email.md) — blocked by [Let Project editors manage private Email Triggers](02-manage-private-project-email-triggers.md) and [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
 - [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md) — blocked by [Hydrate and admit one received email](04-hydrate-and-admit-received-email.md)
 - [Let the triggered agent read an email attachment](06-read-email-attachments-on-demand.md) — blocked by [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md)
@@ -22,11 +21,7 @@ None.
 
 ## Implemented
 
-- [Configure Organization Resend receiving in One and Desktop](01-prepare-organization-resend-receiving.md)
-- [Distinguish provider outages from invalid receiving configuration](13-classify-receiving-provider-failures.md)
-- [Classify malformed receiving JSON as an invalid request](19-classify-malformed-receiving-json.md)
-- [Execute malformed JSON contracts through every receiving route](21-execute-malformed-json-route-contracts.md)
-- [Execute the configured receiving route exports](32-execute-configured-receiving-route-exports.md)
+None.
 
 ## Done
 
@@ -50,3 +45,8 @@ None.
 - [Prove durable paginated webhook recovery](29-prove-durable-paginated-webhook-recovery.md)
 - [Recover an ambiguous Resend webhook create without creating another webhook](15-recover-ambiguous-resend-webhook-creates.md)
 - [Make Resend webhook staging recoverable after every provider step](11-stage-resend-webhooks-recoverably.md)
+- [Execute the configured receiving route exports](32-execute-configured-receiving-route-exports.md)
+- [Execute malformed JSON contracts through every receiving route](21-execute-malformed-json-route-contracts.md)
+- [Classify malformed receiving JSON as an invalid request](19-classify-malformed-receiving-json.md)
+- [Distinguish provider outages from invalid receiving configuration](13-classify-receiving-provider-failures.md)
+- [Configure Organization Resend receiving in One and Desktop](01-prepare-organization-resend-receiving.md)
