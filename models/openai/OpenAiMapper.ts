@@ -860,7 +860,10 @@ function toChatResponseFormat(
       request.providerOptions?.openai?.responseSchemaName ??
       request.providerOptions?.openrouter?.responseSchemaName ??
       "kestrel_response";
-    if (env.providerName === "ollama" || env.providerName === "lmstudio") {
+    if (
+      (env.providerName === "ollama" || env.providerName === "lmstudio") &&
+      v2Requirements(request)?.output.assurance !== "provider_strict_schema"
+    ) {
       // Local OpenAI-compatible providers can reject large constrained schemas.
       // Keep JSON mode enabled, but let Kestrel validate the parsed payload itself.
       return {

@@ -157,6 +157,11 @@ export function SettingsWorkspace({
   const [kestrelOneUrl, setKestrelOneUrl] = useState(DEFAULT_KESTREL_ONE_BASE_URL);
   const [desktopName, setDesktopName] = useState("Kestrel Desktop");
   const [kestrelOneBusy, setKestrelOneBusy] = useState(false);
+  const [desktopModelReadinessBusy, setDesktopModelReadinessBusy] =
+    useState(false);
+  const [desktopModelReadiness, setDesktopModelReadiness] = useState<
+    DesktopEnvironmentStatusProjection["environments"][number]["models"][number]
+  >();
   const dialogRef = useRef<HTMLFormElement>(null);
   const savingRef = useRef(false);
   const refreshVersionRef = useRef(0);
@@ -393,6 +398,25 @@ export function SettingsWorkspace({
       if (!poll) onError(errorMessage(error));
     } finally {
       if (!poll) setKestrelOneBusy(false);
+    }
+  }
+
+  async function refreshDesktopModelReadiness(): Promise<void> {
+    setDesktopModelReadinessBusy(true);
+    onError(undefined);
+    try {
+      const readiness = await window.kestrelDesktop.refreshDesktopModelReadiness();
+      setDesktopModelReadiness(readiness);
+      setNotice(
+        readiness.reachability === "reachable"
+          ? `Model readiness refreshed: ${readiness.qualification}.`
+          : `Model readiness refreshed: ${readiness.reachability}.`,
+      );
+      await refreshKestrelOne();
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setDesktopModelReadinessBusy(false);
     }
   }
 
@@ -1394,6 +1418,46 @@ export function SettingsWorkspace({
               {kestrelOne?.activeRuns ?? 0} active remote task
               {(kestrelOne?.activeRuns ?? 0) === 1 ? "" : "s"}
             </small>
+          </div>
+          <div className="settings-form">
+            <strong>Model readiness</strong>
+            {(() => {
+              const readiness =
+                desktopModelReadiness ?? kestrelOne?.environments[0]?.models[0];
+              return readiness === undefined ? (
+                <p>
+                  Refresh the exact configured model before making it available
+                  for remote tasks.
+                </p>
+              ) : (
+                <>
+                  <p>
+                    {readiness.registration.providerId}/
+                    {readiness.registration.modelId} · Reachability: {readiness.reachability} · Qualification: {readiness.qualification}
+                  </p>
+                  {readiness.eligibleRoles.length > 0 ? (
+                    <small>
+                      Eligible roles: {readiness.eligibleRoles.join(", ")}
+                    </small>
+                  ) : (
+                    <small>
+                      {readiness.unavailableRoles[0]?.reason ??
+                        "No runtime role is currently qualified."}
+                    </small>
+                  )}
+                </>
+              );
+            })()}
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={desktopModelReadinessBusy}
+              onClick={() => void refreshDesktopModelReadiness()}
+            >
+              {desktopModelReadinessBusy
+                ? "Refreshing model…"
+                : "Refresh model readiness"}
+            </button>
           </div>
         </div>
         {kestrelOne?.activity.length ? (

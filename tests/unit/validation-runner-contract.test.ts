@@ -265,8 +265,8 @@ test("runtime hermetic lane manifest is explicit, complete, and independently ru
   const assigned = Object.values(runtimeHermeticLaneManifest.lanes).flatMap(
     (definition) => definition.files,
   );
-  assert.equal(assigned.length, 363);
-  assert.equal(new Set(assigned).size, 363);
+  assert.equal(assigned.length, 364);
+  assert.equal(new Set(assigned).size, 364);
   assert.ok(
     runtimeHermeticLaneManifest.lanes["cli-command-mode"]?.files.includes(
       "tests/unit/approval-policy-pack-digest.test.ts",

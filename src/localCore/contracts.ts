@@ -820,7 +820,10 @@ export function parseLocalCoreModelReadiness(
       "Local Core model readiness.eligibleRoles must not contain duplicates.",
     );
   }
-  const derivedEligibleRoles = deriveLocalCoreEligibleRoles(registration);
+  const derivedEligibleRoles = deriveLocalCoreEligibleRoles(
+    registration,
+    record.reachability,
+  );
   if (
     eligibleRoles.length !== derivedEligibleRoles.length ||
     eligibleRoles.some((role) => derivedEligibleRoles.includes(role) === false)

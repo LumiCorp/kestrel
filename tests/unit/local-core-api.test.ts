@@ -2389,8 +2389,9 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
       platform: "darwin",
       coreVersion: "0.6.0",
       idleTimeoutMs: 0,
-      modelQualificationFetchImpl: async () =>
-        new Response(
+      modelQualificationFetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { tools?: unknown };
+        return new Response(
           JSON.stringify({
             id: "local-core-qualification",
             model: "llama3.2:latest",
@@ -2398,12 +2399,24 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
               {
                 index: 0,
                 finish_reason: "stop",
-                message: { role: "assistant", content: "{\"ok\":true}" },
+                message: request.tools
+                  ? {
+                      role: "assistant",
+                      tool_calls: [
+                        {
+                          id: "probe-call",
+                          type: "function",
+                          function: { name: "probe_tool", arguments: "{}" },
+                        },
+                      ],
+                    }
+                  : { role: "assistant", content: '{"ok":true}' },
               },
             ],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
-        ),
+        );
+      },
       executionRuntimeFactory: (profile) => {
         runtimeProfiles.push({
           id: profile.id,
@@ -2537,7 +2550,7 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
               eligibleRoles: ["agent.loop"],
             },
           }),
-      /eligible roles do not match current registration qualification/u,
+        /eligible roles do not match current registration qualification/u,
       );
 
       const storedProfiles = (await client.getJson("/v1/profiles")) as {
@@ -2644,11 +2657,11 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
         "qualified",
       );
       assert.equal(
-        refreshedReadiness.registration.capabilities.providerStrictSchema
-          .state,
-        "unsupported",
+        refreshedReadiness.registration.capabilities.providerStrictSchema.state,
+        "qualified",
       );
-      assert.deepEqual(refreshedReadiness.eligibleRoles, []);
+      assert.deepEqual(refreshedReadiness.eligibleRoles, ["agent.loop"]);
+      assert.equal(refreshedReadiness.reachability, "reachable");
       const reloadedReadiness = await client.desktopExecutionConfig();
       assert.equal(reloadedReadiness.modelReadiness.qualification, "qualified");
 

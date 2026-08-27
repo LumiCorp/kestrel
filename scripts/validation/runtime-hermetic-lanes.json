@@ -276,6 +276,7 @@
         "tests/unit/local-core-mcp-verification.test.ts",
         "tests/unit/local-core-microsoft-365.test.ts",
         "tests/unit/local-core-migrations.test.ts",
+        "tests/unit/local-core-model-readiness.test.ts",
         "tests/unit/local-core-postgres.test.ts",
         "tests/unit/local-core-protocol-event-journal.test.ts",
         "tests/unit/local-core-runtime-configuration.test.ts",

@@ -13,6 +13,7 @@ import {
   type ModelCapabilityClaimV2,
   type ModelCapabilityEvidenceV2,
   type ModelRegistrationV2,
+  type ModelRequestRequirementsV2,
   type ProviderRuntimeConfigurationV1,
 } from "../kestrel/contracts/model-registration.js";
 import {
@@ -47,7 +48,74 @@ export interface LocalCoreModelReadiness {
 type StoredLocalCoreModelReadiness = {
   version: 1;
   registrations: ModelRegistrationV2[];
+  reachabilityByFingerprint: Record<
+    string,
+    LocalCoreModelReadiness["reachability"]
+  >;
+  unavailableReasonByFingerprint: Record<string, string>;
 };
+
+function parseStoredReachability(
+  value: unknown,
+): StoredLocalCoreModelReadiness["reachabilityByFingerprint"] {
+  const candidate =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as { reachabilityByFingerprint?: unknown })
+          .reachabilityByFingerprint
+      : undefined;
+  if (candidate === undefined) return {};
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate)
+  ) {
+    throw new Error(
+      "Local Core model readiness reachability history is invalid.",
+    );
+  }
+  return Object.fromEntries(
+    Object.entries(candidate).map(([fingerprint, reachability]) => {
+      if (
+        reachability !== "unknown" &&
+        reachability !== "reachable" &&
+        reachability !== "unreachable"
+      ) {
+        throw new Error(
+          "Local Core model readiness reachability history is invalid.",
+        );
+      }
+      return [fingerprint, reachability];
+    }),
+  );
+}
+
+function parseStoredUnavailableReasons(value: unknown): Record<string, string> {
+  const candidate =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as { unavailableReasonByFingerprint?: unknown })
+          .unavailableReasonByFingerprint
+      : undefined;
+  if (candidate === undefined) return {};
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate)
+  ) {
+    throw new Error(
+      "Local Core model readiness unavailability history is invalid.",
+    );
+  }
+  return Object.fromEntries(
+    Object.entries(candidate).map(([fingerprint, reason]) => {
+      if (typeof reason !== "string" || reason.trim().length === 0) {
+        throw new Error(
+          "Local Core model readiness unavailability history is invalid.",
+        );
+      }
+      return [fingerprint, reason.trim()];
+    }),
+  );
+}
 
 /**
  * Qualification history is local, secret-free, and append-only. A new route
@@ -69,27 +137,48 @@ export class LocalCoreModelReadinessStore {
       const match = [...stored.registrations]
         .reverse()
         .find((candidate) => sameRouteIdentity(candidate, current));
-      return match === undefined ? undefined : readinessForRegistration(match);
+      return match === undefined
+        ? undefined
+        : readinessForRegistration(
+            match,
+            stored.reachabilityByFingerprint[match.fingerprint] ?? "unknown",
+            stored.unavailableReasonByFingerprint[match.fingerprint],
+          );
     });
   }
 
-  async append(registration: ModelRegistrationV2): Promise<void> {
+  async append(readiness: LocalCoreModelReadiness): Promise<void> {
     await this.#withLock(async () => {
       const stored = await this.#read();
-      const parsed = parseModelRegistrationV2(registration);
-      if (stored.registrations.some((entry) => entry.fingerprint === parsed.fingerprint)) {
-        return;
-      }
+      const parsed = parseModelRegistrationV2(readiness.registration);
       await this.#write({
         version: 1,
-        registrations: [...stored.registrations, parsed],
+        registrations: stored.registrations.some(
+          (entry) => entry.fingerprint === parsed.fingerprint,
+        )
+          ? stored.registrations
+          : [...stored.registrations, parsed],
+        reachabilityByFingerprint: {
+          ...stored.reachabilityByFingerprint,
+          [parsed.fingerprint]: readiness.reachability,
+        },
+        unavailableReasonByFingerprint: {
+          ...stored.unavailableReasonByFingerprint,
+          ...(readiness.unavailableRoles[0] === undefined
+            ? {}
+            : {
+                [parsed.fingerprint]: readiness.unavailableRoles[0].reason,
+              }),
+        },
       });
     });
   }
 
   async #read(): Promise<StoredLocalCoreModelReadiness> {
     try {
-      const value = JSON.parse(await readFile(this.#filePath, "utf8")) as unknown;
+      const value = JSON.parse(
+        await readFile(this.#filePath, "utf8"),
+      ) as unknown;
       if (
         typeof value !== "object" ||
         value === null ||
@@ -101,13 +190,20 @@ export class LocalCoreModelReadinessStore {
       }
       return {
         version: 1,
-        registrations: (value as { registrations: unknown[] }).registrations.map(
-          parseModelRegistrationV2,
-        ),
+        registrations: (
+          value as { registrations: unknown[] }
+        ).registrations.map(parseModelRegistrationV2),
+        reachabilityByFingerprint: parseStoredReachability(value),
+        unavailableReasonByFingerprint: parseStoredUnavailableReasons(value),
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { version: 1, registrations: [] };
+        return {
+          version: 1,
+          registrations: [],
+          reachabilityByFingerprint: {},
+          unavailableReasonByFingerprint: {},
+        };
       }
       throw error;
     }
@@ -125,7 +221,10 @@ export class LocalCoreModelReadinessStore {
 
   async #withLock<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.#queue.then(operation);
-    this.#queue = result.then(() => undefined, () => undefined);
+    this.#queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
     return await result;
   }
 }
@@ -161,7 +260,8 @@ export function createLocalCoreModelReadiness(input: {
   const evidence: ModelCapabilityEvidenceV2 = {
     source: "adapter_manifest",
     observedRevision: revision,
-    observedAt: input.observedAt ?? (input.now ?? (() => new Date()))().toISOString(),
+    observedAt:
+      input.observedAt ?? (input.now ?? (() => new Date()))().toISOString(),
     adapterRevision: adapter.factoryId,
     ...(input.credentialRevision === undefined
       ? {}
@@ -182,7 +282,7 @@ export function createLocalCoreModelReadiness(input: {
     state: "declared",
     evidence: [evidence],
   });
-  const supportsLocalSchemaQualification =
+  const supportsLocalQualification =
     profile.modelProvider === "ollama" || profile.modelProvider === "lmstudio";
   const registration = createModelRegistrationV2({
     version: MODEL_REGISTRATION_V2_VERSION,
@@ -215,14 +315,21 @@ export function createLocalCoreModelReadiness(input: {
     providerEvidence: [evidence],
     qualification: { state: "pending" },
     capabilities: {
-      jsonSyntax: supportsLocalSchemaQualification ? declared() : unsupported(),
-      localSchemaValidation: supportsLocalSchemaQualification
+      // The local adapters can encode these contracts, but only the exact
+      // model response may upgrade them to qualified. In particular, the
+      // OpenAI-compatible codec's syntax is not treated as capability truth.
+      jsonSyntax: supportsLocalQualification ? declared() : unsupported(),
+      localSchemaValidation: supportsLocalQualification
         ? declared()
         : unsupported(),
-      providerStrictSchema: unsupported(),
-      nativeTools: unsupported(),
-      requiredToolChoice: unsupported(),
-      strictToolInputs: unsupported(),
+      providerStrictSchema: supportsLocalQualification
+        ? declared()
+        : unsupported(),
+      nativeTools: supportsLocalQualification ? declared() : unsupported(),
+      requiredToolChoice: supportsLocalQualification
+        ? declared()
+        : unsupported(),
+      strictToolInputs: supportsLocalQualification ? declared() : unsupported(),
       parallelToolCalls: unsupported(),
       reasoning: { ...unsupported(), modes: ["off"] },
       continuation: { ...unsupported(), kinds: [] },
@@ -285,26 +392,29 @@ export async function qualifyLocalCoreModelReadiness(input: {
   const run = await runLiveModelQualification({
     service,
     registration,
-    probeRevision: "local-core-schema-validation-v1",
-    probes: localSchemaValidationProbes(registration),
+    probeRevision: "local-core-agent-loop-v1",
+    probes: localAgentLoopProbes(registration),
     gateway,
-    maxProbes: 1,
+    maxProbes: LOCAL_AGENT_LOOP_QUALIFICATION_CAPABILITIES.length,
     force: true,
   });
   const failedWithoutProof = run.results.find(
-    (result) => result.outcome === "failed" && result.responseHash === undefined,
+    (result) =>
+      result.outcome === "failed" && result.responseHash === undefined,
   );
   if (failedWithoutProof !== undefined) {
-    throw new Error(
-      `Local Core qualification could not verify this route (${failedWithoutProof.failureCode ?? "MODEL_QUALIFICATION_FAILED"}).`,
+    return readinessForRegistration(
+      registration,
+      "unreachable",
+      `Local Core could not verify this exact route (${failedWithoutProof.failureCode ?? "MODEL_QUALIFICATION_FAILED"}). Refresh the provider configuration and try again.`,
     );
   }
-  const qualified = applyLocalSchemaQualification({
+  const qualified = applyLocalQualificationResults({
     registration,
-    result: run.results[0]!,
+    results: run.results,
     checkedAt: run.checkedAt,
   });
-  return readinessForRegistration(qualified);
+  return readinessForRegistration(qualified, "reachable");
 }
 
 export function isLocalCoreModelRoleReady(
@@ -317,6 +427,7 @@ export function isLocalCoreModelRoleReady(
 /** The local and hosted agent loop share these strict contract requirements. */
 export function deriveLocalCoreEligibleRoles(
   registration: ModelRegistrationV2,
+  reachability: LocalCoreModelReadiness["reachability"] = "unknown",
 ): string[] {
   const strictAgentLoopReady =
     registration.qualification.state === "qualified" &&
@@ -324,54 +435,111 @@ export function deriveLocalCoreEligibleRoles(
     registration.capabilities.nativeTools.state === "qualified" &&
     registration.capabilities.requiredToolChoice.state === "qualified" &&
     registration.capabilities.strictToolInputs.state === "qualified";
-  return strictAgentLoopReady ? ["agent.loop"] : [];
+  return strictAgentLoopReady && reachability === "reachable"
+    ? ["agent.loop"]
+    : [];
 }
 
-function localSchemaValidationProbes(
+const LOCAL_AGENT_LOOP_QUALIFICATION_CAPABILITIES = [
+  "local_schema_validation",
+  "provider_strict_schema",
+  "native_tools",
+  "required_tool_choice",
+  "strict_tool_inputs",
+] as const;
+
+type LocalAgentLoopQualificationCapability =
+  (typeof LOCAL_AGENT_LOOP_QUALIFICATION_CAPABILITIES)[number];
+
+function localAgentLoopProbes(
   registration: ModelRegistrationV2,
 ): readonly ModelQualificationProbe[] {
-  return [{
-    capability: "local_schema_validation",
-    request: createModelRequestV2({
-      version: "model_request_v2",
-      model: registration.modelId,
-      input: "Return exactly the JSON object {\"ok\":true}.",
-      responseFormat: "json",
-      responseSchema: {
-        type: "object",
-        properties: { ok: { type: "boolean" } },
-        required: ["ok"],
-        additionalProperties: false,
-      },
-      requirements: {
-        runtimeRole: "qualification.local_schema_validation",
-        output: {
-          kind: "json_schema",
-          assurance: "local_schema_validation",
-          schemaName: "qualification_probe",
+  return LOCAL_AGENT_LOOP_QUALIFICATION_CAPABILITIES.map((capability) => {
+    const tools: ModelRequestRequirementsV2["tools"] = {
+      choice:
+        capability === "native_tools"
+          ? "auto"
+          : capability === "required_tool_choice" ||
+              capability === "strict_tool_inputs"
+            ? "required"
+            : "none",
+      strictArguments: capability === "strict_tool_inputs",
+      parallelism: "forbidden" as const,
+    };
+    const output =
+      capability === "local_schema_validation"
+        ? {
+            kind: "json_schema" as const,
+            assurance: "local_schema_validation" as const,
+            schemaName: "qualification_probe",
+          }
+        : capability === "provider_strict_schema"
+          ? {
+              kind: "json_schema" as const,
+              assurance: "provider_strict_schema" as const,
+              schemaName: "qualification_probe",
+            }
+          : { kind: "text" as const, assurance: "none" as const };
+    return {
+      capability,
+      request: createModelRequestV2({
+        version: "model_request_v2",
+        model: registration.modelId,
+        input:
+          tools.choice === "none"
+            ? 'Return exactly the JSON object {"ok":true}.'
+            : "Call probe_tool with an empty object and do not return prose.",
+        responseFormat: output.kind === "text" ? "text" : "json",
+        ...(output.kind === "json_schema"
+          ? {
+              responseSchema: {
+                type: "object",
+                properties: { ok: { type: "boolean" } },
+                required: ["ok"],
+                additionalProperties: false,
+              },
+            }
+          : {}),
+        ...(tools.choice === "none"
+          ? {}
+          : {
+              tools: [
+                {
+                  name: "probe_tool",
+                  description:
+                    "Qualification probe. Call with an empty object.",
+                  inputSchema: {
+                    type: "object",
+                    properties: {},
+                    additionalProperties: false,
+                  },
+                },
+              ],
+            }),
+        requirements: {
+          runtimeRole: `qualification.${capability}`,
+          output,
+          tools,
+          reasoning: { mode: "off", continuationKinds: [] },
+          streaming: { required: false, terminalBehavior: "not_required" },
+          inputModalities: ["text"],
+          endpoint: "chat",
         },
-        tools: {
-          choice: "none",
-          strictArguments: false,
-          parallelism: "forbidden",
-        },
-        reasoning: { mode: "off", continuationKinds: [] },
-        streaming: { required: false, terminalBehavior: "not_required" },
-        inputModalities: ["text"],
-        endpoint: "chat",
-      },
-    }),
-  }];
+      }),
+    };
+  });
 }
 
-function applyLocalSchemaQualification(input: {
+function applyLocalQualificationResults(input: {
   registration: ModelRegistrationV2;
-  result: ModelCapabilityQualification;
+  results: readonly ModelCapabilityQualification[];
   checkedAt: string;
 }): ModelRegistrationV2 {
   const { fingerprint: _fingerprint, ...authoring } = input.registration;
-  const qualificationRevision = "local-core-schema-validation-v1";
-  const evidence: ModelCapabilityEvidenceV2 = {
+  const qualificationRevision = "local-core-agent-loop-v1";
+  const evidenceFor = (
+    result: ModelCapabilityQualification,
+  ): ModelCapabilityEvidenceV2 => ({
     source: "qualification",
     observedRevision: authoring.revision,
     observedAt: input.checkedAt,
@@ -381,49 +549,84 @@ function applyLocalSchemaQualification(input: {
       : { credentialRevision: authoring.credentialRevision }),
     qualificationRevision,
     retainedPayloadHash: hashCanonical({
-      capability: input.result.capability,
-      outcome: input.result.outcome,
-      requestHash: input.result.requestHash,
-      responseHash: input.result.responseHash ?? null,
-      terminalState: input.result.terminalState ?? null,
-      validationOutcome: input.result.validationOutcome,
-      failureCode: input.result.failureCode ?? null,
-      binding: input.result.binding,
+      capability: result.capability,
+      outcome: result.outcome,
+      requestHash: result.requestHash,
+      responseHash: result.responseHash ?? null,
+      terminalState: result.terminalState ?? null,
+      validationOutcome: result.validationOutcome,
+      failureCode: result.failureCode ?? null,
+      binding: result.binding,
     }),
+  });
+  const results = new Map(
+    input.results.map((result) => [result.capability, result]),
+  );
+  const apply = (
+    capability: LocalAgentLoopQualificationCapability,
+    claim: ModelCapabilityClaimV2,
+  ): ModelCapabilityClaimV2 => {
+    const result = results.get(capability);
+    if (result === undefined || claim.state === "unsupported") return claim;
+    return {
+      state: result.outcome === "qualified" ? "qualified" : "failed",
+      evidence: [...claim.evidence, evidenceFor(result)],
+    };
   };
-  const qualified = input.result.outcome === "qualified";
-  const localSchemaValidation = {
-    state: qualified ? "qualified" : "failed",
-    evidence: [...authoring.capabilities.localSchemaValidation.evidence, evidence],
-  } as ModelCapabilityClaimV2;
+  const allQualified = LOCAL_AGENT_LOOP_QUALIFICATION_CAPABILITIES.every(
+    (capability) => results.get(capability)?.outcome === "qualified",
+  );
   return createModelRegistrationV2({
     ...authoring,
     qualification: {
-      state: qualified ? "qualified" : "failed",
+      state: allQualified ? "qualified" : "failed",
       revision: qualificationRevision,
       checkedAt: input.checkedAt,
-      probeHash: hashCanonical([{
-        capability: input.result.capability,
-        requestHash: input.result.requestHash,
-        responseHash: input.result.responseHash ?? null,
-        outcome: input.result.outcome,
-      }]),
+      probeHash: hashCanonical(
+        input.results.map((result) => ({
+          capability: result.capability,
+          requestHash: result.requestHash,
+          responseHash: result.responseHash ?? null,
+          outcome: result.outcome,
+        })),
+      ),
     },
     capabilities: {
       ...authoring.capabilities,
-      localSchemaValidation,
+      localSchemaValidation: apply(
+        "local_schema_validation",
+        authoring.capabilities.localSchemaValidation,
+      ),
+      providerStrictSchema: apply(
+        "provider_strict_schema",
+        authoring.capabilities.providerStrictSchema,
+      ),
+      nativeTools: apply("native_tools", authoring.capabilities.nativeTools),
+      requiredToolChoice: apply(
+        "required_tool_choice",
+        authoring.capabilities.requiredToolChoice,
+      ),
+      strictToolInputs: apply(
+        "strict_tool_inputs",
+        authoring.capabilities.strictToolInputs,
+      ),
     },
   });
 }
 
 function readinessForRegistration(
   registration: ModelRegistrationV2,
+  reachability: LocalCoreModelReadiness["reachability"] = "unknown",
+  unavailableReason?: string | undefined,
 ): LocalCoreModelReadiness {
-  const eligibleRoles = deriveLocalCoreEligibleRoles(registration);
+  const eligibleRoles = deriveLocalCoreEligibleRoles(
+    registration,
+    reachability,
+  );
   return {
     version: LOCAL_CORE_MODEL_READINESS_VERSION,
     registration,
-    reachability: "unknown",
+    reachability,
     qualification:
       registration.qualification.state === "legacy_unqualified"
         ? "stale"
@@ -431,11 +634,16 @@ function readinessForRegistration(
     eligibleRoles,
     unavailableRoles: eligibleRoles.includes("agent.loop")
       ? []
-      : [{
-          role: "agent.loop",
-          reason:
-            "This exact local route has no current qualification for strict schema and required tool work.",
-        }],
+      : [
+          {
+            role: "agent.loop",
+            reason:
+              unavailableReason ??
+              (reachability === "unreachable"
+                ? "This exact local route is currently unreachable. Refresh the provider configuration and try again."
+                : "This exact local route has no current qualification for strict schema and required tool work."),
+          },
+        ],
   };
 }
 

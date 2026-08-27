@@ -1951,7 +1951,7 @@ async function handleRequest(input: {
           : { fetchImpl: input.ensureOptions.modelQualificationFetchImpl }),
       });
       await new LocalCoreModelReadinessStore(input.status.home.homePath).append(
-        readiness.registration,
+        readiness,
       );
       writeJson(input.response, 200, { ok: true, modelReadiness: readiness });
       return;
