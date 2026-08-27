@@ -6,14 +6,12 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
+- [Show truthful hosted model readiness by role](11-show-truthful-hosted-model-readiness.md)
+- [Publish exact Local Core and Desktop model readiness](12-publish-local-core-model-readiness.md)
+
 ## Blocked
 
-- [Show truthful hosted model readiness by role](11-show-truthful-hosted-model-readiness.md) — depends on issues 08, 09, and 10.
-- [Publish exact Local Core and Desktop model readiness](12-publish-local-core-model-readiness.md) — depends on issues 06, 09, and 10.
-
 ## Implemented
-
-- [Persist exact admission and response proof](10-persist-model-call-proof.md)
 
 ## Done
 
@@ -26,3 +24,4 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Bind runtime routes to exact model evidence](07-bind-exact-runtime-routes.md)
 - [Persist exact hosted model registrations](08-persist-exact-hosted-registrations.md)
 - [Admit effective model contracts before provider spend](09-admit-effective-model-contracts.md)
+- [Persist exact admission and response proof](10-persist-model-call-proof.md)
