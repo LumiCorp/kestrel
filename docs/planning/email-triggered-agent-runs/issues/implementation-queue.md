@@ -5,6 +5,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 ## Ready
 
 - [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
+- [Close the owner-loss migration cutover race](40-close-owner-loss-migration-cutover-race.md)
 
 ## In progress
 
