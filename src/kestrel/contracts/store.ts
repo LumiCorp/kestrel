@@ -480,7 +480,12 @@ export interface EffectStore {
     owner: { runId: string; sessionId: string },
     result: EffectResult & { status: "DONE" },
   ): Promise<void>;
-  saveEffectResult(runId: string, sessionId: string, result: EffectResult): Promise<void>;
+  saveEffectResult(
+    runId: string,
+    sessionId: string,
+    result: EffectResult,
+    intent?: EffectResultPersistenceIntent | undefined,
+  ): Promise<void>;
   markEffectStatus(
     idempotencyKey: string,
     status: EffectExecutionStatus,
@@ -490,6 +495,11 @@ export interface EffectStore {
   claimNextRegionWorkItem(sessionId: string, cursor?: string): Promise<RegionWorkItem | null>;
   completeRegionWorkItem(itemId: number, outcome: "DONE" | "FAILED", error?: Record<string, unknown>): Promise<void>;
   spawnRegionWorkItems(sessionId: string, items: RegionWorkIntent[]): Promise<void>;
+}
+
+export interface EffectResultPersistenceIntent {
+  version: "prepared_approval_cleanup_result_persistence_v1";
+  idempotencyKey: string;
 }
 
 export function validatePreparedApprovalCleanupDoneEvidence(input: {

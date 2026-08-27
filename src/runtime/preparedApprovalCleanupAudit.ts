@@ -38,12 +38,18 @@ type NormalizedCleanupEvidenceValue =
   | NormalizedCleanupEvidenceValue[]
   | { [key: string]: NormalizedCleanupEvidenceValue };
 
+export interface PreparedApprovalCleanupDoneAuditSnapshot {
+  resultIdentity: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  releasedPreparedInvocationId?: Record<string, unknown> | undefined;
+}
+
 export function snapshotPreparedApprovalCleanupDoneResult(input: {
-  result: EffectResult & { status: "DONE" };
+  result: unknown;
   expectedIdempotencyKey: string;
 }): {
   snapshot: (EffectResult & { status: "DONE" }) | null;
-  auditResult: EffectResult & { status: "DONE" };
+  auditSnapshot: PreparedApprovalCleanupDoneAuditSnapshot;
 } {
   let descriptors: PropertyDescriptorMap;
   try {
@@ -51,12 +57,13 @@ export function snapshotPreparedApprovalCleanupDoneResult(input: {
   } catch {
     return {
       snapshot: null,
-      auditResult: {
-        idempotencyKey: input.expectedIdempotencyKey,
-        status: "DONE",
+      auditSnapshot: materializePreparedApprovalCleanupDoneAuditSnapshot({
+        idempotencyKey: UNREADABLE_DESCRIPTOR,
+        status: UNREADABLE_DESCRIPTOR,
         output: unreadableAuditValue(),
-        timestamp: Symbol("unreadable-cleanup-result-timestamp") as never,
-      },
+        error: unreadableAuditValue(),
+        timestamp: UNREADABLE_DESCRIPTOR,
+      }),
     };
   }
   const idempotencyKey = readDataDescriptor(descriptors.idempotencyKey);
@@ -64,69 +71,88 @@ export function snapshotPreparedApprovalCleanupDoneResult(input: {
   const output = readDataDescriptor(descriptors.output);
   const error = readDataDescriptor(descriptors.error);
   const timestamp = readDataDescriptor(descriptors.timestamp);
-  const auditResult: EffectResult & { status: "DONE" } = {
-    idempotencyKey: typeof idempotencyKey === "string"
-      ? idempotencyKey
-      : input.expectedIdempotencyKey,
-    status: "DONE",
-    ...(output === UNREADABLE_DESCRIPTOR
-      ? { output: unreadableAuditValue() }
-      : output === undefined ? {} : { output }),
-    ...(error === UNREADABLE_DESCRIPTOR || error === undefined
+  const materializedOutput = materializeCleanupOutput(output);
+  const auditSnapshot = materializePreparedApprovalCleanupDoneAuditSnapshot({
+    idempotencyKey,
+    status,
+    ...(materializedOutput.auditValue === undefined
       ? {}
-      : { error: error as never }),
-    timestamp: timestamp === UNREADABLE_DESCRIPTOR
-      ? Symbol("unreadable-cleanup-result-timestamp") as never
-      : timestamp as never,
-  };
+      : { output: materializedOutput.auditValue }),
+    ...(error === UNREADABLE_DESCRIPTOR
+      ? { error: unreadableAuditValue() }
+      : error === undefined ? {} : { error }),
+    timestamp,
+  });
   if (
     idempotencyKey !== input.expectedIdempotencyKey ||
     status !== "DONE" ||
     error !== undefined ||
     typeof timestamp !== "string" ||
     !isCanonicalTimestamp(timestamp) ||
-    typeof output !== "object" ||
-    output === null ||
-    Array.isArray(output)
-  ) return { snapshot: null, auditResult };
-  let outputDescriptors: PropertyDescriptorMap;
-  try {
-    outputDescriptors = Object.getOwnPropertyDescriptors(output);
-  } catch {
-    return {
-      snapshot: null,
-      auditResult: { ...auditResult, output: unreadableAuditValue() },
-    };
-  }
-  const outputKeys = Reflect.ownKeys(outputDescriptors);
-  if (outputKeys.some((key) => {
-    const descriptor = outputDescriptors[key as keyof PropertyDescriptorMap];
-    return descriptor !== undefined && !("value" in descriptor);
-  })) {
-    return {
-      snapshot: null,
-      auditResult: { ...auditResult, output: unreadableAuditValue() },
-    };
-  }
-  const releasedDescriptor = outputDescriptors.releasedPreparedInvocationId;
-  if (
-    outputKeys.length !== 1 ||
-    outputKeys[0] !== "releasedPreparedInvocationId" ||
-    releasedDescriptor === undefined ||
-    releasedDescriptor.enumerable !== true ||
-    !("value" in releasedDescriptor) ||
-    typeof releasedDescriptor.value !== "string"
-  ) return { snapshot: null, auditResult };
+    materializedOutput.exactReleasedPreparedInvocationId === undefined
+  ) return { snapshot: null, auditSnapshot };
   return {
     snapshot: {
       idempotencyKey,
       status: "DONE",
       output: {
-        releasedPreparedInvocationId: releasedDescriptor.value,
+        releasedPreparedInvocationId:
+          materializedOutput.exactReleasedPreparedInvocationId,
       },
       timestamp,
     },
-    auditResult,
+    auditSnapshot,
+  };
+}
+
+function materializeCleanupOutput(value: unknown): {
+  auditValue: unknown;
+  exactReleasedPreparedInvocationId?: string | undefined;
+} {
+  if (value === UNREADABLE_DESCRIPTOR) {
+    return { auditValue: unreadableAuditValue() };
+  }
+  if (typeof value !== "object" || value === null) {
+    return { auditValue: value };
+  }
+  let isArray: boolean;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    isArray = Array.isArray(value);
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return { auditValue: unreadableAuditValue() };
+  }
+  const keys = Reflect.ownKeys(descriptors);
+  const auditValue: Record<string, unknown> | unknown[] = isArray ? [] : {};
+  for (const key of keys) {
+    if (typeof key !== "string" || key === "length") continue;
+    const descriptor = descriptors[key];
+    if (descriptor?.enumerable !== true) continue;
+    Object.defineProperty(auditValue, key, {
+      value: descriptor !== undefined && "value" in descriptor
+        ? descriptor.value
+        : unreadableAuditValue(),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  const releasedDescriptor = descriptors.releasedPreparedInvocationId;
+  const exactReleasedPreparedInvocationId =
+    !isArray &&
+    keys.length === 1 &&
+    keys[0] === "releasedPreparedInvocationId" &&
+    releasedDescriptor?.enumerable === true &&
+    "value" in releasedDescriptor &&
+    typeof releasedDescriptor.value === "string"
+      ? releasedDescriptor.value
+      : undefined;
+  return {
+    auditValue,
+    ...(exactReleasedPreparedInvocationId === undefined
+      ? {}
+      : { exactReleasedPreparedInvocationId }),
   };
 }
 
@@ -148,6 +174,56 @@ function unreadableAuditValue(): Record<string, unknown> {
     },
   });
   return value;
+}
+
+function materializePreparedApprovalCleanupDoneAuditSnapshot(input: {
+  idempotencyKey: unknown;
+  status: unknown;
+  output?: unknown;
+  error?: unknown;
+  timestamp: unknown;
+}): PreparedApprovalCleanupDoneAuditSnapshot {
+  const normalizedResult = normalizePreparedApprovalCleanupDoneEvidence({
+    idempotencyKey: "audit-only",
+    status: "DONE",
+    ...(input.output === undefined ? {} : { output: input.output }),
+    ...(input.error === undefined ? {} : { error: input.error as never }),
+    timestamp: "1970-01-01T00:00:00.000Z",
+  });
+  const releasedPreparedInvocationId =
+    projectReleasedPreparedInvocationIdFromDescriptor(input.output);
+  return {
+    resultIdentity: {
+      idempotencyKey: projectAuditIdentity(input.idempotencyKey),
+      status: projectAuditStatus(input.status),
+      originalTimestamp: input.timestamp === UNREADABLE_DESCRIPTOR
+        ? { type: "unreadable" }
+        : projectTimestamp(input.timestamp),
+    },
+    evidence: projectBoundedEvidence({
+      output: normalizedResult.output,
+      error: normalizedResult.error,
+    }),
+    ...(releasedPreparedInvocationId === undefined
+      ? {}
+      : { releasedPreparedInvocationId }),
+  };
+}
+
+function projectAuditIdentity(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") return projectIdentifier(value);
+  if (value === UNREADABLE_DESCRIPTOR) return { type: "unreadable" };
+  const projection = projectBoundedEvidence({ output: value, error: undefined });
+  return {
+    type: (projection.outputShape as Record<string, unknown>).type,
+    canonicalHash: projection.canonicalHash,
+  };
+}
+
+function projectAuditStatus(value: unknown): unknown {
+  if (value === "DONE") return "DONE";
+  if (value === UNREADABLE_DESCRIPTOR) return { type: "unreadable" };
+  return projectAuditIdentity(value);
 }
 
 function isCanonicalTimestamp(value: string): boolean {
@@ -181,30 +257,45 @@ export function buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent(input: {
   invalidResult: EffectResult & { status: "DONE" };
   occurredAt: string;
 }): RunEvent {
-  const normalizedResult =
-    normalizePreparedApprovalCleanupDoneEvidence(input.invalidResult);
-  const evidence = projectBoundedEvidence({
-    output: normalizedResult.output,
-    error: normalizedResult.error,
+  return buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot({
+    effect: input.effect,
+    occurredAt: input.occurredAt,
+    auditSnapshot: materializePreparedApprovalCleanupDoneAuditSnapshot({
+      idempotencyKey: input.invalidResult.idempotencyKey,
+      status: input.invalidResult.status,
+      output: input.invalidResult.output,
+      error: input.invalidResult.error,
+      timestamp: input.invalidResult.timestamp,
+    }),
   });
+}
+
+export function buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot(
+  input: {
+    effect: PersistedEffect;
+    auditSnapshot: PreparedApprovalCleanupDoneAuditSnapshot;
+    occurredAt: string;
+  },
+): RunEvent {
+  const evidence = input.auditSnapshot.evidence;
   const effectIdentity = {
     runId: projectIdentifier(input.effect.runId),
     sessionId: projectIdentifier(input.effect.sessionId),
     idempotencyKey: projectIdentifier(input.effect.idempotencyKey),
-  };
-  const resultIdentity = {
-    idempotencyKey: projectIdentifier(input.invalidResult.idempotencyKey),
-    status: input.invalidResult.status,
-    originalTimestamp: projectTimestamp(input.invalidResult.timestamp),
   };
   const metadata = {
     version: "prepared_approval_cleanup_done_evidence_quarantine_v2",
     validationReasonCode:
       "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
     effectIdentity,
-    resultIdentity,
+    resultIdentity: input.auditSnapshot.resultIdentity,
     evidence,
-    ...projectReleasedPreparedInvocationId(input.invalidResult.output),
+    ...(input.auditSnapshot.releasedPreparedInvocationId === undefined
+      ? {}
+      : {
+          releasedPreparedInvocationId:
+            input.auditSnapshot.releasedPreparedInvocationId,
+        }),
   };
   return {
     runId: input.effect.runId,
@@ -323,14 +414,20 @@ function normalizeEvidenceArray(
   state.traversalTruncated ||= truncated;
   const normalized: NormalizedCleanupEvidenceValue[] = [];
   for (let index = 0; index < observed; index += 1) {
-    let member: unknown;
+    let descriptor: PropertyDescriptor | undefined;
     try {
-      member = value[index];
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     } catch {
       state.traversalTruncated = true;
       normalized.push(normalizationMarker("unreadable"));
       continue;
     }
+    if (descriptor === undefined || !("value" in descriptor)) {
+      state.traversalTruncated = true;
+      normalized.push(normalizationMarker("unreadable"));
+      continue;
+    }
+    const member = descriptor.value;
     const next = normalizeEvidenceValue(member, state, depth + 1, "array");
     normalized.push(next === OMIT_NORMALIZED_VALUE ? null : next);
   }
@@ -368,9 +465,9 @@ function normalizeEvidenceObject(
     ? selectedUserKeys.slice(0, MAX_CONTAINER_ENTRIES - 1)
     : selectedUserKeys;
   for (const key of selectedKeys) {
-    let member: unknown;
+    let descriptor: PropertyDescriptor | undefined;
     try {
-      member = value[key];
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
     } catch {
       state.traversalTruncated = true;
       const safeKey = normalizeEvidenceKey(key);
@@ -382,6 +479,18 @@ function normalizeEvidenceObject(
       });
       continue;
     }
+    if (descriptor === undefined || !("value" in descriptor)) {
+      state.traversalTruncated = true;
+      const safeKey = normalizeEvidenceKey(key);
+      Object.defineProperty(normalized, safeKey, {
+        value: normalizationMarker("unreadable"),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      continue;
+    }
+    const member = descriptor.value;
     const next = normalizeEvidenceValue(member, state, depth + 1, "object");
     if (next === OMIT_NORMALIZED_VALUE) continue;
     const safeKey = normalizeEvidenceKey(key);
@@ -763,28 +872,26 @@ function incrementType(types: Record<string, number>, type: string): void {
   types[type] = (types[type] ?? 0) + 1;
 }
 
-function projectReleasedPreparedInvocationId(
+function projectReleasedPreparedInvocationIdFromDescriptor(
   output: unknown,
-): Record<string, unknown> {
-  if (typeof output !== "object" || output === null) {
-    return {};
-  }
+): Record<string, unknown> | undefined {
+  if (typeof output !== "object" || output === null) return;
+  let descriptor: PropertyDescriptor | undefined;
   try {
-    if (Array.isArray(output)) return {};
+    if (Array.isArray(output)) return;
+    descriptor = Object.getOwnPropertyDescriptor(
+      output,
+      "releasedPreparedInvocationId",
+    );
   } catch {
-    return {};
+    return;
   }
-  let candidate: unknown;
-  try {
-    candidate = (output as Record<string, unknown>)
-      .releasedPreparedInvocationId;
-  } catch {
-    return {};
-  }
-  if (typeof candidate !== "string") return {};
-  return {
-    releasedPreparedInvocationId: projectIdentifier(candidate),
-  };
+  if (
+    descriptor === undefined ||
+    !("value" in descriptor) ||
+    typeof descriptor.value !== "string"
+  ) return;
+  return projectIdentifier(descriptor.value);
 }
 
 function projectIdentifier(value: string): {

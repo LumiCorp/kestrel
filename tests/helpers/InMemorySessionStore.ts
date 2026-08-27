@@ -14,6 +14,7 @@ import type {
   ClaimConversationTurnExecutionResult,
   CommitStepInput,
   CommitStepResult,
+  EffectResultPersistenceIntent,
   LegacySessionArchive,
   OutboxEventRecord,
   PersistedArtifact,
@@ -641,7 +642,12 @@ export class InMemorySessionStore implements SessionStore {
     return { ...result };
   }
 
-  async saveEffectResult(_runId: string, _sessionId: string, result: EffectResult): Promise<void> {
+  async saveEffectResult(
+    _runId: string,
+    _sessionId: string,
+    result: EffectResult,
+    _intent?: EffectResultPersistenceIntent | undefined,
+  ): Promise<void> {
     if (this.effectResults.has(result.idempotencyKey)) {
       return;
     }

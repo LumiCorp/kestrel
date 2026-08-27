@@ -308,6 +308,9 @@ test("malformed cleanup DONE evidence is quarantined and released exactly once b
       unexpected: true,
     },
     timestamp: "2026-08-27T00:00:01.000Z",
+  }, {
+    version: "prepared_approval_cleanup_result_persistence_v1",
+    idempotencyKey,
   });
   const kestrel = createRuntime(store, {}, { toolGateway: gateway });
   const run = (id: string) => kestrel.run({

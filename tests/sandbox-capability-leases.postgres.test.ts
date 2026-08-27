@@ -18,11 +18,20 @@ import { PgSqlExecutor } from "../src/store/PgSqlExecutor.js";
 import { PostgresSessionStore } from "../src/store/PostgresSessionStore.js";
 import {
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot,
   PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+  snapshotPreparedApprovalCleanupDoneResult,
 } from "../src/runtime/preparedApprovalCleanupAudit.js";
 import { createTestToolGateway, prepareTestToolCall } from "./helpers/createTestToolGateway.js";
 
 const databaseUrl = process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL?.trim();
+
+function cleanupResultPersistenceIntent(idempotencyKey: string) {
+  return {
+    version: "prepared_approval_cleanup_result_persistence_v1" as const,
+    idempotencyKey,
+  };
+}
 
 test("PostgreSQL capability lease ledger serializes CAS transitions and preserves immutable evidence", async () => {
   assert.ok(databaseUrl, "KESTREL_PRODUCT_RUNNER_DATABASE_URL is required");
@@ -534,7 +543,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       status: "DONE",
       output: rawEquivalentOutput,
       timestamp: "2026-08-27T00:00:01.000Z",
-    });
+    }, cleanupResultPersistenceIntent(conflictingEffectId));
     assert.equal(
       await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
         conflictingEffectId,
@@ -651,15 +660,19 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     );
     const conflictingEffect = await store.getPersistedEffect(conflictingEffectId);
     assert.ok(conflictingEffect);
+    const rawAuditSnapshot = snapshotPreparedApprovalCleanupDoneResult({
+      result: {
+        idempotencyKey: conflictingEffectId,
+        status: "DONE",
+        output: rawEquivalentOutput,
+        timestamp: "2026-08-27T00:00:01.000Z",
+      },
+      expectedIdempotencyKey: conflictingEffectId,
+    });
     const expectedRawAudit =
-      buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot({
         effect: conflictingEffect,
-        invalidResult: {
-          idempotencyKey: conflictingEffectId,
-          status: "DONE",
-          output: rawEquivalentOutput,
-          timestamp: "2026-08-27T00:00:01.000Z",
-        },
+        auditSnapshot: rawAuditSnapshot.auditSnapshot,
         occurredAt: "2026-08-27T00:00:02.000Z",
       });
     assert.deepEqual(
@@ -758,7 +771,12 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       timestamp: "2026-08-27T00:00:06.000Z",
     };
     const expectedLongResult = structuredClone(longResult);
-    const longResultSave = store.saveEffectResult(runId, sessionId, longResult);
+    const longResultSave = store.saveEffectResult(
+      runId,
+      sessionId,
+      longResult,
+      cleanupResultPersistenceIntent(longEffectId),
+    );
     longResult.output.releasedPreparedInvocationId = "post-save-mutation";
     await longResultSave;
     assert.equal(
@@ -826,7 +844,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       status: "DONE",
       output: invalidUpgradeOutput,
       timestamp: "2026-08-27T00:00:07.000Z",
-    });
+    }, cleanupResultPersistenceIntent(upgradeEffectId));
     assert.equal((await store.getEffectResult(upgradeEffectId))?.status, "FAILED");
     assert.ok(upgradeGetterReads <= 1);
     assert.equal(
@@ -841,6 +859,102 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       "conflict",
       "lossy JSON serialization must never upgrade malformed exact-looking output",
     );
+    assert.equal(
+      await store.resetPreparedApprovalCleanupEffectExecution(
+        upgradeEffectId,
+        cleanupOwner,
+      ),
+      "reset",
+    );
+    let topLevelErrorReads = 0;
+    const preMutationOutput = {
+      releasedPreparedInvocationId: "wrong-call",
+      nested: { value: "before-save" },
+    };
+    const hostileTopLevelResult: Record<string, unknown> = {
+      idempotencyKey: upgradeEffectId,
+      status: "DONE",
+      output: preMutationOutput,
+      timestamp: "2026-08-27T00:00:07.500Z",
+    };
+    Object.defineProperty(hostileTopLevelResult, "error", {
+      enumerable: true,
+      get() {
+        topLevelErrorReads += 1;
+        throw new Error("pg-top-level-error-secret-sentinel");
+      },
+    });
+    const upgradeEffect = await store.getPersistedEffect(upgradeEffectId);
+    assert.ok(upgradeEffect);
+    const expectedHostileSnapshot = snapshotPreparedApprovalCleanupDoneResult({
+      result: hostileTopLevelResult,
+      expectedIdempotencyKey: upgradeEffectId,
+    });
+    const expectedHostileAudit =
+      buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot({
+        effect: upgradeEffect,
+        auditSnapshot: expectedHostileSnapshot.auditSnapshot,
+        occurredAt: "2026-08-27T00:00:08.000Z",
+      });
+    const hostileSave = store.saveEffectResult(
+      runId,
+      sessionId,
+      hostileTopLevelResult as never,
+      cleanupResultPersistenceIntent(upgradeEffectId),
+    );
+    preMutationOutput.nested.value = "mutated-after-save-secret-sentinel";
+    await hostileSave;
+    assert.equal(topLevelErrorReads, 0);
+    assert.equal((await store.getEffectResult(upgradeEffectId))?.status, "FAILED");
+    const hostileEvents = await store.getReplayStream({
+      runId,
+      eventTypes: ["prepared_approval_cleanup.done_evidence_quarantined"],
+    });
+    const hostileAudit = hostileEvents.find((event) => {
+      const identity = event.metadata?.effectIdentity as
+        Record<string, unknown> | undefined;
+      return (
+        (identity?.idempotencyKey as Record<string, unknown> | undefined)
+          ?.canonicalHash === hashCanonical({ value: upgradeEffectId }) &&
+        (event.metadata?.evidence as Record<string, unknown> | undefined)
+          ?.canonicalHash ===
+          (expectedHostileAudit.metadata?.evidence as Record<string, unknown>)
+            .canonicalHash
+      );
+    });
+    assert.ok(hostileAudit);
+    assert.deepEqual(
+      hostileAudit.metadata?.evidence,
+      expectedHostileAudit.metadata?.evidence,
+      "invalid audit evidence is isolated before the first database await",
+    );
+    assert.equal(
+      JSON.stringify(hostileAudit).includes("mutated-after-save-secret-sentinel"),
+      false,
+    );
+    assert.equal(
+      await store.resetPreparedApprovalCleanupEffectExecution(
+        upgradeEffectId,
+        cleanupOwner,
+      ),
+      "reset",
+    );
+    const revokedCleanupResult = Proxy.revocable({
+      idempotencyKey: upgradeEffectId,
+      status: "DONE" as const,
+      output: {
+        releasedPreparedInvocationId: upgradePreparedToolCall.callId,
+      },
+      timestamp: "2026-08-27T00:00:08.500Z",
+    }, {});
+    revokedCleanupResult.revoke();
+    await store.saveEffectResult(
+      runId,
+      sessionId,
+      revokedCleanupResult.proxy,
+      cleanupResultPersistenceIntent(upgradeEffectId),
+    );
+    assert.equal((await store.getEffectResult(upgradeEffectId))?.status, "FAILED");
 
     const timestampPreparedToolCall = await prepareTestToolCall({
       gateway,
@@ -878,6 +992,18 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         binding.tenantId,
       ],
     );
+    await assert.rejects(
+      store.saveEffectResult(runId, sessionId, {
+        idempotencyKey: timestampEffectId,
+        status: "DONE",
+        output: {
+          releasedPreparedInvocationId: timestampPreparedToolCall.callId,
+        },
+        timestamp: "2026-08-27T00:00:08.750Z",
+      }),
+      /requires explicit cleanup intent/u,
+    );
+    assert.equal(await store.getEffectResult(timestampEffectId), null);
     await store.saveEffectResult(runId, sessionId, {
       idempotencyKey: timestampEffectId,
       status: "DONE",
@@ -885,7 +1011,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         releasedPreparedInvocationId: timestampPreparedToolCall.callId,
       },
       timestamp: (() => "pg-hostile-timestamp-secret") as never,
-    });
+    }, cleanupResultPersistenceIntent(timestampEffectId));
     const quarantinedTimestamp = await store.getEffectResult(timestampEffectId);
     assert.equal(quarantinedTimestamp?.status, "FAILED");
     const timestampEvents = await store.getReplayStream({
@@ -951,7 +1077,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         status: "DONE",
         output: { releasedPreparedInvocationId: `cleanup-corrupt-${suffix}` },
         timestamp: "2026-08-27T00:00:09.000Z",
-      }),
+      }, cleanupResultPersistenceIntent(corruptEffectId)),
       /exact durable prepared tool call/u,
     );
     assert.equal(await store.getEffectResult(corruptEffectId), null);
@@ -959,6 +1085,50 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       runId,
       eventTypes: ["prepared_approval_cleanup.done_evidence_quarantined"],
     })).length, eventsBeforeCorruptSave);
+
+    const ordinaryIntentIsolationId = `ordinary-intent-isolation-${suffix}`;
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json,
+          idempotency_key, failure_policy, status, created_at, tenant_id,
+          tenant_ownership_state)
+       VALUES ($1, $2, 35, 'ordinary_test_effect', '{}'::jsonb, $3,
+               'STOP', 'PENDING', NOW(), $4, 'tenant_bound')`,
+      [runId, sessionId, ordinaryIntentIsolationId, binding.tenantId],
+    );
+    let ordinaryDescriptorInspections = 0;
+    const ordinaryResult = new Proxy({
+      idempotencyKey: ordinaryIntentIsolationId,
+      status: "DONE" as const,
+      output: { ordinary: true },
+      timestamp: "2026-08-27T00:00:09.500Z",
+    }, {
+      ownKeys(target) {
+        ordinaryDescriptorInspections += 1;
+        return Reflect.ownKeys(target);
+      },
+    });
+    await store.saveEffectResult(runId, sessionId, ordinaryResult);
+    assert.equal(
+      ordinaryDescriptorInspections,
+      0,
+      "ordinary DONE persistence receives no cleanup descriptor inspection",
+    );
+    await assert.rejects(
+      store.saveEffectResult(
+        runId,
+        sessionId,
+        ordinaryResult,
+        cleanupResultPersistenceIntent(ordinaryIntentIsolationId),
+      ),
+      /intent does not match the locked durable effect/u,
+    );
+    assert.deepEqual(await store.getEffectResult(ordinaryIntentIsolationId), {
+      idempotencyKey: ordinaryIntentIsolationId,
+      status: "DONE",
+      output: { ordinary: true },
+      timestamp: "2026-08-27T00:00:09.500Z",
+    });
 
     await assert.rejects(
       prepareTestToolCall({

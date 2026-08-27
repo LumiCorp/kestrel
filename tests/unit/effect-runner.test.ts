@@ -112,6 +112,13 @@ async function persistPreparedApprovalCleanupEffect(
   return persisted;
 }
 
+function cleanupResultPersistenceIntent(idempotencyKey: string) {
+  return {
+    version: "prepared_approval_cleanup_result_persistence_v1" as const,
+    idempotencyKey,
+  };
+}
+
 
 test("Effect runner reports compiled tool activity", async () => {
   const store = new InMemorySessionStore();
@@ -533,7 +540,7 @@ test("cleanup DONE quarantine preserves malformed audit evidence across effect s
       status: "DONE",
       output: malformedOutput,
       timestamp,
-    });
+    }, cleanupResultPersistenceIntent(effect.idempotencyKey));
 
     assert.equal(
       await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
@@ -955,7 +962,7 @@ test("production in-memory quarantine is total through public store APIs", async
         unusualValue,
       },
       timestamp: (timestamp ?? "2026-08-27T00:00:01.000Z") as string,
-    });
+    }, cleanupResultPersistenceIntent(effect.idempotencyKey));
     assert.equal(
       await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
         effect.idempotencyKey,
@@ -1045,7 +1052,12 @@ test("production in-memory validates exact cleanup evidence before projection", 
       output: { releasedPreparedInvocationId: callId },
       timestamp: "2026-08-27T00:00:01.000Z",
     };
-    await store.saveEffectResult(effect.runId, effect.sessionId, exactResult);
+    await store.saveEffectResult(
+      effect.runId,
+      effect.sessionId,
+      exactResult,
+      cleanupResultPersistenceIntent(effect.idempotencyKey),
+    );
     assert.equal(
       await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
         effect.idempotencyKey,
@@ -1078,7 +1090,7 @@ test("production in-memory validates exact cleanup evidence before projection", 
       status: "DONE",
       output,
       timestamp: "2026-08-27T00:00:01.000Z",
-    });
+    }, cleanupResultPersistenceIntent(effect.idempotencyKey));
     output.releasedPreparedInvocationId = "mutated-after-save";
     assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
       releasedPreparedInvocationId: built.preparedCallId,
@@ -1112,7 +1124,7 @@ test("production in-memory validates exact cleanup evidence before projection", 
       status: "DONE",
       output,
       timestamp: "2026-08-27T00:00:01.000Z",
-    });
+    }, cleanupResultPersistenceIntent(effect.idempotencyKey));
     assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "FAILED");
     assert.equal(getterReads, 0, "stateful accessors must never supply authority");
   }
@@ -1141,7 +1153,7 @@ test("production in-memory validates exact cleanup evidence before projection", 
       status: "DONE",
       output,
       timestamp: "2026-08-27T00:00:01.000Z",
-    });
+    }, cleanupResultPersistenceIntent(effect.idempotencyKey));
     assert.equal(
       await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
         effect.idempotencyKey,
@@ -1173,6 +1185,124 @@ test("production in-memory validates exact cleanup evidence before projection", 
   }
 });
 
+test("explicit cleanup persistence snapshots hostile top-level evidence and isolates ordinary DONE", async () => {
+  for (const mode of ["accessors", "revoked-proxy"] as const) {
+    const store = new DurableInMemorySessionStore();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: `explicit-intent-${mode}`,
+      status: "PENDING",
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+    let accessorReads = 0;
+    let hostileResult: unknown;
+    if (mode === "accessors") {
+      const result: Record<string, unknown> = {
+        idempotencyKey: effect.idempotencyKey,
+        status: "DONE",
+        output: { releasedPreparedInvocationId: built.preparedCallId },
+        timestamp: "2026-08-27T00:00:01.000Z",
+      };
+      Object.defineProperty(result, "error", {
+        enumerable: true,
+        get() {
+          accessorReads += 1;
+          throw new Error("top-level-error-secret-sentinel");
+        },
+      });
+      hostileResult = result;
+    } else {
+      const revoked = Proxy.revocable({
+        idempotencyKey: effect.idempotencyKey,
+        status: "DONE",
+        output: { releasedPreparedInvocationId: built.preparedCallId },
+        timestamp: "2026-08-27T00:00:01.000Z",
+      }, {});
+      revoked.revoke();
+      hostileResult = revoked.proxy;
+    }
+    await store.saveEffectResult(
+      effect.runId,
+      effect.sessionId,
+      hostileResult as never,
+      cleanupResultPersistenceIntent(effect.idempotencyKey),
+    );
+    assert.equal(
+      (await store.getEffectResult(effect.idempotencyKey))?.status,
+      "FAILED",
+      mode,
+    );
+    assert.equal(accessorReads, 0, mode);
+    const audit = store.getRunEvents()[0];
+    assert.ok(audit, mode);
+    assert.equal(
+      (audit.metadata?.evidence as Record<string, unknown>)
+        .traversalTruncated,
+      true,
+      `${mode}: unreadable evidence remains truthful`,
+    );
+    assert.equal(
+      JSON.stringify(audit).includes("top-level-error-secret-sentinel"),
+      false,
+      mode,
+    );
+  }
+
+  const store = new DurableInMemorySessionStore();
+  const built = await buildPreparedApprovalCleanupEffect({
+    suffix: "explicit-intent-required",
+    status: "PENDING",
+  });
+  const cleanup = await persistPreparedApprovalCleanupEffect(store, built.effect);
+  const exactCleanupResult = {
+    idempotencyKey: cleanup.idempotencyKey,
+    status: "DONE" as const,
+    output: { releasedPreparedInvocationId: built.preparedCallId },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  };
+  await assert.rejects(
+    store.saveEffectResult(cleanup.runId, cleanup.sessionId, exactCleanupResult),
+    /requires explicit cleanup intent/u,
+  );
+  assert.equal(await store.getEffectResult(cleanup.idempotencyKey), null);
+
+  const ordinaryCandidate = await buildPreparedApprovalCleanupEffect({
+    suffix: "ordinary-intent-isolation",
+    status: "PENDING",
+  });
+  const ordinary = await persistPreparedApprovalCleanupEffect(store, {
+    ...ordinaryCandidate.effect,
+    type: "ordinary_test_effect",
+    payload: { ordinary: true },
+  });
+  let ordinaryDescriptorInspections = 0;
+  const ordinaryResult = new Proxy({
+    idempotencyKey: ordinary.idempotencyKey,
+    status: "DONE" as const,
+    output: { ordinary: true },
+    timestamp: "2026-08-27T00:00:02.000Z",
+  }, {
+    ownKeys(target) {
+      ordinaryDescriptorInspections += 1;
+      return Reflect.ownKeys(target);
+    },
+  });
+  await store.saveEffectResult(ordinary.runId, ordinary.sessionId, ordinaryResult);
+  assert.equal(
+    ordinaryDescriptorInspections,
+    1,
+    "ordinary persistence performs only its existing shallow-copy inspection",
+  );
+  await assert.rejects(
+    store.saveEffectResult(
+      ordinary.runId,
+      ordinary.sessionId,
+      ordinaryResult,
+      cleanupResultPersistenceIntent(ordinary.idempotencyKey),
+    ),
+    /intent does not match the locked durable effect/u,
+  );
+});
+
 test("cleanup DONE quarantine preserves exact evidence and refuses ordinary effects", async () => {
   const store = new InMemorySessionStore();
   const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
@@ -1188,7 +1318,12 @@ test("cleanup DONE quarantine preserves exact evidence and refuses ordinary effe
     output: { releasedPreparedInvocationId: preparedCallId },
     timestamp: "2026-08-27T00:00:02.000Z",
   };
-  await store.saveEffectResult(effect.runId, effect.sessionId, exactResult);
+  await store.saveEffectResult(
+    effect.runId,
+    effect.sessionId,
+    exactResult,
+    cleanupResultPersistenceIntent(effect.idempotencyKey),
+  );
   assert.equal(
     await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
       effect.idempotencyKey,
@@ -1250,7 +1385,7 @@ test("effect runner quarantines an existing malformed cleanup DONE and releases 
     status: "DONE",
     output: { releasedPreparedInvocationId: "wrong-call" },
     timestamp: "2026-08-27T00:00:01.000Z",
-  });
+  }, cleanupResultPersistenceIntent(effect.idempotencyKey));
   let releases = 0;
   registry.register("release_prepared_tool_call", async () => {
     releases += 1;
@@ -1294,7 +1429,7 @@ test("effect runner quarantines malformed cleanup DONE from a claim race", async
         status: "DONE",
         output: { releasedPreparedInvocationId: "claim-race-wrong-call" },
         timestamp: "2026-08-27T00:00:01.000Z",
-      });
+      }, cleanupResultPersistenceIntent(idempotencyKey));
       return "terminal";
     }
     return claimEffectExecution(idempotencyKey, owner);
@@ -1357,7 +1492,7 @@ test("effect runner validates and quarantines malformed cleanup DONE from a rese
         status: "DONE",
         output: { releasedPreparedInvocationId: "reset-race-wrong-call" },
         timestamp: "2026-08-27T00:00:02.000Z",
-      });
+      }, cleanupResultPersistenceIntent(idempotencyKey));
       return "done";
     }
     return reset;
@@ -1404,7 +1539,7 @@ test("two cleanup runners serialize release and retain quarantine audit after co
       malformedText: "invalid\u0000audit",
     },
     timestamp: originalTimestamp,
-  });
+  }, cleanupResultPersistenceIntent(effect.idempotencyKey));
   assert.equal(
     await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
       effect.idempotencyKey,

@@ -11,7 +11,6 @@ work; this queue does not reopen them.
 
 ## Ready
 
-- [Bind cleanup persistence to one pre-await evidence snapshot](06z5-bind-cleanup-persistence-snapshot.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
@@ -24,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Bind cleanup persistence to one pre-await evidence snapshot](06z5-bind-cleanup-persistence-snapshot.md)
 - [Snapshot exact cleanup evidence once before validation and persistence](06z2-snapshot-exact-cleanup-evidence.md)
 - [Reject non-durable prepared invocation identifiers](06z3-reject-non-durable-prepared-identifiers.md)
 - [Use trusted timestamps for quarantined cleanup results](06z4-use-trusted-cleanup-quarantine-timestamps.md)

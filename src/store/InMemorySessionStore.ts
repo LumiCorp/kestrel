@@ -25,6 +25,7 @@ import type {
   ClaimConversationTurnExecutionResult,
   CommitStepInput,
   CommitStepResult,
+  EffectResultPersistenceIntent,
   LegacySessionArchive,
   OutboxEventRecord,
   PersistedArtifact,
@@ -55,6 +56,7 @@ import {
 import { SessionBusyError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import {
   buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot,
   snapshotPreparedApprovalCleanupDoneResult,
 } from "../runtime/preparedApprovalCleanupAudit.js";
 import {
@@ -1023,14 +1025,49 @@ export class InMemorySessionStore implements SessionStore {
     return { status: "cancelled" } as const;
   }
 
-  async saveEffectResult(runId: string, sessionId: string, result: EffectResult): Promise<void> {
-    const resultIdempotencyKey = result.idempotencyKey;
-    const resultStatus = result.status;
+  async saveEffectResult(
+    runId: string,
+    sessionId: string,
+    result: EffectResult,
+    intent?: EffectResultPersistenceIntent | undefined,
+  ): Promise<void> {
+    const cleanupMaterialized = intent === undefined
+      ? null
+      : snapshotPreparedApprovalCleanupDoneResult({
+          result,
+          expectedIdempotencyKey: intent.idempotencyKey,
+        });
+    const resultIdempotencyKey = intent?.idempotencyKey ?? result.idempotencyKey;
+    const resultStatus = intent === undefined ? result.status : "DONE";
     const effect = this.effects.find((candidate) => candidate.idempotencyKey === resultIdempotencyKey);
     if (effect === undefined || effect.runId !== runId || effect.sessionId !== sessionId) {
       throw new SandboxCapabilityExactResultConflictError("Effect result owner does not match the locked effect");
     }
-    if (!this.hasTrustedEffectTenant(effect, result)) {
+    const preparedApprovalCleanup =
+      effect.type === "release_prepared_tool_call" &&
+      hasPreparedApprovalCleanupMarker(effect.payload);
+    if (intent !== undefined) {
+      if (
+        intent.version !==
+          "prepared_approval_cleanup_result_persistence_v1" ||
+        !preparedApprovalCleanup
+      ) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup persistence intent does not match the locked durable effect",
+        );
+      }
+      validatePreparedApprovalCleanupEffectIdentity(effect);
+    } else if (preparedApprovalCleanup && resultStatus === "DONE") {
+      throw new SandboxCapabilityExactResultConflictError(
+        "Cleanup DONE persistence requires explicit cleanup intent",
+      );
+    }
+    const tenantResult = cleanupMaterialized?.snapshot ?? {
+      idempotencyKey: resultIdempotencyKey,
+      status: "FAILED" as const,
+      timestamp: new Date().toISOString(),
+    };
+    if (!this.hasTrustedEffectTenant(effect, intent === undefined ? result : tenantResult)) {
       throw new SandboxCapabilityExactResultConflictError("Effect result tenant does not match durable authority");
     }
     if (resultStatus === "DONE" && effect?.status === "FAILED") {
@@ -1042,15 +1079,10 @@ export class InMemorySessionStore implements SessionStore {
 
     if (
       resultStatus === "DONE" &&
-      effect.type === "release_prepared_tool_call" &&
-      hasPreparedApprovalCleanupMarker(effect.payload)
+      cleanupMaterialized !== null
     ) {
-      validatePreparedApprovalCleanupEffectIdentity(effect);
       const occurredAt = new Date().toISOString();
-      const materialized = snapshotPreparedApprovalCleanupDoneResult({
-        result: result as EffectResult & { status: "DONE" },
-        expectedIdempotencyKey: effect.idempotencyKey,
-      });
+      const materialized = cleanupMaterialized;
       if (materialized.snapshot !== null) {
         try {
           validatePreparedApprovalCleanupDoneEvidence({
@@ -1070,14 +1102,18 @@ export class InMemorySessionStore implements SessionStore {
         }
       }
       const auditEvent =
-        buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+        buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot({
           effect,
-          invalidResult: materialized.auditResult,
+          auditSnapshot: materialized.auditSnapshot,
           occurredAt,
         });
       const quarantinedResult = {
         ...quarantinePreparedApprovalCleanupDoneResult(
-          materialized.auditResult,
+          {
+            idempotencyKey: effect.idempotencyKey,
+            status: "DONE",
+            timestamp: occurredAt,
+          },
         ),
         timestamp: occurredAt,
       };
