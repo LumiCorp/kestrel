@@ -17,6 +17,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Make Environment default admission current and atomic](15-make-environment-default-admission-current-and-atomic.md)
 - [Prove Environment default admission behavior](16-prove-environment-default-admission-behavior.md)
 - [Make Environment default concurrency proof deterministic](17-make-environment-default-concurrency-proof-deterministic.md)
+- [Bind Environment default race proof to exact sessions](18-bind-environment-default-race-proof-to-exact-sessions.md)
 
 ## Done
 

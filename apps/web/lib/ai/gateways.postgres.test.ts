@@ -792,6 +792,7 @@ test("recorded RunPod cleanup connections remain usable after disablement", asyn
 
 test("Environment default admission excludes stale hosted evidence across a credential rotation", async (context) => {
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
+  const suffix = crypto.randomUUID();
   process.env.DATABASE_URL = databaseUrl;
   process.env.POSTGRES_URL = databaseUrl;
   const [
@@ -805,7 +806,6 @@ test("Environment default admission excludes stale hosted evidence across a cred
   ]);
   const sql = postgres(databaseUrl, { max: 1 });
   const rotation = postgres(databaseUrl, { max: 1 });
-  const suffix = crypto.randomUUID();
   const organizationId = `environment-default-org-${suffix}`;
   const userId = `environment-default-user-${suffix}`;
   const environmentId = `environment-default-environment-${suffix}`;
@@ -917,24 +917,31 @@ test("Environment default admission excludes stale hosted evidence across a cred
   const rotationRelease = new Promise<void>((resolve) => {
     releaseRotation = resolve;
   });
-  let rotationStarted!: () => void;
-  const started = new Promise<void>((resolve) => {
+  let rotationStarted!: (backendPid: number) => void;
+  const started = new Promise<number>((resolve) => {
     rotationStarted = resolve;
   });
   const rotating = rotation.begin(async (transaction) => {
+    const [backend] = await transaction<Array<{ pid: number }>>`
+      SELECT pg_backend_pid() AS "pid"
+    `;
+    assert.ok(backend);
     await transaction`
       UPDATE "ai_gateways"
       SET "credential_revision" = 2
       WHERE "id" = ${gatewayId}
     `;
-    rotationStarted();
+    rotationStarted(backend.pid);
     await rotationRelease;
   });
-  await started;
+  const rotationBackendPid = await started;
   const selection = selectDefault();
   let contentionError: unknown;
   try {
-    await waitForGatewaySelectionContention(sql);
+    await waitForGatewaySelectionContention({
+      sql,
+      rotationBackendPid,
+    });
   } catch (error) {
     contentionError = error;
   } finally {
@@ -960,16 +967,20 @@ test("Environment default admission excludes stale hosted evidence across a cred
 });
 
 async function waitForGatewaySelectionContention(
-  sql: ReturnType<typeof postgres>,
+  input: {
+    sql: ReturnType<typeof postgres>;
+    rotationBackendPid: number;
+  },
 ): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    const [waiting] = await sql<Array<{ waiting: boolean }>>`
+    const [waiting] = await input.sql<Array<{ waiting: boolean }>>`
       SELECT EXISTS (
         SELECT 1
         FROM pg_stat_activity
         WHERE datname = current_database()
           AND wait_event_type = 'Lock'
+          AND ${input.rotationBackendPid} = ANY(pg_blocking_pids(pid))
       ) AS "waiting"
     `;
     if (waiting?.waiting) return;
