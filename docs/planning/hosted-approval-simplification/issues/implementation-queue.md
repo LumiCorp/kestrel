@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-None.
+- [Redact cleanup quarantine audit](06p-redact-cleanup-quarantine-audit.md)
 
 ## Blocked
 
