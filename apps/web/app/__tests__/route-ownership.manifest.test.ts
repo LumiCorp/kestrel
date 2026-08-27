@@ -83,6 +83,7 @@ test(
         "/platform",
         "/projects",
         "/schedules",
+        "/workflows",
       ],
     );
 

@@ -1221,6 +1221,196 @@ export const projectPromptScheduleRuns = pgTable(
   ],
 );
 
+/** =========================
+ *  Project Workflows
+ *  ========================= */
+
+export const projectWorkflows = pgTable(
+  "project_workflows",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    modelId: text("model_id").notNull(),
+    currentVersion: integer("current_version").notNull().default(1),
+    enabled: boolean("enabled").notNull().default(false),
+    cronExpression: text("cron_expression"),
+    timeZone: text("time_zone"),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.projectId],
+      foreignColumns: [projects.organizationId, projects.id],
+      name: "project_workflows_organization_project_fk",
+    }).onDelete("cascade"),
+    index("project_workflows_project_idx").on(table.projectId),
+    index("project_workflows_creator_idx").on(table.createdByUserId),
+    index("project_workflows_due_idx").on(table.enabled, table.nextRunAt),
+  ],
+);
+
+export const projectWorkflowVersions = pgTable(
+  "project_workflow_versions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => projectWorkflows.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    definition: jsonb("definition").notNull().$type<Record<string, unknown>>(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_workflow_versions_workflow_version_idx").on(
+      table.workflowId,
+      table.version,
+    ),
+  ],
+);
+
+export const projectWorkflowRuns = pgTable(
+  "project_workflow_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => projectWorkflows.id, { onDelete: "cascade" }),
+    workflowVersionId: text("workflow_version_id")
+      .notNull()
+      .references(() => projectWorkflowVersions.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    trigger: text("trigger", { enum: ["manual", "scheduled"] }).notNull(),
+    requestId: text("request_id"),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
+    environmentIdSnapshot: text("environment_id_snapshot").notNull(),
+    projectContextRevisionIdSnapshot: text(
+      "project_context_revision_id_snapshot",
+    ).notNull(),
+    modelIdSnapshot: text("model_id_snapshot").notNull(),
+    input: jsonb("input").$type<Record<string, unknown>>(),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    status: text("status", {
+      enum: [
+        "queued",
+        "running",
+        "waiting_for_input",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_workflow_runs_request_idx").on(
+      table.workflowId,
+      table.requestId,
+    ),
+    uniqueIndex("project_workflow_runs_occurrence_idx").on(
+      table.workflowId,
+      table.scheduledFor,
+    ),
+    index("project_workflow_runs_status_idx").on(table.status),
+    index("project_workflow_runs_created_idx").on(table.workflowId, table.createdAt),
+  ],
+);
+
+export const projectWorkflowStepRuns = pgTable(
+  "project_workflow_step_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => projectWorkflowRuns.id, { onDelete: "cascade" }),
+    nodeId: text("node_id").notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    status: text("status", {
+      enum: [
+        "pending",
+        "running",
+        "waiting_for_input",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("pending"),
+    input: jsonb("input").$type<Record<string, unknown>>(),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    threadId: text("thread_id").references(() => threads.id, {
+      onDelete: "set null",
+    }),
+    turnId: text("turn_id").references(() => threadTurns.id, {
+      onDelete: "set null",
+    }),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_workflow_step_runs_node_attempt_idx").on(
+      table.workflowRunId,
+      table.nodeId,
+      table.attempt,
+    ),
+    index("project_workflow_step_runs_run_status_idx").on(
+      table.workflowRunId,
+      table.status,
+    ),
+    index("project_workflow_step_runs_turn_idx").on(table.turnId),
+  ],
+);
+
 export const threadTurnEvents = pgTable(
   "thread_turn_events",
   {

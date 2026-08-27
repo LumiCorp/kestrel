@@ -23,7 +23,8 @@ export type KestrelOneRouteOwner =
   | "stats"
   | "threads"
   | "tool-boundary"
-  | "webhook";
+  | "webhook"
+  | "workflows";
 
 export type KestrelOneRouteKind = "api" | "page";
 
@@ -353,6 +354,28 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "authenticated",
     "redirect-sign-in",
     { primaryNavigation: true },
+  ),
+  page(
+    "app/(workspace)/workflows/page.tsx",
+    "/workflows",
+    "workflows",
+    "authenticated",
+    "redirect-sign-in",
+    { primaryNavigation: true },
+  ),
+  page(
+    "app/(workspace)/workflows/[workflowId]/page.tsx",
+    "/workflows/:workflowId",
+    "workflows",
+    "authenticated",
+    "redirect-sign-in",
+  ),
+  page(
+    "app/(workspace)/workflows/runs/[runId]/page.tsx",
+    "/workflows/runs/:runId",
+    "workflows",
+    "authenticated",
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/apps/page.tsx",
@@ -1991,6 +2014,41 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/api/projects/[id]/schedules/[scheduleId]/test/route.ts",
     "/api/projects/:id/schedules/:scheduleId/test",
     "projects",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/workflows/route.ts",
+    "/api/projects/:id/workflows",
+    "workflows",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/workflows/generate/route.ts",
+    "/api/projects/:id/workflows/generate",
+    "workflows",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/workflows/[workflowId]/route.ts",
+    "/api/projects/:id/workflows/:workflowId",
+    "workflows",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/workflows/[workflowId]/run/route.ts",
+    "/api/projects/:id/workflows/:workflowId/run",
+    "workflows",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/workflow-runs/[runId]/route.ts",
+    "/api/workflow-runs/:runId",
+    "workflows",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized,
   ),

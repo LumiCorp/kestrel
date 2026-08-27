@@ -13,19 +13,15 @@ export type RuntimeModelSelectionTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
 >[0];
 
-export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
-  transaction: RuntimeModelSelectionTransaction,
-  input: {
-    organizationId: string;
-    environmentId: string;
-    modelIds: readonly string[];
-  },
-) {
-  const modelIds = [...new Set(input.modelIds.map((value) => value.trim()))].filter(
-    Boolean,
-  );
-  if (modelIds.length === 0) return new Set<string>();
+export type ResolvedKestrelRuntimeModelIdentity = {
+  provider: string;
+  rawModelId: string;
+};
 
+async function listAvailableKestrelRuntimeGatewayModels(
+  transaction: RuntimeModelSelectionTransaction,
+  input: { organizationId: string; environmentId: string },
+) {
   const rows = await transaction
     .select({
       id: schema.aiGatewayModels.id,
@@ -53,7 +49,7 @@ export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
         ),
       ),
     );
-  const gatewayModels = rows
+  return rows
     .filter((row) => {
       if (!isKestrelRuntimeLanguageProvider(row.gatewayProvider)) return false;
       const provider = getGatewayModelEconomicsProvider({
@@ -70,6 +66,25 @@ export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
       ...row,
       id: row.alias?.trim() || `${row.gatewayProvider}/${row.rawModelId}`,
     }));
+}
+
+export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
+  transaction: RuntimeModelSelectionTransaction,
+  input: {
+    organizationId: string;
+    environmentId: string;
+    modelIds: readonly string[];
+  },
+) {
+  const modelIds = [...new Set(input.modelIds.map((value) => value.trim()))].filter(
+    Boolean,
+  );
+  if (modelIds.length === 0) return new Set<string>();
+
+  const gatewayModels = await listAvailableKestrelRuntimeGatewayModels(
+    transaction,
+    input,
+  );
 
   const desktopSelections = new Map<
     string,
@@ -133,4 +148,33 @@ export async function isKestrelRuntimeModelSelectionAvailableInTransaction(
       { ...input, modelIds: [modelId] },
     );
   return !unavailable.has(modelId);
+}
+
+export async function resolveKestrelRuntimeModelIdentityInTransaction(
+  transaction: RuntimeModelSelectionTransaction,
+  input: {
+    organizationId: string;
+    environmentId: string;
+    modelId: string;
+  },
+): Promise<ResolvedKestrelRuntimeModelIdentity | null> {
+  const modelId = input.modelId.trim();
+  if (!modelId) return null;
+  const unavailable =
+    await findUnavailableKestrelRuntimeModelSelectionsInTransaction(
+      transaction,
+      { ...input, modelIds: [modelId] },
+    );
+  if (unavailable.has(modelId)) return null;
+  const desktop = parseDesktopLocalRuntimeModelId(modelId);
+  if (desktop) {
+    return { provider: desktop.provider, rawModelId: desktop.model };
+  }
+  const selected = selectGatewayModelSelection(
+    await listAvailableKestrelRuntimeGatewayModels(transaction, input),
+    modelId,
+  );
+  return selected
+    ? { provider: selected.gatewayProvider, rawModelId: selected.rawModelId }
+    : null;
 }
