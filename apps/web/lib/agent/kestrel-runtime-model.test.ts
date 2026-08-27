@@ -104,6 +104,49 @@ test("legacy approved catalog metadata is upgraded at runtime", () => {
   assert.equal(selection.economicsProfile?.contextWindowTokens, 202_752);
 });
 
+test("pending and adapter-stale hosted evidence remains legacy instead of claiming a qualified route", () => {
+  const selection = toKestrelOneRuntimeModelSelection({
+    id: "pending-openai",
+    gatewayId: "gateway-openai",
+    rawModelId: "gpt-4.1-mini",
+    gatewayProvider: "openai",
+    credentialRevision: 7,
+    metadata: {
+      kestrelModelRegistrationV2: translateOpenAiManifestModel({
+        registrationId: "openai:gpt-4.1-mini:pending",
+        revision: "catalog-1",
+        modelId: "gpt-4.1-mini",
+        endpoint: "responses",
+        credentialRevision: "7",
+        providerConfiguration: {
+          version: "provider_runtime_configuration_v1",
+          providerId: "openai",
+          protocol: "openai",
+          authentication: { mode: "required", credentialReference: { source: "gateway", id: "provider.openai.default" } },
+          endpoint: "https://api.openai.com/v1",
+          timeoutMs: 60_000,
+          allowedHeaders: [],
+          dataHandling: "provider_managed",
+        },
+      }),
+      kestrelEconomicsProfile: {
+        version: 1,
+        profileId: "openai:gpt-4.1-mini:v1",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 16_384,
+        counting: { counter: "utf8-byte-upper-bound", counterVersion: "1", method: "conservative_estimate", confidence: "conservative" },
+        cache: { behavior: "none" },
+      },
+    },
+    organizationId: "org-1",
+    environmentId: "env-1",
+  });
+  assert.equal(selection.routeBinding, undefined);
+  assert.equal(selection.registration, undefined);
+});
+
 test("qualified hosted selections carry their exact registration into the runner profile", () => {
   const pending = translateOpenAiManifestModel({
     registrationId: "openai:gpt-4.1-mini:responses",

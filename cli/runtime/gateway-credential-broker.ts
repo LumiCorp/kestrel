@@ -11,9 +11,11 @@ import type {
 } from "../../src/kestrel/contracts/model-io.js";
 import type { TuiProfile } from "../contracts.js";
 import type { ModelCredentialRouteBindingV2 } from "../../src/kestrel/contracts/model-route.js";
+import type { OpenRouterQualifiedRouteEvidence } from "../../models/openrouter/OpenRouterV2Codec.js";
 import {
   legacyEffectiveModelContractResolverV1,
   parseEffectiveModelContractV1,
+  resolveExactModelEndpointV1,
   type EffectiveModelContractV1,
 } from "../../src/kestrel/effective-model-contract.js";
 import { parseModelRequestV2 } from "../../src/kestrel/contracts/model-registration.js";
@@ -34,6 +36,7 @@ export interface GatewayCredentialReference {
   rawModelId: string;
   provider: "openai" | "openrouter" | "anthropic" | "ollama";
   routeBinding?: ModelCredentialRouteBindingV2 | undefined;
+  openRouterRouteEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
 }
 
 export interface GatewayCredentialLease {
@@ -232,7 +235,14 @@ export class BrokeredModelGateway implements ModelGateway {
   }) {
     this.reference = input.reference;
     this.cache = input.cache;
-    this.createProvider = input.createProvider ?? createProviderGatewayForLease;
+    this.createProvider =
+      input.createProvider ??
+      ((lease) =>
+        createProviderGatewayForLease(lease, {
+          ...(input.reference.openRouterRouteEvidence === undefined
+            ? {}
+            : { routeEvidence: input.reference.openRouterRouteEvidence }),
+        }));
     this.onEvent = input.onEvent ?? (() => {});
     this.onLease = input.onLease ?? (() => {});
   }
@@ -437,7 +447,10 @@ function requireSecureGatewayUrl(value: string) {
 
 export function createProviderGatewayForLease(
   lease: GatewayCredentialLease,
-  options: { fetchImpl?: typeof fetch | undefined } = {},
+  options: {
+    fetchImpl?: typeof fetch | undefined;
+    routeEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
+  } = {},
 ): ModelGateway {
   if (lease.protocol === "anthropic") {
     if (!lease.apiKey) {
@@ -445,6 +458,9 @@ export function createProviderGatewayForLease(
     }
     return createAnthropicModelGatewayFromEnv({
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.routeEvidence === undefined
+        ? {}
+        : { routeEvidence: options.routeEvidence }),
       envConfig: {
         apiKey: lease.apiKey,
         model: lease.rawModelId,
@@ -584,10 +600,12 @@ async function assertEffectiveContractRouteBinding(
     parsed.qualificationRevision !== binding.qualificationRevision ||
     parsed.apiEndpoint !== binding.apiEndpoint ||
     parsed.endpointCodec !== binding.endpointCodec ||
+    parsed.endpoint !== resolveExactModelEndpointV1(binding.endpointCodec) ||
     parsed.routingPolicyFingerprint !== binding.routingPolicyFingerprint ||
     parsed.runtimeRole !== binding.requiredRole ||
     parsed.credentialRevision !== binding.credentialRevision ||
     requestV2.model !== parsed.modelId ||
+    requestV2.requirements.endpoint !== parsed.endpoint ||
     requestV2.fingerprints.request !== parsed.requestFingerprint ||
     requestV2.fingerprints.schema !== parsed.schemaHash ||
     requestV2.fingerprints.toolSurface !== parsed.toolSurfaceHash

@@ -14,10 +14,19 @@ import {
   type ModelCredentialRouteBindingV2,
 } from "../../../../src/kestrel/contracts/model-route";
 import {
+  ANTHROPIC_MODELS_API_TRANSLATOR_REVISION,
+} from "../../../../models/anthropic/AnthropicModelManifest";
+import {
+  OPENAI_MODEL_MANIFEST_REVISION,
+} from "../../../../models/openai/OpenAiModelManifest";
+import {
   fingerprintModelRoutingPolicyV2,
   parseModelRegistrationV2,
   type ModelRegistrationV2,
 } from "../../../../src/kestrel/contracts/model-registration";
+import { OPENROUTER_MODEL_DETAIL_TRANSLATOR_REVISION } from "../ai/openrouter-model-resolution";
+import { readHostedOpenRouterRouteEvidence } from "../ai/hosted-model-registration";
+import type { OpenRouterQualifiedRouteEvidence } from "../../../../models/openrouter/OpenRouterV2Codec";
 
 type RunnerModelProvider = NonNullable<RunnerProfile["modelProvider"]>;
 
@@ -30,6 +39,7 @@ export type KestrelOneRuntimeModelSelection = {
   provider: RunnerModelProvider;
   routeBinding?: ModelCredentialRouteBindingV2 | undefined;
   registration?: ModelRegistrationV2 | undefined;
+  openRouterRouteEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
   economicsProfile?: GatewayModelEconomicsProfile | undefined;
 };
 
@@ -124,6 +134,9 @@ export function toKestrelOneRuntimeModelSelection(input: {
       : {
           routeBinding: qualifiedRoute.routeBinding,
           registration: qualifiedRoute.registration,
+          ...(qualifiedRoute.openRouterRouteEvidence === undefined
+            ? {}
+            : { openRouterRouteEvidence: qualifiedRoute.openRouterRouteEvidence }),
         }),
     economicsProfile,
   };
@@ -199,6 +212,9 @@ export function applyKestrelOneModelsToProfile(
       ...(selection.registration === undefined
         ? {}
         : { registration: selection.registration }),
+      ...(selection.openRouterRouteEvidence === undefined
+        ? {}
+        : { openRouterRouteEvidence: selection.openRouterRouteEvidence }),
     },
   };
 }
@@ -213,6 +229,7 @@ function readQualifiedRoute(input: {
   | {
       routeBinding: ModelCredentialRouteBindingV2;
       registration: ModelRegistrationV2;
+      openRouterRouteEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
     }
   | undefined {
   if (
@@ -231,14 +248,28 @@ function readQualifiedRoute(input: {
     parsed.modelId !== input.rawModelId ||
     parsed.qualification.state !== "qualified" ||
     parsed.qualification.revision === undefined ||
-    parsed.credentialRevision !== String(input.credentialRevision)
+    parsed.credentialRevision !== String(input.credentialRevision) ||
+    parsed.adapterRevision !== currentAdapterRevision(parsed.providerId)
   ) {
-    throw new Error(
-      "The selected model registration does not match its exact runtime route.",
-    );
+    // Existing registrations that are pending, stale, or from an older
+    // adapter revision remain reachable only through the explicit legacy
+    // compatibility route. They cannot acquire qualified capabilities.
+    return;
   }
   return {
     registration: parsed,
+    ...(parsed.providerId !== "openrouter"
+      ? {}
+      : (() => {
+          const openRouterRouteEvidence = readHostedOpenRouterRouteEvidence({
+            metadata: input.metadata,
+            registration: parsed,
+          });
+          if (openRouterRouteEvidence === undefined) {
+            throw new Error("Qualified OpenRouter registrations require retained exact route evidence.");
+          }
+          return { openRouterRouteEvidence };
+        })()),
     routeBinding: {
       version: "model_credential_route_binding_v2",
       status: "qualified",
@@ -257,6 +288,19 @@ function readQualifiedRoute(input: {
       credentialRevision: input.credentialRevision,
     },
   };
+}
+
+function currentAdapterRevision(provider: ModelRegistrationV2["providerId"]): string | undefined {
+  switch (provider) {
+    case "openai":
+      return OPENAI_MODEL_MANIFEST_REVISION;
+    case "openrouter":
+      return OPENROUTER_MODEL_DETAIL_TRANSLATOR_REVISION;
+    case "anthropic":
+      return ANTHROPIC_MODELS_API_TRANSLATOR_REVISION;
+    default:
+      return;
+  }
 }
 
 export function isKestrelOneManagedRuntimeModel(

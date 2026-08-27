@@ -101,11 +101,11 @@ export class RetryingModelGateway implements ModelGateway {
           },
           this.config.timingPolicy,
         );
+        const requestForInvocation = verifiedV2Request === undefined
+          ? { ...effectiveRequest, metadata: timeoutMetadata }
+          : effectiveRequest;
         return await withTimeout(
-          this.invoke<T>({
-            ...effectiveRequest,
-            metadata: timeoutMetadata,
-          }, {
+          this.invoke<T>(requestForInvocation, {
             signal: options.signal,
             ...(onEvent !== undefined ? { onEvent } : {}),
           }),

@@ -16,6 +16,7 @@ import {
   translateOpenRouterCapabilityEvidence,
   translateOpenRouterModelDetails,
 } from "./openrouter-model-resolution";
+import type { OpenRouterQualifiedRouteEvidence } from "../../../../models/openrouter/OpenRouterV2Codec";
 
 export const HOSTED_MODEL_REGISTRATION_KEY = "kestrelModelRegistrationV2";
 export const HOSTED_MODEL_REGISTRATION_EVIDENCE_KEY =
@@ -202,6 +203,57 @@ export function readHostedModelRegistrationState(input: {
   } catch {
     return "legacy_unqualified";
   }
+}
+
+/** Read retained server evidence for the OpenRouter V2 transport. */
+export function readHostedOpenRouterRouteEvidence(input: {
+  metadata: unknown;
+  registration: ModelRegistrationV2;
+}): OpenRouterQualifiedRouteEvidence | undefined {
+  const registration = parseModelRegistrationV2(input.registration);
+  if (registration.providerId !== "openrouter") return;
+  const evidence = asRecord(asRecord(input.metadata)[HOSTED_MODEL_REGISTRATION_EVIDENCE_KEY]);
+  const capability = asRecord(asRecord(evidence.sourcePayload).capability);
+  const routing = asRecord(capability.routing);
+  const endpoint = registration.route.endpointCodec === "openrouter.chat.v2"
+    ? "chat"
+    : registration.route.endpointCodec === "openrouter.responses.v2"
+      ? "responses"
+      : undefined;
+  const providerEvidence = registration.providerEvidence.find((entry) => entry.source === "provider");
+  if (
+    evidence.provider !== "openrouter" ||
+    endpoint === undefined ||
+    capability.modelId !== registration.modelId ||
+    capability.sourceHash !== providerEvidence?.retainedPayloadHash ||
+    (routing.kind !== "fixed" && routing.kind !== "provider") ||
+    typeof routing.policyId !== "string" ||
+    !Array.isArray(routing.allowedEndpointIds) ||
+    !Array.isArray(capability.supportedParameters) ||
+    !Array.isArray(capability.endpoints)
+  ) return;
+  const strings = (value: unknown): string[] | undefined =>
+    Array.isArray(value) && value.every((entry) => typeof entry === "string" && entry.length > 0)
+      ? value
+      : undefined;
+  const supportedParameters = strings(capability.supportedParameters);
+  const allowedEndpointIds = strings(routing.allowedEndpointIds);
+  const endpoints = capability.endpoints.flatMap((candidate) => {
+    const record = asRecord(candidate);
+    const supported = strings(record.supportedParameters);
+    return typeof record.id === "string" && supported !== undefined
+      ? [{ id: record.id, supportedParameters: supported }]
+      : [];
+  });
+  if (supportedParameters === undefined || allowedEndpointIds === undefined || endpoints.length !== capability.endpoints.length) return;
+  return {
+    modelId: registration.modelId,
+    endpoint,
+    supportedParameters,
+    endpoints,
+    routing: { kind: routing.kind, policyId: routing.policyId, allowedEndpointIds },
+    sourceHash: providerEvidence.retainedPayloadHash,
+  };
 }
 
 function registrationForEvidence(input: {

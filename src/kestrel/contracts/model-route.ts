@@ -26,6 +26,21 @@ export interface ModelCredentialReferenceV1 {
    * hosted route. Runtime admission consumes this rather than web metadata.
    */
   registration?: ModelRegistrationV2 | undefined;
+  openRouterRouteEvidence?: OpenRouterRouteEvidenceV1 | undefined;
+}
+
+/** Retained server evidence required by the OpenRouter V2 codec. */
+export interface OpenRouterRouteEvidenceV1 {
+  modelId: string;
+  endpoint: "chat" | "responses";
+  supportedParameters: string[];
+  endpoints: Array<{ id: string; supportedParameters: string[] }>;
+  routing: {
+    kind: "fixed" | "provider";
+    policyId: string;
+    allowedEndpointIds: string[];
+  };
+  sourceHash: string;
 }
 
 /**
@@ -81,6 +96,7 @@ export function parseModelCredentialReferenceV1(
     "provider",
     "routeBinding",
     "registration",
+    "openRouterRouteEvidence",
   ]);
   for (const field of Object.keys(record)) {
     if (!fields.has(field)) {
@@ -122,6 +138,10 @@ export function parseModelCredentialReferenceV1(
     record.registration === undefined
       ? undefined
       : parseModelRegistrationV2(record.registration);
+  const openRouterRouteEvidence =
+    record.openRouterRouteEvidence === undefined
+      ? undefined
+      : parseOpenRouterRouteEvidence(record.openRouterRouteEvidence);
   if (routeBinding?.status === "qualified") {
     if (registration === undefined) {
       throw new Error(
@@ -143,7 +163,24 @@ export function parseModelCredentialReferenceV1(
         "Qualified model credential registration does not match its route binding.",
       );
     }
-  } else if (registration !== undefined) {
+    if (
+      (routeBinding.provider === "openrouter") !==
+      (openRouterRouteEvidence !== undefined)
+    ) {
+      throw new Error(
+        "Qualified OpenRouter routes require exact route evidence and other qualified routes cannot carry it.",
+      );
+    }
+    if (
+      openRouterRouteEvidence !== undefined &&
+      (openRouterRouteEvidence.modelId !== routeBinding.rawModelId ||
+        openRouterRouteEvidence.endpoint !== endpointForCodec(routeBinding.endpointCodec))
+    ) {
+      throw new Error(
+        "OpenRouter route evidence does not match its qualified route binding.",
+      );
+    }
+  } else if (registration !== undefined || openRouterRouteEvidence !== undefined) {
     throw new Error(
       "Legacy model credential routes cannot carry a qualified registration snapshot.",
     );
@@ -152,7 +189,47 @@ export function parseModelCredentialReferenceV1(
     ...parsed,
     ...(routeBinding === undefined ? {} : { routeBinding }),
     ...(registration === undefined ? {} : { registration }),
+    ...(openRouterRouteEvidence === undefined ? {} : { openRouterRouteEvidence }),
   };
+}
+
+function parseOpenRouterRouteEvidence(value: unknown): OpenRouterRouteEvidenceV1 {
+  const record = value as Record<string, unknown>;
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw new Error("OpenRouter route evidence must be an object.");
+  }
+  const endpoints = Array.isArray(record.endpoints)
+    ? record.endpoints.map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("OpenRouter route endpoint is invalid.");
+        const item = entry as Record<string, unknown>;
+        return { id: requireString(item.id, "openRouterRouteEvidence.endpoints.id"), supportedParameters: requireStringArray(item.supportedParameters, "openRouterRouteEvidence.endpoints.supportedParameters") };
+      })
+    : (() => { throw new Error("OpenRouter route evidence endpoints are invalid."); })();
+  const routing = record.routing as Record<string, unknown>;
+  if (!routing || typeof routing !== "object" || Array.isArray(routing) || (routing.kind !== "fixed" && routing.kind !== "provider")) {
+    throw new Error("OpenRouter route evidence routing is invalid.");
+  }
+  const endpoint = record.endpoint;
+  if (endpoint !== "chat" && endpoint !== "responses") throw new Error("OpenRouter route evidence endpoint is invalid.");
+  return {
+    modelId: requireString(record.modelId, "openRouterRouteEvidence.modelId"),
+    endpoint,
+    supportedParameters: requireStringArray(record.supportedParameters, "openRouterRouteEvidence.supportedParameters"),
+    endpoints,
+    routing: { kind: routing.kind, policyId: requireString(routing.policyId, "openRouterRouteEvidence.routing.policyId"), allowedEndpointIds: requireStringArray(routing.allowedEndpointIds, "openRouterRouteEvidence.routing.allowedEndpointIds") },
+    sourceHash: requireHash(record.sourceHash, "openRouterRouteEvidence.sourceHash"),
+  };
+}
+
+function requireStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || entry.trim().length === 0)) {
+    throw new Error(`Model credential reference ${field} must be non-empty strings.`);
+  }
+  return value.map((entry) => entry.trim());
+}
+
+function endpointForCodec(codec: string): "chat" | "responses" | undefined {
+  return codec === "openrouter.chat.v2" ? "chat" : codec === "openrouter.responses.v2" ? "responses" : undefined;
 }
 
 export function parseModelCredentialRouteBindingV2(

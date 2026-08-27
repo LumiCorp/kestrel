@@ -43,7 +43,7 @@ const qualifiedRouteBinding = {
   registrationFingerprint: `sha256:${"a".repeat(64)}`,
   qualificationRevision: "qualification-3",
   apiEndpoint: "https://openrouter.ai/api/v1",
-  endpointCodec: "openrouter_chat_v1",
+  endpointCodec: "openrouter.chat.v2",
   routingPolicyFingerprint: `sha256:${"b".repeat(64)}`,
   requiredRole: "agent.loop",
   credentialRevision: 7,
@@ -191,6 +191,35 @@ test("broker rejects a mismatched effective contract before acquiring a credenti
   );
   assert.equal(loads, 0);
   assert.equal(providerCreations, 0);
+});
+
+test("broker rejects a qualified endpoint that does not match its bound codec", async () => {
+  let loads = 0;
+  const request = qualifiedRequest();
+  const contract = createEffectiveModelContractV1({
+    ...qualifiedContractInput(request),
+    endpoint: "responses",
+  });
+  const cache = new GatewayCredentialLeaseCache({
+    random: () => 0,
+    load: async () => {
+      loads += 1;
+      return { ...lease({ leaseId: "should-not-load", expiresAtMs: Date.now() + 60_000 }), routeBinding: qualifiedRouteBinding };
+    },
+  });
+  const gateway = new BrokeredModelGateway({
+    reference: { ...reference, routeBinding: qualifiedRouteBinding },
+    cache,
+    createProvider: () => ({ async call<T>() { return {} as T; } }),
+  });
+
+  await assert.rejects(
+    gateway.call(request, { effectiveModelContract: contract }),
+    (error: unknown) =>
+      error instanceof GatewayCredentialBrokerError &&
+      error.code === "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
+  );
+  assert.equal(loads, 0);
 });
 
 test("broker blocks structured legacy routes before acquiring a credential lease", async () => {
