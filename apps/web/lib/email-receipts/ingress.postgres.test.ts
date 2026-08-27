@@ -35,7 +35,11 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
   const suffix = randomUUID();
   const organizationId = `receipt-org-${suffix}`;
   const userId = `receipt-user-${suffix}`;
+  const memberId = `receipt-member-${suffix}`;
   const environmentId = `receipt-environment-${suffix}`;
+  const projectId = `receipt-project-${suffix}`;
+  const triggerId = `receipt-trigger-${suffix}`;
+  const triggerAddress = `trigger-${suffix}@example.test`;
   const connectionId = `receipt-connection-${suffix}`;
   const locator = randomBytes(32).toString("base64url");
   const signingSecret = `whsec_${randomBytes(32).toString("base64")}`;
@@ -79,6 +83,10 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
     VALUES (${organizationId}, 'Receipt Org', ${`receipt-${suffix}`}, ${now})
   `;
   await sql`
+    INSERT INTO "member" ("id", "organizationId", "userId", "role", "createdAt")
+    VALUES (${memberId}, ${organizationId}, ${userId}, 'owner', ${now})
+  `;
+  await sql`
     INSERT INTO "environments" (
       "id", "organization_id", "created_by_user_id", "name", "slug",
       "region", "status", "is_default"
@@ -102,6 +110,32 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
       true, ${now}, ${userId}, ${now}, ${now}
     )
   `;
+  await sql.begin(async (transaction) => {
+    await transaction`
+      INSERT INTO "projects" (
+        "id", "organization_id", "environment_id", "created_by_user_id", "name"
+      ) VALUES (
+        ${projectId}, ${organizationId}, ${environmentId}, ${userId}, 'Receipt Project'
+      )
+    `;
+    await transaction`
+      INSERT INTO "project_members" (
+        "project_id", "organization_member_id", "role"
+      ) VALUES (${projectId}, ${memberId}, 'owner')
+    `;
+    await transaction`
+      INSERT INTO "project_email_triggers" (
+        "id", "organization_id", "project_id", "created_by_user_id",
+        "execution_owner_user_id", "name", "instruction", "model_id",
+        "access_mode", "address_local_part", "address_domain", "enabled",
+        "revision", "created_at", "updated_at"
+      ) VALUES (
+        ${triggerId}, ${organizationId}, ${projectId}, ${userId}, ${userId},
+        'Receipt Trigger', 'Process this email.', 'openrouter/test-email-model',
+        'private', ${`trigger-${suffix}`}, 'example.test', true, 1, ${now}, ${now}
+      )
+    `;
+  });
   for (const invalidTerminal of [
     { state: "queued", reason: "UNEXPECTED", finishedAt: null },
     { state: "queued", reason: null, finishedAt: now },
@@ -242,7 +276,7 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
 
   const emailId = `email-${suffix}`;
   const providerMessageId = `provider-message-${suffix}`;
-  const event = receivedEvent({ emailId, providerMessageId });
+  const event = receivedEvent({ emailId, providerMessageId, recipient: triggerAddress });
   const invalid = await invokeSigned(
     route,
     url,
@@ -360,18 +394,23 @@ test("signed Resend ingress converges durably and queue reconciliation preserves
       reservedTurnId: string;
       receivedForMailboxes: string[];
       state: string;
+      triggerId: string | null;
+      triggerRevision: number | null;
     }>
   >`
     SELECT "id", "reserved_thread_id" AS "reservedThreadId",
       "reserved_message_id" AS "reservedMessageId",
       "reserved_turn_id" AS "reservedTurnId",
-      "received_for_mailboxes" AS "receivedForMailboxes", "state"
+      "received_for_mailboxes" AS "receivedForMailboxes", "state",
+      "trigger_id" AS "triggerId", "trigger_revision" AS "triggerRevision"
     FROM "email_delivery_receipts"
     WHERE "receiving_connection_id" = ${connectionId}
   `;
   assert.equal(receipt?.id, firstBody.receiptId);
   assert.equal(receipt?.state, "queued");
-  assert.deepEqual(receipt?.receivedForMailboxes, ["trigger@example.test"]);
+  assert.equal(receipt?.triggerId, triggerId);
+  assert.equal(receipt?.triggerRevision, 1);
+  assert.deepEqual(receipt?.receivedForMailboxes, [triggerAddress]);
   assert.equal(
     new Set([
       receipt?.reservedThreadId,
@@ -648,8 +687,10 @@ function receivedEvent(input: {
   emailId: string;
   providerMessageId: string;
   includeReceivedFor?: boolean;
+  recipient?: string;
 }) {
   const createdAt = new Date().toISOString();
+  const recipient = input.recipient ?? "trigger@example.test";
   return {
     type: "email.received",
     created_at: createdAt,
@@ -657,13 +698,13 @@ function receivedEvent(input: {
       email_id: input.emailId,
       created_at: createdAt,
       from: "Sender <sender@example.test>",
-      to: ["trigger@example.test"],
+      to: [recipient],
       bcc: [],
       cc: [],
       message_id: input.providerMessageId,
       ...(input.includeReceivedFor === false
         ? {}
-        : { received_for: ["trigger@example.test"] }),
+        : { received_for: [recipient] }),
       subject: "Private invoice subject",
       attachments: [],
     },

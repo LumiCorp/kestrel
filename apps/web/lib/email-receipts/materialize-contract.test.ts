@@ -97,6 +97,7 @@ test("Trigger inspection includes every receipt lifecycle state without copying 
   assert.match(triggerStore, /case "hydrating":/u);
   assert.match(triggerStore, /case "materialized":/u);
   assert.match(triggerStore, /reason: schema\.emailDeliveryReceipts\.reason/u);
+  assert.match(triggerClient, /Receipt \$\{trigger\.latestReceipt\.id\}/u);
   assert.doesNotMatch(triggerStore, /claimedFrom:\s*schema\.emailDeliveryReceipts/u);
   assert.doesNotMatch(triggerStore, /subject:\s*schema\.emailDeliveryReceipts/u);
   assert.match(triggerClient, /Latest delivery: \{trigger\.latestReceipt\.state\}/u);

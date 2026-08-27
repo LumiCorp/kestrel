@@ -498,6 +498,7 @@ export function EmailTriggersClient({
                                 {trigger.latestReceipt.reason
                                   ? ` (${trigger.latestReceipt.reason})`
                                   : ""}
+                                {` · Receipt ${trigger.latestReceipt.id}`}
                               </Link>
                             ) : (
                               <span>
@@ -505,6 +506,7 @@ export function EmailTriggersClient({
                                 {trigger.latestReceipt.reason
                                   ? ` (${trigger.latestReceipt.reason})`
                                   : ""}
+                                {` · Receipt ${trigger.latestReceipt.id}`}
                               </span>
                             )}
                           </>

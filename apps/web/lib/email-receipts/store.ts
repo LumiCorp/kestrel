@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { normalizeMailbox, parseMailboxFields } from "./mailboxes";
 
 export type EmailDeliveryReceiptState =
   | "queued"
@@ -116,6 +117,7 @@ export async function createOrFindQueuedEmailDeliveryReceipt(input: {
       reservedMessageId: randomUUID(),
       reservedTurnId: randomUUID(),
     };
+    const trigger = await resolveIngressReceiptTrigger(transaction, input);
     await transaction.insert(schema.emailDeliveryReceipts).values({
       ...receipt,
       organizationId: input.organizationId,
@@ -123,6 +125,13 @@ export async function createOrFindQueuedEmailDeliveryReceipt(input: {
       svixId: input.svixId,
       resendEmailId: input.resendEmailId,
       eventAt: input.eventAt,
+      ...(trigger
+        ? {
+            triggerOrganizationId: trigger.organizationId,
+            triggerId: trigger.id,
+            triggerRevision: trigger.revision,
+          }
+        : {}),
       claimedFrom: input.claimedFrom,
       toMailboxes: input.toMailboxes,
       ccMailboxes: input.ccMailboxes,
@@ -132,6 +141,44 @@ export async function createOrFindQueuedEmailDeliveryReceipt(input: {
     });
     return { receipt, created: true };
   });
+}
+
+async function resolveIngressReceiptTrigger(
+  transaction: Parameters<Parameters<typeof knowledgeDb.transaction>[0]>[0],
+  input: Pick<
+    Parameters<typeof createOrFindQueuedEmailDeliveryReceipt>[0],
+    "organizationId" | "toMailboxes" | "ccMailboxes" | "bccMailboxes"
+  >,
+) {
+  let recipients: Set<string>;
+  try {
+    recipients = new Set([
+      ...parseMailboxFields(input.toMailboxes),
+      ...parseMailboxFields(input.ccMailboxes),
+      ...parseMailboxFields(input.bccMailboxes),
+    ]);
+  } catch {
+    // Hydration remains the authoritative mailbox validation and trigger
+    // resolution path. A malformed ingress address must not block durable
+    // receipt creation just because it cannot be projected to a Trigger.
+    return null;
+  }
+  const triggers = await transaction
+    .select({
+      id: schema.projectEmailTriggers.id,
+      organizationId: schema.projectEmailTriggers.organizationId,
+      revision: schema.projectEmailTriggers.revision,
+      addressLocalPart: schema.projectEmailTriggers.addressLocalPart,
+      addressDomain: schema.projectEmailTriggers.addressDomain,
+    })
+    .from(schema.projectEmailTriggers)
+    .where(eq(schema.projectEmailTriggers.organizationId, input.organizationId));
+  const addressed = triggers.filter((trigger) =>
+    recipients.has(
+      normalizeMailbox(trigger.addressLocalPart, trigger.addressDomain),
+    ),
+  );
+  return addressed.length === 1 ? addressed[0] : null;
 }
 
 export async function listDispatchableEmailDeliveryReceiptIds() {

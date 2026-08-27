@@ -7,6 +7,7 @@ import {
   listDispatchableEmailDeliveryReceiptIds,
   readEmailDeliveryReceiptState,
 } from "@/lib/email-receipts/store";
+import { recordEmailReceiptTelemetry } from "@/lib/email-receipts/observability";
 import { resolveTurnWorkerConcurrency } from "@/lib/runtime/process-contracts";
 import {
   claimDueProjectPromptScheduleRuns,
@@ -378,6 +379,7 @@ async function recoverQueuedEmailDeliveryReceipts(boss: PgBoss) {
 
 export async function reconcileEmailDeliveryReceiptQueue() {
   await recoverQueuedEmailDeliveryReceipts(await getTurnBoss());
+  recordEmailReceiptTelemetry({ event: "worker_reconciled" });
 }
 
 async function readDurableDispatchState(turnId: string) {
@@ -587,8 +589,18 @@ export async function startDurableThreadTurnWorker() {
           await processEmailDeliveryReceipt(receiptId);
           const materialized =
             await materializeAdmittedEmailDeliveryReceipt(receiptId);
+          if (materialized?.turnId) {
+            recordEmailReceiptTelemetry({
+              event: "materialized",
+              receiptId,
+            });
+          }
           if (materialized?.turnId && materialized.shouldDispatch) {
             await dispatchTurnOrReconcile(boss, materialized.turnId);
+            recordEmailReceiptTelemetry({
+              event: "execution_routed",
+              receiptId,
+            });
           }
         }
       },

@@ -9,6 +9,7 @@ import {
   RESEND_WEBHOOK_MAX_BODY_BYTES,
   resendEmailReceivedEventSchema,
 } from "./ingress";
+import { recordEmailReceiptTelemetry } from "./observability";
 
 const validEvent = {
   type: "email.received",
@@ -88,6 +89,35 @@ test("ingress telemetry is bounded, allowlisted, and cannot replace an outcome",
   assert.doesNotThrow(() =>
     recordEmailIngressTelemetry(
       { outcome: "invalid_signature", durationMs: 1 },
+      () => {
+        throw new Error("telemetry sink unavailable");
+      },
+    ),
+  );
+});
+
+test("receipt lifecycle telemetry is bounded, content-free, and secondary", () => {
+  let fields: Record<string, unknown> | undefined;
+  recordEmailReceiptTelemetry(
+    {
+      event: "hydration_started",
+      receiptId: "receipt-correlation",
+      durationMs: Number.POSITIVE_INFINITY,
+      queueLatencyMs: Number.POSITIVE_INFINITY,
+    },
+    (_message, recorded) => {
+      fields = recorded;
+    },
+  );
+  assert.deepEqual(fields, {
+    event: "hydration_started",
+    receiptId: "receipt-correlation",
+    durationMs: 60_000,
+    queueLatencyMs: 7 * 24 * 60 * 60 * 1000,
+  });
+  assert.doesNotThrow(() =>
+    recordEmailReceiptTelemetry(
+      { event: "failed", receiptId: "receipt-correlation" },
       () => {
         throw new Error("telemetry sink unavailable");
       },
@@ -189,6 +219,23 @@ test("daily receipt retention removes only expired, nonmaterialized terminal dia
   assert.match(cleanupRoute, /purgeExpiredTerminalEmailDeliveryReceipts/u);
   assert.match(cleanupRoute, /purgedTerminalEmailReceipts/u);
   assert.match(vercel, /"\/api\/cron\/attachments\/cleanup"/u);
+});
+
+test("receipt lifecycle records bounded evidence at every durable handoff", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const runtime = fs.readFileSync(path.resolve(directory, "runtime.ts"), "utf8");
+  const queue = fs.readFileSync(
+    path.resolve(directory, "../../lib/turns/queue.ts"),
+    "utf8",
+  );
+  const ingress = fs.readFileSync(path.resolve(directory, "ingress.ts"), "utf8");
+
+  assert.match(runtime, /event: "hydration_started"/u);
+  assert.match(runtime, /recordEmailReceiptOutcome/u);
+  assert.match(queue, /event: "materialized"/u);
+  assert.match(queue, /event: "execution_routed"/u);
+  assert.match(queue, /event: "worker_reconciled"/u);
+  assert.match(ingress, /webhookAgeMs/u);
 });
 
 function trackedStreamRequest(

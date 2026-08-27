@@ -90,6 +90,7 @@ export function recordEmailIngressTelemetry(
     durationMs: number;
     receiptId?: string;
     created?: boolean;
+    webhookAgeMs?: number;
   },
   sink: (message: string, fields: Record<string, unknown>) => void =
     console.info,
@@ -103,6 +104,14 @@ export function recordEmailIngressTelemetry(
       ),
       ...(input.receiptId ? { receiptId: input.receiptId } : {}),
       ...(input.created === undefined ? {} : { created: input.created }),
+      ...(input.webhookAgeMs === undefined
+        ? {}
+        : {
+            webhookAgeMs: Math.min(
+              7 * 24 * 60 * 60 * 1000,
+              Math.max(0, Math.round(input.webhookAgeMs)),
+            ),
+          }),
     });
   } catch {
     // Telemetry is secondary evidence and cannot replace the ingress outcome.
@@ -228,6 +237,7 @@ async function handleResendInboundWebhookRequest(
       durationMs: performance.now() - startedAt,
       receiptId: stored.receipt.id,
       created: stored.created,
+      webhookAgeMs: Date.now() - new Date(event.data.created_at).getTime(),
     });
     return Response.json(
       { receiptId: stored.receipt.id, state: stored.receipt.state },

@@ -1,8 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, inArray } from "drizzle-orm";
-import emailAddresses from "email-addresses";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import sanitizeHtml from "sanitize-html";
 import { decryptReceivingApiKey } from "@/lib/email/receiving-config";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -11,12 +10,15 @@ import {
   EMAIL_ATTACHMENT_MAX_COUNT,
   EMAIL_CONTENT_ID_MAX_LENGTH,
   EMAIL_DISPOSITION_MAX_LENGTH,
-  EMAIL_MAILBOX_LIST_MAX_COUNT,
-  EMAIL_MAILBOX_MAX_LENGTH,
   EMAIL_MEDIA_TYPE_MAX_LENGTH,
   EMAIL_MODEL_VISIBLE_MAX_BYTES,
   EMAIL_SUBJECT_MAX_LENGTH,
 } from "./bounds";
+import {
+  normalizeMailbox,
+  parseExactlyOneMailbox,
+  parseMailboxFields,
+} from "./mailboxes";
 import {
   EmailReceiptProviderError,
   type ReceivedEmailAttachment,
@@ -24,6 +26,7 @@ import {
   type ReceivedEmailProvider,
   ResendReceivedEmailProvider,
 } from "./provider";
+import { recordEmailReceiptTelemetry } from "./observability";
 
 export type EmailReceiptTerminalReason =
   | "EMAIL_RECEIPT_PROVIDER_PERMANENT"
@@ -64,6 +67,7 @@ type ClaimedReceipt = {
   organizationId: string;
   resendEmailId: string;
   encryptedApiKey: string;
+  createdAt: Date;
 };
 
 type ResolvedTrigger = {
@@ -99,8 +103,14 @@ export async function processEmailDeliveryReceipt(
   receiptId: string,
   input: { provider?: ReceivedEmailProvider; env?: NodeJS.ProcessEnv } = {},
 ) {
+  const startedAt = performance.now();
   const claimed = await claimReceiptForHydration(receiptId);
   if (!claimed) return { outcome: "terminal_or_unavailable" as const };
+  recordEmailReceiptTelemetry({
+    event: "hydration_started",
+    receiptId: claimed.id,
+    queueLatencyMs: Date.now() - claimed.createdAt.getTime(),
+  });
 
   let apiKey: string;
   try {
@@ -110,11 +120,13 @@ export async function processEmailDeliveryReceipt(
       env: input.env,
     });
   } catch {
-    return await finishEmailReceipt(
+    const result = await finishEmailReceipt(
       claimed.id,
       "failed",
       "EMAIL_RECEIPT_PROVIDER_PERMANENT",
     );
+    recordEmailReceiptOutcome(claimed.id, startedAt, result.outcome);
+    return result;
   }
 
   let hydrated: ReceivedEmailHydration;
@@ -125,11 +137,13 @@ export async function processEmailDeliveryReceipt(
   } catch (error) {
     if (error instanceof EmailReceiptProviderError) {
       if (error.retryable) throw error;
-      return await finishEmailReceipt(
+      const result = await finishEmailReceipt(
         claimed.id,
         providerFailureState(error.code),
         providerFailureReason(error.code),
       );
+      recordEmailReceiptOutcome(claimed.id, startedAt, result.outcome);
+      return result;
     }
     throw error;
   }
@@ -159,15 +173,19 @@ export async function processEmailDeliveryReceipt(
         );
       }
     }
-    return await admitEmailReceipt(claimed.id, normalized, trigger);
+    const result = await admitEmailReceipt(claimed.id, normalized, trigger);
+    recordEmailReceiptOutcome(claimed.id, startedAt, result.outcome);
+    return result;
   } catch (error) {
     if (error instanceof EmailReceiptDispositionError) {
-      return await finishEmailReceipt(
+      const result = await finishEmailReceipt(
         claimed.id,
         error.state,
         error.reason,
         error.trigger,
       );
+      recordEmailReceiptOutcome(claimed.id, startedAt, result.outcome);
+      return result;
     }
     throw error;
   }
@@ -185,6 +203,7 @@ async function claimReceiptForHydration(
           schema.emailDeliveryReceipts.receivingConnectionId,
         resendEmailId: schema.emailDeliveryReceipts.resendEmailId,
         state: schema.emailDeliveryReceipts.state,
+        createdAt: schema.emailDeliveryReceipts.createdAt,
       })
       .from(schema.emailDeliveryReceipts)
       .where(eq(schema.emailDeliveryReceipts.id, receiptId))
@@ -254,7 +273,21 @@ async function claimReceiptForHydration(
       organizationId: receipt.organizationId,
       resendEmailId: receipt.resendEmailId,
       encryptedApiKey: authority.encryptedApiKey,
+      createdAt: receipt.createdAt,
     };
+  });
+}
+
+function recordEmailReceiptOutcome(
+  receiptId: string,
+  startedAt: number,
+  outcome: "admitted" | "rejected" | "failed" | "terminal_or_unavailable",
+) {
+  if (outcome === "terminal_or_unavailable") return;
+  recordEmailReceiptTelemetry({
+    event: outcome,
+    receiptId,
+    durationMs: performance.now() - startedAt,
   });
 }
 
@@ -294,45 +327,7 @@ export function normalizeReceivedEmail(email: ReceivedEmailHydration) {
   }
 }
 
-export function parseExactlyOneMailbox(value: string) {
-  const addresses = parseMailboxFields([value]);
-  if (addresses.length !== 1) throw new Error("Expected one mailbox.");
-  const address = addresses[0];
-  if (!address) throw new Error("Expected one mailbox.");
-  return address;
-}
-
-export function parseMailboxFields(values: readonly string[]) {
-  if (values.length > EMAIL_MAILBOX_LIST_MAX_COUNT) {
-    throw new Error("Mailbox list is out of bounds.");
-  }
-  const parsed: string[] = [];
-  for (const value of values) {
-    boundedText(value, EMAIL_MAILBOX_MAX_LENGTH);
-    const entries = emailAddresses.parseAddressList({
-      input: value,
-      strict: true,
-      rfc6532: true,
-    });
-    if (!entries?.length) throw new Error("Mailbox is malformed.");
-    for (const entry of entries) {
-      const mailboxes = entry.type === "group" ? entry.addresses : [entry];
-      if (mailboxes.length === 0) throw new Error("Mailbox group is empty.");
-      for (const mailbox of mailboxes) {
-        parsed.push(normalizeMailbox(mailbox.local, mailbox.domain));
-      }
-    }
-  }
-  if (parsed.length > EMAIL_MAILBOX_LIST_MAX_COUNT) {
-    throw new Error("Mailbox list is out of bounds.");
-  }
-  return parsed;
-}
-
-function normalizeMailbox(local: string, domain: string) {
-  const address = `${local}@${domain}`.toLowerCase();
-  return boundedText(address, EMAIL_MAILBOX_MAX_LENGTH);
-}
+export { parseExactlyOneMailbox, parseMailboxFields } from "./mailboxes";
 
 export function selectEmailBody(text: string | null, html: string | null) {
   const plain = text?.trim();
@@ -673,9 +668,14 @@ async function scrubTerminalReceiptInTransaction(
     .set({
       state: input.state,
       reason: input.reason,
-      triggerOrganizationId: input.trigger?.organizationId ?? null,
-      triggerId: input.trigger?.id ?? null,
-      triggerRevision: input.trigger?.revision ?? null,
+      triggerOrganizationId:
+        input.trigger?.organizationId ??
+        sql`${schema.emailDeliveryReceipts.triggerOrganizationId}`,
+      triggerId:
+        input.trigger?.id ?? sql`${schema.emailDeliveryReceipts.triggerId}`,
+      triggerRevision:
+        input.trigger?.revision ??
+        sql`${schema.emailDeliveryReceipts.triggerRevision}`,
       claimedFrom: null,
       toMailboxes: null,
       ccMailboxes: null,
