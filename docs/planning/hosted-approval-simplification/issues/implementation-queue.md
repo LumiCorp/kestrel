@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-- [Recover completed cleanup with bounded reconciliation](06i-recover-completed-cleanup-with-backoff.md)
+None.
 
 ## Blocked
 
@@ -23,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Recover completed cleanup with bounded reconciliation](06i-recover-completed-cleanup-with-backoff.md)
 - [Bridge the deployed preset-2 baseline](06h-bridge-the-deployed-preset2-baseline.md)
 - [Converge prepared cleanup across retry and lifecycle](06g-converge-cleanup-across-retry-and-lifecycle.md)
 - [Construct the V4 compatibility release](06f-construct-v4-compatibility-release.md)
