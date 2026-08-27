@@ -814,6 +814,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "webhook-validation",
   ),
   api(
+    "app/api/webhooks/resend/inbound/[locator]/route.ts",
+    "/api/webhooks/resend/inbound/:locator",
+    "email-delivery",
+    "webhook",
+    "webhook-validation",
+  ),
+  api(
     "app/api/kestrel/tools/search-knowledge-documents/route.ts",
     "/api/kestrel/tools/search-knowledge-documents",
     "tool-boundary",

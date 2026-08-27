@@ -638,6 +638,13 @@
       "when": 1787918400000,
       "tag": "0090_project_email_trigger_owner_loss",
       "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1787922000000,
+      "tag": "0091_email_delivery_receipts",
+      "breakpoints": true
     }
   ]
 }

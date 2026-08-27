@@ -178,9 +178,19 @@ test(
         assert.match(
           source,
           /\bparamsSchema\b/,
-          `${entry.file} must validate platform`,
+          `${entry.file} must validate its provider-owned path`,
         );
-        assert.match(source, /\bhandleDiscordWebhook\b/);
+        if (entry.file === "app/api/webhooks/[platform]/route.ts") {
+          assert.match(source, /\bhandleDiscordWebhook\b/);
+          assert.doesNotMatch(source, /handleResendInboundWebhook/u);
+          continue;
+        }
+        assert.equal(
+          entry.file,
+          "app/api/webhooks/resend/inbound/[locator]/route.ts",
+        );
+        assert.match(source, /\bhandleResendInboundWebhook\b/);
+        assert.doesNotMatch(source, /handleDiscordWebhook/u);
       }
     }
   },

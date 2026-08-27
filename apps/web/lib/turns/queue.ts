@@ -3,6 +3,10 @@ import "server-only";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import {
+  listDispatchableEmailDeliveryReceiptIds,
+  readEmailDeliveryReceiptState,
+} from "@/lib/email-receipts/store";
 import { resolveTurnWorkerConcurrency } from "@/lib/runtime/process-contracts";
 import {
   claimDueProjectPromptScheduleRuns,
@@ -27,6 +31,7 @@ export const PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE =
   "project.prompt-schedule.dispatch";
 export const PROJECT_PROMPT_SCHEDULE_EXECUTION_QUEUE =
   "project.prompt-schedule.execute";
+export const EMAIL_DELIVERY_RECEIPT_QUEUE = "email.delivery-receipt.hydrate";
 export const PROJECT_PROMPT_SCHEDULE_DISPATCH_CRON = "* * * * *";
 export const DURABLE_TURN_EXPIRE_SECONDS = 12 * 60 * 60;
 export const DURABLE_TURN_HEARTBEAT_SECONDS = 60;
@@ -73,6 +78,7 @@ async function createTurnBoss() {
   });
   await boss.createQueue(PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE);
   await boss.createQueue(PROJECT_PROMPT_SCHEDULE_EXECUTION_QUEUE);
+  await boss.createQueue(EMAIL_DELIVERY_RECEIPT_QUEUE);
   await boss.schedule(
     PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE,
     PROJECT_PROMPT_SCHEDULE_DISPATCH_CRON,
@@ -158,6 +164,46 @@ async function sendProjectPromptScheduleRun(boss: PgBoss, runId: string) {
   }
 }
 
+async function sendEmailDeliveryReceipt(boss: PgBoss, receiptId: string) {
+  const jobId = await boss.send(
+    EMAIL_DELIVERY_RECEIPT_QUEUE,
+    { receiptId },
+    {
+      id: receiptId,
+      retryLimit: 3,
+      retryDelay: 5,
+      retryBackoff: true,
+      singletonKey: receiptId,
+    },
+  );
+  if (!(jobId || (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)))) {
+    throw new Error("The email delivery receipt queue rejected the job.");
+  }
+}
+
+async function dispatchEmailDeliveryReceiptOrReconcile(
+  boss: PgBoss,
+  receiptId: string,
+) {
+  try {
+    await sendEmailDeliveryReceipt(boss, receiptId);
+  } catch (error) {
+    try {
+      if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)) return;
+      const receipt = await readEmailDeliveryReceiptState(receiptId);
+      if (!receipt || receipt.state !== "queued") return;
+    } catch {
+      // The queued database record remains durable dispatch intent. Worker
+      // maintenance retries after either queue or database state is readable.
+    }
+    throw error;
+  }
+}
+
+export async function enqueueEmailDeliveryReceipt(receiptId: string) {
+  await dispatchEmailDeliveryReceiptOrReconcile(await getTurnBoss(), receiptId);
+}
+
 async function dispatchTurnOrReconcile(boss: PgBoss, turnId: string) {
   try {
     await sendTurn(boss, turnId);
@@ -237,6 +283,17 @@ async function hasNonterminalProjectPromptScheduleJob(
   return jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state));
 }
 
+async function hasNonterminalEmailDeliveryReceiptJob(
+  boss: PgBoss,
+  receiptId: string,
+) {
+  const jobs = await boss.findJobs<{ receiptId?: unknown }>(
+    EMAIL_DELIVERY_RECEIPT_QUEUE,
+    { data: { receiptId } },
+  );
+  return jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state));
+}
+
 async function dispatchDueProjectPromptSchedules(boss: PgBoss) {
   const runIds = await claimDueProjectPromptScheduleRuns();
   for (const runId of runIds) {
@@ -270,6 +327,19 @@ async function recoverQueuedProjectPromptScheduleRuns(boss: PgBoss) {
       await sendProjectPromptScheduleRun(boss, runId);
     }
   }
+}
+
+async function recoverQueuedEmailDeliveryReceipts(boss: PgBoss) {
+  const receiptIds = await listDispatchableEmailDeliveryReceiptIds();
+  for (const receiptId of receiptIds) {
+    if (!(await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId))) {
+      await dispatchEmailDeliveryReceiptOrReconcile(boss, receiptId);
+    }
+  }
+}
+
+export async function reconcileEmailDeliveryReceiptQueue() {
+  await recoverQueuedEmailDeliveryReceipts(await getTurnBoss());
 }
 
 async function readDurableDispatchState(turnId: string) {
@@ -398,6 +468,7 @@ export async function reconcileDurableThreadTurnQueue() {
 
 function createWorkerMaintenance(boss: PgBoss) {
   return createSingleFlightOperation(async () => {
+    await recoverQueuedEmailDeliveryReceipts(boss);
     await recoverQueuedProjectPromptScheduleRuns(boss);
     await reconcileDurableThreadTurnQueueWithBoss(boss);
     await advanceActiveProjectWorkflows(boss);

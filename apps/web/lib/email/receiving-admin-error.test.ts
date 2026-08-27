@@ -87,6 +87,27 @@ test("receiving provider failures have stable actionable HTTP status classes", (
       error:
         "The receiving configuration changed while receiving was being saved. Refresh and try again.",
     },
+    {
+      code: "RESEND_RECEIVING_WEBHOOK_KEY_REPLACEMENT_UNSUPPORTED",
+      status: 409,
+      error:
+        "This receiving connection already has a staged webhook. Continue with its current Resend API key; replacing the key is not supported yet.",
+    },
+    {
+      code: "RESEND_RECEIVING_WEBHOOK_STAGING_FAILED",
+      status: 503,
+      error: "Resend webhook staging is temporarily unavailable.",
+    },
+    {
+      code: "RESEND_RECEIVING_WEBHOOK_CONFLICT",
+      status: 409,
+      error: "Resend webhook staging requires operator review.",
+    },
+    {
+      code: "RESEND_RECEIVING_WEBHOOK_INVALID",
+      status: 502,
+      error: "Resend returned invalid webhook staging evidence.",
+    },
   ] as const;
   const secret = "re_provider_detail_must_not_escape";
 

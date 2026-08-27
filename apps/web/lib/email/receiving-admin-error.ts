@@ -142,6 +142,39 @@ function safeConfigError(error: ReceivingConfigError) {
           error: "Resend rejected the receiving request.",
         },
       };
+    case "RESEND_RECEIVING_WEBHOOK_KEY_REPLACEMENT_UNSUPPORTED":
+      return {
+        status: 409,
+        body: {
+          code: error.code,
+          error:
+            "This receiving connection already has a staged webhook. Continue with its current Resend API key; replacing the key is not supported yet.",
+        },
+      };
+    case "RESEND_RECEIVING_WEBHOOK_STAGING_FAILED":
+      return {
+        status: 503,
+        body: {
+          code: error.code,
+          error: "Resend webhook staging is temporarily unavailable.",
+        },
+      };
+    case "RESEND_RECEIVING_WEBHOOK_CONFLICT":
+      return {
+        status: 409,
+        body: {
+          code: error.code,
+          error: "Resend webhook staging requires operator review.",
+        },
+      };
+    case "RESEND_RECEIVING_WEBHOOK_INVALID":
+      return {
+        status: 502,
+        body: {
+          code: error.code,
+          error: "Resend returned invalid webhook staging evidence.",
+        },
+      };
     default:
       return {
         status: 500,

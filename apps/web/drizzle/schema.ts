@@ -735,6 +735,10 @@ export const threads = pgTable(
   (table) => [
     index("threads_created_by_user_id_idx").on(table.createdByUserId),
     index("threads_org_id_idx").on(table.organizationId),
+    uniqueIndex("threads_organization_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
     index("threads_project_id_idx").on(table.projectId),
     index("threads_origin_idx").on(table.origin),
     index("threads_external_thread_id_idx").on(table.externalThreadId),
@@ -827,6 +831,10 @@ export const threadMessages = pgTable(
     index("thread_messages_thread_created_id_idx").on(
       table.threadId,
       table.createdAt,
+      table.id,
+    ),
+    uniqueIndex("thread_messages_thread_identity_idx").on(
+      table.threadId,
       table.id,
     ),
     uniqueIndex("thread_messages_external_message_idx").on(
@@ -1138,6 +1146,10 @@ export const threadTurns = pgTable(
     uniqueIndex("thread_turns_thread_idempotency_idx").on(
       table.threadId,
       table.idempotencyKey,
+    ),
+    uniqueIndex("thread_turns_thread_identity_idx").on(
+      table.threadId,
+      table.id,
     ),
     uniqueIndex("thread_turns_input_message_idx").on(table.inputMessageId),
     index("thread_turns_org_status_idx").on(table.organizationId, table.status),
@@ -1524,6 +1536,10 @@ export const projectEmailTriggers = pgTable(
       table.addressDomain,
       table.addressLocalPart,
     ),
+    uniqueIndex("project_email_triggers_organization_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
     index("project_email_triggers_project_idx").on(table.projectId),
     index("project_email_triggers_execution_owner_idx").on(
       table.executionOwnerUserId,
@@ -1548,6 +1564,150 @@ export const projectEmailTriggers = pgTable(
     check(
       "project_email_triggers_deleted_disabled_check",
       sql`${table.deletedAt} IS NULL OR NOT ${table.enabled}`,
+    ),
+  ],
+);
+
+export const emailDeliveryReceipts = pgTable(
+  "email_delivery_receipts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    receivingConnectionId: text("receiving_connection_id").notNull(),
+    triggerOrganizationId: text("trigger_organization_id"),
+    triggerId: text("trigger_id"),
+    svixId: text("svix_id").notNull(),
+    resendEmailId: text("resend_email_id").notNull(),
+    eventAt: timestamp("event_at", { withTimezone: true }).notNull(),
+    state: text("state", {
+      enum: [
+        "queued",
+        "hydrating",
+        "admitted",
+        "materialized",
+        "rejected",
+        "failed",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    reason: text("reason"),
+    claimedFrom: text("claimed_from"),
+    toMailboxes: jsonb("to_mailboxes").$type<string[]>(),
+    ccMailboxes: jsonb("cc_mailboxes").$type<string[]>(),
+    bccMailboxes: jsonb("bcc_mailboxes").$type<string[]>(),
+    receivedForMailboxes: jsonb("received_for_mailboxes").$type<string[]>(),
+    replyToMailboxes: jsonb("reply_to_mailboxes").$type<string[]>(),
+    subject: text("subject"),
+    textBody: text("text_body"),
+    htmlBody: text("html_body"),
+    triggerRevision: integer("trigger_revision"),
+    reservedThreadId: text("reserved_thread_id").notNull(),
+    reservedMessageId: text("reserved_message_id").notNull(),
+    reservedTurnId: text("reserved_turn_id").notNull(),
+    materializedThreadOrganizationId: text(
+      "materialized_thread_organization_id",
+    ),
+    materializedThreadId: text("materialized_thread_id"),
+    materializedMessageThreadId: text("materialized_message_thread_id"),
+    materializedMessageId: text("materialized_message_id"),
+    materializedTurnThreadId: text("materialized_turn_thread_id"),
+    materializedTurnId: text("materialized_turn_id"),
+    hydratedAt: timestamp("hydrated_at", { withTimezone: true }),
+    admittedAt: timestamp("admitted_at", { withTimezone: true }),
+    materializedAt: timestamp("materialized_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.receivingConnectionId],
+      foreignColumns: [
+        organizationReceivingConnections.organizationId,
+        organizationReceivingConnections.id,
+      ],
+      name: "email_delivery_receipts_organization_connection_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.triggerOrganizationId, table.triggerId],
+      foreignColumns: [
+        projectEmailTriggers.organizationId,
+        projectEmailTriggers.id,
+      ],
+      name: "email_delivery_receipts_organization_trigger_fk",
+    }).onDelete("set null"),
+    foreignKey({
+      columns: [
+        table.materializedThreadOrganizationId,
+        table.materializedThreadId,
+      ],
+      foreignColumns: [threads.organizationId, threads.id],
+      name: "email_delivery_receipts_organization_thread_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [
+        table.materializedMessageThreadId,
+        table.materializedMessageId,
+      ],
+      foreignColumns: [threadMessages.threadId, threadMessages.id],
+      name: "email_delivery_receipts_thread_message_fk",
+    }).onDelete("set null"),
+    foreignKey({
+      columns: [table.materializedTurnThreadId, table.materializedTurnId],
+      foreignColumns: [threadTurns.threadId, threadTurns.id],
+      name: "email_delivery_receipts_thread_turn_fk",
+    }).onDelete("set null"),
+    uniqueIndex("email_delivery_receipts_connection_svix_idx").on(
+      table.receivingConnectionId,
+      table.svixId,
+    ),
+    uniqueIndex("email_delivery_receipts_connection_email_idx").on(
+      table.receivingConnectionId,
+      table.resendEmailId,
+    ),
+    uniqueIndex("email_delivery_receipts_reserved_thread_idx").on(
+      table.reservedThreadId,
+    ),
+    uniqueIndex("email_delivery_receipts_reserved_message_idx").on(
+      table.reservedMessageId,
+    ),
+    uniqueIndex("email_delivery_receipts_reserved_turn_idx").on(
+      table.reservedTurnId,
+    ),
+    index("email_delivery_receipts_state_idx").on(table.state, table.updatedAt),
+    index("email_delivery_receipts_trigger_idx").on(table.triggerId),
+    check(
+      "email_delivery_receipts_trigger_organization_check",
+      sql`(${table.triggerOrganizationId} IS NULL) = (${table.triggerId} IS NULL) AND (${table.triggerOrganizationId} IS NULL OR ${table.triggerOrganizationId} = ${table.organizationId})`,
+    ),
+    check(
+      "email_delivery_receipts_thread_organization_check",
+      sql`(${table.materializedThreadOrganizationId} IS NULL) = (${table.materializedThreadId} IS NULL) AND (${table.materializedThreadOrganizationId} IS NULL OR ${table.materializedThreadOrganizationId} = ${table.organizationId})`,
+    ),
+    check(
+      "email_delivery_receipts_materialized_children_check",
+      sql`(${table.materializedMessageThreadId} IS NULL) = (${table.materializedMessageId} IS NULL) AND (${table.materializedTurnThreadId} IS NULL) = (${table.materializedTurnId} IS NULL) AND (${table.materializedMessageThreadId} IS NULL OR ${table.materializedMessageThreadId} = ${table.materializedThreadId}) AND (${table.materializedTurnThreadId} IS NULL OR ${table.materializedTurnThreadId} = ${table.materializedThreadId})`,
+    ),
+    check(
+      "email_delivery_receipts_reason_check",
+      sql`((${table.state} IN ('rejected', 'failed')) AND ${table.reason} IS NOT NULL AND ${table.finishedAt} IS NOT NULL) OR ((${table.state} NOT IN ('rejected', 'failed')) AND ${table.reason} IS NULL AND ${table.finishedAt} IS NULL)`,
+    ),
+    check(
+      "email_delivery_receipts_state_check",
+      sql`${table.state} IN ('queued', 'hydrating', 'admitted', 'materialized', 'rejected', 'failed')`,
+    ),
+    check(
+      "email_delivery_receipts_materialized_state_check",
+      sql`(${table.state} = 'materialized') = (${table.materializedThreadOrganizationId} IS NOT NULL AND ${table.materializedThreadId} IS NOT NULL AND ${table.materializedAt} IS NOT NULL)`,
     ),
   ],
 );
@@ -6586,6 +6746,18 @@ export const organizationReceivingConnections = pgTable(
     routeLocator: text("route_locator").notNull(),
     providerWebhookId: text("provider_webhook_id"),
     encryptedSigningSecret: text("encrypted_signing_secret"),
+    webhookCreateIntent: jsonb("webhook_create_intent").$type<{
+      endpoint: string;
+      events: ["email.received"];
+    }>(),
+    webhookCreateAttemptedAt: timestamp("webhook_create_attempted_at", {
+      withTimezone: true,
+    }),
+    webhookStagingSequence: bigint("webhook_staging_sequence", {
+      mode: "number",
+    })
+      .notNull()
+      .default(0),
     webhookStatus: text("webhook_status", {
       enum: ["not_staged", "staged", "active", "disabled", "error"],
     })
@@ -6613,6 +6785,10 @@ export const organizationReceivingConnections = pgTable(
   (table) => [
     uniqueIndex("organization_receiving_connections_org_idx").on(
       table.organizationId,
+    ),
+    uniqueIndex("organization_receiving_connections_organization_id_idx").on(
+      table.organizationId,
+      table.id,
     ),
     uniqueIndex("organization_receiving_connections_route_locator_idx").on(
       table.routeLocator,

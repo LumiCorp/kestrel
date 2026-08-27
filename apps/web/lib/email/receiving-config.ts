@@ -10,6 +10,7 @@ import {
   ResendReceivingProviderError,
   type ResendReceivingDomain,
   type ResendReceivingProvider,
+  type ResendWebhookCreateRecoveryProvider,
 } from "./receiving-provider";
 
 const credentialBinding = (organizationId: string) =>
@@ -125,16 +126,29 @@ export async function saveReceivingConnection(input: {
   env?: NodeJS.ProcessEnv;
   provider?: ResendReceivingProvider;
 }): Promise<PublicReceivingConnection> {
+  const provider = input.provider ?? new ResendHttpReceivingProvider();
   const existing = await findConnection(input.organizationId);
   const suppliedApiKey = input.apiKey?.trim() || undefined;
   const storedEncryptedApiKey = existing?.encryptedApiKey ?? null;
+  const existingApiKey = decryptStoredApiKey({
+    organizationId: input.organizationId,
+    encryptedApiKey: storedEncryptedApiKey,
+    env: input.env,
+  });
+  if (
+    suppliedApiKey &&
+    existing?.providerWebhookId &&
+    existingApiKey &&
+    suppliedApiKey !== existingApiKey
+  ) {
+    throw new ReceivingConfigError(
+      "RESEND_RECEIVING_WEBHOOK_KEY_REPLACEMENT_UNSUPPORTED",
+      "This receiving connection already has a staged webhook. Continue with its current Resend API key; replacing the key is not supported yet.",
+    );
+  }
   const apiKey =
     suppliedApiKey ??
-    decryptStoredApiKey({
-      organizationId: input.organizationId,
-      encryptedApiKey: storedEncryptedApiKey,
-      env: input.env,
-    });
+    existingApiKey;
   if (!apiKey) {
     throw new ReceivingConfigError(
       "RESEND_RECEIVING_CREDENTIAL_REQUIRED",
@@ -150,9 +164,7 @@ export async function saveReceivingConnection(input: {
       : undefined;
   let domain: ResendReceivingDomain;
   try {
-    domain = await (
-      input.provider ?? new ResendHttpReceivingProvider()
-    ).getDomain(apiKey, input.receivingDomainId.trim());
+    domain = await provider.getDomain(apiKey, input.receivingDomainId.trim());
   } catch (error) {
     const normalized = normalizeProviderError(error);
     if (storedHealthCheck) {
@@ -271,6 +283,12 @@ export async function saveReceivingConnection(input: {
         routeLocator:
           lockedExisting?.routeLocator ?? randomBytes(32).toString("base64url"),
         inboundEnabled: false,
+        webhookStatus:
+          lockedExisting?.providerWebhookId &&
+          lockedExisting.encryptedSigningSecret
+            ? "disabled"
+            : "not_staged",
+        webhookStagingSequence: (lockedExisting?.webhookStagingSequence ?? -1) + 1,
         lastHealthCheckedAt: now,
         lastErrorCode: null,
         updatedByUserId: input.actorUserId,
@@ -288,6 +306,12 @@ export async function saveReceivingConnection(input: {
           mxStatus: domain.mxStatus,
           domainCheckedAt: now,
           inboundEnabled: false,
+          webhookStatus:
+            lockedExisting?.providerWebhookId &&
+            lockedExisting.encryptedSigningSecret
+              ? "disabled"
+              : "not_staged",
+          webhookStagingSequence: sql`${schema.organizationReceivingConnections.webhookStagingSequence} + 1`,
           lastHealthCheckedAt: now,
           lastErrorCode: null,
           updatedByUserId: input.actorUserId,
@@ -295,7 +319,23 @@ export async function saveReceivingConnection(input: {
         },
       });
   });
+  if (isWebhookRecoveryProvider(provider)) {
+    const { stageReceivingWebhook } = await import(
+      "./receiving-webhook-staging"
+    );
+    await stageReceivingWebhook({
+      organizationId: input.organizationId,
+      provider,
+      env: input.env,
+    });
+  }
   return getPublicReceivingConnection(input.organizationId);
+}
+
+function isWebhookRecoveryProvider(
+  provider: ResendReceivingProvider,
+): provider is ResendWebhookCreateRecoveryProvider {
+  return "reconcileWebhookCreate" in provider;
 }
 
 export function encryptReceivingSigningSecret(input: {
@@ -318,6 +358,56 @@ export function decryptReceivingSigningSecret(input: {
   return decryptGatewayCredential({
     gatewayId: signingSecretBinding(input.organizationId),
     encrypted: input.encryptedSigningSecret,
+    env: input.env,
+  });
+}
+
+/** Server-only authority used by the dedicated Resend ingress boundary. */
+export async function resolveReceivingIngressAuthority(
+  routeLocator: string,
+  env?: NodeJS.ProcessEnv,
+) {
+  const row = await knowledgeDb.query.organizationReceivingConnections.findFirst(
+    {
+      columns: {
+        id: true,
+        organizationId: true,
+        encryptedSigningSecret: true,
+        inboundEnabled: true,
+        webhookStatus: true,
+      },
+      where: (table, { eq }) => eq(table.routeLocator, routeLocator),
+    },
+  );
+  if (!row) return null;
+  if (
+    !row.inboundEnabled ||
+    row.webhookStatus !== "active" ||
+    !row.encryptedSigningSecret
+  ) {
+    return { available: false as const };
+  }
+  return {
+    available: true as const,
+    connectionId: row.id,
+    organizationId: row.organizationId,
+    signingSecret: decryptReceivingSigningSecret({
+      organizationId: row.organizationId,
+      encryptedSigningSecret: row.encryptedSigningSecret,
+      env,
+    }),
+  };
+}
+
+/** Server-only credential resolver for provider webhook reconciliation. */
+export function decryptReceivingApiKey(input: {
+  organizationId: string;
+  encryptedApiKey: string;
+  env?: NodeJS.ProcessEnv;
+}) {
+  return decryptGatewayCredential({
+    gatewayId: credentialBinding(input.organizationId),
+    encrypted: input.encryptedApiKey,
     env: input.env,
   });
 }

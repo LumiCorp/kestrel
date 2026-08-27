@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
+None.
 
 ## In progress
 
@@ -20,7 +20,7 @@ None.
 
 ## Implemented
 
-None.
+- [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
 
 ## Done
 
