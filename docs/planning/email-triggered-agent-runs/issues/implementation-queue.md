@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Execute the configured receiving route exports](32-execute-configured-receiving-route-exports.md)
+None.
 
 ## In progress
 
@@ -26,6 +26,7 @@ None.
 - [Distinguish provider outages from invalid receiving configuration](13-classify-receiving-provider-failures.md)
 - [Classify malformed receiving JSON as an invalid request](19-classify-malformed-receiving-json.md)
 - [Execute malformed JSON contracts through every receiving route](21-execute-malformed-json-route-contracts.md)
+- [Execute the configured receiving route exports](32-execute-configured-receiving-route-exports.md)
 
 ## Done
 

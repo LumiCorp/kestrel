@@ -29,11 +29,11 @@ const domainsBodySchema = z.object({
 });
 
 export function createOneReceivingPutHandler(options: {
-  requireAdmin: () => Promise<OrganizationAdminAuthority>;
+  requireAdmin: (request: Request) => Promise<OrganizationAdminAuthority>;
 }) {
   return async function putOneReceiving(request: Request) {
     try {
-      const { organizationId, session } = await options.requireAdmin();
+      const { organizationId, session } = await options.requireAdmin(request);
       const body = receivingBodySchema.parse(
         await parseReceivingAdminJson(request),
       );
@@ -69,11 +69,11 @@ export function createOneReceivingPutHandler(options: {
 }
 
 export function createOneReceivingDomainsPostHandler(options: {
-  requireAdmin: () => Promise<OrganizationAdminAuthority>;
+  requireAdmin: (request: Request) => Promise<OrganizationAdminAuthority>;
 }) {
   return async function postOneReceivingDomains(request: Request) {
     try {
-      const { organizationId } = await options.requireAdmin();
+      const { organizationId } = await options.requireAdmin(request);
       const body = domainsBodySchema.parse(
         await parseReceivingAdminJson(request),
       );

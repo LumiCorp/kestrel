@@ -1403,6 +1403,214 @@ test("Desktop receiving GET permits only members while inspection and mutation r
   });
 });
 
+test("configured receiving mutation exports authorize before parsing malformed JSON", async (context) => {
+  assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");
+  process.env.DATABASE_URL = databaseUrl;
+  process.env.POSTGRES_URL = databaseUrl;
+  const [
+    { resetDbRuntimeForTests },
+    oneReceivingRoute,
+    oneDomainsRoute,
+    desktopReceivingRoute,
+    desktopDomainsRoute,
+  ] = await Promise.all([
+    import("@/lib/db/runtime"),
+    import("@/app/api/organization/email/receiving/route"),
+    import("@/app/api/organization/email/receiving/domains/route"),
+    import("@/app/api/desktop/v1/organizations/[organizationId]/email/receiving/route"),
+    import("@/app/api/desktop/v1/organizations/[organizationId]/email/receiving/domains/route"),
+  ]);
+  const sql = postgres(databaseUrl, { max: 2 });
+  const suffix = crypto.randomUUID();
+  const organizationId = `receiving-route-auth-${suffix}`;
+  const environmentId = `receiving-route-environment-${suffix}`;
+  const adminUserId = `receiving-route-admin-${suffix}`;
+  const memberUserId = `receiving-route-member-${suffix}`;
+  const adminSessionToken = `receiving-route-admin-session-${suffix}`;
+  const memberSessionToken = `receiving-route-member-session-${suffix}`;
+  const now = new Date();
+  const adminCredential = desktopAccessCredential({
+    userId: adminUserId,
+    expiresAt: new Date(now.getTime() + 10 * 60_000),
+  });
+  const memberCredential = desktopAccessCredential({
+    userId: memberUserId,
+    expiresAt: new Date(now.getTime() + 10 * 60_000),
+  });
+
+  context.after(async () => {
+    await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+    await sql`DELETE FROM "user" WHERE "id" IN (${adminUserId}, ${memberUserId})`;
+    await resetDbRuntimeForTests();
+    await sql.end({ timeout: 0 });
+  });
+
+  await sql.begin(async (transaction) => {
+    await transaction`
+      INSERT INTO "user" (
+        "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+      ) VALUES
+        (
+          ${adminUserId}, 'Receiving Route Admin',
+          ${`${adminUserId}@example.test`}, true, ${now}, ${now}
+        ),
+        (
+          ${memberUserId}, 'Receiving Route Member',
+          ${`${memberUserId}@example.test`}, true, ${now}, ${now}
+        )
+    `;
+    await transaction`
+      INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+      VALUES (
+        ${organizationId}, 'Receiving Route Auth',
+        ${`receiving-route-auth-${suffix}`}, ${now}
+      )
+    `;
+    await transaction`
+      INSERT INTO "member" (
+        "id", "organizationId", "userId", "role", "createdAt"
+      ) VALUES
+        (
+          ${crypto.randomUUID()}, ${organizationId}, ${adminUserId},
+          'owner', ${now}
+        ),
+        (
+          ${crypto.randomUUID()}, ${organizationId}, ${memberUserId},
+          'member', ${now}
+        )
+    `;
+    await transaction`
+      INSERT INTO "environments" (
+        "id", "organization_id", "created_by_user_id", "name", "slug",
+        "provider", "region", "status", "is_default", "created_at",
+        "updated_at"
+      ) VALUES (
+        ${environmentId}, ${organizationId}, ${adminUserId},
+        'Receiving Route Environment', 'default', 'fly', 'iad', 'ready', true,
+        ${now}, ${now}
+      )
+    `;
+    await transaction`
+      INSERT INTO "session" (
+        "id", "expiresAt", "token", "createdAt", "updatedAt", "userId",
+        "activeOrganizationId"
+      ) VALUES
+        (
+          ${crypto.randomUUID()}, ${new Date(now.getTime() + 10 * 60_000)},
+          ${adminSessionToken}, ${now}, ${now}, ${adminUserId},
+          ${organizationId}
+        ),
+        (
+          ${crypto.randomUUID()}, ${new Date(now.getTime() + 10 * 60_000)},
+          ${memberSessionToken}, ${now}, ${now}, ${memberUserId},
+          ${organizationId}
+        )
+    `;
+    for (const credential of [adminCredential, memberCredential]) {
+      await transaction`
+        INSERT INTO "desktop_user_credentials" (
+          "id", "user_id", "family_id", "kind", "secret_hash",
+          "expires_at", "revoked_at", "created_at"
+        ) VALUES (
+          ${credential.id}, ${credential.userId}, ${crypto.randomUUID()},
+          'access', ${credential.secretHash}, ${credential.expiresAt},
+          ${credential.revokedAt}, ${now}
+        )
+      `;
+    }
+  });
+
+  const oneReceivingUrl = "http://localhost/api/organization/email/receiving";
+  const desktopReceivingUrl = `http://localhost/api/desktop/v1/organizations/${organizationId}/email/receiving`;
+  const desktopContext = {
+    params: Promise.resolve({ organizationId }),
+  };
+  const mutations = [
+    {
+      name: "One receiving PUT",
+      url: oneReceivingUrl,
+      method: "PUT",
+      adminAuthorization: `Bearer ${adminSessionToken}`,
+      memberAuthorization: `Bearer ${memberSessionToken}`,
+      invoke: (request: Request) => oneReceivingRoute.PUT(request),
+    },
+    {
+      name: "One domains POST",
+      url: `${oneReceivingUrl}/domains`,
+      method: "POST",
+      adminAuthorization: `Bearer ${adminSessionToken}`,
+      memberAuthorization: `Bearer ${memberSessionToken}`,
+      invoke: (request: Request) => oneDomainsRoute.POST(request),
+    },
+    {
+      name: "Desktop receiving PUT",
+      url: desktopReceivingUrl,
+      method: "PUT",
+      adminAuthorization: `Bearer ${adminCredential.value}`,
+      memberAuthorization: `Bearer ${memberCredential.value}`,
+      invoke: (request: Request) =>
+        desktopReceivingRoute.PUT(request, desktopContext),
+    },
+    {
+      name: "Desktop domains POST",
+      url: `${desktopReceivingUrl}/domains`,
+      method: "POST",
+      adminAuthorization: `Bearer ${adminCredential.value}`,
+      memberAuthorization: `Bearer ${memberCredential.value}`,
+      invoke: (request: Request) =>
+        desktopDomainsRoute.POST(request, desktopContext),
+    },
+  ];
+
+  for (const mutation of mutations) {
+    const authorized = trackedMalformedMutationRequest({
+      url: mutation.url,
+      method: mutation.method,
+      authorization: mutation.adminAuthorization,
+    });
+    const authorizedResponse = await mutation.invoke(authorized.request);
+    assert.equal(authorizedResponse.status, 422, mutation.name);
+    assert.deepEqual(
+      await authorizedResponse.json(),
+      {
+        code: "RESEND_RECEIVING_REQUEST_INVALID",
+        error: "Invalid inbound receiving request.",
+      },
+      mutation.name,
+    );
+    assert.equal(authorized.readCount(), 1, mutation.name);
+
+    const unauthenticated = trackedMalformedMutationRequest({
+      url: mutation.url,
+      method: mutation.method,
+    });
+    const unauthenticatedResponse = await mutation.invoke(
+      unauthenticated.request,
+    );
+    assert.equal(unauthenticatedResponse.status, 401, mutation.name);
+    assert.deepEqual(
+      await unauthenticatedResponse.json(),
+      { code: "UNAUTHORIZED", error: "Unauthorized" },
+      mutation.name,
+    );
+    assert.equal(unauthenticated.readCount(), 0, mutation.name);
+
+    const member = trackedMalformedMutationRequest({
+      url: mutation.url,
+      method: mutation.method,
+      authorization: mutation.memberAuthorization,
+    });
+    const memberResponse = await mutation.invoke(member.request);
+    assert.equal(memberResponse.status, 403, mutation.name);
+    assert.deepEqual(
+      await memberResponse.json(),
+      { code: "FORBIDDEN", error: "Forbidden" },
+      mutation.name,
+    );
+    assert.equal(member.readCount(), 0, mutation.name);
+  }
+});
+
 function fakeProvider(): ResendReceivingProvider {
   const domain = (id: string): ResendReceivingDomain => ({
     id,
@@ -1528,4 +1736,25 @@ function desktopRequest(url: string, method: string, credential: string) {
     method,
     headers: { authorization: `Bearer ${credential}` },
   });
+}
+
+function trackedMalformedMutationRequest(input: {
+  url: string;
+  method: string;
+  authorization?: string;
+}) {
+  const request = new Request(input.url, {
+    method: input.method,
+    body: "{",
+    headers: {
+      "content-type": "application/json",
+      ...(input.authorization ? { authorization: input.authorization } : {}),
+    },
+  });
+  let reads = 0;
+  request.text = async () => {
+    reads += 1;
+    return "{";
+  };
+  return { request, readCount: () => reads };
 }
