@@ -51,7 +51,7 @@ test("canonical Kestrel policy composes parity across product environments", () 
     environmentPresetId: "workspace_hosted",
     overlay: LUNA_ROUTE,
   });
-  assert.equal(KESTREL_ONE_ENVIRONMENT_PRESETS.workspace_hosted.version, 2);
+  assert.equal(KESTREL_ONE_ENVIRONMENT_PRESETS.workspace_hosted.version, 4);
 
   for (const composed of [
     cliSafe,
@@ -157,7 +157,7 @@ test("canonical Kestrel One policy and presets are immutable versioned definitio
   assert.equal(
     Object.values(KESTREL_ONE_ENVIRONMENT_PRESETS).every((preset) =>
       Object.isFrozen(preset) && preset.version ===
-        (preset.id === "workspace_hosted" ? 2 : 1)
+        (preset.id === "workspace_hosted" ? 4 : 1)
     ),
     true,
   );
@@ -562,7 +562,7 @@ test("legacy composition fingerprint includes Kestrel and economics policy revis
     harnessEconomicsPolicyId: "economics:kestrel:v2",
     harnessEconomicsPolicyVersion: 1,
     environmentPresetId: "workspace_hosted",
-    environmentPresetVersion: 2,
+    environmentPresetVersion: 4,
     environmentCapabilityPacks: composed.profile.capabilityPacks,
     overlay: LUNA_ROUTE,
     toolAllowlist: composed.profile.toolAllowlist,

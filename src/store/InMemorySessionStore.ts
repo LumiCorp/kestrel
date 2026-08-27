@@ -53,7 +53,7 @@ import {
   validateRuntimeSessionState,
 } from "../runtime/state.js";
 import { SessionBusyError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
-import { sanitizeJsonValue } from "../runtime/jsonSanitizer.js";
+import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
 import { buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent } from "../runtime/preparedApprovalCleanupAudit.js";
 import {
   buildCanonicalWaitingFor,
@@ -1131,20 +1131,23 @@ export class InMemorySessionStore implements SessionStore {
           effect.status = "DONE";
           return "done";
         } catch {
-          const auditEvent = sanitizeJsonValue(
+          const auditEvent = JSON.parse(stringifySanitizedJson(
             buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
               effect,
               invalidResult: doneResult,
               occurredAt: new Date().toISOString(),
             }),
-          );
-          this.runEvents.push(structuredClone(auditEvent));
+          )) as RunEvent;
+          const quarantinedResult = JSON.parse(stringifySanitizedJson(
+            quarantinePreparedApprovalCleanupDoneResult(doneResult),
+          )) as EffectResult;
+          const preparedAuditEvent = structuredClone(auditEvent);
+          const preparedQuarantinedResult = structuredClone(quarantinedResult);
+          this.runEvents.push(preparedAuditEvent);
           this.operationLog.push(`runEvent:${auditEvent.type}`);
           this.effectResults.set(
             idempotencyKey,
-            structuredClone(
-              quarantinePreparedApprovalCleanupDoneResult(doneResult),
-            ),
+            preparedQuarantinedResult,
           );
           effect.status = "PENDING";
           this.operationLog.push(

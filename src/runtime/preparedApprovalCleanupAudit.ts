@@ -36,6 +36,16 @@ export function buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent(input: {
     output: input.invalidResult.output,
     error: input.invalidResult.error,
   });
+  const effectIdentity = {
+    runId: projectIdentifier(input.effect.runId),
+    sessionId: projectIdentifier(input.effect.sessionId),
+    idempotencyKey: projectIdentifier(input.effect.idempotencyKey),
+  };
+  const resultIdentity = {
+    idempotencyKey: projectIdentifier(input.invalidResult.idempotencyKey),
+    status: input.invalidResult.status,
+    originalTimestamp: input.invalidResult.timestamp,
+  };
   const event: RunEvent = {
     runId: input.effect.runId,
     sessionId: input.effect.sessionId,
@@ -47,16 +57,8 @@ export function buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent(input: {
       version: "prepared_approval_cleanup_done_evidence_quarantine_v2",
       validationReasonCode:
         "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
-      effectIdentity: {
-        runId: input.effect.runId,
-        sessionId: input.effect.sessionId,
-        idempotencyKey: input.effect.idempotencyKey,
-      },
-      resultIdentity: {
-        idempotencyKey: input.invalidResult.idempotencyKey,
-        status: input.invalidResult.status,
-        originalTimestamp: input.invalidResult.timestamp,
-      },
+      effectIdentity,
+      resultIdentity,
       evidence,
       ...projectReleasedPreparedInvocationId(input.invalidResult.output),
     },
@@ -66,7 +68,19 @@ export function buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent(input: {
     serializedBytes >
     PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES
   ) {
-    throw new Error("Cleanup quarantine audit metadata exceeded its hard bound");
+    event.metadata = {
+      version: "prepared_approval_cleanup_done_evidence_quarantine_v2",
+      validationReasonCode:
+        "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+      projectionStatus: "metadata_bound_exceeded",
+      effectIdentity,
+      resultIdentity,
+      evidence: {
+        canonicalHash: evidence.canonicalHash,
+        canonicalByteSize: evidence.canonicalByteSize,
+        traversalTruncated: true,
+      },
+    };
   }
   return event;
 }
@@ -196,32 +210,18 @@ function projectObject(
   state: BoundedProjectionState,
   depth: number,
 ): { canonical: unknown; summary: BoundedShapeSummary } {
-  const collected: string[] = [];
-  let truncated = false;
-  let propertiesScanned = 0;
+  let selection: { keys: string[]; truncated: boolean };
   try {
-    for (const key in value) {
-      propertiesScanned += 1;
-      if (propertiesScanned > MAX_CONTAINER_ENTRIES) {
-        truncated = true;
-        break;
-      }
-      if (!Object.hasOwn(value, key)) continue;
-      collected.push(key);
-    }
+    selection = selectCanonicalOwnKeys(value);
   } catch {
     state.traversalTruncated = true;
     return truncatedProjection("object_enumeration_failed");
   }
-  collected.sort((left, right) => left.localeCompare(right));
   const entries: Array<{ key: string; value: unknown }> = [];
   const types: Record<string, number> = {};
-  for (const key of collected) {
-    const safeKey = sanitizeUtf16String(
-      key.slice(0, MAX_STRING_CODE_UNITS),
-    );
-    state.sourceBytesObserved += Buffer.byteLength(safeKey);
-    state.sourceBytesTruncated ||= key.length > MAX_STRING_CODE_UNITS;
+  for (const key of selection.keys) {
+    const keyEvidence = projectIdentifier(key);
+    state.sourceBytesObserved += keyEvidence.utf8ByteSize;
     let member: unknown;
     try {
       member = value[key];
@@ -230,19 +230,41 @@ function projectObject(
       member = undefined;
     }
     const projected = projectValue(member, state, depth + 1);
-    entries.push({ key: safeKey, value: projected.canonical });
+    entries.push({ key: keyEvidence.canonicalHash, value: projected.canonical });
     incrementType(types, projected.summary.type);
   }
-  state.traversalTruncated ||= truncated;
+  state.traversalTruncated ||= selection.truncated;
   return {
-    canonical: { type: "object", entries, observed: collected.length, truncated },
+    canonical: {
+      type: "object",
+      entries,
+      observed: selection.keys.length,
+      truncated: selection.truncated,
+    },
     summary: {
       type: "object",
-      topLevelEntriesObserved: collected.length,
-      topLevelEntriesTruncated: truncated,
+      topLevelEntriesObserved: selection.keys.length,
+      topLevelEntriesTruncated: selection.truncated,
       topLevelValueTypes: types,
     },
   };
+}
+
+function selectCanonicalOwnKeys(value: Record<string, unknown>): {
+  keys: string[];
+  truncated: boolean;
+} {
+  const selected: string[] = [];
+  let ownKeyCount = 0;
+  for (const key in value) {
+    if (!Object.hasOwn(value, key)) continue;
+    ownKeyCount += 1;
+    let insertAt = selected.findIndex((candidate) => key < candidate);
+    if (insertAt < 0) insertAt = selected.length;
+    selected.splice(insertAt, 0, key);
+    if (selected.length > MAX_CONTAINER_ENTRIES) selected.pop();
+  }
+  return { keys: selected, truncated: ownKeyCount > selected.length };
 }
 
 function primitiveProjection(
@@ -282,18 +304,17 @@ function projectReleasedPreparedInvocationId(
     return {};
   }
   if (typeof candidate !== "string") return {};
-  const safe = sanitizeUtf16String(
-    candidate.slice(0, MAX_STRING_CODE_UNITS),
-  );
   return {
-    releasedPreparedInvocationId: {
-      canonicalHash: hashCanonical({
-        value: safe,
-        codeUnits: candidate.length,
-        truncated: candidate.length > MAX_STRING_CODE_UNITS,
-      }),
-      bytesObserved: Buffer.byteLength(safe),
-      truncated: candidate.length > MAX_STRING_CODE_UNITS,
-    },
+    releasedPreparedInvocationId: projectIdentifier(candidate),
+  };
+}
+
+function projectIdentifier(value: string): {
+  canonicalHash: string;
+  utf8ByteSize: number;
+} {
+  return {
+    canonicalHash: hashCanonical({ value }),
+    utf8ByteSize: Buffer.byteLength(value),
   };
 }

@@ -12,6 +12,7 @@ import {
   type SandboxCapabilityChildReservationV1,
   type SandboxCapabilityLeaseTransitionRecordV1,
 } from "../src/kestrel/contracts/sandbox-capability.js";
+import { hashCanonical } from "../src/kestrel/contracts/tool-contract.js";
 import { SandboxCapabilityExactResultConflictError } from "../src/kestrel/contracts/store.js";
 import { PgSqlExecutor } from "../src/store/PgSqlExecutor.js";
 import { PostgresSessionStore } from "../src/store/PostgresSessionStore.js";
@@ -625,18 +626,23 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         "prepared_approval_cleanup.done_evidence_quarantined",
       ],
     });
-    const conflictingAudit = quarantineEvents.find((event) =>
-      event.metadata?.effectIdentity !== undefined &&
-      (event.metadata.effectIdentity as { idempotencyKey?: string })
-        .idempotencyKey === conflictingEffectId
-    );
-    assert.deepEqual(conflictingAudit?.metadata?.resultIdentity, {
-      idempotencyKey: conflictingEffectId,
-      status: "DONE",
-      originalTimestamp: "2026-08-27T00:00:01.000Z",
+    const conflictingAudit = quarantineEvents.find((event) => {
+      const resultIdentity = event.metadata?.resultIdentity as
+        Record<string, unknown> | undefined;
+      return resultIdentity?.originalTimestamp ===
+        "2026-08-27T00:00:01.000Z";
     });
+    const conflictingResultIdentity = conflictingAudit?.metadata
+      ?.resultIdentity as Record<string, unknown>;
+    assert.equal(conflictingResultIdentity.status, "DONE");
+    assert.equal(
+      (conflictingResultIdentity.idempotencyKey as Record<string, unknown>)
+        .canonicalHash,
+      hashCanonical({ value: conflictingEffectId }),
+    );
     const serializedConflictAudit = JSON.stringify(conflictingAudit);
     for (const sentinel of [
+      conflictingEffectId,
       "wrong-call",
       "pg-api-key-sentinel",
       "pg-provider-token-sentinel",

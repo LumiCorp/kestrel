@@ -192,5 +192,5 @@ test("every V3 remember decision revalidates current authority before evidence i
     boundary.indexOf("await validateRememberApprovalEligibilityInTransaction") <
       boundary.indexOf("await insertRememberedToolApprovalInTransaction"),
   );
-  assert.match(boundary, /hostedMutation \|\| decision === "remember_approval"/u);
+  assert.match(boundary, /hostedMutation \|\| approvesPreparedDecision/u);
 });
