@@ -11,6 +11,7 @@ work; this queue does not reopen them.
 
 ## Ready
 
+- [Require immutable cleanup intent for all result statuses](06z6-require-cleanup-intent-for-all-results.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
