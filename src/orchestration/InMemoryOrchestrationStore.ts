@@ -91,6 +91,29 @@ export class InMemoryOrchestrationStore implements OrchestrationStore {
     this.delegations.set(record.delegationId, clone(record));
   }
 
+  async createDialog(record: DelegationRecord): Promise<boolean> {
+    const dialog = readStoredDialog(record);
+    if (dialog === undefined) {
+      throw new Error("createDialog requires a dialog delegation record.");
+    }
+    const exists = [...this.delegations.values()].some((candidate) => {
+      if (candidate.parentThreadId !== record.parentThreadId) return false;
+      const existing = readStoredDialog(candidate);
+      return existing?.normalizedName === dialog.normalizedName;
+    });
+    if (exists) return false;
+    this.delegations.set(record.delegationId, clone(record));
+    return true;
+  }
+
+  async compareAndSetDialog(record: DelegationRecord, expectedRevision: number): Promise<boolean> {
+    const current = this.delegations.get(record.delegationId);
+    const currentDialog = current === undefined ? undefined : readStoredDialog(current);
+    if (currentDialog === undefined || currentDialog.revision !== expectedRevision) return false;
+    this.delegations.set(record.delegationId, clone(record));
+    return true;
+  }
+
   async getDelegation(delegationId: string): Promise<DelegationRecord | null> {
     return cloneOrNull(this.delegations.get(delegationId));
   }
@@ -339,6 +362,21 @@ export class InMemoryOrchestrationStore implements OrchestrationStore {
   async getContextPolicyDefinition(contextPolicyId: string): Promise<ContextPolicyDefinitionRecord | null> {
     return cloneOrNull(this.contextPolicies.get(contextPolicyId));
   }
+}
+
+function readStoredDialog(record: DelegationRecord): { normalizedName: string; revision: number } | undefined {
+  const dialog = record.policy?.dialog;
+  if (typeof dialog !== "object" || dialog === null || Array.isArray(dialog)) return undefined;
+  const value = dialog as Record<string, unknown>;
+  if (value.version !== "v1" || typeof value.name !== "string") return undefined;
+  return {
+    normalizedName: typeof value.normalizedName === "string"
+      ? value.normalizedName
+      : value.name.trim().toLocaleLowerCase(),
+    revision: typeof value.revision === "number" && Number.isInteger(value.revision) && value.revision >= 0
+      ? value.revision
+      : 0,
+  };
 }
 
 function clone<T>(value: T): T {

@@ -212,6 +212,7 @@ function PureMultimodalInput({
   activeEnvironmentName,
   modelScopeQuery,
   newTurnDisabledReason,
+  focusRequest = 0,
 }: {
   threadId: string;
   projectId?: string;
@@ -243,6 +244,7 @@ function PureMultimodalInput({
   activeEnvironmentName?: string;
   modelScopeQuery?: string;
   newTurnDisabledReason?: string;
+  focusRequest?: number;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
@@ -258,6 +260,11 @@ function PureMultimodalInput({
       return () => clearTimeout(timer);
     }
   }, [width]);
+
+  useEffect(() => {
+    if (focusRequest === 0) return;
+    textareaRef.current?.focus();
+  }, [focusRequest]);
 
   const resetHeight = useCallback(() => {
     if (textareaRef.current) {
@@ -1354,6 +1361,9 @@ export const MultimodalInput = memo(
       return false;
     }
     if (prevProps.interactionMode !== nextProps.interactionMode) {
+      return false;
+    }
+    if (prevProps.focusRequest !== nextProps.focusRequest) {
       return false;
     }
 

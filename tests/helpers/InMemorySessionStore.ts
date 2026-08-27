@@ -1340,6 +1340,17 @@ export class InMemorySessionStore implements SessionStore {
     return this.orchestrationStore.upsertDelegation(record);
   }
 
+  async createDialog(record: Parameters<InMemoryOrchestrationStore["createDialog"]>[0]): Promise<boolean> {
+    return this.orchestrationStore.createDialog(record);
+  }
+
+  async compareAndSetDialog(
+    record: Parameters<InMemoryOrchestrationStore["compareAndSetDialog"]>[0],
+    expectedRevision: Parameters<InMemoryOrchestrationStore["compareAndSetDialog"]>[1],
+  ): Promise<boolean> {
+    return this.orchestrationStore.compareAndSetDialog(record, expectedRevision);
+  }
+
   async getDelegation(delegationId: string) {
     return this.orchestrationStore.getDelegation(delegationId);
   }

@@ -75,4 +75,8 @@ test("workspace image exposes pnpm to hosted project commands", async () => {
   assert.match(devShellPackageSmoke, /printf '%s\\\\n' \\"\$HOME\\"; pnpm --version/u);
   assert.match(devShellPackageSmoke, /result\.text, `\$\{runnerHome\}\\n\$\{expectedPnpm\}\\n`/u);
   assert.match(imageSmoke, /import\("@kestrel-agents\/files"\)/u);
+  assert.match(
+    imageSmoke,
+    /const expected = \["dialog\.open", "dialog\.send", "dialog\.read", "dialog\.list", "dialog\.close"\];/u,
+  );
 });

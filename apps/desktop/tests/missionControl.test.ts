@@ -361,6 +361,9 @@ test("Desktop Mission Control projects runtime thread inspection through the run
               dialogId: "dialog-1",
               name: "Peregrine",
               status: "open",
+              activity: "working",
+              revision: 3,
+              errorMessage: "The collaborator needs an answer.",
               childThreadId: "thread-child:session-1",
               messages: [{
                 messageId: "dialog-message-1",
@@ -371,6 +374,7 @@ test("Desktop Mission Control projects runtime thread inspection through the run
                 sender: "collaborator",
                 text: "The bridge is verified.",
                 createdAt: "2026-07-10T11:59:00.000Z",
+                dialogActivity: "working",
               }],
             }],
             childBlockerChain: [],
@@ -481,6 +485,10 @@ test("Desktop Mission Control projects runtime thread inspection through the run
   );
   assert.deepEqual(response.childThreads.map((thread) => thread.threadId), ["thread-child:session-1"]);
   assert.equal(response.dialogs?.[0]?.messages[0]?.parentRunId, "run-1");
+  assert.equal(response.dialogs?.[0]?.activity, "working");
+  assert.equal(response.dialogs?.[0]?.revision, 3);
+  assert.equal(response.dialogs?.[0]?.errorMessage, "The collaborator needs an answer.");
+  assert.equal(response.dialogs?.[0]?.messages[0]?.dialogActivity, "working");
   assert.deepEqual(calls, [{
     command: { type: "operator.thread", threadId: "thread-main:session-1" },
     requestContext: context,

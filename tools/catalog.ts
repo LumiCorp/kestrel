@@ -62,6 +62,8 @@ import { agentSpawnTool } from "./runtime/agentSpawn.js";
 import { dialogOpenTool } from "./runtime/dialogOpen.js";
 import { dialogSendTool } from "./runtime/dialogSend.js";
 import { dialogCloseTool } from "./runtime/dialogClose.js";
+import { dialogReadTool } from "./runtime/dialogRead.js";
+import { dialogListTool } from "./runtime/dialogList.js";
 import { delegateSpawnChildTool } from "./runtime/delegateSpawnChild.js";
 import { delegateListChildrenTool } from "./runtime/delegateListChildren.js";
 import { delegateGetChildResultTool } from "./runtime/delegateGetChildResult.js";
@@ -174,6 +176,8 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   agentSpawnTool,
   dialogOpenTool,
   dialogSendTool,
+  dialogReadTool,
+  dialogListTool,
   dialogCloseTool,
   delegateSpawnChildTool,
   delegateListChildrenTool,

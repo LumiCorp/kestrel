@@ -5,8 +5,8 @@ import { parseObjectInput, requireStringField } from "../helpers.js";
 export const dialogCloseTool: SharedToolModule = {
   definition: {
     name: "dialog.close",
-    description: "Close an open collaborator dialog. Its conversation remains visible in the thread.",
-    inputSchema: { type: "object", properties: { dialogId: { type: "string" } }, required: ["dialogId"], additionalProperties: false },
+    description: "Stop an open collaborator and end this private conversation for the current task. You can still read its messages and results. You cannot send another message, reopen the collaborator, or reuse its name. This cannot be undone.",
+    inputSchema: { type: "object", properties: { dialogId: { type: "string", description: "The collaborator to stop." } }, required: ["dialogId"], additionalProperties: false },
     capability: { freshnessClass: "runtime", latencyClass: "low", costClass: "free", executionClass: "sandboxed_only", capabilityClasses: ["runtime.dialog"] },
     presentation: { displayName: "Close Dialog", aliases: ["finish collaborator dialog"], keywords: ["dialog", "close"], provider: "kestrel", toolFamily: "runtime" },
   },
