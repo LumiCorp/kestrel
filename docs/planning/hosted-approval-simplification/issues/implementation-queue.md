@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-- [Order the V4 compatibility rollout](06d-order-v4-compatibility-rollout.md)
+None.
 
 ## Blocked
 
@@ -23,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Order the V4 compatibility rollout](06d-order-v4-compatibility-rollout.md)
 - [Generalize prepared approval cleanup](06c-generalize-prepared-approval-cleanup.md)
 - [Release a Web-rejected prepared approval](06b-release-web-rejected-prepared-approval.md)
 - [Version trusted hosted approval timing](06a-version-trusted-hosted-approval-timing.md)
