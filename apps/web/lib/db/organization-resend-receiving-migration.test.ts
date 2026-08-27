@@ -9,6 +9,10 @@ const migration = fs.readFileSync(
   path.join(directory, "migrations/0087_organization_resend_receiving.sql"),
   "utf8",
 );
+const healthCheckSequenceMigration = fs.readFileSync(
+  path.join(directory, "migrations/0084_receiving_health_check_sequence.sql"),
+  "utf8",
+);
 const journal = JSON.parse(
   fs.readFileSync(path.join(directory, "migrations/meta/_journal.json"), "utf8"),
 ) as { entries: Array<{ idx: number; tag: string }> };
@@ -29,6 +33,25 @@ test("Organization Resend receiving is additive, tenant-owned, and inactive", ()
       version: "7",
       when: 1_787_907_600_000,
       tag: "0087_organization_resend_receiving",
+      breakpoints: true,
+    },
+  );
+});
+
+test("stored receiving health checks have a durable monotonic sequence", () => {
+  assert.match(
+    healthCheckSequenceMigration,
+    /ADD COLUMN "health_check_sequence" bigint DEFAULT 0 NOT NULL/u,
+  );
+  assert.deepEqual(
+    journal.entries.find(
+      (entry) => entry.tag === "0084_receiving_health_check_sequence",
+    ),
+    {
+      idx: 84,
+      version: "7",
+      when: 1_787_804_969_000,
+      tag: "0084_receiving_health_check_sequence",
       breakpoints: true,
     },
   );

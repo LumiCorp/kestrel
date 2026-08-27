@@ -12,7 +12,14 @@ export type ReceivingConnection = {
   lastHealthCheckedAt: string | null;
   lastTestedAt: string | null;
   lastErrorCode: string | null;
-  readiness: string;
+  readiness:
+    | "not_configured"
+    | "credential_insufficient"
+    | "domain_unready"
+    | "ready_inactive"
+    | "staged"
+    | "active"
+    | "error";
 };
 
 export type ReceivingDomain = {
@@ -221,13 +228,153 @@ async function readBody(response: Response): Promise<Record<string, unknown>> {
 }
 
 function readConnection(body: Record<string, unknown>): ReceivingConnection {
-  return body.connection as ReceivingConnection;
+  assertExactKeys(body, ["connection"]);
+  const connection = assertRecord(body.connection);
+  assertExactKeys(connection, [
+    "provider",
+    "configured",
+    "credentialStatus",
+    "credentialValidatedAt",
+    "receivingDomain",
+    "receivingDomainStatus",
+    "mxStatus",
+    "domainCheckedAt",
+    "webhookStatus",
+    "inboundEnabled",
+    "lastHealthCheckedAt",
+    "lastTestedAt",
+    "lastErrorCode",
+    "readiness",
+  ]);
+  return {
+    provider: assertEnum(connection.provider, ["resend"]),
+    configured: assertBoolean(connection.configured),
+    credentialStatus: assertEnum(connection.credentialStatus, [
+      "not_configured",
+      "full_access",
+      "insufficient",
+      "error",
+    ]),
+    credentialValidatedAt: assertNullableDate(connection.credentialValidatedAt),
+    receivingDomain: assertNullableText(connection.receivingDomain),
+    receivingDomainStatus: assertEnum(connection.receivingDomainStatus, [
+      "not_selected",
+      "pending",
+      "verified",
+      "failed",
+    ]),
+    mxStatus: assertEnum(connection.mxStatus, [
+      "unknown",
+      "pending",
+      "verified",
+      "failed",
+    ]),
+    domainCheckedAt: assertNullableDate(connection.domainCheckedAt),
+    webhookStatus: assertEnum(connection.webhookStatus, [
+      "not_staged",
+      "staged",
+      "active",
+      "disabled",
+      "error",
+    ]),
+    inboundEnabled: assertBoolean(connection.inboundEnabled),
+    lastHealthCheckedAt: assertNullableDate(connection.lastHealthCheckedAt),
+    lastTestedAt: assertNullableDate(connection.lastTestedAt),
+    lastErrorCode: assertNullableText(connection.lastErrorCode),
+    readiness: assertEnum(connection.readiness, [
+      "not_configured",
+      "credential_insufficient",
+      "domain_unready",
+      "ready_inactive",
+      "staged",
+      "active",
+      "error",
+    ]),
+  };
 }
 
 function readDomains(body: Record<string, unknown>): ReceivingDomain[] {
-  return Array.isArray(body.domains) ? (body.domains as ReceivingDomain[]) : [];
+  assertExactKeys(body, ["domains"]);
+  if (!Array.isArray(body.domains)) {
+    throw new Error("Invalid receiving domains response.");
+  }
+  return body.domains.map((value) => {
+    const domain = assertRecord(value);
+    assertExactKeys(domain, ["id", "name", "status", "receiving", "mxStatus"]);
+    return {
+      id: assertText(domain.id),
+      name: assertText(domain.name),
+      status: assertEnum(domain.status, ["pending", "verified", "failed"]),
+      receiving: assertEnum(domain.receiving, ["enabled", "disabled"]),
+      mxStatus: assertEnum(domain.mxStatus, [
+        "unknown",
+        "pending",
+        "verified",
+        "failed",
+      ]),
+    };
+  });
 }
 
 function readError(body: Record<string, unknown>): string | undefined {
   return typeof body.error === "string" ? body.error : undefined;
+}
+
+function assertRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid receiving response.");
+  }
+  return value as Record<string, unknown>;
+}
+
+function assertExactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+): void {
+  const actualKeys = Object.keys(value);
+  if (
+    actualKeys.length !== expectedKeys.length ||
+    actualKeys.some((key) => !expectedKeys.includes(key))
+  ) {
+    throw new Error("Invalid receiving response.");
+  }
+}
+
+function assertText(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("Invalid receiving response.");
+  }
+  return value;
+}
+
+function assertNullableText(value: unknown): string | null {
+  if (value === null) {
+    return null;
+  }
+  return assertText(value);
+}
+
+function assertNullableDate(value: unknown): string | null {
+  const text = assertNullableText(value);
+  if (text !== null && Number.isNaN(Date.parse(text))) {
+    throw new Error("Invalid receiving response.");
+  }
+  return text;
+}
+
+function assertBoolean(value: unknown): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error("Invalid receiving response.");
+  }
+  return value;
+}
+
+function assertEnum<const Value extends string>(
+  value: unknown,
+  allowed: readonly Value[],
+): Value {
+  if (typeof value !== "string" || !allowed.includes(value as Value)) {
+    throw new Error("Invalid receiving response.");
+  }
+  return value as Value;
 }

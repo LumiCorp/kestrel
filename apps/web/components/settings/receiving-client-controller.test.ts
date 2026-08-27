@@ -20,6 +20,7 @@ type PresentationState = {
   domainId: string;
   domains: ReceivingDomain[];
   error: string | undefined;
+  infos: string[];
   successes: string[];
   writes: number;
 };
@@ -39,12 +40,12 @@ test("a delayed failed check cannot repaint a newer successful recovery", async 
   assert.equal(state.busy, true, "busy remains set while the winning refresh is pending");
   assert.deepEqual(state.domains, [readyDomain("newer-domain")]);
 
-  newerRefresh.resolve(jsonResponse({ connection: connection("recovered") }));
+  newerRefresh.resolve(jsonResponse({ connection: connection("active") }));
   await newer;
   olderCheck.resolve(jsonResponse({ error: "Older key was revoked." }, 401));
   await older;
 
-  assert.equal(state.connection?.readiness, "recovered");
+  assert.equal(state.connection?.readiness, "active");
   assert.deepEqual(state.domains, [readyDomain("newer-domain")]);
   assert.equal(state.error, undefined);
   assert.deepEqual(state.busyTransitions, [true, false]);
@@ -61,13 +62,13 @@ test("a delayed successful check cannot clear a newer failure or replace its cho
   const newer = controller.inspectDomains("newer-key");
   newerCheck.resolve(jsonResponse({ error: "Newest key is invalid." }, 401));
   await settled();
-  newerRefresh.resolve(jsonResponse({ connection: connection("not_ready") }));
+  newerRefresh.resolve(jsonResponse({ connection: connection("domain_unready") }));
   await newer;
 
   olderCheck.resolve(jsonResponse({ domains: [readyDomain("stale-domain")] }));
   await older;
 
-  assert.equal(state.connection?.readiness, "not_ready");
+  assert.equal(state.connection?.readiness, "domain_unready");
   assert.deepEqual(state.domains, []);
   assert.equal(state.error, "Newest key is invalid.");
   assert.deepEqual(state.busyTransitions, [true, false]);
@@ -80,12 +81,12 @@ test("a newer load supersedes a delayed save and owns the final busy transition"
 
   const save = controller.save("older-key", "older-domain");
   const load = controller.load();
-  newerLoad.resolve(jsonResponse({ connection: connection("current_load") }));
+  newerLoad.resolve(jsonResponse({ connection: connection("staged") }));
   await load;
-  olderSave.resolve(jsonResponse({ connection: connection("stale_save") }));
+  olderSave.resolve(jsonResponse({ connection: connection("error") }));
   await save;
 
-  assert.equal(state.connection?.readiness, "current_load");
+  assert.equal(state.connection?.readiness, "staged");
   assert.equal(state.error, undefined);
   assert.deepEqual(state.busyTransitions, [true, false]);
 });
@@ -98,7 +99,7 @@ test("a winning save clears the write-only form but stays busy through reconcili
   state.domainId = "ready-domain";
 
   const save = controller.save(state.apiKey, state.domainId);
-  saveResponse.resolve(jsonResponse({ connection: connection("saving") }));
+  saveResponse.resolve(jsonResponse({ connection: connection("ready_inactive") }));
   await settled();
 
   assert.equal(state.apiKey, "");
@@ -106,10 +107,10 @@ test("a winning save clears the write-only form but stays busy through reconcili
   assert.equal(state.busy, true);
   assert.deepEqual(state.successes, ["Inbound receiving configuration saved."]);
 
-  refresh.resolve(jsonResponse({ connection: connection("saved") }));
+  refresh.resolve(jsonResponse({ connection: connection("staged") }));
   await save;
 
-  assert.equal(state.connection?.readiness, "saved");
+  assert.equal(state.connection?.readiness, "staged");
   assert.deepEqual(state.busyTransitions, [true, false]);
 });
 
@@ -128,6 +129,83 @@ test("deactivation prevents a pending operation from writing after unmount", asy
   assert.equal(state.error, undefined);
 });
 
+test("a load with a missing connection preserves the prior valid presentation", async () => {
+  const loadResponse = deferredResponse();
+  const { controller, state } = fixture([loadResponse]);
+  seedPresentation(state);
+
+  const load = controller.load();
+  loadResponse.resolve(jsonResponse({}));
+  await load;
+
+  assertPresentationPreserved(state);
+  assert.equal(state.error, "Could not load inbound receiving.");
+  assert.deepEqual(state.successes, []);
+});
+
+test("a domain check with a wrong-type envelope preserves the form and choices", async () => {
+  const checkResponse = deferredResponse();
+  const { controller, state } = fixture([checkResponse]);
+  seedPresentation(state);
+
+  const check = controller.inspectDomains(state.apiKey);
+  checkResponse.resolve(jsonResponse({ domains: "not-an-array" }));
+  await check;
+
+  assertPresentationPreserved(state);
+  assert.equal(state.error, "Could not inspect Resend receiving domains.");
+  assert.deepEqual(state.infos, []);
+  assert.deepEqual(state.successes, []);
+});
+
+test("a save with a secret-bearing unknown field cannot clear the form or report success", async () => {
+  const saveResponse = deferredResponse();
+  const { controller, state } = fixture([saveResponse]);
+  seedPresentation(state);
+
+  const save = controller.save(state.apiKey, state.domainId);
+  saveResponse.resolve(
+    jsonResponse({
+      connection: {
+        ...connection("ready_inactive"),
+        apiKey: "re_must_not_reach_the_client",
+      },
+    }),
+  );
+  await save;
+
+  assertPresentationPreserved(state);
+  assert.equal(state.error, "Could not save inbound receiving.");
+  assert.deepEqual(state.successes, []);
+});
+
+test("a reconciliation with an invalid enum preserves the prior connection", async () => {
+  const checkResponse = deferredResponse();
+  const reconcileResponse = deferredResponse();
+  const { controller, state } = fixture([checkResponse, reconcileResponse]);
+  seedPresentation(state);
+
+  const check = controller.inspectDomains(state.apiKey);
+  checkResponse.resolve(
+    jsonResponse({ domains: [readyDomain("ready-domain")] }),
+  );
+  await settled();
+  reconcileResponse.resolve(
+    jsonResponse({
+      connection: {
+        ...connection("ready_inactive"),
+        webhookStatus: "future_status",
+      },
+    }),
+  );
+  await check;
+
+  assertPresentationPreserved(state);
+  assert.equal(state.error, "Could not inspect Resend receiving domains.");
+  assert.deepEqual(state.infos, []);
+  assert.deepEqual(state.successes, []);
+});
+
 function fixture(requests: DeferredResponse[]) {
   const state: PresentationState = {
     apiKey: "",
@@ -137,6 +215,7 @@ function fixture(requests: DeferredResponse[]) {
     domainId: "",
     domains: [],
     error: undefined,
+    infos: [],
     successes: [],
     writes: 0,
   };
@@ -174,7 +253,9 @@ function fixture(requests: DeferredResponse[]) {
       setError: (value) => write(() => {
         state.error = value;
       }),
-      showInfo: () => write(() => {}),
+      showInfo: (message) => write(() => {
+        state.infos.push(message);
+      }),
       showSuccess: (message) => write(() => {
         state.successes.push(message);
       }),
@@ -209,7 +290,7 @@ function readyDomain(id: string): ReceivingDomain {
   };
 }
 
-function connection(readiness: string): ReceivingConnection {
+function connection(readiness: ReceivingConnection["readiness"]): ReceivingConnection {
   return {
     configured: true,
     credentialStatus: "full_access",
@@ -226,6 +307,20 @@ function connection(readiness: string): ReceivingConnection {
     receivingDomainStatus: "verified",
     webhookStatus: "not_staged",
   };
+}
+
+function seedPresentation(state: PresentationState): void {
+  state.apiKey = "replacement-key";
+  state.connection = connection("ready_inactive");
+  state.domainId = "ready-domain";
+  state.domains = [readyDomain("ready-domain")];
+}
+
+function assertPresentationPreserved(state: PresentationState): void {
+  assert.equal(state.apiKey, "replacement-key");
+  assert.deepEqual(state.connection, connection("ready_inactive"));
+  assert.equal(state.domainId, "ready-domain");
+  assert.deepEqual(state.domains, [readyDomain("ready-domain")]);
 }
 
 async function settled(): Promise<void> {

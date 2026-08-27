@@ -415,6 +415,58 @@ test("stored receiving checks persist failure and recovery without poisoning the
       organizationId,
       provider: new ResendHttpReceivingProvider({
         baseUrl: "https://resend.test",
+        fetchImpl: async (input) => {
+          const path = new URL(String(input)).pathname;
+          if (path === "/domains") {
+            return Response.json({
+              object: "list",
+              has_more: false,
+              data: [
+                {
+                  id: "domain-health",
+                  name: "domain-health.example.test",
+                  status: "verified",
+                  capabilities: {
+                    sending: "enabled",
+                    receiving: "enabled",
+                  },
+                },
+              ],
+            });
+          }
+          return Response.json({
+            id: "domain-other",
+            name: "domain-other.example.test",
+            status: "failed",
+            capabilities: { sending: "enabled", receiving: "enabled" },
+            records: [{ record: "Receiving MX", type: "MX", status: "failed" }],
+          });
+        },
+      }),
+    }),
+    (error: unknown) =>
+      error instanceof receiving.ReceivingConfigError &&
+      error.code === "RESEND_RECEIVING_RESPONSE_INVALID",
+  );
+  const afterContradictoryHydration =
+    await receiving.getPublicReceivingConnection(organizationId);
+  assert.equal(afterContradictoryHydration.credentialStatus, "error");
+  assert.equal(
+    afterContradictoryHydration.lastErrorCode,
+    "RESEND_RECEIVING_RESPONSE_INVALID",
+  );
+  assert.equal(afterContradictoryHydration.receivingDomainStatus, "verified");
+  assert.equal(afterContradictoryHydration.mxStatus, "verified");
+  assert.equal(
+    afterContradictoryHydration.domainCheckedAt,
+    initiallyHealthy.domainCheckedAt,
+  );
+
+  await assert.rejects(
+    receiving.inspectReceivingDomains({
+      organizationId,
+      provider: new ResendHttpReceivingProvider({
+        baseUrl: "https://resend.test",
         fetchImpl: async () =>
           Response.json({ object: "list", has_more: true, data: [] }),
       }),
@@ -614,6 +666,185 @@ test("stored receiving checks persist failure and recovery without poisoning the
   assert.notEqual(afterStaleCheck?.encryptedApiKey, saved.encryptedApiKey);
   assert.equal(afterStaleCheck?.credentialStatus, "full_access");
   assert.equal(afterStaleCheck?.lastErrorCode, null);
+});
+
+test("same-key stored receiving checks persist in invocation order across inverted provider completion", async (context) => {
+  assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");
+  process.env.DATABASE_URL = databaseUrl;
+  process.env.POSTGRES_URL = databaseUrl;
+  process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID = "test-key";
+  process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS = JSON.stringify({
+    "test-key": randomBytes(32).toString("base64"),
+  });
+  const [{ resetDbRuntimeForTests }, receiving] = await Promise.all([
+    import("@/lib/db/runtime"),
+    import("./receiving-config"),
+  ]);
+  const sql = postgres(databaseUrl, { max: 6 });
+  const suffix = crypto.randomUUID();
+  const organizationId = `receiving-order-org-${suffix}`;
+  const userId = `receiving-order-user-${suffix}`;
+  const now = new Date();
+
+  context.after(async () => {
+    await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+    await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+    await resetDbRuntimeForTests();
+    await sql.end({ timeout: 0 });
+  });
+
+  await sql`
+    INSERT INTO "user" (
+      "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+    ) VALUES (
+      ${userId}, 'Receiving Order User', ${`${userId}@example.test`},
+      true, ${now}, ${now}
+    )
+  `;
+  await sql`
+    INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+    VALUES (
+      ${organizationId}, 'Receiving Order Org',
+      ${`receiving-order-${suffix}`}, ${now}
+    )
+  `;
+  await receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    apiKey: "re_ordered_stored_key",
+    receivingDomainId: "domain-order",
+    provider: fakeProvider(),
+  });
+
+  const readAuthority = () =>
+    sql<
+      Array<{
+        encryptedApiKey: string;
+        healthCheckSequence: number;
+        credentialStatus: string;
+        receivingDomainStatus: string;
+        mxStatus: string;
+        lastHealthCheckedAt: Date | null;
+        lastErrorCode: string | null;
+      }>
+    >`
+      SELECT
+        "encrypted_api_key" AS "encryptedApiKey",
+        "health_check_sequence" AS "healthCheckSequence",
+        "credential_status" AS "credentialStatus",
+        "receiving_domain_status" AS "receivingDomainStatus",
+        "mx_status" AS "mxStatus",
+        "last_health_checked_at" AS "lastHealthCheckedAt",
+        "last_error_code" AS "lastErrorCode"
+      FROM "organization_receiving_connections"
+      WHERE "organization_id" = ${organizationId}
+    `;
+  const [initial] = await readAuthority();
+  assert.ok(initial);
+
+  const lateFailureStarted = deferred();
+  const releaseLateFailure = deferred();
+  const lateFailure = receiving.inspectReceivingDomains({
+    organizationId,
+    provider: coordinatedProvider({
+      async listDomains(apiKey) {
+        assert.equal(apiKey, "re_ordered_stored_key");
+        lateFailureStarted.resolve();
+        await releaseLateFailure.promise;
+        throw new ResendReceivingProviderError(
+          "RESEND_RECEIVING_CREDENTIAL_INSUFFICIENT",
+          "Resend receiving requires a Full access API key.",
+        );
+      },
+    }),
+  });
+  await lateFailureStarted.promise;
+  await receiving.inspectReceivingDomains({
+    organizationId,
+    provider: healthyListProvider("domain-order"),
+  });
+  const [afterNewerRecovery] = await readAuthority();
+  assert.ok(afterNewerRecovery);
+  assert.equal(afterNewerRecovery.credentialStatus, "full_access");
+  assert.equal(afterNewerRecovery.receivingDomainStatus, "verified");
+  assert.equal(afterNewerRecovery.lastErrorCode, null);
+
+  releaseLateFailure.resolve();
+  await assert.rejects(lateFailure, (error: unknown) => {
+    assert.ok(error instanceof receiving.ReceivingConfigError);
+    assert.equal(error.code, "RESEND_RECEIVING_CREDENTIAL_INSUFFICIENT");
+    return true;
+  });
+  const [afterLateFailure] = await readAuthority();
+  assert.deepEqual(afterLateFailure, afterNewerRecovery);
+
+  const lateEmptyStarted = deferred();
+  const releaseLateEmpty = deferred();
+  const lateEmpty = receiving.inspectReceivingDomains({
+    organizationId,
+    provider: coordinatedProvider({
+      async listDomains(apiKey) {
+        assert.equal(apiKey, "re_ordered_stored_key");
+        lateEmptyStarted.resolve();
+        await releaseLateEmpty.promise;
+        return [];
+      },
+    }),
+  });
+  await lateEmptyStarted.promise;
+  await receiving.inspectReceivingDomains({
+    organizationId,
+    provider: healthyListProvider("domain-order"),
+  });
+  const [afterRecoveryNewerThanEmpty] = await readAuthority();
+  assert.ok(afterRecoveryNewerThanEmpty);
+  assert.equal(afterRecoveryNewerThanEmpty.receivingDomainStatus, "verified");
+  assert.equal(afterRecoveryNewerThanEmpty.mxStatus, "verified");
+
+  releaseLateEmpty.resolve();
+  assert.deepEqual(await lateEmpty, []);
+  const [afterLateEmpty] = await readAuthority();
+  assert.deepEqual(afterLateEmpty, afterRecoveryNewerThanEmpty);
+
+  const lateSuccessStarted = deferred();
+  const releaseLateSuccess = deferred();
+  const lateSuccess = receiving.inspectReceivingDomains({
+    organizationId,
+    provider: coordinatedProvider({
+      async listDomains(apiKey) {
+        assert.equal(apiKey, "re_ordered_stored_key");
+        lateSuccessStarted.resolve();
+        await releaseLateSuccess.promise;
+        return [verifiedReceivingDomain("domain-order")];
+      },
+    }),
+  });
+  await lateSuccessStarted.promise;
+  await assert.rejects(
+    receiving.inspectReceivingDomains({
+      organizationId,
+      provider: failingListProvider(
+        "RESEND_RECEIVING_CREDENTIAL_INSUFFICIENT",
+        "Resend receiving requires a Full access API key.",
+      ),
+    }),
+  );
+  const [afterNewerFailure] = await readAuthority();
+  assert.ok(afterNewerFailure);
+  assert.equal(afterNewerFailure.credentialStatus, "insufficient");
+  assert.equal(
+    afterNewerFailure.lastErrorCode,
+    "RESEND_RECEIVING_CREDENTIAL_INSUFFICIENT",
+  );
+
+  releaseLateSuccess.resolve();
+  assert.equal((await lateSuccess)[0]?.id, "domain-order");
+  const [afterLateSuccess] = await readAuthority();
+  assert.deepEqual(afterLateSuccess, afterNewerFailure);
+  assert.equal(afterNewerFailure.encryptedApiKey, initial.encryptedApiKey);
+  assert.ok(
+    afterNewerFailure.healthCheckSequence > initial.healthCheckSequence,
+  );
 });
 
 test("Desktop receiving routes preserve authentication and Organization Admin failures", async (context) => {

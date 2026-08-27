@@ -6513,6 +6513,9 @@ export const organizationReceivingConnections = pgTable(
     lastHealthCheckedAt: timestamp("last_health_checked_at", {
       withTimezone: true,
     }),
+    healthCheckSequence: bigint("health_check_sequence", { mode: "number" })
+      .notNull()
+      .default(0),
     lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
     lastErrorCode: text("last_error_code"),
     updatedByUserId: text("updated_by_user_id").references(() => users.id, {

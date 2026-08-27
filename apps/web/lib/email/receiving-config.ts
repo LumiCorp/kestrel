@@ -81,6 +81,13 @@ export async function inspectReceivingDomains(input: {
       "Enter a Resend Full access API key.",
     );
   }
+  const storedHealthCheck =
+    !suppliedApiKey && storedEncryptedApiKey
+      ? await beginStoredCredentialHealthCheck({
+          organizationId: input.organizationId,
+          expectedEncryptedApiKey: storedEncryptedApiKey,
+        })
+      : undefined;
   let domains: ReceivingDomainOption[];
   try {
     domains = await (
@@ -88,19 +95,21 @@ export async function inspectReceivingDomains(input: {
     ).listDomains(key);
   } catch (error) {
     const normalized = normalizeProviderError(error);
-    if (!suppliedApiKey && storedEncryptedApiKey) {
+    if (storedHealthCheck) {
       await persistStoredCredentialHealth({
         organizationId: input.organizationId,
-        expectedEncryptedApiKey: storedEncryptedApiKey,
+        expectedEncryptedApiKey: storedHealthCheck.expectedEncryptedApiKey,
+        healthCheckSequence: storedHealthCheck.healthCheckSequence,
         outcome: credentialFailureOutcome(normalized),
       });
     }
     throw normalized;
   }
-  if (!suppliedApiKey && storedEncryptedApiKey) {
+  if (storedHealthCheck) {
     await persistStoredCredentialHealth({
       organizationId: input.organizationId,
-      expectedEncryptedApiKey: storedEncryptedApiKey,
+      expectedEncryptedApiKey: storedHealthCheck.expectedEncryptedApiKey,
+      healthCheckSequence: storedHealthCheck.healthCheckSequence,
       outcome: { credentialStatus: "full_access", errorCode: null },
       checkedDomains: domains,
     });
@@ -132,6 +141,13 @@ export async function saveReceivingConnection(input: {
       "Enter a Resend Full access API key.",
     );
   }
+  const storedHealthCheck =
+    !suppliedApiKey && storedEncryptedApiKey
+      ? await beginStoredCredentialHealthCheck({
+          organizationId: input.organizationId,
+          expectedEncryptedApiKey: storedEncryptedApiKey,
+        })
+      : undefined;
   let domain: ResendReceivingDomain;
   try {
     domain = await (
@@ -139,10 +155,11 @@ export async function saveReceivingConnection(input: {
     ).getDomain(apiKey, input.receivingDomainId.trim());
   } catch (error) {
     const normalized = normalizeProviderError(error);
-    if (!suppliedApiKey && storedEncryptedApiKey) {
+    if (storedHealthCheck) {
       await persistStoredCredentialHealth({
         organizationId: input.organizationId,
-        expectedEncryptedApiKey: storedEncryptedApiKey,
+        expectedEncryptedApiKey: storedHealthCheck.expectedEncryptedApiKey,
+        healthCheckSequence: storedHealthCheck.healthCheckSequence,
         outcome: credentialFailureOutcome(normalized),
       });
     }
@@ -153,10 +170,11 @@ export async function saveReceivingConnection(input: {
     domain.status !== "verified" ||
     domain.mxStatus !== "verified"
   ) {
-    if (!suppliedApiKey && storedEncryptedApiKey) {
+    if (storedHealthCheck) {
       await persistStoredCredentialHealth({
         organizationId: input.organizationId,
-        expectedEncryptedApiKey: storedEncryptedApiKey,
+        expectedEncryptedApiKey: storedHealthCheck.expectedEncryptedApiKey,
+        healthCheckSequence: storedHealthCheck.healthCheckSequence,
         outcome: { credentialStatus: "full_access", errorCode: null },
         ...(domain.id === existing?.receivingDomainId
           ? { checkedDomains: [domain] }
@@ -199,6 +217,13 @@ export async function saveReceivingConnection(input: {
         "RESEND_RECEIVING_CREDENTIAL_CHANGED",
         "The Resend credential changed while receiving was being saved. Refresh and try again.",
       );
+    }
+    if (
+      storedHealthCheck &&
+      lockedExisting?.healthCheckSequence !==
+        storedHealthCheck.healthCheckSequence
+    ) {
+      return;
     }
     const encryptedApiKey = suppliedApiKey
       ? preparedEncryptedApiKey
@@ -294,6 +319,7 @@ function decryptStoredApiKey(input: {
 async function persistStoredCredentialHealth(input: {
   organizationId: string;
   expectedEncryptedApiKey: string;
+  healthCheckSequence: number;
   outcome: {
     credentialStatus: "full_access" | "insufficient" | "error";
     errorCode: string | null;
@@ -315,6 +341,9 @@ async function persistStoredCredentialHealth(input: {
         "RESEND_RECEIVING_CREDENTIAL_CHANGED",
         "The Resend credential changed while receiving was being checked. Refresh and try again.",
       );
+    }
+    if (lockedExisting.healthCheckSequence !== input.healthCheckSequence) {
+      return;
     }
     const checkedDomain = lockedExisting.receivingDomainId
       ? input.checkedDomains?.find(
@@ -348,6 +377,42 @@ async function persistStoredCredentialHealth(input: {
           input.organizationId,
         ),
       );
+  });
+}
+
+async function beginStoredCredentialHealthCheck(input: {
+  organizationId: string;
+  expectedEncryptedApiKey: string;
+}) {
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
+    );
+    const lockedExisting =
+      await transaction.query.organizationReceivingConnections.findFirst({
+        where: (table, { eq: equals }) =>
+          equals(table.organizationId, input.organizationId),
+      });
+    if (lockedExisting?.encryptedApiKey !== input.expectedEncryptedApiKey) {
+      throw new ReceivingConfigError(
+        "RESEND_RECEIVING_CREDENTIAL_CHANGED",
+        "The Resend credential changed while receiving was being checked. Refresh and try again.",
+      );
+    }
+    const healthCheckSequence = lockedExisting.healthCheckSequence + 1;
+    await transaction
+      .update(schema.organizationReceivingConnections)
+      .set({ healthCheckSequence })
+      .where(
+        eq(
+          schema.organizationReceivingConnections.organizationId,
+          input.organizationId,
+        ),
+      );
+    return {
+      expectedEncryptedApiKey: input.expectedEncryptedApiKey,
+      healthCheckSequence,
+    };
   });
 }
 

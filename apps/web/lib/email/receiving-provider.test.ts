@@ -125,6 +125,68 @@ test("documented temporary_failure domain state is a stable failed projection", 
   });
 });
 
+test("domain retrieval rejects a successful response for another domain identity", async () => {
+  const provider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async () =>
+      Response.json({
+        id: "domain-other",
+        name: "other.example.test",
+        status: "verified",
+        capabilities: { sending: "enabled", receiving: "enabled" },
+        records: [
+          { record: "Receiving MX", type: "MX", status: "verified" },
+        ],
+      }),
+  });
+
+  await assert.rejects(
+    provider.getDomain("re_full_access", "domain-requested"),
+    (error: unknown) =>
+      error instanceof ResendReceivingProviderError &&
+      error.code === "RESEND_RECEIVING_RESPONSE_INVALID",
+  );
+});
+
+test("domain list hydration rejects details for a contradictory domain identity", async () => {
+  const provider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/domains") {
+        return Response.json({
+          object: "list",
+          has_more: false,
+          data: [
+            {
+              id: "domain-requested",
+              name: "requested.example.test",
+              status: "verified",
+              capabilities: { sending: "enabled", receiving: "enabled" },
+            },
+          ],
+        });
+      }
+      return Response.json({
+        id: "domain-other",
+        name: "other.example.test",
+        status: "verified",
+        capabilities: { sending: "enabled", receiving: "enabled" },
+        records: [
+          { record: "Receiving MX", type: "MX", status: "verified" },
+        ],
+      });
+    },
+  });
+
+  await assert.rejects(
+    provider.listDomains("re_full_access"),
+    (error: unknown) =>
+      error instanceof ResendReceivingProviderError &&
+      error.code === "RESEND_RECEIVING_RESPONSE_INVALID",
+  );
+});
+
 test("webhook creation returns its recovery identity and one-time secret before follow-up work", async () => {
   const calls: Array<{ path: string; method: string; body?: string }> = [];
   const provider = new ResendHttpReceivingProvider({

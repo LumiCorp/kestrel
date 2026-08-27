@@ -97,9 +97,11 @@ export class ResendHttpReceivingProvider implements ResendReceivingProvider {
     apiKey: string,
     domainId: string,
   ): Promise<ResendReceivingDomain> {
-    return parseDomain(
+    const domain = parseDomain(
       await this.#request(apiKey, `/domains/${encodeURIComponent(domainId)}`),
     );
+    if (domain.id !== domainId) throw invalidResponse();
+    return domain;
   }
 
   async createWebhook(input: {

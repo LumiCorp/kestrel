@@ -7,10 +7,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Show redacted receiving status to non-Admin Organization members](14-show-redacted-receiving-status-to-members.md)
 - [Recover an ambiguous Resend webhook create without creating another webhook](15-recover-ambiguous-resend-webhook-creates.md)
 - [Keep removed-domain failures separate from credential health](18-separate-domain-and-credential-health.md)
-- [Prevent an older stored-key check from overwriting newer durable health](20-order-stored-receiving-health-checks.md)
 - [Execute malformed JSON contracts through every receiving route](21-execute-malformed-json-route-contracts.md)
-- [Bind hydrated Resend domain details to the requested identity](22-bind-hydrated-resend-domain-identities.md)
-- [Reject malformed successful receiving responses in One](23-validate-one-receiving-responses.md)
 - [Scope malformed JSON classification to the explicit parse operation](24-scope-json-syntax-classification.md)
 
 ## In progress
@@ -36,6 +33,9 @@ None.
 - [Reject incomplete Resend domain lists as health evidence](16-reject-incomplete-resend-domain-lists.md)
 - [Prevent an older One receiving check from repainting newer health](17-prevent-stale-one-receiving-refreshes.md)
 - [Classify malformed receiving JSON as an invalid request](19-classify-malformed-receiving-json.md)
+- [Prevent an older stored-key check from overwriting newer durable health](20-order-stored-receiving-health-checks.md)
+- [Bind hydrated Resend domain details to the requested identity](22-bind-hydrated-resend-domain-identities.md)
+- [Reject malformed successful receiving responses in One](23-validate-one-receiving-responses.md)
 
 ## Done
 
