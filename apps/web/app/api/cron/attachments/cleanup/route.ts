@@ -1,5 +1,6 @@
 import { cleanupExpiredDraftThreadAttachments } from "@/lib/attachments/store";
 import { backfillLegacyThreadAttachments } from "@/lib/attachments/backfill";
+import { purgeExpiredTerminalEmailDeliveryReceipts } from "@/lib/email-receipts/retention";
 import {
   authorizeEnvironmentReconcileCron,
   EnvironmentReconcileCronError,
@@ -16,8 +17,19 @@ export async function GET(request: Request) {
     });
     const deletedDraftAttachments = await cleanupExpiredDraftThreadAttachments();
     const legacyBackfill = await backfillLegacyThreadAttachments(100);
-    console.info("[attachments.cleanup] completed", { deletedDraftAttachments, legacyBackfill });
-    return Response.json({ ok: true, deletedDraftAttachments, legacyBackfill }, {
+    const purgedTerminalEmailReceipts =
+      await purgeExpiredTerminalEmailDeliveryReceipts();
+    console.info("[attachments.cleanup] completed", {
+      deletedDraftAttachments,
+      legacyBackfill,
+      purgedTerminalEmailReceipts,
+    });
+    return Response.json({
+      ok: true,
+      deletedDraftAttachments,
+      legacyBackfill,
+      purgedTerminalEmailReceipts,
+    }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
@@ -27,7 +39,9 @@ export async function GET(request: Request) {
         headers: { "Cache-Control": "no-store" },
       });
     }
-    console.error("[attachments.cleanup] failed", error);
+    console.error("[attachments.cleanup] failed", {
+      errorType: error instanceof Error ? error.name : "UnknownError",
+    });
     return Response.json({ ok: false, error: { code: "ATTACHMENT_CLEANUP_FAILED" } }, {
       status: 500,
       headers: { "Cache-Control": "no-store" },

@@ -75,9 +75,16 @@ export type ProjectEmailTriggerSummary = {
   updatedAt: Date;
   latestReceipt: {
     id: string;
-    state: "materialized" | "rejected" | "failed" | "admitted";
+    state:
+      | "queued"
+      | "hydrating"
+      | "admitted"
+      | "materialized"
+      | "rejected"
+      | "failed";
     receivedAt: Date;
     threadId: string | null;
+    reason: string | null;
   } | null;
   readiness: {
     receiving: boolean;
@@ -399,6 +406,7 @@ export async function listProjectEmailTriggersForUser(input: {
               state: schema.emailDeliveryReceipts.state,
               receivedAt: schema.emailDeliveryReceipts.eventAt,
               threadId: schema.emailDeliveryReceipts.materializedThreadId,
+              reason: schema.emailDeliveryReceipts.reason,
             })
             .from(schema.emailDeliveryReceipts)
             .where(
@@ -408,7 +416,6 @@ export async function listProjectEmailTriggersForUser(input: {
                   trigger.organizationId,
                 ),
                 eq(schema.emailDeliveryReceipts.triggerId, trigger.id),
-                sql`${schema.emailDeliveryReceipts.state} IN ('admitted', 'materialized', 'rejected', 'failed')`,
               ),
             )
             .orderBy(sql`${schema.emailDeliveryReceipts.eventAt} DESC`)
@@ -475,10 +482,15 @@ function projectLatestEmailReceipt(
     state: typeof schema.emailDeliveryReceipts.$inferSelect.state;
     receivedAt: Date;
     threadId: string | null;
+    reason: string | null;
   } | null,
 ): ProjectEmailTriggerSummary["latestReceipt"] {
   if (!receipt) return null;
   switch (receipt.state) {
+    case "queued":
+      return { ...receipt, state: "queued" };
+    case "hydrating":
+      return { ...receipt, state: "hydrating" };
     case "admitted":
       return { ...receipt, state: "admitted" };
     case "materialized":
@@ -487,9 +499,6 @@ function projectLatestEmailReceipt(
       return { ...receipt, state: "rejected" };
     case "failed":
       return { ...receipt, state: "failed" };
-    case "queued":
-    case "hydrating":
-      return null;
   }
 }
 

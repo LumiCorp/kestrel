@@ -163,6 +163,34 @@ test("the receipt queue consumes and recovers queued or interrupted hydration", 
   );
 });
 
+test("daily receipt retention removes only expired, nonmaterialized terminal diagnostics", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const retention = fs.readFileSync(
+    path.resolve(directory, "retention.ts"),
+    "utf8",
+  );
+  const cleanupRoute = fs.readFileSync(
+    path.resolve(
+      directory,
+      "../../app/api/cron/attachments/cleanup/route.ts",
+    ),
+    "utf8",
+  );
+  const vercel = fs.readFileSync(
+    path.resolve(directory, "../../vercel.json"),
+    "utf8",
+  );
+
+  assert.match(retention, /EMAIL_DELIVERY_RECEIPT_RETENTION_DAYS = 30/u);
+  assert.match(retention, /\["rejected", "failed"\]/u);
+  assert.match(retention, /isNull\(schema\.emailDeliveryReceipts\.materializedThreadId\)/u);
+  assert.match(retention, /lt\(schema\.emailDeliveryReceipts\.finishedAt, cutoff\)/u);
+  assert.match(cleanupRoute, /authorizeEnvironmentReconcileCron/u);
+  assert.match(cleanupRoute, /purgeExpiredTerminalEmailDeliveryReceipts/u);
+  assert.match(cleanupRoute, /purgedTerminalEmailReceipts/u);
+  assert.match(vercel, /"\/api\/cron\/attachments\/cleanup"/u);
+});
+
 function trackedStreamRequest(
   chunks: Uint8Array[],
   headers: Record<string, string> = {},

@@ -99,6 +99,7 @@ const groups = [
       "lib/costs/store.postgres.test.ts",
       "lib/email/config.postgres.test.ts",
       "lib/email-receipts/ingress.postgres.test.ts",
+      "lib/email-receipts/retention.postgres.test.ts",
       "lib/email-receipts/runtime.postgres.test.ts",
       "lib/email-triggers/owner-loss.postgres.test.ts",
       "lib/email-triggers/routes.postgres.test.ts",

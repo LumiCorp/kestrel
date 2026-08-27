@@ -98,9 +98,16 @@ export type EmailTriggerSummary = {
   updatedAt: string;
   latestReceipt: {
     id: string;
-    state: "materialized" | "rejected" | "failed" | "admitted";
+    state:
+      | "queued"
+      | "hydrating"
+      | "admitted"
+      | "materialized"
+      | "rejected"
+      | "failed";
     receivedAt: string;
     threadId: string | null;
+    reason: string | null;
   } | null;
   readiness: {
     receiving: boolean;
@@ -488,10 +495,16 @@ export function EmailTriggersClient({
                                 href={`/threads/${trigger.latestReceipt.threadId}`}
                               >
                                 Latest delivery: {trigger.latestReceipt.state}
+                                {trigger.latestReceipt.reason
+                                  ? ` (${trigger.latestReceipt.reason})`
+                                  : ""}
                               </Link>
                             ) : (
                               <span>
                                 Latest delivery: {trigger.latestReceipt.state}
+                                {trigger.latestReceipt.reason
+                                  ? ` (${trigger.latestReceipt.reason})`
+                                  : ""}
                               </span>
                             )}
                           </>

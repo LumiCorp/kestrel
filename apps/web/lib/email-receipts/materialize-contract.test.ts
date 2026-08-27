@@ -80,6 +80,28 @@ test("normal Thread and Trigger surfaces expose receipt provenance without widen
   assert.doesNotMatch(threadStore, /origin:\s*"email"/u);
 });
 
+test("Trigger inspection includes every receipt lifecycle state without copying email content", async () => {
+  const triggerStore = await readFile(
+    new URL("../email-triggers/store.ts", import.meta.url),
+    "utf8",
+  );
+  const triggerClient = await readFile(
+    new URL(
+      "../../components/email-triggers/email-triggers-client.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(triggerStore, /case "queued":/u);
+  assert.match(triggerStore, /case "hydrating":/u);
+  assert.match(triggerStore, /case "materialized":/u);
+  assert.match(triggerStore, /reason: schema\.emailDeliveryReceipts\.reason/u);
+  assert.doesNotMatch(triggerStore, /claimedFrom:\s*schema\.emailDeliveryReceipts/u);
+  assert.doesNotMatch(triggerStore, /subject:\s*schema\.emailDeliveryReceipts/u);
+  assert.match(triggerClient, /Latest delivery: \{trigger\.latestReceipt\.state\}/u);
+});
+
 test("attachment import is receipt-scoped and returns through the canonical Thread file surface", async () => {
   const [importer, route, profile] = await Promise.all([
     readFile(new URL("./attachment-import.ts", import.meta.url), "utf8"),
