@@ -226,6 +226,14 @@ test("new hosted approval card reloads its action from the persisted prepared ca
     /remember_approval/u,
   );
   assert.equal(interaction?.approval?.toolName, "internet.search");
+  assert.equal(
+    interaction?.metadata?.hostedApprovalTiming?.requestedAt,
+    restartedPrepared.approval.externalApprovalBinding.requestedAt,
+  );
+  assert.equal(
+    interaction?.metadata?.hostedApprovalTiming?.expiresAt,
+    restartedPrepared.approval.externalApprovalBinding.expiresAt,
+  );
   assert.deepEqual(
     interaction?.approval?.stableToolIdentity,
     prepared.stableToolIdentity,

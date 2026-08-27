@@ -70,53 +70,51 @@ export async function resolveRuntimeApprovalPolicies(input: {
     ]),
   );
   const policies = new Map<string, RuntimeApprovalPolicyView>();
+  const hostedAgentId =
+    process.env.KESTREL_ONE_AGENT_ID?.trim() || "kestrel-one";
   for (const binding of bindings) {
     const configuration = configurationsByApp.get(binding.appKey);
     const capability = configuration?.capabilities.find(
       (candidate) => candidate.key === binding.capabilityKey,
     );
     if (!(configuration && capability)) continue;
-    const providerApproval = await knowledgeDb.query.appOperationApprovals.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.organizationId, input.organizationId),
-          eq(table.threadId, input.threadId),
-          eq(table.interactionId, binding.interactionId),
-        ),
-      columns: {
-        actorUserId: true,
-        agentId: true,
-        environmentId: true,
-        appKey: true,
-        capabilityKey: true,
-        connectionId: true,
-        resourceId: true,
-        resourceType: true,
-      },
-    });
-    const [subjectRestrictions, approvalResource] = providerApproval
-      ? await Promise.all([
-          knowledgeDb.query.environmentCapabilitySubjectRestrictions.findMany({
+    const [providerApproval, subjectRestrictions] = await Promise.all([
+      knowledgeDb.query.appOperationApprovals.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.organizationId, input.organizationId),
+            eq(table.threadId, input.threadId),
+            eq(table.interactionId, binding.interactionId),
+          ),
+        columns: {
+          connectionId: true,
+          resourceId: true,
+          resourceType: true,
+        },
+      }),
+      knowledgeDb.query.environmentCapabilitySubjectRestrictions.findMany({
           where: (table, { and, eq, isNull, or }) =>
             and(
               eq(table.organizationId, input.organizationId),
-              eq(table.environmentId, providerApproval.environmentId),
-              eq(table.providerKey, providerApproval.appKey),
-              eq(table.capabilityKey, providerApproval.capabilityKey),
+              eq(table.environmentId, configuration.environmentId),
+              eq(table.providerKey, binding.appKey),
+              eq(table.capabilityKey, binding.capabilityKey),
               isNull(table.resourceId),
               or(
                 and(
                   eq(table.subjectType, "actor"),
-                  eq(table.subjectId, providerApproval.actorUserId),
+                  eq(table.subjectId, input.userId),
                 ),
                 and(
                   eq(table.subjectType, "agent"),
-                  eq(table.subjectId, providerApproval.agentId),
+                  eq(table.subjectId, hostedAgentId),
                 ),
               ),
             ),
-          }),
-          knowledgeDb.query.appConnectionResources.findFirst({
+        }),
+    ]);
+    const approvalResource = providerApproval
+      ? await knowledgeDb.query.appConnectionResources.findFirst({
             where: (table, { and, eq }) =>
               and(
                 eq(table.id, providerApproval.resourceId),
@@ -125,9 +123,8 @@ export async function resolveRuntimeApprovalPolicies(input: {
                 eq(table.enabled, true),
               ),
             columns: { id: true },
-          }),
-        ])
-      : [[], undefined];
+          })
+      : undefined;
     const subjectApprovalMode = subjectRestrictions.some(
       (restriction) => !restriction.enabled || restriction.approvalMode === "deny",
     )

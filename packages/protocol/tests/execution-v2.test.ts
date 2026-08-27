@@ -9,6 +9,7 @@ import {
   RUNNER_EVENT_CONTRACT_VERSION,
   RUNNER_EVENT_TYPES,
   RUNNER_JOB_STREAM_EVENT_TYPES,
+  WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
   RunnerProtocolContractError,
   RUNNER_STREAMING_COMMAND_TYPES,
   isRunnerEventAllowedForCommand,
@@ -1020,6 +1021,31 @@ test("canonical execution profile contracts validate exact-tool preflight fields
       },
     }),
     /evidence\.actorAccess must be a boolean/u,
+  );
+});
+
+test("an older Web event parser accepts the V3 hosted preset during rollback", () => {
+  const event = parseRunnerEventV2({
+    id: "event:workspace-hosted-v3",
+    type: "execution-profile.resolved",
+    ts: "2026-08-26T12:00:00.000Z",
+    payload: {
+      ...eventPayloads["execution-profile.resolved"],
+      environmentPreset: {
+        id: "workspace_hosted",
+        version: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+      },
+      resolvedProfile: {
+        ...(eventPayloads["execution-profile.resolved"]!
+          .resolvedProfile as Record<string, unknown>),
+        approvalPolicyPackId: "hosted_workspace",
+      },
+    },
+  });
+  assert.equal(event.type, "execution-profile.resolved");
+  assert.equal(
+    event.payload.environmentPreset.version,
+    WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
   );
 });
 

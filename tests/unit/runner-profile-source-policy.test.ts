@@ -132,7 +132,7 @@ test("RunnerHost resolves exact Build-mode tool decisions without model executio
           profileId: `kestrel:workspace_hosted:${"b".repeat(64)}`,
           fingerprint: "b".repeat(64),
           policy: { id: "kestrel", version: 4 },
-          environmentPreset: { id: "workspace_hosted", version: 2 },
+          environmentPreset: { id: "workspace_hosted", version: 3 },
           resolvedProfile: {
             id: `kestrel:workspace_hosted:${"b".repeat(64)}`,
             label: "Kestrel",
@@ -196,7 +196,7 @@ test("RunnerHost exact-tool preflight fails closed without actor access", async 
           profileId: `kestrel:workspace_hosted:${"c".repeat(64)}`,
           fingerprint: "c".repeat(64),
           policy: { id: "kestrel", version: 4 },
-          environmentPreset: { id: "workspace_hosted", version: 2 },
+          environmentPreset: { id: "workspace_hosted", version: 3 },
           resolvedProfile: {
             id: `kestrel:workspace_hosted:${"c".repeat(64)}`,
             label: "Kestrel",
@@ -249,7 +249,7 @@ test("RunnerHost exact-tool preflight preserves a denied approval disposition", 
           profileId: `kestrel:workspace_hosted:${"d".repeat(64)}`,
           fingerprint: "d".repeat(64),
           policy: { id: "kestrel", version: 4 },
-          environmentPreset: { id: "workspace_hosted", version: 2 },
+          environmentPreset: { id: "workspace_hosted", version: 3 },
           resolvedProfile: {
             id: `kestrel:workspace_hosted:${"d".repeat(64)}`,
             label: "Kestrel",

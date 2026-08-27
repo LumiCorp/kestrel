@@ -260,7 +260,7 @@ test("hosted V3 approval hides remember after current Project policy becomes str
   assert.deepEqual(dto.decisions, ["decline"]);
 });
 
-test("hosted V3 approval hides remember after current Subject policy becomes stricter", () => {
+test("built-in exec_command hides remember after current Subject policy becomes Ask", () => {
   const dto = mobileInteractionDto({
     id: "runtime-interaction-3",
     requestId: "approval-3",
@@ -271,6 +271,7 @@ test("hosted V3 approval hides remember after current Subject policy becomes str
     requestEnvelope: {
       version: "runner_hosted_tool_approval_interaction_v3",
       approval: {
+        toolName: "exec_command",
         presentation: {
           policy: {
             reasonCode: "environment_policy",
@@ -282,9 +283,9 @@ test("hosted V3 approval hides remember after current Subject policy becomes str
     approvalPolicy: {
       projectId: "project-1",
       environmentId: "environment-1",
-      appKey: "google-workspace",
-      capabilityKey: "calendar.events.create",
-      capabilityDisplayName: "Create calendar events",
+      appKey: "built_in.workspace",
+      capabilityKey: "executeCommand",
+      capabilityDisplayName: "Execute command",
       environmentApprovalMode: "ask",
       projectApprovalMode: "ask",
       minimumApprovalMode: "auto",
@@ -298,6 +299,42 @@ test("hosted V3 approval hides remember after current Subject policy becomes str
   assert.equal(dto.kind, "approval");
   if (dto.kind !== "approval") assert.fail("expected approval DTO");
   assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
+});
+
+test("built-in exec_command exposes only decline after current Subject policy blocks it", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-subject-blocked",
+    requestId: "approval-subject-blocked",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "pending",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v3",
+      approval: {
+        toolName: "exec_command",
+        presentation: { policy: { rememberApprovalEligible: true } },
+      },
+    },
+    approvalPolicy: {
+      projectId: "project-1",
+      environmentId: "environment-1",
+      appKey: "built_in.workspace",
+      capabilityKey: "executeCommand",
+      capabilityDisplayName: "Execute command",
+      environmentApprovalMode: "ask",
+      projectApprovalMode: "ask",
+      minimumApprovalMode: "auto",
+      subjectApprovalMode: "deny",
+      rememberApprovalEligible: false,
+      reasonCode: "environment_policy",
+      canEditProject: false,
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, ["decline"]);
 });
 
 test("closed hosted approvals advertise no Mobile decisions", () => {

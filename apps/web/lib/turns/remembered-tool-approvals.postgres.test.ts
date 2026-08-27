@@ -59,6 +59,13 @@ test("remembered approval storage enforces identity, authority, and thread casca
         },
       },
     },
+    metadata: {
+      hostedApprovalTiming: {
+        version: "trusted_hosted_approval_timing_v1" as const,
+        requestedAt: new Date(now.getTime() - 1_000).toISOString(),
+        expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+      },
+    },
     approval: {
       preparedInvocationId: `prepared-${requestId}`,
       toolName,

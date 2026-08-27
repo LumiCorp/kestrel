@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-- [Make hosted tool availability and approval one truthful decision](06-unify-hosted-tool-decision.md)
+None.
 
 ## Blocked
 
@@ -23,7 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
-None.
+- [Make hosted tool availability and approval one truthful decision](06-unify-hosted-tool-decision.md)
 
 ## Done
 

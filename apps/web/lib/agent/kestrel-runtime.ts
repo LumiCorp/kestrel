@@ -2,7 +2,10 @@ import "server-only";
 
 import { readRequestCorrelation } from "@kestrel-agents/next";
 import type { KestrelAgent, RunnerActorMetadata } from "@kestrel-agents/sdk";
-import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
+import {
+  WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+  type RunnerTurnAttachment,
+} from "@kestrel-agents/protocol";
 import {
   isRunnerRunStreamEvent,
   isRunnerRunTerminalEvent,
@@ -791,6 +794,9 @@ export async function resolveHostedKestrelExecutionProfile(input: {
       },
       input.context,
     );
+    if (environmentPresetId === "workspace_hosted") {
+      assertHostedWorkspaceProfileCompatibility(resolution);
+    }
     if (input.exactToolName !== undefined) {
       assertHostedWorkspaceExactToolPreflight(
         resolution,
@@ -803,6 +809,30 @@ export async function resolveHostedKestrelExecutionProfile(input: {
   }
 }
 
+export function assertHostedWorkspaceProfileCompatibility(
+  resolution: Awaited<ReturnType<HostedKestrelExecutionProfileResolver["resolveExecutionProfile"]>>,
+): void {
+  if (
+    resolution.environmentPreset.id !== "workspace_hosted" ||
+    resolution.environmentPreset.version !==
+      WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION ||
+    resolution.resolvedProfile.approvalPolicyPackId !== "hosted_workspace"
+  ) {
+    throw Object.assign(
+      new Error("The runner does not support the current hosted approval contract."),
+      {
+        code: "HOSTED_PROFILE_CONTRACT_INCOMPATIBLE",
+        details: {
+          environmentPreset: resolution.environmentPreset,
+          approvalPolicyPackId:
+            resolution.resolvedProfile.approvalPolicyPackId ?? null,
+          requiredPresetVersion: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+        },
+      },
+    );
+  }
+}
+
 export function assertHostedWorkspaceExactToolPreflight(
   resolution: Awaited<ReturnType<HostedKestrelExecutionProfileResolver["resolveExecutionProfile"]>>,
   requiredTool: string,
@@ -810,6 +840,7 @@ export function assertHostedWorkspaceExactToolPreflight(
   if (resolution.environmentPreset.id !== "workspace_hosted") {
     return;
   }
+  assertHostedWorkspaceProfileCompatibility(resolution);
   if (
     resolution.resolvedProfile.approvalPolicyPackId !== "hosted_workspace" ||
     resolution.exactToolDecisions?.[requiredTool]?.available !== true

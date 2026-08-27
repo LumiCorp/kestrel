@@ -306,7 +306,7 @@ async function validateRememberApprovalEligibilityInTransaction(
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_ACCESS_DENIED");
   }
   const hostedAgentId =
-    process.env.KESTREL_ONE_HOSTED_AGENT_ID?.trim() || "kestrel-one";
+    process.env.KESTREL_ONE_AGENT_ID?.trim() || "kestrel-one";
   const [project, definition, capability, projectApp, environmentGrant, projectPolicy] =
     await Promise.all([
       tx.query.projects.findFirst({
@@ -487,6 +487,17 @@ export async function insertRememberedToolApprovalInTransaction(
     );
   }
   const sourceToolIdentity = sourceRequest.approval.stableToolIdentity;
+  const sourceTiming = sourceRequest.metadata?.hostedApprovalTiming;
+  if (
+    sourceTiming === undefined ||
+    Date.parse(sourceTiming.expiresAt) <=
+    Date.parse(approval.createdAt)
+  ) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "Remembered approval source interaction expired before the decision.",
+    );
+  }
   if (
     approval.sourceInteractionId !== source.id ||
     approval.organizationId !== source.organizationId ||
@@ -2310,6 +2321,19 @@ export async function resolveDurableRuntimeInteraction(input: {
             "APP_OPERATION_APPROVAL_ACCESS_DENIED",
           );
         }
+        if (
+          decision === "remember_approval" &&
+          hostedApproval?.version ===
+            "runner_hosted_tool_approval_interaction_v3" &&
+          (hostedApproval.metadata?.hostedApprovalTiming === undefined ||
+            Date.parse(
+              hostedApproval.metadata.hostedApprovalTiming.expiresAt,
+            ) <= now.getTime())
+        ) {
+          throw new AppOperationApprovalError(
+            "APP_OPERATION_APPROVAL_NOT_PENDING",
+          );
+        }
         if (decision === "remember_approval" && hostedApproval && accessibleThread.projectId) {
           await validateRememberApprovalEligibilityInTransaction(tx, {
             organizationId: input.organizationId,
@@ -2488,7 +2512,7 @@ async function failPendingHostedApprovalInTransaction(
 ) {
   const expired = input.failureCode === "EXTERNAL_APPROVAL_EXPIRED";
   const failureMessage = expired
-    ? "The provider authorization expired before the decision was accepted."
+    ? "The prepared authorization expired before the decision was accepted."
     : input.failureCode === "EXTERNAL_APPROVAL_POLICY_CHANGED"
       ? "Current policy no longer permits this approval to be remembered."
       : "The approval no longer matches the prepared tool invocation.";

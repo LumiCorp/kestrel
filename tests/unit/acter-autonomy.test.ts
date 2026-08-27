@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   parseRunnerExternalApprovalBindingV1,
   parseRunnerExternalApprovalBindingV2,
+  type ToolApprovalDispositionV1,
 } from "@kestrel-agents/protocol";
 
 import type { StepContext, StepContractRegistry, StepIO, Transition } from "../../src/kestrel/contracts/execution.js";
@@ -903,16 +904,7 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
     ...toolInput,
     title: toolInput.title.trim(),
   };
-  let currentApprovalDisposition:
-    | {
-        mode: "auto";
-        reasonCode: "environment_policy";
-        authority: {
-          kind: "hosted_app_policy";
-          revision: string;
-        };
-      }
-    | undefined;
+  let currentApprovalDisposition: ToolApprovalDispositionV1 | undefined;
   const config = {
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -926,7 +918,7 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
         ...(currentApprovalDisposition === undefined
           ? {}
           : { approvalDisposition: currentApprovalDisposition }),
-        approvalAuthority: {
+        approvalAuthority: currentApprovalDisposition?.authority ?? {
           kind: "hosted_app_policy" as const,
           revision: "hosted-app-policy-revision",
         },
@@ -1405,18 +1397,82 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
       error.code === "HOSTED_PREPARED_APPROVAL_INVALID",
   );
 
-  await expectPersistedApprovalRejected(
-    structuredClone(waitingAgent),
+  const expectPolicyTighteningCleanup = async (
+    label: string,
+    payload: Record<string, unknown>,
+    reasonCode: string,
+  ) => {
+    const transition = await waitApprovalStep(
+      buildContext({
+        session: {
+          ...buildContext().session,
+          state: { agent: structuredClone(waitingAgent) },
+          currentStepAgent: "agent.exec.wait_approval",
+        },
+        event: {
+          id: `evt-github-${label}`,
+          type: "user.approval",
+          sessionId: "session-1",
+          payload: {
+            ...payload,
+            decision: "approve_once",
+            approvalId: pendingApproval.approvalId,
+          },
+        },
+      }),
+      {
+        useModel: async () => {
+          throw new Error("not expected");
+        },
+        inspectTool,
+        releasePreparedToolCall,
+        useTool: async () => {
+          throw new Error("tightened policy must not execute");
+        },
+      },
+    );
+    const agent = transition.statePatch?.agent as Record<string, unknown>;
+    const result = agent.lastActionResult as Record<string, unknown>;
+    assert.equal(transition.status, "RUNNING");
+    assert.equal(transition.waitFor, undefined);
+    assert.equal(agent.waitingFor, undefined);
+    assert.equal(
+      (agent.exec as Record<string, unknown>).pendingApproval,
+      undefined,
+    );
+    assert.equal(result.kind, "approval_policy_change");
+    assert.equal(result.availabilityReason, "approval_policy");
+    assert.equal(result.approvalReasonCode, reasonCode);
+    assert.equal(transition.effects?.length, 1);
+    assert.equal(transition.effects?.[0]?.type, "release_prepared_tool_call");
+  };
+
+  await expectPolicyTighteningCleanup(
+    "stricter-current-policy",
     {
       ...modePayload,
       executionPolicy: {
         ...modePayload.executionPolicy,
         approvalPolicy: { strictApprovalPerCall: true },
       },
-      decision: "approve_once",
     },
-    "stricter-current-policy",
+    "runtime_strict",
   );
+
+  currentApprovalDisposition = {
+    mode: "ask",
+    reasonCode: "subject_restriction",
+    authority: {
+      kind: "hosted_app_policy",
+      revision: "subject-restriction-policy-revision",
+    },
+  };
+  await expectPolicyTighteningCleanup(
+    "subject-restriction-current-policy",
+    modePayload,
+    "subject_restriction",
+  );
+  currentApprovalDisposition = undefined;
 
   await assert.rejects(
     () => waitApprovalStep(

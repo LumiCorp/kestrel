@@ -451,6 +451,13 @@ export function projectHostedToolApprovalInteractionV3(input: {
         },
       },
     },
+    metadata: {
+      hostedApprovalTiming: {
+        version: "trusted_hosted_approval_timing_v1",
+        requestedAt: binding.requestedAt,
+        expiresAt: binding.expiresAt,
+      },
+    },
     approval: {
       preparedInvocationId: prepared.callId,
       toolName: prepared.activation.descriptor.toolId,

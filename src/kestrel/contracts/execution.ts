@@ -118,7 +118,15 @@ export interface RuntimeHostedToolApprovalInteractionV3
       };
     };
   };
-  metadata?: Record<string, unknown> | undefined;
+  metadata?:
+    | (Record<string, unknown> & {
+        hostedApprovalTiming?: {
+          version: "trusted_hosted_approval_timing_v1";
+          requestedAt: string;
+          expiresAt: string;
+        } | undefined;
+      })
+    | undefined;
   approval: RuntimeHostedToolApprovalInteractionV2["approval"];
 }
 

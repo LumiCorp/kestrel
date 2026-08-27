@@ -43,6 +43,13 @@ const interaction = {
 const rememberedInteraction = {
   ...interaction,
   version: "runner_hosted_tool_approval_interaction_v3",
+  metadata: {
+    hostedApprovalTiming: {
+      version: "trusted_hosted_approval_timing_v1",
+      requestedAt: "2026-08-26T12:00:00.000Z",
+      expiresAt: "2026-08-26T12:05:00.000Z",
+    },
+  },
   prompt:
     "Approve hosted.tool? Choose 'decline', 'approve_once', or 'remember_approval'.",
   inputSchema: {
@@ -194,6 +201,29 @@ test("hosted approval interaction V3 adds remember without changing V2", () => {
   assert.deepEqual(
     parseRunnerHostedToolApprovalInteractionV3(rememberedInteraction),
     rememberedInteraction,
+  );
+  assert.deepEqual(
+    Object.keys(rememberedInteraction.approval).sort(),
+    Object.keys(interaction.approval).sort(),
+    "new timing evidence must not widen approval keys rejected by old Web",
+  );
+  const { metadata: _metadata, ...legacyInteraction } = rememberedInteraction;
+  assert.deepEqual(
+    parseRunnerHostedToolApprovalInteractionV3(legacyInteraction),
+    legacyInteraction,
+  );
+  assert.throws(
+    () => parseRunnerHostedToolApprovalInteractionV3({
+      ...rememberedInteraction,
+      metadata: {
+        hostedApprovalTiming: {
+          ...rememberedInteraction.metadata.hostedApprovalTiming,
+          expiresAt:
+            rememberedInteraction.metadata.hostedApprovalTiming.requestedAt,
+        },
+      },
+    }),
+    /expiresAt must be after/u,
   );
   assert.deepEqual(
     parseRunnerInteractionRequest(rememberedInteraction),

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION } from "@kestrel-agents/protocol";
+
 import type { TuiProfile } from "../../cli/contracts.js";
 import {
   createKestrelEnvironmentBindingV1,
@@ -307,7 +309,10 @@ export const KESTREL_ONE_ENVIRONMENT_PRESETS: Readonly<
     id: "desktop_dev_local",
     version: 1,
   }),
-  workspace_hosted: Object.freeze({ id: "workspace_hosted", version: 2 }),
+  workspace_hosted: Object.freeze({
+    id: "workspace_hosted",
+    version: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+  }),
 });
 
 export interface KestrelOneProfileOverlay {

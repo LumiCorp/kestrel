@@ -326,7 +326,7 @@ test("a refreshed V3 card hides Remember Approval after Project policy becomes B
   assert.doesNotMatch(html, />Remember Approval</u);
 });
 
-test("a refreshed V3 card hides Remember Approval after Subject policy becomes Ask First", () => {
+test("a refreshed built-in exec_command card hides Remember after Subject policy becomes Ask", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[{
@@ -336,7 +336,7 @@ test("a refreshed V3 card hides Remember Approval after Subject policy becomes A
         requestEnvelope: {
           version: "runner_hosted_tool_approval_interaction_v3",
           approval: {
-            toolName: "internet.research",
+            toolName: "exec_command",
             presentation: {
               policy: {
                 reasonCode: "environment_policy",
@@ -348,9 +348,9 @@ test("a refreshed V3 card hides Remember Approval after Subject policy becomes A
         approvalPolicy: {
           projectId: "project-1",
           environmentId: "environment-1",
-          appKey: "tavily",
-          capabilityKey: "research",
-          capabilityDisplayName: "Run research",
+          appKey: "built_in.workspace",
+          capabilityKey: "executeCommand",
+          capabilityDisplayName: "Execute command",
           environmentApprovalMode: "ask",
           projectApprovalMode: "ask",
           minimumApprovalMode: "auto",
@@ -367,6 +367,45 @@ test("a refreshed V3 card hides Remember Approval after Subject policy becomes A
   );
   assert.match(html, />Decline</u);
   assert.match(html, />Approve Once</u);
+  assert.doesNotMatch(html, />Remember Approval</u);
+});
+
+test("a refreshed built-in exec_command card exposes only Decline after Subject policy blocks it", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v3",
+          approval: {
+            toolName: "exec_command",
+            presentation: { policy: { rememberApprovalEligible: true } },
+          },
+        },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "built_in.workspace",
+          capabilityKey: "executeCommand",
+          capabilityDisplayName: "Execute command",
+          environmentApprovalMode: "ask",
+          projectApprovalMode: "ask",
+          minimumApprovalMode: "auto",
+          subjectApprovalMode: "deny",
+          rememberApprovalEligible: false,
+          reasonCode: "environment_policy",
+          canEditProject: true,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Decline</u);
+  assert.doesNotMatch(html, />Approve Once</u);
   assert.doesNotMatch(html, />Remember Approval</u);
 });
 

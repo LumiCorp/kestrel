@@ -21,6 +21,7 @@ export type {
 export const EXECUTION_PROTOCOL_VERSION = "execution-protocol-v4" as const;
 export const RUNNER_COMMAND_CONTRACT_VERSION = "runner-command-v3" as const;
 export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v3" as const;
+export const WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION = 3 as const;
 export const RUNNER_WAITING_PROMPT_HISTORY_KIND = "runtime.waiting_prompt" as const;
 export const RUNNER_ASSISTANT_TEXT_HISTORY_KIND = "runtime.assistant_text" as const;
 
@@ -644,6 +645,14 @@ export interface RunnerHostedToolApprovalInteractionV2
 
 export const RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3 =
   "runner_hosted_tool_approval_interaction_v3" as const;
+export const RUNNER_HOSTED_APPROVAL_TIMING_VERSION =
+  "trusted_hosted_approval_timing_v1" as const;
+
+export interface RunnerHostedApprovalTimingV1 {
+  version: typeof RUNNER_HOSTED_APPROVAL_TIMING_VERSION;
+  requestedAt: string;
+  expiresAt: string;
+}
 
 export interface RunnerHostedToolApprovalInteractionV3
   extends Record<string, unknown> {
@@ -663,7 +672,11 @@ export interface RunnerHostedToolApprovalInteractionV3
       };
     };
   };
-  metadata?: Record<string, unknown> | undefined;
+  metadata?:
+    | (Record<string, unknown> & {
+        hostedApprovalTiming?: RunnerHostedApprovalTimingV1 | undefined;
+      })
+    | undefined;
   approval: RunnerHostedToolApprovalInteractionV2["approval"];
 }
 
@@ -4248,6 +4261,38 @@ function validateRunnerHostedToolApprovalInteraction(
   }
   requireNonEmptyString(interaction.prompt, `${label}.prompt`);
   validateOptionalRecord(interaction.metadata, `${label}.metadata`);
+  if (expectedVersion === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3) {
+    const metadata = interaction.metadata as Record<string, unknown> | undefined;
+    if (metadata?.hostedApprovalTiming !== undefined) {
+      const timing = requireRecord(
+        metadata.hostedApprovalTiming,
+        `${label}.metadata.hostedApprovalTiming`,
+      );
+      rejectUnknownFields(
+        timing,
+        `${label}.metadata.hostedApprovalTiming`,
+        ["version", "requestedAt", "expiresAt"],
+      );
+      if (timing.version !== RUNNER_HOSTED_APPROVAL_TIMING_VERSION) {
+        throw new RunnerProtocolContractError(
+          `${label}.metadata.hostedApprovalTiming.version must be '${RUNNER_HOSTED_APPROVAL_TIMING_VERSION}'`,
+        );
+      }
+      const requestedAt = requireIsoTimestamp(
+        timing.requestedAt,
+        `${label}.metadata.hostedApprovalTiming.requestedAt`,
+      );
+      const expiresAt = requireIsoTimestamp(
+        timing.expiresAt,
+        `${label}.metadata.hostedApprovalTiming.expiresAt`,
+      );
+      if (Date.parse(expiresAt) <= Date.parse(requestedAt)) {
+        throw new RunnerProtocolContractError(
+          `${label}.metadata.hostedApprovalTiming.expiresAt must be after requestedAt`,
+        );
+      }
+    }
+  }
   const schema = requireRecord(interaction.inputSchema, `${label}.inputSchema`);
   rejectUnknownFields(schema, `${label}.inputSchema`, [
     "type",

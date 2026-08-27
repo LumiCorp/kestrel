@@ -101,6 +101,13 @@ const durablePending: ThreadInteractionView = {
         },
       },
     },
+    metadata: {
+      hostedApprovalTiming: {
+        version: "trusted_hosted_approval_timing_v1",
+        requestedAt: "2026-08-26T12:00:00.000Z",
+        expiresAt: "2099-08-26T12:05:00.000Z",
+      },
+    },
     approval: {
       preparedInvocationId: "prepared-1",
       toolName: "kestrel_one.github_issue_create",

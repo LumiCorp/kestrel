@@ -688,11 +688,22 @@ async function maybeRequireToolApproval(input: {
           availabilityReason: input.effectiveDecision.availabilityReason,
         });
       }
-      assertPreparedApprovalMatchesCurrentHostedAuthority({
-        preparedToolCall: persistedPreparedToolCall,
-        policyRevision: runtimePolicyRevision,
-        approvalAuthorityRevision: upstreamApprovalAuthorityRevision,
-      });
+      if (
+        !preparedApprovalMatchesCurrentHostedAuthority({
+          preparedToolCall: persistedPreparedToolCall,
+          policyRevision: runtimePolicyRevision,
+          approvalAuthorityRevision: upstreamApprovalAuthorityRevision,
+        })
+      ) {
+        return toToolApprovalPolicyChangedTransition({
+          ...input,
+          approvalId: asString(currentPendingApproval.approvalId)!,
+          preparedToolCall: persistedPreparedToolCall,
+          availabilityReason: "approval_policy",
+          approvalReasonCode:
+            input.effectiveDecision?.approvalDisposition.reasonCode,
+        });
+      }
     } catch (error) {
       throw createRuntimeFailure(
         "HOSTED_PREPARED_APPROVAL_INVALID",
@@ -1099,6 +1110,7 @@ function toToolApprovalPolicyChangedTransition(input: {
   toolClass: ToolExecutionClass;
   preparedToolCall: PreparedToolCallV1;
   availabilityReason: EffectiveToolDecisionV1["availabilityReason"];
+  approvalReasonCode?: ToolApprovalDispositionV1["reasonCode"] | undefined;
 }): Transition {
   const lastActionResult = {
     ok: false,
@@ -1106,6 +1118,9 @@ function toToolApprovalPolicyChangedTransition(input: {
     status: "denied",
     reason: "policy_changed",
     availabilityReason: input.availabilityReason,
+    ...(input.approvalReasonCode === undefined
+      ? {}
+      : { approvalReasonCode: input.approvalReasonCode }),
     approvalId: input.approvalId,
     toolName: input.toolName,
     toolClass: input.toolClass,
@@ -1139,6 +1154,9 @@ function toToolApprovalPolicyChangedTransition(input: {
             toolName: input.toolName,
             toolClass: input.toolClass,
             availabilityReason: input.availabilityReason,
+            ...(input.approvalReasonCode === undefined
+              ? {}
+              : { approvalReasonCode: input.approvalReasonCode }),
           },
         },
       ],
@@ -1893,26 +1911,20 @@ function assertPreparedApprovalMatchesStableHostedAuthority(input: {
   }
 }
 
-function assertPreparedApprovalMatchesCurrentHostedAuthority(input: {
+function preparedApprovalMatchesCurrentHostedAuthority(input: {
   preparedToolCall: PreparedToolCallV1;
   policyRevision: string;
   approvalAuthorityRevision: string;
-}): void {
+}): boolean {
   const stableAuthority = input.preparedToolCall.stableAuthority;
   if (stableAuthority === undefined) {
     throw new Error(
       "persisted hosted approval is missing stable hosted authority",
     );
   }
-  if (
-    stableAuthority.policyRevision !== input.policyRevision ||
-    stableAuthority.approvalAuthorityRevision !==
-      input.approvalAuthorityRevision
-  ) {
-    throw new Error(
-      "persisted hosted approval no longer matches current policy authority",
-    );
-  }
+  return stableAuthority.policyRevision === input.policyRevision &&
+    stableAuthority.approvalAuthorityRevision ===
+      input.approvalAuthorityRevision;
 }
 
 async function resolveApprovalDecision(input: {

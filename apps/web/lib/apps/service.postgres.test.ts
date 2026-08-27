@@ -1651,6 +1651,13 @@ test(
           },
         },
       },
+      metadata: {
+        hostedApprovalTiming: {
+          version: "trusted_hosted_approval_timing_v1",
+          requestedAt: now.toISOString(),
+          expiresAt: rememberExpiresAt.toISOString(),
+        },
+      },
       approval: {
         preparedInvocationId: rememberPreparedId,
         toolName: rememberToolName,
@@ -1816,7 +1823,15 @@ test(
         rateLimitMode: "strict",
       },
     });
-    const createExecRememberInteraction = async (label: string, sequence: number) => {
+    const createExecRememberInteraction = async (
+      label: string,
+      sequence: number,
+      timing: {
+        legacy?: boolean;
+        requestedAt?: string;
+        expiresAt?: string;
+      } = {},
+    ) => {
       const turnId = `exec-remember-${label}-turn-${suffix}`;
       const interactionId = `exec-remember-${label}-interaction-${suffix}`;
       const requestId = `exec-remember-${label}-request-${suffix}`;
@@ -1843,6 +1858,21 @@ test(
             },
           },
         },
+        ...(timing.legacy
+          ? {}
+          : {
+              metadata: {
+                hostedApprovalTiming: {
+                  version: "trusted_hosted_approval_timing_v1",
+                  requestedAt:
+                    timing.requestedAt ??
+                    new Date(Date.now() - 1_000).toISOString(),
+                  expiresAt:
+                    timing.expiresAt ??
+                    new Date(Date.now() + 60_000).toISOString(),
+                },
+              },
+            }),
         approval: {
           preparedInvocationId: `exec-remember-${label}-prepared-${suffix}`,
           toolName: "exec_command",
@@ -1904,8 +1934,166 @@ test(
             "version" = "thread_turn_queue_state"."version" + 1
         `;
       });
-      return { interactionId, requestId, turnId };
+      return { interactionId, requestEnvelope, requestId, turnId };
     };
+    const subjectExecRemember = await createExecRememberInteraction(
+      "subject",
+      189,
+    );
+    const builtInSubjectRestrictionId = `exec-subject-restriction-${suffix}`;
+    const [insertedWorkspaceProvider] = await sql<Array<{ key: string }>>`
+      INSERT INTO "tool_providers" (
+        "key", "display_name", "description", "type", "auth_type", "metadata"
+      ) VALUES (
+        'built_in.workspace', 'Workspace', 'Workspace execution tools.',
+        'built_in', 'system', ${sql.json({ category: "built_in" })}
+      )
+      ON CONFLICT ("key") DO NOTHING
+      RETURNING "key"
+    `;
+    const [insertedWorkspaceCapability] = await sql<Array<{ key: string }>>`
+      INSERT INTO "tool_capabilities" (
+        "provider_key", "key", "runtime_name", "display_name", "description",
+        "access_mode", "default_enabled", "default_approval_mode"
+      ) VALUES (
+        'built_in.workspace', 'executeCommand', 'exec_command',
+        'Execute Command', 'Execute a workspace command.', 'write', true, 'ask'
+      )
+      ON CONFLICT ("provider_key", "key") DO NOTHING
+      RETURNING "key"
+    `;
+    await sql`
+      INSERT INTO "environment_capability_subject_restrictions" (
+        "id", "organization_id", "environment_id", "subject_type",
+        "subject_id", "provider_key", "capability_key", "resource_id",
+        "enabled", "approval_mode"
+      ) VALUES (
+        ${builtInSubjectRestrictionId}, ${organizationId}, ${environmentId},
+        'actor', ${userId}, 'built_in.workspace', 'executeCommand', NULL,
+        true, 'ask'
+      )
+    `;
+    const resolveExecSubjectPolicy = () =>
+      runtimeApprovalPolicy.resolveRuntimeApprovalPolicies({
+        threadId,
+        organizationId,
+        projectId,
+        userId,
+        canEditProject: false,
+        interactions: [{
+          id: subjectExecRemember.interactionId,
+          requestId: subjectExecRemember.requestId,
+          source: "runtime",
+          kind: "approval",
+          status: "pending",
+          requestEnvelope: subjectExecRemember.requestEnvelope,
+        }],
+      });
+    const subjectAskExecPolicy = await resolveExecSubjectPolicy();
+    assert.deepEqual(
+      {
+        subjectApprovalMode:
+          subjectAskExecPolicy.get(subjectExecRemember.requestId)
+            ?.subjectApprovalMode,
+        approvalResourceAvailable:
+          subjectAskExecPolicy.get(subjectExecRemember.requestId)
+            ?.approvalResourceAvailable,
+        rememberApprovalEligible:
+          subjectAskExecPolicy.get(subjectExecRemember.requestId)
+            ?.rememberApprovalEligible,
+      },
+      {
+        subjectApprovalMode: "ask",
+        approvalResourceAvailable: undefined,
+        rememberApprovalEligible: false,
+      },
+    );
+    await sql`
+      UPDATE "environment_capability_subject_restrictions"
+      SET "approval_mode" = 'deny'
+      WHERE "id" = ${builtInSubjectRestrictionId}
+    `;
+    const subjectBlockedExecPolicy = await resolveExecSubjectPolicy();
+    assert.equal(
+      subjectBlockedExecPolicy.get(subjectExecRemember.requestId)
+        ?.subjectApprovalMode,
+      "deny",
+    );
+    assert.equal(
+      subjectBlockedExecPolicy.get(subjectExecRemember.requestId)
+        ?.rememberApprovalEligible,
+      false,
+    );
+    await sql`
+      DELETE FROM "environment_capability_subject_restrictions"
+      WHERE "id" = ${builtInSubjectRestrictionId}
+    `;
+    if (insertedWorkspaceCapability) {
+      await sql`
+        DELETE FROM "tool_capabilities"
+        WHERE "provider_key" = 'built_in.workspace'
+          AND "key" = ${insertedWorkspaceCapability.key}
+      `;
+    }
+    if (insertedWorkspaceProvider) {
+      await sql`
+        DELETE FROM "tool_providers"
+        WHERE "key" = ${insertedWorkspaceProvider.key}
+      `;
+    }
+    const legacyExecApproveOnce = await createExecRememberInteraction(
+      "legacy-approve-once",
+      188,
+      { legacy: true },
+    );
+    const legacyExecApproveOnceResolution =
+      await turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: legacyExecApproveOnce.requestId,
+        eventType: "user.approval",
+        turnId: legacyExecApproveOnce.turnId,
+        message: "Approve once",
+        decision: "approve_once",
+        messageId: `exec-legacy-approve-once-message-${suffix}`,
+        source: "web",
+      });
+    assert.equal(legacyExecApproveOnceResolution.shouldDispatch, true);
+    const legacyExecRemember = await createExecRememberInteraction(
+      "legacy-remember",
+      187,
+      { legacy: true },
+    );
+    const legacyExecRememberResolution =
+      await turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: legacyExecRemember.requestId,
+        eventType: "user.approval",
+        turnId: legacyExecRemember.turnId,
+        message: "Remember approval",
+        decision: "remember_approval",
+        messageId: `exec-legacy-remember-message-${suffix}`,
+        source: "mobile",
+      });
+    assert.equal(legacyExecRememberResolution.shouldDispatch, false);
+    const [legacyExecRememberState] = await sql<
+      Array<{ failureCode: string | null; rememberedCount: number }>
+    >`
+      SELECT
+        interaction."response_failure_code" AS "failureCode",
+        (SELECT count(*)::int FROM "remembered_tool_approvals"
+          WHERE "source_interaction_id" = ${legacyExecRemember.interactionId})
+          AS "rememberedCount"
+      FROM "thread_interactions" interaction
+      WHERE interaction."id" = ${legacyExecRemember.interactionId}
+    `;
+    assert.deepEqual(legacyExecRememberState, {
+      failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+      rememberedCount: 0,
+    });
     const execRemember = await createExecRememberInteraction("eligible", 190);
     const execRememberResolution = await turnStore.resolveDurableRuntimeInteraction({
       threadId,
@@ -1932,7 +2120,56 @@ test(
           AS "rememberedCount"
     `;
     assert.deepEqual(execRememberState, { appApprovalCount: 0, rememberedCount: 1 });
-    const staleExecRemember = await createExecRememberInteraction("stale", 191);
+    const expiredExecRemember = await createExecRememberInteraction(
+      "expired",
+      191,
+      {
+        requestedAt: new Date(Date.now() - 120_000).toISOString(),
+        expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      },
+    );
+    const expiredExecResolution =
+      await turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: expiredExecRemember.requestId,
+        eventType: "user.approval",
+        turnId: expiredExecRemember.turnId,
+        message: "Remember approval",
+        decision: "remember_approval",
+        messageId: `exec-remember-expired-message-${suffix}`,
+        source: "web",
+      });
+    assert.equal(expiredExecResolution.shouldDispatch, false);
+    const [expiredExecState] = await sql<
+      Array<{
+        appApprovalCount: number;
+        failureCode: string | null;
+        rememberedCount: number;
+        turnStatus: string;
+      }>
+    >`
+      SELECT
+        interaction."response_failure_code" AS "failureCode",
+        turn."status" AS "turnStatus",
+        (SELECT count(*)::int FROM "app_operation_approvals"
+          WHERE "interaction_id" = ${expiredExecRemember.interactionId})
+          AS "appApprovalCount",
+        (SELECT count(*)::int FROM "remembered_tool_approvals"
+          WHERE "source_interaction_id" = ${expiredExecRemember.interactionId})
+          AS "rememberedCount"
+      FROM "thread_interactions" interaction
+      JOIN "thread_turns" turn ON turn."id" = interaction."turn_id"
+      WHERE interaction."id" = ${expiredExecRemember.interactionId}
+    `;
+    assert.deepEqual(expiredExecState, {
+      appApprovalCount: 0,
+      failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+      rememberedCount: 0,
+      turnStatus: "failed",
+    });
+    const staleExecRemember = await createExecRememberInteraction("stale", 192);
     await appService.saveEnvironmentAppCapabilityGrant({
       organizationId,
       environmentId,
@@ -2034,6 +2271,12 @@ test(
       const requestEnvelope = {
         ...rememberRequestEnvelope,
         requestId,
+        metadata: {
+          hostedApprovalTiming: {
+            ...rememberRequestEnvelope.metadata.hostedApprovalTiming,
+            expiresAt: expiresAt.toISOString(),
+          },
+        },
         approval: {
           ...rememberRequestEnvelope.approval,
           preparedInvocationId,
