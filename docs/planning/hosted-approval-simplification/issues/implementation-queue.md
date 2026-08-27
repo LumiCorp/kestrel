@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-- [Redact cleanup quarantine audit](06p-redact-cleanup-quarantine-audit.md)
+- None.
 
 ## Blocked
 
@@ -23,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Redact cleanup quarantine audit](06p-redact-cleanup-quarantine-audit.md)
 - [Serialize cleanup release and audit quarantine](06o-serialize-cleanup-release-and-audit-quarantine.md)
 - [Quarantine invalid cleanup DONE evidence](06n-quarantine-invalid-cleanup-done-evidence.md)
 - [Validate before cleanup DONE repair](06m-validate-before-cleanup-done-repair.md)

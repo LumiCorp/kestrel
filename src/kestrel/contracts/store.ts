@@ -575,36 +575,6 @@ export function quarantinePreparedApprovalCleanupDoneResult(
   };
 }
 
-export function buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent(input: {
-  effect: PersistedEffect;
-  invalidResult: EffectResult & { status: "DONE" };
-  occurredAt: string;
-}): RunEvent {
-  return {
-    runId: input.effect.runId,
-    sessionId: input.effect.sessionId,
-    stepIndex: input.effect.stepIndex,
-    type: "prepared_approval_cleanup.done_evidence_quarantined",
-    level: "WARN",
-    timestamp: input.occurredAt,
-    metadata: {
-      version: "prepared_approval_cleanup_done_evidence_quarantine_v1",
-      effectIdentity: {
-        runId: input.effect.runId,
-        sessionId: input.effect.sessionId,
-        idempotencyKey: input.effect.idempotencyKey,
-      },
-      invalidResult: {
-        idempotencyKey: input.invalidResult.idempotencyKey,
-        status: input.invalidResult.status,
-        output: input.invalidResult.output ?? null,
-        error: input.invalidResult.error ?? null,
-        originalTimestamp: input.invalidResult.timestamp,
-      },
-    },
-  };
-}
-
 export type ExactEffectResultRead =
   | { status: "found"; result: AgentToolResultV2 }
   | { status: "not_found" }

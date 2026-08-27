@@ -11,7 +11,6 @@ import type {
 import {
   SandboxCapabilityExactResultCancelledError,
   SandboxCapabilityExactResultConflictError,
-  buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
   exactEffectRequiresCapabilityTenantBinding,
   validateExactEffectCancellationCandidate,
   validateExactEffectCancellationTenantBinding,
@@ -55,6 +54,7 @@ import {
 } from "../runtime/state.js";
 import { SessionBusyError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { sanitizeJsonValue } from "../runtime/jsonSanitizer.js";
+import { buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent } from "../runtime/preparedApprovalCleanupAudit.js";
 import {
   buildCanonicalWaitingFor,
   readActiveWaitState,

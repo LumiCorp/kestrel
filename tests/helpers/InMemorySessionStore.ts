@@ -27,12 +27,12 @@ import type {
   UpdateConversationTurnTerminalEnvelopeInput,
 } from "../../src/kestrel/contracts/store.js";
 import {
-  buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
   quarantinePreparedApprovalCleanupDoneResult,
   validatePreparedApprovalCleanupDoneEvidence,
   validatePreparedApprovalCleanupEffectIdentity,
 } from "../../src/kestrel/contracts/store.js";
 import { sanitizeJsonValue } from "../../src/runtime/jsonSanitizer.js";
+import { buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent } from "../../src/runtime/preparedApprovalCleanupAudit.js";
 
 import {
   normalizeRuntimeStateForPersist,

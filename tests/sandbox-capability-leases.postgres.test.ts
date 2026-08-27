@@ -15,6 +15,7 @@ import {
 import { SandboxCapabilityExactResultConflictError } from "../src/kestrel/contracts/store.js";
 import { PgSqlExecutor } from "../src/store/PgSqlExecutor.js";
 import { PostgresSessionStore } from "../src/store/PostgresSessionStore.js";
+import { PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES } from "../src/runtime/preparedApprovalCleanupAudit.js";
 import { createTestToolGateway, prepareTestToolCall } from "./helpers/createTestToolGateway.js";
 
 const databaseUrl = process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL?.trim();
@@ -518,7 +519,12 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         runId,
         sessionId,
         conflictingEffectId,
-        JSON.stringify({ releasedPreparedInvocationId: "wrong-call" }),
+        JSON.stringify({
+          releasedPreparedInvocationId: "wrong-call",
+          apiKey: "pg-api-key-sentinel",
+          providerPayload: { token: "pg-provider-token-sentinel" },
+          url: "https://pg-private.example.invalid/provider",
+        }),
         "2026-08-27T00:00:01.000Z",
       ],
     );
@@ -544,6 +550,9 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     );
     assert.deepEqual(quarantinedConflict?.output, {
       releasedPreparedInvocationId: "wrong-call",
+      apiKey: "pg-api-key-sentinel",
+      providerPayload: { token: "pg-provider-token-sentinel" },
+      url: "https://pg-private.example.invalid/provider",
     });
     assert.equal(
       quarantinedConflict?.timestamp,
@@ -621,13 +630,33 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       (event.metadata.effectIdentity as { idempotencyKey?: string })
         .idempotencyKey === conflictingEffectId
     );
-    assert.deepEqual(conflictingAudit?.metadata?.invalidResult, {
+    assert.deepEqual(conflictingAudit?.metadata?.resultIdentity, {
       idempotencyKey: conflictingEffectId,
       status: "DONE",
-      output: { releasedPreparedInvocationId: "wrong-call" },
-      error: null,
       originalTimestamp: "2026-08-27T00:00:01.000Z",
     });
+    const serializedConflictAudit = JSON.stringify(conflictingAudit);
+    for (const sentinel of [
+      "wrong-call",
+      "pg-api-key-sentinel",
+      "pg-provider-token-sentinel",
+      "pg-private.example.invalid",
+    ]) {
+      assert.equal(serializedConflictAudit.includes(sentinel), false, sentinel);
+    }
+    assert.equal(
+      conflictingAudit?.metadata?.validationReasonCode,
+      "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+    );
+    assert.match(
+      String((conflictingAudit?.metadata?.evidence as Record<string, unknown>)
+        .canonicalHash),
+      /^sha256:[0-9a-f]{64}$/u,
+    );
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(conflictingAudit?.metadata)) <=
+        PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+    );
     assert.equal(
       (await store.executePreparedApprovalCleanupInCriticalSection(
         conflictingEffectId,

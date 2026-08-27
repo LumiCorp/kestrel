@@ -27,6 +27,10 @@ import {
   type SandboxCapabilityLeaseTransitionRecordV1,
 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import type { PersistedEffect } from "../../src/kestrel/contracts/store.js";
+import {
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+} from "../../src/runtime/preparedApprovalCleanupAudit.js";
 
 async function buildPreparedApprovalCleanupEffect(input: {
   suffix: string;
@@ -517,6 +521,97 @@ test("cleanup DONE quarantine preserves malformed audit evidence across effect s
   }
 });
 
+test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free", async () => {
+  const { effect } = await buildPreparedApprovalCleanupEffect({
+    suffix: "bounded-audit",
+    status: "FAILED",
+  });
+  const cyclicOutput: Record<string, unknown> = {
+    releasedPreparedInvocationId: "private-prepared-call-sentinel",
+    authorization: "Bearer authorization-sentinel",
+    apiKey: "api-key-sentinel",
+    url: "https://private.example.invalid/provider?token=url-token-sentinel",
+    providerPayload: {
+      token: "provider-token-sentinel",
+      nested: { password: "password-sentinel" },
+    },
+    oversized: "oversized-secret-sentinel".repeat(100_000),
+    invalidUnicode: "invalid\ud800unicode",
+  };
+  cyclicOutput.self = cyclicOutput;
+  for (let index = 0; index < 32; index += 1) {
+    cyclicOutput[`extra-${index}`] = `extra-secret-${index}`;
+  }
+  const invalidResult = {
+    idempotencyKey: effect.idempotencyKey,
+    status: "DONE" as const,
+    output: cyclicOutput,
+    error: {
+      code: "PROVIDER_ERROR",
+      message: "provider-error-message-sentinel",
+      details: { authToken: "error-token-sentinel" },
+    },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  };
+  const first = buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+    effect,
+    invalidResult,
+    occurredAt: "2026-08-27T00:00:02.000Z",
+  });
+  const second = buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+    effect,
+    invalidResult,
+    occurredAt: "2026-08-27T00:00:02.000Z",
+  });
+
+  assert.deepEqual(first, second);
+  const serialized = JSON.stringify(first);
+  for (const sentinel of [
+    "private-prepared-call-sentinel",
+    "authorization-sentinel",
+    "api-key-sentinel",
+    "private.example.invalid",
+    "url-token-sentinel",
+    "provider-token-sentinel",
+    "password-sentinel",
+    "oversized-secret-sentinel",
+    "provider-error-message-sentinel",
+    "error-token-sentinel",
+  ]) {
+    assert.equal(serialized.includes(sentinel), false, sentinel);
+  }
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(first.metadata)) <=
+      PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+  );
+  assert.equal(
+    first.metadata?.validationReasonCode,
+    "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+  );
+  const evidence = first.metadata?.evidence as Record<string, unknown>;
+  assert.match(String(evidence.canonicalHash), /^sha256:[0-9a-f]{64}$/u);
+  assert.equal(evidence.sourceBytesTruncated, true);
+  assert.equal(evidence.traversalTruncated, true);
+  assert.ok(Number(evidence.nodesVisited) <= 128);
+  assert.deepEqual(evidence.outputShape, {
+    type: "object",
+    topLevelEntriesObserved: 16,
+    topLevelEntriesTruncated: true,
+    topLevelValueTypes: { string: 14, object: 1, truncated: 1 },
+  });
+  assert.deepEqual(evidence.errorShape, {
+    type: "object",
+    topLevelEntriesObserved: 3,
+    topLevelEntriesTruncated: false,
+    topLevelValueTypes: { string: 2, object: 1 },
+  });
+  assert.match(
+    String((first.metadata?.releasedPreparedInvocationId as Record<string, unknown>)
+      .canonicalHash),
+    /^sha256:[0-9a-f]{64}$/u,
+  );
+});
+
 test("cleanup DONE quarantine preserves exact evidence and refuses ordinary effects", async () => {
   const store = new InMemorySessionStore();
   const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
@@ -806,16 +901,23 @@ test("two cleanup runners serialize release and retain quarantine audit after co
     event.type === "prepared_approval_cleanup.done_evidence_quarantined"
   );
   assert.equal(quarantineEvents.length, 1);
-  assert.deepEqual(quarantineEvents[0]?.metadata?.invalidResult, {
+  assert.deepEqual(quarantineEvents[0]?.metadata?.resultIdentity, {
     idempotencyKey: effect.idempotencyKey,
     status: "DONE",
-    output: {
-      releasedPreparedInvocationId: "wrong-call",
-      malformedText: "invalid\uFFFDaudit",
-    },
-    error: null,
     originalTimestamp,
   });
+  const serializedAudit = JSON.stringify(quarantineEvents[0]);
+  assert.equal(serializedAudit.includes("wrong-call"), false);
+  assert.equal(serializedAudit.includes("invalid\uFFFDaudit"), false);
+  assert.match(
+    String((quarantineEvents[0]?.metadata?.evidence as Record<string, unknown>)
+      .canonicalHash),
+    /^sha256:[0-9a-f]{64}$/u,
+  );
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(quarantineEvents[0]?.metadata)) <=
+      PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+  );
 
   const replay = await new InlineEffectRunner(store, registry).runEffects(
     [effect],

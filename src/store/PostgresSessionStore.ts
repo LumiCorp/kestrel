@@ -7,7 +7,6 @@ import { parseRunnerPreparedApprovalCleanupV1 } from "@kestrel-agents/protocol";
 import {
   SandboxCapabilityExactResultCancelledError,
   SandboxCapabilityExactResultConflictError,
-  buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
   exactEffectRequiresCapabilityTenantBinding,
   validateExactEffectCancellationCandidate,
   validateExactEffectCancellationTenantBinding,
@@ -93,6 +92,7 @@ import {
 } from "../runtime/stateDiagnostics.js";
 import { normalizeOptionalTimestampString, normalizeTimestampString } from "../runtime/timestamps.js";
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
+import { buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent } from "../runtime/preparedApprovalCleanupAudit.js";
 import {
   buildCanonicalWaitingFor,
   readActiveWaitState,
