@@ -82,6 +82,7 @@ const groups = [
       "lib/apps/service.postgres.test.ts",
       "lib/db/edge-only-retirement.postgres.test.ts",
       "lib/email/receiving-config.postgres.test.ts",
+      "lib/email/receiving-activation.postgres.test.ts",
       "lib/email/receiving-deletion-fence.postgres.test.ts",
       "lib/email/receiving-route-replacement.postgres.test.ts",
       "lib/email/receiving-webhook-reconciliation.postgres.test.ts",

@@ -4,8 +4,10 @@ import { logAdminEvent } from "@/lib/admin/logs";
 import {
   inspectReceivingDomains,
   saveReceivingConnection,
+  getPublicReceivingConnection,
 } from "@/lib/email/receiving-config";
 import type { ResendReceivingProvider } from "@/lib/email/receiving-provider";
+import { setReceivingInboundEnabled } from "@/lib/email/receiving-activation";
 import {
   getSafeReceivingAdminError,
   parseReceivingAdminJson,
@@ -28,6 +30,8 @@ const receivingBodySchema = z.object({
 const domainsBodySchema = z.object({
   apiKey: z.string().trim().min(1).optional(),
 });
+
+const activationBodySchema = z.object({ enabled: z.boolean() }).strict();
 
 export function createOneReceivingPutHandler(options: {
   requireAdmin: (request: Request) => Promise<OrganizationAdminAuthority>;
@@ -86,6 +90,49 @@ export function createOneReceivingDomainsPostHandler(options: {
           apiKey: body.apiKey,
         }),
       });
+    } catch (error) {
+      return errorResponse(error);
+    }
+  };
+}
+
+export function createOneReceivingActivationPostHandler(options: {
+  requireAdmin: (request: Request) => Promise<OrganizationAdminAuthority>;
+  provider?: ResendReceivingProvider;
+}) {
+  return async function postOneReceivingActivation(request: Request) {
+    try {
+      const { organizationId, session } = await options.requireAdmin(request);
+      const { enabled } = activationBodySchema.parse(
+        await parseReceivingAdminJson(request),
+      );
+      await setReceivingInboundEnabled({
+        organizationId,
+        enabled,
+        provider: options.provider,
+      });
+      const connection = await getPublicReceivingConnection(organizationId);
+      await logAdminEvent({
+        organizationId,
+        actorUserId: session.user.id,
+        category: "email",
+        action: enabled ? "enable-inbound-receiving" : "disable-inbound-receiving",
+        targetType: "organization_receiving_connection",
+        targetId: organizationId,
+        message: enabled
+          ? "Enabled Organization inbound email receiving."
+          : "Disabled Organization inbound email receiving.",
+        metadata: {
+          provider: "resend",
+          readiness: connection.readiness,
+          inboundEnabled: connection.inboundEnabled,
+        },
+      }).catch(() => {
+        console.error(
+          "[organization:email:receiving] Activation completed, but its audit event could not be recorded.",
+        );
+      });
+      return NextResponse.json({ connection });
     } catch (error) {
       return errorResponse(error);
     }

@@ -4,14 +4,14 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Safely enable and prove email-triggered work](08-enable-and-prove-email-triggered-work.md)
+None.
 
 ## Blocked
 None.
 
 ## In progress
 
-None.
+- [Safely enable and prove email-triggered work](08-enable-and-prove-email-triggered-work.md)
 
 ## Implemented
 

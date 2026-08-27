@@ -7,6 +7,10 @@ const browserRoute = fs.readFileSync(
   new URL("../../app/api/organization/email/receiving/route.ts", import.meta.url),
   "utf8",
 );
+const activationRoute = fs.readFileSync(
+  new URL("../../app/api/organization/email/receiving/activation/route.ts", import.meta.url),
+  "utf8",
+);
 const desktopRoute = fs.readFileSync(
   new URL(
     "../../app/api/desktop/v1/organizations/[organizationId]/email/receiving/route.ts",
@@ -42,6 +46,14 @@ test("receiving mutations stay Admin-only while Desktop members can read the pub
   assert.match(desktopRoute, /GET[\s\S]*requireDesktopReceivingMember/u);
   assert.match(desktopRoute, /requireDesktopReceivingAdmin/u);
   assert.match(desktopRoute, /organizationId/u);
+  assert.match(activationRoute, /requireOrganizationAdmin/u);
+  assert.doesNotMatch(activationRoute, /desktop/u);
+});
+
+test("only Kestrel One can request inbound activation", () => {
+  assert.match(activationRoute, /createOneReceivingActivationPostHandler/u);
+  assert.match(activationRoute, /POST/u);
+  assert.doesNotMatch(desktopRoute, /activation/u);
 });
 
 test("inbound configuration remains separate from outbound Email App state", () => {

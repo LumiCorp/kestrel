@@ -187,6 +187,30 @@ function safeConfigError(error: ReceivingConfigError) {
           error: "Resend returned invalid webhook staging evidence.",
         },
       };
+    case "RESEND_RECEIVING_WEBHOOK_NOT_READY":
+      return {
+        status: 409,
+        body: {
+          code: error.code,
+          error: "Inbound receiving is not ready to enable.",
+        },
+      };
+    case "RESEND_RECEIVING_WEBHOOK_ACTIVATION_FAILED":
+      return {
+        status: 503,
+        body: {
+          code: error.code,
+          error: "Inbound receiving could not be enabled. It remains disabled.",
+        },
+      };
+    case "RESEND_RECEIVING_WEBHOOK_DISABLE_FAILED":
+      return {
+        status: 503,
+        body: {
+          code: error.code,
+          error: "Inbound receiving remains closed while Resend disablement is retried.",
+        },
+      };
     default:
       return {
         status: 500,

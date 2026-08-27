@@ -118,6 +118,36 @@ test("a winning save commits the cleared form only after reconciliation", async 
   assert.deepEqual(state.busyTransitions, [true, false]);
 });
 
+test("activation reconciles the redacted hosted connection before reporting success", async () => {
+  const activation = deferredResponse();
+  const refresh = deferredResponse();
+  const { controller, state } = fixture([activation, refresh]);
+
+  const enabling = controller.setInboundEnabled(true);
+  activation.resolve(jsonResponse({ connection: connection("active", true) }));
+  await settled();
+  refresh.resolve(jsonResponse({ connection: connection("active", true) }));
+  await enabling;
+
+  assert.equal(state.connection?.inboundEnabled, true);
+  assert.equal(state.connection?.readiness, "active");
+  assert.deepEqual(state.successes, ["Inbound receiving enabled."]);
+});
+
+test("failed disablement preserves the prior view and does not claim work stopped", async () => {
+  const disable = deferredResponse();
+  const { controller, state } = fixture([disable]);
+  state.connection = connection("active", true);
+
+  const disabling = controller.setInboundEnabled(false);
+  disable.resolve(jsonResponse({ error: "Inbound receiving remains closed while Resend disablement is retried." }, 503));
+  await disabling;
+
+  assert.equal(state.connection?.inboundEnabled, true);
+  assert.equal(state.error, "Inbound receiving remains closed while Resend disablement is retried.");
+  assert.deepEqual(state.successes, []);
+});
+
 test("deactivation prevents a pending operation from writing after unmount", async () => {
   const pendingCheck = deferredResponse();
   const { controller, state } = fixture([pendingCheck]);
@@ -322,13 +352,16 @@ function readyDomain(id: string): ReceivingDomain {
   };
 }
 
-function connection(readiness: ReceivingConnection["readiness"]): ReceivingConnection {
+function connection(
+  readiness: ReceivingConnection["readiness"],
+  inboundEnabled = false,
+): ReceivingConnection {
   return {
     configured: true,
     credentialStatus: "full_access",
     credentialValidatedAt: "2026-08-27T12:00:00.000Z",
     domainCheckedAt: "2026-08-27T12:00:00.000Z",
-    inboundEnabled: false,
+    inboundEnabled,
     lastErrorCode: null,
     lastHealthCheckedAt: "2026-08-27T12:00:00.000Z",
     lastTestedAt: null,

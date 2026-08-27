@@ -63,6 +63,26 @@ export function OrganizationReceivingClient() {
     await controllerRef.current?.save(apiKey, domainId);
   }
 
+  async function setInboundEnabled(enabled: boolean) {
+    if (
+      enabled &&
+      !window.confirm(
+        "Enable inbound receiving? New emails sent to enabled private Triggers can create agent work.",
+      )
+    ) {
+      return;
+    }
+    if (
+      !enabled &&
+      !window.confirm(
+        "Disable inbound receiving? New emails will stop. Existing Threads and turns continue.",
+      )
+    ) {
+      return;
+    }
+    await controllerRef.current?.setInboundEnabled(enabled);
+  }
+
   const selected = domains.find((domain) => domain.id === domainId);
   const selectedReady =
     selected?.receiving === "enabled" &&
@@ -109,6 +129,15 @@ export function OrganizationReceivingClient() {
               detail="Delivery stays disabled until the complete email-to-agent path is ready."
               status={connection?.webhookStatus.replaceAll("_", " ") ?? "Not staged"}
               tone="neutral"
+            />
+          </SettingsRow>
+          <SettingsRow label="Activation">
+            <SettingsStatusSummary
+              detail={connection?.inboundEnabled
+                ? "New email can create work through enabled private Triggers."
+                : activationBlocker(connection?.readiness)}
+              status={connection?.inboundEnabled ? "Enabled" : "Disabled"}
+              tone={connection?.inboundEnabled ? "positive" : "warning"}
             />
           </SettingsRow>
           <SettingsRow label="Health evidence">
@@ -177,6 +206,33 @@ export function OrganizationReceivingClient() {
               {busy ? "Saving…" : "Save inbound receiving"}
             </Button>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {connection?.inboundEnabled || shouldRetryDisable(connection) ? (
+              <Button
+                disabled={busy}
+                onClick={() => void setInboundEnabled(false)}
+                type="button"
+                variant="destructive"
+              >
+                {shouldRetryDisable(connection)
+                  ? "Retry disabling inbound receiving"
+                  : "Disable inbound receiving"}
+              </Button>
+            ) : (
+              <Button
+                disabled={busy || !canActivate(connection)}
+                onClick={() => void setInboundEnabled(true)}
+                type="button"
+              >
+                Enable inbound receiving
+              </Button>
+            )}
+            <p className="text-muted-foreground text-sm">
+              {connection?.inboundEnabled
+                ? "Disablement stops new email at Kestrel One. Existing work continues."
+                : "Kestrel One enables the staged Resend webhook only after it rechecks current receiving health."}
+            </p>
+          </div>
         </div>
       </SettingsSection>
     </>
@@ -185,4 +241,34 @@ export function OrganizationReceivingClient() {
 
 function formatEvidenceTime(value: string | null | undefined): string {
   return value ? new Date(value).toLocaleString() : "Never";
+}
+
+function canActivate(connection: ReceivingConnection | undefined) {
+  return (
+    connection?.readiness === "staged" ||
+    (connection?.readiness === "error" && !shouldRetryDisable(connection))
+  );
+}
+
+function shouldRetryDisable(connection: ReceivingConnection | undefined) {
+  return connection?.lastErrorCode === "RESEND_RECEIVING_WEBHOOK_DISABLE_FAILED";
+}
+
+function activationBlocker(readiness: ReceivingConnection["readiness"] | undefined) {
+  switch (readiness) {
+    case "staged":
+      return "The staged webhook is ready for Kestrel One to verify and enable.";
+    case "not_configured":
+      return "Configure a Resend Full access key and receiving domain first.";
+    case "credential_insufficient":
+      return "A Resend Full access key is required.";
+    case "domain_unready":
+      return "Choose a verified receiving domain with healthy MX records.";
+    case "ready_inactive":
+      return "Kestrel One is waiting for the receiving webhook to be staged.";
+    case "error":
+      return "Kestrel One will recheck the staged webhook before retrying the last requested action.";
+    default:
+      return "Loading current receiving readiness.";
+  }
 }

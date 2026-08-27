@@ -7,6 +7,7 @@ import { ReceivingConfigError } from "./receiving-config";
 import {
   createDesktopReceivingDomainsPostHandler,
   createDesktopReceivingPutHandler,
+  createOneReceivingActivationPostHandler,
   createOneReceivingDomainsPostHandler,
   createOneReceivingPutHandler,
 } from "./receiving-admin-route-handlers";
@@ -114,6 +115,21 @@ test("receiving provider failures have stable actionable HTTP status classes", (
       status: 502,
       error: "Resend returned invalid webhook staging evidence.",
     },
+    {
+      code: "RESEND_RECEIVING_WEBHOOK_NOT_READY",
+      status: 409,
+      error: "Inbound receiving is not ready to enable.",
+    },
+    {
+      code: "RESEND_RECEIVING_WEBHOOK_ACTIVATION_FAILED",
+      status: 503,
+      error: "Inbound receiving could not be enabled. It remains disabled.",
+    },
+    {
+      code: "RESEND_RECEIVING_WEBHOOK_DISABLE_FAILED",
+      status: 503,
+      error: "Inbound receiving remains closed while Resend disablement is retried.",
+    },
   ] as const;
   const secret = "re_provider_detail_must_not_escape";
 
@@ -214,7 +230,7 @@ test("only Kestrel's explicit JSON parsing syntax errors use the invalid-request
   });
 });
 
-test("all four receiving mutations return the exact invalid-request response for authorized malformed JSON", async () => {
+test("all five receiving mutations return the exact invalid-request response for authorized malformed JSON", async () => {
   const cases = receivingMutationCases({
     requireOneAdmin: async () => ({
       organizationId: "organization-route-contract",
@@ -230,7 +246,7 @@ test("all four receiving mutations return the exact invalid-request response for
   }
 });
 
-test("all four receiving mutations reject unauthenticated and non-Admin callers before reading malformed JSON", async () => {
+test("all five receiving mutations reject unauthenticated and non-Admin callers before reading malformed JSON", async () => {
   const authorizationCases = [
     {
       message: "Unauthorized",
@@ -313,6 +329,14 @@ function receivingMutationCases(input: {
       url: `${oneReceivingUrl}/domains`,
       invoke: (request: Request) =>
         createOneReceivingDomainsPostHandler({
+          requireAdmin: input.requireOneAdmin,
+        })(request),
+    },
+    {
+      name: "One activation POST",
+      url: `${oneReceivingUrl}/activation`,
+      invoke: (request: Request) =>
+        createOneReceivingActivationPostHandler({
           requireAdmin: input.requireOneAdmin,
         })(request),
     },

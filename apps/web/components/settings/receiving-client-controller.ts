@@ -173,6 +173,49 @@ export class OrganizationReceivingController {
     });
   }
 
+  async setInboundEnabled(enabled: boolean): Promise<void> {
+    await this.#run(
+      enabled
+        ? "Could not enable inbound receiving."
+        : "Could not disable inbound receiving.",
+      async (operation) => {
+        const response = await this.#request(
+          "/api/organization/email/receiving/activation",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ enabled }),
+          },
+        );
+        const body = await readBody(response);
+        if (!operation.isCurrent()) return;
+        if (!response.ok) {
+          operation.commit(() => {
+            this.#present.setError(
+              readError(body) ||
+                (enabled
+                  ? "Could not enable inbound receiving."
+                  : "Could not disable inbound receiving."),
+            );
+          });
+          return;
+        }
+        readConnection(body);
+        const connection = await this.#readReconciledConnection(operation);
+        if (!connection) return;
+        operation.commit(() => {
+          this.#present.setConnection(connection);
+          this.#present.setError(undefined);
+          this.#present.showSuccess(
+            enabled
+              ? "Inbound receiving enabled."
+              : "Inbound receiving disabled. Existing work continues.",
+          );
+        });
+      },
+    );
+  }
+
   async #readReconciledConnection(
     operation: Operation,
   ): Promise<ReceivingConnection | undefined> {
