@@ -9,7 +9,7 @@ const source = await readFile(
 
 test("post-cutover command canary joins the exact exec_command to its Ask First card", () => {
   assert.match(source, /turn\?\.status === "waiting_for_input"/u);
-  assert.match(source, /parseRunnerHostedToolApprovalInteractionV3/u);
+  assert.match(source, /parseRunnerHostedToolApprovalInteractionV4/u);
   assert.match(source, /toolInput\?\.command === input\.command/u);
   assert.match(source, /toolCalls\.has\(request\.approval\.preparedInvocationId\)/u);
   assert.match(source, /request\.approval\.toolName === "exec_command"/u);
