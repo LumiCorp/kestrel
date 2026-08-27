@@ -9,8 +9,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Keep removed-domain failures separate from credential health](18-separate-domain-and-credential-health.md)
 - [Execute malformed JSON contracts through every receiving route](21-execute-malformed-json-route-contracts.md)
 - [Scope malformed JSON classification to the explicit parse operation](24-scope-json-syntax-classification.md)
-- [Reject superseded stored-key receiving saves](25-reject-superseded-receiving-saves.md)
-- [Commit One receiving presentation atomically](26-commit-one-receiving-presentation-atomically.md)
 
 ## In progress
 
@@ -37,6 +35,8 @@ None.
 - [Classify malformed receiving JSON as an invalid request](19-classify-malformed-receiving-json.md)
 - [Prevent an older stored-key check from overwriting newer durable health](20-order-stored-receiving-health-checks.md)
 - [Reject malformed successful receiving responses in One](23-validate-one-receiving-responses.md)
+- [Reject superseded stored-key receiving saves](25-reject-superseded-receiving-saves.md)
+- [Commit One receiving presentation atomically](26-commit-one-receiving-presentation-atomically.md)
 
 ## Done
 

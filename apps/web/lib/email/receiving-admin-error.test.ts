@@ -77,6 +77,12 @@ test("receiving provider failures have stable actionable HTTP status classes", (
       error:
         "Choose a verified Resend receiving domain with healthy MX records.",
     },
+    {
+      code: "RESEND_RECEIVING_SAVE_SUPERSEDED",
+      status: 409,
+      error:
+        "The receiving configuration changed while receiving was being saved. Refresh and try again.",
+    },
   ] as const;
   const secret = "re_provider_detail_must_not_escape";
 
@@ -96,6 +102,23 @@ test("One and Desktop receiving routes use the same safe status boundary", () =>
   for (const route of receivingRoutes) {
     assert.match(route, /getSafeReceivingAdminError/u);
   }
+});
+
+test("One records the receiving update audit only after the save succeeds", () => {
+  const oneReceivingRoute = receivingRoutes[0];
+  assert.ok(oneReceivingRoute);
+  const save = oneReceivingRoute.indexOf(
+    "const connection = await saveReceivingConnection",
+  );
+  const audit = oneReceivingRoute.indexOf("await logAdminEvent", save);
+  const success = oneReceivingRoute.indexOf(
+    "return NextResponse.json({ connection })",
+    audit,
+  );
+
+  assert.ok(save >= 0);
+  assert.ok(audit > save);
+  assert.ok(success > audit);
 });
 
 test("invalid receiving request bodies are non-retryable correction responses", () => {

@@ -223,7 +223,10 @@ export async function saveReceivingConnection(input: {
       lockedExisting?.healthCheckSequence !==
         storedHealthCheck.healthCheckSequence
     ) {
-      return;
+      throw new ReceivingConfigError(
+        "RESEND_RECEIVING_SAVE_SUPERSEDED",
+        "The receiving configuration changed while receiving was being saved. Refresh and try again.",
+      );
     }
     const encryptedApiKey = suppliedApiKey
       ? preparedEncryptedApiKey

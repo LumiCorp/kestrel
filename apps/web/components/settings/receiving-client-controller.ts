@@ -71,7 +71,14 @@ export class OrganizationReceivingController {
 
   async load(): Promise<void> {
     await this.#run("Could not load inbound receiving.", async (operation) => {
-      await this.#reconcile(operation);
+      const connection = await this.#readReconciledConnection(operation);
+      if (!connection) {
+        return;
+      }
+      operation.commit(() => {
+        this.#present.setConnection(connection);
+        this.#present.setError(undefined);
+      });
     });
   }
 
@@ -92,8 +99,12 @@ export class OrganizationReceivingController {
           return;
         }
         if (!response.ok) {
-          await this.#reconcile(operation);
+          const connection = await this.#readReconciledConnection(operation);
+          if (!connection) {
+            return;
+          }
           operation.commit(() => {
+            this.#present.setConnection(connection);
             this.#present.setError(
               readError(body) || "Could not inspect Resend receiving domains.",
             );
@@ -102,12 +113,14 @@ export class OrganizationReceivingController {
         }
 
         const domains = readDomains(body);
+        const connection = await this.#readReconciledConnection(operation);
+        if (!connection) {
+          return;
+        }
         operation.commit(() => {
+          this.#present.setConnection(connection);
           this.#present.setDomains(domains);
           this.#present.setError(undefined);
-        });
-        await this.#reconcile(operation);
-        operation.commit(() => {
           if (domains.length === 0) {
             this.#present.showInfo(
               "No Resend receiving domains are available for this key.",
@@ -144,7 +157,11 @@ export class OrganizationReceivingController {
         return;
       }
 
-      const connection = readConnection(body);
+      readConnection(body);
+      const connection = await this.#readReconciledConnection(operation);
+      if (!connection) {
+        return;
+      }
       operation.commit(() => {
         this.#present.setConnection(connection);
         this.#present.setApiKey("");
@@ -153,28 +170,24 @@ export class OrganizationReceivingController {
         this.#present.setError(undefined);
         this.#present.showSuccess("Inbound receiving configuration saved.");
       });
-      await this.#reconcile(operation);
     });
   }
 
-  async #reconcile(operation: Operation): Promise<void> {
+  async #readReconciledConnection(
+    operation: Operation,
+  ): Promise<ReceivingConnection | undefined> {
     const response = await this.#request(
       "/api/organization/email/receiving",
       { cache: "no-store" },
     );
     const body = await readBody(response);
-    if (!response.ok) {
-      operation.commit(() => {
-        this.#present.setError(
-          readError(body) || "Could not load inbound receiving.",
-        );
-      });
+    if (!operation.isCurrent()) {
       return;
     }
-    operation.commit(() => {
-      this.#present.setConnection(readConnection(body));
-      this.#present.setError(undefined);
-    });
+    if (!response.ok) {
+      throw new Error(readError(body) || "Could not load inbound receiving.");
+    }
+    return readConnection(body);
   }
 
   async #run(

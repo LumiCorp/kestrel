@@ -106,6 +106,15 @@ function safeConfigError(error: ReceivingConfigError) {
             "The Resend credential changed while receiving was being saved. Refresh and try again.",
         },
       };
+    case "RESEND_RECEIVING_SAVE_SUPERSEDED":
+      return {
+        status: 409,
+        body: {
+          code: error.code,
+          error:
+            "The receiving configuration changed while receiving was being saved. Refresh and try again.",
+        },
+      };
     case "RESEND_RECEIVING_DOMAIN_INVALID":
       return {
         status: 422,

@@ -38,7 +38,7 @@ test("a delayed failed check cannot repaint a newer successful recovery", async 
   await settled();
 
   assert.equal(state.busy, true, "busy remains set while the winning refresh is pending");
-  assert.deepEqual(state.domains, [readyDomain("newer-domain")]);
+  assert.deepEqual(state.domains, []);
 
   newerRefresh.resolve(jsonResponse({ connection: connection("active") }));
   await newer;
@@ -91,7 +91,7 @@ test("a newer load supersedes a delayed save and owns the final busy transition"
   assert.deepEqual(state.busyTransitions, [true, false]);
 });
 
-test("a winning save clears the write-only form but stays busy through reconciliation", async () => {
+test("a winning save commits the cleared form only after reconciliation", async () => {
   const saveResponse = deferredResponse();
   const refresh = deferredResponse();
   const { controller, state } = fixture([saveResponse, refresh]);
@@ -102,15 +102,19 @@ test("a winning save clears the write-only form but stays busy through reconcili
   saveResponse.resolve(jsonResponse({ connection: connection("ready_inactive") }));
   await settled();
 
-  assert.equal(state.apiKey, "");
-  assert.equal(state.domainId, "");
+  assert.equal(state.apiKey, "replacement-key");
+  assert.equal(state.domainId, "ready-domain");
   assert.equal(state.busy, true);
-  assert.deepEqual(state.successes, ["Inbound receiving configuration saved."]);
+  assert.deepEqual(state.successes, []);
 
   refresh.resolve(jsonResponse({ connection: connection("staged") }));
   await save;
 
   assert.equal(state.connection?.readiness, "staged");
+  assert.equal(state.apiKey, "");
+  assert.equal(state.domainId, "");
+  assert.deepEqual(state.domains, []);
+  assert.deepEqual(state.successes, ["Inbound receiving configuration saved."]);
   assert.deepEqual(state.busyTransitions, [true, false]);
 });
 
@@ -179,7 +183,7 @@ test("a save with a secret-bearing unknown field cannot clear the form or report
   assert.deepEqual(state.successes, []);
 });
 
-test("a reconciliation with an invalid enum preserves the prior connection", async () => {
+test("a domain check with malformed reconciliation preserves old domain choices", async () => {
   const checkResponse = deferredResponse();
   const reconcileResponse = deferredResponse();
   const { controller, state } = fixture([checkResponse, reconcileResponse]);
@@ -187,7 +191,7 @@ test("a reconciliation with an invalid enum preserves the prior connection", asy
 
   const check = controller.inspectDomains(state.apiKey);
   checkResponse.resolve(
-    jsonResponse({ domains: [readyDomain("ready-domain")] }),
+    jsonResponse({ domains: [readyDomain("new-domain")] }),
   );
   await settled();
   reconcileResponse.resolve(
@@ -204,6 +208,34 @@ test("a reconciliation with an invalid enum preserves the prior connection", asy
   assert.equal(state.error, "Could not inspect Resend receiving domains.");
   assert.deepEqual(state.infos, []);
   assert.deepEqual(state.successes, []);
+});
+
+test("a save with malformed reconciliation preserves the write-only form", async () => {
+  const saveResponse = deferredResponse();
+  const reconcileResponse = deferredResponse();
+  const { controller, state } = fixture([saveResponse, reconcileResponse]);
+  seedPresentation(state);
+
+  const save = controller.save(state.apiKey, state.domainId);
+  saveResponse.resolve(
+    jsonResponse({ connection: connection("ready_inactive") }),
+  );
+  await settled();
+  reconcileResponse.resolve(
+    jsonResponse({
+      connection: {
+        ...connection("staged"),
+        credentialStatus: "future_status",
+      },
+    }),
+  );
+  await save;
+
+  assertPresentationPreserved(state);
+  assert.equal(state.error, "Could not save inbound receiving.");
+  assert.deepEqual(state.infos, []);
+  assert.deepEqual(state.successes, []);
+  assert.deepEqual(state.busyTransitions, [true, false]);
 });
 
 function fixture(requests: DeferredResponse[]) {

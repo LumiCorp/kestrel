@@ -847,6 +847,110 @@ test("same-key stored receiving checks persist in invocation order across invert
   );
 });
 
+test("a stored-key receiving save rejects when a newer same-key check supersedes it", async (context) => {
+  assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");
+  process.env.DATABASE_URL = databaseUrl;
+  process.env.POSTGRES_URL = databaseUrl;
+  process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID = "test-key";
+  process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS = JSON.stringify({
+    "test-key": randomBytes(32).toString("base64"),
+  });
+  const [{ resetDbRuntimeForTests }, receiving] = await Promise.all([
+    import("@/lib/db/runtime"),
+    import("./receiving-config"),
+  ]);
+  const sql = postgres(databaseUrl, { max: 6 });
+  const suffix = crypto.randomUUID();
+  const organizationId = `receiving-save-order-org-${suffix}`;
+  const userId = `receiving-save-order-user-${suffix}`;
+  const now = new Date();
+
+  context.after(async () => {
+    await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+    await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+    await resetDbRuntimeForTests();
+    await sql.end({ timeout: 0 });
+  });
+
+  await sql`
+    INSERT INTO "user" (
+      "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+    ) VALUES (
+      ${userId}, 'Receiving Save Order User',
+      ${`${userId}@example.test`}, true, ${now}, ${now}
+    )
+  `;
+  await sql`
+    INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+    VALUES (
+      ${organizationId}, 'Receiving Save Order Org',
+      ${`receiving-save-order-${suffix}`}, ${now}
+    )
+  `;
+  await receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    apiKey: "re_save_order_stored_key",
+    receivingDomainId: "domain-original",
+    provider: fakeProvider(),
+  });
+
+  const staleSaveStarted = deferred();
+  const releaseStaleSave = deferred();
+  const staleSave = receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    receivingDomainId: "domain-superseded",
+    provider: coordinatedProvider({
+      async getDomain(apiKey, id) {
+        assert.equal(apiKey, "re_save_order_stored_key");
+        assert.equal(id, "domain-superseded");
+        staleSaveStarted.resolve();
+        await releaseStaleSave.promise;
+        return verifiedReceivingDomain(id);
+      },
+    }),
+  });
+
+  await staleSaveStarted.promise;
+  await receiving.inspectReceivingDomains({
+    organizationId,
+    provider: healthyListProvider("domain-original"),
+  });
+  releaseStaleSave.resolve();
+
+  await assert.rejects(staleSave, (error: unknown) => {
+    assert.ok(error instanceof receiving.ReceivingConfigError);
+    assert.equal(error.code, "RESEND_RECEIVING_SAVE_SUPERSEDED");
+    return true;
+  });
+
+  const [persisted] = await sql<
+    Array<{
+      receivingDomainId: string | null;
+      receivingDomain: string | null;
+      credentialStatus: string;
+      healthCheckSequence: string;
+      lastErrorCode: string | null;
+    }>
+  >`
+    SELECT
+      "receiving_domain_id" AS "receivingDomainId",
+      "receiving_domain" AS "receivingDomain",
+      "credential_status" AS "credentialStatus",
+      "health_check_sequence" AS "healthCheckSequence",
+      "last_error_code" AS "lastErrorCode"
+    FROM "organization_receiving_connections"
+    WHERE "organization_id" = ${organizationId}
+  `;
+  assert.ok(persisted);
+  assert.equal(persisted.receivingDomainId, "domain-original");
+  assert.equal(persisted.receivingDomain, "domain-original.example.test");
+  assert.equal(persisted.credentialStatus, "full_access");
+  assert.equal(persisted.lastErrorCode, null);
+  assert.equal(persisted.healthCheckSequence, "2");
+});
+
 test("Desktop receiving routes preserve authentication and Organization Admin failures", async (context) => {
   assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");
   process.env.DATABASE_URL = databaseUrl;
