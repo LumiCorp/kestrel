@@ -12,7 +12,7 @@ None.
 
 ## Blocked
 
-- [Hydrate and admit one received email](04-hydrate-and-admit-received-email.md) — blocked by [Let Project editors manage private Email Triggers](02-manage-private-project-email-triggers.md) and [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
+- [Hydrate and admit one received email](04-hydrate-and-admit-received-email.md) — blocked by [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
 - [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md) — blocked by [Hydrate and admit one received email](04-hydrate-and-admit-received-email.md)
 - [Let the triggered agent read an email attachment](06-read-email-attachments-on-demand.md) — blocked by [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md)
 - [Retain and inspect email-triggered work safely](07-retain-and-inspect-email-triggered-work.md) — blocked by [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md)
@@ -20,15 +20,7 @@ None.
 
 ## Implemented
 
-- [Let Project editors manage private Email Triggers](02-manage-private-project-email-triggers.md)
-- [Create private Triggers before inbound activation](33-create-private-triggers-before-inbound-activation.md)
-- [Disable Triggers on Organization owner loss](34-disable-triggers-on-organization-owner-loss.md)
-- [Preserve Trigger lifecycle disable reasons](35-preserve-trigger-lifecycle-disable-reasons.md)
-- [Preserve unavailable Trigger models while editing](36-preserve-unavailable-trigger-models-in-editing.md)
-- [Execute the Email Trigger route exports](37-execute-email-trigger-route-exports.md)
-- [Reconcile stale Trigger owners during migration](38-reconcile-stale-trigger-owners-during-migration.md)
-- [Keep route-export sessions live](39-keep-route-export-sessions-live.md)
-- [Close the owner-loss migration cutover race](40-close-owner-loss-migration-cutover-race.md)
+None.
 
 ## Done
 
@@ -57,3 +49,12 @@ None.
 - [Classify malformed receiving JSON as an invalid request](19-classify-malformed-receiving-json.md)
 - [Distinguish provider outages from invalid receiving configuration](13-classify-receiving-provider-failures.md)
 - [Configure Organization Resend receiving in One and Desktop](01-prepare-organization-resend-receiving.md)
+- [Let Project editors manage private Email Triggers](02-manage-private-project-email-triggers.md)
+- [Create private Triggers before inbound activation](33-create-private-triggers-before-inbound-activation.md)
+- [Disable Triggers on Organization owner loss](34-disable-triggers-on-organization-owner-loss.md)
+- [Preserve Trigger lifecycle disable reasons](35-preserve-trigger-lifecycle-disable-reasons.md)
+- [Preserve unavailable Trigger models while editing](36-preserve-unavailable-trigger-models-in-editing.md)
+- [Execute the Email Trigger route exports](37-execute-email-trigger-route-exports.md)
+- [Reconcile stale Trigger owners during migration](38-reconcile-stale-trigger-owners-during-migration.md)
+- [Keep route-export sessions live](39-keep-route-export-sessions-live.md)
+- [Close the owner-loss migration cutover race](40-close-owner-loss-migration-cutover-race.md)
