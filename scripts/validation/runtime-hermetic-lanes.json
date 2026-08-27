@@ -324,6 +324,7 @@
         "tests/unit/dev-shell-model-contract.test.ts",
         "tests/unit/devshell-tool-env-mode.test.ts",
         "tests/unit/evidence-extract-tool.test.ts",
+        "tests/unit/effective-model-contract.test.ts",
         "tests/unit/exec-command-budget.test.ts",
         "tests/unit/exec-command-tool.test.ts",
         "tests/unit/execution-authorization-provider.test.ts",

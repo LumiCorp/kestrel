@@ -252,7 +252,7 @@ export function readHostedOpenRouterRouteEvidence(input: {
     supportedParameters,
     endpoints,
     routing: { kind: routing.kind, policyId: routing.policyId, allowedEndpointIds },
-    sourceHash: providerEvidence.retainedPayloadHash,
+    sourceHash: providerEvidence!.retainedPayloadHash,
   };
 }
 

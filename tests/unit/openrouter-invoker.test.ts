@@ -253,11 +253,11 @@ test("OpenRouter Responses stream carries function-argument deltas into the term
   const route: OpenRouterQualifiedRouteEvidence = {
     modelId: "openai/gpt-5.2-chat",
     endpoint: "responses",
-    supportedParameters: ["tools", "tool_choice", "parallel_tool_calls"],
+    supportedParameters: ["tools", "tool_choice", "strict_tool_inputs", "parallel_tool_calls"],
     endpoints: [
       {
         id: "openai",
-        supportedParameters: ["tools", "tool_choice", "parallel_tool_calls"],
+        supportedParameters: ["tools", "tool_choice", "strict_tool_inputs", "parallel_tool_calls"],
       },
     ],
     routing: {

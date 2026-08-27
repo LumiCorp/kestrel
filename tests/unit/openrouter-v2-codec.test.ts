@@ -22,8 +22,10 @@ function route(
     endpoint: "chat",
     supportedParameters: [
       "response_format",
+      "structured_outputs",
       "tools",
       "tool_choice",
+      "strict_tool_inputs",
       "parallel_tool_calls",
       "reasoning",
       "reasoning_details",
@@ -33,8 +35,10 @@ function route(
         id: "together",
         supportedParameters: [
           "response_format",
+          "structured_outputs",
           "tools",
           "tool_choice",
+          "strict_tool_inputs",
           "parallel_tool_calls",
           "reasoning",
           "reasoning_details",
@@ -245,8 +249,10 @@ test("OpenRouter V2 fails closed for no eligible endpoint intersection", () => {
         route({
           supportedParameters: [
             "response_format",
+            "structured_outputs",
             "tools",
             "tool_choice",
+            "strict_tool_inputs",
             "parallel_tool_calls",
           ],
           endpoints: [
@@ -326,8 +332,10 @@ test("OpenRouter V2 routes only to endpoints that satisfy every required paramet
           id: "novita",
           supportedParameters: [
             "response_format",
+            "structured_outputs",
             "tools",
             "tool_choice",
+            "strict_tool_inputs",
             "parallel_tool_calls",
           ],
         },
@@ -343,6 +351,28 @@ test("OpenRouter V2 routes only to endpoints that satisfy every required paramet
   assert.deepEqual((mapped.body.provider as Record<string, unknown>).order, [
     "novita",
   ]);
+});
+
+test("OpenRouter V2 refuses strict requests when no exact endpoint advertises strict support", () => {
+  assert.throws(
+    () =>
+      buildOpenRouterHttpRequestV2(
+        request({ output: "json_schema", tools: true }),
+        env,
+        route({
+          endpoints: [{
+            id: "together",
+            supportedParameters: [
+              "response_format",
+              "tools",
+              "tool_choice",
+              "parallel_tool_calls",
+            ],
+          }],
+        }),
+      ),
+    /no eligible provider endpoint/u,
+  );
 });
 
 test("OpenRouter V2 Responses accepts direct function calls and refuses argument repair", () => {

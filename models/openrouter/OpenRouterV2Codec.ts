@@ -288,7 +288,13 @@ function chatStructuredOutput(request: ModelRequestV2) {
     schemaName,
   });
   return {
-    value: compiled.responseFormat,
+    value: {
+      ...compiled.responseFormat,
+      json_schema: {
+        ...compiled.responseFormat.json_schema,
+        strict: true,
+      },
+    },
     structuredOutput: {
       mode: "constrained" as const,
       schemaName,
@@ -332,12 +338,19 @@ function requiredOpenRouterParameters(
   endpoint: OpenRouterEndpoint,
 ): string[] {
   const required = new Set<string>();
-  if (request.requirements.output.kind !== "text")
+  if (request.requirements.output.kind !== "text") {
     required.add("response_format");
+    if (request.requirements.output.assurance === "provider_strict_schema") {
+      required.add("structured_outputs");
+    }
+  }
   if (request.requirements.tools.choice !== "none") {
     required.add("tools");
     required.add("tool_choice");
     required.add("parallel_tool_calls");
+    if (request.requirements.tools.strictArguments) {
+      required.add("strict_tool_inputs");
+    }
   }
   if (request.requirements.reasoning.mode !== "off") required.add("reasoning");
   if (request.reasoning?.continuation?.length)

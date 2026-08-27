@@ -2,6 +2,35 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import postgres from "postgres";
 import { withGatewayModelEconomicsProfile } from "./model-economics-profile";
+import { qualifyHostedAgentLoopModel } from "./hosted-model-qualification";
+
+const qualificationRunner: typeof qualifyHostedAgentLoopModel = async (input) =>
+  qualifyHostedAgentLoopModel({
+    ...input,
+    fetchImpl: async (_url, init) => {
+      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const hasTools = Array.isArray(payload.tools);
+      return new Response(
+        JSON.stringify({
+          id: "resp_qualification",
+          model: input.registration.modelId,
+          status: "completed",
+          output: hasTools
+            ? [{
+                type: "function_call",
+                call_id: "call_qualification",
+                name: "probe_tool",
+                arguments: "{}",
+              }]
+            : [{
+                type: "message",
+                content: [{ type: "output_text", text: '{"ok":true}' }],
+              }],
+        }),
+        { status: 200 },
+      );
+    },
+  });
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
@@ -60,6 +89,7 @@ test("hosted registration evidence commits with economics and default intent or 
       provider: "openai",
       catalogRecord: { id: "gpt-4.1-mini" },
     },
+    qualificationRunner,
   });
   const [persisted] = await sql<
     Array<{ metadata: Record<string, unknown>; isDefault: boolean }>
@@ -80,7 +110,7 @@ test("hosted registration evidence commits with economics and default intent or 
         state: string;
       }
     ).state,
-    "pending",
+    "qualified",
   );
   assert.notEqual(
     (persisted?.metadata.kestrelModelRegistrationV2 as { browser?: string })
@@ -150,6 +180,7 @@ test("hosted registration evidence commits with economics and default intent or 
         provider: "openai",
         catalogRecord: { id: "gpt-4.1-mini" },
       },
+      qualificationRunner,
     }),
     /changed while provider evidence was resolving/u,
   );

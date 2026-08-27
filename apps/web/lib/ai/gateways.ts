@@ -67,11 +67,15 @@ import {
   createHostedModelRegistration,
   hostedModelRegistrationRevision,
   preserveHostedModelCapabilityMetadata,
+  readHostedOpenRouterRouteEvidence,
   removeHostedModelCapabilityMetadata,
   withHostedModelRegistration,
   type HostedModelProviderEvidence,
   type HostedModelRegistrationProvider,
 } from "./hosted-model-registration";
+import {
+  qualifyHostedAgentLoopModel,
+} from "./hosted-model-qualification";
 import type { ProviderRuntimeConfigurationV1 } from "../../../../src/kestrel/contracts/model-registration";
 
 export { fetchOpenRouterModelDetailsWithCredentials } from "./openrouter-model-resolution";
@@ -1311,6 +1315,8 @@ export async function saveGatewayModel(input: {
   expectedModelUpdatedAt?: Date | null;
   /** Server-only test/operation seam. The browser API never accepts this. */
   providerEvidence?: HostedModelProviderEvidence;
+  /** Server-only qualifier injection. The browser API never accepts this. */
+  qualificationRunner?: typeof qualifyHostedAgentLoopModel;
   /** Catalog sync must not turn unknown legacy rows into implicit approvals. */
   preserveHostedRegistration?: boolean;
 }) {
@@ -1603,7 +1609,7 @@ export async function saveGatewayModel(input: {
         injectedEvidence: input.providerEvidence,
       })
     : undefined;
-  const hostedRegistration =
+  let hostedRegistration =
     hostedProviderEvidence !== undefined
       ? createHostedRegistrationOrThrow({
           gateway: hostedGateway!,
@@ -1613,6 +1619,42 @@ export async function saveGatewayModel(input: {
           providerEvidence: hostedProviderEvidence,
         })
       : undefined;
+  if (hostedRegistration !== undefined) {
+    const apiKey =
+      getGatewayApiKey(hostedGateway!) ??
+      (input.qualificationRunner === undefined ? null : "test-only-credential");
+    if (!apiKey) {
+      throw new GatewayModelProviderResolutionError({
+        message: `${getProviderDisplayName(hostedRegistrationProvider!)} gateway credentials are required to qualify a model for agent work.`,
+        status: 422,
+        retryable: false,
+      });
+    }
+    const openRouterRouteEvidence =
+      hostedRegistration.registration.providerId === "openrouter"
+        ? readHostedOpenRouterRouteEvidence({
+            metadata: {
+              kestrelModelRegistrationEvidenceV1: hostedRegistration.evidence,
+            },
+            registration: hostedRegistration.registration,
+          })
+        : undefined;
+    const qualification = await (input.qualificationRunner ?? qualifyHostedAgentLoopModel)({
+      registration: hostedRegistration.registration,
+      credential: {
+        revision: String(hostedGateway!.credentialRevision),
+        apiKey,
+      },
+      ...(openRouterRouteEvidence === undefined
+        ? {}
+        : { openRouterRouteEvidence }),
+    });
+    hostedRegistration = {
+      ...hostedRegistration,
+      registration: qualification.registration,
+      qualification: qualification.qualification,
+    };
+  }
   if (hostedRegistration !== undefined) {
     economicsMetadata = withHostedModelRegistration({
       metadata: economicsMetadata,
