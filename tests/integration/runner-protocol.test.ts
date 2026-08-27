@@ -3326,6 +3326,10 @@ test("an in-flight user cancellation cannot overwrite an earlier shutdown cancel
   const claimReleased = new Promise<void>((resolve) => {
     releaseClaim = resolve;
   });
+  let releaseRuntime!: () => void;
+  const runtimeReleased = new Promise<void>((resolve) => {
+    releaseRuntime = resolve;
+  });
   const host = new RunnerHost(
     writer,
     (_profile, _onLog, _onProgress, _onConsole, _onReasoning, _onTask, onRunEvent) => ({
@@ -3344,6 +3348,7 @@ test("an in-flight user cancellation cannot overwrite an earlier shutdown cancel
         await new Promise<void>((resolve) => {
           options?.signal?.addEventListener("abort", () => resolve(), { once: true });
         });
+        await runtimeReleased;
         return {
           assistantText: null,
           output: completedOutput(turn.sessionId, "run-shutdown-first"),
@@ -3382,7 +3387,9 @@ test("an in-flight user cancellation cannot overwrite an earlier shutdown cancel
   await claimStarted;
   const close = host.close({ abortActiveRuns: true });
   releaseClaim();
-  await Promise.all([cancel, run, close]);
+  await cancel;
+  releaseRuntime();
+  await Promise.all([run, close]);
 
   const cancelled = events.find((event) =>
     event.type === "run.cancelled" &&
