@@ -1,4 +1,4 @@
-# Named Collaborator and A2A Lifecycle Change Design
+# Local Named Collaborator Lifecycle Change Design
 
 ## Executive Summary
 
@@ -29,27 +29,21 @@ case-insensitively reserved for the lifetime of the parent Thread. Closing
 `Peregrine` does not make `Peregrine` available for a different collaborator
 in the same parent Thread.
 
-The existing `DelegationSupervisor` and `ThreadRuntime` remain the execution
-and parent-fan-in seams, but the dialog state can no longer live only as a
-mutable array in `DelegationRecord.policy_json`. Typed, append-oriented
-collaborator, task, message, artifact-reference, name-reservation, and outbox
-records must become the runtime authority. This is required for cursor reads,
-restart recovery, A2A task mappings, and an atomic close fence.
+The existing `DelegationSupervisor`, `ThreadRuntime`, and durable
+`orchestration_delegations` record remain the runtime authority for this
+release. This release adds no database migration, typed collaborator ledger,
+or data backfill. The existing Web `thread_dialogs` and `thread_messages`
+migration is a presentation projection, not lifecycle authority.
 
-A2A support is a real outbound provider path, not merely an analogy. A local
-child Thread and an approved remote A2A agent implement one collaborator
-provider boundary. Kestrel remains authoritative for the parent Thread,
-authorization, durable history, and delivery. Remote A2A context and task IDs
-are opaque bindings to a Kestrel collaborator and its work tasks; they never
-replace Kestrel identity. Inbound serving of Kestrel agents over A2A is outside
-this change.
+A2A support is explicitly deferred. A future A2A change may introduce typed
+collaborator/task/message/reservation/outbox storage and remote provider
+bindings, but neither is required to ship or operate this local lifecycle.
 
 ## Settled Product Contract
 
 A named collaborator has one durable identity, one immutable display name, and
-one private child Thread inside one parent Thread. The child Thread is the
-execution context for a local collaborator and the durable local mirror for a
-remote A2A collaborator.
+one private local child Thread inside one parent Thread. The child Thread is
+the execution context for this release.
 
 The lifecycle is:
 
@@ -78,9 +72,9 @@ A failed or completed task does not close its collaborator. An open,
 non-busy collaborator can receive another message. A closed collaborator can
 only be read or listed.
 
-## Current Behavior and First Wrong Components
+## Historical Baseline and Resolved Gaps
 
-Kestrel already exposes exactly `dialog.open`, `dialog.send`, and
+Before this release, Kestrel exposed only `dialog.open`, `dialog.send`, and
 `dialog.close` in the managed profile
 ([policy](../../src/profile/kestrelOnePolicy.ts),
 [registry](../../tools/runtime/UnifiedToolRegistry.ts)). Open creates a normal
@@ -93,7 +87,11 @@ dialog and source-message identity
 ([queue](../../src/orchestration/FollowUpQueue.ts)). These are the right seams
 to retain.
 
-The existing contract is incomplete in five specific places:
+The following was the initial gap analysis. It is historical context, not
+remaining release work: the local release now exposes exactly `dialog.open`,
+`dialog.send`, `dialog.read`, `dialog.list`, and `dialog.close` and retains the
+existing durable delegation storage. Typed tables, name-reservation backfill,
+and cross-provider close fencing remain future A2A-scale work.
 
 1. `DialogServicePort` has no read or list operation, and `DialogSnapshot`
    exposes no messages, cursor, task state, artifacts, or synchronization state
@@ -157,8 +155,7 @@ A parent-thread-scoped durable identity containing:
 - `dialogId`, immutable `name`, normalized name key, and private
   `childThreadId`;
 - lifecycle state and a monotonically increasing revision/fence;
-- provider kind and an opaque approved provider binding;
-- creation-time role/profile/capability binding and current policy validity;
+- creation-time local child-Thread binding and current policy validity;
 - timestamps including terminal `closedAt` when closed.
 
 The display name is not the primary key, but it is immutable and reserved for
@@ -171,11 +168,6 @@ One unit of work initiated by `dialog.open` or `dialog.send`. A collaborator
 has at most one nonterminal task. A later message creates a new task unless the
 current task is in an interrupted state that explicitly expects more input.
 
-For A2A, `input_required` and `auth_required` continue the same remote task ID.
-After a terminal task, a later send starts a new A2A task in the same remote
-context. This follows A2A's distinction between a conversational context and a
-task; a terminal A2A task cannot accept more messages.
-
 ### Message and Artifact
 
 Messages are append-only records with an immutable ID and sequence inside the
@@ -183,10 +175,8 @@ collaborator. They carry sender, task ID when applicable, parent run/source
 identity, typed content parts, status, and creation time. Rendered text such as
 `"Peregrine: result"` is presentation, not provenance.
 
-Artifacts are durable Kestrel artifact references associated with a
-collaborator task. Remote file URLs are never the durable artifact. The A2A
-provider validates and ingests permitted content through Kestrel's artifact
-boundary, then stores a Kestrel reference plus source metadata.
+Artifacts remain ordinary durable Kestrel artifact references associated with
+the local child Thread. This release adds no new collaborator artifact system.
 
 ### Required invariants
 
@@ -202,8 +192,8 @@ boundary, then stores a Kestrel reference plus source metadata.
 - Each committed reply produces at most one durable parent follow-up.
 - Nested Kestrel collaborator creation remains prohibited.
 - A collaborator can retain only the authority granted at creation and still
-  allowed by current policy. It never widens authority because an Agent Card,
-  model, or remote peer claims more capability.
+  allowed by current policy. It never widens authority because a model claims
+  more capability.
 
 ## Parent and Tool Instruction Contract
 
@@ -276,7 +266,6 @@ Input descriptions:
 | --- | --- | --- |
 | `name` | yes | A short, memorable name for this collaborator. The name must be unique in this task and cannot be changed or reused. |
 | `message` | yes | What you want the collaborator to do or answer. Include the context they need. |
-| `agentId` | no | The approved remote agent to use. Leave this out to use a Kestrel collaborator. |
 
 Runtime meaning: open reserves the name, creates the collaborator and private
 child Thread, saves the first message, creates the first work task, and records
@@ -305,9 +294,8 @@ arrived; the parent must not create a possible duplicate. Send starts a new
 work task after the last one ends. If the collaborator is waiting for an answer
 or permission, it continues that same task.
 
-The first model-facing input stays text-only. Internally, messages can contain
-A2A text and structured data. Files returned by a provider must become saved
-Kestrel artifact references before the parent can use them.
+The first model-facing input stays text-only. Local collaborators use text and
+existing saved Kestrel artifact references.
 
 ### Exact `dialog.read` copy
 
@@ -333,8 +321,7 @@ order. `afterCursor` checks for newer messages; `beforeCursor` pages into older
 history. With a current `afterCursor`, it returns no new messages.
 
 Read uses only Kestrel's saved state. It does not contact the collaborator,
-wake it, start work, or create a parent turn. Kestrel updates remote A2A work
-separately and reports when it last checked the remote agent.
+wake it, start work, or create a parent turn.
 
 ### Exact `dialog.list` copy
 
@@ -381,7 +368,7 @@ The input rules are exact:
 
 - Trim `name`. Accept 1 to 40 characters. Compare names without case. Reserve
   the normalized name until the parent Thread is deleted.
-- Require nonempty `message`, `dialogId`, `agentId`, and cursor strings when
+- Require nonempty `message`, `dialogId`, and cursor strings when
   those fields are present. The normal runtime request-size limit applies to
   messages; the dialog tools do not create another text-size limit.
 - `dialog.read.limit` accepts an integer from 1 through 100 and defaults to 20.
@@ -413,7 +400,7 @@ interface DialogSummaryV2 {
     | "delivery_unknown"
     | "interrupted";
   active: boolean;
-  provider: "local" | "a2a";
+  provider: "local";
   latestTask?: {
     taskId: string;
     status:
@@ -431,7 +418,6 @@ interface DialogSummaryV2 {
     updatedAt: string;
   };
   cursor: string;
-  providerObservedAt?: string;
   createdAt: string;
   updatedAt: string;
   closedAt?: string;
@@ -443,8 +429,8 @@ while the collaborator is waiting for input, needs authorization, has an
 unknown delivery result, was interrupted, is idle, or is closed. `activity`
 becomes `idle` after the latest task completes, fails, is cancelled, or is
 rejected. The terminal result remains available in `latestTask.status`. A
-closed collaborator is never active, even if a remote provider still reports
-work after Kestrel has closed it.
+closed collaborator is never active, even if a late local child completion
+arrives after Kestrel has closed it.
 
 `dialog.read` returns the summary plus one ordered item stream. Messages and
 saved artifacts share the same collaborator sequence, so one cursor cannot
@@ -526,9 +512,7 @@ Errors must state what happened and what the parent can do next. Use this copy:
 | `DIALOG_DELIVERY_UNKNOWN` | Kestrel does not know whether the last message reached '{name}'. Do not resend it. Use dialog.read to check the saved status. |
 | `DIALOG_CLOSED` | '{name}' is closed. You can read its history, but you cannot send another message or reopen it. |
 | `DIALOG_NESTING_FORBIDDEN` | Only Kestrel in the main conversation can open collaborators. Continue without opening another collaborator. |
-| `DIALOG_AGENT_NOT_APPROVED` | This remote agent is not approved for the current task. Use an approved agent or leave agentId out to use a Kestrel collaborator. |
 | `DIALOG_CURSOR_INVALID` | This cursor does not belong to this collaborator or list. Start a new read or list without the cursor. |
-| `DIALOG_PROVIDER_UNAVAILABLE` | The collaborator's provider is unavailable. The conversation is still saved. Read the current status or try again later. |
 
 Provider-specific details can appear in structured error metadata for logs and
 operators. The parent-facing message must remain actionable and must not expose
@@ -674,9 +658,7 @@ provider, or treats its local display state as lifecycle authority.
 
 Do not add a permanent sidebar section, a separate collaborators page, a
 workflow canvas, raw provider labels, or one global toast per collaborator
-event. Local and A2A collaborators share the same presentation; provider type
-is an operator concern unless a user-facing permission or failure requires
-disclosure.
+event. This local release does not expose a provider label.
 
 ### Delivery, focus, and accessibility
 
@@ -736,13 +718,13 @@ sequenceDiagram
     participant V as Collaborator Provider
     participant Q as Parent Follow-up Queue
 
-    P->>D: dialog.open(name, agentId?, first message)
-    D->>S: reserve name + create collaborator/task/message/outbox
+    P->>D: dialog.open(name, first message)
+    D->>S: reserve name + create local collaborator and saved message
     D-->>P: accepted snapshot + cursor
     D->>V: dispatch task asynchronously
     V-->>D: task status, reply parts, artifacts
     D->>S: commit only if lifecycle=open and fence matches
-    D->>Q: release committed reply through durable outbox
+    D->>Q: release committed reply through the existing follow-up queue
     Q-->>P: serialized collaborator follow-up
 
     P->>D: dialog.read(dialogId, afterCursor?)
@@ -766,21 +748,19 @@ sequenceDiagram
 The completion/close race has one durable linearization rule:
 
 - If the reply transaction commits while the collaborator is open and its
-  dispatch fence still matches, the reply and follow-up outbox entry exist.
+  dispatch fence still matches, the reply and follow-up record exist.
   A later close does not retract them, so the queued parent continuation may
   arrive after close with closed lifecycle metadata.
 - If close commits first, a late provider success cannot append a collaborator
-  message or enqueue a follow-up. It can be retained only as provider audit
-  evidence. The active task remains cancelled or records a late-cancel
-  diagnostic; the collaborator stays closed.
+  message or enqueue a follow-up. The active child task remains cancelled or
+  records a late-cancel diagnostic; the collaborator stays closed.
 
-The follow-up outbox and reply commit are one transaction. The existing
-`FollowUpQueue` remains the consumer: it starts a parent continuation when the
-parent is idle and serializes the update when the parent is busy. Multiple
-collaborator replies remain separate causally identified entries; they are not
-merged by rendered text. Each entry derives its parent turn identity from the
-saved collaborator message ID, so recovery replays a completed parent turn
-instead of calling the model twice.
+The existing `FollowUpQueue` remains the consumer: it starts a parent
+continuation when the parent is idle and serializes the update when the parent
+is busy. Multiple collaborator replies remain separate causally identified
+entries; they are not merged by rendered text. Each entry derives its parent
+turn identity from the saved collaborator message ID, so recovery replays a
+completed parent turn instead of calling the model twice.
 
 ## State Ownership and Persistence
 
@@ -790,33 +770,28 @@ The runtime orchestration store is canonical. Web `thread_dialogs` and
 whether a collaborator is open, whether a message committed before close, or
 which provider task is current.
 
-The durable runtime model needs typed stores with these responsibilities:
-
-| Record | Owns |
-| --- | --- |
-| Collaborator | Parent/child identity, immutable name, lifecycle, provider binding reference, policy revision, close fence |
-| Name reservation | Atomic lifetime uniqueness of normalized name within parent Thread |
-| Task | Kestrel task ID, task state, dispatch fence, provider task binding, delivery/synchronization state |
-| Message | Immutable sequence, sender, typed parts, task/source identities, status |
-| Artifact link | Kestrel artifact reference and provider provenance |
-| Delivery outbox | Exactly-once eligibility for parent follow-up and runtime projection events |
-
-The existing `orchestration_delegations` row remains the compatibility root and
-local child scheduling link. `persistent_dialog_v2` uses typed dialog records
-rather than treating `policy_json` as the authoritative message log. The
-generic one-shot delegation contract does not need to become a collaborator
-task model.
-
-The name reservation is separate from a strict unique index on all historical
-dialog rows. The current product permitted reuse, so old data may already
-contain duplicate closed names. Backfilling one reservation per normalized
-parent/name preserves those records while preventing every future reuse.
-
-Message sequence and close-fence changes are transactional compare-and-set
-operations. In-process `AbortController` state is an optimization only; it is
+For this release, the existing `orchestration_delegations` row is the durable
+root, including the local child scheduling link and dialog state. The
+`DelegationSupervisor` uses the existing transactional creation and
+compare-and-set operations to reserve names, preserve terminal close, and
+recover saved replies. In-process `AbortController` state is an optimization,
 not lifecycle authority.
 
-## Local and A2A Provider Boundary
+The existing Web migration
+[`0040_persistent_collaborator_dialogs.sql`](../../apps/web/lib/db/migrations/0040_persistent_collaborator_dialogs.sql)
+continues to project durable dialog messages into `thread_dialogs` and
+`thread_messages` for presentation and search. It is unchanged by this
+release; there is no schema change or historical data backfill.
+
+Typed append-only collaborator, task, message, reservation, artifact, and
+outbox records are a future A2A-scale persistence design. They are not a
+requirement for local named collaborators and must not be added opportunistically.
+
+## Future A2A Provider Boundary (Not in This Release)
+
+This section records a possible future interoperability direction. It is not
+implemented, is not a release prerequisite, and must not be used as a source of
+requirements for the local collaborator lifecycle above.
 
 ```mermaid
 flowchart LR
@@ -890,13 +865,9 @@ rather than an automatic duplicate send.
 
 ## Restart and Failure Recovery
 
-On runtime startup, durable nonterminal tasks are reconciled without reopening
-closed collaborators:
+On runtime startup, durable local tasks are reconciled without reopening closed
+collaborators:
 
-- A remote A2A task with a provider task ID is observed with `GetTask`; any
-  returned state, messages, and artifacts pass through the same fenced commit
-  path. Temporary network failure leaves the task observable as stale or
-  unknown and schedules bounded retry.
 - A local task whose process disappeared is marked `interrupted`, its dialog
   remains open, and a durable system message/follow-up explains that work did
   not complete. It is not silently replayed because the previous child turn may
@@ -906,53 +877,40 @@ closed collaborators:
 - A committed reply whose parent follow-up was not delivered remains in the
   outbox and is delivered once after restart.
 
-Task failure, provider rejection, unsupported content, and authentication
-requirements are task outcomes, not automatic collaborator closure. Reads
-expose the exact state and structured error. A later send is allowed when the
-collaborator is open and no task is actively working; authorization-required
-continuation follows the approved credential workflow rather than receiving
-credentials in an A2A message.
+Task failure and local interruption are task outcomes, not automatic
+collaborator closure. Reads expose the saved state and error. A later send is
+allowed when the collaborator is open and no child turn is actively working.
 
 ## Security and Policy Boundary
 
 - Every operation resolves `dialogId` under the active parent Thread. A raw ID
   never bypasses parent, organization, user, project, or workspace scope.
-- Remote definitions and credentials are operator-controlled. Tool input can
-  select only an approved `agentId`; it cannot provide a URL or secret.
-- Agent Card URLs and file references use HTTPS, egress allowlisting, DNS/IP
-  rebinding defenses, size/content limits, and SSRF validation.
-- Credentials are injected by the provider client from an opaque connection
-  reference and are never written into messages, Agent Cards, dialog rows, or
-  model context.
-- Agent Card signatures are verified when present; configured provider
-  identity and transport policy remain required even for a signed card.
-- Remote output is untrusted input. Parts and artifacts are schema-, media-,
-  size-, malware-, and authorization-checked before persistence or rendering.
-- A remote agent receives only the content and authority explicitly granted to
-  that collaborator. It does not inherit Kestrel's local tool credentials.
-- Local children cannot call `dialog.open`; a remote peer cannot call back into
-  Kestrel collaborator tools unless a future inbound A2A design explicitly
-  grants that path.
+- Local children cannot call `dialog.open` and therefore cannot create nested
+  collaborators.
+- This release has no remote collaborator definition, Agent Card, remote
+  credential, provider URL, or A2A transport input.
 
 ## Affected Surface
 
 | Surface | Required change |
 | --- | --- |
 | Parent prompt | Add the approved plain-language collaboration policy and no hidden routing heuristic |
-| Tool contracts/catalog | Add `dialog.read` and `dialog.list`; add approved `agentId` selection to open; use the exact descriptions and field help in this design |
+| Tool contracts/catalog | Expose exactly `dialog.open`, `dialog.send`, `dialog.read`, `dialog.list`, and `dialog.close` with the approved plain-language descriptions |
 | Managed profile and smoke contract | Expose exactly open, send, read, list, and close; keep legacy delegation tools hidden; remove bird-name language |
-| `DelegationSupervisor` | Coordinate typed state, provider dispatch, busy/input continuation, terminal close, and fenced completion |
+| `DelegationSupervisor` | Coordinate local durable dialog state, child dispatch, busy continuation, terminal close, and fenced completion |
 | `ThreadRuntime`/`FollowUpQueue` | Consume durable outbox entries and preserve structured provenance while serializing parent turns |
-| Orchestration store | Add typed collaborator/task/message/artifact-link/name-reservation/outbox operations and compare-and-set transitions |
-| PostgreSQL/in-memory stores | Implement the same canonical ordering, uniqueness, fence, and query semantics |
-| Local child execution | Preserve one private child Thread, persisted role/policy binding, no nesting, and interrupted-run recovery |
-| A2A client provider | Approved discovery, transport negotiation, send/get/cancel, content normalization, and ambiguous-delivery handling |
-| Web persistence | Project canonical lifecycle/task/message state; stop treating the partial open-name index as the runtime invariant |
+| Orchestration store | Retain the existing durable delegation record and transactional dialog operations; no new schema or migration |
+| PostgreSQL/in-memory stores | Preserve the existing local ordering, uniqueness, terminal-close, and query semantics |
+| Local child execution | Preserve one private child Thread, no nesting, and interrupted-run recovery |
+| Web persistence | Keep the existing `0040_persistent_collaborator_dialogs` presentation projection unchanged |
 | Web/Desktop/TUI/operator views | Group private messages by collaborator; show the immutable name, open/closed lifecycle, activity, task failures, artifacts, and archived readable history without rendering every private message in the primary transcript |
 | Replay/evidence | Include collaborator/task/message/source IDs and close-fence outcomes in deterministic events |
 | Prompt and tool-choice tests | Protect the approved words, reply instructions, examples, and no-tool cases as behavior |
 
-## Coexistence and Transition Contract
+## Future Typed-Ledger Coexistence and Transition (Not in This Release)
+
+The transition described below applies only if a later A2A-scale typed ledger
+is approved. It is not a migration plan for this local release.
 
 Existing `persistent_dialog_v1` records remain readable by ID. The v2 reader
 can normalize their message arrays into the new response shape, and the
@@ -1037,26 +995,25 @@ complete outbound named collaboration.
   explicitly. Confidence: high.
 - **Parent delivery:** every committed reply creates one durable, serialized
   parent follow-up. Confidence: high.
-- **Persistence:** typed append-oriented runtime records and outbox become
-  canonical; Web remains a projection. Confidence: high.
-- **A2A direction:** outbound v1 client first through the official JS SDK;
-  inbound serving, gRPC, and v0.3 compatibility are out of scope. Confidence:
+- **Persistence:** retain the existing durable delegation record and Web
+  projection; no migration or backfill is part of this release. Confidence:
   high.
-- **A2A mapping:** one Kestrel collaborator context contains sequential tasks;
-  remote IDs are opaque bindings. Confidence: high.
-- **Content:** outbound text first; typed text/data results and ingested durable
-  artifact references are supported. Confidence: medium-high.
-- **Restart:** reconcile remote tasks, mark vanished local work interrupted,
-  and never automatically replay uncertain effects. Confidence: high.
+- **A2A direction:** deferred to a future change. It must not add a remote
+  provider, typed ledger, or transport work to this release. Confidence: high.
+- **Content:** local collaborator text and existing saved Kestrel artifacts are
+  supported; no new collaborator artifact system is introduced. Confidence:
+  high.
+- **Restart:** mark vanished local work interrupted and never automatically
+  replay uncertain effects. Confidence: high.
 - **Nesting and authority:** no nested Kestrel collaborators; persisted
   creation authority is revalidated and can only narrow. Confidence: high.
 
-No material design question remains. Streaming, push notifications, richer
-outbound parts, collaborator renaming, name reuse, waiting subscriptions,
-cross-parent collaborators, and inbound A2A are explicit future changes rather
-than ambiguities in this contract.
+No material local-release design question remains. Streaming, push
+notifications, collaborator renaming, name reuse, waiting subscriptions,
+cross-parent collaborators, typed append-only storage, and A2A are explicit
+future changes rather than ambiguities in this contract.
 
-## External Findings
+## Future A2A External Findings (Not a Local Release Requirement)
 
 The released [A2A v1.0 specification](https://a2a-protocol.org/v1.0.0/specification/)
 defines contexts as groupings for multiple tasks and messages, requires new

@@ -98,10 +98,11 @@ not depend on which product initiated the work.
 
 Kestrel One has one versioned agent policy across Desktop, CLI/TUI, and the
 hosted product. The policy owns agent identity, prompt selection, interaction
-modes, safety defaults, and the model-visible collaborator contract. Only
-`dialog.open`, `dialog.send`, and `dialog.close` are model-visible collaboration
-tools; legacy spawn/delegate operations remain internal, and collaborators
-cannot create nested collaborators.
+modes, safety defaults, and the model-visible collaborator contract. The five
+model-visible collaboration tools are `dialog.open`, `dialog.send`,
+`dialog.read`, `dialog.list`, and `dialog.close`; legacy spawn/delegate
+operations remain internal, and collaborators cannot create nested
+collaborators.
 
 Environment presets are separate from agent policy. `cli_dev_local`,
 `desktop_dev_local`, and `workspace_hosted` contribute only their runtime

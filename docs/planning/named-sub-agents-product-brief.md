@@ -20,6 +20,10 @@ child Thread inside one parent Thread. Kestrel keeps the existing
 `FollowUpQueue` seams. The release hardens those seams instead of introducing a
 new agent platform.
 
+This release adds no database migration or data backfill. Existing Web
+`0040_persistent_collaborator_dialogs` storage remains the presentation/search
+projection of Kestrel's durable local dialog records.
+
 ## Outcomes and Delivery Boundary
 
 This release must create these outcomes:
@@ -241,24 +245,16 @@ Do not introduce a provider interface, remote-agent registry, generalized task
 model, generalized artifact stream, or generalized delivery outbox in this
 release.
 
-### Minimum durable state
+### Existing durable state
 
-Extend the existing dialog record and store operations only as needed to keep:
+The existing delegation record, child Thread, and `FollowUpQueue` are the
+durable state for this release. They already retain the collaborator identity,
+lifecycle, saved private history, and parent follow-up path used by the five
+tools. This release does not alter their schema or add a data backfill.
 
-- immutable name and normalized name reservation;
-- open or closed lifecycle and `closedAt`;
-- a monotonic revision used to fence close against completion;
-- idle, working, waiting, or interrupted activity;
-- saved messages with stable message IDs, sender, status, and time;
-- the newest message cursor;
-- whether a saved collaborator reply still needs a parent follow-up;
-- creation-time profile and capability ceiling.
-
-Use an atomic store operation for lifetime name reservation and close fencing.
-Use the smallest data change that enforces those guarantees in both PostgreSQL
-and the in-memory store. Do not normalize local state into multiple tables
-unless implementation evidence shows the existing record cannot satisfy a
-required atomic transition.
+A future A2A-scale follow-on may replace or supplement this record with typed
+append-only tables, historical-name reservation backfill, or cross-provider
+close fencing. None is a prerequisite for the local lifecycle.
 
 ### Tool inputs and results
 
@@ -320,11 +316,8 @@ general-purpose outbox for unrelated runtime work.
 ### Existing data and restart behavior
 
 - Preserve existing dialog IDs, child Thread IDs, names, and message history.
-- Reserve every distinct historical normalized name against future reuse.
-- Preserve duplicate historical names as readable records by ID.
-- Add missing local lifecycle fields lazily or through one additive migration.
-- Do not build an expand-migrate-contract program for this local change.
-- Mark an open dialog with vanished active work as interrupted after restart.
+- Keep using the current restart and follow-up behavior; do not add a migration,
+  historical-name backfill, or a new delivery system.
 - Never replay uncertain work automatically and never resume closed work.
 
 ### Verification

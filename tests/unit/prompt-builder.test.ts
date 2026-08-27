@@ -117,6 +117,20 @@ test("deliberator prompt preserves application instructions at system priority",
   assert.match(prompt, /2\. Return a JSON object matching the requested schema\./u);
 });
 
+test("base Kestrel and Reference React prompts leave collaborator guidance to the parent runtime", () => {
+  const kestrel = buildDeliberatorSystemPrompt({
+    interactionMode: "build",
+    promptVariant: "kestrel:build",
+  });
+  const referenceReact = buildDeliberatorSystemPrompt({
+    interactionMode: "build",
+    promptVariant: "reference-react:build",
+  });
+
+  assert.doesNotMatch(kestrel, /named collaborators/iu);
+  assert.doesNotMatch(referenceReact, /Named collaborators:/u);
+});
+
 test("deliberator prompt exposes typed host actions only for Desktop Chat and Build", () => {
   const desktopChat = buildDeliberatorSystemPrompt({
     interactionMode: "chat",

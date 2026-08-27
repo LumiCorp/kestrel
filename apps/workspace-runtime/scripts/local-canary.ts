@@ -112,7 +112,7 @@ try {
 				toolName.startsWith("delegate.") ||
 				toolName === "agent.spawn",
 		),
-		["dialog.open", "dialog.send", "dialog.close"],
+		["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"],
 	);
 } finally {
 	await runnerClient.close();

@@ -147,7 +147,13 @@ test("ThreadRuntime gives only fully equipped root turns the named collaborator 
   await runtime.submitTurn({ threadId: "dialog-root", message: "work", eventType: "user.message" });
   await runtime.submitTurn({ threadId: "dialog-child", message: "work", eventType: "user.message" });
 
-  assert.match(executor.inputs[0]?.runtimeTurn?.systemInstructions?.join("\n") ?? "", /You can ask named collaborators to help with the current task\./);
+  const parentInstructions = executor.inputs[0]?.runtimeTurn?.systemInstructions?.join("\n") ?? "";
+  assert.match(parentInstructions, /You can ask named collaborators to help with the current task\./u);
+  assert.match(parentInstructions, /Do not open one when nobody can continue until the user answers a question\./u);
+  assert.match(parentInstructions, /dialog\.send only when it is open and idle\./u);
+  assert.match(parentInstructions, /Use dialog\.read when you want to see their status, messages, or results without asking them to do more\./u);
+  assert.match(parentInstructions, /Collaborators cannot open other collaborators\./u);
+  assert.equal(parentInstructions.match(/You can ask named collaborators to help with the current task\./gu)?.length, 1);
   assert.equal(executor.inputs[1]?.runtimeTurn?.systemInstructions, undefined);
 });
 
