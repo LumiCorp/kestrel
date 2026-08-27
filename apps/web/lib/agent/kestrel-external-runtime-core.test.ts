@@ -163,6 +163,89 @@ test("external replies surface canonical runner failures", async () => {
   );
 });
 
+test("external cancellation errors retain completed usage and safe support evidence", async () => {
+  const agent: Pick<KestrelAgent, "run"> = {
+    async run(turn) {
+      return {
+        id: "event_cancelled",
+        type: "run.cancelled",
+        ts: "2026-07-09T12:00:00.000Z",
+        sessionId: turn.sessionId,
+        runId: "run_cancelled",
+        payload: {
+          sessionId: turn.sessionId,
+          runId: "run_cancelled",
+          result: {
+            assistantText: null,
+            output: {
+              status: "FAILED",
+              sessionId: turn.sessionId,
+              runId: "run_cancelled",
+              errors: [{
+                code: "RUN_CANCELLED",
+                message: "Run cancelled.",
+                details: {
+                  cancellationReason: "user_requested",
+                  modelWorkRecorded: true,
+                  validationRejections: 1,
+                  prompt: "secret prompt",
+                  credential: "secret credential",
+                },
+              }],
+              telemetry: {
+                modelCalls: 1,
+                inputTokens: 21,
+                cachedInputTokens: 5,
+                outputTokens: 8,
+                reasoningTokens: 3,
+                totalTokens: 29,
+                durationMs: 400,
+                pricedCostUsd: 0.002,
+                validationRejections: 1,
+              },
+            },
+          },
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    generateKestrelOneExternalReplyFromAgent({
+      agent,
+      sessionId: "chat_123",
+      prompt: "Cancel after validation",
+      context,
+      clientCapabilities: undefined,
+    }),
+    (error: unknown) => {
+      const failure = error as Error & {
+        code?: string;
+        details?: Record<string, unknown>;
+        usage?: Record<string, number>;
+      };
+      assert.equal(failure.code, "RUN_CANCELLED");
+      assert.deepEqual(failure.details, {
+        cancellationReason: "user_requested",
+        modelWorkRecorded: true,
+        validationRejections: 1,
+      });
+      assert.deepEqual(failure.usage, {
+        modelCalls: 1,
+        inputTokens: 21,
+        cachedInputTokens: 5,
+        outputTokens: 8,
+        reasoningTokens: 3,
+        totalTokens: 29,
+        durationMs: 400,
+        pricedCostUsd: 0.002,
+        validationRejections: 1,
+      });
+      return true;
+    },
+  );
+});
+
 test("external bot replies submit the gateway-managed inline profile", async () => {
   let captured: unknown;
   const profile = {

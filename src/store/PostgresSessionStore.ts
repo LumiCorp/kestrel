@@ -3,6 +3,7 @@ import type {
   RuntimeError,
   TransitionStatus,
 } from "../kestrel/contracts/base.js";
+import { parseRunnerPreparedApprovalCleanupV1 } from "@kestrel-agents/protocol";
 import {
   SandboxCapabilityExactResultCancelledError,
   SandboxCapabilityExactResultConflictError,
@@ -11,6 +12,10 @@ import {
   validateExactEffectCancellationTenantBinding,
   validateExactEffectResultRead,
   validateExactEffectResultTenantBinding,
+  quarantinePreparedApprovalCleanupDoneResult,
+  snapshotEffectResultPersistenceIntent,
+  validatePreparedApprovalCleanupEffectIdentity,
+  validatePreparedApprovalCleanupDoneEvidence,
 } from "../kestrel/contracts/store.js";
 import type {
   RunEvent,
@@ -22,6 +27,7 @@ import type {
   CommitStepResult,
   ClaimConversationTurnExecutionInput,
   ClaimConversationTurnExecutionResult,
+  EffectResultPersistenceIntent,
   GetArtifactInput,
   ListArtifactsInput,
   PersistedArtifact,
@@ -88,6 +94,11 @@ import {
 } from "../runtime/stateDiagnostics.js";
 import { normalizeOptionalTimestampString, normalizeTimestampString } from "../runtime/timestamps.js";
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
+import {
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot,
+  snapshotPreparedApprovalCleanupResult,
+} from "../runtime/preparedApprovalCleanupAudit.js";
 import {
   buildCanonicalWaitingFor,
   readActiveWaitState,
@@ -1567,7 +1578,7 @@ export class PostgresSessionStore implements SessionStore {
               e.payload_json, e.idempotency_key, e.failure_policy, e.status, e.created_at
          FROM effects e
         WHERE e.session_id = $1
-          AND e.status = 'PENDING'
+          AND e.status IN ('PENDING', 'CLAIMED')
         ORDER BY e.id ASC`,
       [sessionId],
     );
@@ -1762,6 +1773,7 @@ export class PostgresSessionStore implements SessionStore {
             : tenantRead.status === "not_found" ? "not_found" : "conflict",
         } as const;
       }
+      if (effect.status === "CLAIMED") return { status: "started" } as const;
       if (effect.status !== "PENDING") return { status: "conflict" } as const;
       await executor.query(
         `UPDATE effects SET status = 'FAILED' WHERE idempotency_key = $1`,
@@ -1775,7 +1787,26 @@ export class PostgresSessionStore implements SessionStore {
     runId: string,
     sessionId: string,
     result: EffectResult,
+    intent?: EffectResultPersistenceIntent | undefined,
   ): Promise<void> {
+    const materializedIntent = intent === undefined
+      ? null
+      : snapshotEffectResultPersistenceIntent(intent);
+    if (intent !== undefined && materializedIntent === null) {
+      throw new SandboxCapabilityExactResultConflictError(
+        "Cleanup persistence intent was unreadable or malformed",
+      );
+    }
+    const cleanupMaterializedCandidate = materializedIntent === null
+      ? null
+      : snapshotPreparedApprovalCleanupResult({
+          result,
+          expectedIdempotencyKey: materializedIntent.idempotencyKey,
+        });
+    const resultIdempotencyKey = materializedIntent?.idempotencyKey ??
+      result.idempotencyKey;
+    const resultStatus = cleanupMaterializedCandidate?.snapshot?.status ??
+      (materializedIntent === null ? result.status : null);
     await this.ensureSchemaV3();
     await this.withTransaction(async (executor) => {
       const effect = await executor.query<{
@@ -1787,21 +1818,116 @@ export class PostgresSessionStore implements SessionStore {
         `SELECT run_id, session_id, status, tenant_id, tenant_ownership_state, effect_type, payload_json,
                 step_index, failure_policy, created_at
            FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
-        [result.idempotencyKey],
+        [resultIdempotencyKey],
       );
       const row = effect.rows[0];
       if (row === undefined || row.run_id !== runId || row.session_id !== sessionId) {
         throw new SandboxCapabilityExactResultConflictError("Effect result owner does not match the locked effect");
       }
-      if (result.status === "DONE" && row.status === "FAILED") {
+      const persistedEffect: PersistedEffect = {
+        runId: row.run_id, sessionId: row.session_id, stepIndex: row.step_index,
+        type: row.effect_type, payload: row.payload_json, idempotencyKey: resultIdempotencyKey,
+        failurePolicy: row.failure_policy, status: row.status, createdAt: normalizeTimestampString(row.created_at),
+      };
+      const preparedApprovalCleanup =
+        isPreparedApprovalCleanupReleaseEffect(
+          row.effect_type,
+          row.payload_json,
+        );
+      if (materializedIntent !== null) {
+        if (!preparedApprovalCleanup) {
+          throw new SandboxCapabilityExactResultConflictError(
+            "Cleanup persistence intent does not match the locked durable effect",
+          );
+        }
+        validatePreparedApprovalCleanupEffectIdentity(persistedEffect);
+      } else if (preparedApprovalCleanup) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup result persistence requires explicit cleanup intent",
+        );
+      }
+      if (resultStatus === "DONE" && row.status === "FAILED") {
         throw new SandboxCapabilityExactResultCancelledError("Completed effect-result persistence lost to durable cancellation");
       }
-      if (!await this.hasTrustedPostgresEffectTenant(executor, {
-        runId: row.run_id, sessionId: row.session_id, stepIndex: row.step_index,
-        type: row.effect_type, payload: row.payload_json, idempotencyKey: result.idempotencyKey,
-        failurePolicy: row.failure_policy, status: row.status, createdAt: normalizeTimestampString(row.created_at),
-      }, row.tenant_id, row.tenant_ownership_state, result)) {
+      const tenantResult = cleanupMaterializedCandidate?.snapshot ?? {
+        idempotencyKey: resultIdempotencyKey,
+        status: "FAILED" as const,
+        timestamp: new Date().toISOString(),
+      };
+      if (!await this.hasTrustedPostgresEffectTenant(executor, persistedEffect,
+        row.tenant_id, row.tenant_ownership_state,
+        materializedIntent === null ? result : tenantResult)) {
         throw new SandboxCapabilityExactResultConflictError("Effect result tenant does not match durable authority");
+      }
+      let resultToPersist = result;
+      if (cleanupMaterializedCandidate !== null) {
+        const existing = await executor.query(
+          `SELECT 1 FROM effect_results
+            WHERE idempotency_key = $1
+            FOR UPDATE`,
+          [resultIdempotencyKey],
+        );
+        if (existing.rows[0] !== undefined) return;
+        const occurredAt = new Date().toISOString();
+        const materialized = cleanupMaterializedCandidate;
+        let validSnapshot = false;
+        if (materialized.snapshot?.status === "DONE") {
+          try {
+            validatePreparedApprovalCleanupDoneEvidence({
+              effect: persistedEffect,
+              result: materialized.snapshot,
+            });
+            validSnapshot = true;
+            resultToPersist = materialized.snapshot;
+          } catch {
+            // Invalid result evidence is quarantined below in this transaction.
+          }
+        }
+        if (materialized.snapshot?.status === "FAILED") {
+          resultToPersist = materialized.snapshot;
+          validSnapshot = true;
+        }
+        if (!validSnapshot) {
+          const quarantined =
+            quarantinePreparedApprovalCleanupDoneResult(
+              {
+                idempotencyKey: persistedEffect.idempotencyKey,
+                status: "DONE",
+                timestamp: occurredAt,
+              },
+            );
+          await this.appendRunEventsBatchWithExecutor(executor, [
+            buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot({
+              effect: persistedEffect,
+              auditSnapshot: materialized.auditSnapshot,
+              occurredAt,
+            }),
+          ]);
+          await executor.query(
+            `INSERT INTO effect_results
+               (run_id, session_id, idempotency_key, status, output_json,
+                error_json, created_at)
+             VALUES ($1, $2, $3, 'FAILED', NULL, $4::jsonb, $5::timestamptz)`,
+            [
+              runId,
+              sessionId,
+              persistedEffect.idempotencyKey,
+              stringifySanitizedJson(quarantined.error),
+              occurredAt,
+            ],
+          );
+          await executor.query(
+            `UPDATE effects SET status = 'PENDING'
+              WHERE idempotency_key = $1`,
+            [persistedEffect.idempotencyKey],
+          );
+          return;
+        }
+      }
+      if (resultStatus === null) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup result persistence did not produce a stable terminal status",
+        );
       }
       await executor.query(
         `INSERT INTO effect_results
@@ -1811,12 +1937,556 @@ export class PostgresSessionStore implements SessionStore {
         [
           runId,
           sessionId,
-          result.idempotencyKey,
-          result.status,
+          resultIdempotencyKey,
+          resultStatus,
+          stringifySanitizedJson(resultToPersist.output ?? null),
+          stringifySanitizedJson(resultToPersist.error ?? null),
+          normalizeTimestampString(resultToPersist.timestamp),
+        ],
+      );
+    });
+  }
+
+  async claimEffectExecution(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"claimed" | "already_claimed" | "terminal"> {
+    await this.ensureSchemaV3();
+    return this.withTransaction(async (executor) => {
+      const effect = await executor.query<{
+        run_id: string; session_id: string; status: PersistedEffect["status"];
+        tenant_id: string | null; tenant_ownership_state: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
+        effect_type: string; payload_json: Record<string, unknown>;
+        step_index: number; failure_policy: PersistedEffect["failurePolicy"]; created_at: string;
+      }>(
+        `SELECT run_id, session_id, status, tenant_id, tenant_ownership_state, effect_type, payload_json,
+                step_index, failure_policy, created_at
+           FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const row = effect.rows[0];
+      if (row === undefined || row.run_id !== owner.runId || row.session_id !== owner.sessionId) {
+        throw new SandboxCapabilityExactResultConflictError("Effect execution owner or tenant does not match the locked effect");
+      }
+      if (!await this.hasTrustedPostgresEffectTenant(executor, {
+        runId: row.run_id, sessionId: row.session_id, stepIndex: row.step_index,
+        type: row.effect_type, payload: row.payload_json, idempotencyKey,
+        failurePolicy: row.failure_policy, status: row.status, createdAt: normalizeTimestampString(row.created_at),
+      }, row.tenant_id, row.tenant_ownership_state)) {
+        throw new SandboxCapabilityExactResultConflictError("Effect execution owner or tenant does not match durable authority");
+      }
+      if (row.status !== "PENDING") {
+        return row.status === "CLAIMED" ? "already_claimed" : "terminal";
+      }
+      const claimed = await executor.query(
+        `UPDATE effects SET status = 'CLAIMED'
+          WHERE idempotency_key = $1 AND run_id = $2 AND session_id = $3 AND status = 'PENDING'`,
+        [idempotencyKey, owner.runId, owner.sessionId],
+      );
+      if (claimed.rowCount !== 1) {
+        throw new SandboxCapabilityExactResultConflictError("Effect execution claim lost its serialized authority");
+      }
+      return "claimed";
+    });
+  }
+
+  async resetPreparedApprovalCleanupEffectExecution(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"reset" | "done" | "conflict"> {
+    await this.ensureSchemaV3();
+    return this.withTransaction(async (executor) => {
+      const effect = await executor.query<{
+        run_id: string; session_id: string; status: PersistedEffect["status"];
+        effect_type: string; payload_json: Record<string, unknown>;
+        step_index: number; failure_policy: PersistedEffect["failurePolicy"];
+        created_at: string; tenant_id: string | null;
+        tenant_ownership_state: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
+      }>(
+        `SELECT run_id, session_id, status, effect_type, payload_json, step_index,
+                failure_policy, created_at, tenant_id, tenant_ownership_state
+           FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const row = effect.rows[0];
+      if (
+        row === undefined ||
+        row.run_id !== owner.runId ||
+        row.session_id !== owner.sessionId ||
+        !isPreparedApprovalCleanupReleaseEffect(row.effect_type, row.payload_json)
+      ) return "conflict";
+      if (!await this.hasTrustedPostgresEffectTenant(executor, {
+        runId: row.run_id,
+        sessionId: row.session_id,
+        stepIndex: row.step_index,
+        type: row.effect_type,
+        payload: row.payload_json,
+        idempotencyKey,
+        failurePolicy: row.failure_policy,
+        status: row.status,
+        createdAt: normalizeTimestampString(row.created_at),
+      }, row.tenant_id, row.tenant_ownership_state)) return "conflict";
+      const result = await executor.query<{ status: "DONE" | "FAILED" }>(
+        `SELECT status FROM effect_results WHERE idempotency_key = $1 FOR UPDATE`,
+        [idempotencyKey],
+      );
+      if (result.rows[0]?.status === "DONE") return "done";
+      if (result.rows[0]?.status === "FAILED") {
+        await executor.query(
+          `DELETE FROM effect_results WHERE idempotency_key = $1 AND status = 'FAILED'`,
+          [idempotencyKey],
+        );
+      }
+      if (row.status === "DONE") return "conflict";
+      await executor.query(
+        `UPDATE effects SET status = 'PENDING' WHERE idempotency_key = $1`,
+        [idempotencyKey],
+      );
+      return "reset";
+    });
+  }
+
+  async quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"done" | "quarantined" | "conflict"> {
+    await this.ensureSchemaV3();
+    return this.withTransaction(async (executor) => {
+      const selected = await executor.query<{
+        run_id: string;
+        session_id: string;
+        status: PersistedEffect["status"];
+        effect_type: string;
+        payload_json: Record<string, unknown>;
+        step_index: number;
+        failure_policy: PersistedEffect["failurePolicy"];
+        created_at: string;
+        tenant_id: string | null;
+        tenant_ownership_state:
+          | "legacy_unknown"
+          | "explicit_unbound"
+          | "tenant_bound";
+      }>(
+        `SELECT run_id, session_id, status, effect_type, payload_json,
+                step_index, failure_policy, created_at, tenant_id,
+                tenant_ownership_state
+           FROM effects
+          WHERE idempotency_key = $1
+          FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const row = selected.rows[0];
+      if (
+        row === undefined ||
+        row.run_id !== owner.runId ||
+        row.session_id !== owner.sessionId ||
+        !isPreparedApprovalCleanupReleaseEffect(
+          row.effect_type,
+          row.payload_json,
+        )
+      ) return "conflict";
+      const effect: PersistedEffect = {
+        runId: row.run_id,
+        sessionId: row.session_id,
+        stepIndex: row.step_index,
+        type: row.effect_type,
+        payload: row.payload_json,
+        idempotencyKey,
+        failurePolicy: row.failure_policy,
+        status: row.status,
+        createdAt: normalizeTimestampString(row.created_at),
+      };
+      try {
+        validatePreparedApprovalCleanupEffectIdentity(effect);
+      } catch {
+        return "conflict";
+      }
+      const recorded = await executor.query<{
+        status: "DONE" | "FAILED";
+        output_json: unknown;
+        error_json: RuntimeError | null;
+        created_at: string;
+        run_id: string;
+        session_id: string;
+      }>(
+        `SELECT status, output_json, error_json, created_at, run_id, session_id
+           FROM effect_results
+          WHERE idempotency_key = $1
+          FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const resultRow = recorded.rows[0];
+      if (
+        resultRow === undefined ||
+        resultRow.status !== "DONE" ||
+        resultRow.run_id !== owner.runId ||
+        resultRow.session_id !== owner.sessionId
+      ) return "conflict";
+      const result: EffectResult & { status: "DONE" } = {
+        idempotencyKey,
+        status: "DONE",
+        ...(resultRow.output_json === null
+          ? {}
+          : { output: resultRow.output_json }),
+        ...(resultRow.error_json === null
+          ? {}
+          : { error: resultRow.error_json }),
+        timestamp: normalizeTimestampString(resultRow.created_at),
+      };
+      if (
+        !await this.hasTrustedPostgresEffectTenant(
+          executor,
+          effect,
+          row.tenant_id,
+          row.tenant_ownership_state,
+          result,
+        )
+      ) return "conflict";
+      try {
+        validatePreparedApprovalCleanupDoneEvidence({ effect, result });
+        await executor.query(
+          `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1`,
+          [idempotencyKey],
+        );
+        return "done";
+      } catch {
+        const occurredAt = new Date().toISOString();
+        const quarantined =
+          quarantinePreparedApprovalCleanupDoneResult(result);
+        await this.appendRunEventsBatchWithExecutor(executor, [
+          buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+            effect,
+            invalidResult: result,
+            occurredAt,
+          }),
+        ]);
+        await executor.query(
+          `UPDATE effect_results
+              SET status = 'FAILED', output_json = NULL, error_json = $2::jsonb,
+                  created_at = $3::timestamptz
+            WHERE idempotency_key = $1`,
+          [idempotencyKey, stringifySanitizedJson(quarantined.error), occurredAt],
+        );
+        await executor.query(
+          `UPDATE effects SET status = 'PENDING' WHERE idempotency_key = $1`,
+          [idempotencyKey],
+        );
+        return "quarantined";
+      }
+    });
+  }
+
+  async executePreparedApprovalCleanupInCriticalSection(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+    execute: () => Promise<EffectResult & { status: "DONE" }>,
+  ): Promise<
+    | { status: "executed"; result: EffectResult & { status: "DONE" } }
+    | { status: "done"; result: EffectResult & { status: "DONE" } }
+    | { status: "conflict" }
+  > {
+    await this.ensureSchemaV3();
+    return this.withDedicatedPreparedApprovalCleanupTransaction(async (executor) => {
+      const selected = await executor.query<{
+        run_id: string;
+        session_id: string;
+        status: PersistedEffect["status"];
+        effect_type: string;
+        payload_json: Record<string, unknown>;
+        step_index: number;
+        failure_policy: PersistedEffect["failurePolicy"];
+        created_at: string;
+        tenant_id: string | null;
+        tenant_ownership_state:
+          | "legacy_unknown"
+          | "explicit_unbound"
+          | "tenant_bound";
+      }>(
+        `SELECT run_id, session_id, status, effect_type, payload_json,
+                step_index, failure_policy, created_at, tenant_id,
+                tenant_ownership_state
+           FROM effects
+          WHERE idempotency_key = $1
+          FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const row = selected.rows[0];
+      if (
+        row === undefined ||
+        row.run_id !== owner.runId ||
+        row.session_id !== owner.sessionId ||
+        !isPreparedApprovalCleanupReleaseEffect(
+          row.effect_type,
+          row.payload_json,
+        )
+      ) return { status: "conflict" };
+      const effect: PersistedEffect = {
+        runId: row.run_id,
+        sessionId: row.session_id,
+        stepIndex: row.step_index,
+        type: row.effect_type,
+        payload: row.payload_json,
+        idempotencyKey,
+        failurePolicy: row.failure_policy,
+        status: row.status,
+        createdAt: normalizeTimestampString(row.created_at),
+      };
+      try {
+        validatePreparedApprovalCleanupEffectIdentity(effect);
+      } catch {
+        return { status: "conflict" };
+      }
+      const recorded = await executor.query<{
+        run_id: string;
+        session_id: string;
+        status: "DONE" | "FAILED";
+        output_json: unknown;
+        error_json: RuntimeError | null;
+        created_at: string;
+      }>(
+        `SELECT run_id, session_id, status, output_json, error_json, created_at
+           FROM effect_results
+          WHERE idempotency_key = $1
+          FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const resultRow = recorded.rows[0];
+      if (
+        resultRow !== undefined &&
+        (resultRow.run_id !== owner.runId ||
+          resultRow.session_id !== owner.sessionId)
+      ) return { status: "conflict" };
+      if (resultRow?.status === "DONE") {
+        const result: EffectResult & { status: "DONE" } = {
+          idempotencyKey,
+          status: "DONE",
+          ...(resultRow.output_json === null
+            ? {}
+            : { output: resultRow.output_json }),
+          ...(resultRow.error_json === null
+            ? {}
+            : { error: resultRow.error_json }),
+          timestamp: normalizeTimestampString(resultRow.created_at),
+        };
+        if (
+          !await this.hasTrustedPostgresEffectTenant(
+            executor,
+            effect,
+            row.tenant_id,
+            row.tenant_ownership_state,
+            result,
+          )
+        ) return { status: "conflict" };
+        try {
+          validatePreparedApprovalCleanupDoneEvidence({ effect, result });
+        } catch {
+          return { status: "conflict" };
+        }
+        await executor.query(
+          `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1`,
+          [idempotencyKey],
+        );
+        return { status: "done", result };
+      }
+      if (
+        resultRow !== undefined ||
+        row.status !== "CLAIMED" ||
+        !await this.hasTrustedPostgresEffectTenant(
+          executor,
+          effect,
+          row.tenant_id,
+          row.tenant_ownership_state,
+        )
+      ) return { status: "conflict" };
+      const result = await execute();
+      validatePreparedApprovalCleanupDoneEvidence({ effect, result });
+      if (
+        !await this.hasTrustedPostgresEffectTenant(
+          executor,
+          effect,
+          row.tenant_id,
+          row.tenant_ownership_state,
+          result,
+        )
+      ) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup critical-section result tenant does not match durable authority",
+        );
+      }
+      await executor.query(
+        `INSERT INTO effect_results
+           (run_id, session_id, idempotency_key, status, output_json,
+            error_json, created_at)
+         VALUES ($1, $2, $3, 'DONE', $4::jsonb, NULL, $5::timestamptz)`,
+        [
+          owner.runId,
+          owner.sessionId,
+          idempotencyKey,
           stringifySanitizedJson(result.output ?? null),
-          stringifySanitizedJson(result.error ?? null),
           normalizeTimestampString(result.timestamp),
         ],
+      );
+      await executor.query(
+        `UPDATE effects
+            SET status = 'DONE'
+          WHERE idempotency_key = $1
+            AND run_id = $2
+            AND session_id = $3`,
+        [idempotencyKey, owner.runId, owner.sessionId],
+      );
+      return { status: "executed", result };
+    });
+  }
+
+  async commitPreparedApprovalCleanupEffectDone(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+    result: EffectResult & { status: "DONE" },
+  ): Promise<void> {
+    await this.ensureSchemaV3();
+    await this.withTransaction(async (executor) => {
+      const selected = await executor.query<{
+        run_id: string;
+        session_id: string;
+        status: PersistedEffect["status"];
+        effect_type: string;
+        payload_json: Record<string, unknown>;
+        step_index: number;
+        failure_policy: PersistedEffect["failurePolicy"];
+        created_at: string;
+        tenant_id: string | null;
+        tenant_ownership_state:
+          | "legacy_unknown"
+          | "explicit_unbound"
+          | "tenant_bound";
+      }>(
+        `SELECT run_id, session_id, status, effect_type, payload_json,
+                step_index, failure_policy, created_at, tenant_id,
+                tenant_ownership_state
+           FROM effects
+          WHERE idempotency_key = $1
+          FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const row = selected.rows[0];
+      if (
+        row === undefined ||
+        row.run_id !== owner.runId ||
+        row.session_id !== owner.sessionId ||
+        result.idempotencyKey !== idempotencyKey ||
+        result.status !== "DONE" ||
+        !isPreparedApprovalCleanupReleaseEffect(
+          row.effect_type,
+          row.payload_json,
+        )
+      ) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup effect success does not match exact durable authority",
+        );
+      }
+      const effect: PersistedEffect = {
+        runId: row.run_id,
+        sessionId: row.session_id,
+        stepIndex: row.step_index,
+        type: row.effect_type,
+        payload: row.payload_json,
+        idempotencyKey,
+        failurePolicy: row.failure_policy,
+        status: row.status,
+        createdAt: normalizeTimestampString(row.created_at),
+      };
+      const suppliedEvidence = validatePreparedApprovalCleanupDoneEvidence({
+        effect,
+        result,
+      });
+      if (
+        !await this.hasTrustedPostgresEffectTenant(
+          executor,
+          effect,
+          row.tenant_id,
+          row.tenant_ownership_state,
+          result,
+        )
+      ) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup effect success tenant does not match durable authority",
+        );
+      }
+      const recorded = await executor.query<{
+        run_id: string;
+        session_id: string;
+        status: "DONE" | "FAILED";
+        output_json: unknown;
+        error_json: RuntimeError | null;
+        created_at: string;
+      }>(
+        `SELECT run_id, session_id, status, output_json, error_json, created_at
+           FROM effect_results
+          WHERE idempotency_key = $1
+          FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const existing = recorded.rows[0];
+      if (
+        existing !== undefined &&
+        (existing.run_id !== owner.runId ||
+          existing.session_id !== owner.sessionId)
+      ) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup effect result owner does not match durable authority",
+        );
+      }
+      if (existing?.status === "DONE") {
+        const existingEvidence = validatePreparedApprovalCleanupDoneEvidence({
+          effect,
+          result: {
+            idempotencyKey,
+            status: "DONE",
+            ...(existing.output_json === null
+              ? {}
+              : { output: existing.output_json }),
+            ...(existing.error_json === null
+              ? {}
+              : { error: existing.error_json }),
+            timestamp: normalizeTimestampString(existing.created_at),
+          },
+        });
+        if (
+          existingEvidence.canonicalOutput !== suppliedEvidence.canonicalOutput
+        ) {
+          throw new SandboxCapabilityExactResultConflictError(
+            "Cleanup DONE result conflicts with existing exact evidence",
+          );
+        }
+      }
+      await executor.query(
+        `INSERT INTO effect_results
+           (run_id, session_id, idempotency_key, status, output_json,
+            error_json, created_at)
+         VALUES ($1, $2, $3, 'DONE', $4::jsonb, NULL, $5::timestamptz)
+         ON CONFLICT (idempotency_key) DO UPDATE
+           SET run_id = EXCLUDED.run_id,
+               session_id = EXCLUDED.session_id,
+               status = 'DONE',
+               output_json = EXCLUDED.output_json,
+               error_json = NULL,
+               created_at = EXCLUDED.created_at
+         WHERE effect_results.status = 'FAILED'`,
+        [
+          owner.runId,
+          owner.sessionId,
+          idempotencyKey,
+          stringifySanitizedJson(result.output ?? null),
+          normalizeTimestampString(result.timestamp),
+        ],
+      );
+      await executor.query(
+        `UPDATE effects
+            SET status = 'DONE'
+          WHERE idempotency_key = $1
+            AND run_id = $2
+            AND session_id = $3`,
+        [idempotencyKey, owner.runId, owner.sessionId],
       );
     });
   }
@@ -1858,6 +2528,15 @@ export class PostgresSessionStore implements SessionStore {
         failurePolicy: row.failure_policy, status: row.status, createdAt: normalizeTimestampString(row.created_at),
       }, row.tenant_id, row.tenant_ownership_state)) {
         throw new SandboxCapabilityExactResultConflictError("Effect status owner or tenant does not match durable authority");
+      }
+      if (status === "FAILED") {
+        const exactResult = await executor.query<{ status: "DONE" | "FAILED" }>(
+          `SELECT status FROM effect_results WHERE idempotency_key = $1 FOR UPDATE`,
+          [idempotencyKey],
+        );
+        if (row.status === "DONE" || exactResult.rows[0]?.status === "DONE") {
+          return;
+        }
       }
       await executor.query(
         `UPDATE effects SET status = $2 WHERE idempotency_key = $1`,
@@ -2172,9 +2851,9 @@ export class PostgresSessionStore implements SessionStore {
         if (canonicalStoreJson(recorded) !== canonicalStoreJson(exactInput.result)) {
           throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result conflicts with recorded exact replay output");
         }
-        if (effectRow.status === "PENDING") {
+        if (effectRow.status === "PENDING" || effectRow.status === "CLAIMED") {
           const completed = await executor.query(
-            `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status = 'PENDING'`,
+            `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status IN ('PENDING', 'CLAIMED')`,
             [exactInput.toolCallId],
           );
           if (completed.rowCount !== 1) {
@@ -2200,7 +2879,7 @@ export class PostgresSessionStore implements SessionStore {
         ],
       );
       const completed = await executor.query(
-        `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status = 'PENDING'`,
+        `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status IN ('PENDING', 'CLAIMED')`,
         [exactInput.toolCallId],
       );
       if (completed.rowCount !== 1) {
@@ -4869,6 +5548,17 @@ export class PostgresSessionStore implements SessionStore {
     }
   }
 
+  private withDedicatedPreparedApprovalCleanupTransaction<T>(
+    operation: (executor: SqlExecutor) => Promise<T>,
+  ): Promise<T> {
+    if (typeof this.db.transaction !== "function") {
+      throw new Error(
+        "Prepared approval cleanup execution requires a dedicated transactional SQL client",
+      );
+    }
+    return this.db.transaction(operation);
+  }
+
   private withMissionControlTransaction<T>(
     operation: (executor: SqlExecutor) => Promise<T>,
   ): Promise<T> {
@@ -5296,6 +5986,21 @@ function throwIfSandboxCapabilityResultPersistenceCancelled(signal: AbortSignal 
 
 function readNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function isPreparedApprovalCleanupReleaseEffect(
+  effectType: string,
+  payload: unknown,
+): boolean {
+  if (effectType !== "release_prepared_tool_call") return false;
+  const record = readRecord(payload);
+  if (record?.preparedApprovalCleanup === undefined) return false;
+  try {
+    parseRunnerPreparedApprovalCleanupV1(record.preparedApprovalCleanup);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readConversationTurnTerminalEnvelope(

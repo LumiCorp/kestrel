@@ -23,6 +23,7 @@ const files = execFileSync(
     "apps/web/lib/files/service.postgres.test.ts",
     "apps/web/lib/files/availability.postgres.test.ts",
     "apps/web/lib/files/blob-repair-atomicity.postgres.test.ts",
+    "apps/web/lib/turns/remembered-tool-approvals.postgres.test.ts",
   )
   .filter((file, index, all) => all.indexOf(file) === index)
   .sort()
@@ -65,6 +66,7 @@ const groups = [
     name: "Apps",
     databaseUrl: required("KESTREL_APPS_DB_TEST_URL"),
     files: [
+      "lib/apps/hosted-approval-proof.postgres.test.ts",
       "lib/apps/service.postgres.test.ts",
       "lib/db/edge-only-retirement.postgres.test.ts",
       "lib/signup-access-codes.postgres.test.ts",
@@ -107,6 +109,7 @@ const groups = [
       "lib/mobile/v2/snapshot.postgres.test.ts",
       "lib/turns/conversation-snapshot.postgres.test.ts",
       "lib/turns/mobile-store.postgres.test.ts",
+      "lib/turns/remembered-tool-approvals.postgres.test.ts",
       "lib/turns/store.postgres.test.ts",
     ],
   },

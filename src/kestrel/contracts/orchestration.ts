@@ -11,7 +11,7 @@ import type {
 import type { HarnessEconomicsPolicyV1 } from "../../economics/contracts.js";
 import type {
   RunnerExternalApprovalBindingV1,
-  RunnerInteractionRequestV1,
+  RunnerInteractionRequest,
 } from "@kestrel-agents/protocol";
 import type { RuntimeTurnActor } from "../../runtime/RuntimeTurn.js";
 
@@ -185,7 +185,7 @@ export interface InteractionRequestRecord {
   delegationId?: string | undefined;
   waitKind?: WaitForMatcher["kind"] | undefined;
   prompt?: string | undefined;
-  interaction?: RunnerInteractionRequestV1 | undefined;
+  interaction?: RunnerInteractionRequest | undefined;
   metadata?: Record<string, unknown> | undefined;
   response?: Record<string, unknown> | undefined;
   createdAt: string;

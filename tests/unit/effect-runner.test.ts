@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { InlineEffectRunner } from "../../src/effects/EffectRunner.js";
 import { EffectRegistry } from "../../src/effects/EffectRegistry.js";
 import { createExecuteToolCallHandler } from "../../src/effects/handlers/executeToolCall.js";
+import { createReleasePreparedToolCallHandler } from "../../src/effects/handlers/releasePreparedToolCall.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { InMemorySessionStore as DurableInMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
@@ -12,6 +13,7 @@ import { defaultToolCatalog } from "../../tools/catalog.js";
 import {
   createToolActivationRefV1,
   fingerprintToolScopeV1,
+  hashCanonical,
 } from "../../src/kestrel/contracts/tool-contract.js";
 import {
   adaptLegacyTestToolGateway,
@@ -25,6 +27,97 @@ import {
   type SandboxCapabilityLeaseBindingV1,
   type SandboxCapabilityLeaseTransitionRecordV1,
 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import type { PersistedEffect } from "../../src/kestrel/contracts/store.js";
+import {
+  boundPreparedApprovalCleanupQuarantineAuditMetadata,
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  normalizePreparedApprovalCleanupDoneEvidence,
+  PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+} from "../../src/runtime/preparedApprovalCleanupAudit.js";
+
+async function buildPreparedApprovalCleanupEffect(input: {
+  suffix: string;
+  status: PersistedEffect["status"];
+  callId?: string;
+}): Promise<{ effect: PersistedEffect; preparedCallId: string }> {
+  const runId = `run-cleanup-${input.suffix}`;
+  const sessionId = `session-cleanup-${input.suffix}`;
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: adaptLegacyTestToolGateway({
+      call: async () => ({ unreachable: true }),
+    }),
+    toolName: "exec_command",
+    toolInput: { cmd: "true" },
+    runId,
+    sessionId,
+    callId: input.callId ?? `prepared-cleanup-${input.suffix}`,
+  });
+  return {
+    preparedCallId: preparedToolCall.callId,
+    effect: {
+      runId,
+      sessionId,
+      stepIndex: 1,
+      type: "release_prepared_tool_call",
+      payload: {
+        preparedToolCall,
+        preparedApprovalCleanup: {
+          version: "runner_prepared_approval_cleanup_v1",
+          organizationId: `org-cleanup-${input.suffix}`,
+          threadId: sessionId,
+          turnId: `turn-cleanup-${input.suffix}`,
+          interactionId: `interaction-cleanup-${input.suffix}`,
+          requestId: `approval-cleanup-${input.suffix}`,
+          failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+          failureMessage: "Expired.",
+        },
+      },
+      idempotencyKey: `${preparedToolCall.callId}:release`,
+      failurePolicy: "STOP",
+      status: input.status,
+      createdAt: "2026-08-27T00:00:00.000Z",
+    },
+  };
+}
+
+async function persistPreparedApprovalCleanupEffect(
+  store: DurableInMemorySessionStore,
+  effect: PersistedEffect,
+): Promise<PersistedEffect> {
+  const event = {
+    id: `event-${effect.runId}`,
+    type: "user.message" as const,
+    sessionId: effect.sessionId,
+    payload: {},
+    timestamp: "2026-08-27T00:00:00.000Z",
+  };
+  const session = await store.ensureSession(effect.sessionId);
+  await store.startRun(effect.runId, event);
+  const committed = await store.commitStep({
+    runId: effect.runId,
+    event,
+    sessionId: effect.sessionId,
+    expectedVersion: session.version,
+    effects: [{
+      type: effect.type,
+      payload: effect.payload,
+      idempotencyKey: effect.idempotencyKey,
+      failurePolicy: effect.failurePolicy,
+    }],
+    emitEvents: [],
+    stepIndex: effect.stepIndex,
+  });
+  const persisted = committed.persistedEffects[0];
+  if (persisted === undefined) throw new Error("Cleanup effect was not persisted");
+  return persisted;
+}
+
+function cleanupResultPersistenceIntent(idempotencyKey: string) {
+  return {
+    version: "prepared_approval_cleanup_result_persistence_v1" as const,
+    idempotencyKey,
+  };
+}
 
 
 test("Effect runner reports compiled tool activity", async () => {
@@ -75,6 +168,196 @@ test("Effect runner reports compiled tool activity", async () => {
   assert.equal((activities[1]?.output as { status?: string }).status, "OK");
 });
 
+test("Effect runner durably claims immediately before invoking the validated handler", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const effect = {
+    runId: "run-claim",
+    sessionId: "session-claim",
+    stepIndex: 0,
+    type: "test.claimed",
+    payload: {},
+    idempotencyKey: "claim-1",
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+  registry.register(effect.type, async () => {
+    assert.equal((await store.listPendingEffects(effect.sessionId))[0]?.status, "CLAIMED");
+    return { ok: true };
+  });
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+
+  assert.equal(outcome.stop, false);
+  assert.deepEqual(store.operationLog.filter((entry) =>
+    entry.startsWith("claimEffectExecution:") || entry.startsWith("saveEffectResult:")
+  ), ["claimEffectExecution:claim-1", "saveEffectResult:claim-1:DONE"]);
+});
+
+test("Effect runner repairs a split DONE result without downgrading or replaying the effect", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const effect = {
+    runId: "run-split-done",
+    sessionId: "session-split-done",
+    stepIndex: 0,
+    type: "test.split-done",
+    payload: {},
+    idempotencyKey: "split-done-1",
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-27T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push(
+    { ...effect },
+  );
+  let handlerCalls = 0;
+  registry.register(effect.type, async () => {
+    handlerCalls += 1;
+    return { released: true };
+  });
+  const markEffectStatus = store.markEffectStatus.bind(store);
+  let injectedFailure = true;
+  store.markEffectStatus = async (idempotencyKey, status, owner) => {
+    if (status === "DONE" && injectedFailure) {
+      injectedFailure = false;
+      throw new Error("Injected crash after saving the DONE result.");
+    }
+    await markEffectStatus(idempotencyKey, status, owner);
+  };
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    },
+  );
+
+  assert.equal(outcome.stop, false);
+  assert.equal(handlerCalls, 1);
+  assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "DONE");
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.equal(
+    store.operationLog.includes(
+      `markEffectStatus:${effect.idempotencyKey}:FAILED`,
+    ),
+    false,
+  );
+});
+
+test("Effect runner records terminal unknown and never repeats a claimed prepared call without a result", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  let handlerCalls = 0;
+  registry.register("execute_tool_call", async () => {
+    handlerCalls += 1;
+    return { repeated: true };
+  });
+  const gateway = adaptLegacyTestToolGateway({
+    validateInput: async (_name, input) => input,
+    call: async () => ({ unreachable: true }),
+  });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway,
+    toolName: "fs.write_text",
+    toolInput: { path: "unknown.txt", text: "once" },
+    runId: "run-original",
+    sessionId: "session-unknown",
+    callId: "call-unknown",
+  });
+  const effect = {
+    runId: "run-continuation",
+    sessionId: "session-unknown",
+    stepIndex: 1,
+    type: "execute_tool_call",
+    payload: { preparedToolCall },
+    idempotencyKey: "call-unknown",
+    failurePolicy: "STOP" as const,
+    status: "CLAIMED" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+  const runner = new InlineEffectRunner(store, registry);
+
+  const first = await runner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  const recorded = await store.getEffectResult(effect.idempotencyKey);
+  const output = recorded?.output as { toolCallId?: string; outcome?: { effectState?: string; retryable?: boolean } };
+  assert.equal(first.stop, true);
+  assert.equal(first.errors[0]?.code, "EFFECT_EXECUTION_OUTCOME_UNKNOWN");
+  assert.equal(recorded?.status, "FAILED");
+  assert.equal(output.toolCallId, effect.idempotencyKey);
+  assert.deepEqual(output.outcome, {
+    ...(output.outcome ?? {}),
+    effectState: "unknown",
+    retryable: false,
+  });
+  assert.equal(handlerCalls, 0);
+
+  const replay = await runner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  assert.equal(replay.stop, true);
+  assert.equal(handlerCalls, 0);
+});
+
+test("Effect runner accepts a continuation effect run while preserving prepared identity", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  let handlerCalls = 0;
+  registry.register("execute_tool_call", async () => {
+    handlerCalls += 1;
+    return { ok: true };
+  });
+  const gateway = adaptLegacyTestToolGateway({
+    validateInput: async (_name, input) => input,
+    call: async () => ({ unreachable: true }),
+  });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway,
+    toolName: "fs.write_text",
+    toolInput: { path: "continuation.txt", text: "exact" },
+    runId: "run-original",
+    sessionId: "session-continuation",
+    callId: "call-continuation",
+  });
+  const effect = {
+    runId: "run-continuation",
+    sessionId: preparedToolCall.sessionId,
+    stepIndex: 2,
+    type: "execute_tool_call",
+    payload: { preparedToolCall },
+    idempotencyKey: preparedToolCall.callId,
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+
+  assert.equal(outcome.stop, false);
+  assert.equal(handlerCalls, 1);
+  assert.equal(preparedToolCall.runId, "run-original");
+});
+
 test("Effect runner STOP policy halts on failure", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();
@@ -108,6 +391,1536 @@ test("Effect runner STOP policy halts on failure", async () => {
   assert.equal(outcome.stop, true);
   assert.equal(outcome.terminalStatus, "FAILED");
   assert.equal(outcome.errors.length, 1);
+});
+
+test("two cleanup runners converge when FAILED commits before atomic release success", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: adaptLegacyTestToolGateway({
+      call: async () => ({ unreachable: true }),
+    }),
+    toolName: "exec_command",
+    toolInput: { cmd: "true" },
+    runId: "run-cleanup-retry",
+    sessionId: "thread-cleanup-retry",
+    callId: "prepared-cleanup",
+  });
+  let calls = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    calls += 1;
+    if (calls === 1) throw new Error("transient release failure");
+    return { releasedPreparedInvocationId: preparedToolCall.callId };
+  });
+  const effect = {
+    runId: "run-cleanup-retry",
+    sessionId: "thread-cleanup-retry",
+    stepIndex: 1,
+    type: "release_prepared_tool_call",
+    payload: {
+      preparedToolCall,
+      preparedApprovalCleanup: {
+        version: "runner_prepared_approval_cleanup_v1" as const,
+        organizationId: "org-cleanup",
+        threadId: "thread-cleanup-retry",
+        turnId: "turn-cleanup",
+        interactionId: "interaction-cleanup",
+        requestId: "approval-cleanup",
+        failureCode: "EXTERNAL_APPROVAL_EXPIRED" as const,
+        failureMessage: "Expired.",
+      },
+    },
+    idempotencyKey: `${preparedToolCall.callId}:release`,
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+  const failingRunner = new InlineEffectRunner(store, registry);
+  const successfulRunner = new InlineEffectRunner(store, registry);
+
+  const failed = await failingRunner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  assert.equal(failed.stop, true);
+  assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "FAILED");
+
+  const retried = await successfulRunner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  assert.equal(retried.stop, false);
+  assert.equal(calls, 2);
+  assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "DONE");
+  assert.equal(
+    (await store.getPersistedEffect(effect.idempotencyKey))?.status,
+    "DONE",
+  );
+  await store.saveEffectResult(effect.runId, effect.sessionId, {
+    idempotencyKey: effect.idempotencyKey,
+    status: "FAILED",
+    error: {
+      code: "EFFECT_EXECUTION_FAILED",
+      message: "stale failing runner",
+    },
+    timestamp: "2026-08-27T00:00:02.000Z",
+  }, cleanupResultPersistenceIntent(effect.idempotencyKey));
+  await store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
+  assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "DONE");
+  assert.equal(
+    (await store.getPersistedEffect(effect.idempotencyKey))?.status,
+    "DONE",
+  );
+  const exactDone = await store.getEffectResult(effect.idempotencyKey);
+  assert.equal(exactDone?.status, "DONE");
+  if (exactDone?.status !== "DONE") {
+    throw new Error("Expected exact cleanup DONE evidence.");
+  }
+  await store.commitPreparedApprovalCleanupEffectDone(
+    effect.idempotencyKey,
+    effect,
+    {
+      ...exactDone,
+      status: "DONE",
+      timestamp: "2026-08-27T00:00:03.000Z",
+    },
+  );
+  await assert.rejects(
+    store.commitPreparedApprovalCleanupEffectDone(
+      effect.idempotencyKey,
+      effect,
+      {
+        ...exactDone,
+        status: "DONE",
+        output: { releasedPreparedInvocationId: "wrong-prepared-call" },
+        timestamp: "2026-08-27T00:00:04.000Z",
+      },
+    ),
+    /exact prepared invocation|exact durable authority/u,
+  );
+  assert.deepEqual(
+    await store.getEffectResult(effect.idempotencyKey),
+    exactDone,
+  );
+  assert.equal(
+    store.operationLog.filter((entry) =>
+      entry === `resetPreparedApprovalCleanupEffectExecution:${effect.idempotencyKey}`
+    ).length,
+    1,
+  );
+  assert.equal(
+    store.operationLog.filter((entry) =>
+      entry ===
+        `commitPreparedApprovalCleanupEffectDone:${effect.idempotencyKey}`
+    ).length,
+    2,
+  );
+});
+
+test("cleanup DONE quarantine preserves malformed audit evidence across effect states", async () => {
+  for (const status of ["PENDING", "CLAIMED", "FAILED"] as const) {
+    const store = new InMemorySessionStore();
+    const { effect } = await buildPreparedApprovalCleanupEffect({
+      suffix: `audit-${status.toLowerCase()}`,
+      status,
+    });
+    (store as unknown as { effects: PersistedEffect[] }).effects.push(
+      structuredClone(effect),
+    );
+    const malformedOutput = {
+      releasedPreparedInvocationId: "wrong-prepared-call",
+      unexpected: true,
+    };
+    const timestamp = "2026-08-27T00:00:01.000Z";
+    await store.saveEffectResult(effect.runId, effect.sessionId, {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE",
+      output: malformedOutput,
+      timestamp,
+    }, cleanupResultPersistenceIntent(effect.idempotencyKey));
+
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "conflict",
+    );
+    assert.equal(
+      (await store.getPersistedEffect(effect.idempotencyKey))?.status,
+      "PENDING",
+    );
+    const quarantined = await store.getEffectResult(effect.idempotencyKey);
+    assert.equal(quarantined?.status, "FAILED");
+    assert.notEqual(quarantined?.timestamp, timestamp);
+    assert.equal(quarantined?.output, undefined);
+    assert.equal(
+      quarantined?.error?.code,
+      "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+    );
+  }
+});
+
+test("cleanup DONE quarantine audit is deterministic, bounded, and secret-free", async () => {
+  const { effect } = await buildPreparedApprovalCleanupEffect({
+    suffix: "bounded-audit",
+    status: "FAILED",
+  });
+  const cyclicOutput: Record<string, unknown> = {
+    releasedPreparedInvocationId: "private-prepared-call-sentinel",
+    authorization: "Bearer authorization-sentinel",
+    apiKey: "api-key-sentinel",
+    url: "https://private.example.invalid/provider?token=url-token-sentinel",
+    providerPayload: {
+      token: "provider-token-sentinel",
+      nested: { password: "password-sentinel" },
+    },
+    aOversized: "oversized-secret-sentinel".repeat(100_000),
+    invalidUnicode: "invalid\ud800unicode",
+  };
+  cyclicOutput.aCycle = cyclicOutput;
+  for (let index = 0; index < 32; index += 1) {
+    cyclicOutput[`extra-${index}`] = `extra-secret-${index}`;
+  }
+  const invalidResult = {
+    idempotencyKey: effect.idempotencyKey,
+    status: "DONE" as const,
+    output: cyclicOutput,
+    error: {
+      code: "PROVIDER_ERROR",
+      message: "provider-error-message-sentinel",
+      details: { authToken: "error-token-sentinel" },
+    },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  };
+  const first = buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+    effect,
+    invalidResult,
+    occurredAt: "2026-08-27T00:00:02.000Z",
+  });
+  const reorderedOutput = Object.fromEntries(
+    Object.entries(cyclicOutput)
+      .filter(([key]) => key !== "aCycle")
+      .reverse(),
+  );
+  reorderedOutput.aCycle = reorderedOutput;
+  const second = buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+    effect,
+    invalidResult: { ...invalidResult, output: reorderedOutput },
+    occurredAt: "2026-08-27T00:00:02.000Z",
+  });
+  const jsonbStyleOutput = Object.fromEntries(
+    Object.entries(cyclicOutput)
+      .filter(([key]) => key !== "aCycle")
+      .sort(([left], [right]) =>
+        left.length - right.length || (left < right ? -1 : left > right ? 1 : 0)
+      ),
+  );
+  jsonbStyleOutput.aCycle = jsonbStyleOutput;
+  const jsonbStyle = buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+    effect,
+    invalidResult: { ...invalidResult, output: jsonbStyleOutput },
+    occurredAt: "2026-08-27T00:00:02.000Z",
+  });
+
+  assert.deepEqual(first, second);
+  assert.deepEqual(first, jsonbStyle);
+  assert.equal(
+    (first.metadata?.resultIdentity as Record<string, unknown>)
+      .originalTimestamp,
+    invalidResult.timestamp,
+  );
+  const serialized = JSON.stringify(first);
+  for (const sentinel of [
+    "private-prepared-call-sentinel",
+    "authorization-sentinel",
+    "api-key-sentinel",
+    "private.example.invalid",
+    "url-token-sentinel",
+    "provider-token-sentinel",
+    "password-sentinel",
+    "oversized-secret-sentinel",
+    "provider-error-message-sentinel",
+    "error-token-sentinel",
+  ]) {
+    assert.equal(serialized.includes(sentinel), false, sentinel);
+  }
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(first.metadata)) <=
+      PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+  );
+  assert.equal(
+    first.metadata?.validationReasonCode,
+    "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+  );
+  const evidence = first.metadata?.evidence as Record<string, unknown>;
+  assert.match(String(evidence.canonicalHash), /^sha256:[0-9a-f]{64}$/u);
+  assert.equal(evidence.sourceBytesTruncated, true);
+  assert.equal(evidence.traversalTruncated, true);
+  assert.ok(Number(evidence.nodesVisited) <= 128);
+  assert.deepEqual(evidence.outputShape, {
+    type: "object",
+    topLevelEntriesObserved: 16,
+    topLevelEntriesTruncated: true,
+    topLevelValueTypes: { string: 14, object: 2 },
+  });
+  assert.deepEqual(evidence.errorShape, {
+    type: "object",
+    topLevelEntriesObserved: 3,
+    topLevelEntriesTruncated: false,
+    topLevelValueTypes: { string: 2, object: 1 },
+  });
+  assert.match(
+    String((first.metadata?.releasedPreparedInvocationId as Record<string, unknown>)
+      .canonicalHash),
+    /^sha256:[0-9a-f]{64}$/u,
+  );
+
+  const rawDurableForm: Record<string, unknown> = {
+    stable: "value",
+    omitted: undefined,
+    functionValue: () => "omitted",
+    symbolValue: Symbol("omitted"),
+    invalidUnicode: "bad\ud800value",
+    oversizedString: "bounded".repeat(100),
+  };
+  rawDurableForm.self = rawDurableForm;
+  const rawDurableResult = {
+    ...invalidResult,
+    output: rawDurableForm,
+    error: undefined,
+  };
+  const normalizedDurableResult =
+    normalizePreparedApprovalCleanupDoneEvidence(rawDurableResult);
+  const rawDurableEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect,
+      invalidResult: rawDurableResult,
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  const persistedDurableEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect,
+      invalidResult: {
+        ...rawDurableResult,
+        output: {
+          stable: "value",
+          invalidUnicode: "bad\ud800value",
+          oversizedString: "bounded".repeat(100),
+        },
+      },
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  assert.notDeepEqual(
+    rawDurableEvent.metadata?.evidence,
+    persistedDurableEvent.metadata?.evidence,
+    "old rows are projected from their actual raw JSON without caller-asserted provenance",
+  );
+  assert.ok(normalizedDurableResult.output !== undefined);
+
+  const sharedOversizedKeyPrefix = "oversized-key-secret-sentinel".repeat(20);
+  const firstOversizedKey = `${sharedOversizedKeyPrefix}:first`;
+  const secondOversizedKey = `${sharedOversizedKeyPrefix}:second`;
+  const oversizedKeyResult = normalizePreparedApprovalCleanupDoneEvidence({
+    ...invalidResult,
+    output: {
+      [firstOversizedKey]: "first-value",
+      [secondOversizedKey]: "second-value",
+    },
+  });
+  const oversizedKeyOutput = oversizedKeyResult.output as Record<string, unknown>;
+  const boundedIdentityKeys = Object.keys(oversizedKeyOutput).filter(
+    (key) => key !== "$kestrelCleanupEvidence",
+  );
+  assert.equal(boundedIdentityKeys.length, 2);
+  assert.notEqual(boundedIdentityKeys[0], boundedIdentityKeys[1]);
+  assert.ok(boundedIdentityKeys.every((key) =>
+    /^\$kestrelCleanupKey:v1:[0-9a-f]{64}:[0-9]+$/u.test(key)
+  ));
+  assert.deepEqual(
+    boundedIdentityKeys.map((key) => oversizedKeyOutput[key]).sort(),
+    ["first-value", "second-value"],
+    "shared-prefix oversized keys must not overwrite each other",
+  );
+  const oversizedKeyEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect,
+      invalidResult: { ...invalidResult, output: {
+        [firstOversizedKey]: "first-value",
+        [secondOversizedKey]: "second-value",
+      } },
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  const oversizedKeyEvidence = oversizedKeyEvent.metadata?.evidence as
+    Record<string, unknown>;
+  assert.equal(oversizedKeyEvidence.sourceBytesTruncated, true);
+  assert.equal(
+    (oversizedKeyEvidence.outputShape as Record<string, unknown>)
+      .topLevelEntriesTruncated,
+    false,
+    "bounded key identities must not claim that entries were dropped",
+  );
+  assert.equal(
+    JSON.stringify(oversizedKeyEvent).includes(sharedOversizedKeyPrefix),
+    false,
+  );
+
+  const forgedMarkerOutput = {
+    stable: "value",
+    $kestrelCleanupEvidence: "object_entries_and_keys_truncated",
+    "$kestrelCleanupKey:v1:forged": "generated-prefix-value",
+  };
+  const forgedMarkerEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect,
+      invalidResult: { ...invalidResult, output: forgedMarkerOutput },
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  const forgedEvidence = forgedMarkerEvent.metadata?.evidence as
+    Record<string, unknown>;
+  assert.equal(forgedEvidence.sourceBytesTruncated, false);
+  assert.equal(forgedEvidence.traversalTruncated, false);
+  assert.equal(
+    (forgedEvidence.outputShape as Record<string, unknown>)
+      .topLevelEntriesTruncated,
+    false,
+    "a raw marker-like key must remain user evidence, not internal diagnostics",
+  );
+  const normalizedForgedResult =
+    normalizePreparedApprovalCleanupDoneEvidence({
+      ...invalidResult,
+      output: forgedMarkerOutput,
+    });
+  const replayedForgedMarkerEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect,
+      invalidResult: {
+        ...invalidResult,
+        output: JSON.parse(JSON.stringify(forgedMarkerOutput)),
+      },
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  assert.deepEqual(
+    replayedForgedMarkerEvent.metadata?.evidence,
+    forgedMarkerEvent.metadata?.evidence,
+  );
+  const normalizedForgedOutput = normalizedForgedResult.output as
+    Record<string, unknown>;
+  assert.equal(Object.values(normalizedForgedOutput).includes(
+    "object_entries_and_keys_truncated",
+  ), true);
+  assert.equal(Object.values(normalizedForgedOutput).includes(
+    "generated-prefix-value",
+  ), true);
+
+  const unreadableObject: Record<string, unknown> = {};
+  Object.defineProperty(unreadableObject, "secret", {
+    enumerable: true,
+    get() {
+      throw new Error("unreadable-getter-secret-sentinel");
+    },
+  });
+  const unreadableArray: unknown[] = [];
+  Object.defineProperty(unreadableArray, 0, {
+    enumerable: true,
+    get() {
+      throw new Error("unreadable-index-secret-sentinel");
+    },
+  });
+  unreadableArray.length = 1;
+  for (const unreadable of [unreadableObject, unreadableArray]) {
+    const unreadableEvent =
+      buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+        effect,
+        invalidResult: { ...invalidResult, output: unreadable },
+        occurredAt: "2026-08-27T00:00:02.000Z",
+      });
+    assert.equal(
+      (unreadableEvent.metadata?.evidence as Record<string, unknown>)
+        .traversalTruncated,
+      true,
+    );
+    assert.equal(JSON.stringify(unreadableEvent).includes("secret-sentinel"), false);
+  }
+
+  const identitySentinel = "oversized-identifier-secret-sentinel".repeat(50_000);
+  const oversizedIdentityEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect: { ...effect, idempotencyKey: identitySentinel },
+      invalidResult: { ...invalidResult, idempotencyKey: identitySentinel },
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  const serializedOversizedIdentity = JSON.stringify(oversizedIdentityEvent);
+  assert.equal(
+    serializedOversizedIdentity.includes("oversized-identifier-secret-sentinel"),
+    false,
+  );
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(oversizedIdentityEvent.metadata)) <=
+      PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+  );
+  assert.equal(
+    ((oversizedIdentityEvent.metadata?.effectIdentity as Record<string, unknown>)
+      .idempotencyKey as Record<string, unknown>).canonicalHash,
+    hashCanonical({ value: identitySentinel }),
+  );
+
+  const timestampSentinel = "timestamp-secret-sentinel".repeat(50_000);
+  const malformedTimestampEvent =
+    buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+      effect,
+      invalidResult: { ...invalidResult, timestamp: timestampSentinel },
+      occurredAt: "2026-08-27T00:00:02.000Z",
+    });
+  const malformedTimestampSerialized = JSON.stringify(malformedTimestampEvent);
+  assert.equal(
+    malformedTimestampSerialized.includes("timestamp-secret-sentinel"),
+    false,
+  );
+  const timestampEvidence = (malformedTimestampEvent.metadata?.resultIdentity as
+    Record<string, unknown>).originalTimestamp as Record<string, unknown>;
+  assert.equal(timestampEvidence.type, "string");
+  assert.equal(
+    timestampEvidence.canonicalHash,
+    hashCanonical({ value: timestampSentinel }),
+  );
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(malformedTimestampEvent.metadata)) <=
+      PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+  );
+  const fallback = boundPreparedApprovalCleanupQuarantineAuditMetadata(
+    { secret: "fallback-secret-sentinel".repeat(1_000) },
+    String(evidence.canonicalHash),
+  );
+  assert.equal(fallback.projectionStatus, "metadata_bound_exceeded");
+  assert.equal(JSON.stringify(fallback).includes("fallback-secret-sentinel"), false);
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(fallback)) <=
+      PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+  );
+});
+
+test("production in-memory quarantine is total through public store APIs", async () => {
+  const cyclic: Record<string, unknown> = { invalidUnicode: "bad\ud800value" };
+  cyclic.self = cyclic;
+  const throwingGetter: Record<string, unknown> = {};
+  Object.defineProperty(throwingGetter, "secret", {
+    enumerable: true,
+    get: () => { throw new Error("getter-secret-sentinel"); },
+  });
+  const throwingToJson = {
+    stable: "value",
+    toJSON: () => { throw new Error("to-json-secret-sentinel"); },
+  };
+  const throwingProxy = new Proxy({}, {
+    ownKeys: () => { throw new Error("proxy-secret-sentinel"); },
+  });
+  const cases: Array<[string, unknown, unknown?]> = [
+    ["bigint", 1n],
+    ["throwing-getter", throwingGetter],
+    ["throwing-to-json", throwingToJson],
+    ["proxy", throwingProxy],
+    ["function", () => "function-secret-sentinel"],
+    ["symbol", Symbol("symbol-secret-sentinel")],
+    ["undefined", undefined],
+    ["cycle", cyclic],
+    ["invalid-unicode", "bad\ud800value"],
+    ["secret-timestamp", "value", "timestamp-secret-sentinel"],
+    [
+      "oversized-timestamp",
+      "value",
+      "timestamp-secret-sentinel".repeat(50_000),
+    ],
+    ["function-timestamp", "value", () => "timestamp-secret-sentinel"],
+    ["symbol-timestamp", "value", Symbol("timestamp-secret-sentinel")],
+    [
+      "proxy-timestamp",
+      "value",
+      new Proxy({}, { ownKeys() { throw new Error("timestamp-secret-sentinel"); } }),
+    ],
+  ];
+
+  for (const [suffix, unusualValue, timestamp] of cases) {
+    const store = new DurableInMemorySessionStore();
+    const registry = new EffectRegistry();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: `public-total-${suffix}`,
+      status: "PENDING",
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(
+      store,
+      built.effect,
+    );
+    await store.saveEffectResult(effect.runId, effect.sessionId, {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE",
+      output: {
+        releasedPreparedInvocationId: "wrong-call-secret-sentinel",
+        unusualValue,
+      },
+      timestamp: (timestamp ?? "2026-08-27T00:00:01.000Z") as string,
+    }, cleanupResultPersistenceIntent(effect.idempotencyKey));
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "conflict",
+      `${suffix}: persistence owns atomic quarantine`,
+    );
+    assert.equal(store.getRunEvents().length, 1, suffix);
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "conflict",
+      suffix,
+    );
+    assert.equal(store.getRunEvents().length, 1, suffix);
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(store.getRunEvents()[0]?.metadata)) <=
+        PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+      suffix,
+    );
+    assert.equal(
+      JSON.stringify(store.getRunEvents()[0]).includes("secret-sentinel"),
+      false,
+      suffix,
+    );
+    assert.equal(
+      (await store.getEffectResult(effect.idempotencyKey))?.output,
+      undefined,
+      suffix,
+    );
+    assert.equal(
+      (await store.getEffectResult(effect.idempotencyKey))?.timestamp,
+      store.getRunEvents()[0]?.timestamp,
+      `${suffix}: audit and FAILED replacement share one trusted timestamp`,
+    );
+    assert.equal(
+      await store.resetPreparedApprovalCleanupEffectExecution(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "reset",
+      suffix,
+    );
+    let releases = 0;
+    registry.register("release_prepared_tool_call", async () => {
+      releases += 1;
+      return { releasedPreparedInvocationId: built.preparedCallId };
+    });
+    const outcome = await new InlineEffectRunner(store, registry).runEffects(
+      [effect],
+      {
+        runId: effect.runId,
+        sessionId: effect.sessionId,
+        stepIndex: effect.stepIndex,
+      },
+    );
+    assert.equal(outcome.stop, false, suffix);
+    assert.equal(releases, 1, suffix);
+    assert.equal(store.getRunEvents().length, 1, suffix);
+    assert.equal(
+      (await store.getPersistedEffect(effect.idempotencyKey))?.status,
+      "DONE",
+      suffix,
+    );
+  }
+});
+
+test("production in-memory validates exact cleanup evidence before projection", async () => {
+  const exactIds = [
+    `prepared-cleanup-${"long-id".repeat(100)}`,
+    `prepared-cleanup-${"valid-unicode-😀".repeat(100)}`,
+  ];
+  for (const [index, callId] of exactIds.entries()) {
+    const store = new DurableInMemorySessionStore();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: `exact-original-${index}`,
+      status: "PENDING",
+      callId,
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+    const exactResult = {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE" as const,
+      output: { releasedPreparedInvocationId: callId },
+      timestamp: "2026-08-27T00:00:01.000Z",
+    };
+    await store.saveEffectResult(
+      effect.runId,
+      effect.sessionId,
+      exactResult,
+      cleanupResultPersistenceIntent(effect.idempotencyKey),
+    );
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "done",
+    );
+    assert.deepEqual(await store.getEffectResult(effect.idempotencyKey), exactResult);
+  }
+
+  await assert.rejects(
+    buildPreparedApprovalCleanupEffect({
+      suffix: "invalid-identifier",
+      status: "PENDING",
+      callId: "prepared-cleanup-invalid-\ud800-id",
+    }),
+    /valid UTF-16/u,
+  );
+
+  {
+    const store = new DurableInMemorySessionStore();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: "post-save-mutation",
+      status: "PENDING",
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+    const output = { releasedPreparedInvocationId: built.preparedCallId };
+    await store.saveEffectResult(effect.runId, effect.sessionId, {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE",
+      output,
+      timestamp: "2026-08-27T00:00:01.000Z",
+    }, cleanupResultPersistenceIntent(effect.idempotencyKey));
+    output.releasedPreparedInvocationId = "mutated-after-save";
+    assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+      releasedPreparedInvocationId: built.preparedCallId,
+    });
+  }
+
+  for (const outputKind of ["getter", "proxy"] as const) {
+    const store = new DurableInMemorySessionStore();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: `unstable-${outputKind}`,
+      status: "PENDING",
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+    let getterReads = 0;
+    const statefulOutput: Record<string, unknown> = {};
+    Object.defineProperty(statefulOutput, "releasedPreparedInvocationId", {
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        return getterReads === 1 ? built.preparedCallId : "state-drift";
+      },
+    });
+    const output = outputKind === "getter"
+      ? statefulOutput
+      : new Proxy(
+          { releasedPreparedInvocationId: built.preparedCallId },
+          { ownKeys() { throw new Error("unstable output proxy"); } },
+        );
+    await store.saveEffectResult(effect.runId, effect.sessionId, {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE",
+      output,
+      timestamp: "2026-08-27T00:00:01.000Z",
+    }, cleanupResultPersistenceIntent(effect.idempotencyKey));
+    assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "FAILED");
+    assert.equal(getterReads, 0, "stateful accessors must never supply authority");
+  }
+
+  for (const [index, invalidValue] of [
+    undefined,
+    () => "invalid-function",
+    Symbol("invalid-symbol"),
+  ].entries()) {
+    const store = new DurableInMemorySessionStore();
+    const registry = new EffectRegistry();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: `invalid-extra-${index}`,
+      status: "PENDING",
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+    const output: Record<string, unknown> = {
+      releasedPreparedInvocationId: built.preparedCallId,
+    };
+    Object.defineProperty(output, "extra", {
+      value: invalidValue,
+      enumerable: true,
+    });
+    await store.saveEffectResult(effect.runId, effect.sessionId, {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE",
+      output,
+      timestamp: "2026-08-27T00:00:01.000Z",
+    }, cleanupResultPersistenceIntent(effect.idempotencyKey));
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "conflict",
+    );
+    assert.equal(
+      await store.resetPreparedApprovalCleanupEffectExecution(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "reset",
+    );
+    let releases = 0;
+    registry.register("release_prepared_tool_call", async () => {
+      releases += 1;
+      return { releasedPreparedInvocationId: built.preparedCallId };
+    });
+    assert.equal((await new InlineEffectRunner(store, registry).runEffects(
+      [effect],
+      {
+        runId: effect.runId,
+        sessionId: effect.sessionId,
+        stepIndex: effect.stepIndex,
+      },
+    )).stop, false);
+    assert.equal(releases, 1);
+  }
+});
+
+test("explicit cleanup persistence snapshots hostile top-level evidence and isolates ordinary DONE", async () => {
+  for (const mode of ["accessors", "revoked-proxy"] as const) {
+    const store = new DurableInMemorySessionStore();
+    const built = await buildPreparedApprovalCleanupEffect({
+      suffix: `explicit-intent-${mode}`,
+      status: "PENDING",
+    });
+    const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+    let accessorReads = 0;
+    let hostileResult: unknown;
+    if (mode === "accessors") {
+      const result: Record<string, unknown> = {
+        idempotencyKey: effect.idempotencyKey,
+        status: "DONE",
+        output: { releasedPreparedInvocationId: built.preparedCallId },
+        timestamp: "2026-08-27T00:00:01.000Z",
+      };
+      Object.defineProperty(result, "error", {
+        enumerable: true,
+        get() {
+          accessorReads += 1;
+          throw new Error("top-level-error-secret-sentinel");
+        },
+      });
+      hostileResult = result;
+    } else {
+      const revoked = Proxy.revocable({
+        idempotencyKey: effect.idempotencyKey,
+        status: "DONE",
+        output: { releasedPreparedInvocationId: built.preparedCallId },
+        timestamp: "2026-08-27T00:00:01.000Z",
+      }, {});
+      revoked.revoke();
+      hostileResult = revoked.proxy;
+    }
+    await store.saveEffectResult(
+      effect.runId,
+      effect.sessionId,
+      hostileResult as never,
+      cleanupResultPersistenceIntent(effect.idempotencyKey),
+    );
+    assert.equal(
+      (await store.getEffectResult(effect.idempotencyKey))?.status,
+      "FAILED",
+      mode,
+    );
+    assert.equal(accessorReads, 0, mode);
+    const audit = store.getRunEvents()[0];
+    assert.ok(audit, mode);
+    assert.equal(
+      (audit.metadata?.evidence as Record<string, unknown>)
+        .traversalTruncated,
+      true,
+      `${mode}: unreadable evidence remains truthful`,
+    );
+    assert.equal(
+      JSON.stringify(audit).includes("top-level-error-secret-sentinel"),
+      false,
+      mode,
+    );
+  }
+
+  const store = new DurableInMemorySessionStore();
+  const built = await buildPreparedApprovalCleanupEffect({
+    suffix: "explicit-intent-required",
+    status: "PENDING",
+  });
+  const cleanup = await persistPreparedApprovalCleanupEffect(store, built.effect);
+  const exactCleanupResult = {
+    idempotencyKey: cleanup.idempotencyKey,
+    status: "DONE" as const,
+    output: { releasedPreparedInvocationId: built.preparedCallId },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  };
+  await assert.rejects(
+    store.saveEffectResult(cleanup.runId, cleanup.sessionId, exactCleanupResult),
+    /requires explicit cleanup intent/u,
+  );
+  assert.equal(await store.getEffectResult(cleanup.idempotencyKey), null);
+
+  const ordinaryCandidate = await buildPreparedApprovalCleanupEffect({
+    suffix: "ordinary-intent-isolation",
+    status: "PENDING",
+  });
+  const ordinary = await persistPreparedApprovalCleanupEffect(store, {
+    ...ordinaryCandidate.effect,
+    type: "ordinary_test_effect",
+    payload: { ordinary: true },
+  });
+  let ordinaryDescriptorInspections = 0;
+  const ordinaryResult = new Proxy({
+    idempotencyKey: ordinary.idempotencyKey,
+    status: "DONE" as const,
+    output: { ordinary: true },
+    timestamp: "2026-08-27T00:00:02.000Z",
+  }, {
+    ownKeys(target) {
+      ordinaryDescriptorInspections += 1;
+      return Reflect.ownKeys(target);
+    },
+  });
+  await store.saveEffectResult(ordinary.runId, ordinary.sessionId, ordinaryResult);
+  assert.equal(
+    ordinaryDescriptorInspections,
+    1,
+    "ordinary persistence performs only its existing shallow-copy inspection",
+  );
+  await assert.rejects(
+    store.saveEffectResult(
+      ordinary.runId,
+      ordinary.sessionId,
+      ordinaryResult,
+      cleanupResultPersistenceIntent(ordinary.idempotencyKey),
+    ),
+    /intent does not match the locked durable effect/u,
+  );
+});
+
+test("cleanup intent and FAILED results are immutable in production and shared stores", async () => {
+  const built = await buildPreparedApprovalCleanupEffect({
+    suffix: "all-status-intent",
+    status: "PENDING",
+  });
+  const store = new DurableInMemorySessionStore();
+  const effect = await persistPreparedApprovalCleanupEffect(store, built.effect);
+  let resultIdentityReads = 0;
+  const statefulIdentityResult: Record<string, unknown> = {
+    error: { code: "EFFECT_EXECUTION_FAILED", message: "failed" },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  };
+  for (const key of ["idempotencyKey", "status"] as const) {
+    Object.defineProperty(statefulIdentityResult, key, {
+      enumerable: true,
+      get() {
+        resultIdentityReads += 1;
+        return key === "idempotencyKey" ? effect.idempotencyKey : "FAILED";
+      },
+    });
+  }
+  await store.saveEffectResult(
+    effect.runId,
+    effect.sessionId,
+    statefulIdentityResult as never,
+    cleanupResultPersistenceIntent(effect.idempotencyKey),
+  );
+  assert.equal(resultIdentityReads, 0);
+  assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "FAILED");
+  assert.equal(
+    await store.resetPreparedApprovalCleanupEffectExecution(
+      effect.idempotencyKey,
+      effect,
+    ),
+    "reset",
+  );
+
+  const failedResult = {
+    idempotencyKey: effect.idempotencyKey,
+    status: "FAILED" as const,
+    error: {
+      code: "EFFECT_EXECUTION_FAILED",
+      message: "stable failure",
+      details: { state: "before-save" },
+    },
+    timestamp: "2026-08-27T00:00:02.000Z",
+  };
+  await assert.rejects(
+    store.saveEffectResult(effect.runId, effect.sessionId, failedResult),
+    /requires explicit cleanup intent/u,
+  );
+  let intentGetterReads = 0;
+  const statefulIntent: Record<string, unknown> = {};
+  for (const key of ["version", "idempotencyKey"] as const) {
+    Object.defineProperty(statefulIntent, key, {
+      enumerable: true,
+      get() {
+        intentGetterReads += 1;
+        return key === "version"
+          ? "prepared_approval_cleanup_result_persistence_v1"
+          : effect.idempotencyKey;
+      },
+    });
+  }
+  await assert.rejects(
+    store.saveEffectResult(
+      effect.runId,
+      effect.sessionId,
+      failedResult,
+      statefulIntent as never,
+    ),
+    /intent was unreadable or malformed/u,
+  );
+  assert.equal(intentGetterReads, 0);
+  const failedSave = store.saveEffectResult(
+    effect.runId,
+    effect.sessionId,
+    failedResult,
+    cleanupResultPersistenceIntent(effect.idempotencyKey),
+  );
+  failedResult.error.details.state = "mutated-after-save";
+  await failedSave;
+  const persistedFailure = await store.getEffectResult(effect.idempotencyKey);
+  assert.equal(persistedFailure?.status, "FAILED");
+  assert.equal(
+    (persistedFailure?.error?.details as Record<string, unknown>).state,
+    "before-save",
+  );
+
+  const sharedStore = new InMemorySessionStore();
+  (sharedStore as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(built.effect),
+  );
+  const sharedFailure = {
+    idempotencyKey: built.effect.idempotencyKey,
+    status: "FAILED" as const,
+    error: {
+      code: "EFFECT_EXECUTION_FAILED",
+      message: "shared stable failure",
+      details: { state: "before-save" },
+    },
+    timestamp: "2026-08-27T00:00:03.000Z",
+  };
+  await assert.rejects(
+    sharedStore.saveEffectResult(
+      built.effect.runId,
+      built.effect.sessionId,
+      sharedFailure,
+    ),
+    /requires explicit cleanup intent/u,
+  );
+  const sharedSave = sharedStore.saveEffectResult(
+    built.effect.runId,
+    built.effect.sessionId,
+    sharedFailure,
+    cleanupResultPersistenceIntent(built.effect.idempotencyKey),
+  );
+  sharedFailure.error.details.state = "mutated-after-save";
+  await sharedSave;
+  const sharedPersisted = await sharedStore.getEffectResult(
+    built.effect.idempotencyKey,
+  );
+  assert.equal(sharedPersisted?.status, "FAILED");
+  assert.equal(
+    (sharedPersisted?.error?.details as Record<string, unknown>).state,
+    "before-save",
+  );
+});
+
+test("cleanup DONE quarantine preserves exact evidence and refuses ordinary effects", async () => {
+  const store = new InMemorySessionStore();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "exact-immutable",
+    status: "FAILED",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  const exactResult = {
+    idempotencyKey: effect.idempotencyKey,
+    status: "DONE" as const,
+    output: { releasedPreparedInvocationId: preparedCallId },
+    timestamp: "2026-08-27T00:00:02.000Z",
+  };
+  await store.saveEffectResult(
+    effect.runId,
+    effect.sessionId,
+    exactResult,
+    cleanupResultPersistenceIntent(effect.idempotencyKey),
+  );
+  assert.equal(
+    await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+      effect.idempotencyKey,
+      effect,
+    ),
+    "done",
+  );
+  assert.deepEqual(await store.getEffectResult(effect.idempotencyKey), exactResult);
+  assert.equal(
+    (await store.getPersistedEffect(effect.idempotencyKey))?.status,
+    "DONE",
+  );
+
+  const ordinary = {
+    ...effect,
+    idempotencyKey: `${effect.idempotencyKey}:ordinary`,
+    payload: { preparedToolCall: effect.payload.preparedToolCall },
+    status: "PENDING" as const,
+  };
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(ordinary),
+  );
+  const ordinaryResult = {
+    idempotencyKey: ordinary.idempotencyKey,
+    status: "DONE" as const,
+    output: { releasedPreparedInvocationId: preparedCallId },
+    timestamp: "2026-08-27T00:00:03.000Z",
+  };
+  await store.saveEffectResult(ordinary.runId, ordinary.sessionId, ordinaryResult);
+  assert.equal(
+    await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+      ordinary.idempotencyKey,
+      ordinary,
+    ),
+    "conflict",
+  );
+  assert.deepEqual(
+    await store.getEffectResult(ordinary.idempotencyKey),
+    ordinaryResult,
+  );
+  assert.equal(
+    (await store.getPersistedEffect(ordinary.idempotencyKey))?.status,
+    "PENDING",
+  );
+});
+
+test("effect runner quarantines an existing malformed cleanup DONE and releases once", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "existing-done",
+    status: "PENDING",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  await store.saveEffectResult(effect.runId, effect.sessionId, {
+    idempotencyKey: effect.idempotencyKey,
+    status: "DONE",
+    output: { releasedPreparedInvocationId: "wrong-call" },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  }, cleanupResultPersistenceIntent(effect.idempotencyKey));
+  let releases = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    releases += 1;
+    return { releasedPreparedInvocationId: preparedCallId };
+  });
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    },
+  );
+
+  assert.equal(outcome.stop, false);
+  assert.equal(releases, 1);
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
+});
+
+test("effect runner quarantines malformed cleanup DONE from a claim race", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "claim-race",
+    status: "PENDING",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  const claimEffectExecution = store.claimEffectExecution.bind(store);
+  let injectRace = true;
+  store.claimEffectExecution = async (idempotencyKey, owner) => {
+    if (injectRace) {
+      injectRace = false;
+      await store.saveEffectResult(effect.runId, effect.sessionId, {
+        idempotencyKey,
+        status: "DONE",
+        output: { releasedPreparedInvocationId: "claim-race-wrong-call" },
+        timestamp: "2026-08-27T00:00:01.000Z",
+      }, cleanupResultPersistenceIntent(idempotencyKey));
+      assert.equal(
+        await store.resetPreparedApprovalCleanupEffectExecution(
+          idempotencyKey,
+          owner,
+        ),
+        "reset",
+      );
+      return claimEffectExecution(idempotencyKey, owner);
+    }
+    return claimEffectExecution(idempotencyKey, owner);
+  };
+  let releases = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    releases += 1;
+    return { releasedPreparedInvocationId: preparedCallId };
+  });
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    },
+  );
+
+  assert.equal(outcome.stop, false);
+  assert.equal(releases, 1);
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
+});
+
+test("effect runner validates and quarantines malformed cleanup DONE from a reset race", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "reset-race",
+    status: "FAILED",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  await store.saveEffectResult(effect.runId, effect.sessionId, {
+    idempotencyKey: effect.idempotencyKey,
+    status: "FAILED",
+    error: { code: "EFFECT_EXECUTION_FAILED", message: "retryable failure" },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  }, cleanupResultPersistenceIntent(effect.idempotencyKey));
+  const resetPreparedApprovalCleanupEffectExecution =
+    store.resetPreparedApprovalCleanupEffectExecution.bind(store);
+  let injectRace = true;
+  store.resetPreparedApprovalCleanupEffectExecution = async (
+    idempotencyKey,
+    owner,
+  ) => {
+    const reset = await resetPreparedApprovalCleanupEffectExecution(
+      idempotencyKey,
+      owner,
+    );
+    if (injectRace) {
+      injectRace = false;
+      assert.equal(reset, "reset");
+      await store.saveEffectResult(effect.runId, effect.sessionId, {
+        idempotencyKey,
+        status: "DONE",
+        output: { releasedPreparedInvocationId: "reset-race-wrong-call" },
+        timestamp: "2026-08-27T00:00:02.000Z",
+      }, cleanupResultPersistenceIntent(idempotencyKey));
+      assert.equal(
+        await resetPreparedApprovalCleanupEffectExecution(
+          idempotencyKey,
+          owner,
+        ),
+        "reset",
+      );
+      return "reset";
+    }
+    return reset;
+  };
+  let releases = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    releases += 1;
+    return { releasedPreparedInvocationId: preparedCallId };
+  });
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    },
+  );
+
+  assert.equal(outcome.stop, false);
+  assert.equal(releases, 1);
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
+});
+
+test("two cleanup runners serialize release and retain quarantine audit after convergence", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "serialized-convergence",
+    status: "PENDING",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  const originalTimestamp = "2026-08-27T00:00:01.000Z";
+  await store.saveEffectResult(effect.runId, effect.sessionId, {
+    idempotencyKey: effect.idempotencyKey,
+    status: "DONE",
+    output: {
+      releasedPreparedInvocationId: "wrong-call",
+      malformedText: "invalid\u0000audit",
+    },
+    timestamp: originalTimestamp,
+  }, cleanupResultPersistenceIntent(effect.idempotencyKey));
+  assert.equal(
+    await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+      effect.idempotencyKey,
+      effect,
+    ),
+    "conflict",
+  );
+  assert.equal(
+    await store.resetPreparedApprovalCleanupEffectExecution(
+      effect.idempotencyKey,
+      effect,
+    ),
+    "reset",
+  );
+  let releaseHandler!: () => void;
+  const handlerGate = new Promise<void>((resolve) => {
+    releaseHandler = resolve;
+  });
+  let handlerStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    handlerStarted = resolve;
+  });
+  let releases = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    releases += 1;
+    handlerStarted();
+    await handlerGate;
+    return { releasedPreparedInvocationId: preparedCallId };
+  });
+  const context = {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  };
+  const first = new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    context,
+  );
+  await started;
+  const second = new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    context,
+  );
+  await Promise.resolve();
+  releaseHandler();
+  const outcomes = await Promise.all([first, second]);
+
+  assert.deepEqual(outcomes.map((outcome) => outcome.stop), [false, false]);
+  assert.equal(releases, 1);
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
+  const quarantineEvents = store.getRunEvents().filter((event) =>
+    event.type === "prepared_approval_cleanup.done_evidence_quarantined"
+  );
+  assert.equal(quarantineEvents.length, 1);
+  const resultIdentity = quarantineEvents[0]?.metadata?.resultIdentity as
+    Record<string, unknown>;
+  assert.equal(resultIdentity.status, "DONE");
+  assert.equal(resultIdentity.originalTimestamp, originalTimestamp);
+  assert.equal(
+    (resultIdentity.idempotencyKey as Record<string, unknown>).canonicalHash,
+    hashCanonical({ value: effect.idempotencyKey }),
+  );
+  const serializedAudit = JSON.stringify(quarantineEvents[0]);
+  assert.equal(serializedAudit.includes("wrong-call"), false);
+  assert.equal(serializedAudit.includes("invalid\uFFFDaudit"), false);
+  assert.match(
+    String((quarantineEvents[0]?.metadata?.evidence as Record<string, unknown>)
+      .canonicalHash),
+    /^sha256:[0-9a-f]{64}$/u,
+  );
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(quarantineEvents[0]?.metadata)) <=
+      PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
+  );
+
+  const replay = await new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    context,
+  );
+  assert.equal(replay.stop, false);
+  assert.equal(releases, 1, "exact DONE recheck must skip the handler");
+  assert.equal(
+    store.getRunEvents().filter((event) =>
+      event.type === "prepared_approval_cleanup.done_evidence_quarantined"
+    ).length,
+    1,
+  );
+});
+
+test("cleanup critical section releases after a thrown handler and permits retry", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "critical-section-throw",
+    status: "PENDING",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  let attempts = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("injected cleanup handler crash");
+    return { releasedPreparedInvocationId: preparedCallId };
+  });
+  const runner = new InlineEffectRunner(store, registry);
+  const context = {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  };
+
+  const crashed = await runner.runEffects([effect], context);
+  const retried = await runner.runEffects([effect], context);
+
+  assert.equal(crashed.stop, true);
+  assert.equal(retried.stop, false);
+  assert.equal(attempts, 2);
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
+});
+
+test("cleanup critical section refuses ordinary effects without invoking the handler", async () => {
+  const store = new InMemorySessionStore();
+  const { effect } = await buildPreparedApprovalCleanupEffect({
+    suffix: "ordinary-isolation",
+    status: "CLAIMED",
+  });
+  const ordinary = {
+    ...effect,
+    payload: { preparedToolCall: effect.payload.preparedToolCall },
+  };
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(ordinary),
+  );
+  let handlerCalls = 0;
+  const outcome = await store.executePreparedApprovalCleanupInCriticalSection(
+    ordinary.idempotencyKey,
+    ordinary,
+    async () => {
+      handlerCalls += 1;
+      throw new Error("ordinary handler must not run");
+    },
+  );
+
+  assert.deepEqual(outcome, { status: "conflict" });
+  assert.equal(handlerCalls, 0);
+  assert.equal((await store.getPersistedEffect(ordinary.idempotencyKey))?.status, "CLAIMED");
+});
+
+test("ordinary failed release remains terminal and is never retried", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  let calls = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    calls += 1;
+    throw new Error("ordinary release failure");
+  });
+  const effect = {
+    runId: "run-ordinary-release",
+    sessionId: "session-ordinary-release",
+    stepIndex: 1,
+    type: "release_prepared_tool_call",
+    payload: {},
+    idempotencyKey: "ordinary:release",
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+  const runner = new InlineEffectRunner(store, registry);
+  await runner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  await runner.runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  assert.equal(calls, 1);
+});
+
+test("cleanup-only release recovers a crash after claim and before release", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: adaptLegacyTestToolGateway({
+      call: async () => ({ unreachable: true }),
+    }),
+    toolName: "exec_command",
+    toolInput: { cmd: "true" },
+    runId: "run-cleanup-claimed",
+    sessionId: "thread-cleanup-claimed",
+    callId: "prepared-cleanup-claimed",
+  });
+  let calls = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    calls += 1;
+    return { releasedPreparedInvocationId: preparedToolCall.callId };
+  });
+  const effect = {
+    runId: "run-cleanup-claimed",
+    sessionId: "thread-cleanup-claimed",
+    stepIndex: 1,
+    type: "release_prepared_tool_call",
+    payload: {
+      preparedToolCall,
+      preparedApprovalCleanup: {
+        version: "runner_prepared_approval_cleanup_v1" as const,
+        organizationId: "org-cleanup",
+        threadId: "thread-cleanup-claimed",
+        turnId: "turn-cleanup",
+        interactionId: "interaction-cleanup",
+        requestId: "approval-cleanup",
+        failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED" as const,
+        failureMessage: "Policy changed.",
+      },
+    },
+    idempotencyKey: `${preparedToolCall.callId}:release`,
+    failurePolicy: "STOP" as const,
+    status: "CLAIMED" as const,
+    createdAt: "2026-08-26T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({ ...effect });
+  const outcome = await new InlineEffectRunner(store, registry).runEffects([effect], {
+    runId: effect.runId,
+    sessionId: effect.sessionId,
+    stepIndex: effect.stepIndex,
+  });
+  assert.equal(outcome.stop, false);
+  assert.equal(calls, 1);
 });
 
 test("Effect runner CONTINUE policy keeps running", async () => {
@@ -383,6 +2196,64 @@ test("execute-tool handler persists the exact completed result before returning 
 
   assert.equal((output as { status?: string }).status, "OK");
   assert.deepEqual(order, ["tool-completed", "exact-result-durable", "handler-returned"]);
+});
+
+test("prepared-call cleanup runs only after its durable effect exists and remains idempotent", async () => {
+  const store = new InMemorySessionStore();
+  const toolGateway = adaptLegacyTestToolGateway({
+    validateInput: async (_name, input) => input,
+    call: async () => {
+      throw new Error("cleanup must not execute the prepared call");
+    },
+  });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: toolGateway,
+    toolName: "code.execute",
+    toolInput: { language: "javascript", code: "return 1" },
+    runId: "run-cleanup",
+    sessionId: "session-cleanup",
+    callId: "call-cleanup",
+  });
+  let releases = 0;
+  toolGateway.releasePreparedToolCall = async (prepared) => {
+    assert.equal(prepared.callId, "call-cleanup");
+    releases += 1;
+  };
+  const registry = new EffectRegistry();
+  registry.register(
+    "release_prepared_tool_call",
+    createReleasePreparedToolCallHandler(toolGateway),
+  );
+  const runner = new InlineEffectRunner(store, registry);
+  const effect = {
+    runId: "run-cleanup-continuation",
+    sessionId: "session-cleanup",
+    stepIndex: 2,
+    type: "release_prepared_tool_call",
+    payload: { preparedToolCall },
+    idempotencyKey: "call-cleanup:release",
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-26T12:00:00.000Z",
+  };
+
+  assert.equal(
+    (await runner.runEffects([effect], {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    })).stop,
+    false,
+  );
+  assert.equal(
+    (await runner.runEffects([effect], {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    })).stop,
+    false,
+  );
+  assert.equal(releases, 1);
 });
 
 test("deferred capability output mutation cannot alter or masquerade as the persisted snapshot", async () => {

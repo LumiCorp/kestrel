@@ -112,6 +112,7 @@ test("trusted hosted preset exposes sandbox code while web defaults remain narro
   assert.deepEqual(hosted.capabilityPacks, ["balanced", "filesystem", "dev_shell", "sandbox_code"]);
   assert.equal(hosted.codeMode.enabled, true);
   assert.equal(hosted.toolAllowlist.includes("code.execute"), true);
+  assert.equal(hosted.toolAllowlist.includes("exec_command"), false);
   assert.deepEqual(web.capabilityPacks, ["balanced"]);
   assert.equal(web.toolAllowlist.includes("code.execute"), false);
 });

@@ -92,7 +92,12 @@ export type ModelProviderId =
   | "ollama"
   | "lmstudio";
 export type StoreDriverId = "auto" | "postgres" | "sqlite";
-export type ApprovalPolicyPackId = "dev" | "isolated_code" | "ci_bot" | "production";
+export type ApprovalPolicyPackId =
+  | "dev"
+  | "isolated_code"
+  | "ci_bot"
+  | "hosted_workspace"
+  | "production";
 export interface AgentStageConfig {
   modelByStage?: Record<string, string> | undefined;
 }
@@ -259,6 +264,9 @@ export interface TuiProfile {
         string,
         import("../src/mode/contracts.js").ToolApprovalPolicyEvidenceV1
       >
+    | undefined;
+  rememberedToolApprovalEvidence?:
+    | import("@kestrel-agents/protocol").RememberedToolApprovalEvidenceV1[]
     | undefined;
   mcpServers?: McpServerConfig[] | undefined;
   ociMcpEgressBindings?: ResolvedOciMcpEgressBindingV1[] | undefined;

@@ -7,6 +7,11 @@ import {
   capabilityForMicrosoft365Operation,
   microsoft365RuntimeInputSchema,
 } from "@/lib/integrations/microsoft-365-contract";
+import {
+  githubMutationTools as githubTools,
+  googleMutationTools as googleTools,
+  microsoftMutationTools as microsoftTools,
+} from "@/lib/apps/hosted-app-operation-identity";
 
 const repositorySchema = z.string().regex(/^[^/\s]+\/[^/\s]+$/u);
 export const githubRuntimeActionInputSchema = z.discriminatedUnion("operation", [
@@ -40,25 +45,6 @@ type HostedMutation = {
   resourceLabel?: string;
   providerInput: Record<string, unknown>;
 };
-
-const githubTools = {
-  "kestrel_one.github_issue_create": ["issue.create", "issue.write"],
-  "kestrel_one.github_pull_request_create": ["pull_request.create", "pull_request.write"],
-  "kestrel_one.github_pull_request_merge": ["pull_request.merge", "merge.write"],
-  "kestrel_one.github_release_create": ["release.create", "release.write"],
-  "kestrel_one.github_workflow_dispatch": ["workflow.dispatch", "workflow.dispatch"],
-} as const;
-
-const googleTools = {
-  "kestrel_one.google_calendar_create_event": "events.create",
-  "kestrel_one.google_calendar_update_event": "events.update",
-  "kestrel_one.google_calendar_delete_event": "events.delete",
-} as const;
-
-const microsoftTools = {
-  "kestrel_one.microsoft_365_send_mail": "mail.send",
-  "kestrel_one.microsoft_365_send_chat_message": "chat.send",
-} as const;
 
 export function parseHostedMutation(toolName: string, toolInput: Record<string, unknown>): HostedMutation | null {
   if (toolName === "kestrel_one.email_send") {

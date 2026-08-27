@@ -77,6 +77,7 @@ export const desktopHostOpenTool: SharedToolModule = {
       executionClass: "external_side_effect",
       allowedInteractionModes: ["chat", "build"],
       capabilityClasses: ["desktop.host.open"],
+      approvalCapabilities: ["external.confirm"],
     },
     presentation: {
       displayName: "Open on Desktop",

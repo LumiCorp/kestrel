@@ -289,16 +289,22 @@ function parseOptionalApprovalPolicyPack(value: unknown): ApprovalPolicyPackId |
   if (value === undefined) {
     return ;
   }
-  if (value === "dev" || value === "isolated_code" || value === "ci_bot" || value === "production") {
+  if (
+    value === "dev" ||
+    value === "isolated_code" ||
+    value === "ci_bot" ||
+    value === "hosted_workspace" ||
+    value === "production"
+  ) {
     return value;
   }
-  throw new Error("job input approvalPolicyPackId must be dev|isolated_code|ci_bot|production when present");
+  throw new Error("job input approvalPolicyPackId must be dev|isolated_code|ci_bot|hosted_workspace|production when present");
 }
 
 function parseRequiredApprovalPolicyPack(value: unknown): ApprovalPolicyPackId {
   const parsed = parseOptionalApprovalPolicyPack(value);
   if (parsed === undefined) {
-    throw new Error("job input approvalPolicyPackId must be dev|isolated_code|ci_bot|production");
+    throw new Error("job input approvalPolicyPackId must be dev|isolated_code|ci_bot|hosted_workspace|production");
   }
   return parsed;
 }

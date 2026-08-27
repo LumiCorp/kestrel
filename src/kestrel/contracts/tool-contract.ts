@@ -768,7 +768,7 @@ function parseCapability(value: unknown): ToolCapabilityContractV1 {
     COST_CLASSES,
     "tool descriptor.capability.costClass",
   );
-  requireEnumString(
+  const executionClass = requireEnumString(
     input.executionClass,
     EXECUTION_CLASSES,
     "tool descriptor.capability.executionClass",
@@ -800,6 +800,14 @@ function parseCapability(value: unknown): ToolCapabilityContractV1 {
         "tool descriptor.capability.approvalCapabilities must be omitted when empty",
       );
     }
+  }
+  if (
+    executionClass === "external_side_effect" &&
+    input.approvalCapabilities === undefined
+  ) {
+    throw new Error(
+      "tool descriptor.capability.approvalCapabilities is required for external_side_effect tools",
+    );
   }
   if (input.minimumApprovalMode !== undefined) {
     requireEnumString(

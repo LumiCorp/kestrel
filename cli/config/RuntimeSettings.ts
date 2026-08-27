@@ -92,7 +92,13 @@ function parseOptionalStoreDriver(value: unknown): StoreDriverId | undefined {
 }
 
 function parseOptionalApprovalPolicyPack(value: unknown): ApprovalPolicyPackId | undefined {
-  if (value === "dev" || value === "isolated_code" || value === "ci_bot" || value === "production") {
+  if (
+    value === "dev" ||
+    value === "isolated_code" ||
+    value === "ci_bot" ||
+    value === "hosted_workspace" ||
+    value === "production"
+  ) {
     return value;
   }
   return ;

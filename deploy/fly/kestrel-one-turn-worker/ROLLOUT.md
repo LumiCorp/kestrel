@@ -1,5 +1,9 @@
 # Kestrel One turn-worker rollout
 
+When the image changes hosted approval protocol production, also follow the
+[hosted approval V4 guided rollout](../../../docs/operations/hosted-approval-v3-rollout-runbook.md).
+Its compatibility and activation images are separate qualified releases.
+
 The turn worker is a manually published Fly image deployed to one exact Machine
 at a time. It owns durable turn execution, scheduled prompt dispatch, turn queue
 reconciliation, and mobile push outbox maintenance. Publishing a tag is not

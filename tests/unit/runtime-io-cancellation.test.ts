@@ -67,17 +67,40 @@ test("RuntimeIO.model does not emit model request events when already aborted", 
 test("RuntimeIO.model does not emit completion when aborted after provider return", async () => {
   const controller = new AbortController();
   const emitted: string[] = [];
+  const guardrails = new Guardrails(guardrailConfig);
   const io = createRuntimeIO({
     signal: controller.signal,
     emitted,
+    guardrails,
+    runtimeMetadata: {
+      runtimeAssembly: {
+        harnessEconomics: pricedEconomicsControl(
+          economicsPolicy({ mode: "observe", exposure: "assembly_allowlist", maxToolTokens: 100_000 }),
+        ),
+      },
+    },
     modelCall: async () => {
       controller.abort();
-      return { ok: true };
+      return {
+        text: "must not be consumed",
+        usage: {
+          inputTokens: 120,
+          cachedInputTokens: 20,
+          outputTokens: 30,
+          reasoningTokens: 10,
+          totalTokens: 150,
+        },
+        provider: { name: "provider-a", model: "model-a" },
+      };
     },
   });
 
   await assert.rejects(
-    () => io.model(modelRequest()),
+    () => io.model({
+      ...modelRequest(),
+      model: "model-a",
+      metadata: { requestedProvider: "provider-a" },
+    }),
     (error) => readErrorCode(error) === "RUN_CANCELLED",
   );
 
@@ -85,6 +108,21 @@ test("RuntimeIO.model does not emit completion when aborted after provider retur
   assert.ok(emitted.includes("MODEL_CALL_FAILED"));
   assert.equal(emitted.includes("model.completed"), false);
   assert.equal(emitted.includes("MODEL_CALL_DONE"), false);
+  assert.deepEqual(
+    { ...guardrails.telemetry(), durationMs: 0 },
+    {
+      stepsExecuted: 0,
+      toolCalls: 0,
+      modelCalls: 0,
+      durationMs: 0,
+      inputTokens: 120,
+      cachedInputTokens: 20,
+      outputTokens: 30,
+      reasoningTokens: 10,
+      totalTokens: 150,
+      pricedCostUsd: 0.0018,
+    },
+  );
 });
 
 test("RuntimeIO disables gateway retries for maintenance calls only", async () => {
@@ -1150,6 +1188,7 @@ function createRuntimeIO(input: {
   provenanceUpdates?: Array<
     Parameters<NonNullable<RuntimeStore["updateModelCallProvenance"]>>[0]
   > | undefined;
+  guardrails?: Guardrails | undefined;
 }): RuntimeIO {
   let seq = 0;
   const store = {
@@ -1202,7 +1241,7 @@ function createRuntimeIO(input: {
     },
     toolJobQueue: new ToolJobQueue(),
     toolQueueEnabled: input.toolQueueEnabled ?? false,
-    guardrails: new Guardrails({
+    guardrails: input.guardrails ?? new Guardrails({
       ...guardrailConfig,
       ...(input.toolCallRetryCount !== undefined ? { toolCallRetryCount: input.toolCallRetryCount } : {}),
     }),
@@ -1355,6 +1394,25 @@ function economicsControl(policy: HarnessEconomicsPolicyV1) {
       },
       cache: { behavior: "none" as const },
     }],
+  };
+}
+
+function pricedEconomicsControl(policy: HarnessEconomicsPolicyV1) {
+  const control = economicsControl(policy);
+  return {
+    ...control,
+    modelProfiles: control.modelProfiles.map((profile) => ({
+      ...profile,
+      price: {
+        version: 1 as const,
+        priceVersion: "price:test:v1",
+        currency: "USD" as const,
+        effectiveAt: "2026-07-22T00:00:00.000Z",
+        retrievedAt: "2026-07-22T00:00:00.000Z",
+        sourceUrl: "https://provider.example/pricing",
+        perMillionTokens: { input: 10, output: 20 },
+      },
+    })),
   };
 }
 

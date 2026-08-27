@@ -36,11 +36,21 @@ export const threadTurnBodySchema = z
         turnId: routeIdSchema,
         message: z.string().trim().min(1).max(20_000),
         approved: z.boolean().optional(),
+        decision: z.enum([
+          "decline",
+          "approve_once",
+          "remember_approval",
+        ]).optional(),
         reason: z.string().trim().max(2000).optional(),
         recoveryOptionId: z.string().trim().min(1).max(200).optional(),
         messageId: routeIdSchema.optional(),
       })
       .strict()
+      .refine(
+        (response) =>
+          response.approved === undefined || response.decision === undefined,
+        { message: "An interaction response cannot mix V1 and V2 decisions." }
+      )
       .optional(),
   })
   .strict()

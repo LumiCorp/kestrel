@@ -1,0 +1,93 @@
+# Hosted Approval Simplification Implementation Queue
+
+Each issue appears in one state. `Ready` is the current dependency-free
+frontier. Move issues between states as implementation and review change the
+graph.
+
+Remaining implementation must start from the current deployed production
+source or a verified descendant. Revalidate the named seams before applying
+changes. The Done issues below remain evidence of completed behavior and review
+work; this queue does not reopen them.
+
+## Ready
+
+- [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md) — implementation dependencies are complete; production qualification, drain evidence, and cleanup remain the next boundary.
+
+## In progress
+
+- None.
+
+## Blocked
+
+- None.
+
+## Implemented
+
+- None.
+
+## Done
+
+- [Latch the first cancellation source](07f-latch-first-cancellation-source.md)
+- [Capture completed model usage before cancellation](07a-capture-completed-model-usage-before-cancellation.md)
+- [Preserve cancellation telemetry through persistence retry](07b-preserve-cancellation-telemetry-through-persistence-retry.md)
+- [Project a safe cancellation terminal result](07c-project-safe-cancellation-terminal-result.md)
+- [Preserve the cancellation source](07d-preserve-cancellation-source.md)
+- [Preserve zero-dollar priced cost evidence](07e-preserve-zero-priced-cost-evidence.md)
+- [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
+
+- [Bind PostgreSQL result insertion to the locked effect identity](06z7-bind-postgres-result-to-locked-effect.md)
+- [Require immutable cleanup intent for all result statuses](06z6-require-cleanup-intent-for-all-results.md)
+- [Bind cleanup persistence to one pre-await evidence snapshot](06z5-bind-cleanup-persistence-snapshot.md)
+- [Snapshot exact cleanup evidence once before validation and persistence](06z2-snapshot-exact-cleanup-evidence.md)
+- [Reject non-durable prepared invocation identifiers](06z3-reject-non-durable-prepared-identifiers.md)
+- [Use trusted timestamps for quarantined cleanup results](06z4-use-trusted-cleanup-quarantine-timestamps.md)
+- [Preserve exact cleanup success before evidence normalization](06y-preserve-exact-cleanup-success.md)
+- [Eliminate caller-asserted cleanup marker provenance](06z-eliminate-caller-asserted-marker-provenance.md)
+- [Preserve internally generated cleanup truncation diagnostics](06z1-preserve-generated-cleanup-diagnostics.md)
+- [Normalize cleanup evidence before store-specific persistence](06v-normalize-cleanup-before-persistence.md)
+- [Preserve bounded identities for oversized cleanup evidence keys](06w-preserve-oversized-cleanup-key-identities.md)
+- [Prevent forged cleanup evidence normalization markers](06x-prevent-forged-cleanup-evidence-markers.md)
+- [Normalize cleanup quarantine values across stores](06t-normalize-cleanup-quarantine-values.md)
+- [Bound cleanup quarantine audit timestamp](06u-bound-cleanup-audit-timestamp.md)
+- [Align hosted approval contract gates](06s-align-hosted-approval-contract-gates.md)
+- [Make in-memory cleanup quarantine atomic](06r-make-in-memory-quarantine-atomic.md)
+- [Bound and canonicalize cleanup audit identities](06q-bound-and-canonicalize-cleanup-audit-identities.md)
+- [Redact cleanup quarantine audit](06p-redact-cleanup-quarantine-audit.md)
+- [Serialize cleanup release and audit quarantine](06o-serialize-cleanup-release-and-audit-quarantine.md)
+- [Quarantine invalid cleanup DONE evidence](06n-quarantine-invalid-cleanup-done-evidence.md)
+- [Validate before cleanup DONE repair](06m-validate-before-cleanup-done-repair.md)
+- [Validate exact cleanup DONE evidence](06l-validate-exact-cleanup-done-evidence.md)
+- [Atomically commit cleanup release success](06k-atomically-commit-cleanup-release-success.md)
+- [Make cleanup release state monotonic](06j-make-cleanup-release-state-monotonic.md)
+- [Recover completed cleanup with bounded reconciliation](06i-recover-completed-cleanup-with-backoff.md)
+- [Bridge the deployed preset-2 baseline](06h-bridge-the-deployed-preset2-baseline.md)
+- [Converge prepared cleanup across retry and lifecycle](06g-converge-cleanup-across-retry-and-lifecycle.md)
+- [Construct the V4 compatibility release](06f-construct-v4-compatibility-release.md)
+- [Make prepared approval cleanup durable](06e-make-prepared-cleanup-durable.md)
+- [Order the V4 compatibility rollout](06d-order-v4-compatibility-rollout.md)
+- [Generalize prepared approval cleanup](06c-generalize-prepared-approval-cleanup.md)
+- [Release a Web-rejected prepared approval](06b-release-web-rejected-prepared-approval.md)
+- [Version trusted hosted approval timing](06a-version-trusted-hosted-approval-timing.md)
+- [Make hosted tool availability and approval one truthful decision](06-unify-hosted-tool-decision.md)
+
+- [Remember Ask First approval for the thread](03-remember-thread-tool-approval.md)
+- [Make the thread interaction the approval decision owner](04-canonicalize-approval-lifecycle.md)
+- [Resume the exact prepared invocation after approval](02-resume-prepared-invocation.md)
+- [Persist the exact tool invocation before approval](01-persist-prepared-invocation.md)
+- [Reject contradictory V2 approval authority](01a-enforce-v2-authority-consistency.md)
+- [Bind persisted V2 approval to current hosted authority](01a1-bind-v2-to-current-host-authority.md)
+- [Reject downgraded V2 pending approval state](01a2-reject-downgraded-v2-pending-state.md)
+- [Use one canonical persisted invocation for card and approval](01b-canonical-prepared-invocation-state.md)
+- [Bind the approval card to the canonical prepared invocation](01b1-bind-card-to-canonical-invocation.md)
+- [Release prepared execution resources when approval will not execute](01c-release-abandoned-prepared-executions.md)
+- [Complete prepared execution ownership and shutdown safety](01c1-complete-prepared-resource-ownership.md)
+- [Close replay and snapshot-creation races](01c2-close-replay-and-snapshot-races.md)
+- [Make production MCP cleanup retryable](01c3-make-mcp-cleanup-retryable.md)
+- [Serialize MCP retain, release, and retire](01c4-serialize-mcp-retain-and-retire.md)
+- [Clean up the prepared run owner after continuation](01c5-clean-up-the-prepared-run-owner.md)
+- [Terminate expired V2 approvals without reusing expired authority](01d-terminate-expired-v2-approvals.md)
+- [Align the V2 approval prompt with its strict decisions](01e-align-v2-prompt-decisions.md)
+- [Carry strict V2 decisions through hosted clients](01e1-carry-v2-decisions-end-to-end.md)
+- [Bind remembered records to the exact atomic remember decision](01f-bind-remembered-record-to-decision.md)
+- [Derive remembered identity from the locked source interaction](01f1-derive-remembered-identity-from-source.md)
+- [Preserve canonical turn lock order for remembered approval](01f2-preserve-turn-lock-order.md)

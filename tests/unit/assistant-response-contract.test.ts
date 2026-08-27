@@ -8,6 +8,13 @@ import type {
 import { enforceRuntimeAssistantResponseBoundary, finalizeRuntimeAssistantResponse } from "../../src/runtime/assistantResponseContract.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { evaluationReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
+import {
+  createToolActivationRefV1,
+  fingerprintToolScopeV1,
+  hashCanonical,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
 
 test("finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stale assistant text", () => {
   const result = finalizeRuntimeAssistantResponse({
@@ -69,13 +76,247 @@ test("finalizeRuntimeAssistantResponse canonicalizes an approval wait over stale
         policy: {
           mode: "ask",
           reasonCode: "tool_minimum",
-          authorityKind: "runtime_policy",
-          authorityRevision: "legacy-external-confirm",
-          explanation: "This invocation requires approval.",
+            authorityKind: "runtime_policy",
+            authorityRevision: "legacy-external-confirm",
+            explanation: "This invocation requires approval.",
+            rememberApprovalEligible: false,
         },
       },
     },
   });
+});
+
+test("new hosted approval card reloads its action from the persisted prepared call", () => {
+  const descriptor = defaultToolCatalog.getDescriptorRef("internet.search");
+  assert.ok(descriptor);
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-hosted",
+    scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
+  });
+  const effectiveInput = { query: "persisted exact query" };
+  const policyRevision = hashCanonical({ policy: "ask" });
+  const requestingActor = {
+    actorType: "end_user" as const,
+    actorId: "user-1",
+    tenantId: "org-1",
+  };
+  const stableToolIdentity = {
+    version: "stable_tool_approval_identity_v1" as const,
+    toolId: descriptor.toolId,
+    descriptorContractRevision: descriptor.contractRevision,
+    approvalAuthorityRevision: "approval-authority-v1",
+  };
+  const stableAuthorityPayload = {
+    version: "prepared_tool_stable_authority_v1" as const,
+    actor: requestingActor,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    threadId: "thread-1",
+    resourceAuthority: {
+      toolSourceKind: descriptor.sourceKind,
+      toolSourceId: descriptor.sourceId,
+    },
+    policyRevision,
+    capabilities: ["network.call"],
+    descriptorContractRevision: descriptor.contractRevision,
+    approvalAuthorityRevision: stableToolIdentity.approvalAuthorityRevision,
+    normalizedActionHash: hashCanonical({
+      toolId: descriptor.toolId,
+      effectiveInput,
+    }),
+  };
+  const stableAuthority = {
+    ...stableAuthorityPayload,
+    fingerprint: hashCanonical(stableAuthorityPayload),
+  };
+  const prepared = parsePreparedToolCallV1({
+    version: "v1",
+    runId: "original-run",
+    sessionId: "thread-1",
+    callId: "prepared-search-1",
+    activation,
+    origin: {
+      kind: "model",
+      snapshotId: hashCanonical({ snapshot: 1 }),
+      modelToolCallId: "model-call-1",
+    },
+    effectiveInput,
+    policy: {
+      decision: "approval_required",
+      policyRevision,
+      reasonCode: "environment_policy",
+    },
+    approval: {
+      approvalId: "prepared-search-1",
+      authorityRevision: hashCanonical({ approval: 1 }),
+      externalApprovalBinding: {
+        version: "runner_external_approval_binding_v2",
+        approvalId: "prepared-search-1",
+        preparedInvocationId: "prepared-search-1",
+        threadId: "thread-1",
+        actionKey: descriptor.toolId,
+        payloadHash: hashCanonical(effectiveInput),
+        stableAuthorityFingerprint: stableAuthority.fingerprint,
+        stableToolIdentity,
+        requestingActor,
+        toolClass: "external_side_effect",
+        capabilities: ["network.call"],
+        authorityKind: "runtime_policy",
+        authorityRevision: stableToolIdentity.approvalAuthorityRevision,
+        requestedAt: "2026-08-26T12:00:00.000Z",
+        expiresAt: "2026-08-26T12:05:00.000Z",
+      },
+    },
+    stableAuthority,
+    stableToolIdentity,
+    executionRequirements: {
+      version: "prepared_tool_execution_requirements_v1",
+      credentials: ["continuation_run_segment", "live_handler_capability"],
+    },
+    preparedAt: "2026-08-26T12:00:00.000Z",
+  });
+  const restartedPrepared = JSON.parse(JSON.stringify(prepared)) as unknown;
+  const compatibilityResult = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: restartedPrepared,
+        },
+      },
+    }),
+    assistantText: "stale",
+  });
+  assert.equal(
+    compatibilityResult.output.waitFor?.interaction?.version,
+    "runner_hosted_tool_approval_interaction_v2",
+  );
+  const legacyV3Result = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: restartedPrepared,
+        },
+      },
+    }),
+    assistantText: "stale",
+    hostedApprovalProtocolVersion: "v3",
+  });
+  assert.equal(
+    legacyV3Result.output.waitFor?.interaction?.version,
+    "runner_hosted_tool_approval_interaction_v3",
+  );
+  assert.equal(legacyV3Result.output.waitFor?.interaction?.metadata, undefined);
+  const result = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: restartedPrepared,
+          toolName: "forged.tool",
+          toolInput: { query: "forged query" },
+        },
+      },
+    }),
+    assistantText: "stale",
+    hostedApprovalProtocolVersion: "v4",
+  });
+  const interaction = result.output.waitFor?.interaction;
+  assert.equal(interaction?.version, "runner_hosted_tool_approval_interaction_v4");
+  assert.equal(
+    interaction?.prompt,
+    "Approve internet.search? Choose 'decline', 'approve_once', or 'remember_approval'.",
+  );
+  assert.deepEqual(
+    interaction?.inputSchema?.properties.decision.enum,
+    ["decline", "approve_once", "remember_approval"],
+  );
+  assert.match(
+    `${interaction?.prompt} ${JSON.stringify(interaction?.inputSchema)}`,
+    /remember_approval/u,
+  );
+  assert.equal(interaction?.approval?.toolName, "internet.search");
+  assert.equal(
+    interaction?.approval?.requestedAt,
+    prepared.approval?.externalApprovalBinding?.requestedAt,
+  );
+  assert.equal(
+    interaction?.approval?.expiresAt,
+    prepared.approval?.externalApprovalBinding?.expiresAt,
+  );
+  assert.deepEqual(
+    interaction?.approval?.stableToolIdentity,
+    prepared.stableToolIdentity,
+  );
+  assert.deepEqual(interaction?.approval?.requestingActor, requestingActor);
+  assert.equal(
+    "preparedInvocationId" in (interaction?.approval ?? {})
+      ? interaction?.approval.preparedInvocationId
+      : undefined,
+    "prepared-search-1",
+  );
+  assert.match(
+    JSON.stringify(interaction?.approval?.presentation),
+    /persisted exact query/u,
+  );
+  assert.doesNotMatch(JSON.stringify(interaction), /forged query|forged\.tool/u);
+
+  const projectAskPrepared = structuredClone(prepared);
+  projectAskPrepared.policy.reasonCode = "project_restriction";
+  const projectAskResult = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: projectAskPrepared,
+        },
+      },
+    }),
+    assistantText: "stale",
+    hostedApprovalProtocolVersion: "v4",
+  });
+  assert.equal(
+    projectAskResult.output.waitFor?.interaction?.version,
+    "runner_hosted_tool_approval_interaction_v4",
+  );
+
+  const stricterPrepared = structuredClone(prepared);
+  stricterPrepared.policy.reasonCode = "subject_restriction";
+  const stricterResult = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: stricterPrepared,
+        },
+      },
+    }),
+    assistantText: "stale",
+    hostedApprovalProtocolVersion: "v4",
+  });
+  const stricterInteraction = stricterResult.output.waitFor?.interaction;
+  assert.equal(
+    stricterInteraction?.version,
+    "runner_hosted_tool_approval_interaction_v2",
+  );
+  assert.deepEqual(
+    stricterInteraction?.inputSchema?.properties.decision.enum,
+    ["decline", "approve_once"],
+  );
+  assert.doesNotMatch(JSON.stringify(stricterInteraction), /remember_approval/u);
 });
 
 test("finalizeRuntimeAssistantResponse rejects a user-facing wait without a prompt", () => {

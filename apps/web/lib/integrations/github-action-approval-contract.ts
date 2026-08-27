@@ -22,7 +22,9 @@ export function readGitHubApprovalRequest(event: RunnerRunTerminalEvent) {
     event.type === "run.completed"
       ? asRecord(event.payload.result.output.waitFor?.metadata)
       : null;
-  const input = asRecord(approval.input) ?? asRecord(metadata?.toolInput);
+  const input =
+    ("input" in approval ? asRecord(approval.input) : null) ??
+    asRecord(metadata?.toolInput);
   if (!input) return null;
   const repository = readString(input.repository);
   if (!repository) return null;

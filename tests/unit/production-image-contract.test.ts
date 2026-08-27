@@ -19,6 +19,7 @@ import {
   assertProductionImageCanaryEnvironment,
   parsePublishProductionImageArgs,
   productionImageBuildCommands,
+  publishProductionImage,
 } from "../../scripts/publish-production-image.js";
 
 const tag = "operator-aug16";
@@ -51,7 +52,7 @@ test("local publication builds one amd64 image, smokes it, then pushes", () => {
       "--tag",
       tag,
     ]),
-    { role: "preview-edge", tag },
+    { role: "preview-edge", tag, approvalProtocol: undefined },
   );
   const commands = productionImageBuildCommands({
     dockerfile: "Dockerfile",
@@ -61,9 +62,162 @@ test("local publication builds one amd64 image, smokes it, then pushes", () => {
   });
   assert.deepEqual(
     commands.map((command) => `${command.command} ${command.args[0]}`),
-    ["docker buildx", "bash smoke.sh", "docker push"],
+    ["docker buildx", "bash smoke.sh", "docker push", "docker image"],
   );
   assert.match(commands[0].args.join(" "), /--platform linux\/amd64/u);
+});
+
+test("hosted approval image publication smokes the explicit release protocol", () => {
+  assert.deepEqual(
+    parsePublishProductionImageArgs([
+      "--role",
+      "turn-worker",
+      "--tag",
+      tag,
+      "--approval-protocol",
+      "v2",
+    ]),
+    { role: "turn-worker", tag, approvalProtocol: "v2" },
+  );
+  assert.deepEqual(
+    parsePublishProductionImageArgs([
+      "--role",
+      "workspace-runtime",
+      "--tag",
+      tag,
+      "--approval-protocol",
+      "v4",
+    ]),
+    { role: "workspace-runtime", tag, approvalProtocol: "v4" },
+  );
+  assert.throws(
+    () =>
+      parsePublishProductionImageArgs([
+        "--role",
+        "turn-worker",
+        "--tag",
+        tag,
+        "--approval-protocol",
+        "automatic",
+      ]),
+    /must be v2, v3, or v4/u,
+  );
+  const commands = productionImageBuildCommands({
+    dockerfile: "Dockerfile",
+    image: `registry.fly.io/example:${tag}`,
+    tag,
+    smoke: "smoke.sh",
+    approvalProtocol: "v2",
+  });
+  assert.deepEqual(commands[1].args, [
+    "smoke.sh",
+    `registry.fly.io/example:${tag}`,
+    "v2",
+  ]);
+  assert.match(
+    commands[0].args.join(" "),
+    /--build-arg KESTREL_HOSTED_APPROVAL_PROTOCOL=v2/u,
+  );
+  assert.deepEqual(commands[2].args, [
+    "image",
+    "inspect",
+    "--format",
+    '{{ index .Config.Labels "com.lumicorp.kestrel.hosted-approval-producer" }}',
+    `registry.fly.io/example:${tag}`,
+  ]);
+  const activationCommands = productionImageBuildCommands({
+    dockerfile: "Dockerfile",
+    image: "registry.fly.io/example:activation-aug16",
+    tag: "activation-aug16",
+    smoke: "smoke.sh",
+    approvalProtocol: "v4",
+  });
+  assert.match(
+    activationCommands[0].args.join(" "),
+    /--build-arg KESTREL_HOSTED_APPROVAL_PROTOCOL=v4/u,
+  );
+  assert.notDeepEqual(activationCommands[0].args, commands[0].args);
+});
+
+test("producer publication requires, verifies, and records the selected protocol", async () => {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const digestImage = `registry.fly.io/kestrel-one-turn-worker@sha256:${"a".repeat(64)}`;
+  const result = await publishProductionImage(
+    [
+      "--role",
+      "turn-worker",
+      "--tag",
+      tag,
+      "--approval-protocol",
+      "v2",
+    ],
+    (command, args) => {
+      calls.push({ command, args });
+      if (args.some((arg) =>
+        arg.includes("com.lumicorp.kestrel.hosted-approval-producer")
+      )) {
+        return { status: 0, stdout: "v2\n" };
+      }
+      if (args.includes("{{index .RepoDigests 0}}")) {
+        return { status: 0, stdout: `${digestImage}\n` };
+      }
+      return { status: 0, stdout: "" };
+    },
+    {
+      KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
+      KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: "configured",
+    },
+  );
+
+  assert.equal(result.approvalProtocol, "v2");
+  assert.equal(result.digestImage, digestImage);
+  assert.match(calls[0]!.args.join(" "), /KESTREL_HOSTED_APPROVAL_PROTOCOL=v2/u);
+  assert.ok(calls.some(({ args }) => args[0] === "push"));
+});
+
+test("producer publication fails before push when its image label is ambiguous", async () => {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  await assert.rejects(
+    () => publishProductionImage(
+      [
+        "--role",
+        "workspace-runtime",
+        "--tag",
+        tag,
+        "--approval-protocol",
+        "v4",
+      ],
+      (command, args) => {
+        calls.push({ command, args });
+        if (args.some((arg) =>
+          arg.includes("com.lumicorp.kestrel.hosted-approval-producer")
+        )) {
+          return { status: 0, stdout: "v2\n" };
+        }
+        return { status: 0, stdout: "" };
+      },
+      {
+        KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
+        KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: "configured",
+      },
+    ),
+    /advertises 'v2' instead of 'v4'/u,
+  );
+  assert.equal(calls.some(({ args }) => args[0] === "push"), false);
+});
+
+test("producer publication rejects an unversioned build", async () => {
+  await assert.rejects(
+    () => publishProductionImage(
+      ["--role", "turn-worker", "--tag", tag],
+      () => ({ status: 0, stdout: "" }),
+      {
+        KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
+        KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: "configured",
+      },
+    ),
+    /requires --approval-protocol/u,
+  );
 });
 
 test("attachment-owning image publication requires the live signed canary environment", () => {
@@ -73,15 +227,18 @@ test("attachment-owning image publication requires the live signed canary enviro
       /KESTREL_ONE_APP_URL/u,
     );
     assert.throws(
-      () => assertProductionImageCanaryEnvironment(role, {
-        KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
-      }),
+      () =>
+        assertProductionImageCanaryEnvironment(role, {
+          KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
+        }),
       /KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY/u,
     );
-    assert.doesNotThrow(() => assertProductionImageCanaryEnvironment(role, {
-      KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
-      KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: "configured",
-    }));
+    assert.doesNotThrow(() =>
+      assertProductionImageCanaryEnvironment(role, {
+        KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
+        KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: "configured",
+      }),
+    );
   }
   assert.doesNotThrow(() =>
     assertProductionImageCanaryEnvironment("preview-edge", {}),
@@ -89,11 +246,12 @@ test("attachment-owning image publication requires the live signed canary enviro
 });
 
 test("attachment-owning image smokes gate publication on exact-build canary evidence", async () => {
-  const [turnWorkerSmoke, workspaceRuntimeSmoke, workspaceDockerfile] =
+  const [turnWorkerSmoke, workspaceRuntimeSmoke, workspaceDockerfile, turnWorkerDockerfile] =
     await Promise.all([
       readFile("deploy/fly/kestrel-one-turn-worker/smoke.sh", "utf8"),
       readFile("apps/workspace-runtime/scripts/image-smoke.sh", "utf8"),
       readFile("apps/workspace-runtime/Dockerfile", "utf8"),
+      readFile("deploy/fly/kestrel-one-turn-worker/Dockerfile", "utf8"),
     ]);
   for (const source of [turnWorkerSmoke, workspaceRuntimeSmoke]) {
     assert.match(source, /KESTREL_ONE_APP_URL/u);
@@ -102,7 +260,32 @@ test("attachment-owning image smokes gate publication on exact-build canary evid
     assert.match(source, /evidence\.buildId !== process\.argv\[2\]/u);
     assert.match(source, /\$\{image##\*:\}/u);
   }
+  for (const dockerfile of [workspaceDockerfile, turnWorkerDockerfile]) {
+    assert.match(dockerfile, /ARG KESTREL_HOSTED_APPROVAL_PROTOCOL=v2/u);
+    assert.match(
+      dockerfile,
+      /com\.lumicorp\.kestrel\.hosted-approval-producer=\$KESTREL_HOSTED_APPROVAL_PROTOCOL/u,
+    );
+  }
   assert.match(workspaceDockerfile, /KESTREL_BUILD_ID=\$KESTREL_BUILD_ID/u);
+});
+
+test("local real-model qualification accepts and preserves exact prebuilt runtime images", async () => {
+  const canary = await readFile(
+    "apps/workspace-runtime/scripts/local-image-pair-canary.ts",
+    "utf8",
+  );
+  assert.match(canary, /--workspace-image/u);
+  assert.match(canary, /--router-image/u);
+  assert.match(canary, /must be provided together/u);
+  assert.match(canary, /imageSource: selectedImages \? "prebuilt"/u);
+  assert.match(
+    canary,
+    /if \(!selectedImages\) \{[\s\S]*docker\("image", "rm"/u,
+  );
+  assert.match(canary, /modelTimeoutMs: 60_000/u);
+  assert.match(canary, /signal: AbortSignal\.timeout\(90_000\)/u);
+  assert.match(canary, /abortBehavior: "cancel"/u);
 });
 
 test("partial Docker build contexts include root pnpm patches before install", async () => {
@@ -117,7 +300,9 @@ test("partial Docker build contexts include root pnpm patches before install", a
 
   for (const dockerfile of dockerfiles) {
     const patchCopy = dockerfile.indexOf("COPY patches patches");
-    const dependencyInstall = dockerfile.indexOf("RUN pnpm install --frozen-lockfile");
+    const dependencyInstall = dockerfile.indexOf(
+      "RUN pnpm install --frozen-lockfile",
+    );
     assert.ok(
       patchCopy >= 0 && patchCopy < dependencyInstall,
       "root pnpm patches must be available before a partial-context install",
@@ -636,10 +821,13 @@ test("every production image role has a live-proof rollout overlay", async () =>
     "runpod-worker": "deploy/fly/kestrel-one-runpod-worker/ROLLOUT.md",
   };
   const rolloutEntries = await Promise.all(
-    Object.entries(rolloutByRole).map(async ([role, rolloutPath]) => [
-      role,
-      await readFile(path.join(process.cwd(), rolloutPath), "utf8"),
-    ] as const),
+    Object.entries(rolloutByRole).map(
+      async ([role, rolloutPath]) =>
+        [
+          role,
+          await readFile(path.join(process.cwd(), rolloutPath), "utf8"),
+        ] as const,
+    ),
   );
   const rollouts = new Map(rolloutEntries);
   const [canonical, publicDocs, turnReadme, controlReadme, runpodReadme] =
@@ -689,7 +877,10 @@ test("every production image role has a live-proof rollout overlay", async () =>
     assert.match(rollout, /main` to `production/u);
     assert.match(rollout, /image smoke/iu);
     assert.match(rollout, /## Rollback/u);
-    assert.match(canonical, new RegExp(rolloutByRole[image.role]!.replaceAll("/", "\\/"), "u"));
+    assert.match(
+      canonical,
+      new RegExp(rolloutByRole[image.role]!.replaceAll("/", "\\/"), "u"),
+    );
   }
 
   for (const image of catalog.images.filter(
@@ -781,7 +972,8 @@ test("workspace-runtime image carries the Conversation package used by the CLI",
     "RUN pnpm install --frozen-lockfile",
   );
   assert.ok(
-    conversationManifestCopy >= 0 && conversationManifestCopy < dependencyInstall,
+    conversationManifestCopy >= 0 &&
+      conversationManifestCopy < dependencyInstall,
     "the Conversation manifest must be present before pnpm install",
   );
   const conversationSourceCopy = dockerfile.indexOf(
@@ -795,7 +987,8 @@ test("workspace-runtime image carries the Conversation package used by the CLI",
     "the Conversation sources must be present in the build stage",
   );
   assert.ok(
-    conversationBuild >= 0 && conversationBuild < dockerfile.indexOf("pnpm run clean"),
+    conversationBuild >= 0 &&
+      conversationBuild < dockerfile.indexOf("pnpm run clean"),
     "the Conversation package must be built before the root runtime",
   );
   assert.match(

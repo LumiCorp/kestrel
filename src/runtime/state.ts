@@ -3,6 +3,18 @@ import type {
   StateNodeRef,
 } from "../kestrel/contracts/base.js";
 import {
+  parseRunnerHostedToolApprovalInteractionV2,
+  parseRunnerHostedToolApprovalInteractionV3,
+  parseRunnerHostedToolApprovalInteractionV4,
+} from "@kestrel-agents/protocol";
+import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
+import { parseDurablePreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
+import {
+  projectHostedToolApprovalInteractionV2,
+  projectHostedToolApprovalInteractionV3,
+  projectHostedToolApprovalInteractionV4,
+} from "./assistantResponseContract.js";
+import {
   normalizeVisibleTodoState,
   validateVisibleTodoState,
   type VisibleTodoState,
@@ -48,7 +60,7 @@ export interface RuntimeWaitState {
   resumeStepAgent?: string | undefined;
   resumeToken?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined;
+  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequest | undefined;
 }
 
 export interface RuntimeCanonicalWaitingForState {
@@ -60,7 +72,7 @@ export interface RuntimeCanonicalWaitingForState {
   resumeStepAgent?: string | undefined;
   resumeToken?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined;
+  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequest | undefined;
   blockedAction?: unknown | undefined;
 }
 
@@ -382,6 +394,104 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
         },
       };
     }
+    const interaction = asRecord(waitingFor.interaction);
+    const waitMetadata = asRecord(waitingFor.metadata);
+    const pendingApproval = asRecord(exec.pendingApproval);
+    const hasHostedApprovalV2Evidence =
+      pendingApproval?.version === "hosted_tool_approval_v2" ||
+      pendingApproval?.preparedInvocationId !== undefined ||
+      pendingApproval?.preparedToolCall !== undefined ||
+      waitMetadata?.preparedToolCall !== undefined ||
+      asRecord(pendingApproval?.externalApprovalBinding)?.version ===
+        "runner_external_approval_binding_v2" ||
+      asRecord(waitMetadata?.externalApprovalBinding)?.version ===
+        "runner_external_approval_binding_v2";
+    if (
+      hasHostedApprovalV2Evidence &&
+      interaction?.version !== "runner_hosted_tool_approval_interaction_v2" &&
+      interaction?.version !== "runner_hosted_tool_approval_interaction_v3" &&
+      interaction?.version !== "runner_hosted_tool_approval_interaction_v4"
+    ) {
+      return {
+        code: "RUNTIME_STATE_INVALID",
+        message: "state.agent.waitingFor hosted approval state is incomplete",
+        details: {
+          path: "state.agent.waitingFor.interaction",
+        },
+      };
+    }
+    if (
+      interaction?.version === "runner_hosted_tool_approval_interaction_v2" ||
+      interaction?.version === "runner_hosted_tool_approval_interaction_v3" ||
+      interaction?.version === "runner_hosted_tool_approval_interaction_v4"
+    ) {
+      try {
+        if (waitingFor.kind !== "approval") {
+          throw new Error(
+            "hosted tool approval interaction requires an approval wait",
+          );
+        }
+        const parsedInteraction = interaction.version ===
+          "runner_hosted_tool_approval_interaction_v4"
+          ? parseRunnerHostedToolApprovalInteractionV4(
+              interaction,
+              waitingFor.eventType,
+            )
+          : interaction.version === "runner_hosted_tool_approval_interaction_v3"
+          ? parseRunnerHostedToolApprovalInteractionV3(
+              interaction,
+              waitingFor.eventType,
+            )
+          : parseRunnerHostedToolApprovalInteractionV2(
+              interaction,
+              waitingFor.eventType,
+            );
+        const prepared = parseDurablePreparedToolCallV1(
+          waitMetadata?.preparedToolCall,
+        );
+        if (
+          pendingApproval?.version !== "hosted_tool_approval_v2" ||
+          pendingApproval.preparedToolCall !== undefined ||
+          pendingApproval.preparedInvocationId !== prepared.callId ||
+          parsedInteraction.approval.preparedInvocationId !== prepared.callId
+        ) {
+          throw new Error(
+            "hosted tool approval must use one canonical prepared invocation",
+          );
+        }
+        const projectedInteraction = interaction.version ===
+          "runner_hosted_tool_approval_interaction_v4"
+          ? projectHostedToolApprovalInteractionV4({
+              preparedToolCall: prepared,
+              requestId: parsedInteraction.requestId,
+            })
+          : interaction.version === "runner_hosted_tool_approval_interaction_v3"
+          ? projectHostedToolApprovalInteractionV3({
+              preparedToolCall: prepared,
+              requestId: parsedInteraction.requestId,
+            })
+          : projectHostedToolApprovalInteractionV2({
+              preparedToolCall: prepared,
+              requestId: parsedInteraction.requestId,
+            });
+        if (
+          canonicalJson(parsedInteraction) !== canonicalJson(projectedInteraction)
+        ) {
+          throw new Error(
+            "hosted tool approval card must match its canonical prepared invocation",
+          );
+        }
+      } catch (error) {
+        return {
+          code: "RUNTIME_STATE_INVALID",
+          message: "state.agent.waitingFor.interaction is invalid",
+          details: {
+            path: "state.agent.waitingFor.interaction",
+            cause: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+    }
   }
 
   const terminal = asRecord(agent.terminal);
@@ -525,6 +635,30 @@ export function readWaitState(state: Record<string, unknown>): RuntimeWaitState 
       : {}),
     ...(waitingFor.resumeToken !== undefined ? { resumeToken: waitingFor.resumeToken } : {}),
     ...(waitingFor.metadata !== undefined ? { metadata: waitingFor.metadata } : {}),
+    ...(waitingFor.interaction !== undefined
+      ? {
+          interaction:
+            waitingFor.interaction.version ===
+            "runner_hosted_tool_approval_interaction_v2"
+              ? parseRunnerHostedToolApprovalInteractionV2(
+                  waitingFor.interaction,
+                  waitingFor.eventType,
+                )
+              : waitingFor.interaction.version ===
+                  "runner_hosted_tool_approval_interaction_v3"
+                ? parseRunnerHostedToolApprovalInteractionV3(
+                    waitingFor.interaction,
+                    waitingFor.eventType,
+                  )
+                : waitingFor.interaction.version ===
+                    "runner_hosted_tool_approval_interaction_v4"
+                  ? parseRunnerHostedToolApprovalInteractionV4(
+                      waitingFor.interaction,
+                      waitingFor.eventType,
+                    )
+              : waitingFor.interaction,
+        }
+      : {}),
   };
 }
 

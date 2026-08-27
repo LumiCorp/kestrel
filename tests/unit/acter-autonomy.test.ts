@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseRunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
+import {
+  parseRunnerExternalApprovalBindingV1,
+  parseRunnerExternalApprovalBindingV2,
+  type ToolApprovalDispositionV1,
+} from "@kestrel-agents/protocol";
 
 import type { StepContext, StepContractRegistry, StepIO, Transition } from "../../src/kestrel/contracts/execution.js";
 
@@ -28,10 +32,18 @@ import { handleAskUserAction } from "../../agents/reference-react/src/steps/acte
 import { buildFilesystemInspectionActionKey } from "../../agents/reference-react/src/filesystemInspection.js";
 import { detectReadOnlyResultDuplicate } from "../../src/runtime/readOnlyResultDuplicates.js";
 import { readActiveWaitState } from "../../src/runtime/waitState.js";
+import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 import { kestrelOneGitHubIssueCreateTool } from "../../tools/kestrelOne/githubActions.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
+import {
+  createToolActivationRefV1,
+  fingerprintToolScopeV1,
+  hashCanonical,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
 
 function buildExecConfig() {
   return {
@@ -881,7 +893,7 @@ test("exec.wait_approval records processor-owned approval denials", async () => 
   assert.equal(workingPlan.status, "dispatching");
 });
 
-test("GitHub external confirmation resumes only the exact approved mutation", async () => {
+test("GitHub external confirmation resumes the exact mutation and releases rejected Remember continuations", async () => {
   const definition = kestrelOneGitHubIssueCreateTool.definition;
   const toolInput = {
     repository: "acme/support",
@@ -892,6 +904,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     ...toolInput,
     title: toolInput.title.trim(),
   };
+  let currentApprovalDisposition: ToolApprovalDispositionV1 | undefined;
   const config = {
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -902,6 +915,13 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         approvalCapabilities: [
           ...(definition.capability.approvalCapabilities ?? []),
         ],
+        ...(currentApprovalDisposition === undefined
+          ? {}
+          : { approvalDisposition: currentApprovalDisposition }),
+        approvalAuthority: currentApprovalDisposition?.authority ?? {
+          kind: "hosted_app_policy" as const,
+          revision: "hosted-app-policy-revision",
+        },
         executionClass: definition.capability.executionClass,
       },
     ],
@@ -921,6 +941,18 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         "external.confirm": true,
       },
     },
+    actor: {
+      actorType: "end_user",
+      actorId: "user-1",
+      tenantId: "org-1",
+    },
+    hostedApprovalAuthority: {
+      version: "runner_hosted_approval_authority_v1",
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      threadId: "session-1",
+    },
   };
   let inlineToolCalls = 0;
   let approvalInspections = 0;
@@ -928,6 +960,154 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     approvalInspections += 1;
     return { effectiveInput: normalizedToolInput };
   };
+  let approvalPreparations = 0;
+  let approvalReleases = 0;
+  const descriptor = defaultToolCatalog.getDescriptorRef(definition.name);
+  assert.ok(descriptor);
+  const prepareToolForApproval: NonNullable<StepIO["prepareToolForApproval"]> =
+    async (_name, _input, approval) => {
+      approvalPreparations += 1;
+      const activation = createToolActivationRefV1({
+        descriptor,
+        registryGeneration: "hosted-generation",
+        scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
+      });
+      const stableAuthorityPayload = {
+        version: "prepared_tool_stable_authority_v1" as const,
+        actor: {
+          actorType: "end_user" as const,
+          actorId: "user-1",
+          tenantId: "org-1",
+        },
+        organizationId: "org-1",
+        environmentId: "env-1",
+        projectId: "project-1",
+        threadId: "session-1",
+        resourceAuthority: {
+          toolSourceKind: descriptor.sourceKind,
+          toolSourceId: descriptor.sourceId,
+        },
+        policyRevision: approval.policyRevision,
+        capabilities: [...approval.capabilities].sort(),
+        descriptorContractRevision: descriptor.contractRevision,
+        approvalAuthorityRevision: approval.authorityRevision,
+        normalizedActionHash: hashCanonical({
+          toolId: definition.name,
+          effectiveInput: normalizedToolInput,
+        }),
+      };
+      return parsePreparedToolCallV1({
+        version: "v1",
+        runId: "run-1",
+        sessionId: "session-1",
+        callId: "prepared-github-1",
+        activation,
+        origin: {
+          kind: "trusted_runtime",
+          producerId: "test.hosted-approval:v2",
+          adapterId: "test.hosted-approval:v2",
+        },
+        effectiveInput: normalizedToolInput,
+        policy: {
+          decision: "approval_required",
+          policyRevision: approval.policyRevision,
+          reasonCode: "environment_policy",
+        },
+        approval: {
+          approvalId: "prepared-github-1",
+          authorityRevision: hashCanonical({ approval: approval.authorityRevision }),
+        },
+        stableAuthority: {
+          ...stableAuthorityPayload,
+          fingerprint: hashCanonical(stableAuthorityPayload),
+        },
+        stableToolIdentity: {
+          version: "stable_tool_approval_identity_v1",
+          toolId: definition.name,
+          descriptorContractRevision: descriptor.contractRevision,
+          approvalAuthorityRevision: approval.authorityRevision,
+        },
+        executionRequirements: {
+          version: "prepared_tool_execution_requirements_v1",
+          credentials: [
+            "continuation_run_segment",
+            "live_handler_capability",
+          ],
+        },
+        preparedAt: "2026-08-26T12:00:00.000Z",
+      });
+    };
+  const releasePreparedToolCall: NonNullable<StepIO["releasePreparedToolCall"]> =
+    async (prepared) => {
+      assert.equal(prepared.callId, "prepared-github-1");
+      approvalReleases += 1;
+    };
+
+  const legacyWait = await dispatchStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: {
+          agent: {
+            nextAction: {
+              kind: "tool",
+              name: definition.name,
+              input: toolInput,
+            },
+          },
+        },
+      },
+      event: {
+        ...buildContext().event,
+        payload: modePayload,
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      inspectTool,
+      useTool: async () => {
+        throw new Error("legacy approval must not execute inline");
+      },
+    },
+  );
+  const legacyAgent = legacyWait.statePatch?.agent as Record<string, unknown>;
+  const legacyPending = (
+    legacyAgent.exec as Record<string, unknown>
+  ).pendingApproval as Record<string, unknown>;
+  legacyPending.version = "hosted_tool_approval_v1";
+  const legacyResumed = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: legacyAgent },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-github-legacy-approval",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          message: "approve",
+          approvalId: legacyPending.approvalId,
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      inspectTool,
+      useTool: async () => {
+        throw new Error("legacy durable mutation must not execute inline");
+      },
+    },
+  );
+  assert.equal(legacyResumed.status, "RUNNING");
+  assert.equal(legacyResumed.effects?.length, 1);
+  approvalInspections = 0;
 
   const approvalWait = await dispatchStep(
     buildContext({
@@ -953,6 +1133,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         throw new Error("not expected");
       },
       inspectTool,
+      prepareToolForApproval,
       useTool: async () => {
         inlineToolCalls += 1;
         throw new Error("GitHub mutation must not run before approval");
@@ -962,6 +1143,18 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
 
   assert.equal(approvalWait.status, "WAITING");
   assert.equal(approvalWait.waitFor?.eventType, "user.approval");
+  assert.match(
+    approvalWait.waitFor?.interaction?.prompt as string,
+    /'approve_once' or 'decline'/u,
+  );
+  assert.deepEqual(
+    (
+      approvalWait.waitFor?.interaction?.inputSchema as {
+        properties?: { decision?: { enum?: unknown } };
+      }
+    ).properties?.decision?.enum,
+    ["decline", "approve_once"],
+  );
   assert.equal(approvalWait.waitFor?.metadata?.toolName, definition.name);
   assert.deepEqual(
     approvalWait.waitFor?.metadata?.toolInput,
@@ -982,41 +1175,365 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     pendingApproval.approvalId,
     approvalWait.waitFor?.metadata?.approvalId
   );
-  const binding = parseRunnerExternalApprovalBindingV1(
+  const binding = parseRunnerExternalApprovalBindingV2(
     approvalWait.waitFor?.metadata?.externalApprovalBinding,
   );
   assert.equal(binding.actionKey, definition.name);
-  assert.equal(binding.runId, "run-1");
+  assert.equal(binding.preparedInvocationId, "prepared-github-1");
   assert.equal(binding.threadId, "session-1");
-  assert.equal(binding.authorityKind, "runtime_policy");
+  assert.equal(binding.authorityKind, "hosted_app_policy");
+  assert.equal(binding.authorityRevision, "hosted-app-policy-revision");
   assert.deepEqual(
     binding.capabilities,
     [...(definition.capability.approvalCapabilities ?? [])].sort(),
   );
   assert.match(binding.payloadHash, /^sha256:[0-9a-f]{64}$/u);
   assert.deepEqual(pendingApproval.externalApprovalBinding, binding);
+  assert.equal(pendingApproval.version, "hosted_tool_approval_v2");
+  assert.equal(pendingApproval.preparedInvocationId, "prepared-github-1");
+  assert.equal(pendingApproval.preparedToolCall, undefined);
+  assert.equal(approvalPreparations, 1);
+
+  const expectPersistedApprovalRejected = async (
+    agent: Record<string, unknown>,
+    payload: Record<string, unknown>,
+    label: string,
+  ): Promise<void> => {
+    await assert.rejects(
+      () =>
+        waitApprovalStep(
+          buildContext({
+            session: {
+              ...buildContext().session,
+              state: { agent },
+              currentStepAgent: "agent.exec.wait_approval",
+            },
+            event: {
+              id: `evt-github-${label}`,
+              type: "user.approval",
+              sessionId: "session-1",
+              payload: {
+                ...payload,
+                message: "approve",
+                approvalId: pendingApproval.approvalId,
+              },
+            },
+          }),
+          {
+            useModel: async () => {
+              throw new Error("not expected");
+            },
+            inspectTool,
+            prepareToolForApproval,
+            useTool: async () => {
+              throw new Error("invalid persisted approval must not execute");
+            },
+          },
+        ),
+      (error) =>
+        error instanceof RuntimeFailure &&
+        error.code === "HOSTED_PREPARED_APPROVAL_INVALID",
+      label,
+    );
+  };
+
+  const missingBindingAgent = structuredClone(waitingAgent);
+  const missingBindingExec = missingBindingAgent.exec as Record<string, unknown>;
+  const missingBindingPending = missingBindingExec.pendingApproval as Record<
+    string,
+    unknown
+  >;
+  const missingBindingPrepared = (
+    (missingBindingAgent.waitingFor as Record<string, unknown>)
+      .metadata as Record<string, unknown>
+  ).preparedToolCall as Record<string, unknown>;
+  delete (missingBindingPrepared.approval as Record<string, unknown>)
+    .externalApprovalBinding;
+  delete missingBindingPending.externalApprovalBinding;
+  await expectPersistedApprovalRejected(
+    missingBindingAgent,
+    modePayload,
+    "missing-v2-binding",
+  );
+
+  for (const [label, version] of [
+    ["missing-v2-discriminator", undefined],
+    ["altered-v2-discriminator", "hosted_tool_approval_v1"],
+  ] as const) {
+    const downgradedAgent = structuredClone(waitingAgent);
+    const downgradedPending = (
+      downgradedAgent.exec as Record<string, unknown>
+    ).pendingApproval as Record<string, unknown>;
+    if (version === undefined) delete downgradedPending.version;
+    else downgradedPending.version = version;
+    await expectPersistedApprovalRejected(
+      downgradedAgent,
+      { ...modePayload, decision: "approve_once" },
+      label,
+    );
+    assert.equal(
+      approvalPreparations,
+      1,
+      "malformed durable state must not prepare replacement authority",
+    );
+  }
+
+  const duplicatePreparedAgent = structuredClone(waitingAgent);
+  const duplicatePreparedPending = (
+    duplicatePreparedAgent.exec as Record<string, unknown>
+  ).pendingApproval as Record<string, unknown>;
+  duplicatePreparedPending.preparedToolCall = structuredClone(
+    ((duplicatePreparedAgent.waitingFor as Record<string, unknown>)
+      .metadata as Record<string, unknown>).preparedToolCall,
+  );
+  await expectPersistedApprovalRejected(
+    duplicatePreparedAgent,
+    { ...modePayload, decision: "approve_once" },
+    "duplicate-prepared-authority",
+  );
+
+  const authoritySubstitutions: Array<
+    [
+      string,
+      (
+        authority: Record<string, any>,
+        approvalBinding: Record<string, any>,
+      ) => void,
+    ]
+  > = [
+    ["cross-organization", (authority, approvalBinding) => {
+      authority.organizationId = "org-2";
+      authority.actor.tenantId = "org-2";
+      approvalBinding.requestingActor.tenantId = "org-2";
+    }],
+    ["cross-environment", (authority) => {
+      authority.environmentId = "env-2";
+    }],
+    ["cross-project", (authority) => {
+      authority.projectId = "project-2";
+    }],
+    ["cross-actor", (authority, approvalBinding) => {
+      authority.actor.actorId = "user-2";
+      approvalBinding.requestingActor.actorId = "user-2";
+    }],
+  ];
+  for (const [label, substitute] of authoritySubstitutions) {
+    const substitutedAgent = structuredClone(waitingAgent);
+    const substitutedPending = (
+      substitutedAgent.exec as Record<string, unknown>
+    ).pendingApproval as Record<string, any>;
+    const substitutedPrepared = (
+      (substitutedAgent.waitingFor as Record<string, unknown>)
+        .metadata as Record<string, unknown>
+    ).preparedToolCall as Record<string, any>;
+    const substitutedAuthority = substitutedPrepared.stableAuthority as Record<
+      string,
+      any
+    >;
+    const substitutedBinding = substitutedPrepared.approval
+      .externalApprovalBinding as Record<string, any>;
+    substitute(substitutedAuthority, substitutedBinding);
+    const { fingerprint: _fingerprint, ...authorityPayload } =
+      substitutedAuthority;
+    substitutedAuthority.fingerprint = hashCanonical(authorityPayload);
+    substitutedBinding.stableAuthorityFingerprint =
+      substitutedAuthority.fingerprint;
+    substitutedPending.externalApprovalBinding = substitutedBinding;
+    await expectPersistedApprovalRejected(
+      substitutedAgent,
+      modePayload,
+      label,
+    );
+  }
 
   const staleAgent = structuredClone(waitingAgent);
-  const staleExec = staleAgent.exec as Record<string, unknown>;
-  const stalePending = staleExec.pendingApproval as Record<string, unknown>;
-  stalePending.externalApprovalBinding = {
+  const stalePrepared = structuredClone(
+    ((staleAgent.waitingFor as Record<string, unknown>).metadata as Record<
+      string,
+      unknown
+    >).preparedToolCall,
+  ) as Record<string, unknown>;
+  const stalePreparedApproval = stalePrepared.approval as Record<string, unknown>;
+  stalePreparedApproval.externalApprovalBinding = {
     ...binding,
-    authorityRevision: `sha256:${"a".repeat(64)}`,
+    authorityRevision: "changed-authority",
   };
-  const staleResume = await waitApprovalStep(
+  ((staleAgent.waitingFor as Record<string, unknown>).metadata as Record<
+    string,
+    unknown
+  >).preparedToolCall = stalePrepared;
+  await assert.rejects(
+    () => waitApprovalStep(
+      buildContext({
+        session: {
+          ...buildContext().session,
+          state: { agent: staleAgent },
+          currentStepAgent: "agent.exec.wait_approval",
+        },
+        event: {
+          id: "evt-github-stale-approval",
+          type: "user.approval",
+          sessionId: "session-1",
+          payload: {
+            ...modePayload,
+            message: "approve",
+            approvalId: pendingApproval.approvalId,
+          },
+        },
+      }),
+      {
+        useModel: async () => {
+          throw new Error("not expected");
+        },
+        inspectTool,
+        prepareToolForApproval,
+        useTool: async () => {
+          throw new Error("stale approval must not execute the mutation");
+        },
+      },
+    ),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "HOSTED_PREPARED_APPROVAL_INVALID",
+  );
+
+  const expectPolicyTighteningCleanup = async (
+    label: string,
+    payload: Record<string, unknown>,
+    reasonCode: string,
+  ) => {
+    const transition = await waitApprovalStep(
+      buildContext({
+        session: {
+          ...buildContext().session,
+          state: { agent: structuredClone(waitingAgent) },
+          currentStepAgent: "agent.exec.wait_approval",
+        },
+        event: {
+          id: `evt-github-${label}`,
+          type: "user.approval",
+          sessionId: "session-1",
+          payload: {
+            ...payload,
+            decision: "remember_approval",
+            approvalId: pendingApproval.approvalId,
+          },
+        },
+      }),
+      {
+        useModel: async () => {
+          throw new Error("not expected");
+        },
+        inspectTool,
+        releasePreparedToolCall,
+        useTool: async () => {
+          throw new Error("tightened policy must not execute");
+        },
+      },
+    );
+    const agent = transition.statePatch?.agent as Record<string, unknown>;
+    const result = agent.lastActionResult as Record<string, unknown>;
+    assert.equal(transition.status, "RUNNING");
+    assert.equal(transition.waitFor, undefined);
+    assert.equal(agent.waitingFor, undefined);
+    assert.equal(
+      (agent.exec as Record<string, unknown>).pendingApproval,
+      undefined,
+    );
+    assert.equal(result.kind, "approval_policy_change");
+    assert.equal(result.availabilityReason, "approval_policy");
+    assert.equal(result.approvalReasonCode, reasonCode);
+    assert.equal(transition.effects?.length, 1);
+    assert.equal(transition.effects?.[0]?.type, "release_prepared_tool_call");
+  };
+
+  await expectPolicyTighteningCleanup(
+    "stricter-current-policy",
+    {
+      ...modePayload,
+      executionPolicy: {
+        ...modePayload.executionPolicy,
+        approvalPolicy: { strictApprovalPerCall: true },
+      },
+    },
+    "runtime_strict",
+  );
+
+  currentApprovalDisposition = {
+    mode: "ask",
+    reasonCode: "subject_restriction",
+    authority: {
+      kind: "hosted_app_policy",
+      revision: "subject-restriction-policy-revision",
+    },
+  };
+  await expectPolicyTighteningCleanup(
+    "subject-restriction-current-policy",
+    modePayload,
+    "subject_restriction",
+  );
+  currentApprovalDisposition = undefined;
+
+  await assert.rejects(
+    () => waitApprovalStep(
+      buildContext({
+        session: {
+          ...buildContext().session,
+          state: { agent: structuredClone(waitingAgent) },
+          currentStepAgent: "agent.exec.wait_approval",
+        },
+        event: {
+          id: "evt-github-wrong-actor-decline",
+          type: "user.approval",
+          sessionId: "session-1",
+          payload: {
+            ...modePayload,
+            actor: {
+              ...modePayload.actor,
+              actorId: "user-2",
+            },
+            decision: "decline",
+            approvalId: pendingApproval.approvalId,
+          },
+        },
+      }),
+      {
+        useModel: async () => {
+          throw new Error("not expected");
+        },
+        inspectTool,
+        releasePreparedToolCall,
+        useTool: async () => {
+          throw new Error("a different actor must not resolve the approval");
+        },
+      },
+    ),
+    (error) =>
+      error instanceof RuntimeFailure &&
+      error.code === "HOSTED_PREPARED_APPROVAL_INVALID",
+  );
+
+  const blockedAfterAsk = await waitApprovalStep(
     buildContext({
       session: {
         ...buildContext().session,
-        state: { agent: staleAgent },
+        state: { agent: structuredClone(waitingAgent) },
         currentStepAgent: "agent.exec.wait_approval",
       },
       event: {
-        id: "evt-github-stale-approval",
+        id: "evt-github-blocked-after-ask",
         type: "user.approval",
         sessionId: "session-1",
         payload: {
           ...modePayload,
-          message: "approve",
+          executionPolicy: {
+            ...modePayload.executionPolicy,
+            capabilityPolicy: {
+              ...modePayload.executionPolicy.capabilityPolicy,
+              "external.confirm": false,
+            },
+          },
+          decision: "approve_once",
           approvalId: pendingApproval.approvalId,
         },
       },
@@ -1026,13 +1543,247 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         throw new Error("not expected");
       },
       inspectTool,
+      releasePreparedToolCall,
       useTool: async () => {
-        throw new Error("stale approval must not execute the mutation");
+        throw new Error("a newly blocked approval must not execute");
       },
     },
   );
-  assert.equal(staleResume.status, "WAITING");
-  assert.equal(staleResume.waitFor?.eventType, "user.approval");
+  const blockedAgent = blockedAfterAsk.statePatch?.agent as Record<
+    string,
+    unknown
+  >;
+  const blockedExec = blockedAgent.exec as Record<string, unknown>;
+  const blockedResult = blockedAgent.lastActionResult as Record<string, unknown>;
+  assert.equal(blockedAfterAsk.status, "RUNNING");
+  assert.equal(blockedAfterAsk.waitFor, undefined);
+  assert.equal(blockedAgent.waitingFor, undefined);
+  assert.equal(blockedExec.pendingApproval, undefined);
+  assert.equal(blockedResult.kind, "approval_policy_change");
+  assert.equal(blockedResult.status, "denied");
+  assert.equal(blockedResult.reason, "policy_changed");
+  assert.equal(blockedResult.availabilityReason, "capability_policy");
+  assert.equal(blockedAfterAsk.effects?.length, 1);
+  assert.equal(
+    blockedAfterAsk.effects?.[0]?.type,
+    "release_prepared_tool_call",
+  );
+  assert.equal(
+    (
+      blockedAfterAsk.effects?.[0]?.payload.preparedToolCall as Record<
+        string,
+        unknown
+      >
+    ).callId,
+    "prepared-github-1",
+  );
+
+  currentApprovalDisposition = {
+    mode: "auto",
+    reasonCode: "environment_policy",
+    authority: {
+      kind: "hosted_app_policy",
+      revision: "hosted-app-policy-revision",
+    },
+  };
+  const declinedAfterAutomatic = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: structuredClone(waitingAgent) },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-github-decline-after-automatic",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          decision: "decline",
+          approvalId: pendingApproval.approvalId,
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      inspectTool,
+      releasePreparedToolCall,
+      useTool: async () => {
+        throw new Error("an explicit decline must never execute");
+      },
+    },
+  );
+  const declinedAgent = declinedAfterAutomatic.statePatch?.agent as Record<
+    string,
+    unknown
+  >;
+  assert.equal(
+    (declinedAgent.lastActionResult as { status?: unknown })?.status,
+    "denied",
+  );
+  currentApprovalDisposition = undefined;
+
+  const originalDateNow = Date.now;
+  Date.now = () => Date.parse(binding.expiresAt) + 1;
+  let expired: Awaited<ReturnType<typeof waitApprovalStep>>;
+  try {
+    expired = await waitApprovalStep(
+      buildContext({
+        session: {
+          ...buildContext().session,
+          state: { agent: structuredClone(waitingAgent) },
+          currentStepAgent: "agent.exec.wait_approval",
+        },
+        event: {
+          id: "evt-github-expired-approval",
+          type: "user.approval",
+          sessionId: "session-1",
+          payload: {
+            ...modePayload,
+            decision: "remember_approval",
+            approvalId: pendingApproval.approvalId,
+          },
+        },
+      }),
+      {
+        useModel: async () => {
+          throw new Error("not expected");
+        },
+        inspectTool,
+        prepareToolForApproval,
+        releasePreparedToolCall,
+        useTool: async () => {
+          throw new Error("expired approval must not execute");
+        },
+      },
+    );
+  } finally {
+    Date.now = originalDateNow;
+  }
+  assert.equal(expired.status, "RUNNING");
+  assert.equal(expired.waitFor, undefined);
+  const expiredAgent = expired.statePatch?.agent as Record<string, unknown>;
+  const expiredExec = expiredAgent.exec as Record<string, unknown>;
+  const expiredResult = expiredAgent.lastActionResult as Record<string, unknown>;
+  assert.equal(expiredExec.pendingApproval, undefined);
+  assert.equal(expiredAgent.waitingFor, undefined);
+  assert.equal(expiredResult.status, "expired");
+  assert.equal(expired.effects?.length, 1);
+  assert.equal(expired.effects?.[0]?.type, "release_prepared_tool_call");
+  assert.equal(
+    (
+      expired.effects?.[0]?.payload.preparedToolCall as Record<string, unknown>
+    ).callId,
+    "prepared-github-1",
+  );
+  assert.equal(approvalReleases, 0);
+  assert.equal(approvalPreparations, 1);
+
+  const declined = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: structuredClone(waitingAgent) },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-github-decline",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          decision: "decline",
+          approvalId: pendingApproval.approvalId,
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("not expected");
+      },
+      inspectTool,
+      prepareToolForApproval,
+      releasePreparedToolCall,
+      useTool: async () => {
+        throw new Error("declined approval must not execute");
+      },
+    },
+  );
+  assert.equal(
+    (
+      (declined.statePatch?.agent as Record<string, unknown>)
+        .lastActionResult as Record<string, unknown>
+    ).status,
+    "denied",
+  );
+  assert.equal(approvalPreparations, 1);
+  assert.equal(declined.effects?.length, 1);
+  assert.equal(declined.effects?.[0]?.type, "release_prepared_tool_call");
+  assert.equal(approvalReleases, 0);
+
+  const cleanup = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: structuredClone(waitingAgent) },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-github-cleanup",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          decision: "decline",
+          approvalId: pendingApproval.approvalId,
+          preparedApprovalCleanup: {
+            version: "runner_prepared_approval_cleanup_v1",
+            organizationId: "org-1",
+            threadId: "session-1",
+            turnId: "turn-cleanup",
+            interactionId: "interaction-cleanup",
+            requestId: pendingApproval.approvalId,
+            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+            failureMessage: "The prepared authorization expired.",
+          },
+        },
+      },
+    }),
+    {
+      useModel: async () => {
+        throw new Error("cleanup must not use a model");
+      },
+      inspectTool,
+      prepareToolForApproval,
+      releasePreparedToolCall,
+      useTool: async () => {
+        throw new Error("cleanup must not execute the prepared tool");
+      },
+    },
+  );
+  assert.equal(cleanup.status, "COMPLETED");
+  assert.equal(cleanup.nextStepAgent, undefined);
+  assert.equal(cleanup.effects?.length, 1);
+  assert.equal(cleanup.effects?.[0]?.type, "release_prepared_tool_call");
+  assert.equal(
+    cleanup.effects?.[0]?.payload.preparedApprovalCleanup &&
+      (cleanup.effects[0].payload.preparedApprovalCleanup as Record<string, unknown>).requestId,
+    pendingApproval.approvalId,
+  );
+  assert.deepEqual(
+    (
+      (cleanup.statePatch?.agent as Record<string, unknown>)
+        .terminal as Record<string, unknown>
+    ).preparedApprovalCleanup,
+    {
+      version: "prepared_approval_cleanup_terminal_v1",
+      releaseEffectIdempotencyKey:
+        `${String(pendingApproval.preparedInvocationId)}:release`,
+      cleanup: cleanup.effects?.[0]?.payload.preparedApprovalCleanup,
+    },
+  );
 
   const resumed = await waitApprovalStep(
     buildContext({
@@ -1047,7 +1798,24 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         sessionId: "session-1",
         payload: {
           ...modePayload,
-          message: "approve",
+          mcpContext: {
+            organizationId: "org-1",
+            environmentId: "env-1",
+            projectId: "project-1",
+            threadId: "session-1",
+            grantId: "rotated-mcp-grant",
+          },
+          mcpAuthorization: {
+            executionTicket: "rotated-execution-ticket",
+          },
+          clientCapabilities: {
+            kestrelOne: { contextGrantId: "rotated-context-grant" },
+          },
+          workspace: {
+            workspaceRoot: "/workspace/project",
+            leaseId: "rotated-workspace-lease",
+          },
+          decision: "remember_approval",
           approvalId: pendingApproval.approvalId,
         },
       },
@@ -1057,6 +1825,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
         throw new Error("not expected");
       },
       inspectTool,
+      prepareToolForApproval,
       useTool: async () => {
         inlineToolCalls += 1;
         throw new Error("durable GitHub mutation must not run inline");
@@ -1068,20 +1837,30 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
   assert.equal(resumed.nextStepAgent, "agent.exec.wait_effect");
   assert.equal(resumed.effects?.length, 1);
   assert.equal(resumed.effects?.[0]?.type, "execute_tool_call");
-  assert.deepEqual(resumed.effects?.[0]?.payload, {
-    toolName: definition.name,
-    toolInput,
-  });
+  const resumedPreparedToolCall = parsePreparedToolCallV1(
+    resumed.effects?.[0]?.payload.preparedToolCall,
+  );
+  assert.equal(resumed.effects?.[0]?.idempotencyKey, "prepared-github-1");
+  assert.equal(resumedPreparedToolCall.callId, "prepared-github-1");
+  assert.deepEqual(resumedPreparedToolCall.effectiveInput, normalizedToolInput);
+  assert.deepEqual(
+    resumedPreparedToolCall,
+    ((waitingAgent.waitingFor as Record<string, unknown>).metadata as Record<
+      string,
+      unknown
+    >).preparedToolCall,
+  );
   const resumedAgent = resumed.statePatch?.agent as Record<string, unknown>;
   const resumedExec = resumedAgent.exec as Record<string, unknown>;
   assert.equal(resumedExec.pendingApproval, undefined);
+  assert.equal(approvalPreparations, 1);
   assert.deepEqual(resumedExec.pendingToolCall, {
     name: definition.name,
     input: toolInput,
     idempotencyKey: resumed.effects?.[0]?.idempotencyKey,
   });
   assert.equal(inlineToolCalls, 0);
-  assert.equal(approvalInspections, 3);
+  assert.equal(approvalInspections, 0);
 });
 
 test("exec.wait_effect records processor-owned effect waits when result is unavailable", async () => {

@@ -84,7 +84,7 @@ test("durable turn continuations refresh persisted grant identity and revoke onl
   assert.match(source, /refreshProjectContextGrant/);
   assert.match(
     source,
-    /reattachExecutionId \?\? recoveredCompletedExecutionId/,
+    /reattachExecutionId \?\?[\s\S]*recoveredCompletedExecutionId \?\?[\s\S]*turn\.interactionResponse \? turn\.environmentExecutionId : null/,
   );
   assert.match(
     source,

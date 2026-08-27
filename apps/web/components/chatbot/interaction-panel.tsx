@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import {
   runnerStructuredReviewOptionLabel,
   type RunnerStructuredReviewOptionId,
@@ -20,6 +19,7 @@ export type RuntimeInteractionResponse = {
   turnId: string;
   message: string;
   approved?: boolean | undefined;
+  decision?: "decline" | "approve_once" | "remember_approval" | undefined;
   reason?: string | undefined;
   recoveryOptionId?: string | undefined;
   presentation?: "control" | undefined;
@@ -49,7 +49,7 @@ export function InteractionPanel({
 
   async function resolveRuntime(
     interaction: ThreadInteractionView,
-    decision?: boolean,
+    decision?: "decline" | "approve_once" | "remember_approval",
     recoveryOptionId?: string
   ) {
     const answer = content[interaction.requestId]?.trim();
@@ -61,9 +61,11 @@ export function InteractionPanel({
             recoveryOptionId as RunnerStructuredReviewOptionId
           )
         : interaction.kind === "approval"
-        ? decision
-          ? "Approved"
-          : "Denied"
+        ? decision === "remember_approval"
+          ? "Remember approval"
+          : decision === "approve_once"
+            ? "Approve once"
+            : "Decline"
         : answer;
     if (!message) {
       setError("Enter a response before continuing.");
@@ -81,7 +83,11 @@ export function InteractionPanel({
         eventType: interaction.eventType,
         turnId: interaction.turnId,
         message,
-        ...(interaction.kind === "approval" ? { approved: decision } : {}),
+        ...(interaction.kind === "approval"
+          ? isStrictHostedApproval(interaction)
+            ? { decision }
+            : { approved: decision === "approve_once" }
+          : {}),
         ...(recoveryOptionId !== undefined ? { recoveryOptionId } : {}),
       });
       await onResolved();
@@ -260,9 +266,15 @@ export function InteractionPanel({
                   {interaction.status === "processing"
                     ? "Decision recorded"
                     : interaction.status === "resolved"
-                      ? "Authorization accepted"
+                      ? interaction.approvalOutcome?.authorizationState === "denied"
+                        ? "Authorization declined"
+                        : "Authorization accepted"
+                      : interaction.approvalOutcome?.authorizationState === "expired"
+                        ? "Authorization expired — operation not executed"
                       : interaction.approvalOutcome?.effectState === "not_started"
                         ? "Authorization failed — operation not executed"
+                        : interaction.approvalOutcome?.effectState === "committed"
+                          ? "Authorization failed after the operation committed"
                         : "Authorization failed — effect status unknown"}
                 </p>
               ) : null}
@@ -399,14 +411,6 @@ export function InteractionPanel({
                             interaction.approvalPolicy.projectApprovalMode,
                           )}
                         </dd>
-                        {interaction.approvalPolicy.alwaysApprovalAction ===
-                        "open_environment_apps" ? (
-                          <p className="mt-1 text-muted-foreground text-xs">
-                            Always Approve requires changing{" "}
-                            {interaction.approvalPolicy.capabilityDisplayName}{" "}
-                            to Automatic in Environment Apps.
-                          </p>
-                        ) : null}
                       </div>
                     ) : null}
                   </dl>
@@ -453,45 +457,37 @@ export function InteractionPanel({
                     <>
                       <Button
                         disabled={busy !== null}
-                        onClick={() => void resolveRuntime(interaction, false)}
+                        onClick={() => void resolveRuntime(interaction, "decline")}
                         size="sm"
                         variant="outline"
                       >
-                        Deny
+                        {isStrictHostedApproval(interaction) ? "Decline" : "Deny"}
                       </Button>
-                      <Button
-                        autoFocus={index === 0}
-                        disabled={busy !== null}
-                        onClick={() => void resolveRuntime(interaction, true)}
-                        size="sm"
-                        variant="outline"
-                      >
-                        Approve Once
-                      </Button>
-                      {interaction.approvalPolicy?.alwaysApprovalAction ===
-                      "open_environment_apps" ? (
+                      {isCurrentHostedApprovalActionable(interaction) ? (
                         <Button
-                          asChild
+                          autoFocus={index === 0}
+                          disabled={busy !== null}
+                          onClick={() => void resolveRuntime(interaction, "approve_once")}
                           size="sm"
-                          title={alwaysApprovalTitle(interaction)}
+                          variant="outline"
                         >
-                          <Link
-                            href={
-                              interaction.approvalPolicy.environmentAppsHref
-                            }
-                          >
-                            Always Approve
-                          </Link>
+                          Approve Once
                         </Button>
-                      ) : (
+                      ) : null}
+                      {isRememberApprovalEligible(interaction) ? (
                         <Button
-                          disabled
+                          disabled={busy !== null}
+                          onClick={() =>
+                            void resolveRuntime(
+                              interaction,
+                              "remember_approval",
+                            )
+                          }
                           size="sm"
-                          title={alwaysApprovalTitle(interaction)}
                         >
-                          Always Approve
+                          Remember Approval
                         </Button>
-                      )}
+                      ) : null}
                     </>
                   ) : (
                     <Button
@@ -608,19 +604,53 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function isHostedV2Approval(interaction: ThreadInteractionView): boolean {
+  return interaction.requestEnvelope.version ===
+    "runner_hosted_tool_approval_interaction_v2";
+}
+
+function isHostedV3Approval(interaction: ThreadInteractionView): boolean {
+  return interaction.requestEnvelope.version ===
+    "runner_hosted_tool_approval_interaction_v3";
+}
+
+function isHostedV4Approval(interaction: ThreadInteractionView): boolean {
+  return interaction.requestEnvelope.version ===
+    "runner_hosted_tool_approval_interaction_v4";
+}
+
+function isStrictHostedApproval(interaction: ThreadInteractionView): boolean {
+  return isHostedV2Approval(interaction) ||
+    isHostedV3Approval(interaction) ||
+    isHostedV4Approval(interaction);
+}
+
+function isRememberApprovalEligible(
+  interaction: ThreadInteractionView,
+): boolean {
+  if (!isHostedV4Approval(interaction)) return false;
+  const approval = readRecord(interaction.requestEnvelope.approval);
+  const presentation = readRecord(approval?.presentation);
+  const presentationPolicy = readRecord(presentation?.policy);
+  return presentationPolicy?.rememberApprovalEligible === true &&
+    interaction.approvalPolicy?.rememberApprovalEligible === true &&
+    isCurrentHostedApprovalActionable(interaction);
+}
+
+function isCurrentHostedApprovalActionable(
+  interaction: ThreadInteractionView,
+): boolean {
+  if (!isStrictHostedApproval(interaction)) return true;
+  const policy = interaction.approvalPolicy;
+  return policy !== undefined &&
+    policy.environmentApprovalMode !== "deny" &&
+    policy.projectApprovalMode !== "deny" &&
+    policy.subjectApprovalMode !== "deny" &&
+    policy.approvalResourceAvailable !== false;
+}
+
 function approvalModeLabel(mode: "auto" | "ask" | "deny") {
   if (mode === "auto") return "Automatic";
   if (mode === "ask") return "Ask first";
   return "Blocked";
-}
-
-function alwaysApprovalTitle(interaction: ThreadInteractionView) {
-  const action = interaction.approvalPolicy?.alwaysApprovalAction;
-  if (action === "open_environment_apps") {
-    return "Open this capability in Environment Apps";
-  }
-  if (action === "minimum_ask") {
-    return "This capability requires approval for every invocation";
-  }
-  return "Persistent approval is unavailable for this request";
 }

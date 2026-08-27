@@ -1,12 +1,21 @@
 import "server-only";
 
-import { and, eq, gt, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import {
-  parseRunnerExternalApprovalBindingV1,
+  isRememberApprovalEligibleV1,
+  parseRunnerExternalApprovalBinding,
+  resolveToolApprovalDispositionV1,
+  RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   serializeCanonicalApprovalPayload,
-  type RunnerExternalApprovalBindingV1,
+  type StableToolApprovalIdentityV1,
+  type RunnerExternalApprovalBinding,
 } from "@kestrel-agents/protocol";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import {
+  preparedApprovalCleanupFailure,
+  preparedApprovalQueueLockKey,
+  schedulePreparedApprovalCleanupInTransaction,
+} from "@/lib/turns/prepared-approval-cleanup";
 import {
   assertAppOperationApprovalBinding,
   createAppExternalApprovalBinding,
@@ -15,6 +24,7 @@ import {
   type AppOperationApprovalBinding,
 } from "./app-operation-approval-contract";
 import { resolveEffectiveProjectAppAccess } from "./project-service";
+import { getCoreAppDefinition } from "./catalog";
 
 const APPROVAL_TTL_MS = 5 * 60_000;
 type ApprovalTransaction = Parameters<Parameters<typeof knowledgeDb.transaction>[0]>[0];
@@ -31,7 +41,7 @@ export async function recordAppOperationApprovalRequest(input: {
   projectId: string;
   requestedExecutionId: string;
   expiresAt: Date;
-  runtimeBinding?: RunnerExternalApprovalBindingV1 | undefined;
+  runtimeBinding?: RunnerExternalApprovalBinding | undefined;
   approvedByUserId?: string | undefined;
 }) {
   const now = new Date();
@@ -108,7 +118,7 @@ export async function recordAppOperationApprovalRequest(input: {
     }),
   );
   const runtimeBinding = input.runtimeBinding
-    ? parseRunnerExternalApprovalBindingV1(input.runtimeBinding)
+    ? parseRunnerExternalApprovalBinding(input.runtimeBinding)
     : createAppExternalApprovalBinding({
         binding: input.binding,
         requestedExecutionId: input.requestedExecutionId,
@@ -119,8 +129,18 @@ export async function recordAppOperationApprovalRequest(input: {
   if (
     runtimeBinding.approvalId !== input.binding.runtimeApprovalId ||
     runtimeBinding.threadId !== input.binding.threadId ||
+    (runtimeBinding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+      (runtimeBinding.requestingActor.actorId !== input.binding.actorUserId ||
+        (runtimeBinding.requestingActor.tenantId !== undefined &&
+          runtimeBinding.requestingActor.tenantId !==
+            input.binding.organizationId))) ||
     input.expiresAt.getTime() > Date.parse(runtimeBinding.expiresAt)
   ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
+  }
+  const interactionOwned =
+    runtimeBinding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION;
+  if (interactionOwned && input.approvedByUserId !== undefined) {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
   }
   const payloadHash = hashAppOperationPayload(input.binding.payload);
@@ -145,10 +165,16 @@ export async function recordAppOperationApprovalRequest(input: {
       payload: input.binding.payload,
       externalApprovalBinding: runtimeBinding,
       authorityRevision,
+      lifecycleVersion: interactionOwned ? "interaction_v2" : "legacy_v1",
+      availabilityStatus: interactionOwned ? "available" : null,
+      status: interactionOwned
+        ? null
+        : input.approvedByUserId
+          ? "approved"
+          : "pending",
       expiresAt,
-      ...(input.approvedByUserId
+      ...(!interactionOwned && input.approvedByUserId
         ? {
-            status: "approved" as const,
             decidedByUserId: input.approvedByUserId,
             decidedAt: now,
           }
@@ -194,6 +220,8 @@ export async function recordAppOperationApprovalRequest(input: {
       input.binding
     );
     if (
+      existing.lifecycleVersion !==
+        (interactionOwned ? "interaction_v2" : "legacy_v1") ||
       serializeCanonicalApprovalPayload(existing.externalApprovalBinding) !==
       serializeCanonicalApprovalPayload(runtimeBinding)
     ) throw new Error("runtime binding mismatch");
@@ -201,6 +229,49 @@ export async function recordAppOperationApprovalRequest(input: {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
   }
   return existing;
+}
+
+export async function linkAppOperationApprovalToInteractionInTransaction(
+  tx: ApprovalTransaction,
+  input: {
+    organizationId: string;
+    threadId: string;
+    runtimeApprovalId: string;
+    interactionId: string;
+    now: Date;
+  },
+) {
+  const [approval] = await tx
+    .select()
+    .from(schema.appOperationApprovals)
+    .where(
+      and(
+        eq(schema.appOperationApprovals.organizationId, input.organizationId),
+        eq(schema.appOperationApprovals.threadId, input.threadId),
+        eq(schema.appOperationApprovals.runtimeApprovalId, input.runtimeApprovalId),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  if (
+    !approval ||
+    approval.lifecycleVersion !== "interaction_v2" ||
+    approval.availabilityStatus !== "available" ||
+    approval.expiresAt.getTime() <= input.now.getTime() ||
+    (approval.interactionId !== null && approval.interactionId !== input.interactionId)
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
+  }
+  if (approval.interactionId === input.interactionId) return approval;
+  const [linked] = await tx
+    .update(schema.appOperationApprovals)
+    .set({ interactionId: input.interactionId, updatedAt: input.now })
+    .where(eq(schema.appOperationApprovals.id, approval.id))
+    .returning();
+  if (!linked) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
+  }
+  return linked;
 }
 
 export async function decideAppOperationApproval(input: {
@@ -232,6 +303,7 @@ export async function decideAppOperationApproval(input: {
           schema.appOperationApprovals.runtimeApprovalId,
           input.runtimeApprovalId
         ),
+        eq(schema.appOperationApprovals.lifecycleVersion, "legacy_v1"),
         eq(schema.appOperationApprovals.status, "pending"),
         isNotNull(schema.appOperationApprovals.externalApprovalBinding),
         isNotNull(schema.appOperationApprovals.authorityRevision),
@@ -251,6 +323,7 @@ export async function decideAppOperationApproval(input: {
           equals(table.threadId, input.threadId),
           equals(table.actorUserId, input.userId),
           equals(table.runtimeApprovalId, input.runtimeApprovalId),
+          equals(table.lifecycleVersion, "legacy_v1"),
           input.approved
             ? inArray(table.status, ["approved", "consumed"])
             : equals(table.status, "denied"),
@@ -277,6 +350,7 @@ export async function decideAppOperationApprovalInTransaction(
     threadId: string;
     userId: string;
     runtimeApprovalId: string;
+    interactionId?: string | undefined;
     approved: boolean;
     required: boolean;
     now: Date;
@@ -299,6 +373,29 @@ export async function decideAppOperationApprovalInTransaction(
       throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_REQUIRED");
     }
     return null;
+  }
+  if (approval.lifecycleVersion === "interaction_v2") {
+    if (
+      approval.interactionId !== input.interactionId ||
+      approval.actorUserId !== input.userId ||
+      !approval.externalApprovalBinding ||
+      !approval.authorityRevision ||
+      approval.availabilityStatus !== "available" ||
+      approval.expiresAt.getTime() <= input.now.getTime()
+    ) {
+      throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_NOT_PENDING");
+    }
+    if (input.approved) return approval;
+    const [revoked] = await tx
+      .update(schema.appOperationApprovals)
+      .set({
+        availabilityStatus: "expired",
+        payload: { redacted: true, operation: approval.operationKey },
+        updatedAt: input.now,
+      })
+      .where(eq(schema.appOperationApprovals.id, approval.id))
+      .returning();
+    return revoked ?? null;
   }
   const exactRepeatedDecision =
     approval.actorUserId === input.userId &&
@@ -333,6 +430,243 @@ export async function decideAppOperationApprovalInTransaction(
     .where(eq(schema.appOperationApprovals.id, approval.id))
     .returning();
   return decided ?? null;
+}
+
+export async function validateAppApprovalDecisionEligibilityInTransaction(
+  tx: ApprovalTransaction,
+  input: {
+    organizationId: string;
+    projectId: string;
+    threadId: string;
+    userId: string;
+    runtimeApprovalId: string;
+    interactionId: string;
+    toolName: string;
+    stableToolIdentity: StableToolApprovalIdentityV1;
+    decision: "approve_once" | "remember_approval";
+    now: Date;
+  },
+) {
+  const [approval] = await tx
+    .select()
+    .from(schema.appOperationApprovals)
+    .where(
+      and(
+        eq(schema.appOperationApprovals.organizationId, input.organizationId),
+        eq(schema.appOperationApprovals.threadId, input.threadId),
+        eq(schema.appOperationApprovals.runtimeApprovalId, input.runtimeApprovalId),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  if (
+    approval?.lifecycleVersion !== "interaction_v2" ||
+    approval.interactionId !== input.interactionId ||
+    approval.actorUserId !== input.userId ||
+    approval.availabilityStatus !== "available" ||
+    approval.consumedExecutionId !== null ||
+    approval.expiresAt.getTime() <= input.now.getTime() ||
+    !approval.externalApprovalBinding ||
+    !approval.authorityRevision
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_NOT_PENDING");
+  }
+  let runnerBinding: RunnerExternalApprovalBinding;
+  try {
+    runnerBinding = parseRunnerExternalApprovalBinding(
+      approval.externalApprovalBinding,
+    );
+  } catch {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
+  }
+  if (
+    runnerBinding.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION ||
+    runnerBinding.approvalId !== input.runtimeApprovalId ||
+    runnerBinding.preparedInvocationId.length === 0 ||
+    runnerBinding.threadId !== input.threadId ||
+    runnerBinding.actionKey !== input.toolName ||
+    runnerBinding.requestingActor.actorType !== "end_user" ||
+    runnerBinding.requestingActor.actorId !== input.userId ||
+    runnerBinding.requestingActor.tenantId !== input.organizationId ||
+    Date.parse(runnerBinding.expiresAt) <= input.now.getTime() ||
+    serializeCanonicalApprovalPayload(runnerBinding.stableToolIdentity) !==
+      serializeCanonicalApprovalPayload(input.stableToolIdentity)
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
+  }
+  const [thread, resource, environmentGrant, projectPolicy, subjectRestrictions] = await Promise.all([
+    tx.query.threads.findFirst({
+      where: and(
+        eq(schema.threads.id, input.threadId),
+        eq(schema.threads.organizationId, input.organizationId),
+        eq(schema.threads.projectId, input.projectId),
+      ),
+      columns: { id: true },
+    }),
+    tx.query.appConnectionResources.findFirst({
+      where: and(
+        eq(schema.appConnectionResources.id, approval.resourceId),
+        eq(schema.appConnectionResources.connectionId, approval.connectionId),
+        eq(schema.appConnectionResources.resourceType, approval.resourceType),
+        eq(schema.appConnectionResources.enabled, true),
+      ),
+      columns: { id: true },
+    }),
+    tx.query.environmentAppCapabilityGrants.findFirst({
+      where: and(
+        eq(
+          schema.environmentAppCapabilityGrants.environmentId,
+          approval.environmentId,
+        ),
+        eq(schema.environmentAppCapabilityGrants.appKey, approval.appKey),
+        eq(
+          schema.environmentAppCapabilityGrants.capabilityKey,
+          approval.capabilityKey,
+        ),
+      ),
+    }),
+    tx.query.projectAppCapabilityPolicies.findFirst({
+      where: and(
+        eq(schema.projectAppCapabilityPolicies.projectId, input.projectId),
+        eq(schema.projectAppCapabilityPolicies.appKey, approval.appKey),
+        eq(
+          schema.projectAppCapabilityPolicies.capabilityKey,
+          approval.capabilityKey,
+        ),
+      ),
+    }),
+    tx.query.environmentCapabilitySubjectRestrictions.findMany({
+      where: and(
+        eq(
+          schema.environmentCapabilitySubjectRestrictions.organizationId,
+          input.organizationId,
+        ),
+        eq(
+          schema.environmentCapabilitySubjectRestrictions.environmentId,
+          approval.environmentId,
+        ),
+        eq(
+          schema.environmentCapabilitySubjectRestrictions.providerKey,
+          approval.appKey,
+        ),
+        eq(
+          schema.environmentCapabilitySubjectRestrictions.capabilityKey,
+          approval.capabilityKey,
+        ),
+        isNull(schema.environmentCapabilitySubjectRestrictions.resourceId),
+        or(
+          and(
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.subjectType,
+              "actor",
+            ),
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.subjectId,
+              approval.actorUserId,
+            ),
+          ),
+          and(
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.subjectType,
+              "agent",
+            ),
+            eq(
+              schema.environmentCapabilitySubjectRestrictions.subjectId,
+              approval.agentId,
+            ),
+          ),
+        ),
+      ),
+    }),
+  ]);
+  const access = await resolveEffectiveProjectAppAccess(
+    {
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+      appKey: approval.appKey,
+      userId: input.userId,
+      includePolicyOnly: true,
+      skipResourceReadiness: true,
+      skipInitialization: true,
+    },
+    tx as unknown as typeof knowledgeDb,
+  );
+  const capability = access?.capabilities.find(
+    (candidate) => candidate.key === approval.capabilityKey,
+  );
+  const minimumApprovalMode =
+    getCoreAppDefinition(approval.appKey)?.capabilities.find(
+      (candidate) => candidate.key === approval.capabilityKey,
+    )?.minimumApprovalMode ?? "auto";
+  const subjectBlocked = subjectRestrictions.some(
+    (restriction) => !restriction.enabled || restriction.approvalMode === "deny",
+  );
+  const subjectRequiresApproval = subjectRestrictions.some(
+    (restriction) => restriction.approvalMode === "ask",
+  );
+  const currentPolicy = {
+    environment: environmentGrant?.approvalMode ?? "deny",
+    project: projectPolicy?.approvalMode ?? environmentGrant?.approvalMode ?? "deny",
+    ...(subjectBlocked
+      ? { subject: "deny" as const }
+      : subjectRequiresApproval
+        ? { subject: "ask" as const }
+        : {}),
+    minimum: minimumApprovalMode,
+  };
+  const currentDisposition = resolveToolApprovalDispositionV1({
+    ...currentPolicy,
+    authority: {
+      kind: "hosted_app_policy",
+      revision: approval.authorityRevision,
+    },
+  });
+  if (
+    !(thread && resource) ||
+    environmentGrant?.enabled !== true ||
+    (projectPolicy !== undefined &&
+      (projectPolicy.enabled !== true || projectPolicy.approvalMode === "deny")) ||
+    access?.environmentId !== approval.environmentId ||
+    access.connectionId !== approval.connectionId ||
+    !capability ||
+    capability.approvalMode === "deny" ||
+    subjectBlocked ||
+    (input.decision === "remember_approval" &&
+      !isRememberApprovalEligibleV1({
+        disposition: currentDisposition,
+        currentPolicy,
+      }))
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_ACCESS_DENIED");
+  }
+  const currentAuthorityRevision = hashAppApprovalAuthority(
+    appApprovalPolicyEvidence({
+      binding: {
+        organizationId: approval.organizationId,
+        environmentId: approval.environmentId,
+        workspaceId: approval.workspaceId,
+        threadId: approval.threadId,
+        actorUserId: approval.actorUserId,
+        agentId: approval.agentId,
+        appKey: approval.appKey,
+        capabilityKey: approval.capabilityKey,
+        connectionId: approval.connectionId,
+        resourceId: approval.resourceId,
+        resourceType: approval.resourceType,
+        operationKey: approval.operationKey,
+        runtimeApprovalId: approval.runtimeApprovalId,
+        payload: approval.payload,
+      },
+      projectId: input.projectId,
+      access,
+      capability,
+      resourceId: resource.id,
+    }),
+  );
+  if (currentAuthorityRevision !== approval.authorityRevision) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
+  }
+  return approval;
 }
 
 export async function decideAppOperationApprovalIfPresent(input: {
@@ -476,27 +810,59 @@ export async function consumeAppOperationApproval(input: {
       typeof (requestApproval as Record<string, unknown>).toolName === "string"
         ? (requestApproval as Record<string, unknown>).toolName
         : null;
-    let runnerBinding: RunnerExternalApprovalBindingV1;
+    let runnerBinding: RunnerExternalApprovalBinding;
     try {
-      runnerBinding = parseRunnerExternalApprovalBindingV1(existing.externalApprovalBinding);
+      runnerBinding = parseRunnerExternalApprovalBinding(
+        existing.externalApprovalBinding,
+      );
     } catch {
       throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
     }
+    const interactionOwned =
+      runnerBinding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION;
+    const interactionResponse =
+      interaction.responseEnvelope &&
+      typeof interaction.responseEnvelope === "object" &&
+      !Array.isArray(interaction.responseEnvelope)
+        ? interaction.responseEnvelope as Record<string, unknown>
+        : null;
     const directSourceTurn = interaction.turnId === consumingTurn.id;
     const retrySourceTurn = consumingTurn.resumeInteractionId === interaction.id;
+    const interactionIsExecutable =
+      interactionOwned
+        ? interaction.status === "processing"
+        : interaction.status === "resolved";
     if (
       !sourceTurn ||
-      interaction.status !== "resolved" ||
+      !interactionIsExecutable ||
       !(directSourceTurn || retrySourceTurn) ||
       runnerBinding.approvalId !== interaction.runtimeApprovalId ||
       runnerBinding.threadId !== interaction.threadId ||
-      runnerBinding.runId !== interaction.sourceRuntimeRunId ||
+      (runnerBinding.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+        runnerBinding.runId !== interaction.sourceRuntimeRunId) ||
+      (runnerBinding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+        (runnerBinding.preparedInvocationId !==
+          (requestApproval as Record<string, unknown> | undefined)
+            ?.preparedInvocationId ||
+          serializeCanonicalApprovalPayload(runnerBinding.stableToolIdentity) !==
+            serializeCanonicalApprovalPayload(
+              (requestApproval as Record<string, unknown> | undefined)
+                ?.stableToolIdentity,
+            ))) ||
       runnerBinding.actionKey !== requestToolName ||
       !runnerBinding.payloadHash.startsWith("sha256:") ||
       runnerBinding.capabilities.length === 0 ||
       Date.parse(runnerBinding.expiresAt) <= now.getTime() ||
       requestedExecution.runtimeRunId !== interaction.sourceRuntimeRunId ||
-      existing.status !== "approved" ||
+      (interactionOwned
+        ? existing.lifecycleVersion !== "interaction_v2" ||
+          existing.interactionId !== interaction.id ||
+          existing.availabilityStatus !== "available" ||
+          interaction.resolvedByUserId !== input.binding.actorUserId ||
+          interactionResponse?.decision !== "approve_once" &&
+          interactionResponse?.decision !== "remember_approval"
+        : existing.lifecycleVersion !== "legacy_v1" ||
+          existing.status !== "approved") ||
       existing.expiresAt.getTime() <= now.getTime()
     ) {
       throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
@@ -538,7 +904,9 @@ export async function consumeAppOperationApproval(input: {
     const [consumed] = await tx
       .update(schema.appOperationApprovals)
       .set({
-        status: "consumed",
+        ...(interactionOwned
+          ? { availabilityStatus: "consumed" as const }
+          : { status: "consumed" as const }),
         payload: { redacted: true, operation: input.binding.operationKey },
         consumedExecutionId: input.consumedExecutionId,
         consumedAt: now,
@@ -547,7 +915,16 @@ export async function consumeAppOperationApproval(input: {
       .where(
         and(
           eq(schema.appOperationApprovals.id, existing.id),
-          eq(schema.appOperationApprovals.status, "approved"),
+          ...(interactionOwned
+            ? [
+                eq(schema.appOperationApprovals.lifecycleVersion, "interaction_v2"),
+                eq(schema.appOperationApprovals.availabilityStatus, "available"),
+                eq(schema.appOperationApprovals.interactionId, interaction.id),
+              ]
+            : [
+                eq(schema.appOperationApprovals.lifecycleVersion, "legacy_v1"),
+                eq(schema.appOperationApprovals.status, "approved"),
+              ]),
           gt(schema.appOperationApprovals.expiresAt, now),
         ),
       )
@@ -596,38 +973,179 @@ async function expireAppOperationApproval(input: {
   runtimeApprovalId: string;
   now: Date;
 }) {
-  await knowledgeDb
-    .update(schema.appOperationApprovals)
-    .set({
-      status: "expired",
-      payload: sql`jsonb_build_object('redacted', true, 'operation', ${schema.appOperationApprovals.operationKey})`,
-      updatedAt: input.now,
-    })
-    .where(
-      and(
-        eq(schema.appOperationApprovals.organizationId, input.organizationId),
-        eq(
-          schema.appOperationApprovals.runtimeApprovalId,
-          input.runtimeApprovalId
+  await knowledgeDb.transaction(async (tx) => {
+    const interactionOwned = await tx
+      .select({
+        id: schema.appOperationApprovals.id,
+        interactionId: schema.appOperationApprovals.interactionId,
+        threadId: schema.appOperationApprovals.threadId,
+      })
+      .from(schema.appOperationApprovals)
+      .where(
+        and(
+          eq(schema.appOperationApprovals.organizationId, input.organizationId),
+          eq(schema.appOperationApprovals.runtimeApprovalId, input.runtimeApprovalId),
+          eq(schema.appOperationApprovals.lifecycleVersion, "interaction_v2"),
+          eq(schema.appOperationApprovals.availabilityStatus, "available"),
+          lte(schema.appOperationApprovals.expiresAt, input.now),
         ),
-        inArray(schema.appOperationApprovals.status, ["pending", "approved"]),
-        lte(schema.appOperationApprovals.expiresAt, input.now)
-      )
-    );
+      );
+    await expireInteractionOwnedApprovals(tx, interactionOwned, input.now);
+    await tx
+      .update(schema.appOperationApprovals)
+      .set({
+        status: "expired",
+        payload: sql`jsonb_build_object('redacted', true, 'operation', ${schema.appOperationApprovals.operationKey})`,
+        updatedAt: input.now,
+      })
+      .where(
+        and(
+          eq(schema.appOperationApprovals.organizationId, input.organizationId),
+          eq(schema.appOperationApprovals.runtimeApprovalId, input.runtimeApprovalId),
+          eq(schema.appOperationApprovals.lifecycleVersion, "legacy_v1"),
+          inArray(schema.appOperationApprovals.status, ["pending", "approved"]),
+          lte(schema.appOperationApprovals.expiresAt, input.now),
+        ),
+      );
+  });
 }
 
 export async function expireStaleAppOperationApprovals(now = new Date()) {
-  await knowledgeDb
-    .update(schema.appOperationApprovals)
-    .set({
-      status: "expired",
-      payload: sql`jsonb_build_object('redacted', true, 'operation', ${schema.appOperationApprovals.operationKey})`,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        inArray(schema.appOperationApprovals.status, ["pending", "approved"]),
-        lte(schema.appOperationApprovals.expiresAt, now)
-      )
-    );
+  await knowledgeDb.transaction(async (tx) => {
+    const interactionOwned = await tx
+      .select({
+        id: schema.appOperationApprovals.id,
+        interactionId: schema.appOperationApprovals.interactionId,
+        threadId: schema.appOperationApprovals.threadId,
+      })
+      .from(schema.appOperationApprovals)
+      .where(
+        and(
+          eq(schema.appOperationApprovals.lifecycleVersion, "interaction_v2"),
+          eq(schema.appOperationApprovals.availabilityStatus, "available"),
+          lte(schema.appOperationApprovals.expiresAt, now),
+        ),
+      );
+    await expireInteractionOwnedApprovals(tx, interactionOwned, now);
+    await tx
+      .update(schema.appOperationApprovals)
+      .set({
+        status: "expired",
+        payload: sql`jsonb_build_object('redacted', true, 'operation', ${schema.appOperationApprovals.operationKey})`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.appOperationApprovals.lifecycleVersion, "legacy_v1"),
+          inArray(schema.appOperationApprovals.status, ["pending", "approved"]),
+          lte(schema.appOperationApprovals.expiresAt, now),
+        ),
+      );
+  });
+}
+
+async function expireInteractionOwnedApprovals(
+  tx: ApprovalTransaction,
+  approvals: Array<{
+    id: string;
+    interactionId: string | null;
+    threadId: string;
+  }>,
+  now: Date,
+) {
+  for (const approval of approvals.sort((left, right) =>
+    left.threadId.localeCompare(right.threadId) || left.id.localeCompare(right.id)
+  )) {
+    const candidateInteraction = approval.interactionId
+      ? await tx.query.threadInteractions.findFirst({
+          where: eq(schema.threadInteractions.id, approval.interactionId),
+        })
+      : undefined;
+    if (candidateInteraction?.turnId) {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${preparedApprovalQueueLockKey(candidateInteraction.threadId)}, 0))`,
+      );
+      await tx
+        .select({ id: schema.threads.id })
+        .from(schema.threads)
+        .where(eq(schema.threads.id, candidateInteraction.threadId))
+        .limit(1)
+        .for("update");
+    }
+    const [interaction] = approval.interactionId
+      ? await tx
+          .select()
+          .from(schema.threadInteractions)
+          .where(eq(schema.threadInteractions.id, approval.interactionId))
+          .limit(1)
+          .for("update")
+      : [];
+    const [turn] = interaction?.turnId
+      ? await tx
+          .select()
+          .from(schema.threadTurns)
+          .where(eq(schema.threadTurns.id, interaction.turnId))
+          .limit(1)
+          .for("update")
+      : [];
+    const [queueState] = interaction
+      ? await tx
+          .select()
+          .from(schema.threadTurnQueueState)
+          .where(eq(schema.threadTurnQueueState.threadId, interaction.threadId))
+          .limit(1)
+          .for("update")
+      : [];
+    const [lockedApproval] = await tx
+      .select()
+      .from(schema.appOperationApprovals)
+      .where(eq(schema.appOperationApprovals.id, approval.id))
+      .limit(1)
+      .for("update");
+    if (
+      !lockedApproval ||
+      lockedApproval.lifecycleVersion !== "interaction_v2" ||
+      lockedApproval.availabilityStatus !== "available" ||
+      lockedApproval.expiresAt.getTime() > now.getTime() ||
+      lockedApproval.interactionId !== approval.interactionId
+    ) continue;
+    if (
+      interaction &&
+      turn?.status === "waiting_for_input" &&
+      queueState?.activeTurnId === turn.id &&
+      (interaction.status === "pending" ||
+        (interaction.status === "processing" && interaction.resumedAt === null)) &&
+      ((queueState.state === "paused" &&
+        queueState.pauseReason === "interaction_required") ||
+        queueState.state === "running")
+    ) {
+      const existingResponse =
+        interaction.responseEnvelope &&
+        typeof interaction.responseEnvelope === "object" &&
+        !Array.isArray(interaction.responseEnvelope)
+          ? interaction.responseEnvelope as Record<string, unknown>
+          : {
+              requestId: interaction.requestId,
+              eventType: interaction.eventType,
+              message: "",
+            };
+      await schedulePreparedApprovalCleanupInTransaction(tx, {
+        interaction,
+        turn,
+        queueState,
+        cleanup: preparedApprovalCleanupFailure("EXTERNAL_APPROVAL_EXPIRED"),
+        responseEnvelope: existingResponse,
+        now,
+      });
+      continue;
+    }
+    await tx
+      .update(schema.appOperationApprovals)
+      .set({
+        availabilityStatus: "expired",
+        payload: { redacted: true, operation: lockedApproval.operationKey },
+        updatedAt: now,
+      })
+      .where(eq(schema.appOperationApprovals.id, lockedApproval.id));
+  }
 }

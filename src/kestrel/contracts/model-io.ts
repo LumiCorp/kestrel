@@ -366,6 +366,7 @@ export interface ToolGateway {
       rawInput: Record<string, unknown>;
       policy: PreparedToolPolicyDispositionV1;
       approval?: PreparedToolApprovalAuthorityV1 | undefined;
+      approvalCapabilities?: readonly string[] | undefined;
     },
     options?: ToolGatewayCallOptions,
   ): Promise<PreparedToolCallV1>;
@@ -373,6 +374,9 @@ export interface ToolGateway {
     prepared: PreparedToolCallV1,
     options?: ToolGatewayCallOptions,
   ): Promise<AgentToolResultV2>;
+  releasePreparedToolCall?(
+    prepared: PreparedToolCallV1,
+  ): Promise<void> | void;
   releaseToolSurfaceSnapshot?(snapshotId: string): Promise<void> | void;
   releaseToolRun?(runId: string, sessionId: string): Promise<void> | void;
   preRun?(context: ToolGatewayPreRunContext): Promise<void>;

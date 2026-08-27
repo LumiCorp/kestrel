@@ -72,5 +72,315 @@ test("sampling approval hides prompts, tools, and provider data", () => {
     })
   );
   assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.equal(dto.version, "legacy");
+  assert.deepEqual(dto.decisions, ["approve", "deny"]);
   assert.doesNotMatch(JSON.stringify(dto), /private|apiKey|secret/iu);
+});
+
+test("hosted V2 approval publishes its exact decision vocabulary", () => {
+  const dto = mobileInteractionDto(
+    {
+      id: "runtime-interaction-1",
+      requestId: "approval-1",
+      source: "runtime",
+      kind: "approval",
+      prompt: "Approve this exact tool?",
+      status: "pending",
+      requestEnvelope: {
+        version: "runner_hosted_tool_approval_interaction_v2",
+      },
+      approvalPolicy: {
+        projectId: "project-1",
+        environmentId: "environment-1",
+        appKey: "google-workspace",
+        capabilityKey: "calendar.events.create",
+        capabilityDisplayName: "Create calendar events",
+        environmentApprovalMode: "ask",
+        projectApprovalMode: "ask",
+        minimumApprovalMode: "auto",
+        reasonCode: "environment_policy",
+        canEditProject: false,
+      },
+      createdAt: new Date("2026-07-13T12:00:00.000Z"),
+    },
+  );
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.equal(dto.version, "runner_hosted_tool_approval_interaction_v2");
+  assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
+});
+
+test("hosted approval with missing current authority publishes only Decline", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-missing-policy",
+    requestId: "approval-missing-policy",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "pending",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v3",
+      approval: { toolName: "exec_command" },
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, ["decline"]);
+});
+
+test("legacy hosted V3 approval omits Remember Approval", () => {
+  const dto = mobileInteractionDto(
+    {
+      id: "runtime-interaction-1",
+      requestId: "approval-1",
+      source: "runtime",
+      kind: "approval",
+      prompt: "Approve this exact tool?",
+      status: "pending",
+      requestEnvelope: {
+        version: "runner_hosted_tool_approval_interaction_v3",
+        approval: {
+          presentation: {
+            policy: {
+              reasonCode: "environment_policy",
+              rememberApprovalEligible: true,
+            },
+          },
+        },
+      },
+      approvalPolicy: {
+        projectId: "project-1",
+        environmentId: "environment-1",
+        appKey: "google-workspace",
+        capabilityKey: "calendar.events.create",
+        capabilityDisplayName: "Create calendar events",
+        environmentApprovalMode: "ask",
+        projectApprovalMode: "ask",
+        minimumApprovalMode: "auto",
+        rememberApprovalEligible: true,
+        reasonCode: "environment_policy",
+        canEditProject: false,
+      },
+      createdAt: new Date("2026-07-13T12:00:00.000Z"),
+    },
+  );
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.equal(dto.version, "runner_hosted_tool_approval_interaction_v3");
+  assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
+});
+
+test("hosted V4 Project Ask First publishes Remember Approval", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-project-ask",
+    requestId: "approval-project-ask",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "pending",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v4",
+      approval: {
+        presentation: {
+          policy: {
+            reasonCode: "project_restriction",
+            rememberApprovalEligible: true,
+          },
+        },
+      },
+    },
+    approvalPolicy: {
+      projectId: "project-1",
+      environmentId: "environment-1",
+      appKey: "google-workspace",
+      capabilityKey: "calendar.events.create",
+      capabilityDisplayName: "Create calendar events",
+      environmentApprovalMode: "auto",
+      projectApprovalMode: "ask",
+      minimumApprovalMode: "auto",
+      rememberApprovalEligible: true,
+      reasonCode: "project_restriction",
+      canEditProject: false,
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, [
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ]);
+});
+
+test("hosted V3 approval hides remember after current Project policy becomes stricter", () => {
+  const dto = mobileInteractionDto(
+    {
+      id: "runtime-interaction-2",
+      requestId: "approval-2",
+      source: "runtime",
+      kind: "approval",
+      prompt: "Approve this exact tool?",
+      status: "pending",
+      requestEnvelope: {
+        version: "runner_hosted_tool_approval_interaction_v3",
+        approval: {
+          presentation: {
+            policy: {
+              reasonCode: "environment_policy",
+              rememberApprovalEligible: true,
+            },
+          },
+        },
+      },
+      approvalPolicy: {
+        projectId: "project-1",
+        environmentId: "environment-1",
+        appKey: "google-workspace",
+        capabilityKey: "calendar.events.create",
+        capabilityDisplayName: "Create calendar events",
+        environmentApprovalMode: "ask",
+        projectApprovalMode: "deny",
+        minimumApprovalMode: "auto",
+        rememberApprovalEligible: false,
+        reasonCode: "environment_policy",
+        canEditProject: false,
+      },
+      createdAt: new Date("2026-07-13T12:00:00.000Z"),
+    },
+  );
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, ["decline"]);
+});
+
+test("built-in exec_command hides remember after current Subject policy becomes Ask", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-3",
+    requestId: "approval-3",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "pending",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v3",
+      approval: {
+        toolName: "exec_command",
+        presentation: {
+          policy: {
+            reasonCode: "environment_policy",
+            rememberApprovalEligible: true,
+          },
+        },
+      },
+    },
+    approvalPolicy: {
+      projectId: "project-1",
+      environmentId: "environment-1",
+      appKey: "built_in.workspace",
+      capabilityKey: "executeCommand",
+      capabilityDisplayName: "Execute command",
+      environmentApprovalMode: "ask",
+      projectApprovalMode: "ask",
+      minimumApprovalMode: "auto",
+      subjectApprovalMode: "ask",
+      rememberApprovalEligible: false,
+      reasonCode: "environment_policy",
+      canEditProject: false,
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
+});
+
+test("built-in exec_command exposes only decline after current Subject policy blocks it", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-subject-blocked",
+    requestId: "approval-subject-blocked",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "pending",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v3",
+      approval: {
+        toolName: "exec_command",
+        presentation: { policy: { rememberApprovalEligible: true } },
+      },
+    },
+    approvalPolicy: {
+      projectId: "project-1",
+      environmentId: "environment-1",
+      appKey: "built_in.workspace",
+      capabilityKey: "executeCommand",
+      capabilityDisplayName: "Execute command",
+      environmentApprovalMode: "ask",
+      projectApprovalMode: "ask",
+      minimumApprovalMode: "auto",
+      subjectApprovalMode: "deny",
+      rememberApprovalEligible: false,
+      reasonCode: "environment_policy",
+      canEditProject: false,
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, ["decline"]);
+});
+
+test("closed hosted approvals advertise no Mobile decisions", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-4",
+    requestId: "approval-4",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "failed",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v3",
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, []);
+});
+
+test("hosted approvals bound to a closed resource expose only Decline", () => {
+  const dto = mobileInteractionDto({
+    id: "runtime-interaction-5",
+    requestId: "approval-5",
+    source: "runtime",
+    kind: "approval",
+    prompt: "Approve this exact tool?",
+    status: "pending",
+    requestEnvelope: {
+      version: "runner_hosted_tool_approval_interaction_v3",
+      approval: {
+        presentation: { policy: { reasonCode: "environment_policy" } },
+      },
+    },
+    approvalPolicy: {
+      projectId: "project-1",
+      environmentId: "environment-1",
+      appKey: "google-workspace",
+      capabilityKey: "calendar.events.create",
+      capabilityDisplayName: "Create calendar events",
+      environmentApprovalMode: "ask",
+      projectApprovalMode: "ask",
+      minimumApprovalMode: "auto",
+      approvalResourceAvailable: false,
+      reasonCode: "environment_policy",
+      canEditProject: false,
+    },
+    createdAt: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dto.kind, "approval");
+  if (dto.kind !== "approval") assert.fail("expected approval DTO");
+  assert.deepEqual(dto.decisions, ["decline"]);
 });

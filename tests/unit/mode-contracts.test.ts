@@ -5,6 +5,7 @@ import {
   APPROVAL_CAPABILITY_CLASSES,
   alignExecutionPolicyWithMode,
   isToolEligibleForInteractionMode,
+  resolveEffectiveToolDecisionV1,
   isToolClassAllowed,
   normalizeInteractionMode,
   parseExecutionPolicyOverride,
@@ -308,4 +309,74 @@ test("Chat allows read-only tools and only explicitly Chat-enabled app mutations
     }),
     false,
   );
+});
+
+test("effective tool decisions keep Ask First visible and carry Remember eligibility", () => {
+  const decision = resolveEffectiveToolDecisionV1({
+    interactionMode: "build",
+    toolClass: "external_side_effect",
+    executionPolicy: {
+      toolClassPolicy: { external_side_effect: true },
+      capabilityPolicy: { "shell.exec": true },
+    },
+    requiredCapabilities: ["shell.exec"],
+    approvalDisposition: {
+      mode: "ask",
+      reasonCode: "project_restriction",
+      authority: { kind: "runtime_policy", revision: "project-policy:2" },
+    },
+  });
+
+  assert.equal(decision.available, true);
+  assert.equal(decision.approvalDisposition.mode, "ask");
+  assert.equal(decision.rememberApprovalEligible, true);
+  assert.equal(decision.authorityRevision, "project-policy:2");
+});
+
+test("effective tool decisions remove policy-blocked tools and runtime strictness wins", () => {
+  const denied = resolveEffectiveToolDecisionV1({
+    interactionMode: "build",
+    toolClass: "external_side_effect",
+    executionPolicy: { toolClassPolicy: { external_side_effect: true } },
+    approvalDisposition: {
+      mode: "deny",
+      reasonCode: "project_restriction",
+      authority: { kind: "runtime_policy", revision: "project-policy:deny" },
+    },
+  });
+  assert.equal(denied.available, false);
+  assert.equal(denied.availabilityReason, "approval_policy");
+  assert.equal(denied.rememberApprovalEligible, false);
+
+  const blocked = resolveEffectiveToolDecisionV1({
+    interactionMode: "build",
+    toolClass: "external_side_effect",
+    executionPolicy: {
+      toolClassPolicy: { external_side_effect: true },
+      capabilityPolicy: { "shell.exec": false },
+    },
+    requiredCapabilities: ["shell.exec"],
+    approvalDisposition: {
+      mode: "ask",
+      reasonCode: "environment_policy",
+      authority: { kind: "runtime_policy", revision: "environment-policy:1" },
+    },
+  });
+  assert.equal(blocked.available, false);
+  assert.equal(blocked.availabilityReason, "capability_policy");
+  assert.equal(blocked.evidence.blockedCapability, "shell.exec");
+  assert.equal(blocked.rememberApprovalEligible, false);
+
+  const strict = resolveEffectiveToolDecisionV1({
+    interactionMode: "build",
+    toolClass: "external_side_effect",
+    executionPolicy: { approvalPolicy: { strictApprovalPerCall: true } },
+    approvalDisposition: {
+      mode: "auto",
+      reasonCode: "remembered_thread",
+      authority: { kind: "runtime_policy", revision: "remembered:1" },
+    },
+  });
+  assert.equal(strict.approvalDisposition.reasonCode, "runtime_strict");
+  assert.equal(strict.rememberApprovalEligible, false);
 });

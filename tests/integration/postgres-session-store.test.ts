@@ -10,6 +10,40 @@ import { ScriptedSqlExecutor } from "../helpers/ScriptedSqlExecutor.js";
 import { createEmptyProjectSnapshot } from "../../src/project/state.js";
 import { encodeConversationMessageCursor } from "@kestrel-agents/protocol";
 
+test("effect execution claim atomically fences PENDING ownership before invocation", async () => {
+  const sql = new ScriptedSqlExecutor([
+    { match: /^BEGIN/u },
+    {
+      match: /FROM effects WHERE idempotency_key = \$1 FOR UPDATE/u,
+      rows: [{
+        run_id: "run-claim",
+        session_id: "session-claim",
+        status: "PENDING",
+        tenant_id: null,
+        tenant_ownership_state: "explicit_unbound",
+        effect_type: "test.claimed",
+        payload_json: {},
+        step_index: 0,
+        failure_policy: "STOP",
+        created_at: "2026-08-26T00:00:00.000Z",
+      }],
+    },
+    {
+      match: /UPDATE effects SET status = 'CLAIMED'[\s\S]*status = 'PENDING'/u,
+      rowCount: 1,
+    },
+    { match: /^COMMIT/u },
+  ]);
+  const store = new PostgresSessionStore(sql);
+
+  assert.equal(await store.claimEffectExecution("claim-1", {
+    runId: "run-claim",
+    sessionId: "session-claim",
+  }), "claimed");
+  assert.deepEqual(sql.queries[2]?.values, ["claim-1", "run-claim", "session-claim"]);
+  sql.assertExhausted();
+});
+
 test("completed conversation message reads use durable handoff filters and cursor ordering", async () => {
   const startedAt = new Date("2026-07-31T10:00:00.000Z");
   const updatedAt = new Date("2026-07-31T10:02:00.000Z");

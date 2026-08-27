@@ -14,6 +14,7 @@ import type {
   KestrelProgressPresentation,
   KestrelAgentProgressPresentation,
   KestrelProviderReasoningPresentation,
+  KestrelStatusPresentation,
   KestrelTerminalStatus,
   KestrelToolPresentation,
   KestrelDialogMessagePresentation,
@@ -300,6 +301,9 @@ export function createKestrelPresentationAccumulator(input: {
         if (event.runId !== undefined) {
           runId = event.runId;
         }
+        const result = event.payload.result;
+        telemetry = result.output.telemetry;
+        runId = result.output.runId;
         if (event.type === "run.failed") {
           terminalStatus = "failed";
           errorCode = event.payload.error.code;
@@ -310,12 +314,14 @@ export function createKestrelPresentationAccumulator(input: {
           );
         } else if (event.type === "run.cancelled") {
           terminalStatus = "cancelled";
+          const cancellationError = result.output.errors.find(
+            (error) => error.code === "RUN_CANCELLED",
+          );
+          errorCode = cancellationError?.code ?? "RUN_CANCELLED";
+          errorDetails = cancellationError?.details;
           errorMessage = "The run was cancelled before it finished.";
         } else {
-          const result = event.payload.result;
           finalizedPayload = result.finalizedPayload;
-          telemetry = result.output.telemetry;
-          runId = result.output.runId;
           if (result.output.status === "COMPLETED") {
             assistantText = requireNonEmptyString(
               result.assistantText,
@@ -373,12 +379,37 @@ export function createKestrelPresentationAccumulator(input: {
           ...(runId !== undefined ? { runId } : {}),
           ...(errorCode !== undefined ? { errorCode } : {}),
           ...(errorMessage !== null ? { errorMessage } : {}),
+          ...(telemetry !== undefined
+            ? { telemetry: projectSafeTerminalTelemetry(telemetry) }
+            : {}),
         },
       });
       return snapshot();
     },
     snapshot,
   };
+}
+
+function projectSafeTerminalTelemetry(telemetry: RunnerTelemetry) {
+  const projection: NonNullable<KestrelStatusPresentation["telemetry"]> = {};
+  for (const field of [
+    "modelCalls",
+    "inputTokens",
+    "cachedInputTokens",
+    "cacheWriteInputTokens",
+    "outputTokens",
+    "reasoningTokens",
+    "totalTokens",
+    "durationMs",
+    "pricedCostUsd",
+    "validationRejections",
+  ] as const) {
+    const value = telemetry[field];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      projection[field] = value;
+    }
+  }
+  return projection;
 }
 
 function publicRuntimeErrorMessage(code: string | undefined, message: string) {

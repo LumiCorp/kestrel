@@ -515,6 +515,25 @@ export class RuntimeIO {
           requestedModel,
         }),
       );
+      // The provider request has completed at this boundary. Capture only its
+      // safe usage and pricing evidence before cancellation can stop response
+      // consumption and all later work.
+      const modelUsage = this.options.extractModelUsage(recoveredResult);
+      const economicsUsage = normalizeEconomicsUsage(modelUsage);
+      guardrails.onModelUsage(modelUsage);
+      const modelMetadata = this.options.extractModelMetadata(recoveredResult);
+      const actualProvider = readNonEmptyString(modelMetadata?.provider) ?? requestedProvider;
+      const actualModel = readNonEmptyString(modelMetadata?.model) ?? requestedModel;
+      const actualEconomicsModelProfile = actualProvider !== undefined && actualModel !== undefined && economicsControl !== undefined
+        ? resolveModelEconomicsProfileV1(economicsControl, actualProvider, actualModel)
+        : economicsModelProfile;
+      const pricing = attributeModelCallPrice({
+        usage: economicsUsage,
+        profile: actualEconomicsModelProfile,
+        provider: actualProvider,
+        model: actualModel,
+      });
+      guardrails.onModelCost(pricing.status === "priced" ? pricing.totalCostUsd : undefined);
       throwIfRuntimeIOAborted(progress.signal);
       const responseBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist<T>({
         boundary: "model_action",
@@ -553,15 +572,6 @@ export class RuntimeIO {
       if (this.options.deps.providerReasoningVault !== undefined && isModelResponse(result)) {
         await this.options.deps.providerReasoningVault.captureResponse(result, reasoningContext);
       }
-      const modelUsage = this.options.extractModelUsage(result);
-      const economicsUsage = normalizeEconomicsUsage(modelUsage);
-      guardrails.onModelUsage(modelUsage);
-      const modelMetadata = this.options.extractModelMetadata(result);
-      const actualProvider = readNonEmptyString(modelMetadata?.provider) ?? requestedProvider;
-      const actualModel = readNonEmptyString(modelMetadata?.model) ?? requestedModel;
-      const actualEconomicsModelProfile = actualProvider !== undefined && actualModel !== undefined && economicsControl !== undefined
-        ? resolveModelEconomicsProfileV1(economicsControl, actualProvider, actualModel)
-        : economicsModelProfile;
       const completedAt = new Date().toISOString();
       const latencyMs = Date.now() - startedAt;
       await this.options.persistModelResponseDump({
@@ -595,12 +605,7 @@ export class RuntimeIO {
         latencyMs,
         usage: economicsUsage,
         providerReportedInputDeltaTokens: economicsUsage.inputTokens - requestEconomicsManifest.requestCount.tokens,
-        pricing: attributeModelCallPrice({
-          usage: economicsUsage,
-          profile: actualEconomicsModelProfile,
-          provider: actualProvider,
-          model: actualModel,
-        }),
+        pricing,
       });
       await this.options.appendRunEvent(
         progress.runId,
@@ -1598,6 +1603,95 @@ export class RuntimeIO {
         );
       }
     }
+  }
+
+  async prepareToolForApproval(
+    name: string,
+    input: unknown,
+    approval: {
+      policyRevision: string;
+      authorityRevision: string;
+      capabilities: readonly string[];
+    },
+    intent?: {
+      modelToolCallId?: string | undefined;
+      toolSurfaceSnapshot?: import("../kestrel/contracts/tool-contract.js").ToolSurfaceSnapshotV1 | undefined;
+    },
+  ): Promise<import("../kestrel/contracts/tool-invocation.js").PreparedToolCallV1> {
+    const { progress } = this.options;
+    throwIfRuntimeIOAborted(progress.signal);
+    const sessionState = this.options.getSessionState();
+    const runContext = {
+      runId: progress.runId,
+      sessionId: progress.sessionId,
+      payload: this.options.runtimePayload ?? {},
+      sessionState,
+    };
+    const snapshot = intent?.toolSurfaceSnapshot ??
+      await this.options.deps.toolGateway.createToolSurfaceSnapshot({
+        runContext,
+        toolNames: [name],
+      });
+    const activation = snapshot.tools.find(
+      (candidate) => candidate.descriptor.toolId === name,
+    );
+    if (activation === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_SNAPSHOT_LOOKUP_FAILED",
+        `Tool '${name}' was not exposed in snapshot '${snapshot.snapshotId}'.`,
+        { recoverable: false, toolName: name },
+      );
+    }
+    const rawInput = asPlainRecord(input);
+    if (rawInput === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_INPUT_SCHEMA_FAILED",
+        `Tool '${name}' input must be an object.`,
+        { recoverable: true, toolName: name },
+      );
+    }
+    const callId = `approval:${progress.runId}:${randomUUID()}`;
+    return await this.options.deps.toolGateway.prepareToolCall(
+      {
+        runId: progress.runId,
+        sessionId: progress.sessionId,
+        callId,
+        activation,
+        origin:
+          intent?.modelToolCallId === undefined
+            ? {
+                kind: "trusted_runtime",
+                producerId: "runtime.hosted-approval:v2",
+                adapterId: "runtime.hosted-approval:v2",
+              }
+            : {
+                kind: "model",
+                snapshotId: snapshot.snapshotId,
+                modelToolCallId: intent.modelToolCallId,
+              },
+        rawInput,
+        policy: {
+          decision: "approval_required",
+          policyRevision: approval.policyRevision,
+        },
+        approval: {
+          approvalId: callId,
+          authorityRevision: approval.authorityRevision,
+        },
+        approvalCapabilities: approval.capabilities,
+      },
+      {
+        runContext,
+        runtimeBudgetRemainingMs:
+          this.options.guardrails.budgetSnapshot().remainingMs,
+      },
+    );
+  }
+
+  async releasePreparedToolCall(
+    prepared: import("../kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+  ): Promise<void> {
+    await this.options.deps.toolGateway.releasePreparedToolCall?.(prepared);
   }
 
   private async emitToolUpdate(input: {

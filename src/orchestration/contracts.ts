@@ -33,7 +33,7 @@ import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
 import type { RuntimeTurnInput } from "../runtime/RuntimeTurn.js";
 import type { EvidenceRecoverySummary } from "../runtime/evidenceQuality.js";
 import type { ThreadWorkspaceAuthorityProjection } from "../workspace/threadWorkspaceBinding.js";
-import type { RunnerInteractionRequestV1 } from "@kestrel-agents/protocol";
+import type { RunnerInteractionRequest } from "@kestrel-agents/protocol";
 
 export type ContextPolicyAction =
   | "continue"
@@ -306,7 +306,7 @@ export interface OperatorInboxItem {
   childThreadId?: string | undefined;
   recommendedAction?: string | undefined;
   detail?: string | undefined;
-  interaction?: RunnerInteractionRequestV1 | undefined;
+  interaction?: RunnerInteractionRequest | undefined;
   metadata?: Record<string, unknown> | undefined;
 }
 

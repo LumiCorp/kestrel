@@ -135,6 +135,62 @@ test("completed output exposes the finalized payload to adapters", () => {
   assert.deepEqual(snapshot.finalizedPayload, finalizedPayload);
 });
 
+test("cancelled output preserves completed telemetry and structured cancellation evidence", () => {
+  const accumulator = createKestrelPresentationAccumulator({
+    assistantMessageId: "assistant-cancelled",
+  });
+  const completed = completedEvent("Discarded terminal text.");
+  const event: RunnerRunTerminalEvent = {
+    ...completed,
+    type: "run.cancelled",
+    payload: {
+      sessionId: "session-1",
+      runId: "run-1",
+      result: {
+        ...completed.payload.result,
+        assistantText: null,
+        output: {
+          ...completed.payload.result.output,
+          status: "FAILED",
+          errors: [{
+            code: "RUN_CANCELLED",
+            message: "Run cancelled.",
+            details: {
+              cancellationReason: "user_requested",
+              modelWorkRecorded: true,
+              validationRejections: 1,
+            },
+          }],
+          telemetry: {
+            modelCalls: 1,
+            inputTokens: 120,
+            cachedInputTokens: 20,
+            outputTokens: 30,
+            reasoningTokens: 10,
+            totalTokens: 150,
+            durationMs: 1250,
+            pricedCostUsd: 0.0042,
+            validationRejections: 1,
+          },
+        },
+      },
+    },
+  };
+
+  const snapshot = accumulator.finish(event);
+  assert.equal(snapshot.terminalStatus, "cancelled");
+  assert.equal(snapshot.errorCode, "RUN_CANCELLED");
+  assert.equal(snapshot.errorDetails?.cancellationReason, "user_requested");
+  assert.deepEqual(snapshot.telemetry, event.payload.result.output.telemetry);
+  const statusPart = snapshot.message.parts.find(
+    (part) => part.type === "data-kestrel-status",
+  );
+  assert.equal(statusPart?.type, "data-kestrel-status");
+  if (statusPart?.type === "data-kestrel-status") {
+    assert.deepEqual(statusPart.data.telemetry, event.payload.result.output.telemetry);
+  }
+});
+
 test("waiting output persists one assistant prompt and its exact durable interaction", () => {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: "assistant-wait",

@@ -22,6 +22,10 @@ const profile = {
 } as RunnerProfile;
 
 test("hosted runtime tools resolve to the existing App capability owner", () => {
+  assert.deepEqual(resolveKestrelOneToolCapability("exec_command"), {
+    appKey: "built_in.workspace",
+    capabilityKey: "executeCommand",
+  });
   assert.deepEqual(resolveKestrelOneToolCapability("internet.research"), {
     appKey: "tavily",
     capabilityKey: "research",
@@ -31,6 +35,55 @@ test("hosted runtime tools resolve to the existing App capability owner", () => 
     capabilityKey: "getWeather",
   });
   assert.equal(resolveKestrelOneToolCapability("unknown.tool"), null);
+});
+
+test("hosted command visibility and approval follow effective App policy", () => {
+  const commandProfile = {
+    ...profile,
+    toolAllowlist: ["exec_command"],
+  };
+  const ask = restrictKestrelOneProfileTools({
+    profile: commandProfile,
+    effectiveCapabilities: [
+      "app:built_in.workspace.executeCommand:ask",
+    ],
+    approvalPolicies: [
+      {
+        appKey: "built_in.workspace",
+        capabilityKey: "executeCommand",
+        environment: "auto",
+        project: "ask",
+        minimum: "auto",
+      },
+    ],
+  });
+  assert.deepEqual(ask.toolAllowlist, ["exec_command"]);
+  assert.deepEqual(ask.kestrelOneAppApprovalModes, {
+    exec_command: "ask",
+  });
+  assert.deepEqual(ask.kestrelOneAppApprovalPolicies, {
+    exec_command: {
+      environment: "auto",
+      project: "ask",
+      minimum: "auto",
+    },
+  });
+
+  const automatic = restrictKestrelOneProfileTools({
+    profile: commandProfile,
+    effectiveCapabilities: [
+      "app:built_in.workspace.executeCommand:auto",
+    ],
+  });
+  assert.deepEqual(automatic.toolAllowlist, ["exec_command"]);
+  assert.equal(automatic.kestrelOneAppApprovalModes?.exec_command, "auto");
+
+  const blocked = restrictKestrelOneProfileTools({
+    profile: commandProfile,
+    effectiveCapabilities: [],
+  });
+  assert.deepEqual(blocked.toolAllowlist, []);
+  assert.deepEqual(blocked.kestrelOneAppApprovalModes, {});
 });
 
 test("calendar tools are exposed only for effective Project capabilities", () => {

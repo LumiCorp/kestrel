@@ -5,18 +5,26 @@ import type {
 import type {
   EffectRunner,
 } from "../kestrel/contracts/execution.js";
-import type {
-  PersistedEffect,
-  EffectStore,
-  SandboxCapabilityLeaseStore,
-  SessionRepository,
+import {
+  parseRunnerPreparedApprovalCleanupV1,
+} from "@kestrel-agents/protocol";
+import {
+  validateExactEffectResultRead,
+  validatePreparedApprovalCleanupDoneEvidence,
+  type EffectResultPersistenceIntent,
+  type EffectStore,
+  type PersistedEffect,
+  type SandboxCapabilityLeaseStore,
+  type SessionRepository,
 } from "../kestrel/contracts/store.js";
 import {
   parseAgentToolResultV2,
   parsePreparedToolCallV1,
+  type PreparedToolCallV1,
 } from "../kestrel/contracts/tool-invocation.js";
 import type { ToolActivationRefV1 } from "../kestrel/contracts/tool-contract.js";
 import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
+import { buildUnknownPreparedToolCallResultV1 } from "../io/ToolInvocationSupport.js";
 import type { EffectRegistry } from "./EffectRegistry.js";
 import { createEffectExecutionError } from "./errors.js";
 
@@ -52,9 +60,37 @@ export class InlineEffectRunner implements EffectRunner {
 
     for (const effect of effects) {
       const session = await this.store.getSession(context.sessionId);
-      const existingResult = await this.store.getEffectResult(effect.idempotencyKey);
+      let existingResult = await this.store.getEffectResult(effect.idempotencyKey);
+      if (
+        existingResult?.status === "FAILED" &&
+        isPreparedApprovalCleanupRelease(effect)
+      ) {
+        const reset = await this.store.resetPreparedApprovalCleanupEffectExecution(
+          effect.idempotencyKey,
+          effect,
+        );
+        if (reset === "reset") existingResult = null;
+        if (reset === "done") {
+          const resolution = await this.resolvePreparedApprovalCleanupDone(
+            effect,
+          );
+          if (resolution === "done") continue;
+          existingResult = null;
+        }
+      }
+      if (
+        existingResult?.status === "DONE" &&
+        isPreparedApprovalCleanupRelease(effect)
+      ) {
+        const resolution = await this.resolvePreparedApprovalCleanupDone(
+          effect,
+        );
+        if (resolution === "done") continue;
+        existingResult = null;
+      }
       if (existingResult !== null) {
         if (existingResult.status === "DONE") {
+          assertExactRecordedToolResult(effect, existingResult);
           await this.store.markEffectStatus(effect.idempotencyKey, "DONE", effect);
           continue;
         }
@@ -77,19 +113,112 @@ export class InlineEffectRunner implements EffectRunner {
 
       const toolActivity = readEffectToolActivity(effect);
       const startedAt = Date.now();
-      if (toolActivity !== undefined) {
-        await notifyToolActivity(context.onToolActivity, {
-          phase: "started",
-          toolCallId: toolActivity.toolCallId,
-          toolName: toolActivity.toolName,
-          input: toolActivity.toolInput,
-          ...(toolActivity.activation === undefined
-            ? {}
-            : { activation: toolActivity.activation }),
-        });
-      }
       try {
         const handler = this.registry.resolve(effect.type);
+        const prepared = validatePreparedEffectForExecution(effect, context);
+        let claim = await this.store.claimEffectExecution(effect.idempotencyKey, effect);
+        if (
+          claim === "already_claimed" &&
+          isPreparedApprovalCleanupRelease(effect) &&
+          (await this.store.getEffectResult(effect.idempotencyKey)) === null
+        ) {
+          // A cleanup critical section is the execution lease. It re-reads the
+          // claimed effect under its lock, so recovery never steals a live
+          // CLAIMED cleanup merely because its result is not written yet.
+          claim = "claimed";
+        }
+        if (claim !== "claimed") {
+          const racedResult = await this.store.getEffectResult(effect.idempotencyKey);
+          if (
+            racedResult?.status === "DONE" &&
+            isPreparedApprovalCleanupRelease(effect)
+          ) {
+            const resolution = await this.resolvePreparedApprovalCleanupDone(
+              effect,
+            );
+            if (resolution === "done") continue;
+            claim = await this.store.claimEffectExecution(
+              effect.idempotencyKey,
+              effect,
+            );
+          }
+        }
+        if (claim !== "claimed") {
+          const racedResult = await this.store.getEffectResult(effect.idempotencyKey);
+          if (racedResult?.status === "DONE") {
+            assertExactRecordedToolResult(effect, racedResult);
+            await this.store.markEffectStatus(effect.idempotencyKey, "DONE", effect);
+            continue;
+          }
+          if (racedResult?.status === "FAILED") {
+            await this.store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
+            if (racedResult.error !== undefined) errors.push(racedResult.error);
+            if (effect.failurePolicy === "CONTINUE") continue;
+            return {
+              stop: true,
+              terminalStatus: effect.failurePolicy === "WAIT" ? "WAITING" : "FAILED",
+              errors,
+            };
+          }
+
+          const runtimeError: RuntimeError = {
+            code: "EFFECT_EXECUTION_OUTCOME_UNKNOWN",
+            message: "Effect execution was durably claimed without a recorded exact result; refusing to repeat it",
+            details: {
+              idempotencyKey: effect.idempotencyKey,
+              effectType: effect.type,
+              claimState: claim,
+              effectState: "unknown",
+              retryable: false,
+            },
+          };
+          const unknownOutput = prepared === undefined
+            ? undefined
+            : buildUnknownPreparedToolCallResultV1({
+                prepared,
+                error: runtimeError,
+                startedAt: new Date(startedAt).toISOString(),
+              });
+          errors.push(runtimeError);
+          await this.store.saveEffectResult(effect.runId, effect.sessionId, {
+            idempotencyKey: effect.idempotencyKey,
+            status: "FAILED",
+            ...(unknownOutput === undefined ? {} : { output: unknownOutput }),
+            error: runtimeError,
+            timestamp: new Date().toISOString(),
+          }, preparedApprovalCleanupPersistenceIntent(effect));
+          await this.store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
+          if (toolActivity !== undefined) {
+            await notifyToolActivity(context.onToolActivity, {
+              phase: "failed",
+              toolCallId: toolActivity.toolCallId,
+              toolName: toolActivity.toolName,
+              input: toolActivity.toolInput,
+              error: runtimeError,
+              durationMs: Date.now() - startedAt,
+              ...(unknownOutput === undefined
+                ? {}
+                : { activation: unknownOutput.activation, outcome: unknownOutput.outcome }),
+            });
+          }
+          if (effect.failurePolicy === "CONTINUE") continue;
+          return {
+            stop: true,
+            terminalStatus: effect.failurePolicy === "WAIT" ? "WAITING" : "FAILED",
+            errors,
+          };
+        }
+        if (toolActivity !== undefined) {
+          await notifyToolActivity(context.onToolActivity, {
+            phase: "started",
+            toolCallId: toolActivity.toolCallId,
+            toolName: toolActivity.toolName,
+            input: toolActivity.toolInput,
+            ...(toolActivity.activation === undefined
+              ? {}
+              : { activation: toolActivity.activation }),
+          });
+        }
         let completedEffectResult: {
           idempotencyKey: string;
           status: "DONE";
@@ -131,14 +260,66 @@ export class InlineEffectRunner implements EffectRunner {
           readSandboxCapabilityReplayEvidence(output) === undefined
             ? Promise.resolve()
             : persistCompletedResult(output);
-        let output = await handler(effect, {
-          ...context,
-          session,
-          persistCompletedCapabilityResult,
-        });
-        await persistCompletedResult(output);
-        if (readSandboxCapabilityReplayEvidence(output) === undefined) {
-          await this.store.markEffectStatus(effect.idempotencyKey, "DONE", effect);
+        let output: unknown;
+        if (isPreparedApprovalCleanupRelease(effect)) {
+          const criticalSection =
+            await this.store.executePreparedApprovalCleanupInCriticalSection(
+              effect.idempotencyKey,
+              effect,
+              async () => {
+                const handlerOutput = await handler(effect, {
+                  ...context,
+                  session,
+                  persistCompletedCapabilityResult: async () => {
+                    throw new Error(
+                      "Cleanup release handlers cannot persist capability results",
+                    );
+                  },
+                });
+                return {
+                  idempotencyKey: effect.idempotencyKey,
+                  status: "DONE",
+                  output: snapshotCanonicalEffectOutput(handlerOutput),
+                  timestamp: new Date().toISOString(),
+                };
+              },
+            );
+          if (criticalSection.status === "conflict") {
+            throw new Error(
+              "Prepared approval cleanup execution lost its exact critical-section authority",
+            );
+          }
+          output = criticalSection.result.output;
+        } else {
+          output = await handler(effect, {
+            ...context,
+            session,
+            persistCompletedCapabilityResult,
+          });
+          await persistCompletedResult(output);
+        }
+        if (
+          readSandboxCapabilityReplayEvidence(output) === undefined &&
+          !isPreparedApprovalCleanupRelease(effect)
+        ) {
+          try {
+            await this.store.markEffectStatus(
+              effect.idempotencyKey,
+              "DONE",
+              effect,
+            );
+          } catch (statusWriteError) {
+            const recordedResult = await this.store.getEffectResult(
+              effect.idempotencyKey,
+            );
+            if (recordedResult?.status !== "DONE") throw statusWriteError;
+            assertExactRecordedToolResult(effect, recordedResult);
+            await this.store.markEffectStatus(
+              effect.idempotencyKey,
+              "DONE",
+              effect,
+            );
+          }
         }
         if (toolActivity !== undefined) {
           const evidence = readAgentToolResultV2(output);
@@ -172,7 +353,7 @@ export class InlineEffectRunner implements EffectRunner {
           status: "FAILED",
           error: runtimeError,
           timestamp: new Date().toISOString(),
-        });
+        }, preparedApprovalCleanupPersistenceIntent(effect));
         await this.store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
         if (toolActivity !== undefined) {
           await notifyToolActivity(context.onToolActivity, {
@@ -233,6 +414,46 @@ export class InlineEffectRunner implements EffectRunner {
     };
   }
 
+  private async resolvePreparedApprovalCleanupDone(
+    effect: PersistedEffect,
+  ): Promise<"done" | "retry"> {
+    const quarantine =
+      await this.store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      );
+    if (quarantine === "done") return "done";
+    if (quarantine !== "quarantined") {
+      throw new Error(
+        "Prepared approval cleanup DONE evidence could not be validated or quarantined",
+      );
+    }
+    const reset = await this.store.resetPreparedApprovalCleanupEffectExecution(
+      effect.idempotencyKey,
+      effect,
+    );
+    if (reset === "reset") return "retry";
+    if (reset === "done") {
+      const racedCompletion =
+        await this.store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+          effect.idempotencyKey,
+          effect,
+        );
+      if (racedCompletion === "done") return "done";
+      if (racedCompletion === "quarantined") {
+        const racedReset =
+          await this.store.resetPreparedApprovalCleanupEffectExecution(
+            effect.idempotencyKey,
+            effect,
+          );
+        if (racedReset === "reset") return "retry";
+      }
+    }
+    throw new Error(
+      "Quarantined prepared approval cleanup evidence could not be reset",
+    );
+  }
+
   private async persistCompletedEffectResult(
     effect: PersistedEffect,
     result: {
@@ -243,6 +464,14 @@ export class InlineEffectRunner implements EffectRunner {
     },
     signal?: AbortSignal | undefined,
   ): Promise<void> {
+    if (isPreparedApprovalCleanupRelease(effect)) {
+      await this.store.commitPreparedApprovalCleanupEffectDone(
+        effect.idempotencyKey,
+        effect,
+        result,
+      );
+      return;
+    }
     const capabilityReplay = readSandboxCapabilityReplayEvidence(result.output);
     if (capabilityReplay === undefined) {
       await this.store.saveEffectResult(effect.runId, effect.sessionId, result);
@@ -264,6 +493,74 @@ export class InlineEffectRunner implements EffectRunner {
       result,
       signal,
     });
+  }
+}
+
+export function isPreparedApprovalCleanupRelease(
+  effect: PersistedEffect,
+): boolean {
+  if (effect.type !== "release_prepared_tool_call") return false;
+  const payload = parseOptionalRecord(effect.payload);
+  if (payload?.preparedApprovalCleanup === undefined) return false;
+  try {
+    parseRunnerPreparedApprovalCleanupV1(payload.preparedApprovalCleanup);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function preparedApprovalCleanupPersistenceIntent(
+  effect: PersistedEffect,
+): EffectResultPersistenceIntent | undefined {
+  return isPreparedApprovalCleanupRelease(effect)
+    ? {
+        version: "prepared_approval_cleanup_result_persistence_v1",
+        idempotencyKey: effect.idempotencyKey,
+      }
+    : undefined;
+}
+
+function validatePreparedEffectForExecution(
+  effect: PersistedEffect,
+  context: { runId: string; sessionId: string },
+): PreparedToolCallV1 | undefined {
+  if (effect.sessionId !== context.sessionId) {
+    throw new Error("Effect execution context does not match its persisted continuation owner");
+  }
+  if (effect.type !== "execute_tool_call" && effect.type !== "tool.execute") return;
+  const payload = parseOptionalRecord(effect.payload);
+  if (payload?.preparedToolCall === undefined) return;
+  const prepared = parsePreparedToolCallV1(payload.preparedToolCall);
+  if (
+    prepared.sessionId !== effect.sessionId ||
+    prepared.callId !== effect.idempotencyKey
+  ) {
+    throw new Error("Prepared tool call does not match the persisted effect identity");
+  }
+  return prepared;
+}
+
+function assertExactRecordedToolResult(effect: PersistedEffect, result: Awaited<ReturnType<EffectStore["getEffectResult"]>>): void {
+  if (result === null) return;
+  if (isPreparedApprovalCleanupRelease(effect)) {
+    validatePreparedApprovalCleanupDoneEvidence({ effect, result });
+    return;
+  }
+  if (effect.type !== "execute_tool_call" && effect.type !== "tool.execute") return;
+  const payload = parseOptionalRecord(effect.payload);
+  if (payload?.preparedToolCall === undefined) return;
+  const read = validateExactEffectResultRead({
+    requested: {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      idempotencyKey: effect.idempotencyKey,
+    },
+    effect: { ...effect, status: "DONE" },
+    effectResult: result,
+  });
+  if (read.status !== "found") {
+    throw new Error(`Recorded tool result is not the exact prepared invocation result (${read.status})`);
   }
 }
 

@@ -2,7 +2,11 @@ import "server-only";
 
 import { readRequestCorrelation } from "@kestrel-agents/next";
 import type { KestrelAgent, RunnerActorMetadata } from "@kestrel-agents/sdk";
-import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
+import {
+  WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+  type RunnerPreparedApprovalCleanupV1,
+  type RunnerTurnAttachment,
+} from "@kestrel-agents/protocol";
 import {
   isRunnerRunStreamEvent,
   isRunnerRunTerminalEvent,
@@ -48,6 +52,7 @@ import {
   persistRuntimeDialogMessage,
   readRuntimeDialogMessage,
 } from "@/lib/turns/dialog-messages";
+import { listRememberedToolApprovalEvidenceForRuntime } from "@/lib/turns/store";
 import {
   activateEnvironmentModelGrant,
   resolveEnvironmentExecutionRoute,
@@ -72,6 +77,9 @@ import {
 
 const DEFAULT_PROFILE_ID = "kestrel";
 const DEFAULT_HOSTED_AGENT_ID = "kestrel-one";
+const LEGACY_HOSTED_WORKSPACE_PRESET_VERSION = 2;
+const HOSTED_WORKSPACE_POLICY_ID = "kestrel";
+const HOSTED_WORKSPACE_POLICY_VERSION = 4;
 const HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
   "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
@@ -363,6 +371,9 @@ export type KestrelOneAgentResponseInput = {
         eventType: string;
         message: string;
         approved?: boolean | undefined;
+        decision?: "decline" | "approve_once" | "remember_approval" | undefined;
+        decidingActor?: RunnerActorMetadata | undefined;
+        preparedApprovalCleanup?: RunnerPreparedApprovalCleanupV1 | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;
       }
@@ -522,6 +533,12 @@ function createModelAwareKestrelOneAgent(input: {
           }
           const { signal, abortBehavior, resumeRequestId, ...turn } = turnInput;
           const eventType = turn.eventType || "user.message";
+          const rememberedToolApprovalEvidence =
+            await listRememberedToolApprovalEvidenceForRuntime({
+              organizationId: input.organizationId,
+              threadId: input.threadId,
+              userId: input.actorUserId,
+            });
           const resolvedProfile = await resolveHostedKestrelExecutionProfile({
             client,
             context,
@@ -532,6 +549,7 @@ function createModelAwareKestrelOneAgent(input: {
               approvalPolicies: route.approvalPolicies,
               reasoningPolicy: route.reasoningPolicy,
               ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
+              rememberedToolApprovalEvidence,
             },
             ...(runtimeModel !== undefined
               ? { runtimeModels: [runtimeModel] }
@@ -554,6 +572,17 @@ function createModelAwareKestrelOneAgent(input: {
           const normalizedTurn = {
             ...turn,
             eventType,
+            ...(route.projectId
+              ? {
+                  hostedApprovalAuthority: {
+                    version: "runner_hosted_approval_authority_v1" as const,
+                    organizationId: input.organizationId,
+                    environmentId: route.environmentId,
+                    projectId: route.projectId,
+                    threadId: input.threadId,
+                  },
+                }
+              : {}),
             ...(runtimeWorkspace ? { workspace: runtimeWorkspace } : {}),
             ...(projectSkills
               ? { workspaceSkills: projectSkills.catalog }
@@ -689,6 +718,9 @@ export async function resolveHostedKestrelExecutionProfile(input: {
       | undefined;
     reasoningPolicy?: RunnerProfile["reasoning"] | undefined;
     ociMcpEgressBindings?: ResolvedOciMcpEgressBindingV1[] | undefined;
+    rememberedToolApprovalEvidence?:
+      | import("@kestrel-agents/protocol").RememberedToolApprovalEvidenceV1[]
+      | undefined;
   };
   runtimeModels?:
     | readonly [
@@ -696,6 +728,7 @@ export async function resolveHostedKestrelExecutionProfile(input: {
         ...EnvironmentRuntimeModelSelection[],
       ]
     | undefined;
+  exactToolName?: string | undefined;
 }) {
   const primaryRuntimeModel = input.runtimeModels?.[0];
   const environmentPresetId =
@@ -709,9 +742,13 @@ export async function resolveHostedKestrelExecutionProfile(input: {
     approvalPolicies: input.route.approvalPolicies,
   });
   try {
-    return await input.client.resolveExecutionProfile(
+    const resolution = await input.client.resolveExecutionProfile(
       {
         environmentPresetId,
+        ...(environmentPresetId === "workspace_hosted" &&
+        input.exactToolName !== undefined
+          ? { exactToolNames: [input.exactToolName] }
+          : {}),
         managedConfiguration: {
           label: "Kestrel One",
           additionalToolNames: toolConfiguration.additionalToolNames,
@@ -719,6 +756,8 @@ export async function resolveHostedKestrelExecutionProfile(input: {
             toolConfiguration.kestrelOneAppApprovalModes,
           kestrelOneAppApprovalPolicies:
             toolConfiguration.kestrelOneAppApprovalPolicies,
+          rememberedToolApprovalEvidence:
+            input.route.rememberedToolApprovalEvidence ?? [],
           ...(input.route.reasoningPolicy !== undefined
             ? { reasoning: input.route.reasoningPolicy }
             : {}),
@@ -761,8 +800,98 @@ export async function resolveHostedKestrelExecutionProfile(input: {
       },
       input.context,
     );
+    if (environmentPresetId === "workspace_hosted") {
+      assertHostedWorkspaceProfileCompatibility(resolution);
+    }
+    if (input.exactToolName !== undefined) {
+      assertHostedWorkspaceExactToolPreflight(
+        resolution,
+        input.exactToolName,
+      );
+    }
+    return resolution;
   } catch (error) {
     throw mapHostedKestrelProfileResolutionError(error, primaryRuntimeModel);
+  }
+}
+
+export function assertHostedWorkspaceProfileCompatibility(
+  resolution: Awaited<ReturnType<HostedKestrelExecutionProfileResolver["resolveExecutionProfile"]>>,
+): void {
+  const preset4ProducerSupported =
+    resolution.environmentPreset.version ===
+      WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION &&
+    (resolution.hostedApprovalProducerProtocol === "v2" ||
+      resolution.hostedApprovalProducerProtocol === "v4");
+  const deployedPreset2BridgeSupported =
+    resolution.environmentPreset.version ===
+      LEGACY_HOSTED_WORKSPACE_PRESET_VERSION &&
+    resolution.hostedApprovalProducerProtocol === undefined;
+  const policyIdentitySupported =
+    resolution.policy.id === HOSTED_WORKSPACE_POLICY_ID &&
+    resolution.policy.version === HOSTED_WORKSPACE_POLICY_VERSION &&
+    resolution.resolvedProfile.approvalPolicyPackId === "hosted_workspace";
+  const expectedProfileId =
+    `kestrel:workspace_hosted:${resolution.fingerprint}`;
+  const profileIdentitySupported =
+    resolution.profileId === expectedProfileId &&
+    resolution.resolvedProfile.id === expectedProfileId;
+  if (
+    resolution.environmentPreset.id !== "workspace_hosted" ||
+    !(preset4ProducerSupported || deployedPreset2BridgeSupported) ||
+    !policyIdentitySupported ||
+    !profileIdentitySupported
+  ) {
+    throw Object.assign(
+      new Error("The runner does not support the current hosted approval contract."),
+      {
+        code: "HOSTED_PROFILE_CONTRACT_INCOMPATIBLE",
+        details: {
+          environmentPreset: resolution.environmentPreset,
+          approvalPolicyPackId:
+            resolution.resolvedProfile.approvalPolicyPackId ?? null,
+          profileId: resolution.profileId,
+          requiredPresetVersion: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+          policy: resolution.policy,
+          hostedApprovalProducerProtocol:
+            resolution.hostedApprovalProducerProtocol ?? null,
+          acceptedPresetVersions: [
+            LEGACY_HOSTED_WORKSPACE_PRESET_VERSION,
+            WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+          ],
+        },
+      },
+    );
+  }
+}
+
+export function assertHostedWorkspaceExactToolPreflight(
+  resolution: Awaited<ReturnType<HostedKestrelExecutionProfileResolver["resolveExecutionProfile"]>>,
+  requiredTool: string,
+): void {
+  if (resolution.environmentPreset.id !== "workspace_hosted") {
+    return;
+  }
+  assertHostedWorkspaceProfileCompatibility(resolution);
+  if (
+    resolution.resolvedProfile.approvalPolicyPackId !== "hosted_workspace" ||
+    resolution.exactToolDecisions?.[requiredTool]?.available !== true
+  ) {
+    throw Object.assign(
+      new Error(
+        `Hosted no-spend preflight rejected required tool '${requiredTool}' before model execution.`,
+      ),
+      {
+        code: "HOSTED_REQUIRED_TOOL_UNAVAILABLE",
+        details: {
+          requiredTool,
+          approvalPolicyPackId:
+            resolution.resolvedProfile.approvalPolicyPackId ?? null,
+          exactToolDecision:
+            resolution.exactToolDecisions?.[requiredTool] ?? null,
+        },
+      },
+    );
   }
 }
 
@@ -938,6 +1067,12 @@ export async function generateKestrelOneExternalReply(input: {
       gatewayId: runtimeModel.gatewayId,
       rawModelId: runtimeModel.model,
     });
+    const rememberedToolApprovalEvidence =
+      await listRememberedToolApprovalEvidenceForRuntime({
+        organizationId: input.organizationId,
+        threadId: input.sessionId,
+        userId: input.actor.actorId,
+      });
     const resolvedProfile = await resolveHostedKestrelExecutionProfile({
       client,
       context,
@@ -948,6 +1083,7 @@ export async function generateKestrelOneExternalReply(input: {
         approvalPolicies: route.approvalPolicies,
         reasoningPolicy: route.reasoningPolicy,
         ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
+        rememberedToolApprovalEvidence,
       },
       runtimeModels: [runtimeModel],
     });
@@ -974,6 +1110,17 @@ export async function generateKestrelOneExternalReply(input: {
               turn: {
                 ...turn,
                 eventType: turn.eventType || "user.message",
+                ...(route.projectId
+                  ? {
+                      hostedApprovalAuthority: {
+                        version: "runner_hosted_approval_authority_v1" as const,
+                        organizationId: input.organizationId,
+                        environmentId: route.environmentId,
+                        projectId: route.projectId,
+                        threadId: input.sessionId,
+                      },
+                    }
+                  : {}),
                 ...(runtimeWorkspace ? { workspace: runtimeWorkspace } : {}),
               },
             },

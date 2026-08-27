@@ -146,6 +146,7 @@ export async function POST(
         turnId: body.interactionResponse.turnId,
         message: body.interactionResponse.message,
         approved: body.interactionResponse.approved,
+        decision: body.interactionResponse.decision,
         reason: body.interactionResponse.reason,
         recoveryOptionId: body.interactionResponse.recoveryOptionId,
         messageId: body.interactionResponse.messageId ?? crypto.randomUUID(),
