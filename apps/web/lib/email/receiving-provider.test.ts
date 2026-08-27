@@ -75,18 +75,112 @@ test("documented temporary_failure domain state is a stable failed projection", 
   });
 });
 
-test("webhook adapter creates without unsupported status and retrieves after mutations", async () => {
+test("webhook creation returns its recovery identity and one-time secret before follow-up work", async () => {
   const calls: Array<{ path: string; method: string; body?: string }> = [];
   const provider = new ResendHttpReceivingProvider({
     baseUrl: "https://resend.test",
     fetchImpl: async (input, init) => {
       const path = new URL(String(input)).pathname;
       const method = init?.method ?? "GET";
-      calls.push({ path, method, ...(init?.body ? { body: String(init.body) } : {}) });
+      calls.push({
+        path,
+        method,
+        ...(init?.body ? { body: String(init.body) } : {}),
+      });
+      return Response.json({ id: "webhook-1", signing_secret: "whsec_secret" });
+    },
+  });
+
+  const created = await provider.createWebhook({
+    apiKey: "re_full_access",
+    endpoint: "https://example.test/inbound",
+    events: ["email.received"],
+  });
+  assert.deepEqual(created, {
+    id: "webhook-1",
+    signingSecret: "whsec_secret",
+  });
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ["POST"],
+  );
+  assert.deepEqual(JSON.parse(calls[0]?.body ?? "{}"), {
+    endpoint: "https://example.test/inbound",
+    events: ["email.received"],
+  });
+});
+
+test("retry after disable failure resumes from the created webhook ID without another POST", async () => {
+  const calls: Array<{ path: string; method: string }> = [];
+  let disableAttempts = 0;
+  const provider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      const method = init?.method ?? "GET";
+      calls.push({ path, method });
       if (method === "POST") {
-        return Response.json({ id: "webhook-1", signing_secret: "whsec_secret" });
+        return Response.json({
+          id: "webhook-1",
+          signing_secret: "whsec_secret",
+        });
+      }
+      disableAttempts += 1;
+      if (disableAttempts === 1) return new Response(null, { status: 503 });
+      return Response.json({ id: "webhook-1" });
+    },
+  });
+
+  const created = await provider.createWebhook({
+    apiKey: "re_full_access",
+    endpoint: "https://example.test/inbound",
+    events: ["email.received"],
+  });
+  await assert.rejects(
+    provider.updateWebhook({
+      apiKey: "re_full_access",
+      webhookId: created.id,
+      enabled: false,
+    }),
+    (error: unknown) =>
+      error instanceof Error && !error.message.includes(created.signingSecret),
+  );
+  const disabled = await provider.updateWebhook({
+    apiKey: "re_full_access",
+    webhookId: created.id,
+    enabled: false,
+  });
+
+  assert.deepEqual(disabled, {
+    id: "webhook-1",
+    applied: { status: "disabled" },
+  });
+  assert.equal("signingSecret" in disabled, false);
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ["POST", "PATCH", "PATCH"],
+  );
+  assert.equal(calls.filter(({ method }) => method === "POST").length, 1);
+});
+
+test("retry after retrieval failure reconciles the acknowledged disable without another POST", async () => {
+  const calls: Array<{ path: string; method: string }> = [];
+  let retrieveAttempts = 0;
+  const provider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      const method = init?.method ?? "GET";
+      calls.push({ path, method });
+      if (method === "POST") {
+        return Response.json({
+          id: "webhook-1",
+          signing_secret: "whsec_secret",
+        });
       }
       if (method === "PATCH") return Response.json({ id: "webhook-1" });
+      retrieveAttempts += 1;
+      if (retrieveAttempts === 1) return new Response(null, { status: 503 });
       return Response.json({
         id: "webhook-1",
         endpoint: "https://example.test/inbound",
@@ -100,23 +194,51 @@ test("webhook adapter creates without unsupported status and retrieves after mut
     apiKey: "re_full_access",
     endpoint: "https://example.test/inbound",
     events: ["email.received"],
+  });
+  const disabled = await provider.updateWebhook({
+    apiKey: "re_full_access",
+    webhookId: created.id,
     enabled: false,
   });
-  assert.equal(created.signingSecret, "whsec_secret");
-  assert.deepEqual(JSON.parse(calls[0]?.body ?? "{}"), {
+  await assert.rejects(provider.getWebhook("re_full_access", disabled.id));
+  const reconciled = await provider.getWebhook("re_full_access", disabled.id);
+
+  assert.deepEqual(reconciled, {
+    id: "webhook-1",
     endpoint: "https://example.test/inbound",
+    status: "disabled",
     events: ["email.received"],
   });
-  assert.equal(calls[1]?.method, "PATCH");
-  assert.equal(calls[2]?.method, "GET");
+  assert.equal("signingSecret" in reconciled, false);
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ["POST", "PATCH", "GET", "GET"],
+  );
+  assert.equal(calls.filter(({ method }) => method === "POST").length, 1);
+});
 
-  calls.length = 0;
-  await provider.updateWebhook({
-    apiKey: "re_full_access",
-    webhookId: "webhook-1",
-    enabled: false,
+test("webhook removal is retry-safe after an acknowledged delete", async () => {
+  const calls: Array<{ path: string; method: string }> = [];
+  let removeAttempts = 0;
+  const provider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async (input, init) => {
+      calls.push({
+        path: new URL(String(input)).pathname,
+        method: init?.method ?? "GET",
+      });
+      removeAttempts += 1;
+      return new Response(null, { status: removeAttempts === 1 ? 204 : 404 });
+    },
   });
-  assert.deepEqual(calls.map(({ method }) => method), ["PATCH", "GET"]);
+
+  await provider.removeWebhook("re_full_access", "webhook-1");
+  await provider.removeWebhook("re_full_access", "webhook-1");
+
+  assert.deepEqual(calls, [
+    { path: "/webhooks/webhook-1", method: "DELETE" },
+    { path: "/webhooks/webhook-1", method: "DELETE" },
+  ]);
 });
 
 test("Sending-only credentials return the specific inbound readiness failure", async () => {

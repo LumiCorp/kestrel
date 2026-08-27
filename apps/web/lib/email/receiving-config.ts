@@ -88,7 +88,15 @@ export async function saveReceivingConnection(input: {
   provider?: ResendReceivingProvider;
 }): Promise<PublicReceivingConnection> {
   const existing = await findConnection(input.organizationId);
-  const apiKey = input.apiKey?.trim() || (await loadStoredApiKey(input));
+  const suppliedApiKey = input.apiKey?.trim() || undefined;
+  const storedEncryptedApiKey = existing?.encryptedApiKey ?? null;
+  const apiKey =
+    suppliedApiKey ??
+    decryptStoredApiKey({
+      organizationId: input.organizationId,
+      encryptedApiKey: storedEncryptedApiKey,
+      env: input.env,
+    });
   if (!apiKey) {
     throw new ReceivingConfigError(
       "RESEND_RECEIVING_CREDENTIAL_REQUIRED",
@@ -114,14 +122,14 @@ export async function saveReceivingConnection(input: {
     );
   }
   const now = new Date();
-  const encryptedApiKey = input.apiKey?.trim()
+  const preparedEncryptedApiKey = suppliedApiKey
     ? encryptGatewayCredential({
         gatewayId: credentialBinding(input.organizationId),
         plaintext: apiKey,
         env: input.env,
       })
-    : existing?.encryptedApiKey;
-  if (!encryptedApiKey) {
+    : storedEncryptedApiKey;
+  if (!preparedEncryptedApiKey) {
     throw new ReceivingConfigError(
       "RESEND_RECEIVING_CREDENTIAL_REQUIRED",
       "Enter a Resend Full access API key.",
@@ -131,10 +139,33 @@ export async function saveReceivingConnection(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
     );
+    const lockedExisting =
+      await transaction.query.organizationReceivingConnections.findFirst({
+        where: (table, { eq }) =>
+          eq(table.organizationId, input.organizationId),
+      });
+    if (
+      !suppliedApiKey &&
+      (lockedExisting?.encryptedApiKey ?? null) !== storedEncryptedApiKey
+    ) {
+      throw new ReceivingConfigError(
+        "RESEND_RECEIVING_CREDENTIAL_CHANGED",
+        "The Resend credential changed while receiving was being saved. Refresh and try again.",
+      );
+    }
+    const encryptedApiKey = suppliedApiKey
+      ? preparedEncryptedApiKey
+      : lockedExisting?.encryptedApiKey;
+    if (!encryptedApiKey) {
+      throw new ReceivingConfigError(
+        "RESEND_RECEIVING_CREDENTIAL_REQUIRED",
+        "Enter a Resend Full access API key.",
+      );
+    }
     await transaction
       .insert(schema.organizationReceivingConnections)
       .values({
-        id: existing?.id ?? randomUUID(),
+        id: lockedExisting?.id ?? randomUUID(),
         organizationId: input.organizationId,
         provider: "resend",
         encryptedApiKey,
@@ -146,7 +177,7 @@ export async function saveReceivingConnection(input: {
         mxStatus: domain.mxStatus,
         domainCheckedAt: now,
         routeLocator:
-          existing?.routeLocator ?? randomBytes(32).toString("base64url"),
+          lockedExisting?.routeLocator ?? randomBytes(32).toString("base64url"),
         inboundEnabled: false,
         lastHealthCheckedAt: now,
         lastErrorCode: null,
@@ -204,10 +235,21 @@ async function loadStoredApiKey(input: {
   env?: NodeJS.ProcessEnv;
 }) {
   const existing = await findConnection(input.organizationId);
-  return existing?.encryptedApiKey
+  return decryptStoredApiKey({
+    ...input,
+    encryptedApiKey: existing?.encryptedApiKey,
+  });
+}
+
+function decryptStoredApiKey(input: {
+  organizationId: string;
+  encryptedApiKey?: string | null;
+  env?: NodeJS.ProcessEnv;
+}) {
+  return input.encryptedApiKey
     ? decryptGatewayCredential({
         gatewayId: credentialBinding(input.organizationId),
-        encrypted: existing.encryptedApiKey,
+        encrypted: input.encryptedApiKey,
         env: input.env,
       })
     : undefined;

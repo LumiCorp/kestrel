@@ -1,5 +1,6 @@
 import { ZodError } from "zod";
 import { GatewayCredentialEncryptionError } from "@/lib/ai/gateway-credential-crypto";
+import { DesktopUserAuthorizationError } from "@/lib/desktop-account";
 import { ReceivingConfigError } from "./receiving-config";
 
 export function getSafeReceivingAdminError(error: unknown) {
@@ -25,6 +26,12 @@ export function getSafeReceivingAdminError(error: unknown) {
     const status =
       error.code === "RESEND_RECEIVING_CREDENTIAL_INSUFFICIENT" ? 409 : 422;
     return { status, body: { code: error.code, error: error.message } };
+  }
+  if (error instanceof DesktopUserAuthorizationError) {
+    return {
+      status: 401,
+      body: { code: "UNAUTHORIZED", error: "Unauthorized" },
+    };
   }
   const message = error instanceof Error ? error.message : "";
   if (message === "Unauthorized") {

@@ -13,26 +13,42 @@ export type ResendWebhookProjection = {
   events: string[];
 };
 
-export type CreatedResendWebhook = ResendWebhookProjection & {
+export type CreatedResendWebhook = {
+  /** Persist this provider identity before any follow-up provider request. */
+  id: string;
+  /** One-time secret-bearing evidence. This must never enter a public projection. */
   signingSecret: string;
+};
+
+export type ResendWebhookUpdateEvidence = {
+  id: string;
+  applied: {
+    endpoint?: string;
+    status?: "enabled" | "disabled";
+  };
 };
 
 export interface ResendReceivingProvider {
   listDomains(apiKey: string): Promise<ResendReceivingDomain[]>;
   getDomain(apiKey: string, domainId: string): Promise<ResendReceivingDomain>;
+  /** Create only; the caller must persist this evidence before disabling it. */
   createWebhook(input: {
     apiKey: string;
     endpoint: string;
     events: ["email.received"];
-    enabled: boolean;
   }): Promise<CreatedResendWebhook>;
-  getWebhook(apiKey: string, webhookId: string): Promise<ResendWebhookProjection>;
+  /** Retrieve separately so creation and mutation evidence can be persisted first. */
+  getWebhook(
+    apiKey: string,
+    webhookId: string,
+  ): Promise<ResendWebhookProjection>;
+  /** Mutate only; retrieval and reconciliation remain explicit retry steps. */
   updateWebhook(input: {
     apiKey: string;
     webhookId: string;
     endpoint?: string;
     enabled?: boolean;
-  }): Promise<ResendWebhookProjection>;
+  }): Promise<ResendWebhookUpdateEvidence>;
   removeWebhook(apiKey: string, webhookId: string): Promise<void>;
 }
 
@@ -91,7 +107,6 @@ export class ResendHttpReceivingProvider implements ResendReceivingProvider {
     apiKey: string;
     endpoint: string;
     events: ["email.received"];
-    enabled: boolean;
   }): Promise<CreatedResendWebhook> {
     const body = record(
       await this.#request(input.apiKey, "/webhooks", {
@@ -104,14 +119,8 @@ export class ResendHttpReceivingProvider implements ResendReceivingProvider {
     );
     const signingSecret = text(body.signing_secret);
     const id = text(body.id);
-    if (!input.enabled) {
-      await this.#request(input.apiKey, `/webhooks/${encodeURIComponent(id)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "disabled" }),
-      });
-    }
     return {
-      ...(await this.getWebhook(input.apiKey, id)),
+      id,
       signingSecret,
     };
   }
@@ -130,33 +139,48 @@ export class ResendHttpReceivingProvider implements ResendReceivingProvider {
     webhookId: string;
     endpoint?: string;
     enabled?: boolean;
-  }): Promise<ResendWebhookProjection> {
-    await this.#request(
-      input.apiKey,
-      `/webhooks/${encodeURIComponent(input.webhookId)}`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({
-          ...(input.endpoint ? { endpoint: input.endpoint } : {}),
-          ...(input.enabled === undefined
-            ? {}
-            : { status: input.enabled ? "enabled" : "disabled" }),
-        }),
-      },
+  }): Promise<ResendWebhookUpdateEvidence> {
+    const applied = {
+      ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }),
+      ...(input.enabled === undefined
+        ? {}
+        : {
+            status: input.enabled
+              ? ("enabled" as const)
+              : ("disabled" as const),
+          }),
+    };
+    const response = record(
+      await this.#request(
+        input.apiKey,
+        `/webhooks/${encodeURIComponent(input.webhookId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(applied),
+        },
+      ),
     );
-    return await this.getWebhook(input.apiKey, input.webhookId);
+    const id = text(response.id);
+    if (id !== input.webhookId) throw invalidResponse();
+    return { id, applied };
   }
 
   async removeWebhook(apiKey: string, webhookId: string): Promise<void> {
-    await this.#request(apiKey, `/webhooks/${encodeURIComponent(webhookId)}`, {
-      method: "DELETE",
-    });
+    await this.#request(
+      apiKey,
+      `/webhooks/${encodeURIComponent(webhookId)}`,
+      {
+        method: "DELETE",
+      },
+      [404],
+    );
   }
 
   async #request(
     apiKey: string,
     path: string,
     init: RequestInit = {},
+    acceptedStatuses: readonly number[] = [],
   ): Promise<unknown> {
     let response: Response;
     try {
@@ -174,6 +198,7 @@ export class ResendHttpReceivingProvider implements ResendReceivingProvider {
         "Resend receiving is temporarily unavailable.",
       );
     }
+    if (acceptedStatuses.includes(response.status)) return {};
     if (response.status === 401 || response.status === 403) {
       throw new ResendReceivingProviderError(
         "RESEND_RECEIVING_CREDENTIAL_INSUFFICIENT",
@@ -222,9 +247,7 @@ function parseDomain(value: unknown): ResendReceivingDomain {
   };
 }
 
-function mapDomainStatus(
-  value: unknown,
-): ResendReceivingDomain["status"] {
+function mapDomainStatus(value: unknown): ResendReceivingDomain["status"] {
   switch (text(value)) {
     case "verified":
       return "verified";
