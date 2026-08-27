@@ -893,7 +893,7 @@ test("exec.wait_approval records processor-owned approval denials", async () => 
   assert.equal(workingPlan.status, "dispatching");
 });
 
-test("GitHub external confirmation resumes the exact mutation and terminates an expired restart", async () => {
+test("GitHub external confirmation resumes the exact mutation and releases rejected Remember continuations", async () => {
   const definition = kestrelOneGitHubIssueCreateTool.definition;
   const toolInput = {
     repository: "acme/support",
@@ -1415,7 +1415,7 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
           sessionId: "session-1",
           payload: {
             ...payload,
-            decision: "approve_once",
+            decision: "remember_approval",
             approvalId: pendingApproval.approvalId,
           },
         },
@@ -1642,7 +1642,7 @@ test("GitHub external confirmation resumes the exact mutation and terminates an 
           sessionId: "session-1",
           payload: {
             ...modePayload,
-            decision: "approve_once",
+            decision: "remember_approval",
             approvalId: pendingApproval.approvalId,
           },
         },

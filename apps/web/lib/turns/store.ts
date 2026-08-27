@@ -367,7 +367,9 @@ async function validateRememberApprovalEligibilityInTransaction(
     (projectPolicy !== undefined &&
       (projectPolicy.enabled !== true || projectPolicy.approvalMode === "deny"))
   ) {
-    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_ACCESS_DENIED");
+    throw new AppOperationApprovalError(
+      "APP_OPERATION_APPROVAL_POLICY_CHANGED",
+    );
   }
   const subjectRestrictions =
     await tx.query.environmentCapabilitySubjectRestrictions.findMany({
@@ -417,7 +419,9 @@ async function validateRememberApprovalEligibilityInTransaction(
     disposition.reasonCode !== input.presentedReasonCode ||
     !isRememberApprovalEligibleV1({ disposition, currentPolicy })
   ) {
-    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_ACCESS_DENIED");
+    throw new AppOperationApprovalError(
+      "APP_OPERATION_APPROVAL_POLICY_CHANGED",
+    );
   }
 }
 
@@ -2308,6 +2312,7 @@ export async function resolveDurableRuntimeInteraction(input: {
     const presentationPolicy = readPlainRecord(presentation?.policy);
     const approvesCurrentInvocation =
       decision === "approve_once" || decision === "remember_approval";
+    let rememberAuthorityRejectedByCurrentState = false;
     if (hostedMutation || decision === "remember_approval") {
       try {
         if (
@@ -2328,25 +2333,39 @@ export async function resolveDurableRuntimeInteraction(input: {
             "runner_hosted_tool_approval_interaction_v4" &&
           Date.parse(hostedApproval.approval.expiresAt) <= now.getTime()
         ) {
-          throw new AppOperationApprovalError(
-            "APP_OPERATION_APPROVAL_NOT_PENDING",
-          );
+          rememberAuthorityRejectedByCurrentState = true;
         }
-        if (decision === "remember_approval" && hostedApproval && accessibleThread.projectId) {
-          await validateRememberApprovalEligibilityInTransaction(tx, {
-            organizationId: input.organizationId,
-            projectId: accessibleThread.projectId,
-            environmentId: turn.requestedEnvironmentId,
-            userId: input.userId,
-            toolName: hostedApproval.approval.toolName,
-            stableToolIdentity: hostedApproval.approval.stableToolIdentity,
-            presentedReasonCode:
-              typeof presentationPolicy?.reasonCode === "string"
-                ? presentationPolicy.reasonCode
-                : undefined,
-            presentedRememberApprovalEligible:
-              presentationPolicy?.rememberApprovalEligible === true,
-          });
+        if (
+          decision === "remember_approval" &&
+          hostedApproval &&
+          accessibleThread.projectId &&
+          !rememberAuthorityRejectedByCurrentState
+        ) {
+          try {
+            await validateRememberApprovalEligibilityInTransaction(tx, {
+              organizationId: input.organizationId,
+              projectId: accessibleThread.projectId,
+              environmentId: turn.requestedEnvironmentId,
+              userId: input.userId,
+              toolName: hostedApproval.approval.toolName,
+              stableToolIdentity: hostedApproval.approval.stableToolIdentity,
+              presentedReasonCode:
+                typeof presentationPolicy?.reasonCode === "string"
+                  ? presentationPolicy.reasonCode
+                  : undefined,
+              presentedRememberApprovalEligible:
+                presentationPolicy?.rememberApprovalEligible === true,
+            });
+          } catch (error) {
+            if (
+              error instanceof AppOperationApprovalError &&
+              error.code === "APP_OPERATION_APPROVAL_POLICY_CHANGED"
+            ) {
+              rememberAuthorityRejectedByCurrentState = true;
+            } else {
+              throw error;
+            }
+          }
         }
         if (hostedMutation) {
           if (!interaction.runtimeApprovalId) {
@@ -2362,30 +2381,49 @@ export async function resolveDurableRuntimeInteraction(input: {
               "APP_OPERATION_APPROVAL_BINDING_MISMATCH",
             );
           }
-          if (approvesCurrentInvocation && hostedApproval && accessibleThread.projectId) {
-            await validateAppApprovalDecisionEligibilityInTransaction(tx, {
+          if (
+            approvesCurrentInvocation &&
+            hostedApproval &&
+            accessibleThread.projectId &&
+            !rememberAuthorityRejectedByCurrentState
+          ) {
+            try {
+              await validateAppApprovalDecisionEligibilityInTransaction(tx, {
+                organizationId: input.organizationId,
+                projectId: accessibleThread.projectId,
+                threadId: input.threadId,
+                userId: input.userId,
+                runtimeApprovalId: interaction.runtimeApprovalId,
+                interactionId: interaction.id,
+                toolName: hostedApproval.approval.toolName,
+                stableToolIdentity: hostedApproval.approval.stableToolIdentity,
+                decision,
+                now,
+              });
+            } catch (error) {
+              if (
+                decision === "remember_approval" &&
+                error instanceof AppOperationApprovalError &&
+                error.code === "APP_OPERATION_APPROVAL_ACCESS_DENIED"
+              ) {
+                rememberAuthorityRejectedByCurrentState = true;
+              } else {
+                throw error;
+              }
+            }
+          }
+          if (!rememberAuthorityRejectedByCurrentState) {
+            await decideAppOperationApprovalInTransaction(tx, {
               organizationId: input.organizationId,
-              projectId: accessibleThread.projectId,
               threadId: input.threadId,
               userId: input.userId,
               runtimeApprovalId: interaction.runtimeApprovalId,
               interactionId: interaction.id,
-              toolName: hostedApproval.approval.toolName,
-              stableToolIdentity: hostedApproval.approval.stableToolIdentity,
-              decision,
+              approved: approvesCurrentInvocation || approved === true,
+              required: true,
               now,
             });
           }
-          await decideAppOperationApprovalInTransaction(tx, {
-            organizationId: input.organizationId,
-            threadId: input.threadId,
-            userId: input.userId,
-            runtimeApprovalId: interaction.runtimeApprovalId,
-            interactionId: interaction.id,
-            approved: approvesCurrentInvocation || approved === true,
-            required: true,
-            now,
-          });
         }
       } catch (error) {
         if (!(error instanceof AppOperationApprovalError)) throw error;
@@ -2411,6 +2449,12 @@ export async function resolveDurableRuntimeInteraction(input: {
         };
       }
     }
+    if (rememberAuthorityRejectedByCurrentState) {
+      await expirePendingHostedProviderApprovalInTransaction(tx, {
+        interaction,
+        now,
+      });
+    }
     await tx
       .update(schema.threadInteractions)
       .set({
@@ -2421,7 +2465,11 @@ export async function resolveDurableRuntimeInteraction(input: {
         updatedAt: now,
       })
       .where(eq(schema.threadInteractions.id, interaction.id));
-    if (decision === "remember_approval" && hostedApproval !== null) {
+    if (
+      decision === "remember_approval" &&
+      hostedApproval !== null &&
+      !rememberAuthorityRejectedByCurrentState
+    ) {
       await insertRememberedToolApprovalInTransaction(tx, {
         approval: {
           version: "remembered_tool_approval_v1",
@@ -2493,6 +2541,38 @@ export async function resolveDurableRuntimeInteraction(input: {
   });
 }
 
+async function expirePendingHostedProviderApprovalInTransaction(
+  tx: TurnTransaction,
+  input: {
+    interaction: typeof schema.threadInteractions.$inferSelect;
+    now: Date;
+  },
+) {
+  if (!input.interaction.runtimeApprovalId) return;
+  await tx
+    .update(schema.appOperationApprovals)
+    .set({
+      availabilityStatus: "expired",
+      payload: sql`jsonb_build_object('redacted', true, 'operation', ${schema.appOperationApprovals.operationKey})`,
+      updatedAt: input.now,
+    })
+    .where(
+      and(
+        eq(
+          schema.appOperationApprovals.organizationId,
+          input.interaction.organizationId,
+        ),
+        eq(
+          schema.appOperationApprovals.runtimeApprovalId,
+          input.interaction.runtimeApprovalId,
+        ),
+        eq(schema.appOperationApprovals.lifecycleVersion, "interaction_v2"),
+        eq(schema.appOperationApprovals.interactionId, input.interaction.id),
+        eq(schema.appOperationApprovals.availabilityStatus, "available"),
+      ),
+    );
+}
+
 async function failPendingHostedApprovalInTransaction(
   tx: TurnTransaction,
   input: {
@@ -2528,30 +2608,10 @@ async function failPendingHostedApprovalInTransaction(
       updatedAt: input.now,
     })
     .where(eq(schema.threadInteractions.id, input.interaction.id));
-  if (input.interaction.runtimeApprovalId) {
-    await tx
-      .update(schema.appOperationApprovals)
-      .set({
-        availabilityStatus: "expired",
-        payload: sql`jsonb_build_object('redacted', true, 'operation', ${schema.appOperationApprovals.operationKey})`,
-        updatedAt: input.now,
-      })
-      .where(
-        and(
-          eq(
-            schema.appOperationApprovals.organizationId,
-            input.interaction.organizationId,
-          ),
-          eq(
-            schema.appOperationApprovals.runtimeApprovalId,
-            input.interaction.runtimeApprovalId,
-          ),
-          eq(schema.appOperationApprovals.lifecycleVersion, "interaction_v2"),
-          eq(schema.appOperationApprovals.interactionId, input.interaction.id),
-          eq(schema.appOperationApprovals.availabilityStatus, "available"),
-        ),
-      );
-  }
+  await expirePendingHostedProviderApprovalInTransaction(tx, {
+    interaction: input.interaction,
+    now: input.now,
+  });
   await updateInteractionMessagePresentation(tx, input.interaction, "failed", {
     decision: expired ? "expired" : "denied",
     authorizationState: expired ? "expired" : "failed",

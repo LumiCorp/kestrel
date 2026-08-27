@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-- [Release a Web-rejected prepared approval](06b-release-web-rejected-prepared-approval.md)
+None.
 
 ## Blocked
 
@@ -23,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Release a Web-rejected prepared approval](06b-release-web-rejected-prepared-approval.md)
 - [Version trusted hosted approval timing](06a-version-trusted-hosted-approval-timing.md)
 - [Make hosted tool availability and approval one truthful decision](06-unify-hosted-tool-decision.md)
 

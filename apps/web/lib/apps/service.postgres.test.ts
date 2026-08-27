@@ -2141,33 +2141,78 @@ test(
         messageId: `exec-remember-expired-message-${suffix}`,
         source: "web",
       });
-    assert.equal(expiredExecResolution.shouldDispatch, false);
+    assert.equal(expiredExecResolution.shouldDispatch, true);
+    const repeatedExpiredExecResolution =
+      await turnStore.resolveDurableRuntimeInteraction({
+        threadId,
+        organizationId,
+        userId,
+        requestId: expiredExecRemember.requestId,
+        eventType: "user.approval",
+        turnId: expiredExecRemember.turnId,
+        message: "Remember approval",
+        decision: "remember_approval",
+        messageId: `exec-remember-expired-replay-${suffix}`,
+        source: "mobile",
+      });
+    assert.equal(repeatedExpiredExecResolution.shouldDispatch, false);
     const [expiredExecState] = await sql<
       Array<{
+        activeTurnId: string | null;
         appApprovalCount: number;
+        decision: string | null;
+        decisionEventCount: number;
         failureCode: string | null;
+        interactionStatus: string;
+        messageCount: number;
+        queuePauseReason: string | null;
+        queueState: string;
         rememberedCount: number;
         turnStatus: string;
       }>
     >`
       SELECT
+        queue."active_turn_id" AS "activeTurnId",
         interaction."response_failure_code" AS "failureCode",
+        interaction."response_envelope"->>'decision' AS "decision",
+        interaction."status" AS "interactionStatus",
         turn."status" AS "turnStatus",
+        queue."state" AS "queueState",
+        queue."pause_reason" AS "queuePauseReason",
         (SELECT count(*)::int FROM "app_operation_approvals"
           WHERE "interaction_id" = ${expiredExecRemember.interactionId})
           AS "appApprovalCount",
         (SELECT count(*)::int FROM "remembered_tool_approvals"
           WHERE "source_interaction_id" = ${expiredExecRemember.interactionId})
-          AS "rememberedCount"
+          AS "rememberedCount",
+        (SELECT count(*)::int FROM "thread_messages"
+          WHERE "id" IN (
+            ${`exec-remember-expired-message-${suffix}`},
+            ${`exec-remember-expired-replay-${suffix}`}
+          )) AS "messageCount",
+        (SELECT count(*)::int FROM "thread_turn_events"
+          WHERE "turn_id" = ${expiredExecRemember.turnId}
+            AND "type" = 'interaction.decision_recorded'
+            AND "data"->>'requestId' = ${expiredExecRemember.requestId})
+          AS "decisionEventCount"
       FROM "thread_interactions" interaction
       JOIN "thread_turns" turn ON turn."id" = interaction."turn_id"
+      JOIN "thread_turn_queue_state" queue
+        ON queue."thread_id" = interaction."thread_id"
       WHERE interaction."id" = ${expiredExecRemember.interactionId}
     `;
     assert.deepEqual(expiredExecState, {
+      activeTurnId: expiredExecRemember.turnId,
       appApprovalCount: 0,
-      failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+      decision: "remember_approval",
+      decisionEventCount: 1,
+      failureCode: null,
+      interactionStatus: "processing",
+      messageCount: 1,
+      queuePauseReason: null,
+      queueState: "running",
       rememberedCount: 0,
-      turnStatus: "failed",
+      turnStatus: "waiting_for_input",
     });
     const staleExecRemember = await createExecRememberInteraction("stale", 192);
     await appService.saveEnvironmentAppCapabilityGrant({
@@ -2194,20 +2239,31 @@ test(
       messageId: `exec-remember-stale-message-${suffix}`,
       source: "mobile",
     });
-    assert.equal(staleExecResolution.shouldDispatch, false);
+    assert.equal(staleExecResolution.shouldDispatch, true);
     const [staleExecState] = await sql<
-      Array<{ failureCode: string | null; rememberedCount: number }>
+      Array<{
+        failureCode: string | null;
+        interactionStatus: string;
+        queueState: string;
+        rememberedCount: number;
+      }>
     >`
       SELECT
         interaction."response_failure_code" AS "failureCode",
+        interaction."status" AS "interactionStatus",
+        queue."state" AS "queueState",
         (SELECT count(*)::int FROM "remembered_tool_approvals" remembered
           WHERE remembered."source_interaction_id" = interaction."id")
           AS "rememberedCount"
       FROM "thread_interactions" interaction
+      JOIN "thread_turn_queue_state" queue
+        ON queue."thread_id" = interaction."thread_id"
       WHERE interaction."id" = ${staleExecRemember.interactionId}
     `;
     assert.deepEqual(staleExecState, {
-      failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED",
+      failureCode: null,
+      interactionStatus: "processing",
+      queueState: "running",
       rememberedCount: 0,
     });
     const createAdditionalRememberInteraction = async (input: {
@@ -2411,13 +2467,14 @@ test(
         messageId: `remember-policy-changed-message-${suffix}`,
         source: "web",
       });
-    assert.equal(policyChangedResolution.shouldDispatch, false);
+    assert.equal(policyChangedResolution.shouldDispatch, true);
     const [policyChangedState] = await sql<
       Array<{
         availabilityStatus: string;
         effectStatus: string | null;
         failureCode: string | null;
         interactionStatus: string;
+        payloadRedacted: boolean;
         turnStatus: string;
         queueState: string;
         queuePauseReason: string | null;
@@ -2430,6 +2487,7 @@ test(
           interaction."effect_status" AS "effectStatus",
           interaction."response_failure_code" AS "failureCode",
           interaction."status" AS "interactionStatus",
+          (approval."payload"->>'redacted')::boolean AS "payloadRedacted",
           turn."status" AS "turnStatus",
           queue."state" AS "queueState",
           queue."pause_reason" AS "queuePauseReason",
@@ -2447,13 +2505,14 @@ test(
       `;
     assert.deepEqual(policyChangedState, {
       availabilityStatus: "expired",
-      effectStatus: "not_started",
-      failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED",
-      interactionStatus: "failed",
-      turnStatus: "failed",
-      queueState: "paused",
-      queuePauseReason: "turn_failed",
-      activeTurnId: null,
+      effectStatus: null,
+      failureCode: null,
+      interactionStatus: "processing",
+      payloadRedacted: true,
+      turnStatus: "waiting_for_input",
+      queueState: "running",
+      queuePauseReason: null,
+      activeTurnId: policyChanged.turnId,
       rememberedCount: 0,
     });
     const repeatedPolicyChanged =
@@ -2556,28 +2615,36 @@ test(
         messageId: `remember-subject-restricted-message-${suffix}`,
         source: "web",
       });
-    assert.equal(subjectRestrictedResolution.shouldDispatch, false);
+    assert.equal(subjectRestrictedResolution.shouldDispatch, true);
     const [subjectRestrictedState] = await sql<
       Array<{
         failureCode: string | null;
+        interactionStatus: string;
+        queueState: string;
         rememberedCount: number;
         turnStatus: string;
       }>
     >`
       SELECT
         interaction."response_failure_code" AS "failureCode",
+        interaction."status" AS "interactionStatus",
+        queue."state" AS "queueState",
         turn."status" AS "turnStatus",
         (SELECT count(*)::int FROM "remembered_tool_approvals" remembered
           WHERE remembered."source_interaction_id" = interaction."id")
           AS "rememberedCount"
       FROM "thread_interactions" interaction
       JOIN "thread_turns" turn ON turn."id" = interaction."turn_id"
+      JOIN "thread_turn_queue_state" queue
+        ON queue."thread_id" = interaction."thread_id"
       WHERE interaction."id" = ${subjectRestricted.interactionId}
     `;
     assert.deepEqual(subjectRestrictedState, {
-      failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED",
+      failureCode: null,
+      interactionStatus: "processing",
+      queueState: "running",
       rememberedCount: 0,
-      turnStatus: "failed",
+      turnStatus: "waiting_for_input",
     });
     await sql`
       DELETE FROM "environment_capability_subject_restrictions"
