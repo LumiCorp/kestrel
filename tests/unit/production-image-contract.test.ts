@@ -52,7 +52,7 @@ test("local publication builds one amd64 image, smokes it, then pushes", () => {
       "--tag",
       tag,
     ]),
-    { role: "preview-edge", tag, approvalProtocol: undefined },
+    { role: "preview-edge", tag },
   );
   const commands = productionImageBuildCommands({
     dockerfile: "Dockerfile",
@@ -67,156 +67,25 @@ test("local publication builds one amd64 image, smokes it, then pushes", () => {
   assert.match(commands[0].args.join(" "), /--platform linux\/amd64/u);
 });
 
-test("hosted approval image publication smokes the explicit release protocol", () => {
+test("hosted approval image publication has no protocol selector", () => {
   assert.deepEqual(
     parsePublishProductionImageArgs([
       "--role",
       "turn-worker",
       "--tag",
       tag,
-      "--approval-protocol",
-      "v2",
     ]),
-    { role: "turn-worker", tag, approvalProtocol: "v2" },
+    { role: "turn-worker", tag },
   );
-  assert.deepEqual(
+  assert.throws(() =>
     parsePublishProductionImageArgs([
       "--role",
-      "workspace-runtime",
+      "turn-worker",
       "--tag",
       tag,
       "--approval-protocol",
       "v4",
     ]),
-    { role: "workspace-runtime", tag, approvalProtocol: "v4" },
-  );
-  assert.throws(
-    () =>
-      parsePublishProductionImageArgs([
-        "--role",
-        "turn-worker",
-        "--tag",
-        tag,
-        "--approval-protocol",
-        "automatic",
-      ]),
-    /must be v2, v3, or v4/u,
-  );
-  const commands = productionImageBuildCommands({
-    dockerfile: "Dockerfile",
-    image: `registry.fly.io/example:${tag}`,
-    tag,
-    smoke: "smoke.sh",
-    approvalProtocol: "v2",
-  });
-  assert.deepEqual(commands[1].args, [
-    "smoke.sh",
-    `registry.fly.io/example:${tag}`,
-    "v2",
-  ]);
-  assert.match(
-    commands[0].args.join(" "),
-    /--build-arg KESTREL_HOSTED_APPROVAL_PROTOCOL=v2/u,
-  );
-  assert.deepEqual(commands[2].args, [
-    "image",
-    "inspect",
-    "--format",
-    '{{ index .Config.Labels "com.lumicorp.kestrel.hosted-approval-producer" }}',
-    `registry.fly.io/example:${tag}`,
-  ]);
-  const activationCommands = productionImageBuildCommands({
-    dockerfile: "Dockerfile",
-    image: "registry.fly.io/example:activation-aug16",
-    tag: "activation-aug16",
-    smoke: "smoke.sh",
-    approvalProtocol: "v4",
-  });
-  assert.match(
-    activationCommands[0].args.join(" "),
-    /--build-arg KESTREL_HOSTED_APPROVAL_PROTOCOL=v4/u,
-  );
-  assert.notDeepEqual(activationCommands[0].args, commands[0].args);
-});
-
-test("producer publication requires, verifies, and records the selected protocol", async () => {
-  const calls: Array<{ command: string; args: string[] }> = [];
-  const digestImage = `registry.fly.io/kestrel-one-turn-worker@sha256:${"a".repeat(64)}`;
-  const result = await publishProductionImage(
-    [
-      "--role",
-      "turn-worker",
-      "--tag",
-      tag,
-      "--approval-protocol",
-      "v2",
-    ],
-    (command, args) => {
-      calls.push({ command, args });
-      if (args.some((arg) =>
-        arg.includes("com.lumicorp.kestrel.hosted-approval-producer")
-      )) {
-        return { status: 0, stdout: "v2\n" };
-      }
-      if (args.includes("{{index .RepoDigests 0}}")) {
-        return { status: 0, stdout: `${digestImage}\n` };
-      }
-      return { status: 0, stdout: "" };
-    },
-    {
-      KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
-      KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: "configured",
-    },
-  );
-
-  assert.equal(result.approvalProtocol, "v2");
-  assert.equal(result.digestImage, digestImage);
-  assert.match(calls[0]!.args.join(" "), /KESTREL_HOSTED_APPROVAL_PROTOCOL=v2/u);
-  assert.ok(calls.some(({ args }) => args[0] === "push"));
-});
-
-test("producer publication fails before push when its image label is ambiguous", async () => {
-  const calls: Array<{ command: string; args: string[] }> = [];
-  await assert.rejects(
-    () => publishProductionImage(
-      [
-        "--role",
-        "workspace-runtime",
-        "--tag",
-        tag,
-        "--approval-protocol",
-        "v4",
-      ],
-      (command, args) => {
-        calls.push({ command, args });
-        if (args.some((arg) =>
-          arg.includes("com.lumicorp.kestrel.hosted-approval-producer")
-        )) {
-          return { status: 0, stdout: "v2\n" };
-        }
-        return { status: 0, stdout: "" };
-      },
-      {
-        KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
-        KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: "configured",
-      },
-    ),
-    /advertises 'v2' instead of 'v4'/u,
-  );
-  assert.equal(calls.some(({ args }) => args[0] === "push"), false);
-});
-
-test("producer publication rejects an unversioned build", async () => {
-  await assert.rejects(
-    () => publishProductionImage(
-      ["--role", "turn-worker", "--tag", tag],
-      () => ({ status: 0, stdout: "" }),
-      {
-        KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
-        KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: "configured",
-      },
-    ),
-    /requires --approval-protocol/u,
   );
 });
 
@@ -261,11 +130,8 @@ test("attachment-owning image smokes gate publication on exact-build canary evid
     assert.match(source, /\$\{image##\*:\}/u);
   }
   for (const dockerfile of [workspaceDockerfile, turnWorkerDockerfile]) {
-    assert.match(dockerfile, /ARG KESTREL_HOSTED_APPROVAL_PROTOCOL=v2/u);
-    assert.match(
-      dockerfile,
-      /com\.lumicorp\.kestrel\.hosted-approval-producer=\$KESTREL_HOSTED_APPROVAL_PROTOCOL/u,
-    );
+    assert.doesNotMatch(dockerfile, /KESTREL_HOSTED_APPROVAL_PROTOCOL/u);
+    assert.doesNotMatch(dockerfile, /hosted-approval-producer/u);
   }
   assert.match(workspaceDockerfile, /KESTREL_BUILD_ID=\$KESTREL_BUILD_ID/u);
 });

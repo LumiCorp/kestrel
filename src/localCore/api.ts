@@ -790,6 +790,9 @@ export async function startLocalCoreApiServer(
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
           cancelActiveWork: !quiescedShutdownAccepted,
+          releaseInProcessAuthority: () => {
+            activeLocalCoreAuthorities.delete(authorityKey);
+          },
         });
       })().finally(() => {
         activeLocalCoreAuthorities.delete(authorityKey);
@@ -3702,6 +3705,7 @@ async function closeServer(input: {
   projectRunRegistry: DesktopProjectRunRegistry;
   projectRunEventClients: Set<ProjectRunEventClient>;
   cancelActiveWork: boolean;
+  releaseInProcessAuthority: () => void;
 }): Promise<void> {
   const errors: Error[] = [];
   if (input.heartbeat !== undefined) {
@@ -3742,6 +3746,7 @@ async function closeServer(input: {
   await closeLocalCoreStore(input.homePath).catch((error) => {
     errors.push(asError(error));
   });
+  input.releaseInProcessAuthority();
   await rm(input.socketPath, { force: true }).catch((error) => {
     errors.push(asError(error));
   });

@@ -112,6 +112,7 @@ test(
             descriptorContractRevision: `sha256:${"d".repeat(64)}`,
             approvalAuthorityRevision: "authority-v1",
           },
+        scope: { kind: "tool_identity" as const },
           sourceInteractionId: "interaction_123",
         }],
         effectiveCapabilities: [
@@ -192,6 +193,7 @@ test(
             descriptorContractRevision: `sha256:${"d".repeat(64)}`,
             approvalAuthorityRevision: "authority-v1",
           },
+        scope: { kind: "tool_identity" as const },
           sourceInteractionId: "interaction_123",
         }],
         reasoning: {

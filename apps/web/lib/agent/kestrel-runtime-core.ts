@@ -170,7 +170,6 @@ export type KestrelOneAgentResponseInput = {
         requestId: string;
         eventType: string;
         message: string;
-        approved?: boolean | undefined;
         decision?: "decline" | "approve_once" | "remember_approval" | undefined;
         decidingActor?: RunnerActorMetadata | undefined;
         preparedApprovalCleanup?: RunnerPreparedApprovalCleanupV1 | undefined;
@@ -237,7 +236,9 @@ export function createKestrelOneAgentResponseFromAgent(
           requestId: input.approvalDecision.approvalId,
           eventType: "user.approval" as const,
           message: input.approvalDecision.approved ? "approve" : "deny",
-          approved: input.approvalDecision.approved,
+          decision: input.approvalDecision.approved
+            ? ("approve_once" as const)
+            : ("decline" as const),
           ...(input.approvalDecision.reason !== undefined
             ? { reason: input.approvalDecision.reason }
             : {}),

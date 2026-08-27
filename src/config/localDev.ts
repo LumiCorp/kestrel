@@ -2,6 +2,10 @@ const DEFAULT_LOCAL_DATABASE_HOST = "localhost";
 const DEFAULT_LOCAL_DATABASE_NAME = "kestrel";
 const DEFAULT_LOCAL_DATABASE_USER = "kestrel";
 const DEFAULT_LOCAL_DATABASE_PASSWORD = "kestrel";
+const DEFAULT_LOCAL_APP_CREDENTIAL_KEY_ID = "local-app-key-v1";
+const DEFAULT_LOCAL_APP_CREDENTIAL_KEY = Buffer.from(
+  "kestrel-local-app-credential-v1!",
+).toString("base64");
 
 export const DEFAULT_KESTREL_DB_PORT = 55_432;
 export const DEFAULT_KESTREL_WEB_PORT = 43_103;
@@ -38,6 +42,15 @@ export function buildDefaultKestrelDatabaseUrl(
 export function applyKestrelLocalEnvDefaults(env: NodeJS.ProcessEnv = process.env): void {
   if (typeof env.DATABASE_URL !== "string" || env.DATABASE_URL.trim().length === 0) {
     env.DATABASE_URL = buildDefaultKestrelDatabaseUrl(env);
+  }
+  const appCredentialKeyId = env.KESTREL_APP_CREDENTIAL_ACTIVE_KEY_ID?.trim();
+  const appCredentialKeys = env.KESTREL_APP_CREDENTIAL_KEYS?.trim();
+  if (!appCredentialKeyId && !appCredentialKeys) {
+    env.KESTREL_APP_CREDENTIAL_ACTIVE_KEY_ID =
+      DEFAULT_LOCAL_APP_CREDENTIAL_KEY_ID;
+    env.KESTREL_APP_CREDENTIAL_KEYS = JSON.stringify({
+      [DEFAULT_LOCAL_APP_CREDENTIAL_KEY_ID]: DEFAULT_LOCAL_APP_CREDENTIAL_KEY,
+    });
   }
 }
 

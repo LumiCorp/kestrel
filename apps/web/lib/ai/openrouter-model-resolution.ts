@@ -21,13 +21,11 @@ export type OpenRouterCapabilityEvidence = {
     id: string;
     supportedParameters: string[];
   }>;
-  routing:
-    | {
-        kind: "fixed" | "provider";
-        policyId: string;
-        allowedEndpointIds: string[];
-      }
-    | undefined;
+  routing: {
+    kind: "fixed" | "provider";
+    policyId: string;
+    allowedEndpointIds: string[];
+  };
   sourceHash: string;
 };
 
@@ -126,7 +124,11 @@ export function translateOpenRouterCapabilityEvidence(input: {
   const endpoints = readEndpoints(input.details.endpoints);
   const routing =
     endpoints.length === 0
-      ? undefined
+      ? {
+          kind: "provider" as const,
+          policyId: `openrouter:${input.modelId}:provider-managed`,
+          allowedEndpointIds: [],
+        }
       : endpoints.length === 1
         ? {
             kind: "fixed" as const,
@@ -210,13 +212,9 @@ export function translateOpenRouterModelDetails(input: {
           ? "openrouter.chat.v2"
           : "openrouter.responses.v2",
       routing: {
-        kind: capability.routing?.kind ?? "provider",
-        policyId:
-          capability.routing?.policyId ??
-          `openrouter:${input.modelId}:no-qualified-endpoints`,
-        ...(capability.routing?.allowedEndpointIds.length
-          ? { allowedEndpointIds: capability.routing.allowedEndpointIds }
-          : {}),
+        kind: capability.routing.kind,
+        policyId: capability.routing.policyId,
+        allowedEndpointIds: capability.routing.allowedEndpointIds,
         requireParameters: true,
       },
     },
@@ -242,7 +240,10 @@ export function translateOpenRouterModelDetails(input: {
       requiredToolChoice: hasParameter("tool_choice")
         ? declared()
         : unsupported(),
-      strictToolInputs: hasParameter("strict_tool_inputs")
+      // OpenRouter carries strict tool arguments inside each tool schema rather
+      // than advertising a top-level strict_tool_inputs request parameter.
+      // Tool support makes the live probe possible; only the probe qualifies it.
+      strictToolInputs: hasParameter("tools")
         ? declared()
         : unsupported(),
       parallelToolCalls: hasParameter("parallel_tool_calls")

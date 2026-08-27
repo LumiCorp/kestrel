@@ -69,6 +69,34 @@ const gatewayFixture = {
           description: "OpenAI: GPT-5.6 Luna",
           metadata: null,
           economicsAdmission: { status: "needs_profile" },
+          readiness: {
+            version: 1,
+            approval: "unapproved",
+            reachability: "reachable",
+            identity: "legacy",
+            declaration: "missing",
+            qualification: "legacy_unqualified",
+            freshness: "unknown",
+            capabilities: [
+              { capability: "provider_strict_schema", state: "unknown" },
+              { capability: "native_tools", state: "unknown" },
+              { capability: "required_tool_choice", state: "unknown" },
+              { capability: "strict_tool_inputs", state: "unknown" },
+            ],
+            eligibleRoles: [],
+            unavailableRoles: [
+              {
+                role: "agent.loop",
+                reason: "The model is not approved.",
+                missingCapabilities: [
+                  "provider_strict_schema",
+                  "native_tools",
+                  "required_tool_choice",
+                  "strict_tool_inputs",
+                ],
+              },
+            ],
+          },
         },
       ],
     },
@@ -113,6 +141,29 @@ function gatewayFixtureWithApprovedOpenRouterModel() {
                 contextWindowTokens: 1_050_000,
                 maxOutputTokens: 128_000,
                 source: "provider_detail",
+              },
+              readiness: {
+                version: 1,
+                approval: "approved",
+                reachability: "reachable",
+                identity: "exact",
+                declaration: "present",
+                qualification: "qualified",
+                freshness: "current",
+                capabilities: [
+                  {
+                    capability: "provider_strict_schema",
+                    state: "qualified",
+                  },
+                  { capability: "native_tools", state: "qualified" },
+                  {
+                    capability: "required_tool_choice",
+                    state: "qualified",
+                  },
+                  { capability: "strict_tool_inputs", state: "qualified" },
+                ],
+                eligibleRoles: ["agent.loop"],
+                unavailableRoles: [],
               },
             })),
           }
@@ -275,12 +326,12 @@ test("Models lets approval initiate OpenRouter economics admission", async ({
   await approve.click();
 
   await expect(approve).toBeDisabled();
-  await expect(row.getByText("Unapproved", { exact: true })).toBeVisible();
+  await expect(row.getByText("Checking compatibility")).toBeVisible();
   releaseApproval();
 
-  await expect(row.getByText("Approved", { exact: true })).toBeVisible();
+  await expect(row.getByText("Ready", { exact: true })).toBeVisible();
   await expect(row).toContainText(
-    "1,050,000 context · 128,000 output · provider_detail",
+    "1,050,000 context · 128,000 max output",
   );
   await expect(makeDefault).toBeEnabled();
 });
@@ -315,8 +366,11 @@ test("Models keeps failed OpenRouter admission unapproved and retryable", async 
   await expect(
     page.getByText("OpenRouter could not resolve the exact model ID."),
   ).toBeVisible();
-  await expect(row.getByText("Unapproved", { exact: true })).toBeVisible();
-  await expect(row.getByText("Needs economics profile")).toBeVisible();
+  await expect(row.getByText("Not approved", { exact: true })).toBeVisible();
+  await expect(row).toContainText(
+    "Approve this model to verify it and make it available for agent work.",
+  );
+  await expect(row.getByText("Needs economics profile")).toHaveCount(0);
   await expect(approve).toBeEnabled();
   await expect(
     row.getByRole("button", { name: "Make default" }),

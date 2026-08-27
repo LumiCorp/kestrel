@@ -191,10 +191,17 @@ function formatReadinessTimestamp(value: string | undefined) {
 }
 
 function HostedModelReadinessSummary({
+  economicsAdmission,
+  isSaving,
   readiness,
 }: {
+  economicsAdmission: GatewayModel["economicsAdmission"];
+  isSaving: boolean;
   readiness: HostedModelReadiness;
 }) {
+  const isReady =
+    readiness.eligibleRoles.includes("agent.loop") &&
+    economicsAdmission?.status === "ready";
   const evidenceObservedAt = formatReadinessTimestamp(
     readiness.registration?.evidenceObservedAt,
   );
@@ -204,65 +211,101 @@ function HostedModelReadinessSummary({
 
   return (
     <div
-      className="mt-2 space-y-1 text-muted-foreground text-xs leading-5"
+      className="space-y-1.5 text-muted-foreground text-xs leading-5"
       data-testid="hosted-model-readiness"
     >
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <Badge
-          className="rounded-full"
-          variant={readiness.approval === "approved" ? "default" : "outline"}
-        >
-          Admin {readiness.approval}
-        </Badge>
-        <span>
-          Reachability: {formatReadinessValue(readiness.reachability)}
-        </span>
-        <span>
-          Registration: {formatReadinessValue(readiness.identity)} ·{" "}
-          {formatReadinessValue(readiness.declaration)}
-        </span>
-        <span>
-          Qualification: {formatReadinessValue(readiness.qualification)} ·{" "}
-          {formatReadinessValue(readiness.freshness)}
-        </span>
-      </div>
-      <div>
-        Eligible roles:{" "}
-        {readiness.eligibleRoles.length > 0
-          ? readiness.eligibleRoles.join(", ")
-          : "none"}
-      </div>
-      {readiness.unavailableRoles.map((unavailable) => (
-        <div key={unavailable.role}>
-          {unavailable.role} unavailable: {unavailable.reason}
-          {unavailable.missingCapabilities.length > 0 ? (
-            <span>
-              {" "}
-              Missing proofs: {unavailable.missingCapabilities.join(", ")}.
-            </span>
+      {isSaving ? (
+        <>
+          <Badge className="rounded-full" variant="secondary">
+            <Loader2 className="mr-1 size-3 animate-spin" />
+            Checking compatibility
+          </Badge>
+          <p>
+            Kestrel is verifying provider limits and agent compatibility. This
+            can take a moment.
+          </p>
+        </>
+      ) : readiness.approval === "unapproved" ? (
+        <>
+          <Badge className="rounded-full" variant="outline">
+            Not approved
+          </Badge>
+          <p>
+            Approve this model to verify it and make it available for agent
+            work.
+          </p>
+          <details>
+            <summary className="cursor-pointer font-medium text-foreground">
+              What approval checks
+            </summary>
+            <p className="mt-1">
+              Kestrel confirms the exact provider model, reads its token
+              limits, and tests the tool-use features agents require.
+            </p>
+          </details>
+        </>
+      ) : isReady ? (
+        <>
+          <Badge className="rounded-full">Ready</Badge>
+          <p>Available for agent work.</p>
+          {economicsAdmission?.contextWindowTokens !== undefined &&
+          economicsAdmission.maxOutputTokens !== undefined ? (
+            <p>
+              {economicsAdmission.contextWindowTokens.toLocaleString()} context
+              · {economicsAdmission.maxOutputTokens.toLocaleString()} max output
+            </p>
           ) : null}
-        </div>
-      ))}
-      <div>
-        Capability proofs:{" "}
-        {readiness.capabilities
-          .map(
-            (capability) =>
-              `${capability.capability} (${formatReadinessValue(capability.state)})`,
-          )
-          .join(", ")}
-      </div>
-      {readiness.registration ? (
-        <div>
-          Registration {readiness.registration.revision} ·{" "}
-          {readiness.registration.fingerprint}
-          {evidenceObservedAt
-            ? ` · ${readiness.registration.evidenceSource ?? "provider"} evidence ${evidenceObservedAt}`
-            : ""}
-          {qualificationCheckedAt
-            ? ` · Qualified ${qualificationCheckedAt}`
-            : ""}
-        </div>
+        </>
+      ) : (
+        <>
+          <Badge className="rounded-full" variant="destructive">
+            Needs attention
+          </Badge>
+          <p>
+            {readiness.reachability === "unreachable"
+              ? "The provider is unavailable. Check the connection and try again."
+              : readiness.qualification === "failed"
+                ? "This model did not pass the compatibility checks required for agent work."
+                : "Compatibility checks are incomplete. Save the model again to retry them."}
+          </p>
+        </>
+      )}
+      {readiness.approval === "approved" && !isSaving ? (
+        <details>
+          <summary className="cursor-pointer font-medium text-foreground">
+            Technical details
+          </summary>
+          <div className="mt-1 space-y-1">
+            <div>
+              Provider: {formatReadinessValue(readiness.reachability)} ·
+              Qualification: {formatReadinessValue(readiness.qualification)}
+            </div>
+            <div>
+              Capability checks:{" "}
+              {readiness.capabilities
+                .map(
+                  (capability) =>
+                    `${formatReadinessValue(capability.capability)} (${formatReadinessValue(capability.state)})`,
+                )
+                .join(", ")}
+            </div>
+            {readiness.registration ? (
+              <div>
+                Evidence {readiness.registration.revision} ·{" "}
+                {readiness.registration.fingerprint}
+                {evidenceObservedAt
+                  ? ` · ${readiness.registration.evidenceSource ?? "provider"} ${evidenceObservedAt}`
+                  : ""}
+                {qualificationCheckedAt
+                  ? ` · checked ${qualificationCheckedAt}`
+                  : ""}
+              </div>
+            ) : null}
+            {economicsAdmission?.canonicalSlug ? (
+              <div>Canonical model: {economicsAdmission.canonicalSlug}</div>
+            ) : null}
+          </div>
+        </details>
       ) : null}
     </div>
   );
@@ -1036,7 +1079,15 @@ function GatewayModelCatalogPane({
       );
       const json = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(json.error || "Failed to save model.");
+        const fallback =
+          draft.approved && !model.approved
+            ? `Kestrel couldn't approve ${model.rawModelId}. No changes were saved. Try again; if this keeps failing, check the ${providerLabels[bundle.gateway.provider]} connection and server logs.`
+            : `Kestrel couldn't save ${model.rawModelId}. No changes were saved.`;
+        throw new Error(
+          json.code === "GATEWAY_OPERATION_FAILED"
+            ? fallback
+            : json.error || fallback,
+        );
       }
       toast.success(successMessage);
       onRefresh();
@@ -1489,6 +1540,8 @@ function GatewayModelCatalogPane({
                         <TableCell className="py-3 align-top">
                           {model.modality === "language" && model.readiness ? (
                             <HostedModelReadinessSummary
+                              economicsAdmission={model.economicsAdmission}
+                              isSaving={savingModelId === model.id}
                               readiness={model.readiness}
                             />
                           ) : (
@@ -1499,7 +1552,7 @@ function GatewayModelCatalogPane({
                               {draft.approved ? "Approved" : "Unapproved"}
                             </Badge>
                           )}
-                          {model.economicsAdmission ? (
+                          {model.economicsAdmission && !model.readiness ? (
                             <div className="mt-1 text-muted-foreground text-xs">
                               {model.economicsAdmission.status === "ready" ? (
                                 <>
@@ -1519,9 +1572,9 @@ function GatewayModelCatalogPane({
                                     separately.
                                   </div>
                                 </>
-                              ) : (
+                              ) : draft.approved ? (
                                 "Needs economics profile"
-                              )}
+                              ) : null}
                             </div>
                           ) : null}
                         </TableCell>
