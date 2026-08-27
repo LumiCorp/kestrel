@@ -21,7 +21,8 @@ test("configured Email Trigger route exports enforce private Project authority",
   const sql = postgres(databaseUrl, { max: 4 });
   const suffix = crypto.randomUUID();
   const now = new Date("2026-08-27T16:00:00.000Z");
-  const expiresAt = new Date(now.getTime() + 10 * 60_000);
+  const sessionNow = new Date();
+  const expiresAt = new Date(sessionNow.getTime() + 10 * 60_000);
   const ids = {
     organization: `trigger-route-org-${suffix}`,
     otherOrganization: `trigger-route-other-org-${suffix}`,
@@ -125,9 +126,9 @@ test("configured Email Trigger route exports enforce private Project authority",
         "id", "expiresAt", "token", "createdAt", "updatedAt", "userId",
         "activeOrganizationId"
       ) VALUES
-        (${crypto.randomUUID()}, ${expiresAt}, ${sessions.editor}, ${now}, ${now}, ${ids.editor}, ${ids.organization}),
-        (${crypto.randomUUID()}, ${expiresAt}, ${sessions.member}, ${now}, ${now}, ${ids.member}, ${ids.organization}),
-        (${crypto.randomUUID()}, ${expiresAt}, ${sessions.outsider}, ${now}, ${now}, ${ids.outsider}, ${ids.otherOrganization})
+        (${crypto.randomUUID()}, ${expiresAt}, ${sessions.editor}, ${sessionNow}, ${sessionNow}, ${ids.editor}, ${ids.organization}),
+        (${crypto.randomUUID()}, ${expiresAt}, ${sessions.member}, ${sessionNow}, ${sessionNow}, ${ids.member}, ${ids.organization}),
+        (${crypto.randomUUID()}, ${expiresAt}, ${sessions.outsider}, ${sessionNow}, ${sessionNow}, ${ids.outsider}, ${ids.otherOrganization})
     `;
     await transaction`
       INSERT INTO "ai_gateways" (

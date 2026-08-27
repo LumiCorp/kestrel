@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import postgres from "postgres";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
+const ownerLossMigration = fs.readFileSync(
+  new URL(
+    "../db/migrations/0086_project_email_trigger_owner_loss.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 test("Organization owner loss disables Email Triggers before membership and user cascades", async (context) => {
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
@@ -21,18 +29,23 @@ test("Organization owner loss disables Email Triggers before membership and user
     directMember: `trigger-owner-loss-direct-member-${suffix}`,
     raceUser: `trigger-owner-loss-race-user-${suffix}`,
     raceMember: `trigger-owner-loss-race-member-${suffix}`,
+    staleUser: `trigger-owner-loss-stale-user-${suffix}`,
+    staleMember: `trigger-owner-loss-stale-member-${suffix}`,
     enabledTrigger: `trigger-owner-loss-enabled-${suffix}`,
     disabledTrigger: `trigger-owner-loss-disabled-${suffix}`,
     deletedTrigger: `trigger-owner-loss-deleted-${suffix}`,
     directTrigger: `trigger-owner-loss-direct-${suffix}`,
     raceTrigger: `trigger-owner-loss-race-${suffix}`,
+    staleEnabledTrigger: `trigger-owner-loss-stale-enabled-${suffix}`,
+    staleDisabledTrigger: `trigger-owner-loss-stale-disabled-${suffix}`,
+    staleDeletedTrigger: `trigger-owner-loss-stale-deleted-${suffix}`,
   };
 
   context.after(async () => {
     await sql`DELETE FROM "organization" WHERE "id" = ${ids.organization}`;
     await sql`
       DELETE FROM "user"
-      WHERE "id" IN (${ids.admin}, ${ids.genericUser}, ${ids.directUser}, ${ids.raceUser})
+      WHERE "id" IN (${ids.admin}, ${ids.genericUser}, ${ids.directUser}, ${ids.raceUser}, ${ids.staleUser})
     `;
     await sql.end({ timeout: 0 });
   });
@@ -254,5 +267,176 @@ test("Organization owner loss disables Email Triggers before membership and user
     reason: "execution_owner_access_lost",
     revision: 2,
     audits: 1,
+  });
+
+  await sql.begin(async (transaction) => {
+    await transaction`
+      DROP TRIGGER "member_delete_disable_project_email_triggers" ON "member"
+    `;
+    await transaction`
+      DROP FUNCTION "disable_project_email_triggers_on_member_delete"()
+    `;
+    await transaction`
+      INSERT INTO "user" (
+        "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+      ) VALUES (
+        ${ids.staleUser}, 'Owner-loss Stale', ${`${ids.staleUser}@example.test`},
+        true, ${now}, ${now}
+      )
+    `;
+    await transaction`
+      INSERT INTO "member" (
+        "id", "organizationId", "userId", "role", "createdAt"
+      ) VALUES (
+        ${ids.staleMember}, ${ids.organization}, ${ids.staleUser}, 'member', ${now}
+      )
+    `;
+    await transaction`
+      INSERT INTO "project_members" (
+        "project_id", "organization_member_id", "role"
+      ) VALUES (${ids.project}, ${ids.staleMember}, 'editor')
+    `;
+    await transaction`
+      INSERT INTO "project_email_triggers" (
+        "id", "organization_id", "project_id", "created_by_user_id",
+        "execution_owner_user_id", "name", "instruction", "model_id",
+        "address_local_part", "address_domain", "enabled", "disabled_reason",
+        "revision", "deleted_at", "created_at", "updated_at"
+      ) VALUES
+        (
+          ${ids.staleEnabledTrigger}, ${ids.organization}, ${ids.project},
+          ${ids.staleUser}, ${ids.staleUser}, 'Stale enabled target', 'Process email.',
+          'openrouter/model', 'private-stale-enabled-address', 'inbound.example.test',
+          true, NULL, 4, NULL, ${now}, ${now}
+        ),
+        (
+          ${ids.staleDisabledTrigger}, ${ids.organization}, ${ids.project},
+          ${ids.staleUser}, ${ids.staleUser}, 'Stale disabled target', 'Process email.',
+          'openrouter/model', 'private-stale-disabled-address', 'inbound.example.test',
+          false, 'manual', 6, NULL, ${now}, ${now}
+        ),
+        (
+          ${ids.staleDeletedTrigger}, ${ids.organization}, ${ids.project},
+          ${ids.staleUser}, ${ids.staleUser}, 'Stale deleted target', 'Process email.',
+          'openrouter/model', 'private-stale-deleted-address', 'inbound.example.test',
+          false, 'deleted', 8, ${now}, ${now}, ${now}
+        )
+    `;
+
+    await transaction`DELETE FROM "member" WHERE "id" = ${ids.staleMember}`;
+    const [beforeMigration] = await transaction<
+      Array<{ enabled: boolean; revision: number }>
+    >`
+      SELECT "enabled", "revision"
+      FROM "project_email_triggers"
+      WHERE "id" = ${ids.staleEnabledTrigger}
+    `;
+    assert.deepEqual(beforeMigration, { enabled: true, revision: 4 });
+
+    for (const statement of ownerLossMigration
+      .split("--> statement-breakpoint")
+      .map((candidate) => candidate.trim())
+      .filter(Boolean)) {
+      await transaction.unsafe(statement);
+    }
+
+    const migratedRows = await transaction<
+      Array<{
+        id: string;
+        enabled: boolean;
+        reason: string | null;
+        revision: number;
+      }>
+    >`
+      SELECT "id", "enabled", "disabled_reason" AS "reason", "revision"
+      FROM "project_email_triggers"
+      WHERE "id" IN (
+        ${ids.staleEnabledTrigger}, ${ids.staleDisabledTrigger},
+        ${ids.staleDeletedTrigger}
+      )
+      ORDER BY "id"
+    `;
+    assert.deepEqual(
+      migratedRows.find((row) => row.id === ids.staleEnabledTrigger),
+      {
+        id: ids.staleEnabledTrigger,
+        enabled: false,
+        reason: "execution_owner_access_lost",
+        revision: 5,
+      },
+    );
+    assert.deepEqual(
+      migratedRows.find((row) => row.id === ids.staleDisabledTrigger),
+      {
+        id: ids.staleDisabledTrigger,
+        enabled: false,
+        reason: "manual",
+        revision: 6,
+      },
+    );
+    assert.deepEqual(
+      migratedRows.find((row) => row.id === ids.staleDeletedTrigger),
+      {
+        id: ids.staleDeletedTrigger,
+        enabled: false,
+        reason: "deleted",
+        revision: 8,
+      },
+    );
+
+    const staleAudit = await transaction<
+      Array<{
+        targetId: string;
+        metadata: { reason: string; revision: number };
+      }>
+    >`
+      SELECT "target_id" AS "targetId", "metadata"
+      FROM "project_audit_events"
+      WHERE "target_type" = 'project_email_trigger'
+        AND "target_id" IN (
+          ${ids.staleEnabledTrigger}, ${ids.staleDisabledTrigger},
+          ${ids.staleDeletedTrigger}
+        )
+    `;
+    assert.deepEqual(
+      [...staleAudit],
+      [
+        {
+          targetId: ids.staleEnabledTrigger,
+          metadata: { reason: "execution_owner_access_lost", revision: 5 },
+        },
+      ],
+    );
+    assert.doesNotMatch(
+      JSON.stringify(staleAudit),
+      /private-stale-(?:enabled|disabled|deleted)-address|inbound\.example\.test/u,
+    );
+
+    const formerUserDeleted = await transaction<Array<{ id: string }>>`
+      DELETE FROM "user" WHERE "id" = ${ids.staleUser} RETURNING "id"
+    `;
+    assert.deepEqual([...formerUserDeleted], [{ id: ids.staleUser }]);
+    const [preservedHistory] = await transaction<
+      Array<{
+        creator: string | null;
+        executionOwner: string | null;
+        enabled: boolean;
+        reason: string | null;
+        revision: number;
+      }>
+    >`
+      SELECT "created_by_user_id" AS "creator",
+             "execution_owner_user_id" AS "executionOwner",
+             "enabled", "disabled_reason" AS "reason", "revision"
+      FROM "project_email_triggers"
+      WHERE "id" = ${ids.staleEnabledTrigger}
+    `;
+    assert.deepEqual(preservedHistory, {
+      creator: null,
+      executionOwner: null,
+      enabled: false,
+      reason: "execution_owner_access_lost",
+      revision: 5,
+    });
   });
 });

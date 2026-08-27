@@ -5,8 +5,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 ## Ready
 
 - [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
-- [Reconcile stale Trigger owners during migration](38-reconcile-stale-trigger-owners-during-migration.md)
-- [Keep route-export sessions live](39-keep-route-export-sessions-live.md)
 
 ## In progress
 
@@ -28,6 +26,8 @@ None.
 - [Preserve Trigger lifecycle disable reasons](35-preserve-trigger-lifecycle-disable-reasons.md)
 - [Preserve unavailable Trigger models while editing](36-preserve-unavailable-trigger-models-in-editing.md)
 - [Execute the Email Trigger route exports](37-execute-email-trigger-route-exports.md)
+- [Reconcile stale Trigger owners during migration](38-reconcile-stale-trigger-owners-during-migration.md)
+- [Keep route-export sessions live](39-keep-route-export-sessions-live.md)
 
 ## Done
 

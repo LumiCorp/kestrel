@@ -23,6 +23,21 @@ const historyLock = JSON.parse(
 ) as Record<string, string>;
 
 test("Organization member deletion disables owned Email Triggers atomically", () => {
+  const reconciliation = migration.indexOf(
+    'UPDATE "project_email_triggers" AS "triggers"',
+  );
+  const liveDeleteFunction = migration.indexOf(
+    'CREATE FUNCTION "disable_project_email_triggers_on_member_delete"()',
+  );
+  assert.ok(reconciliation >= 0 && reconciliation < liveDeleteFunction);
+  assert.match(
+    migration,
+    /"triggers"\."enabled" = true[\s\S]*"triggers"\."deleted_at" IS NULL[\s\S]*NOT EXISTS \([\s\S]*FROM "member"[\s\S]*"member"\."organizationId" = "triggers"\."organization_id"[\s\S]*"member"\."userId" = "triggers"\."execution_owner_user_id"/u,
+  );
+  assert.match(
+    migration,
+    /UPDATE "project_email_triggers" AS "triggers"[\s\S]*"disabled_reason" = 'execution_owner_access_lost'[\s\S]*"revision" = "triggers"\."revision" \+ 1[\s\S]*'project\.email_trigger\.disabled'[\s\S]*'reason', 'execution_owner_access_lost'[\s\S]*'revision', "revision"/u,
+  );
   assert.match(
     migration,
     /CREATE TRIGGER "member_delete_disable_project_email_triggers"[\s\S]*BEFORE DELETE ON "member"/u,
