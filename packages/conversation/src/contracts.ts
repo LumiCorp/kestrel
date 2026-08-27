@@ -198,6 +198,18 @@ export interface ConversationStatusPresentation {
   runId?: string | undefined;
   errorCode?: string | undefined;
   errorMessage?: string | undefined;
+  telemetry?: {
+    modelCalls?: number | undefined;
+    inputTokens?: number | undefined;
+    cachedInputTokens?: number | undefined;
+    cacheWriteInputTokens?: number | undefined;
+    outputTokens?: number | undefined;
+    reasoningTokens?: number | undefined;
+    totalTokens?: number | undefined;
+    durationMs?: number | undefined;
+    pricedCostUsd?: number | undefined;
+    validationRejections?: number | undefined;
+  } | undefined;
 }
 
 export interface ConversationDialogMessagePresentation {

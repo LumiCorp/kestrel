@@ -11,7 +11,7 @@ work; this queue does not reopen them.
 
 ## Ready
 
-- [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
+- None.
 
 ## In progress
 
@@ -23,7 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
-None.
+- [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## Done
 

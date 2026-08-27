@@ -562,6 +562,13 @@ export class RuntimeIO {
       const actualEconomicsModelProfile = actualProvider !== undefined && actualModel !== undefined && economicsControl !== undefined
         ? resolveModelEconomicsProfileV1(economicsControl, actualProvider, actualModel)
         : economicsModelProfile;
+      const pricing = attributeModelCallPrice({
+        usage: economicsUsage,
+        profile: actualEconomicsModelProfile,
+        provider: actualProvider,
+        model: actualModel,
+      });
+      guardrails.onModelCost(pricing.status === "priced" ? pricing.totalCostUsd : undefined);
       const completedAt = new Date().toISOString();
       const latencyMs = Date.now() - startedAt;
       await this.options.persistModelResponseDump({
@@ -595,12 +602,7 @@ export class RuntimeIO {
         latencyMs,
         usage: economicsUsage,
         providerReportedInputDeltaTokens: economicsUsage.inputTokens - requestEconomicsManifest.requestCount.tokens,
-        pricing: attributeModelCallPrice({
-          usage: economicsUsage,
-          profile: actualEconomicsModelProfile,
-          provider: actualProvider,
-          model: actualModel,
-        }),
+        pricing,
       });
       await this.options.appendRunEvent(
         progress.runId,

@@ -2467,7 +2467,120 @@ test("runner service emits run.cancelled on the original stream after run.cancel
     await aborted;
     const body = await streamResponse.text();
     assert.match(body, /"type":"run\.cancelled"/);
+    assert.match(body, /"modelCalls":0/u);
+    assert.match(body, /"durationMs":0/u);
     assert.doesNotMatch(body, /"type":"run\.failed"/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("runner cancellation preserves completed model telemetry on the original terminal stream", async () => {
+  let resolveStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    resolveStarted = resolve;
+  });
+  const server = await createRunnerServiceServer({
+    runtimeFactory: () => ({
+      runTurn: async (input, options) => {
+        resolveStarted();
+        await new Promise<void>((resolve) => {
+          options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return {
+          assistantText: "must not survive cancellation",
+          output: {
+            status: "COMPLETED",
+            sessionId: input.sessionId,
+            runId: input.runId ?? "run-cancel-telemetry",
+            quality: {
+              citationCoverage: 1,
+              unresolvedClaims: 0,
+              reworkRate: 0,
+              thrashIndex: 0,
+            },
+            errors: [],
+            telemetry: {
+              stepsExecuted: 1,
+              toolCalls: 0,
+              modelCalls: 1,
+              durationMs: 250,
+              inputTokens: 120,
+              cachedInputTokens: 20,
+              outputTokens: 30,
+              reasoningTokens: 10,
+              totalTokens: 150,
+              pricedCostUsd: 0.0042,
+              validationRejections: 1,
+            },
+          },
+        };
+      },
+      close: async () => {},
+    }),
+  });
+
+  try {
+    const streamResponsePromise = fetch(`${server.url}/commands/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json", connection: "close" },
+      body: JSON.stringify({
+        id: "cmd-run-cancel-telemetry",
+        type: "run.start",
+        metadata: {
+          actor: {
+            actorId: "web-user-1",
+            actorType: "end_user",
+            tenantId: "internal",
+          },
+          tenantId: "internal",
+          profile,
+        },
+        payload: {
+          profile,
+          turn: {
+            sessionId: "session-cancel-telemetry",
+            runId: "run-cancel-telemetry",
+            message: "cancel after one model response",
+            eventType: "user.message",
+          },
+        },
+      }),
+    });
+    await started;
+    const cancelResponse = await fetch(`${server.url}/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json", connection: "close" },
+      body: JSON.stringify({
+        id: "cmd-cancel-telemetry",
+        type: "run.cancel",
+        metadata: {
+          actor: {
+            actorId: "web-user-1",
+            actorType: "end_user",
+            tenantId: "internal",
+          },
+          tenantId: "internal",
+        },
+        payload: {
+          sessionId: "session-cancel-telemetry",
+          runId: "run-cancel-telemetry",
+        },
+      }),
+    });
+    assert.equal(cancelResponse.status, 200);
+
+    const streamResponse = await streamResponsePromise;
+    const body = await streamResponse.text();
+    assert.match(body, /"type":"run\.cancelled"/u);
+    assert.match(body, /"modelCalls":1/u);
+    assert.match(body, /"cachedInputTokens":20/u);
+    assert.match(body, /"reasoningTokens":10/u);
+    assert.match(body, /"pricedCostUsd":0\.0042/u);
+    assert.match(body, /"validationRejections":1/u);
+    assert.match(body, /"cancellationReason":"user_requested"/u);
+    assert.doesNotMatch(body, /must not survive cancellation/u);
+    assert.doesNotMatch(body, /"type":"run\.completed"/u);
   } finally {
     await server.close();
   }

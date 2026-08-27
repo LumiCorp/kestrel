@@ -958,7 +958,10 @@ export class RunnerHost {
         this.writer.emit("run.cancelled", {
           sessionId: turn.sessionId,
           runId: emittedRunId,
-          result: buildNonResponsiveTerminalResult({ status: "CANCELLED", sessionId: turn.sessionId, runId: emittedRunId }),
+          result: buildCancelledTerminalResult(terminalResult, {
+            sessionId: turn.sessionId,
+            runId: emittedRunId,
+          }),
         }, { commandId, runId: emittedRunId, sessionId: turn.sessionId });
         return;
       }
@@ -2058,8 +2061,7 @@ export class RunnerHost {
               this.writer.emit("run.cancelled", {
                 sessionId: completedSessionId,
                 runId,
-                result: buildNonResponsiveTerminalResult({
-                  status: "CANCELLED",
+                result: buildCancelledTerminalResult(result, {
                   sessionId: completedSessionId,
                   runId,
                 }),
@@ -3829,6 +3831,35 @@ function buildNonResponsiveTerminalResult(input: {
         modelCalls: 0,
         durationMs: 0,
       },
+    },
+  };
+}
+
+function buildCancelledTerminalResult(
+  result: RunTurnResult,
+  identity: { sessionId: string; runId: string },
+): RunTurnResult {
+  const telemetry = result.output.telemetry;
+  return {
+    ...result,
+    assistantText: null,
+    output: {
+      ...result.output,
+      status: "FAILED",
+      sessionId: identity.sessionId,
+      runId: identity.runId,
+      errors: [
+        ...result.output.errors.filter((error) => error.code !== "RUN_CANCELLED"),
+        {
+          code: "RUN_CANCELLED",
+          message: "Run cancelled.",
+          details: {
+            cancellationReason: "user_requested",
+            modelWorkRecorded: (telemetry.modelCalls ?? 0) > 0,
+            validationRejections: telemetry.validationRejections ?? 0,
+          },
+        },
+      ],
     },
   };
 }

@@ -423,7 +423,7 @@ export function createKestrelOneAgentResponseFromAgent(
         assistantMessageId: streamResult.message.id,
         runId: streamResult.message.metadata?.kestrelRunId ?? null,
         selectedInteractionMode: requestedInteractionMode,
-        telemetry: null,
+        telemetry: streamResult.telemetry ?? null,
       });
     },
     onError: (error) => {

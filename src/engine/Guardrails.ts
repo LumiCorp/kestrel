@@ -27,8 +27,13 @@ export class Guardrails {
   private actionModelCalls = 0;
   private maintenanceModelCalls = 0;
   private inputTokens = 0;
+  private cachedInputTokens = 0;
+  private cacheWriteInputTokens = 0;
   private outputTokens = 0;
+  private reasoningTokens = 0;
   private totalTokens = 0;
+  private pricedCostUsd = 0;
+  private validationRejections = 0;
 
   constructor(
     config: GuardrailConfig,
@@ -130,11 +135,30 @@ export class Guardrails {
     if (typeof usage.outputTokens === "number" && Number.isFinite(usage.outputTokens)) {
       this.outputTokens += usage.outputTokens;
     }
+    if (typeof usage.cachedInputTokens === "number" && Number.isFinite(usage.cachedInputTokens)) {
+      this.cachedInputTokens += usage.cachedInputTokens;
+    }
+    if (typeof usage.cacheWriteInputTokens === "number" && Number.isFinite(usage.cacheWriteInputTokens)) {
+      this.cacheWriteInputTokens += usage.cacheWriteInputTokens;
+    }
+    if (typeof usage.reasoningTokens === "number" && Number.isFinite(usage.reasoningTokens)) {
+      this.reasoningTokens += usage.reasoningTokens;
+    }
     if (typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens)) {
       this.totalTokens += usage.totalTokens;
       return;
     }
     this.totalTokens = this.inputTokens + this.outputTokens;
+  }
+
+  onModelCost(costUsd: number | undefined): void {
+    if (typeof costUsd === "number" && Number.isFinite(costUsd) && costUsd >= 0) {
+      this.pricedCostUsd += costUsd;
+    }
+  }
+
+  onValidationRejection(): void {
+    this.validationRejections += 1;
   }
 
   telemetry(): {
@@ -146,8 +170,13 @@ export class Guardrails {
     maintenanceModelCalls?: number | undefined;
     durationMs: number;
     inputTokens?: number | undefined;
+    cachedInputTokens?: number | undefined;
+    cacheWriteInputTokens?: number | undefined;
     outputTokens?: number | undefined;
+    reasoningTokens?: number | undefined;
     totalTokens?: number | undefined;
+    pricedCostUsd?: number | undefined;
+    validationRejections?: number | undefined;
   } {
     return {
       stepsExecuted: this.stepsExecuted,
@@ -162,8 +191,13 @@ export class Guardrails {
         : {}),
       durationMs: Date.now() - this.startedAt,
       ...(this.inputTokens > 0 ? { inputTokens: this.inputTokens } : {}),
+      ...(this.cachedInputTokens > 0 ? { cachedInputTokens: this.cachedInputTokens } : {}),
+      ...(this.cacheWriteInputTokens > 0 ? { cacheWriteInputTokens: this.cacheWriteInputTokens } : {}),
       ...(this.outputTokens > 0 ? { outputTokens: this.outputTokens } : {}),
+      ...(this.reasoningTokens > 0 ? { reasoningTokens: this.reasoningTokens } : {}),
       ...(this.totalTokens > 0 ? { totalTokens: this.totalTokens } : {}),
+      ...(this.pricedCostUsd > 0 ? { pricedCostUsd: this.pricedCostUsd } : {}),
+      ...(this.validationRejections > 0 ? { validationRejections: this.validationRejections } : {}),
     };
   }
 

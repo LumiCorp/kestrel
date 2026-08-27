@@ -381,8 +381,13 @@ export interface NormalizedOutput {
     maintenanceModelCalls?: number | undefined;
     durationMs: number;
     inputTokens?: number | undefined;
+    cachedInputTokens?: number | undefined;
+    cacheWriteInputTokens?: number | undefined;
     outputTokens?: number | undefined;
+    reasoningTokens?: number | undefined;
     totalTokens?: number | undefined;
+    pricedCostUsd?: number | undefined;
+    validationRejections?: number | undefined;
   };
   readBudgets?: {
     filesystemResume: FilesystemResumeReadBudgetDetail;

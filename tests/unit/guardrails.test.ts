@@ -175,3 +175,46 @@ test("Guardrails report finite remaining time from an external deadline", () => 
   assert.ok(remainingMs <= 60_000);
   assert.notEqual(remainingMs, Number.MAX_SAFE_INTEGER);
 });
+
+test("Guardrails preserve completed model usage, price, and validation rejection evidence", () => {
+  const guardrails = new Guardrails({
+    maxStepsPerRun: 10,
+    maxToolCallsPerRun: 10,
+    maxModelCallsPerRun: 10,
+    maxConcurrentToolJobsPerRun: 2,
+    maxConcurrentToolJobsGlobal: 4,
+    maxQueuedToolJobsPerRun: 10,
+    toolBatchCheckpointSize: 5,
+    toolCallRetryCount: 1,
+  });
+
+  guardrails.onModelCall();
+  guardrails.onModelUsage({
+    inputTokens: 120,
+    cachedInputTokens: 20,
+    cacheWriteInputTokens: 5,
+    outputTokens: 30,
+    reasoningTokens: 10,
+    totalTokens: 150,
+  });
+  guardrails.onModelCost(0.0042);
+  guardrails.onValidationRejection();
+
+  assert.deepEqual(
+    { ...guardrails.telemetry(), durationMs: 0 },
+    {
+      stepsExecuted: 0,
+      toolCalls: 0,
+      modelCalls: 1,
+      durationMs: 0,
+      inputTokens: 120,
+      cachedInputTokens: 20,
+      cacheWriteInputTokens: 5,
+      outputTokens: 30,
+      reasoningTokens: 10,
+      totalTokens: 150,
+      pricedCostUsd: 0.0042,
+      validationRejections: 1,
+    },
+  );
+});

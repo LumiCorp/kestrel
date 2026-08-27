@@ -571,6 +571,16 @@ export class StepRunner {
 
       const traceStatePatch = this.deps.stripDecisionTraceFromStatePatch(transition.statePatch);
       if (traceStatePatch.strippedDecisionTrace.length > 0) {
+        for (const item of traceStatePatch.strippedDecisionTrace) {
+          if (
+            typeof item === "object" &&
+            item !== null &&
+            !Array.isArray(item) &&
+            (item as Record<string, unknown>).eventType === "decision.rejected"
+          ) {
+            input.guardrails.onValidationRejection();
+          }
+        }
         await this.deps.appendDecisionTraceEvents(
           input.runId,
           input.state.session.sessionId,
