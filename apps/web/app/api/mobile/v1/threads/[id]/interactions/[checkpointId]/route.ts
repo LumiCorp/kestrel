@@ -78,17 +78,22 @@ export async function POST(
         pending.kind === "approval" &&
         pending.requestEnvelope.version ===
           "runner_hosted_tool_approval_interaction_v3";
-      const strictHostedApproval = hostedV2Approval || hostedV3Approval;
+      const hostedV4Approval =
+        pending.kind === "approval" &&
+        pending.requestEnvelope.version ===
+          "runner_hosted_tool_approval_interaction_v4";
+      const strictHostedApproval =
+        hostedV2Approval || hostedV3Approval || hostedV4Approval;
       if (pending.kind === "approval" && body.decision === undefined) {
         throw new Error("An approval interaction requires a decision.");
       }
       if (
         pending.kind === "approval" &&
-        (hostedV3Approval
+        (hostedV4Approval
           ? body.decision !== "decline" &&
             body.decision !== "approve_once" &&
             body.decision !== "remember_approval"
-          : hostedV2Approval
+          : hostedV2Approval || hostedV3Approval
             ? body.decision !== "decline" && body.decision !== "approve_once"
           : body.decision !== "approve" && body.decision !== "deny")
       ) {

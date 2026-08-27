@@ -349,6 +349,7 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
   (rememberedAgent.waitingFor as Record<string, unknown>).interaction =
     rememberedInteraction;
   assert.equal(validateRuntimeSessionState(rememberedRestart), undefined);
+  assert.equal(rememberedInteraction.metadata, undefined);
   assert.deepEqual(
     readWaitState(rememberedRestart)?.interaction,
     rememberedInteraction,

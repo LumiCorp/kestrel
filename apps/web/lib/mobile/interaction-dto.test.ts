@@ -130,7 +130,7 @@ test("hosted approval with missing current authority publishes only Decline", ()
   assert.deepEqual(dto.decisions, ["decline"]);
 });
 
-test("hosted V3 approval publishes the remembered decision vocabulary", () => {
+test("legacy hosted V3 approval omits Remember Approval", () => {
   const dto = mobileInteractionDto(
     {
       id: "runtime-interaction-1",
@@ -169,14 +169,10 @@ test("hosted V3 approval publishes the remembered decision vocabulary", () => {
   assert.equal(dto.kind, "approval");
   if (dto.kind !== "approval") assert.fail("expected approval DTO");
   assert.equal(dto.version, "runner_hosted_tool_approval_interaction_v3");
-  assert.deepEqual(dto.decisions, [
-    "decline",
-    "approve_once",
-    "remember_approval",
-  ]);
+  assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
 });
 
-test("hosted V3 Project Ask First publishes Remember Approval", () => {
+test("hosted V4 Project Ask First publishes Remember Approval", () => {
   const dto = mobileInteractionDto({
     id: "runtime-interaction-project-ask",
     requestId: "approval-project-ask",
@@ -185,7 +181,7 @@ test("hosted V3 Project Ask First publishes Remember Approval", () => {
     prompt: "Approve this exact tool?",
     status: "pending",
     requestEnvelope: {
-      version: "runner_hosted_tool_approval_interaction_v3",
+      version: "runner_hosted_tool_approval_interaction_v4",
       approval: {
         presentation: {
           policy: {

@@ -181,7 +181,7 @@ test("a strict hosted card with missing current authority exposes only Decline",
   assert.doesNotMatch(html, />Remember Approval</u);
 });
 
-test("eligible strict V3 cards advertise exactly the remembered decision set", () => {
+test("legacy V3 cards never advertise Remember Approval", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[
@@ -234,13 +234,13 @@ test("eligible strict V3 cards advertise exactly the remembered decision set", (
 
   assert.match(html, />Decline</u);
   assert.match(html, />Approve Once</u);
-  assert.match(html, />Remember Approval</u);
+  assert.doesNotMatch(html, />Remember Approval</u);
   assert.doesNotMatch(html, />Always Approve</u);
   assert.doesNotMatch(html, /href="\/organization\/environments/u);
   assert.match(html, /Environment Apps is configured to ask/u);
 });
 
-test("Project Ask First V3 cards expose Remember Approval", () => {
+test("Project Ask First V4 cards expose Remember Approval", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[{
@@ -248,7 +248,7 @@ test("Project Ask First V3 cards expose Remember Approval", () => {
         kind: "approval",
         eventType: "user.approval",
         requestEnvelope: {
-          version: "runner_hosted_tool_approval_interaction_v3",
+          version: "runner_hosted_tool_approval_interaction_v4",
           approval: {
             toolName: "internet.research",
             presentation: {

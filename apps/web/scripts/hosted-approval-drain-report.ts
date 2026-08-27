@@ -15,13 +15,13 @@ const rows = await knowledgeDb.execute(sql`
         AND coalesce(
           interaction.request_envelope->>'version',
           'v1'
-        ) <> 'runner_hosted_tool_approval_interaction_v3'
+        ) <> 'runner_hosted_tool_approval_interaction_v4'
     )::int AS "compatibilityDecisions",
     count(*) FILTER (
       WHERE coalesce(
           interaction.request_envelope->>'version',
           'v1'
-        ) <> 'runner_hosted_tool_approval_interaction_v3'
+        ) <> 'runner_hosted_tool_approval_interaction_v4'
         AND EXISTS (
           SELECT 1
           FROM thread_turn_events event
@@ -40,7 +40,7 @@ const rows = await knowledgeDb.execute(sql`
         AND coalesce(
           interaction.request_envelope->>'version',
           'v1'
-        ) <> 'runner_hosted_tool_approval_interaction_v3'
+        ) <> 'runner_hosted_tool_approval_interaction_v4'
     )::int AS "pendingOldInteractions",
     (
       SELECT count(*)::int
@@ -73,9 +73,9 @@ const rows = await knowledgeDb.execute(sql`
     ) AS "latestLegacyExpiry",
     count(*) FILTER (
       WHERE interaction.request_envelope->>'version' =
-        'runner_hosted_tool_approval_interaction_v3'
+        'runner_hosted_tool_approval_interaction_v4'
         AND interaction.created_at >= ${observedSince}
-    )::int AS "v3InteractionsObserved"
+    )::int AS "v4InteractionsObserved"
   FROM thread_interactions interaction
   WHERE interaction.kind = 'approval'
 `);
@@ -102,7 +102,7 @@ process.stdout.write(
   `${JSON.stringify(
     {
       ...report,
-      v3InteractionsObserved: readCount(row.v3InteractionsObserved),
+      v4InteractionsObserved: readCount(row.v4InteractionsObserved),
     },
     null,
     2,

@@ -11,7 +11,7 @@ type Runner = (command: string, args: string[], inherit?: boolean) => RunResult;
 export function parsePublishProductionImageArgs(args: string[]): {
   role: string;
   tag: string;
-  approvalProtocol: "v2" | "v3" | undefined;
+  approvalProtocol: "v2" | "v3" | "v4" | undefined;
 } {
   const normalized = operatorArgs(args);
   const role = argument(normalized, "--role");
@@ -20,9 +20,10 @@ export function parsePublishProductionImageArgs(args: string[]): {
   if (
     approvalProtocol !== undefined &&
     approvalProtocol !== "v2" &&
-    approvalProtocol !== "v3"
+    approvalProtocol !== "v3" &&
+    approvalProtocol !== "v4"
   ) {
-    throw new Error("--approval-protocol must be v2 or v3.");
+    throw new Error("--approval-protocol must be v2, v3, or v4.");
   }
   rejectUnknownArgs(normalized, ["--role", "--tag", "--approval-protocol"]);
   return { role, tag, approvalProtocol };
@@ -37,7 +38,7 @@ export function productionImageBuildCommands(input: {
   image: string;
   tag: string;
   smoke: string;
-  expectedApprovalProtocol?: "v2" | "v3" | undefined;
+  expectedApprovalProtocol?: "v2" | "v3" | "v4" | undefined;
 }) {
   return [
     {
@@ -87,7 +88,7 @@ export async function publishProductionImage(
     throw new Error(`${role} does not carry a hosted approval producer.`);
   }
   const expectedApprovalProtocol = protocolAware
-    ? (approvalProtocol ?? "v3")
+    ? (approvalProtocol ?? "v4")
     : undefined;
   assertProductionImageCanaryEnvironment(role, environment);
   const taggedImage = `${image.repository}:${tag}`;

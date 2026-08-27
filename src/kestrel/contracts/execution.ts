@@ -118,22 +118,30 @@ export interface RuntimeHostedToolApprovalInteractionV3
       };
     };
   };
-  metadata?:
-    | (Record<string, unknown> & {
-        hostedApprovalTiming?: {
-          version: "trusted_hosted_approval_timing_v1";
-          requestedAt: string;
-          expiresAt: string;
-        } | undefined;
-      })
-    | undefined;
+  metadata?: Record<string, unknown> | undefined;
   approval: RuntimeHostedToolApprovalInteractionV2["approval"];
+}
+
+export interface RuntimeHostedToolApprovalInteractionV4
+  extends Record<string, unknown> {
+  version: "runner_hosted_tool_approval_interaction_v4";
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: RuntimeHostedToolApprovalInteractionV3["inputSchema"];
+  metadata?: Record<string, unknown> | undefined;
+  approval: RuntimeHostedToolApprovalInteractionV2["approval"] & {
+    requestedAt: string;
+    expiresAt: string;
+  };
 }
 
 export type RuntimeInteractionRequest =
   | RuntimeInteractionRequestV1
   | RuntimeHostedToolApprovalInteractionV2
-  | RuntimeHostedToolApprovalInteractionV3;
+  | RuntimeHostedToolApprovalInteractionV3
+  | RuntimeHostedToolApprovalInteractionV4;
 
 export interface UserWaitForMatcher {
   kind: "user";

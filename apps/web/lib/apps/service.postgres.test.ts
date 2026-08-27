@@ -1635,7 +1635,7 @@ test(
       },
     });
     const rememberRequestEnvelope = {
-      version: "runner_hosted_tool_approval_interaction_v3",
+      version: "runner_hosted_tool_approval_interaction_v4",
       requestId: rememberRequestId,
       kind: "approval",
       eventType: "user.approval",
@@ -1651,13 +1651,6 @@ test(
           },
         },
       },
-      metadata: {
-        hostedApprovalTiming: {
-          version: "trusted_hosted_approval_timing_v1",
-          requestedAt: now.toISOString(),
-          expiresAt: rememberExpiresAt.toISOString(),
-        },
-      },
       approval: {
         preparedInvocationId: rememberPreparedId,
         toolName: rememberToolName,
@@ -1667,6 +1660,8 @@ test(
           actorId: userId,
           tenantId: organizationId,
         },
+        requestedAt: now.toISOString(),
+        expiresAt: rememberExpiresAt.toISOString(),
         presentation: {
           policy: {
             mode: "ask",
@@ -1842,7 +1837,9 @@ test(
         approvalAuthorityRevision: `sha256:${"8".repeat(64)}`,
       };
       const requestEnvelope = {
-        version: "runner_hosted_tool_approval_interaction_v3",
+        version: timing.legacy
+          ? "runner_hosted_tool_approval_interaction_v3"
+          : "runner_hosted_tool_approval_interaction_v4",
         requestId,
         kind: "approval",
         eventType: "user.approval",
@@ -1858,21 +1855,6 @@ test(
             },
           },
         },
-        ...(timing.legacy
-          ? {}
-          : {
-              metadata: {
-                hostedApprovalTiming: {
-                  version: "trusted_hosted_approval_timing_v1",
-                  requestedAt:
-                    timing.requestedAt ??
-                    new Date(Date.now() - 1_000).toISOString(),
-                  expiresAt:
-                    timing.expiresAt ??
-                    new Date(Date.now() + 60_000).toISOString(),
-                },
-              },
-            }),
         approval: {
           preparedInvocationId: `exec-remember-${label}-prepared-${suffix}`,
           toolName: "exec_command",
@@ -1882,6 +1864,16 @@ test(
             actorId: userId,
             tenantId: organizationId,
           },
+          ...(timing.legacy
+            ? {}
+            : {
+                requestedAt:
+                  timing.requestedAt ??
+                  new Date(Date.now() - 1_000).toISOString(),
+                expiresAt:
+                  timing.expiresAt ??
+                  new Date(Date.now() + 60_000).toISOString(),
+              }),
           presentation: {
             policy: {
               mode: "ask",
@@ -2065,8 +2057,8 @@ test(
       187,
       { legacy: true },
     );
-    const legacyExecRememberResolution =
-      await turnStore.resolveDurableRuntimeInteraction({
+    await assert.rejects(
+      () => turnStore.resolveDurableRuntimeInteraction({
         threadId,
         organizationId,
         userId,
@@ -2077,12 +2069,19 @@ test(
         decision: "remember_approval",
         messageId: `exec-legacy-remember-message-${suffix}`,
         source: "mobile",
-      });
-    assert.equal(legacyExecRememberResolution.shouldDispatch, false);
+      }),
+      (error: unknown) =>
+        (error as { code?: unknown }).code === "TURN_CONFLICT",
+    );
     const [legacyExecRememberState] = await sql<
-      Array<{ failureCode: string | null; rememberedCount: number }>
+      Array<{
+        status: string;
+        failureCode: string | null;
+        rememberedCount: number;
+      }>
     >`
       SELECT
+        interaction."status",
         interaction."response_failure_code" AS "failureCode",
         (SELECT count(*)::int FROM "remembered_tool_approvals"
           WHERE "source_interaction_id" = ${legacyExecRemember.interactionId})
@@ -2091,7 +2090,8 @@ test(
       WHERE interaction."id" = ${legacyExecRemember.interactionId}
     `;
     assert.deepEqual(legacyExecRememberState, {
-      failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+      status: "pending",
+      failureCode: null,
       rememberedCount: 0,
     });
     const execRemember = await createExecRememberInteraction("eligible", 190);
@@ -2213,6 +2213,7 @@ test(
     const createAdditionalRememberInteraction = async (input: {
       label: string;
       sequence: number;
+      legacy?: boolean;
     }) => {
       const approvalId = `remember-${input.label}-approval-${suffix}`;
       const preparedInvocationId = `remember-${input.label}-prepared-${suffix}`;
@@ -2268,20 +2269,30 @@ test(
           },
         },
       });
-      const requestEnvelope = {
-        ...rememberRequestEnvelope,
-        requestId,
-        metadata: {
-          hostedApprovalTiming: {
-            ...rememberRequestEnvelope.metadata.hostedApprovalTiming,
-            expiresAt: expiresAt.toISOString(),
-          },
-        },
-        approval: {
-          ...rememberRequestEnvelope.approval,
-          preparedInvocationId,
-        },
-      };
+      const {
+        requestedAt: _requestedAt,
+        expiresAt: _expiresAt,
+        ...legacyApproval
+      } = rememberRequestEnvelope.approval;
+      const requestEnvelope = input.legacy
+        ? {
+            ...rememberRequestEnvelope,
+            version: "runner_hosted_tool_approval_interaction_v3",
+            requestId,
+            approval: {
+              ...legacyApproval,
+              preparedInvocationId,
+            },
+          }
+        : {
+            ...rememberRequestEnvelope,
+            requestId,
+            approval: {
+              ...rememberRequestEnvelope.approval,
+              preparedInvocationId,
+              expiresAt: expiresAt.toISOString(),
+            },
+          };
       await sql.begin(async (transaction) => {
         await transaction`
             INSERT INTO "thread_turns" (
@@ -2336,6 +2347,7 @@ test(
     const mixedClient = await createAdditionalRememberInteraction({
       label: "mixed-client",
       sequence: 100,
+      legacy: true,
     });
     const mixedClientResolution =
       await turnStore.resolveDurableRuntimeInteraction({

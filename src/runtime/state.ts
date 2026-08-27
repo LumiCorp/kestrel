@@ -5,12 +5,14 @@ import type {
 import {
   parseRunnerHostedToolApprovalInteractionV2,
   parseRunnerHostedToolApprovalInteractionV3,
+  parseRunnerHostedToolApprovalInteractionV4,
 } from "@kestrel-agents/protocol";
 import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
 import { parseDurablePreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
 import {
   projectHostedToolApprovalInteractionV2,
   projectHostedToolApprovalInteractionV3,
+  projectHostedToolApprovalInteractionV4,
 } from "./assistantResponseContract.js";
 import {
   normalizeVisibleTodoState,
@@ -407,7 +409,8 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
     if (
       hasHostedApprovalV2Evidence &&
       interaction?.version !== "runner_hosted_tool_approval_interaction_v2" &&
-      interaction?.version !== "runner_hosted_tool_approval_interaction_v3"
+      interaction?.version !== "runner_hosted_tool_approval_interaction_v3" &&
+      interaction?.version !== "runner_hosted_tool_approval_interaction_v4"
     ) {
       return {
         code: "RUNTIME_STATE_INVALID",
@@ -419,7 +422,8 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
     }
     if (
       interaction?.version === "runner_hosted_tool_approval_interaction_v2" ||
-      interaction?.version === "runner_hosted_tool_approval_interaction_v3"
+      interaction?.version === "runner_hosted_tool_approval_interaction_v3" ||
+      interaction?.version === "runner_hosted_tool_approval_interaction_v4"
     ) {
       try {
         if (waitingFor.kind !== "approval") {
@@ -428,7 +432,12 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
           );
         }
         const parsedInteraction = interaction.version ===
-          "runner_hosted_tool_approval_interaction_v3"
+          "runner_hosted_tool_approval_interaction_v4"
+          ? parseRunnerHostedToolApprovalInteractionV4(
+              interaction,
+              waitingFor.eventType,
+            )
+          : interaction.version === "runner_hosted_tool_approval_interaction_v3"
           ? parseRunnerHostedToolApprovalInteractionV3(
               interaction,
               waitingFor.eventType,
@@ -451,7 +460,12 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
           );
         }
         const projectedInteraction = interaction.version ===
-          "runner_hosted_tool_approval_interaction_v3"
+          "runner_hosted_tool_approval_interaction_v4"
+          ? projectHostedToolApprovalInteractionV4({
+              preparedToolCall: prepared,
+              requestId: parsedInteraction.requestId,
+            })
+          : interaction.version === "runner_hosted_tool_approval_interaction_v3"
           ? projectHostedToolApprovalInteractionV3({
               preparedToolCall: prepared,
               requestId: parsedInteraction.requestId,
@@ -636,6 +650,12 @@ export function readWaitState(state: Record<string, unknown>): RuntimeWaitState 
                     waitingFor.interaction,
                     waitingFor.eventType,
                   )
+                : waitingFor.interaction.version ===
+                    "runner_hosted_tool_approval_interaction_v4"
+                  ? parseRunnerHostedToolApprovalInteractionV4(
+                      waitingFor.interaction,
+                      waitingFor.eventType,
+                    )
               : waitingFor.interaction,
         }
       : {}),

@@ -12,7 +12,7 @@ const proof = {
     turnId: "turn-1",
     status: "resolved",
     resolvedByUserId: "user-1",
-    version: "runner_hosted_tool_approval_interaction_v3",
+    version: "runner_hosted_tool_approval_interaction_v4",
     decision: "remember_approval",
     effectState: "committed",
     failureCode: null,

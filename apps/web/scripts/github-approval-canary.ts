@@ -35,17 +35,17 @@ const threadId = required("KESTREL_ONE_CANARY_THREAD_ID");
 const model = process.env.KESTREL_ONE_CANARY_MODEL?.trim();
 const protocol = requiredChoice("KESTREL_ONE_CANARY_APPROVAL_PROTOCOL", [
   "legacy_v1",
-  "durable_v3",
+  "durable_v4",
 ] as const);
 const expectation =
-  protocol === "durable_v3"
+  protocol === "durable_v4"
     ? requiredChoice("KESTREL_ONE_CANARY_EXPECT", [
         "approval",
         "remembered_auto",
       ] as const)
     : "approval";
 const decision =
-  protocol === "durable_v3" && expectation === "approval"
+  protocol === "durable_v4" && expectation === "approval"
     ? requiredChoice("KESTREL_ONE_CANARY_DECISION", [
         "decline",
         "approve_once",
@@ -57,7 +57,7 @@ const decision =
 const nonce = crypto.randomUUID();
 const title = `Kestrel approval canary ${nonce}`;
 const body =
-  protocol === "durable_v3" && decision !== "decline"
+  protocol === "durable_v4" && decision !== "decline"
     ? `Kestrel hosted approval canary ${nonce}. This issue is intentional production proof.`
     : `Kestrel hosted approval canary ${nonce}. This request must be denied and must not create an issue.`;
 

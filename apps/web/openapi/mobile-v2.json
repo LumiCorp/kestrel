@@ -2115,7 +2115,8 @@
             "enum": [
               "legacy",
               "runner_hosted_tool_approval_interaction_v2",
-              "runner_hosted_tool_approval_interaction_v3"
+              "runner_hosted_tool_approval_interaction_v3",
+              "runner_hosted_tool_approval_interaction_v4"
             ]
           },
           "decisions": {

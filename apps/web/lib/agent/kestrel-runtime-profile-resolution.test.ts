@@ -80,7 +80,7 @@ test(
             profileId: `kestrel:workspace_hosted:${"a".repeat(64)}`,
             fingerprint: "a".repeat(64),
             policy: { id: "kestrel", version: 3 },
-            environmentPreset: { id: "workspace_hosted", version: 3 },
+            environmentPreset: { id: "workspace_hosted", version: 4 },
             resolvedProfile: {
               id: `kestrel:workspace_hosted:${"a".repeat(64)}`,
               label: "Kestrel One",
@@ -219,14 +219,14 @@ test(
   },
 );
 
-test("hosted exact-tool preflight rejects a V2 profile before model execution", () => {
+test("hosted exact-tool preflight rejects an unavailable required tool before model execution", () => {
   assert.throws(
     () => assertHostedWorkspaceExactToolPreflight({
       version: 1,
       profileId: `kestrel:workspace_hosted:${"f".repeat(64)}`,
       fingerprint: "f".repeat(64),
       policy: { id: "kestrel", version: 4 },
-      environmentPreset: { id: "workspace_hosted", version: 3 },
+      environmentPreset: { id: "workspace_hosted", version: 4 },
       exactToolDecisions: {
         exec_command: {
           ...ASK_EXEC_COMMAND_DECISION,
@@ -264,7 +264,7 @@ test("ordinary hosted turns remain rolling-compatible without exact shell prefli
           profileId: `kestrel:workspace_hosted:${"e".repeat(64)}`,
           fingerprint: "e".repeat(64),
           policy: { id: "kestrel", version: 3 },
-          environmentPreset: { id: "workspace_hosted", version: 3 },
+          environmentPreset: { id: "workspace_hosted", version: 4 },
           resolvedProfile: {
             id: `kestrel:workspace_hosted:${"e".repeat(64)}`,
             label: "Kestrel One",
@@ -297,7 +297,7 @@ test("ordinary hosted turns remain rolling-compatible without exact shell prefli
   assert.equal(calls[0]?.exactToolNames, undefined);
 });
 
-test("new Web rejects an old version-2 ci_bot runner during rollout", async () => {
+test("new Web rejects the prior V3 hosted runner before model execution", async () => {
   await assert.rejects(
     () => resolveHostedKestrelExecutionProfile({
       client: {
@@ -306,14 +306,14 @@ test("new Web rejects an old version-2 ci_bot runner during rollout", async () =
             version: 1,
             profileId: `kestrel:workspace_hosted:${"b".repeat(64)}`,
             fingerprint: "b".repeat(64),
-            policy: { id: "kestrel", version: 3 },
-            environmentPreset: { id: "workspace_hosted", version: 2 },
+            policy: { id: "kestrel", version: 4 },
+            environmentPreset: { id: "workspace_hosted", version: 3 },
             resolvedProfile: {
               id: `kestrel:workspace_hosted:${"b".repeat(64)}`,
               label: "Kestrel One",
               agent: "reference-react",
               sessionPrefix: "kestrel",
-              approvalPolicyPackId: "ci_bot",
+              approvalPolicyPackId: "hosted_workspace",
               toolAllowlist: ["exec_command"],
             },
           } satisfies ExecutionProfileResolvedEventPayload;
@@ -350,7 +350,7 @@ test("the command canary requests and validates exact shell availability without
           profileId: `kestrel:workspace_hosted:${"d".repeat(64)}`,
           fingerprint: "d".repeat(64),
           policy: { id: "kestrel", version: 4 },
-          environmentPreset: { id: "workspace_hosted", version: 3 },
+          environmentPreset: { id: "workspace_hosted", version: 4 },
           exactToolDecisions: { exec_command: ASK_EXEC_COMMAND_DECISION },
           resolvedProfile: {
             id: `kestrel:workspace_hosted:${"d".repeat(64)}`,
@@ -489,7 +489,7 @@ test("hosted Desktop and web routes carry the exact approved economics profile",
           profileId: `kestrel:workspace_hosted:${"c".repeat(64)}`,
           fingerprint: "c".repeat(64),
           policy: { id: "kestrel", version: 3 },
-          environmentPreset: { id: "workspace_hosted", version: 3 },
+          environmentPreset: { id: "workspace_hosted", version: 4 },
           resolvedProfile: {
             id: `kestrel:workspace_hosted:${"c".repeat(64)}`,
             label: "Kestrel One",

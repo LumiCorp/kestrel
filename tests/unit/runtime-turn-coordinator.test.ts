@@ -45,11 +45,15 @@ test("hosted approval protocol activation is explicit and fail-closed", () => {
     resolveHostedApprovalProtocolVersion({ KESTREL_HOSTED_APPROVAL_PROTOCOL: "v3" }),
     "v3",
   );
+  assert.equal(
+    resolveHostedApprovalProtocolVersion({ KESTREL_HOSTED_APPROVAL_PROTOCOL: "v4" }),
+    "v4",
+  );
   assert.throws(
     () => resolveHostedApprovalProtocolVersion({
       KESTREL_HOSTED_APPROVAL_PROTOCOL: "automatic",
     }),
-    /must be 'v2' or 'v3'/u,
+    /must be 'v2', 'v3', or 'v4'/u,
   );
 });
 

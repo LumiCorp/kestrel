@@ -4,6 +4,7 @@ import {
   parseRunnerExternalApprovalBinding,
   parseRunnerHostedToolApprovalInteractionV2,
   parseRunnerHostedToolApprovalInteractionV3,
+  parseRunnerHostedToolApprovalInteractionV4,
 } from "@kestrel-agents/protocol";
 import { and, eq, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -27,12 +28,17 @@ export async function readHostedApprovalProof(
   if (!interaction) throw new Error("HOSTED_APPROVAL_INTERACTION_NOT_FOUND");
   const requestVersion = readString(interaction.requestEnvelope.version);
   const request =
-    requestVersion === "runner_hosted_tool_approval_interaction_v3"
-      ? parseRunnerHostedToolApprovalInteractionV3(
+    requestVersion === "runner_hosted_tool_approval_interaction_v4"
+      ? parseRunnerHostedToolApprovalInteractionV4(
           interaction.requestEnvelope,
           interaction.eventType,
         )
-      : parseRunnerHostedToolApprovalInteractionV2(
+      : requestVersion === "runner_hosted_tool_approval_interaction_v3"
+        ? parseRunnerHostedToolApprovalInteractionV3(
+          interaction.requestEnvelope,
+          interaction.eventType,
+        )
+        : parseRunnerHostedToolApprovalInteractionV2(
           interaction.requestEnvelope,
           interaction.eventType,
         );
@@ -320,7 +326,7 @@ export function compareHostedApprovalProof(input: {
     mismatches,
     "interaction.version",
     interaction.version,
-    "runner_hosted_tool_approval_interaction_v3",
+    "runner_hosted_tool_approval_interaction_v4",
   );
   check(mismatches, "interaction.status", interaction.status, "resolved");
   check(
@@ -675,7 +681,7 @@ export function compareHostedApprovalProof(input: {
       failureCode: interaction.failureCode,
     },
     compatibilityPath:
-      interaction.version === "runner_hosted_tool_approval_interaction_v3" &&
+      interaction.version === "runner_hosted_tool_approval_interaction_v4" &&
       providerApproval?.lifecycleVersion === "interaction_v2"
         ? null
         : `${interaction.version}:${providerApproval?.lifecycleVersion ?? "missing"}`,

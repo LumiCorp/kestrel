@@ -1,7 +1,7 @@
 # Hosted Environment runtime rollout
 
 When the image changes hosted approval protocol production, also follow the
-[hosted approval V3 guided rollout](../../../docs/operations/hosted-approval-v3-rollout-runbook.md).
+[hosted approval V4 guided rollout](../../../docs/operations/hosted-approval-v3-rollout-runbook.md).
 Its compatibility and activation images are separate qualified releases.
 
 Workspace Runtime and Environment Router are separate GHCR images operated as

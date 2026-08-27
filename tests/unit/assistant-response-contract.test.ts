@@ -195,6 +195,25 @@ test("new hosted approval card reloads its action from the persisted prepared ca
     compatibilityResult.output.waitFor?.interaction?.version,
     "runner_hosted_tool_approval_interaction_v2",
   );
+  const legacyV3Result = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: restartedPrepared,
+        },
+      },
+    }),
+    assistantText: "stale",
+    hostedApprovalProtocolVersion: "v3",
+  });
+  assert.equal(
+    legacyV3Result.output.waitFor?.interaction?.version,
+    "runner_hosted_tool_approval_interaction_v3",
+  );
+  assert.equal(legacyV3Result.output.waitFor?.interaction?.metadata, undefined);
   const result = finalizeRuntimeAssistantResponse({
     output: output("WAITING", {
       waitFor: {
@@ -209,10 +228,10 @@ test("new hosted approval card reloads its action from the persisted prepared ca
       },
     }),
     assistantText: "stale",
-    hostedApprovalProtocolVersion: "v3",
+    hostedApprovalProtocolVersion: "v4",
   });
   const interaction = result.output.waitFor?.interaction;
-  assert.equal(interaction?.version, "runner_hosted_tool_approval_interaction_v3");
+  assert.equal(interaction?.version, "runner_hosted_tool_approval_interaction_v4");
   assert.equal(
     interaction?.prompt,
     "Approve internet.search? Choose 'decline', 'approve_once', or 'remember_approval'.",
@@ -227,12 +246,12 @@ test("new hosted approval card reloads its action from the persisted prepared ca
   );
   assert.equal(interaction?.approval?.toolName, "internet.search");
   assert.equal(
-    interaction?.metadata?.hostedApprovalTiming?.requestedAt,
-    restartedPrepared.approval.externalApprovalBinding.requestedAt,
+    interaction?.approval?.requestedAt,
+    prepared.approval?.externalApprovalBinding?.requestedAt,
   );
   assert.equal(
-    interaction?.metadata?.hostedApprovalTiming?.expiresAt,
-    restartedPrepared.approval.externalApprovalBinding.expiresAt,
+    interaction?.approval?.expiresAt,
+    prepared.approval?.externalApprovalBinding?.expiresAt,
   );
   assert.deepEqual(
     interaction?.approval?.stableToolIdentity,
@@ -265,11 +284,11 @@ test("new hosted approval card reloads its action from the persisted prepared ca
       },
     }),
     assistantText: "stale",
-    hostedApprovalProtocolVersion: "v3",
+    hostedApprovalProtocolVersion: "v4",
   });
   assert.equal(
     projectAskResult.output.waitFor?.interaction?.version,
-    "runner_hosted_tool_approval_interaction_v3",
+    "runner_hosted_tool_approval_interaction_v4",
   );
 
   const stricterPrepared = structuredClone(prepared);
@@ -286,7 +305,7 @@ test("new hosted approval card reloads its action from the persisted prepared ca
       },
     }),
     assistantText: "stale",
-    hostedApprovalProtocolVersion: "v3",
+    hostedApprovalProtocolVersion: "v4",
   });
   const stricterInteraction = stricterResult.output.waitFor?.interaction;
   assert.equal(

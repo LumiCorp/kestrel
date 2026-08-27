@@ -13,6 +13,7 @@ import {
   parseRememberedToolApprovalV1,
   parseRunnerHostedToolApprovalInteractionV2,
   parseRunnerHostedToolApprovalInteractionV3,
+  parseRunnerHostedToolApprovalInteractionV4,
   parseRunnerStructuredReviewInteractionV1,
   resolveToolApprovalDispositionV1,
   serializeCanonicalApprovalPayload,
@@ -475,9 +476,9 @@ export async function insertRememberedToolApprovalInTransaction(
       "Remembered approval source interaction is not the exact remember decision by this actor.",
     );
   }
-  let sourceRequest: ReturnType<typeof parseRunnerHostedToolApprovalInteractionV3>;
+  let sourceRequest: ReturnType<typeof parseRunnerHostedToolApprovalInteractionV4>;
   try {
-    sourceRequest = parseRunnerHostedToolApprovalInteractionV3(
+    sourceRequest = parseRunnerHostedToolApprovalInteractionV4(
       source.requestEnvelope,
     );
   } catch {
@@ -487,10 +488,8 @@ export async function insertRememberedToolApprovalInTransaction(
     );
   }
   const sourceToolIdentity = sourceRequest.approval.stableToolIdentity;
-  const sourceTiming = sourceRequest.metadata?.hostedApprovalTiming;
   if (
-    sourceTiming === undefined ||
-    Date.parse(sourceTiming.expiresAt) <=
+    Date.parse(sourceRequest.approval.expiresAt) <=
     Date.parse(approval.createdAt)
   ) {
     throw new DurableTurnError(
@@ -2131,7 +2130,9 @@ export async function resolveDurableRuntimeInteraction(input: {
         : undefined);
     const approved =
       hostedApproval?.version ===
-      "runner_hosted_tool_approval_interaction_v3"
+        "runner_hosted_tool_approval_interaction_v3" ||
+      hostedApproval?.version ===
+        "runner_hosted_tool_approval_interaction_v4"
         ? undefined
         : input.approved;
     if (
@@ -2193,7 +2194,7 @@ export async function resolveDurableRuntimeInteraction(input: {
           (decision === "decline" ||
             decision === "approve_once" ||
             (hostedApproval.version ===
-              "runner_hosted_tool_approval_interaction_v3" &&
+              "runner_hosted_tool_approval_interaction_v4" &&
               decision === "remember_approval"))
         : decision === undefined && typeof approved === "boolean";
       if (!validDecision) {
@@ -2312,7 +2313,7 @@ export async function resolveDurableRuntimeInteraction(input: {
         if (
           decision === "remember_approval" &&
           (hostedApproval?.version !==
-            "runner_hosted_tool_approval_interaction_v3" ||
+            "runner_hosted_tool_approval_interaction_v4" ||
             !accessibleThread.projectId ||
             (presentationPolicy?.reasonCode !== "environment_policy" &&
               presentationPolicy?.reasonCode !== "project_restriction"))
@@ -2324,11 +2325,8 @@ export async function resolveDurableRuntimeInteraction(input: {
         if (
           decision === "remember_approval" &&
           hostedApproval?.version ===
-            "runner_hosted_tool_approval_interaction_v3" &&
-          (hostedApproval.metadata?.hostedApprovalTiming === undefined ||
-            Date.parse(
-              hostedApproval.metadata.hostedApprovalTiming.expiresAt,
-            ) <= now.getTime())
+            "runner_hosted_tool_approval_interaction_v4" &&
+          Date.parse(hostedApproval.approval.expiresAt) <= now.getTime()
         ) {
           throw new AppOperationApprovalError(
             "APP_OPERATION_APPROVAL_NOT_PENDING",
@@ -3343,6 +3341,7 @@ function parseHostedPreparedApprovalInteraction(
 ):
   | ReturnType<typeof parseRunnerHostedToolApprovalInteractionV2>
   | ReturnType<typeof parseRunnerHostedToolApprovalInteractionV3>
+  | ReturnType<typeof parseRunnerHostedToolApprovalInteractionV4>
   | null {
   if (interaction.kind !== "approval") return null;
   if (readPlainRecord(interaction.requestEnvelope)?.version === "v1") {
@@ -3350,12 +3349,17 @@ function parseHostedPreparedApprovalInteraction(
   }
   try {
     const version = readPlainRecord(interaction.requestEnvelope)?.version;
-    const parsed = version === "runner_hosted_tool_approval_interaction_v3"
-      ? parseRunnerHostedToolApprovalInteractionV3(
+    const parsed = version === "runner_hosted_tool_approval_interaction_v4"
+      ? parseRunnerHostedToolApprovalInteractionV4(
           interaction.requestEnvelope,
           interaction.eventType,
         )
-      : parseRunnerHostedToolApprovalInteractionV2(
+      : version === "runner_hosted_tool_approval_interaction_v3"
+        ? parseRunnerHostedToolApprovalInteractionV3(
+          interaction.requestEnvelope,
+          interaction.eventType,
+        )
+        : parseRunnerHostedToolApprovalInteractionV2(
           interaction.requestEnvelope,
           interaction.eventType,
         );

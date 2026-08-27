@@ -20,6 +20,6 @@ RUN pnpm run web:prepare
 
 ENV NODE_ENV=production
 ENV KESTREL_BUILD_ID=$KESTREL_BUILD_ID
-ENV KESTREL_HOSTED_APPROVAL_PROTOCOL=v3
+ENV KESTREL_HOSTED_APPROVAL_PROTOCOL=v4
 
 CMD ["pnpm", "--filter", "@kestrel/kestrel-one", "worker:turns"]

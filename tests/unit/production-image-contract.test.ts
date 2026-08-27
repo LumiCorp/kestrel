@@ -78,6 +78,17 @@ test("hosted approval image publication smokes the explicit release protocol", (
     ]),
     { role: "turn-worker", tag, approvalProtocol: "v2" },
   );
+  assert.deepEqual(
+    parsePublishProductionImageArgs([
+      "--role",
+      "workspace-runtime",
+      "--tag",
+      tag,
+      "--approval-protocol",
+      "v4",
+    ]),
+    { role: "workspace-runtime", tag, approvalProtocol: "v4" },
+  );
   assert.throws(
     () =>
       parsePublishProductionImageArgs([
@@ -88,7 +99,7 @@ test("hosted approval image publication smokes the explicit release protocol", (
         "--approval-protocol",
         "automatic",
       ]),
-    /must be v2 or v3/u,
+    /must be v2, v3, or v4/u,
   );
   const commands = productionImageBuildCommands({
     dockerfile: "Dockerfile",

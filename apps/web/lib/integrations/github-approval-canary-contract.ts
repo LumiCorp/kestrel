@@ -1,8 +1,8 @@
 import type { UIMessage } from "ai";
 import {
-  parseRunnerHostedToolApprovalInteractionV3,
+  parseRunnerHostedToolApprovalInteractionV4,
   type HostedToolApprovalDecision,
-  type RunnerHostedToolApprovalInteractionV3,
+  type RunnerHostedToolApprovalInteractionV4,
 } from "@kestrel-agents/protocol";
 import type { ThreadInteractionView } from "@/lib/turns/client-contract";
 
@@ -26,8 +26,8 @@ export type GithubDurableApprovalCanaryRequest = {
   requestId: string;
   turnId: string;
   preparedInvocationId: string;
-  stableToolIdentity: RunnerHostedToolApprovalInteractionV3["approval"]["stableToolIdentity"];
-  requestingActor: RunnerHostedToolApprovalInteractionV3["approval"]["requestingActor"];
+  stableToolIdentity: RunnerHostedToolApprovalInteractionV4["approval"]["stableToolIdentity"];
+  requestingActor: RunnerHostedToolApprovalInteractionV4["approval"]["requestingActor"];
 };
 
 const GITHUB_ISSUE_TOOL = "kestrel_one.github_issue_create";
@@ -131,9 +131,9 @@ export function findGithubDurableApprovalRequest(input: {
     ) {
       continue;
     }
-    let request: RunnerHostedToolApprovalInteractionV3;
+    let request: RunnerHostedToolApprovalInteractionV4;
     try {
-      request = parseRunnerHostedToolApprovalInteractionV3(
+      request = parseRunnerHostedToolApprovalInteractionV4(
         interaction.requestEnvelope,
         interaction.eventType,
       );

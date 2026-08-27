@@ -1,4 +1,4 @@
-import { parseRunnerHostedToolApprovalInteractionV3 } from "@kestrel-agents/protocol";
+import { parseRunnerHostedToolApprovalInteractionV4 } from "@kestrel-agents/protocol";
 import { hasCompletedExecCommandCanaryProof } from "../lib/environments/workspace-command-canary";
 import type { ThreadInteractionView } from "../lib/turns/client-contract";
 import {
@@ -470,7 +470,7 @@ function findExactExecCommandApproval(input: {
     }
     let request;
     try {
-      request = parseRunnerHostedToolApprovalInteractionV3(
+      request = parseRunnerHostedToolApprovalInteractionV4(
         interaction.requestEnvelope,
         interaction.eventType,
       );

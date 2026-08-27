@@ -198,8 +198,11 @@ export function mobileInteractionDto(
       : {};
   if (kind === "sampling" || kind === "mcp_sampling" || kind === "approval") {
     const version = interaction.requestEnvelope.version ===
-      "runner_hosted_tool_approval_interaction_v3"
-      ? ("runner_hosted_tool_approval_interaction_v3" as const)
+      "runner_hosted_tool_approval_interaction_v4"
+      ? ("runner_hosted_tool_approval_interaction_v4" as const)
+      : interaction.requestEnvelope.version ===
+          "runner_hosted_tool_approval_interaction_v3"
+        ? ("runner_hosted_tool_approval_interaction_v3" as const)
       : interaction.requestEnvelope.version ===
           "runner_hosted_tool_approval_interaction_v2"
         ? ("runner_hosted_tool_approval_interaction_v2" as const)
@@ -214,7 +217,7 @@ export function mobileInteractionDto(
       interaction.approvalPolicy.subjectApprovalMode !== "deny" &&
       interaction.approvalPolicy.approvalResourceAvailable !== false;
     const rememberEligible =
-      version === "runner_hosted_tool_approval_interaction_v3" &&
+      version === "runner_hosted_tool_approval_interaction_v4" &&
       policy?.rememberApprovalEligible === true &&
       interaction.approvalPolicy?.rememberApprovalEligible === true &&
       currentApprovalActionable;
@@ -228,7 +231,8 @@ export function mobileInteractionDto(
           : rememberEligible
           ? (["decline", "approve_once", "remember_approval"] as const)
           : version === "runner_hosted_tool_approval_interaction_v2" ||
-              version === "runner_hosted_tool_approval_interaction_v3"
+              version === "runner_hosted_tool_approval_interaction_v3" ||
+              version === "runner_hosted_tool_approval_interaction_v4"
             ? currentApprovalActionable
               ? (["decline", "approve_once"] as const)
               : (["decline"] as const)

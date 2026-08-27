@@ -1024,9 +1024,9 @@ test("canonical execution profile contracts validate exact-tool preflight fields
   );
 });
 
-test("an older Web event parser accepts the V3 hosted preset during rollback", () => {
+test("an older Web event parser can transport the V4 hosted preset for fail-closed negotiation", () => {
   const event = parseRunnerEventV2({
-    id: "event:workspace-hosted-v3",
+    id: "event:workspace-hosted-v4",
     type: "execution-profile.resolved",
     ts: "2026-08-26T12:00:00.000Z",
     payload: {

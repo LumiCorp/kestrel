@@ -1,5 +1,5 @@
 ---
-id: hosted-approval-v3-rollout
+id: hosted-approval-v4-rollout
 domain: operations
 status: active
 owner: kestrel-one
@@ -11,11 +11,11 @@ depends_on:
   - ../../deploy/fly/kestrel-one-turn-worker/ROLLOUT.md
 ---
 
-# Hosted approval V3 guided rollout
+# Hosted approval V4 guided rollout
 
 This is the operator procedure for
 [Issue 05](../planning/hosted-approval-simplification/issues/05-contract-legacy-approval-paths.md).
-It deploys compatible readers first, proves the inactive V3 path, activates V3
+It deploys compatible readers first, proves the inactive V4 path, activates V4
 producers on exact targets, observes legacy drain, and only then permits a
 separate cleanup release.
 
@@ -29,15 +29,16 @@ provider credentials into the evidence record.
 Use two qualified commits and never collapse them into one production
 promotion:
 
-1. **Compatibility commit:** migrations, dual V2/V3 readers, strict V3
+1. **Compatibility commit:** migrations, V2/V3/V4 readers, strict V4
    decisions, proof tooling, telemetry report, and Runtime defaulting to V2.
 2. **Activation commit:** the same qualified tree plus
-   `KESTREL_HOSTED_APPROVAL_PROTOCOL=v3` in the Workspace Runtime and
+   `KESTREL_HOSTED_APPROVAL_PROTOCOL=v4` in the Workspace Runtime and
    turn-worker images.
 
 The V2 default is the inactive boundary. An invalid configured value fails
 startup. Existing V2 interactions remain V2; existing V3 interactions remain
-V3. Neither version may be reconstructed or silently converted.
+V3; new Remember-capable interactions are V4. No version may be reconstructed
+or silently converted.
 
 ## Target checklist
 
@@ -48,10 +49,10 @@ Complete current provider state before changing anything.
 | PostgreSQL                     | Record migration head                       | Apply additive migrations through the native `one` build                 | Migration and build succeeded                               | Pending    |
 | Vercel `one`                   | Record deployment ID and commit             | Promote compatibility commit, then activation commit                     | Exact deployment, health, approval API                      | Pending    |
 | Vercel `docs`                  | Record deployment ID and commit             | Native deployment collateral for both promotions                         | Exact build and production URL                              | Pending    |
-| Workspace Runtime              | Inventory every Environment image           | Publish compatibility pair, then V3 pair                                 | Local image E2E, disposable canary, live canary Environment | Pending    |
+| Workspace Runtime              | Inventory every Environment image           | Publish compatibility pair, then V4 pair                                 | Local image E2E, disposable canary, live canary Environment | Pending    |
 | Environment Router             | Inventory every Environment image           | Publish with Workspace Runtime under the same tag                        | Pair smoke, operation, Workspace and Preview canaries       | Pending    |
-| turn-worker                    | Inventory every started and stopped Machine | Publish compatibility image, then V3 image; update one Machine at a time | Worker check, durable turn, hosted approval proof           | Pending    |
-| Mobile API                     | Part of `one`; no separate binary here      | Keep V2/V3 and boolean drain readers during rollout                      | Mobile contract tests and one V3 decision                   | Pending    |
+| turn-worker                    | Inventory every started and stopped Machine | Publish compatibility image, then V4 image; update one Machine at a time | Worker check, durable turn, hosted approval proof           | Pending    |
+| Mobile API                     | Part of `one`; no separate binary here      | Keep V2/V3/V4 and boolean drain readers during rollout                   | Mobile contract tests and one V4 decision                   | Pending    |
 | control-worker                 | Record health only                          | No image change                                                          | Healthy before Environment operations                       | Unaffected |
 | preview-edge                   | Record current image                        | No change                                                                | None beyond production health                               | Unaffected |
 | runpod-worker / managed RunPod | Record current state                        | No change and no spend                                                   | None                                                        | Unaffected |
@@ -99,7 +100,7 @@ docker buildx build --platform linux/amd64 --load \
   --tag local/kestrel-workspace-runtime:<candidate-tag> \
   --build-arg KESTREL_BUILD_ID=<candidate-tag> .
 bash apps/workspace-runtime/scripts/image-smoke.sh \
-  local/kestrel-workspace-runtime:<candidate-tag> <v2-or-v3>
+  local/kestrel-workspace-runtime:<candidate-tag> <v2-or-v4>
 
 docker buildx build --platform linux/amd64 --load \
   --file apps/environment-router/Dockerfile \
@@ -113,11 +114,11 @@ docker buildx build --platform linux/amd64 --load \
   --tag local/kestrel-one-turn-worker:<candidate-tag> \
   --build-arg KESTREL_BUILD_ID=<candidate-tag> .
 bash deploy/fly/kestrel-one-turn-worker/smoke.sh \
-  local/kestrel-one-turn-worker:<candidate-tag> <v2-or-v3>
+  local/kestrel-one-turn-worker:<candidate-tag> <v2-or-v4>
 ```
 
 The compatibility images must report V2 as their hosted approval producer.
-The activation Workspace Runtime and turn-worker images must report V3. For
+The activation Workspace Runtime and turn-worker images must report V4. For
 each candidate, run a real approved model through the exact prebuilt Runtime
 pair and retain the participating image IDs:
 
@@ -146,7 +147,7 @@ Promote only the compatibility commit through the protected `main` to
 
 1. Wait for native `one` and `docs` deployments.
 2. Require the `one` migration/build and both production deployments to pass.
-3. Confirm Web and Mobile read V2 and V3 while old boolean submissions remain
+3. Confirm Web and Mobile read V2, V3, and V4 while old boolean submissions remain
    accepted.
 4. Confirm new hosted interactions are still emitted as V2.
 5. Run a denial-only compatibility canary.
@@ -204,19 +205,19 @@ individually.
 record, durable turn, canary operation, Workspace/Preview results, activation
 record, and per-Environment operations.
 
-## Stage 3 — inactive V3 acceptance
+## Stage 3 — inactive V4 acceptance
 
 Promote the activation commit through the protected `main` to `production`
 path and wait for the `one` and `docs` deployments. Publish one immutable set
 of activation images:
 
 ```bash
-pnpm production:image:publish --role workspace-runtime --tag <activation-tag> --approval-protocol v3
+pnpm production:image:publish --role workspace-runtime --tag <activation-tag> --approval-protocol v4
 pnpm production:image:publish --role environment-router --tag <activation-tag>
-pnpm production:image:publish --role turn-worker --tag <activation-tag> --approval-protocol v3
+pnpm production:image:publish --role turn-worker --tag <activation-tag> --approval-protocol v4
 ```
 
-Before emitting V3, qualify the activation runtime pair with its disposable
+Before emitting V4, qualify the activation runtime pair with its disposable
 canary, then roll the activation image to every started turn-worker Machine,
 one Machine at a time while preserving capacity. Require the exact `worker`
 check after each update and inventory every eligible queue consumer before
@@ -230,8 +231,8 @@ controlled canary Environment to the activation runtime pair and wait for
 Environment on compatibility images. Use exact-target provider changes; do not
 activate an app-wide Fly secret to perform this canary.
 
-Run the V3 Chromium canary with
-`KESTREL_ONE_CANARY_APPROVAL_PROTOCOL=durable_v3`,
+Run the V4 Chromium canary with
+`KESTREL_ONE_CANARY_APPROVAL_PROTOCOL=durable_v4`,
 `KESTREL_ONE_CANARY_EXPECT=approval`, and one decision at a time:
 `decline`, `approve_once`, then `remember_approval`. For approving runs, set
 `KESTREL_ONE_CANARY_CONFIRM_GITHUB_MUTATION=CREATE_ONE_CANARY_ISSUE`.
@@ -279,7 +280,7 @@ effect URL, negative acceptance results, restart proof, credential-rotation
 proof, the complete started-worker image inventory, and exact canary
 Environment images.
 
-## Stage 4 — activate V3 broadly
+## Stage 4 — activate V4 broadly
 
 Use the exact activation images accepted in Stage 3. Do not rebuild or assign
 a second tag between canary acceptance and general rollout.
@@ -292,18 +293,19 @@ approved noncanary Environment through a separate operation. Do not rebuild
 images or repeat a mixed-fleet canary.
 
 Existing V2 interactions finish as V2 or expire. Existing V3 interactions
-finish as V3. Never downgrade either into reconstruction.
+finish as V3. Existing V4 interactions finish as V4. Never downgrade any of
+them into reconstruction.
 
 **Rollback:** restore compatible V2 images on exact targets while retaining
-dual readers. Do not roll back migrations. Do not turn an already-created V3
-interaction into V2.
+compatible readers. Do not roll back migrations. Do not turn an already-created
+V3 or V4 interaction into another version.
 
 **Resume evidence:** second promotion, exact images, target-by-target rollout,
 full hosted acceptance, runtime activation, and rollback identities.
 
 ## Stage 5 — observe legacy drain
 
-Record the time when every approved producer is V3 and every compatible reader
+Record the time when every approved producer is V4 and every compatible reader
 is deployed. Run:
 
 ```bash

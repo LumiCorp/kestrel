@@ -50,7 +50,7 @@ test("mobile OpenAPI contract contains every implemented companion route", () =>
   ]);
 });
 
-test("mobile approval contract publishes explicit legacy, V2, and V3 decisions", () => {
+test("mobile approval contract publishes explicit legacy, V2, V3, and V4 decisions", () => {
   const resolve = contract.components.schemas.ResolveInteractionInput as {
     properties?: { decision?: { enum?: string[] } };
   };
@@ -74,6 +74,7 @@ test("mobile approval contract publishes explicit legacy, V2, and V3 decisions",
     "legacy",
     "runner_hosted_tool_approval_interaction_v2",
     "runner_hosted_tool_approval_interaction_v3",
+    "runner_hosted_tool_approval_interaction_v4",
   ]);
   assert.deepEqual(interaction.properties?.decisions?.items?.enum, [
     "approve",

@@ -614,14 +614,21 @@ function isHostedV3Approval(interaction: ThreadInteractionView): boolean {
     "runner_hosted_tool_approval_interaction_v3";
 }
 
+function isHostedV4Approval(interaction: ThreadInteractionView): boolean {
+  return interaction.requestEnvelope.version ===
+    "runner_hosted_tool_approval_interaction_v4";
+}
+
 function isStrictHostedApproval(interaction: ThreadInteractionView): boolean {
-  return isHostedV2Approval(interaction) || isHostedV3Approval(interaction);
+  return isHostedV2Approval(interaction) ||
+    isHostedV3Approval(interaction) ||
+    isHostedV4Approval(interaction);
 }
 
 function isRememberApprovalEligible(
   interaction: ThreadInteractionView,
 ): boolean {
-  if (!isHostedV3Approval(interaction)) return false;
+  if (!isHostedV4Approval(interaction)) return false;
   const approval = readRecord(interaction.requestEnvelope.approval);
   const presentation = readRecord(approval?.presentation);
   const presentationPolicy = readRecord(presentation?.policy);

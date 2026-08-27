@@ -43,7 +43,7 @@ test("remembered approval storage enforces identity, authority, and thread casca
     identity = toolIdentity,
     toolName = identity.toolId,
   ) => ({
-    version: "runner_hosted_tool_approval_interaction_v3" as const,
+    version: "runner_hosted_tool_approval_interaction_v4" as const,
     requestId,
     kind: "approval" as const,
     eventType: "user.approval" as const,
@@ -59,13 +59,6 @@ test("remembered approval storage enforces identity, authority, and thread casca
         },
       },
     },
-    metadata: {
-      hostedApprovalTiming: {
-        version: "trusted_hosted_approval_timing_v1" as const,
-        requestedAt: new Date(now.getTime() - 1_000).toISOString(),
-        expiresAt: new Date(now.getTime() + 60_000).toISOString(),
-      },
-    },
     approval: {
       preparedInvocationId: `prepared-${requestId}`,
       toolName,
@@ -75,6 +68,8 @@ test("remembered approval storage enforces identity, authority, and thread casca
         actorId: userId,
         tenantId: organizationId,
       },
+      requestedAt: new Date(now.getTime() - 1_000).toISOString(),
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     },
   });
 

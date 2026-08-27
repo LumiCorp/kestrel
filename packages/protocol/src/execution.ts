@@ -21,7 +21,7 @@ export type {
 export const EXECUTION_PROTOCOL_VERSION = "execution-protocol-v4" as const;
 export const RUNNER_COMMAND_CONTRACT_VERSION = "runner-command-v3" as const;
 export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v3" as const;
-export const WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION = 3 as const;
+export const WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION = 4 as const;
 export const RUNNER_WAITING_PROMPT_HISTORY_KIND = "runtime.waiting_prompt" as const;
 export const RUNNER_ASSISTANT_TEXT_HISTORY_KIND = "runtime.assistant_text" as const;
 
@@ -645,14 +645,6 @@ export interface RunnerHostedToolApprovalInteractionV2
 
 export const RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3 =
   "runner_hosted_tool_approval_interaction_v3" as const;
-export const RUNNER_HOSTED_APPROVAL_TIMING_VERSION =
-  "trusted_hosted_approval_timing_v1" as const;
-
-export interface RunnerHostedApprovalTimingV1 {
-  version: typeof RUNNER_HOSTED_APPROVAL_TIMING_VERSION;
-  requestedAt: string;
-  expiresAt: string;
-}
 
 export interface RunnerHostedToolApprovalInteractionV3
   extends Record<string, unknown> {
@@ -672,18 +664,33 @@ export interface RunnerHostedToolApprovalInteractionV3
       };
     };
   };
-  metadata?:
-    | (Record<string, unknown> & {
-        hostedApprovalTiming?: RunnerHostedApprovalTimingV1 | undefined;
-      })
-    | undefined;
+  metadata?: Record<string, unknown> | undefined;
   approval: RunnerHostedToolApprovalInteractionV2["approval"];
+}
+
+export const RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4 =
+  "runner_hosted_tool_approval_interaction_v4" as const;
+
+export interface RunnerHostedToolApprovalInteractionV4
+  extends Record<string, unknown> {
+  version: typeof RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4;
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: RunnerHostedToolApprovalInteractionV3["inputSchema"];
+  metadata?: Record<string, unknown> | undefined;
+  approval: RunnerHostedToolApprovalInteractionV2["approval"] & {
+    requestedAt: string;
+    expiresAt: string;
+  };
 }
 
 export type RunnerInteractionRequest =
   | RunnerInteractionRequestV1
   | RunnerHostedToolApprovalInteractionV2
-  | RunnerHostedToolApprovalInteractionV3;
+  | RunnerHostedToolApprovalInteractionV3
+  | RunnerHostedToolApprovalInteractionV4;
 
 export type RunnerStructuredReviewReason =
   | "recovery_review"
@@ -768,6 +775,19 @@ export function parseRunnerHostedToolApprovalInteractionV3(
   return structuredClone(interaction) as RunnerHostedToolApprovalInteractionV3;
 }
 
+export function parseRunnerHostedToolApprovalInteractionV4(
+  value: unknown,
+  expectedEventType = "user.approval",
+): RunnerHostedToolApprovalInteractionV4 {
+  const interaction = requireRecord(value, "hosted tool approval interaction");
+  validateRunnerHostedToolApprovalInteractionV4(
+    interaction,
+    "hosted tool approval interaction",
+    expectedEventType,
+  );
+  return structuredClone(interaction) as RunnerHostedToolApprovalInteractionV4;
+}
+
 export function parseRunnerInteractionRequest(
   value: unknown,
   expectedEventType?: string | undefined,
@@ -781,6 +801,12 @@ export function parseRunnerInteractionRequest(
   }
   if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3) {
     return parseRunnerHostedToolApprovalInteractionV3(
+      interaction,
+      expectedEventType,
+    );
+  }
+  if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4) {
+    return parseRunnerHostedToolApprovalInteractionV4(
       interaction,
       expectedEventType,
     );
@@ -4159,6 +4185,14 @@ function validateRunnerInteractionRequest(
     );
     return;
   }
+  if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4) {
+    validateRunnerHostedToolApprovalInteractionV4(
+      interaction,
+      label,
+      waitEventType,
+    );
+    return;
+  }
   if (interaction.version !== "v1") {
     throw new RunnerProtocolContractError(`${label}.version must be 'v1'`);
   }
@@ -4228,13 +4262,28 @@ function validateRunnerHostedToolApprovalInteractionV3(
   );
 }
 
+function validateRunnerHostedToolApprovalInteractionV4(
+  interaction: Record<string, unknown>,
+  label: string,
+  waitEventType: string,
+): void {
+  validateRunnerHostedToolApprovalInteraction(
+    interaction,
+    label,
+    waitEventType,
+    RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4,
+    ["decline", "approve_once", "remember_approval"],
+  );
+}
+
 function validateRunnerHostedToolApprovalInteraction(
   interaction: Record<string, unknown>,
   label: string,
   waitEventType: string,
   expectedVersion:
     | typeof RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2
-    | typeof RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3,
+    | typeof RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3
+    | typeof RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4,
   expectedDecisions: readonly HostedToolApprovalDecision[],
 ): void {
   rejectUnknownFields(interaction, label, [
@@ -4261,38 +4310,6 @@ function validateRunnerHostedToolApprovalInteraction(
   }
   requireNonEmptyString(interaction.prompt, `${label}.prompt`);
   validateOptionalRecord(interaction.metadata, `${label}.metadata`);
-  if (expectedVersion === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V3) {
-    const metadata = interaction.metadata as Record<string, unknown> | undefined;
-    if (metadata?.hostedApprovalTiming !== undefined) {
-      const timing = requireRecord(
-        metadata.hostedApprovalTiming,
-        `${label}.metadata.hostedApprovalTiming`,
-      );
-      rejectUnknownFields(
-        timing,
-        `${label}.metadata.hostedApprovalTiming`,
-        ["version", "requestedAt", "expiresAt"],
-      );
-      if (timing.version !== RUNNER_HOSTED_APPROVAL_TIMING_VERSION) {
-        throw new RunnerProtocolContractError(
-          `${label}.metadata.hostedApprovalTiming.version must be '${RUNNER_HOSTED_APPROVAL_TIMING_VERSION}'`,
-        );
-      }
-      const requestedAt = requireIsoTimestamp(
-        timing.requestedAt,
-        `${label}.metadata.hostedApprovalTiming.requestedAt`,
-      );
-      const expiresAt = requireIsoTimestamp(
-        timing.expiresAt,
-        `${label}.metadata.hostedApprovalTiming.expiresAt`,
-      );
-      if (Date.parse(expiresAt) <= Date.parse(requestedAt)) {
-        throw new RunnerProtocolContractError(
-          `${label}.metadata.hostedApprovalTiming.expiresAt must be after requestedAt`,
-        );
-      }
-    }
-  }
   const schema = requireRecord(interaction.inputSchema, `${label}.inputSchema`);
   rejectUnknownFields(schema, `${label}.inputSchema`, [
     "type",
@@ -4338,6 +4355,9 @@ function validateRunnerHostedToolApprovalInteraction(
       "stableToolIdentity",
       "requestingActor",
       "presentation",
+      ...(expectedVersion === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4
+        ? ["requestedAt", "expiresAt"]
+        : []),
     ],
   );
   requireNonEmptyString(
@@ -4345,6 +4365,21 @@ function validateRunnerHostedToolApprovalInteraction(
     `${label}.approval.preparedInvocationId`,
   );
   requireNonEmptyString(approval.toolName, `${label}.approval.toolName`);
+  if (expectedVersion === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4) {
+    const requestedAt = requireIsoTimestamp(
+      approval.requestedAt,
+      `${label}.approval.requestedAt`,
+    );
+    const expiresAt = requireIsoTimestamp(
+      approval.expiresAt,
+      `${label}.approval.expiresAt`,
+    );
+    if (Date.parse(expiresAt) <= Date.parse(requestedAt)) {
+      throw new RunnerProtocolContractError(
+        `${label}.approval.expiresAt must be after requestedAt`,
+      );
+    }
+  }
   const stableToolIdentity = parseStableToolApprovalIdentityV1(
     approval.stableToolIdentity,
   );

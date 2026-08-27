@@ -15,15 +15,15 @@ work; this queue does not reopen them.
 
 ## In progress
 
-- [Version trusted hosted approval timing](06a-version-trusted-hosted-approval-timing.md)
+- [Release a Web-rejected prepared approval](06b-release-web-rejected-prepared-approval.md)
 
 ## Blocked
 
 - [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md) — rollout proof and compatibility controls are already implemented; final production qualification, drain evidence, and cleanup are blocked by [the effective hosted tool decision](06-unify-hosted-tool-decision.md) and [truthful cancellation telemetry](07-preserve-cancellation-telemetry.md).
-- [Release a Web-rejected prepared approval](06b-release-web-rejected-prepared-approval.md) — blocked by [versioned trusted hosted approval timing](06a-version-trusted-hosted-approval-timing.md).
 
 ## Implemented
 
+- [Version trusted hosted approval timing](06a-version-trusted-hosted-approval-timing.md)
 - [Make hosted tool availability and approval one truthful decision](06-unify-hosted-tool-decision.md)
 
 ## Done

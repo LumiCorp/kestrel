@@ -85,7 +85,7 @@ const durablePending: ThreadInteractionView = {
   prompt: "Approve kestrel_one.github_issue_create?",
   status: "pending",
   requestEnvelope: {
-    version: "runner_hosted_tool_approval_interaction_v3",
+    version: "runner_hosted_tool_approval_interaction_v4",
     requestId: "request-1",
     kind: "approval",
     eventType: "user.approval",
@@ -99,13 +99,6 @@ const durablePending: ThreadInteractionView = {
           type: "string",
           enum: ["decline", "approve_once", "remember_approval"],
         },
-      },
-    },
-    metadata: {
-      hostedApprovalTiming: {
-        version: "trusted_hosted_approval_timing_v1",
-        requestedAt: "2026-08-26T12:00:00.000Z",
-        expiresAt: "2099-08-26T12:05:00.000Z",
       },
     },
     approval: {
@@ -122,6 +115,8 @@ const durablePending: ThreadInteractionView = {
         actorId: "user-1",
         tenantId: "org-1",
       },
+      requestedAt: "2026-08-26T12:00:00.000Z",
+      expiresAt: "2099-08-26T12:05:00.000Z",
       presentation: {
         title: "Create a GitHub issue",
         summary: "Open a new issue on GitHub.",
@@ -149,7 +144,7 @@ const durablePending: ThreadInteractionView = {
   resolvedAt: null,
 };
 
-test("durable canary selects only the exact pending V3 prepared invocation", () => {
+test("durable canary selects only the exact pending V4 prepared invocation", () => {
   assert.equal(
     findGithubDurableApprovalRequest({
       interactions: [durablePending],
