@@ -19,9 +19,13 @@ work; this queue does not reopen them.
 
 ## Blocked
 
-- [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md) — rollout proof and compatibility controls are already implemented; final production qualification, drain evidence, and cleanup are blocked by [the effective hosted tool decision](06-unify-hosted-tool-decision.md) and [truthful cancellation telemetry](07-preserve-cancellation-telemetry.md).
+- [Prove the hosted rollout and remove legacy approval paths](05-contract-legacy-approval-paths.md) — rollout proof and compatibility controls are already implemented; final production qualification, drain evidence, and cleanup are blocked by [truthful cancellation telemetry](07-preserve-cancellation-telemetry.md).
 
 ## Implemented
+
+None.
+
+## Done
 
 - [Bind PostgreSQL result insertion to the locked effect identity](06z7-bind-postgres-result-to-locked-effect.md)
 - [Require immutable cleanup intent for all result statuses](06z6-require-cleanup-intent-for-all-results.md)
@@ -57,8 +61,6 @@ work; this queue does not reopen them.
 - [Release a Web-rejected prepared approval](06b-release-web-rejected-prepared-approval.md)
 - [Version trusted hosted approval timing](06a-version-trusted-hosted-approval-timing.md)
 - [Make hosted tool availability and approval one truthful decision](06-unify-hosted-tool-decision.md)
-
-## Done
 
 - [Remember Ask First approval for the thread](03-remember-thread-tool-approval.md)
 - [Make the thread interaction the approval decision owner](04-canonicalize-approval-lifecycle.md)
