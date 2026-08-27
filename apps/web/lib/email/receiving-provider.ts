@@ -207,9 +207,8 @@ export class ResendHttpReceivingProvider
     );
     const projection = parseWebhook(retrieved);
     if (
-      projection.id !== match.id ||
-      projection.status !== "enabled" ||
-      !webhookMatchesCreateIntent(projection, intent)
+      !webhookProjectionsAgree(match, projection) ||
+      projection.status !== "enabled"
     ) {
       throw invalidResponse();
     }
@@ -437,6 +436,19 @@ function webhookMatchesCreateIntent(
     webhook.endpoint === intent.endpoint &&
     webhook.events.length === 1 &&
     webhook.events[0] === "email.received"
+  );
+}
+
+function webhookProjectionsAgree(
+  listed: ResendWebhookProjection,
+  retrieved: ResendWebhookProjection,
+): boolean {
+  return (
+    retrieved.id === listed.id &&
+    retrieved.endpoint === listed.endpoint &&
+    retrieved.status === listed.status &&
+    retrieved.events.length === listed.events.length &&
+    retrieved.events.every((event, index) => event === listed.events[index])
   );
 }
 

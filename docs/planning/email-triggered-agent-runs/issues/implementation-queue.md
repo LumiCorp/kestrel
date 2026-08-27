@@ -5,9 +5,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 ## Ready
 
 - [Execute malformed JSON contracts through every receiving route](21-execute-malformed-json-route-contracts.md)
-- [Scope malformed JSON classification to the explicit parse operation](24-scope-json-syntax-classification.md)
-- [Trust freshly restored Organization authority](30-trust-fresh-restored-organization-authority.md)
-- [Reject webhook list and retrieve status contradictions](31-reject-webhook-status-contradictions.md)
 
 ## In progress
 
@@ -33,6 +30,9 @@ None.
 - [Recover an ambiguous Resend webhook create without creating another webhook](15-recover-ambiguous-resend-webhook-creates.md)
 - [Clear revoked Desktop receiving status](28-clear-revoked-desktop-receiving-status.md)
 - [Prove durable paginated webhook recovery](29-prove-durable-paginated-webhook-recovery.md)
+- [Scope malformed JSON classification to the explicit parse operation](24-scope-json-syntax-classification.md)
+- [Trust freshly restored Organization authority](30-trust-fresh-restored-organization-authority.md)
+- [Reject webhook list and retrieve status contradictions](31-reject-webhook-status-contradictions.md)
 
 ## Done
 

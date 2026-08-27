@@ -6,8 +6,10 @@ import { ReceivingConfigError } from "./receiving-config";
 class ReceivingAdminJsonSyntaxError extends Error {}
 
 export async function parseReceivingAdminJson(request: Request) {
+  const body = await request.text();
+
   try {
-    return await request.json();
+    return JSON.parse(body) as unknown;
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new ReceivingAdminJsonSyntaxError();

@@ -487,11 +487,7 @@ export function SettingsWorkspace({
     try {
       const account = await window.kestrelDesktop.getKestrelOneAccount();
       if (refreshVersion !== kestrelOneAccountRefreshVersionRef.current) return;
-      setKestrelOneAccount(
-        excludedOrganizationId
-          ? withoutOrganizationAuthority(account, excludedOrganizationId)
-          : account,
-      );
+      setKestrelOneAccount(account);
     } catch (error) {
       if (refreshVersion !== kestrelOneAccountRefreshVersionRef.current) return;
       onError(errorMessage(error));
@@ -521,7 +517,7 @@ export function SettingsWorkspace({
         ? withoutOrganizationAuthority(current, organizationId)
         : current,
     );
-    void refreshKestrelOneAccount(organizationId);
+    void refreshKestrelOneAccount();
   }
 
   async function refreshReceivingConnection(

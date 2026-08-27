@@ -157,7 +157,7 @@ test("malformed receiving JSON is a non-retryable correction response", async ()
   );
 });
 
-test("only JSON parsing syntax errors use the invalid-request contract", async () => {
+test("only Kestrel's explicit JSON parsing syntax errors use the invalid-request contract", async () => {
   const internalSyntaxError = new SyntaxError("internal detail");
   assert.deepEqual(getSafeReceivingAdminError(internalSyntaxError), {
     status: 500,
@@ -167,14 +167,28 @@ test("only JSON parsing syntax errors use the invalid-request contract", async (
     },
   });
 
-  const request = new Request("http://localhost/api/organization/email/receiving", {
-    method: "PUT",
-    body: "{}",
-  });
-  request.json = async () => {
-    throw new Error("internal detail");
+  const bodyReadSyntaxError = new SyntaxError("body reader internal detail");
+  const request = new Request(
+    "http://localhost/api/organization/email/receiving",
+    {
+      method: "PUT",
+      body: "{}",
+    },
+  );
+  request.text = async () => {
+    throw bodyReadSyntaxError;
   };
-  await assert.rejects(parseReceivingAdminJson(request), /internal detail/u);
+  await assert.rejects(parseReceivingAdminJson(request), (error: unknown) => {
+    assert.equal(error, bodyReadSyntaxError);
+    assert.deepEqual(getSafeReceivingAdminError(error), {
+      status: 500,
+      body: {
+        code: "RESEND_RECEIVING_OPERATION_FAILED",
+        error: "Inbound receiving operation failed.",
+      },
+    });
+    return true;
+  });
 });
 
 test("all four receiving mutations authorize before using the shared JSON parser", () => {

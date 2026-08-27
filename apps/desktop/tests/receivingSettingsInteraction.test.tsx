@@ -241,6 +241,115 @@ for (const httpStatus of [401, 403] as const) {
   );
 }
 
+test("Desktop trusts a freshly restored Organization after clearing rejected receiving authority", async () => {
+  const preRejectionAccount = deferred<KestrelOneAccountStatus>();
+  const restoredAccount = deferred<KestrelOneAccountStatus>();
+  let accountReads = 0;
+  let organizationAReads = 0;
+  const mounted = await mountReceivingSettings({
+    getAccount: async () => {
+      accountReads += 1;
+      if (accountReads === 1) return signedInAccountWithThread();
+      return accountReads === 2
+        ? preRejectionAccount.promise
+        : restoredAccount.promise;
+    },
+    getReceiving: async (organizationId) => {
+      if (organizationId === "organization-b") {
+        return {
+          status: "ok",
+          connection: receivingConnection("other-org.example.test"),
+        };
+      }
+      organizationAReads += 1;
+      if (organizationAReads === 1) {
+        return {
+          status: "ok",
+          connection: receivingConnection("loaded.example.test"),
+        };
+      }
+      if (organizationAReads === 2) {
+        return { status: "authorization_rejected", httpStatus: 403 };
+      }
+      return {
+        status: "ok",
+        connection: receivingConnection("restored.example.test"),
+      };
+    },
+    submitTurn: async () => ({ id: "turn-2", sequence: 2, status: "queued" }),
+  });
+
+  let organization = controlInLabel<HTMLSelectElement>(
+    mounted.container,
+    "Organization",
+  );
+  changeValue(mounted.browser, organization, "organization-a");
+  await flush();
+  assert.match(mounted.container.textContent ?? "", /loaded\.example\.test/u);
+
+  const send = button(mounted.container, "Send to Thread");
+  const form = send.closest("form");
+  assert.ok(form);
+  act(() =>
+    form.dispatchEvent(
+      new mounted.browser.Event("submit", { bubbles: true, cancelable: true }),
+    ),
+  );
+  await flush();
+  assert.equal(accountReads, 2);
+
+  await act(async () => button(mounted.container, "Refresh").click());
+  await flush();
+  assert.equal(accountReads, 3);
+  organization = controlInLabel<HTMLSelectElement>(
+    mounted.container,
+    "Organization",
+  );
+  assert.deepEqual(
+    [...organization.options].map((option) => option.value),
+    ["", "organization-b"],
+  );
+  assert.doesNotMatch(
+    mounted.container.textContent ?? "",
+    /loaded\.example\.test/u,
+  );
+
+  await act(async () =>
+    preRejectionAccount.resolve(signedInAccountWithThread()),
+  );
+  await flush();
+  organization = controlInLabel<HTMLSelectElement>(
+    mounted.container,
+    "Organization",
+  );
+  assert.deepEqual(
+    [...organization.options].map((option) => option.value),
+    ["", "organization-b"],
+  );
+
+  await act(async () => restoredAccount.resolve(signedInAccount()));
+  await flush();
+  organization = controlInLabel<HTMLSelectElement>(
+    mounted.container,
+    "Organization",
+  );
+  assert.deepEqual(
+    [...organization.options].map((option) => option.value),
+    ["", "organization-a", "organization-b"],
+  );
+
+  if (organization.value !== "organization-a") {
+    changeValue(mounted.browser, organization, "organization-a");
+  }
+  await flush();
+  assert.match(
+    mounted.container.textContent ?? "",
+    /restored\.example\.test/u,
+  );
+
+  await act(async () => mounted.root.unmount());
+});
+
 test("Desktop visibly marks retained receiving status stale after a transient refresh failure", async () => {
   let receivingReads = 0;
   const mounted = await mountReceivingSettings({
@@ -283,6 +392,9 @@ async function mountReceivingSettings(input: {
     organizationId: string,
   ) => Promise<DesktopKestrelOneReceivingConnectionReadResult>;
   onSignOut?: (() => void) | undefined;
+  submitTurn?:
+    | (() => Promise<{ id: string; sequence: number; status: string }>)
+    | undefined;
 }) {
   const browser = new Window({
     url: "http://localhost/#settings-connections",
@@ -305,6 +417,9 @@ async function mountReceivingSettings(input: {
       getPendingUninstallResult: async () => undefined,
       getModelCatalog: async () => ({ models: [] }),
       getKestrelOneReceivingConnection: input.getReceiving,
+      submitKestrelOneTurn:
+        input.submitTurn ??
+        (async () => ({ id: "turn-1", sequence: 1, status: "queued" })),
       signOutKestrelOneAccount: async () => {
         input.onSignOut?.();
         return { status: "signed_out" as const };
@@ -389,6 +504,35 @@ function signedInAccount(
       organizations,
       projects: [],
       threads: [],
+    },
+  };
+}
+
+function signedInAccountWithThread(): KestrelOneAccountStatus {
+  const account = signedInAccount();
+  return {
+    ...account,
+    projection: {
+      ...account.projection,
+      projects: [
+        {
+          id: "project-a",
+          organizationId: "organization-a",
+          name: "Project A",
+          environmentId: "environment-a",
+          environmentProvider: "desktop",
+          role: "member",
+        },
+      ],
+      threads: [
+        {
+          id: "thread-a",
+          projectId: "project-a",
+          title: "Thread A",
+          interactionMode: "chat",
+          updatedAt: "2026-08-27T12:00:00.000Z",
+        },
+      ],
     },
   };
 }

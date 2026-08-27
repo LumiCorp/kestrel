@@ -612,6 +612,93 @@ test("ambiguous create reconciliation verifies retrieved identity, endpoint, sta
   }
 });
 
+test("ambiguous create reconciliation requires matching enabled list and retrieve status", async () => {
+  const endpoint = "https://example.test/inbound/opaque";
+  const providerSecret = "whsec_status_contradiction";
+  const intent = prepareResendWebhookCreateIntent(endpoint);
+  const cases = [
+    { listedStatus: "enabled", retrievedStatus: "disabled" },
+    { listedStatus: "disabled", retrievedStatus: "enabled" },
+  ] as const;
+
+  for (const testCase of cases) {
+    const calls: string[] = [];
+    const provider = new ResendHttpReceivingProvider({
+      baseUrl: "https://resend.test",
+      fetchImpl: async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        calls.push(`${init?.method ?? "GET"} ${path}`);
+        if (path === "/webhooks") {
+          return Response.json({
+            object: "list",
+            has_more: false,
+            data: [
+              {
+                id: "webhook-1",
+                endpoint,
+                status: testCase.listedStatus,
+                events: ["email.received"],
+              },
+            ],
+          });
+        }
+        return Response.json({
+          id: "webhook-1",
+          endpoint,
+          status: testCase.retrievedStatus,
+          events: ["email.received"],
+          signing_secret: providerSecret,
+        });
+      },
+    });
+
+    await assert.rejects(
+      provider.reconcileWebhookCreate({ apiKey: "re_full_access", intent }),
+      (error: unknown) =>
+        error instanceof ResendReceivingProviderError &&
+        error.code === "RESEND_RECEIVING_RESPONSE_INVALID" &&
+        !error.message.includes(endpoint) &&
+        !error.message.includes(providerSecret),
+    );
+    assert.deepEqual(calls, ["GET /webhooks", "GET /webhooks/webhook-1"]);
+  }
+});
+
+test("ambiguous create reconciliation recovers from matching enabled projections with GET only", async () => {
+  const endpoint = "https://example.test/inbound/opaque";
+  const intent = prepareResendWebhookCreateIntent(endpoint);
+  const calls: string[] = [];
+  const provider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      calls.push(`${init?.method ?? "GET"} ${path}`);
+      const projection = {
+        id: "webhook-1",
+        endpoint,
+        status: "enabled",
+        events: ["email.received"],
+      };
+      return path === "/webhooks"
+        ? Response.json({
+            object: "list",
+            has_more: false,
+            data: [projection],
+          })
+        : Response.json({
+            ...projection,
+            signing_secret: "whsec_recovered",
+          });
+    },
+  });
+
+  assert.deepEqual(
+    await provider.reconcileWebhookCreate({ apiKey: "re_full_access", intent }),
+    { id: "webhook-1", signingSecret: "whsec_recovered" },
+  );
+  assert.deepEqual(calls, ["GET /webhooks", "GET /webhooks/webhook-1"]);
+});
+
 test("retry after disable failure resumes from the created webhook ID without another POST", async () => {
   const calls: Array<{ path: string; method: string }> = [];
   let disableAttempts = 0;
