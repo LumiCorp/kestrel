@@ -2,9 +2,94 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { NextRequest } from "next/server";
 import postgres from "postgres";
+import { createModelRegistrationV2 } from "../../../../src/kestrel/contracts/model-registration";
 import { withGatewayModelEconomicsProfile } from "@/lib/ai/model-economics-profile";
+import { createHostedModelRegistration } from "@/lib/ai/hosted-model-registration";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
+
+function qualifiedOpenRouterModelMetadata(input: {
+  modelId: string;
+  metadata: Record<string, unknown>;
+}) {
+  const pending = createHostedModelRegistration({
+    registrationId: `email-trigger-route-registration:${input.modelId}`,
+    revision: "email-trigger-route-registration-v1",
+    observedAt: "2026-08-27T16:00:00.000Z",
+    modelId: input.modelId,
+    credentialRevision: "1",
+    providerConfiguration: {
+      version: "provider_runtime_configuration_v1",
+      providerId: "openrouter",
+      protocol: "openrouter",
+      authentication: {
+        mode: "required",
+        credentialReference: { source: "gateway", id: "provider.openrouter.default" },
+      },
+      endpoint: "https://openrouter.ai/api/v1",
+      timeoutMs: 15_000,
+      allowedHeaders: [],
+      dataHandling: "provider_managed",
+    },
+    providerEvidence: {
+      provider: "openrouter",
+      details: {
+        id: input.modelId,
+        supported_parameters: [
+          "response_format",
+          "structured_outputs",
+          "tools",
+          "tool_choice",
+          "strict_tool_inputs",
+        ],
+        endpoints: [{
+          id: "openrouter",
+          supported_parameters: [
+            "response_format",
+            "structured_outputs",
+            "tools",
+            "tool_choice",
+            "strict_tool_inputs",
+          ],
+        }],
+      },
+    },
+  }).registration;
+  const { fingerprint: _fingerprint, ...authoring } = pending;
+  const evidence = {
+    source: "qualification" as const,
+    observedRevision: authoring.revision,
+    observedAt: "2026-08-27T16:01:00.000Z",
+    adapterRevision: authoring.adapterRevision,
+    credentialRevision: "1",
+    qualificationRevision: "hosted-agent-loop-v1",
+    retainedPayloadHash: `sha256:${"a".repeat(64)}`,
+  };
+  const qualified = <T extends { evidence: readonly unknown[] }>(claim: T) => ({
+    ...claim,
+    state: "qualified" as const,
+    evidence: [...claim.evidence, evidence],
+  });
+  return {
+    ...input.metadata,
+    kestrelModelRegistrationV2: createModelRegistrationV2({
+      ...authoring,
+      qualification: {
+        state: "qualified",
+        revision: "hosted-agent-loop-v1",
+        checkedAt: "2026-08-27T16:01:00.000Z",
+        probeHash: `sha256:${"b".repeat(64)}`,
+      },
+      capabilities: {
+        ...authoring.capabilities,
+        providerStrictSchema: qualified(authoring.capabilities.providerStrictSchema),
+        nativeTools: qualified(authoring.capabilities.nativeTools),
+        requiredToolChoice: qualified(authoring.capabilities.requiredToolChoice),
+        strictToolInputs: qualified(authoring.capabilities.strictToolInputs),
+      },
+    }),
+  };
+}
 
 test("configured Email Trigger route exports enforce private Project authority", async (context) => {
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
@@ -55,6 +140,10 @@ test("configured Email Trigger route exports enforce private Project authority",
     modality: "language",
   });
   assert.ok(modelMetadata);
+  const qualifiedModelMetadata = qualifiedOpenRouterModelMetadata({
+    modelId: "email-trigger-route-model",
+    metadata: modelMetadata,
+  });
 
   context.after(async () => {
     await sql`DELETE FROM "organization" WHERE "id" IN (${ids.organization}, ${ids.otherOrganization})`;
@@ -132,9 +221,11 @@ test("configured Email Trigger route exports enforce private Project authority",
     `;
     await transaction`
       INSERT INTO "ai_gateways" (
-        "id", "organization_id", "provider", "display_name"
+        "id", "organization_id", "environment_id", "provider", "display_name",
+        "credential_status", "credential_validated_at"
       ) VALUES (
-        ${ids.gateway}, ${ids.organization}, 'openrouter', 'Trigger Route Gateway'
+        ${ids.gateway}, ${ids.organization}, ${ids.environment}, 'openrouter', 'Trigger Route Gateway',
+        'ready', ${now}
       )
     `;
     await transaction`
@@ -144,7 +235,7 @@ test("configured Email Trigger route exports enforce private Project authority",
       ) VALUES (
         ${ids.model}, ${ids.organization}, ${ids.gateway},
         'email-trigger-route-model', 'language', true, true,
-        ${transaction.json(JSON.parse(JSON.stringify(modelMetadata)))}
+        ${transaction.json(JSON.parse(JSON.stringify(qualifiedModelMetadata)))}
       )
     `;
     await transaction`

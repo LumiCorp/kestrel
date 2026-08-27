@@ -66,7 +66,7 @@ test("Organization receiving persists one encrypted inactive connection without 
     FROM "organization_email_config" WHERE "organization_id" = ${organizationId}
   `;
 
-  await Promise.all([
+  const saveOutcomes = await Promise.allSettled([
     receiving.saveReceivingConnection({
       organizationId,
       actorUserId: userId,
@@ -82,6 +82,14 @@ test("Organization receiving persists one encrypted inactive connection without 
       provider,
     }),
   ]);
+  assert.ok(
+    saveOutcomes.some((outcome) => outcome.status === "fulfilled"),
+  );
+  for (const outcome of saveOutcomes) {
+    if (outcome.status !== "rejected") continue;
+    assert.ok(outcome.reason instanceof receiving.ReceivingConfigError);
+    assert.equal(outcome.reason.code, "RESEND_RECEIVING_SAVE_SUPERSEDED");
+  }
 
   const rows = await sql<
     Array<{

@@ -65,6 +65,8 @@ test(
     const interactionThreadId = `turn-interaction-${suffix}`;
     const structuredReviewThreadId = `turn-structured-review-${suffix}`;
     const approvalThreadId = `turn-hosted-approval-${suffix}`;
+    const invalidPreparedApprovalThreadId =
+      `turn-invalid-prepared-approval-${suffix}`;
     const now = new Date();
 
     context.after(async () => {
@@ -180,6 +182,10 @@ test(
           (
             ${approvalThreadId}, 'Hosted Approval Turn', ${userId},
             ${organizationId}, 'web'
+          ),
+          (
+            ${invalidPreparedApprovalThreadId}, 'Invalid Prepared Approval Turn',
+            ${userId}, ${organizationId}, 'web'
           )
       `;
     });
@@ -749,21 +755,6 @@ test(
       SET "project_id" = ${projectId}
       WHERE "id" = ${approvalThreadId}
     `;
-    await assert.rejects(
-      store.resolveDurableRuntimeInteraction({
-        threadId: approvalThreadId,
-        organizationId,
-        userId,
-        requestId: approvalRequestId,
-        eventType: "user.approval",
-        turnId: approvalTurn.turn.id,
-        message: "Legacy approve",
-        approved: true,
-        messageId: `legacy-approval-${suffix}`,
-        source: "web",
-      }),
-      /does not match its version/u,
-    );
     for (const [decision, source] of [
       ["decline", "web"],
       ["approve_once", "mobile"],
@@ -781,44 +772,9 @@ test(
           messageId: `other-${decision}-${suffix}`,
           source,
         }),
-        /requesting actor/u,
+        /waiting turn author/u,
       );
     }
-    const wrongTenantApprovalInteraction = {
-      ...approvalRequestEnvelope,
-      approval: {
-        ...approvalRequestEnvelope.approval,
-        requestingActor: {
-          ...approvalRequestEnvelope.approval.requestingActor,
-          tenantId: `other-org-${suffix}`,
-        },
-      },
-    };
-    await sql`
-      UPDATE "thread_interactions"
-      SET "request_envelope" = ${sql.json(wrongTenantApprovalInteraction)}
-      WHERE "request_id" = ${approvalRequestId}
-    `;
-    await assert.rejects(
-      store.resolveDurableRuntimeInteraction({
-        threadId: approvalThreadId,
-        organizationId,
-        userId,
-        requestId: approvalRequestId,
-        eventType: "user.approval",
-        turnId: approvalTurn.turn.id,
-        message: "Approve once",
-        decision: "approve_once",
-        messageId: `wrong-tenant-${suffix}`,
-        source: "web",
-      }),
-      /requesting actor/u,
-    );
-    await sql`
-      UPDATE "thread_interactions"
-      SET "request_envelope" = ${sql.json(approvalRequestEnvelope)}
-      WHERE "request_id" = ${approvalRequestId}
-    `;
     await store.resolveDurableRuntimeInteraction({
       threadId: approvalThreadId,
       organizationId,
@@ -923,6 +879,73 @@ test(
     await store.completeDurableThreadTurn({
       turnId: approvalTurn.turn.id,
       status: "completed",
+    });
+
+    const invalidPreparedApprovalTurn = await createTurn(
+      invalidPreparedApprovalThreadId,
+      "invalid-prepared-approval",
+    );
+    assert.ok(
+      await store.claimDurableThreadTurn(invalidPreparedApprovalTurn.turn.id),
+    );
+    const invalidPreparedApprovalRequestId =
+      `invalid-prepared-approval-${suffix}`;
+    const invalidPreparedApprovalInteraction = {
+      ...approvalInteraction,
+      requestId: invalidPreparedApprovalRequestId,
+      approval: {
+        ...approvalInteraction.approval,
+        preparedInvocationId: `invalid-prepared-${suffix}`,
+        requestingActor: {
+          ...approvalInteraction.approval.requestingActor,
+          tenantId: `other-org-${suffix}`,
+        },
+      },
+    };
+    await store.persistDurableAssistantOutcome({
+      turnId: invalidPreparedApprovalTurn.turn.id,
+      messages: [{
+        id: `assistant-invalid-prepared-${suffix}`,
+        parts: [{
+          type: "data-kestrel-interaction",
+          id: `interaction:${invalidPreparedApprovalRequestId}`,
+          data: invalidPreparedApprovalInteraction,
+        }],
+        model: "kestrel-one",
+        source: "web",
+        projectContextRevisionId: null,
+      }],
+      interaction: invalidPreparedApprovalInteraction,
+    });
+    const invalidPreparedResolution =
+      await store.resolveDurableRuntimeInteraction({
+        threadId: invalidPreparedApprovalThreadId,
+        organizationId,
+        userId,
+        requestId: invalidPreparedApprovalRequestId,
+        eventType: "user.approval",
+        turnId: invalidPreparedApprovalTurn.turn.id,
+        message: "Legacy approve",
+        approved: true,
+        messageId: `invalid-prepared-response-${suffix}`,
+        source: "web",
+      });
+    assert.equal(invalidPreparedResolution.shouldDispatch, true);
+    const invalidPreparedClaim = await store.claimDurableThreadTurn(
+      invalidPreparedApprovalTurn.turn.id,
+    );
+    assert.equal(
+      invalidPreparedClaim?.interactionResponse?.preparedApprovalCleanupFailureCode,
+      "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+    );
+    assert.equal(
+      invalidPreparedClaim?.interactionResponse?.decision,
+      "decline",
+    );
+    await store.completeDurableThreadTurn({
+      turnId: invalidPreparedApprovalTurn.turn.id,
+      status: "failed",
+      failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
     });
 
     const reviewTurn = await createTurn(
@@ -2219,7 +2242,7 @@ test(
         AND "source_id" = ${cancelledMessages[0]!.id}
       ORDER BY "meter"
     `;
-    assert.deepEqual(cancellationUsage, [
+    assert.deepEqual([...cancellationUsage], [
       { meter: "cached_input_tokens", quantity: "5.00000000" },
       { meter: "input_tokens", quantity: "8.00000000" },
       { meter: "output_tokens", quantity: "7.00000000" },
