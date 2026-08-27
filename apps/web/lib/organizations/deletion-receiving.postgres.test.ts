@@ -4,13 +4,14 @@ import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
-import type {
-  CreatedResendWebhook,
-  ResendReceivingDomain,
-  ResendWebhookCreateIntent,
-  ResendWebhookDecommissionProvider,
-  ResendWebhookProjection,
-  ResendWebhookUpdateEvidence,
+import {
+  type CreatedResendWebhook,
+  type ResendReceivingDomain,
+  ResendReceivingProviderError,
+  type ResendWebhookCreateIntent,
+  type ResendWebhookDecommissionProvider,
+  type ResendWebhookProjection,
+  type ResendWebhookUpdateEvidence,
 } from "@/lib/email/receiving-provider";
 
 const databaseUrl = process.env.KESTREL_APPS_DB_TEST_URL?.trim();
@@ -180,7 +181,8 @@ test("Organization deletion disables ingress and decommissions known, absent, fa
     "webhook-retry-private",
     webhook("webhook-retry-private"),
   );
-  failedProvider.removeFailure = new Error(
+  failedProvider.removeFailure = new ResendReceivingProviderError(
+    "RESEND_RECEIVING_PROVIDER_UNAVAILABLE",
     `provider rejected ${failed.apiKey} ${failed.encryptedApiKey} ${failed.locator} webhook-retry-private person@example.test`,
   );
   await deletion.processOrganizationDeletion(failed.operationId, {
@@ -269,6 +271,26 @@ test("Organization deletion disables ingress and decommissions known, absent, fa
   assert.equal(ambiguousProvider.removeCalls, 1);
   assert.deepEqual(ambiguousProvider.reconciledIntents, [ambiguousIntent]);
   await assertCompletedAndCascaded(sql, ambiguous);
+
+  const absentAttempt = await insertFixture({
+    label: "attempted-without-provider-resource",
+    webhookStatus: "staged",
+    providerWebhookId: null,
+    createAttempted: true,
+    createIntent: {
+      endpoint:
+        "https://one.example.test/api/webhooks/resend/inbound/absent-attempt",
+      events: ["email.received"],
+    },
+  });
+  const absentAttemptProvider = new DeletionProvider(absentAttempt.apiKey);
+  await deletion.processOrganizationDeletion(absentAttempt.operationId, {
+    receivingProvider: absentAttemptProvider,
+  });
+  assert.equal(absentAttemptProvider.reconcileCalls, 1);
+  assert.equal(absentAttemptProvider.createCalls, 0);
+  assert.equal(absentAttemptProvider.removeCalls, 0);
+  await assertCompletedAndCascaded(sql, absentAttempt);
 });
 
 type Sql = ReturnType<typeof postgres>;
@@ -342,6 +364,17 @@ class DeletionProvider implements ResendWebhookDecommissionProvider {
     this.reconcileCalls += 1;
     this.reconciledIntents.push(input.intent);
     if (!this.recovered) throw new Error("ambiguous provider evidence");
+    return this.recovered;
+  }
+
+  async reconcileWebhookCreateIfPresent(input: {
+    apiKey: string;
+    intent: ResendWebhookCreateIntent;
+  }): Promise<CreatedResendWebhook | null> {
+    this.assertApiKey(input.apiKey);
+    await this.beforeProviderCall?.("reconcile");
+    this.reconcileCalls += 1;
+    this.reconciledIntents.push(input.intent);
     return this.recovered;
   }
 

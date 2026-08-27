@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { resolveKestrelAppUrl } from "@/lib/app-url";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
@@ -8,6 +8,7 @@ import {
   decryptReceivingSigningSecret,
   encryptReceivingSigningSecret,
   ReceivingConfigError,
+  receivingOrganizationUnavailable,
 } from "./receiving-config";
 import {
   prepareResendWebhookCreateIntent,
@@ -37,25 +38,7 @@ export async function stageReceivingWebhook(input: {
           id: authority.providerWebhookId,
           signingSecret: authority.signingSecret,
         }
-      : authority.createAttempted
-        ? await input.provider.reconcileWebhookCreate({
-            apiKey: authority.apiKey,
-            intent: authority.intent,
-          })
-        : await createAfterAttemptCheckpoint({ ...input, ...authority });
-    if (!authority.providerWebhookId) {
-      await persistCreateEvidence({
-        organizationId: input.organizationId,
-        encryptedApiKey: authority.encryptedApiKey,
-        stagingSequence: authority.stagingSequence,
-        providerWebhookId: created.id,
-        encryptedSigningSecret: encryptReceivingSigningSecret({
-          organizationId: input.organizationId,
-          signingSecret: created.signingSecret,
-          env: input.env,
-        }),
-      });
-    }
+      : await createAfterAttemptCheckpoint({ ...input, ...authority });
 
     const projected = await input.provider.getWebhook(
       authority.apiKey,
@@ -65,14 +48,22 @@ export async function stageReceivingWebhook(input: {
       projected.endpoint !== authority.intent.endpoint ||
       projected.status !== "disabled"
     ) {
-      await input.provider.updateWebhook({
-        apiKey: authority.apiKey,
-        webhookId: created.id,
-        ...(projected.endpoint === authority.intent.endpoint
-          ? {}
-          : { endpoint: authority.intent.endpoint }),
-        enabled: false,
-      });
+      await withActiveStagingAuthority(
+        {
+          organizationId: input.organizationId,
+          encryptedApiKey: authority.encryptedApiKey,
+          stagingSequence: authority.stagingSequence,
+        },
+        () =>
+          input.provider.updateWebhook({
+            apiKey: authority.apiKey,
+            webhookId: created.id,
+            ...(projected.endpoint === authority.intent.endpoint
+              ? {}
+              : { endpoint: authority.intent.endpoint }),
+            enabled: false,
+          }),
+      );
     }
     const verified = await input.provider.getWebhook(
       authority.apiKey,
@@ -180,6 +171,13 @@ async function prepareStagingAuthority(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
     );
+    const organization = await transaction.query.organizations.findFirst({
+      columns: { lifecycleState: true },
+      where: (table, { eq }) => eq(table.id, input.organizationId),
+    });
+    if (organization?.lifecycleState !== "active") {
+      throw receivingOrganizationUnavailable();
+    }
     const row =
       await transaction.query.organizationReceivingConnections.findFirst({
         where: (table, { eq }) =>
@@ -231,7 +229,6 @@ async function prepareStagingAuthority(input: {
         encryptedApiKey: row.encryptedApiKey,
         env: input.env,
       }),
-      createAttempted: row.webhookCreateAttemptedAt !== null,
       encryptedApiKey: row.encryptedApiKey,
       intent,
       providerWebhookId: row.providerWebhookId,
@@ -251,54 +248,20 @@ async function createAfterAttemptCheckpoint(
   input: {
     organizationId: string;
     provider: ResendWebhookCreateRecoveryProvider;
+    env?: NodeJS.ProcessEnv;
   } & Awaited<ReturnType<typeof prepareStagingAuthority>>,
 ) {
-  const claimed = await knowledgeDb
-    .update(schema.organizationReceivingConnections)
-    .set({ webhookCreateAttemptedAt: new Date(), updatedAt: new Date() })
-    .where(
-      and(
-        eq(
-          schema.organizationReceivingConnections.organizationId,
-          input.organizationId,
-        ),
-        isNull(
-          schema.organizationReceivingConnections.webhookCreateAttemptedAt,
-        ),
-        eq(
-          schema.organizationReceivingConnections.encryptedApiKey,
-          input.encryptedApiKey,
-        ),
-        eq(
-          schema.organizationReceivingConnections.webhookStagingSequence,
-          input.stagingSequence,
-        ),
-      ),
-    )
-    .returning({ id: schema.organizationReceivingConnections.id });
-  if (claimed.length === 0) {
-    return input.provider.reconcileWebhookCreate({
-      apiKey: input.apiKey,
-      intent: input.intent,
-    });
-  }
-  return input.provider.createWebhook({
-    apiKey: input.apiKey,
-    intent: input.intent,
-  });
-}
-
-async function persistCreateEvidence(input: {
-  organizationId: string;
-  encryptedApiKey: string;
-  stagingSequence: number;
-  providerWebhookId: string;
-  encryptedSigningSecret: string;
-}) {
-  await knowledgeDb.transaction(async (transaction) => {
+  const action = await knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
     );
+    const organization = await transaction.query.organizations.findFirst({
+      columns: { lifecycleState: true },
+      where: (table, { eq }) => eq(table.id, input.organizationId),
+    });
+    if (organization?.lifecycleState !== "active") {
+      throw receivingOrganizationUnavailable();
+    }
     const row =
       await transaction.query.organizationReceivingConnections.findFirst({
         where: (table, { eq }) =>
@@ -311,9 +274,49 @@ async function persistCreateEvidence(input: {
     ) {
       throw stagingSuperseded();
     }
+    if (row.webhookCreateAttemptedAt) return "reconcile" as const;
+    await transaction
+      .update(schema.organizationReceivingConnections)
+      .set({ webhookCreateAttemptedAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.organizationReceivingConnections.id, row.id));
+    return "create" as const;
+  });
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
+    );
+    const organization = await transaction.query.organizations.findFirst({
+      columns: { lifecycleState: true },
+      where: (table, { eq }) => eq(table.id, input.organizationId),
+    });
+    if (organization?.lifecycleState !== "active") {
+      throw receivingOrganizationUnavailable();
+    }
+    const row =
+      await transaction.query.organizationReceivingConnections.findFirst({
+        where: (table, { eq }) =>
+          eq(table.organizationId, input.organizationId),
+      });
+    if (
+      !row ||
+      row.encryptedApiKey !== input.encryptedApiKey ||
+      row.webhookStagingSequence !== input.stagingSequence
+    ) {
+      throw stagingSuperseded();
+    }
+    const created =
+      action === "reconcile"
+        ? await input.provider.reconcileWebhookCreate({
+            apiKey: input.apiKey,
+            intent: input.intent,
+          })
+        : await input.provider.createWebhook({
+            apiKey: input.apiKey,
+            intent: input.intent,
+          });
     if (
       row.providerWebhookId &&
-      row.providerWebhookId !== input.providerWebhookId
+      row.providerWebhookId !== created.id
     ) {
       throw new ReceivingConfigError(
         "RESEND_RECEIVING_WEBHOOK_CONFLICT",
@@ -323,8 +326,12 @@ async function persistCreateEvidence(input: {
     await transaction
       .update(schema.organizationReceivingConnections)
       .set({
-        providerWebhookId: input.providerWebhookId,
-        encryptedSigningSecret: input.encryptedSigningSecret,
+        providerWebhookId: created.id,
+        encryptedSigningSecret: encryptReceivingSigningSecret({
+          organizationId: input.organizationId,
+          signingSecret: created.signingSecret,
+          env: input.env,
+        }),
         webhookStatus: "disabled",
         inboundEnabled: false,
         updatedAt: new Date(),
@@ -345,6 +352,42 @@ async function persistCreateEvidence(input: {
           ),
         ),
       );
+    return created;
+  });
+}
+
+async function withActiveStagingAuthority<T>(
+  input: {
+    organizationId: string;
+    encryptedApiKey: string;
+    stagingSequence: number;
+  },
+  run: () => Promise<T>,
+) {
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
+    );
+    const organization = await transaction.query.organizations.findFirst({
+      columns: { lifecycleState: true },
+      where: (table, { eq }) => eq(table.id, input.organizationId),
+    });
+    if (organization?.lifecycleState !== "active") {
+      throw receivingOrganizationUnavailable();
+    }
+    const connection =
+      await transaction.query.organizationReceivingConnections.findFirst({
+        columns: { encryptedApiKey: true, webhookStagingSequence: true },
+        where: (table, { eq }) =>
+          eq(table.organizationId, input.organizationId),
+      });
+    if (
+      connection?.encryptedApiKey !== input.encryptedApiKey ||
+      connection.webhookStagingSequence !== input.stagingSequence
+    ) {
+      throw stagingSuperseded();
+    }
+    return run();
   });
 }
 

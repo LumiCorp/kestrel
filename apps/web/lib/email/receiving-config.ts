@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   decryptGatewayCredential,
   encryptGatewayCredential,
@@ -54,6 +54,23 @@ export class ReceivingConfigError extends Error {
   }
 }
 
+export function receivingOrganizationUnavailable() {
+  return new ReceivingConfigError(
+    "RESEND_RECEIVING_ORGANIZATION_UNAVAILABLE",
+    "Inbound receiving is unavailable while the Organization is being deleted.",
+  );
+}
+
+async function assertActiveReceivingOrganization(organizationId: string) {
+  const organization = await knowledgeDb.query.organizations.findFirst({
+    columns: { lifecycleState: true },
+    where: (table, { eq }) => eq(table.id, organizationId),
+  });
+  if (organization?.lifecycleState !== "active") {
+    throw receivingOrganizationUnavailable();
+  }
+}
+
 export async function getPublicReceivingConnection(
   organizationId: string,
 ): Promise<PublicReceivingConnection> {
@@ -67,6 +84,7 @@ export async function inspectReceivingDomains(input: {
   env?: NodeJS.ProcessEnv;
   provider?: ResendReceivingProvider;
 }): Promise<ReceivingDomainOption[]> {
+  await assertActiveReceivingOrganization(input.organizationId);
   const suppliedApiKey = input.apiKey?.trim() || undefined;
   const existing = suppliedApiKey
     ? undefined
@@ -129,6 +147,7 @@ export async function saveReceivingConnection(input: {
   env?: NodeJS.ProcessEnv;
   provider?: ResendReceivingProvider;
 }): Promise<PublicReceivingConnection> {
+  await assertActiveReceivingOrganization(input.organizationId);
   const provider = input.provider ?? new ResendHttpReceivingProvider();
   const existing = await findConnection(input.organizationId);
   const suppliedApiKey = input.apiKey?.trim() || undefined;
@@ -234,6 +253,14 @@ export async function saveReceivingConnection(input: {
       await transaction.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
       );
+      const lockedOrganization =
+        await transaction.query.organizations.findFirst({
+          columns: { lifecycleState: true },
+          where: (table, { eq }) => eq(table.id, input.organizationId),
+        });
+      if (lockedOrganization?.lifecycleState !== "active") {
+        throw receivingOrganizationUnavailable();
+      }
       const lockedExisting =
         await transaction.query.organizationReceivingConnections.findFirst({
           where: (table, { eq }) =>
@@ -471,17 +498,31 @@ export async function resolveReceivingIngressAuthority(
   routeLocator: string,
   env?: NodeJS.ProcessEnv,
 ) {
-  const row =
-    await knowledgeDb.query.organizationReceivingConnections.findFirst({
-      columns: {
-        id: true,
-        organizationId: true,
-        encryptedSigningSecret: true,
-        inboundEnabled: true,
-        webhookStatus: true,
-      },
-      where: (table, { eq }) => eq(table.routeLocator, routeLocator),
-    });
+  const [row] = await knowledgeDb
+    .select({
+      id: schema.organizationReceivingConnections.id,
+      organizationId:
+        schema.organizationReceivingConnections.organizationId,
+      encryptedSigningSecret:
+        schema.organizationReceivingConnections.encryptedSigningSecret,
+      inboundEnabled: schema.organizationReceivingConnections.inboundEnabled,
+      webhookStatus: schema.organizationReceivingConnections.webhookStatus,
+    })
+    .from(schema.organizationReceivingConnections)
+    .innerJoin(
+      schema.organizations,
+      eq(
+        schema.organizations.id,
+        schema.organizationReceivingConnections.organizationId,
+      ),
+    )
+    .where(
+      and(
+        eq(schema.organizationReceivingConnections.routeLocator, routeLocator),
+        eq(schema.organizations.lifecycleState, "active"),
+      ),
+    )
+    .limit(1);
   if (!row) return null;
   if (
     !row.inboundEnabled ||
@@ -547,6 +588,14 @@ async function persistStoredCredentialHealth(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
     );
+    const lockedOrganization =
+      await transaction.query.organizations.findFirst({
+        columns: { lifecycleState: true },
+        where: (table, { eq }) => eq(table.id, input.organizationId),
+      });
+    if (lockedOrganization?.lifecycleState !== "active") {
+      throw receivingOrganizationUnavailable();
+    }
     const lockedExisting =
       await transaction.query.organizationReceivingConnections.findFirst({
         where: (table, { eq: equals }) =>
@@ -626,6 +675,14 @@ async function beginStoredCredentialHealthCheck(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
     );
+    const lockedOrganization =
+      await transaction.query.organizations.findFirst({
+        columns: { lifecycleState: true },
+        where: (table, { eq }) => eq(table.id, input.organizationId),
+      });
+    if (lockedOrganization?.lifecycleState !== "active") {
+      throw receivingOrganizationUnavailable();
+    }
     const lockedExisting =
       await transaction.query.organizationReceivingConnections.findFirst({
         where: (table, { eq: equals }) =>

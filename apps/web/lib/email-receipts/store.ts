@@ -27,6 +27,13 @@ export class EmailDeliveryReceiptConflictError extends Error {
   }
 }
 
+export class EmailDeliveryReceiptUnavailableError extends Error {
+  constructor() {
+    super("Email delivery receipt authority is unavailable.");
+    this.name = "EmailDeliveryReceiptUnavailableError";
+  }
+}
+
 export async function createOrFindQueuedEmailDeliveryReceipt(input: {
   organizationId: string;
   receivingConnectionId: string;
@@ -41,6 +48,14 @@ export async function createOrFindQueuedEmailDeliveryReceipt(input: {
   subject: string;
 }): Promise<{ receipt: EmailDeliveryReceiptProjection; created: boolean }> {
   return knowledgeDb.transaction(async (transaction) => {
+    const [organization] = await transaction
+      .select({ lifecycleState: schema.organizations.lifecycleState })
+      .from(schema.organizations)
+      .where(eq(schema.organizations.id, input.organizationId))
+      .for("update");
+    if (organization?.lifecycleState !== "active") {
+      throw new EmailDeliveryReceiptUnavailableError();
+    }
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:email-receipt:${input.receivingConnectionId}`}, 0))`,
     );

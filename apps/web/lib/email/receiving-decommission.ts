@@ -44,10 +44,11 @@ export async function decommissionOrganizationReceivingWebhook(input: {
     let webhookId = authority.providerWebhookId;
     if (!webhookId) {
       if (!authority.createIntent) throw new ReceivingDecommissionError();
-      const recovered = await provider.reconcileWebhookCreate({
+      const recovered = await provider.reconcileWebhookCreateIfPresent({
         apiKey,
         intent: authority.createIntent,
       });
+      if (!recovered) return;
       await persistRecoveredCreateEvidence({
         organizationId: input.organizationId,
         encryptedApiKey: authority.encryptedApiKey,

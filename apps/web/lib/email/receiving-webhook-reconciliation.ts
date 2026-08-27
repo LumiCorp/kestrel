@@ -53,8 +53,16 @@ export async function reconcileConfiguredReceivingWebhooks(
       organizationId: schema.organizationReceivingConnections.organizationId,
     })
     .from(schema.organizationReceivingConnections)
+    .innerJoin(
+      schema.organizations,
+      eq(
+        schema.organizations.id,
+        schema.organizationReceivingConnections.organizationId,
+      ),
+    )
     .where(
       and(
+        eq(schema.organizations.lifecycleState, "active"),
         eq(schema.organizationReceivingConnections.provider, "resend"),
         isNotNull(schema.organizationReceivingConnections.encryptedApiKey),
         eq(

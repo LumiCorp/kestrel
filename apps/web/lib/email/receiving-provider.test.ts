@@ -559,6 +559,55 @@ test("ambiguous create reconciliation fails closed on zero or multiple intent ma
   }
 });
 
+test("decommission reconciliation distinguishes verified absence from contradictory matches", async () => {
+  const endpoint = "https://example.test/inbound/deleting";
+  const intent = prepareResendWebhookCreateIntent(endpoint);
+  const absentProvider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async () =>
+      Response.json({ object: "list", has_more: false, data: [] }),
+  });
+  assert.equal(
+    await absentProvider.reconcileWebhookCreateIfPresent({
+      apiKey: "re_full_access",
+      intent,
+    }),
+    null,
+  );
+
+  const duplicateProvider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async () =>
+      Response.json({
+        object: "list",
+        has_more: false,
+        data: [
+          {
+            id: "webhook-one",
+            endpoint,
+            status: "enabled",
+            events: ["email.received"],
+          },
+          {
+            id: "webhook-two",
+            endpoint,
+            status: "disabled",
+            events: ["email.received"],
+          },
+        ],
+      }),
+  });
+  await assert.rejects(
+    duplicateProvider.reconcileWebhookCreateIfPresent({
+      apiKey: "re_full_access",
+      intent,
+    }),
+    (error: unknown) =>
+      error instanceof ResendReceivingProviderError &&
+      error.code === "RESEND_RECEIVING_RESPONSE_INVALID",
+  );
+});
+
 test("ambiguous create reconciliation verifies retrieved identity, endpoint, status, events, and secret", async () => {
   const endpoint = "https://example.test/inbound/opaque";
   const intent = prepareResendWebhookCreateIntent(endpoint);
@@ -886,6 +935,73 @@ test("network and retryable HTTP failures are provider-unavailable without crede
         !error.message.includes(secret),
     );
   }
+});
+
+test("every Resend management request applies the 10-second deadline and composes cancellation", async () => {
+  const secret = "re_timeout_secret_must_not_escape";
+  const deadline = new AbortController();
+  const caller = new AbortController();
+  const deadlineCalls: number[] = [];
+  let requestSignal: AbortSignal | undefined;
+  const provider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    signal: caller.signal,
+    timeoutSignal: (timeoutMs) => {
+      deadlineCalls.push(timeoutMs);
+      return deadline.signal;
+    },
+    fetchImpl: async (_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return await new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener(
+          "abort",
+          () => reject(new Error(`aborted ${secret}`)),
+          { once: true },
+        );
+      });
+    },
+  });
+
+  const callerCancelled = provider.listDomains(secret);
+  caller.abort();
+  await assert.rejects(
+    callerCancelled,
+    (error: unknown) =>
+      error instanceof ResendReceivingProviderError &&
+      error.code === "RESEND_RECEIVING_PROVIDER_UNAVAILABLE" &&
+      !error.message.includes(secret),
+  );
+  assert.deepEqual(deadlineCalls, [10_000]);
+  assert.ok(requestSignal);
+  assert.notEqual(requestSignal, caller.signal);
+
+  const timedOut = new AbortController();
+  const timeoutCalls: number[] = [];
+  const timeoutProvider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    timeoutSignal: (timeoutMs) => {
+      timeoutCalls.push(timeoutMs);
+      return timedOut.signal;
+    },
+    fetchImpl: async (_input, init) =>
+      await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new Error(`deadline ${secret}`)),
+          { once: true },
+        );
+      }),
+  });
+  const deadlineCancelled = timeoutProvider.listDomains(secret);
+  timedOut.abort();
+  await assert.rejects(
+    deadlineCancelled,
+    (error: unknown) =>
+      error instanceof ResendReceivingProviderError &&
+      error.code === "RESEND_RECEIVING_PROVIDER_UNAVAILABLE" &&
+      !error.message.includes(secret),
+  );
+  assert.deepEqual(timeoutCalls, [10_000]);
 });
 
 test("malformed successful payload is an invalid upstream response", async () => {

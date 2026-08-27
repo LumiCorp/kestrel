@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, gte, inArray, isNull, ne } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, ne, sql } from "drizzle-orm";
 import { getCurrentSubscriptionByReference } from "@/lib/billing/subscriptions";
 import {
   enqueueEnvironmentOperation,
@@ -61,6 +61,27 @@ export async function requestOrganizationDeletion(input: {
     if (organization.name !== input.confirmationName) {
       throw new Error("Organization confirmation does not match.");
     }
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:receiving:${input.organizationId}`}, 0))`,
+    );
+    await transaction
+      .update(schema.organizationReceivingConnections)
+      .set({
+        inboundEnabled: false,
+        webhookStatus: "disabled",
+        webhookStagingSequence: sql`${schema.organizationReceivingConnections.webhookStagingSequence} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        eq(
+          schema.organizationReceivingConnections.organizationId,
+          input.organizationId,
+        ),
+      );
+    await transaction
+      .update(schema.organizations)
+      .set({ lifecycleState: "deleting" })
+      .where(eq(schema.organizations.id, input.organizationId));
     const existing =
       await transaction.query.organizationDeletionOperations.findFirst({
         where: (table, { and, eq, inArray }) =>
@@ -129,11 +150,6 @@ export async function requestOrganizationDeletion(input: {
       .returning();
     if (!operation)
       throw new Error("Organization deletion operation was not created.");
-    await transaction
-      .update(schema.organizations)
-      .set({ lifecycleState: "deleting" })
-      .where(eq(schema.organizations.id, input.organizationId));
-
     return { operation, created: true };
   });
   return requested.operation;

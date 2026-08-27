@@ -2,17 +2,6 @@
 
 Each issue appears in one state. `Ready` is the current dependency-free frontier. Move issues between states as implementation and review change the graph.
 
-## Ready
-
-- [Fence receiving throughout Organization deletion](46-fence-receiving-during-organization-deletion.md)
-- [Prove Resend key replacement through One and Desktop routes](47-prove-resend-key-replacement-through-management-routes.md)
-- [Bound Resend management requests](48-bound-resend-management-requests.md)
-- [Complete deletion after a webhook create is verified absent](49-complete-deletion-after-verified-absent-create.md)
-
-## In progress
-
-None.
-
 ## Blocked
 
 - [Hydrate and admit one received email](04-hydrate-and-admit-received-email.md) — blocked by [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
@@ -29,6 +18,10 @@ None.
 - [Recover queued receipts after terminal pg-boss jobs](43-recover-terminal-receipt-jobs.md)
 - [Decommission Resend receiving before Organization deletion](44-decommission-resend-before-organization-deletion.md)
 - [Bound Resend webhook bodies before verification](45-bound-resend-webhook-bodies.md)
+- [Fence receiving throughout Organization deletion](46-fence-receiving-during-organization-deletion.md)
+- [Prove Resend key replacement through One and Desktop routes](47-prove-resend-key-replacement-through-management-routes.md)
+- [Bound Resend management requests](48-bound-resend-management-requests.md)
+- [Complete deletion after a webhook create is verified absent](49-complete-deletion-after-verified-absent-create.md)
 
 ## Done
 

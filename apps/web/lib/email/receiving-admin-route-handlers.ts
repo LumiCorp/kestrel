@@ -5,6 +5,7 @@ import {
   inspectReceivingDomains,
   saveReceivingConnection,
 } from "@/lib/email/receiving-config";
+import type { ResendReceivingProvider } from "@/lib/email/receiving-provider";
 import {
   getSafeReceivingAdminError,
   parseReceivingAdminJson,
@@ -30,6 +31,7 @@ const domainsBodySchema = z.object({
 
 export function createOneReceivingPutHandler(options: {
   requireAdmin: (request: Request) => Promise<OrganizationAdminAuthority>;
+  provider?: ResendReceivingProvider;
 }) {
   return async function putOneReceiving(request: Request) {
     try {
@@ -42,6 +44,7 @@ export function createOneReceivingPutHandler(options: {
         actorUserId: session.user.id,
         apiKey: body.apiKey,
         receivingDomainId: body.receivingDomainId,
+        provider: options.provider,
       });
       await logAdminEvent({
         organizationId,
@@ -94,6 +97,7 @@ export function createDesktopReceivingPutHandler(options: {
     request: Request,
     organizationId: string,
   ) => Promise<DesktopAdminAuthority>;
+  provider?: ResendReceivingProvider;
 }) {
   return async function putDesktopReceiving(
     request: Request,
@@ -113,6 +117,7 @@ export function createDesktopReceivingPutHandler(options: {
           actorUserId: user.id,
           apiKey: body.apiKey,
           receivingDomainId: body.receivingDomainId,
+          provider: options.provider,
         }),
       });
     } catch (error) {

@@ -9,6 +9,7 @@ import type {
   ResendWebhookCreateRecoveryProvider,
   ResendWebhookProjection,
 } from "./receiving-provider";
+import { ResendReceivingProviderError } from "./receiving-provider";
 
 const databaseUrl = process.env.KESTREL_APPS_DB_TEST_URL?.trim();
 
@@ -230,7 +231,10 @@ class RecoveryProvider implements ResendWebhookCreateRecoveryProvider {
   }) {
     this.createCalls += 1;
     if (this.behavior === "permanent-failure") {
-      throw new Error("provider unavailable");
+      throw new ResendReceivingProviderError(
+        "RESEND_RECEIVING_PROVIDER_UNAVAILABLE",
+        "Resend receiving is temporarily unavailable.",
+      );
     }
     this.webhook.endpoint = input.intent.endpoint;
     if (this.behavior === "ambiguous-create" && this.createCalls === 1) {

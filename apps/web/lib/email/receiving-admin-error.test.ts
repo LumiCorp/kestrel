@@ -88,6 +88,12 @@ test("receiving provider failures have stable actionable HTTP status classes", (
         "The receiving configuration changed while receiving was being saved. Refresh and try again.",
     },
     {
+      code: "RESEND_RECEIVING_ORGANIZATION_UNAVAILABLE",
+      status: 409,
+      error:
+        "Inbound receiving is unavailable while the Organization is being deleted.",
+    },
+    {
       code: "RESEND_RECEIVING_WEBHOOK_KEY_AUTHORITY_CONFLICT",
       status: 409,
       error:

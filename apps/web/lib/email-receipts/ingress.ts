@@ -7,6 +7,7 @@ import { enqueueEmailDeliveryReceipt } from "@/lib/turns/queue";
 import {
   createOrFindQueuedEmailDeliveryReceipt,
   EmailDeliveryReceiptConflictError,
+  EmailDeliveryReceiptUnavailableError,
 } from "./store";
 
 const mailbox = z.string().min(1).max(320);
@@ -218,6 +219,13 @@ async function handleResendInboundWebhookRequest(
       { status: 202 },
     );
   } catch (error) {
+    if (error instanceof EmailDeliveryReceiptUnavailableError) {
+      recordEmailIngressTelemetry({
+        outcome: "unavailable",
+        durationMs: performance.now() - startedAt,
+      });
+      return Response.json({ error: "Webhook unavailable." }, { status: 404 });
+    }
     if (error instanceof EmailDeliveryReceiptConflictError) {
       recordEmailIngressTelemetry({
         outcome: "receipt_conflict",

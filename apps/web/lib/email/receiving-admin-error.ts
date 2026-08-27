@@ -120,6 +120,15 @@ function safeConfigError(error: ReceivingConfigError) {
             "The receiving configuration changed while receiving was being saved. Refresh and try again.",
         },
       };
+    case "RESEND_RECEIVING_ORGANIZATION_UNAVAILABLE":
+      return {
+        status: 409,
+        body: {
+          code: error.code,
+          error:
+            "Inbound receiving is unavailable while the Organization is being deleted.",
+        },
+      };
     case "RESEND_RECEIVING_DOMAIN_INVALID":
       return {
         status: 422,

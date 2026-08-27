@@ -86,6 +86,15 @@ export interface ResendWebhookCreateRecoveryProvider
 export interface ResendWebhookDecommissionProvider
   extends ResendWebhookCreateRecoveryProvider {
   /**
+   * Reconcile an attempted create for deletion. A complete provider listing
+   * with zero exact matches is authoritative absence; contradictory evidence
+   * still rejects.
+   */
+  reconcileWebhookCreateIfPresent(input: {
+    apiKey: string;
+    intent: ResendWebhookCreateIntent;
+  }): Promise<CreatedResendWebhook | null>;
+  /**
    * Retrieve a webhook while preserving an explicit provider 404 as absence
    * evidence. Other provider failures must still reject.
    */
@@ -99,6 +108,11 @@ type ReceivingFetch = (
   input: RequestInfo | URL,
   init?: RequestInit,
 ) => Promise<Response>;
+
+type TimeoutSignalFactory = (timeoutMs: number) => AbortSignal;
+
+/** Matches Kestrel's established hosted external-API deadline. */
+export const RESEND_MANAGEMENT_REQUEST_TIMEOUT_MS = 10_000;
 
 export class ResendReceivingProviderError extends Error {
   constructor(
@@ -120,10 +134,22 @@ export class ResendHttpReceivingProvider
 {
   readonly #fetch: ReceivingFetch;
   readonly #baseUrl: URL;
+  readonly #signal: AbortSignal | undefined;
+  readonly #timeoutSignal: TimeoutSignalFactory;
 
-  constructor(input: { fetchImpl?: ReceivingFetch; baseUrl?: string } = {}) {
+  constructor(
+    input: {
+      fetchImpl?: ReceivingFetch;
+      baseUrl?: string;
+      signal?: AbortSignal;
+      timeoutSignal?: TimeoutSignalFactory;
+    } = {},
+  ) {
     this.#fetch = input.fetchImpl ?? fetch;
     this.#baseUrl = new URL(input.baseUrl ?? "https://api.resend.com");
+    this.#signal = input.signal;
+    this.#timeoutSignal =
+      input.timeoutSignal ?? ((timeoutMs) => AbortSignal.timeout(timeoutMs));
   }
 
   async listDomains(apiKey: string): Promise<ResendReceivingDomain[]> {
@@ -175,6 +201,29 @@ export class ResendHttpReceivingProvider
     apiKey: string;
     intent: ResendWebhookCreateIntent;
   }): Promise<CreatedResendWebhook> {
+    const matches = await this.#findWebhookCreateIntentMatches(input);
+    if (matches.length !== 1) throw invalidResponse();
+    const match = matches[0];
+    if (!match) throw invalidResponse();
+    return this.#retrieveWebhookCreateEvidence(input.apiKey, match);
+  }
+
+  async reconcileWebhookCreateIfPresent(input: {
+    apiKey: string;
+    intent: ResendWebhookCreateIntent;
+  }): Promise<CreatedResendWebhook | null> {
+    const matches = await this.#findWebhookCreateIntentMatches(input);
+    if (matches.length === 0) return null;
+    if (matches.length !== 1) throw invalidResponse();
+    const match = matches[0];
+    if (!match) throw invalidResponse();
+    return this.#retrieveWebhookCreateEvidence(input.apiKey, match);
+  }
+
+  async #findWebhookCreateIntentMatches(input: {
+    apiKey: string;
+    intent: ResendWebhookCreateIntent;
+  }) {
     const intent = parseWebhookCreateIntent(input.intent);
     const webhooks: ResendWebhookProjection[] = [];
     const cursors = new Set<string>();
@@ -205,16 +254,18 @@ export class ResendHttpReceivingProvider
       cursors.add(nextCursor);
       after = nextCursor;
     }
-    const matches = webhooks.filter((webhook) =>
+    return webhooks.filter((webhook) =>
       webhookMatchesCreateIntent(webhook, intent),
     );
-    if (matches.length !== 1) throw invalidResponse();
+  }
 
-    const match = matches[0];
-    if (!match) throw invalidResponse();
+  async #retrieveWebhookCreateEvidence(
+    apiKey: string,
+    match: ResendWebhookProjection,
+  ) {
     const retrieved = record(
       await this.#request(
-        input.apiKey,
+        apiKey,
         `/webhooks/${encodeURIComponent(match.id)}`,
       ),
     );
@@ -305,8 +356,12 @@ export class ResendHttpReceivingProvider
   ): Promise<unknown> {
     let response: Response;
     try {
+      const deadline = this.#timeoutSignal(
+        RESEND_MANAGEMENT_REQUEST_TIMEOUT_MS,
+      );
       response = await this.#fetch(new URL(path, this.#baseUrl), {
         ...init,
+        signal: combineAbortSignals([this.#signal, init.signal, deadline]),
         headers: {
           authorization: `Bearer ${apiKey}`,
           "user-agent": "Kestrel-One/1.0",
@@ -358,6 +413,17 @@ export class ResendHttpReceivingProvider
       throw invalidResponse();
     }
   }
+}
+
+function combineAbortSignals(
+  signals: Array<AbortSignal | null | undefined>,
+): AbortSignal {
+  const present = signals.filter(
+    (signal): signal is AbortSignal => signal !== null && signal !== undefined,
+  );
+  const first = present[0];
+  if (!first) throw new Error("A Resend request deadline is required.");
+  return present.length === 1 ? first : AbortSignal.any(present);
 }
 
 function parseCompleteList(value: unknown): unknown[] {
