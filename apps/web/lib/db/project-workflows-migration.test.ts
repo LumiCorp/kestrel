@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const migration = fs.readFileSync(
-  path.join(directory, "migrations/0083_project_workflows.sql"),
+  path.join(directory, "migrations/0085_project_workflows.sql"),
   "utf8",
 );
 

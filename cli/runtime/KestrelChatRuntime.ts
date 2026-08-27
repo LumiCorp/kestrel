@@ -3449,6 +3449,8 @@ function createRuntimeWithStore(
       toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN", runtimeEnv),
       appApprovalModes: profile.kestrelOneAppApprovalModes,
       appApprovalPolicies: profile.kestrelOneAppApprovalPolicies,
+      rememberedToolApprovalEvidence:
+        profile.rememberedToolApprovalEvidence ?? [],
     },
     providerConfigurations:
       createToolProviderConfigurationResolverFromEnvironment(

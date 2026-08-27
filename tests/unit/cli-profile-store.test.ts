@@ -589,6 +589,23 @@ test("Kestrel managed configuration parser validates SDK supplied overlays", () 
         minimum: "auto",
       },
     },
+    rememberedToolApprovalEvidence: [
+      {
+        version: "remembered_tool_approval_evidence_v1",
+        organizationId: "org_123",
+        projectId: "project_123",
+        environmentId: "env_123",
+        threadId: "thread_123",
+        actorUserId: "user_123",
+        toolIdentity: {
+          version: "stable_tool_approval_identity_v1",
+          toolId: "kestrel_one.search_knowledge_documents",
+          descriptorContractRevision: `sha256:${"d".repeat(64)}`,
+          approvalAuthorityRevision: "authority-v1",
+        },
+        sourceInteractionId: "interaction_123",
+      },
+    ],
     additionalToolNames: ["kestrel_one.search_knowledge_documents"],
     reasoning: {
       request: { mode: "summary", effort: "high" },
@@ -612,6 +629,10 @@ test("Kestrel managed configuration parser validates SDK supplied overlays", () 
       "kestrel_one.search_knowledge_documents"
     ],
     { environment: "auto", project: "ask", minimum: "auto" },
+  );
+  assert.equal(
+    parsed.rememberedToolApprovalEvidence?.[0]?.sourceInteractionId,
+    "interaction_123",
   );
   assert.throws(
     () =>

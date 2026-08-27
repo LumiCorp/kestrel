@@ -6,6 +6,12 @@ import type {
   AgentToolPresentation,
 } from "../kestrel/contracts/model-io.js";
 import {
+  STABLE_TOOL_APPROVAL_IDENTITY_VERSION,
+  parseStableToolApprovalIdentityV1,
+  type RunnerApprovalActorAuthorityV1,
+  type StableToolApprovalIdentityV1,
+} from "@kestrel-agents/protocol";
+import {
   createToolActivationRefV1,
   createToolSurfaceSnapshotV1,
   fingerprintToolScopeV1,
@@ -20,14 +26,18 @@ import {
 import {
   AGENT_TOOL_RESULT_VERSION,
   PREPARED_TOOL_CALL_VERSION,
+  PREPARED_TOOL_EXECUTION_REQUIREMENTS_VERSION,
+  PREPARED_TOOL_STABLE_AUTHORITY_VERSION,
   TOOL_EXECUTION_OUTCOME_VERSION,
   parsePreparedToolCallV1,
   type AgentToolResultV2,
   type PreparedToolApprovalAuthorityV1,
   type PreparedToolCallOriginV1,
   type PreparedToolCallV1,
+  type PreparedToolExecutionRequirementsV1,
   type PreparedToolInputAdapterV1,
   type PreparedToolPolicyDispositionV1,
+  type PreparedToolStableAuthorityV1,
   type ResolvedModelToolIntentV1,
   type ToolExecutionOutcomeV1,
 } from "../kestrel/contracts/tool-invocation.js";
@@ -129,6 +139,9 @@ export function createPreparedToolCallV1(input: {
   inputAdapters?: PreparedToolInputAdapterV1[] | undefined;
   policy: PreparedToolPolicyDispositionV1;
   approval?: PreparedToolApprovalAuthorityV1 | undefined;
+  stableAuthority?: PreparedToolStableAuthorityV1 | undefined;
+  stableToolIdentity?: StableToolApprovalIdentityV1 | undefined;
+  executionRequirements?: PreparedToolExecutionRequirementsV1 | undefined;
   preparedAt?: string | undefined;
 }): PreparedToolCallV1 {
   if (input.policy.decision === "deny") {
@@ -188,8 +201,97 @@ export function createPreparedToolCallV1(input: {
     inputAdapters,
     policy: input.policy,
     ...(approval === undefined ? {} : { approval }),
+    ...(input.stableAuthority === undefined
+      ? {}
+      : { stableAuthority: input.stableAuthority }),
+    ...(input.stableToolIdentity === undefined
+      ? {}
+      : { stableToolIdentity: input.stableToolIdentity }),
+    ...(input.executionRequirements === undefined
+      ? {}
+      : { executionRequirements: input.executionRequirements }),
     preparedAt: input.preparedAt ?? new Date().toISOString(),
   });
+}
+
+export function createStableToolApprovalIdentityV1(input: {
+  toolId: string;
+  descriptorContractRevision: string;
+  approvalAuthorityRevision: string;
+}): StableToolApprovalIdentityV1 {
+  return parseStableToolApprovalIdentityV1({
+    version: STABLE_TOOL_APPROVAL_IDENTITY_VERSION,
+    ...input,
+  });
+}
+
+export function createPreparedToolApprovalAuthorityV1(input: {
+  activation: ToolActivationRefV1;
+  effectiveInput: Record<string, unknown>;
+  policyRevision: string;
+  approvalAuthorityRevision: string;
+  capabilities: readonly string[];
+  runContext: ToolRunContext;
+}): {
+  stableAuthority: PreparedToolStableAuthorityV1;
+  stableToolIdentity: StableToolApprovalIdentityV1;
+  executionRequirements: PreparedToolExecutionRequirementsV1;
+} | undefined {
+  const context = readHostedStableApprovalContext(input.runContext);
+  if (context === undefined) return;
+  const capabilities = [...new Set(input.capabilities)]
+    .filter((entry) => entry.trim().length > 0)
+    .sort();
+  const normalizedActionHash = hashCanonical({
+    toolId: input.activation.descriptor.toolId,
+    effectiveInput: input.effectiveInput,
+  });
+  const stableToolIdentity = createStableToolApprovalIdentityV1({
+    toolId: input.activation.descriptor.toolId,
+    descriptorContractRevision: input.activation.descriptor.contractRevision,
+    approvalAuthorityRevision: input.approvalAuthorityRevision,
+  });
+  const authorityPayload = {
+    version: PREPARED_TOOL_STABLE_AUTHORITY_VERSION,
+    actor: context.actor,
+    organizationId: context.organizationId,
+    environmentId: context.environmentId,
+    projectId: context.projectId,
+    threadId: context.threadId,
+    resourceAuthority: {
+      ...context.resourceAuthority,
+      toolSourceKind: input.activation.descriptor.sourceKind,
+      toolSourceId: input.activation.descriptor.sourceId,
+    },
+    policyRevision: input.policyRevision,
+    capabilities,
+    descriptorContractRevision: input.activation.descriptor.contractRevision,
+    approvalAuthorityRevision: input.approvalAuthorityRevision,
+    normalizedActionHash,
+  };
+  return {
+    stableAuthority: {
+      ...authorityPayload,
+      fingerprint: hashCanonical(authorityPayload),
+    },
+    stableToolIdentity,
+    executionRequirements: {
+      version: PREPARED_TOOL_EXECUTION_REQUIREMENTS_VERSION,
+      credentials: ([
+        "continuation_run_segment",
+        ...(context.hasMcpGrant ? ["mcp_access_grant" as const] : []),
+        ...(context.hasProjectContextGrant
+          ? ["project_context_grant" as const]
+          : []),
+        ...(context.hasWorkspaceLease ? ["workspace_lease" as const] : []),
+        ...(context.hasSourceWriteGrant ? ["source_write_grant" as const] : []),
+        ...(context.hasProviderExecutionTicket
+          ? ["provider_execution_ticket" as const]
+          : []),
+        "live_handler_capability",
+      ] satisfies import("../kestrel/contracts/tool-invocation.js").RenewableToolExecutionCredentialV1[]).sort(),
+    },
+  };
 }
 
 export async function executePinnedToolCallV1(input: {
@@ -256,6 +358,47 @@ export async function executePinnedToolCallV1(input: {
   }
 
   return buildCompletedToolResult({ prepared, pinned: input.pinned, rawOutput, startedAt });
+}
+
+export function buildUnknownPreparedToolCallResultV1(input: {
+  prepared: PreparedToolCallV1;
+  error: { code: string; message: string; details?: Record<string, unknown> | undefined };
+  startedAt: string;
+}): AgentToolResultV2 {
+  const prepared = parsePreparedToolCallV1(input.prepared);
+  const completedAt = new Date().toISOString();
+  const legacyError = Object.assign(new Error(input.error.message), {
+    ...(input.error.details === undefined ? {} : { details: input.error.details }),
+  });
+  const legacy = buildAgentToolFailureResult({
+    toolName: prepared.activation.descriptor.toolId,
+    input: prepared.effectiveInput,
+    error: legacyError,
+    startedAt: input.startedAt,
+    completedAt,
+  });
+  const outcome: ToolExecutionOutcomeV1 = {
+    version: TOOL_EXECUTION_OUTCOME_VERSION,
+    callId: prepared.callId,
+    activation: prepared.activation,
+    kind: "failure",
+    startedAt: input.startedAt,
+    completedAt,
+    effectState: "unknown",
+    normalizedFailureCode: input.error.code,
+    retryable: false,
+    error: {
+      message: input.error.message,
+      ...(input.error.details === undefined ? {} : { details: input.error.details }),
+    },
+  };
+  return Object.freeze({
+    ...legacy,
+    version: AGENT_TOOL_RESULT_VERSION,
+    toolCallId: prepared.callId,
+    activation: prepared.activation,
+    outcome,
+  });
 }
 
 function buildCompletedToolResult(input: {
@@ -381,7 +524,6 @@ export function fingerprintToolRunScopeV1(
   const organizationId = readString(hosted?.organizationId);
   const environmentId = readString(hosted?.environmentId);
   const gatewayUrl = sanitizeGatewayUrl(readString(hosted?.gatewayUrl));
-  const grantId = readString(hosted?.grantId);
   const projectId =
     readString(hosted?.projectId) ?? readString(projectContext?.projectId);
   const threadId =
@@ -405,20 +547,15 @@ export function fingerprintToolRunScopeV1(
     ? orchestration.devShellSourceWriteApprovalGrants
         .flatMap((value) => {
           const grant = asRecord(value);
-          const grantId = readString(grant?.grantId);
-          if (grantId === undefined) return [];
+          if (readString(grant?.grantId) === undefined) return [];
           return [
             {
-              grantId,
               ...(readString(grant?.command) === undefined
                 ? {}
                 : { command: readString(grant?.command) }),
               ...(readString(grant?.cwd) === undefined
                 ? {}
                 : { cwd: readString(grant?.cwd) }),
-              ...(readString(grant?.expiresAt) === undefined
-                ? {}
-                : { expiresAt: readString(grant?.expiresAt) }),
               writablePaths: Array.isArray(grant?.writablePaths)
                 ? grant.writablePaths
                     .filter(
@@ -431,16 +568,19 @@ export function fingerprintToolRunScopeV1(
             },
           ];
         })
-        .sort((left, right) => left.grantId.localeCompare(right.grantId))
+        .sort((left, right) =>
+          hashCanonical(left).localeCompare(hashCanonical(right)),
+        )
     : [];
   return fingerprintToolScopeV1({
     version: "v1",
+    // The continuation proves its relationship to this run separately while
+    // execution credentials themselves remain renewable.
     runId: runContext?.runId ?? "unscoped",
     sessionId: runContext?.sessionId ?? "unscoped",
     ...(organizationId === undefined ? {} : { organizationId }),
     ...(environmentId === undefined ? {} : { environmentId }),
     ...(gatewayUrl === undefined ? {} : { gatewayUrl }),
-    ...(grantId === undefined ? {} : { grantId }),
     ...(projectId === undefined ? {} : { projectId }),
     ...(threadId === undefined ? {} : { threadId }),
     ...(readString(kestrelOne?.tenantId ?? kestrelOne?.organizationId) ===
@@ -451,9 +591,6 @@ export function fingerprintToolRunScopeV1(
             kestrelOne?.tenantId ?? kestrelOne?.organizationId,
           ),
         }),
-    ...(readString(kestrelOne?.contextGrantId) === undefined
-      ? {}
-      : { contextGrantId: readString(kestrelOne?.contextGrantId) }),
     ...(appApprovalModes === undefined ? {} : { appApprovalModes }),
     ...(appApprovalPolicies === undefined ? {} : { appApprovalPolicies }),
     ...(toolAllowlist === undefined ? {} : { toolAllowlist }),
@@ -479,9 +616,6 @@ export function fingerprintToolRunScopeV1(
       ...(readString(workspace?.sourceWorkspaceRoot) === undefined
         ? {}
         : { sourceWorkspaceRoot: readString(workspace?.sourceWorkspaceRoot) }),
-      ...(readString(workspace?.leaseId) === undefined
-        ? {}
-        : { leaseId: readString(workspace?.leaseId) }),
       ...(workspace?.managedWorktree === true ? { managedWorktree: true } : {}),
       ...(workspace?.managedWorktreeRequired === false
         ? { managedWorktreeRequired: false }
@@ -504,6 +638,106 @@ export function fingerprintToolRunScopeV1(
           ),
         }),
   });
+}
+
+export function readHostedStableApprovalContext(runContext: ToolRunContext):
+  | {
+      actor: RunnerApprovalActorAuthorityV1;
+      organizationId: string;
+      environmentId: string;
+      projectId: string;
+      threadId: string;
+      resourceAuthority: Record<string, unknown>;
+      hasMcpGrant: boolean;
+      hasProjectContextGrant: boolean;
+      hasWorkspaceLease: boolean;
+      hasSourceWriteGrant: boolean;
+      hasProviderExecutionTicket: boolean;
+    }
+  | undefined {
+  const payload = asRecord(runContext.payload);
+  const metadata = asRecord(payload?.metadata);
+  const hostedAuthority = asRecord(payload?.hostedApprovalAuthority);
+  const mcpContext = asRecord(payload?.mcpContext);
+  const projectContext =
+    asRecord(payload?.projectContext) ?? asRecord(metadata?.projectContext);
+  const orchestration = asRecord(payload?.orchestration);
+  const workspace = asRecord(payload?.workspace);
+  const actorInput = asRecord(payload?.actor);
+  const organizationId =
+    readString(hostedAuthority?.organizationId) ??
+    readString(mcpContext?.organizationId) ??
+    readString(actorInput?.tenantId);
+  const environmentId =
+    readString(hostedAuthority?.environmentId) ??
+    readString(mcpContext?.environmentId);
+  const projectId =
+    readString(hostedAuthority?.projectId) ??
+    readString(mcpContext?.projectId) ??
+    readString(projectContext?.projectId);
+  const threadId =
+    readString(hostedAuthority?.threadId) ??
+    readString(mcpContext?.threadId) ??
+    readString(orchestration?.threadId) ??
+    readString(metadata?.threadId);
+  const actorType = readString(actorInput?.actorType);
+  const actorId = readString(actorInput?.actorId);
+  if (
+    organizationId === undefined ||
+    environmentId === undefined ||
+    projectId === undefined ||
+    threadId === undefined ||
+    actorId === undefined ||
+    (actorType !== "end_user" &&
+      actorType !== "operator" &&
+      actorType !== "service")
+  ) {
+    return;
+  }
+  const sourceWriteGrants = Array.isArray(
+    orchestration?.devShellSourceWriteApprovalGrants,
+  )
+    ? orchestration.devShellSourceWriteApprovalGrants
+    : [];
+  return {
+    actor: {
+      actorType,
+      actorId,
+      ...(readString(actorInput?.tenantId) === undefined
+        ? {}
+        : { tenantId: readString(actorInput?.tenantId) }),
+    },
+    organizationId,
+    environmentId,
+    projectId,
+    threadId,
+    resourceAuthority: {
+      ...(sanitizeGatewayUrl(readString(mcpContext?.gatewayUrl)) === undefined
+        ? {}
+        : { gatewayUrl: sanitizeGatewayUrl(readString(mcpContext?.gatewayUrl)) }),
+      ...(readString(workspace?.workspaceRoot) === undefined
+        ? {}
+        : { workspaceRoot: readString(workspace?.workspaceRoot) }),
+      ...(readString(workspace?.sourceWorkspaceRoot) === undefined
+        ? {}
+        : { sourceWorkspaceRoot: readString(workspace?.sourceWorkspaceRoot) }),
+      ...(workspace?.managedWorktree === true ? { managedWorktree: true } : {}),
+    },
+    hasMcpGrant: readString(mcpContext?.grantId) !== undefined,
+    hasProjectContextGrant:
+      readString(
+        asRecord(payload?.clientCapabilities)?.kestrelOne &&
+          asRecord(asRecord(payload?.clientCapabilities)?.kestrelOne)
+            ?.contextGrantId,
+      ) !== undefined,
+    hasWorkspaceLease: readString(workspace?.leaseId) !== undefined,
+    hasSourceWriteGrant: sourceWriteGrants.length > 0,
+    hasProviderExecutionTicket:
+      readString(
+        asRecord(asRecord(payload?.clientCapabilities)?.kestrelOne)
+          ?.executionTicket,
+      ) !== undefined || readString(asRecord(payload?.mcpAuthorization)?.executionTicket) !== undefined,
+  };
 }
 
 function buildFailureResult(input: {

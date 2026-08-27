@@ -37,7 +37,13 @@ import type {
   RuntimeEvent,
   RuntimeEventIntent,
 } from "./events.js";
-import { parseAgentToolResultV2, parsePreparedToolCallV1, type AgentToolResultV2 } from "./tool-invocation.js";
+import {
+  parseAgentToolResultV2,
+  parseDurablePreparedToolCallV1,
+  parsePreparedToolCallV1,
+  type AgentToolResultV2,
+  type PreparedToolCallV1,
+} from "./tool-invocation.js";
 import { canonicalJson } from "./tool-contract.js";
 
 export class SandboxCapabilityExactResultCancelledError extends Error {}
@@ -448,7 +454,38 @@ export interface EffectStore {
   listPendingEffects(sessionId: string): Promise<PersistedEffect[]>;
   getPersistedEffect?(idempotencyKey: string): Promise<PersistedEffect | null>;
   getEffectResult(idempotencyKey: string): Promise<EffectResult | null>;
-  saveEffectResult(runId: string, sessionId: string, result: EffectResult): Promise<void>;
+  claimEffectExecution(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"claimed" | "already_claimed" | "terminal">;
+  resetPreparedApprovalCleanupEffectExecution(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"reset" | "done" | "conflict">;
+  quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"done" | "quarantined" | "conflict">;
+  executePreparedApprovalCleanupInCriticalSection(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+    execute: () => Promise<EffectResult & { status: "DONE" }>,
+  ): Promise<
+    | { status: "executed"; result: EffectResult & { status: "DONE" } }
+    | { status: "done"; result: EffectResult & { status: "DONE" } }
+    | { status: "conflict" }
+  >;
+  commitPreparedApprovalCleanupEffectDone(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+    result: EffectResult & { status: "DONE" },
+  ): Promise<void>;
+  saveEffectResult(
+    runId: string,
+    sessionId: string,
+    result: EffectResult,
+    intent?: EffectResultPersistenceIntent | undefined,
+  ): Promise<void>;
   markEffectStatus(
     idempotencyKey: string,
     status: EffectExecutionStatus,
@@ -460,6 +497,123 @@ export interface EffectStore {
   spawnRegionWorkItems(sessionId: string, items: RegionWorkIntent[]): Promise<void>;
 }
 
+export interface EffectResultPersistenceIntent {
+  version: "prepared_approval_cleanup_result_persistence_v1";
+  idempotencyKey: string;
+}
+
+export function snapshotEffectResultPersistenceIntent(
+  value: unknown,
+): EffectResultPersistenceIntent | null {
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return null;
+  }
+  const keys = Reflect.ownKeys(descriptors);
+  const version = descriptors.version;
+  const idempotencyKey = descriptors.idempotencyKey;
+  if (
+    keys.length !== 2 ||
+    !keys.includes("version") ||
+    !keys.includes("idempotencyKey") ||
+    version?.enumerable !== true ||
+    !("value" in version) ||
+    version.value !== "prepared_approval_cleanup_result_persistence_v1" ||
+    idempotencyKey?.enumerable !== true ||
+    !("value" in idempotencyKey) ||
+    typeof idempotencyKey.value !== "string" ||
+    idempotencyKey.value.length === 0
+  ) return null;
+  return {
+    version: "prepared_approval_cleanup_result_persistence_v1",
+    idempotencyKey: idempotencyKey.value,
+  };
+}
+
+export function validatePreparedApprovalCleanupDoneEvidence(input: {
+  effect: PersistedEffect;
+  result: EffectResult;
+}): {
+  preparedToolCall: PreparedToolCallV1;
+  canonicalOutput: string;
+} {
+  const preparedToolCall = validatePreparedApprovalCleanupEffectIdentity(
+    input.effect,
+  );
+  if (
+    input.result.idempotencyKey !== input.effect.idempotencyKey ||
+    input.result.status !== "DONE" ||
+    input.result.error !== undefined ||
+    typeof input.result.output !== "object" ||
+    input.result.output === null ||
+    Array.isArray(input.result.output)
+  ) {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE evidence does not match the exact prepared invocation",
+    );
+  }
+  const output = input.result.output as Record<string, unknown>;
+  if (
+    Object.keys(output).length !== 1 ||
+    output.releasedPreparedInvocationId !== preparedToolCall.callId
+  ) {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE output does not prove the exact prepared invocation release",
+    );
+  }
+  return {
+    preparedToolCall,
+    canonicalOutput: canonicalJson(output),
+  };
+}
+
+export function validatePreparedApprovalCleanupEffectIdentity(
+  effect: PersistedEffect,
+): PreparedToolCallV1 {
+  if (effect.type !== "release_prepared_tool_call") {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE evidence requires a release effect",
+    );
+  }
+  let preparedToolCall: PreparedToolCallV1;
+  try {
+    preparedToolCall = parseDurablePreparedToolCallV1(
+      effect.payload.preparedToolCall,
+    );
+  } catch {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE evidence requires an exact durable prepared tool call",
+    );
+  }
+  if (
+    preparedToolCall.sessionId !== effect.sessionId ||
+    `${preparedToolCall.callId}:release` !== effect.idempotencyKey
+  ) {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE evidence does not match the exact prepared invocation",
+    );
+  }
+  return preparedToolCall;
+}
+
+export function quarantinePreparedApprovalCleanupDoneResult(
+  result: EffectResult,
+): EffectResult {
+  return {
+    idempotencyKey: result.idempotencyKey,
+    status: "FAILED",
+    error: {
+      code: "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+      message:
+        "Prepared approval cleanup DONE evidence was invalid and quarantined for retry.",
+      details: { retryable: true, quarantined: true },
+    },
+    timestamp: result.timestamp,
+  };
+}
+
 export type ExactEffectResultRead =
   | { status: "found"; result: AgentToolResultV2 }
   | { status: "not_found" }
@@ -468,6 +622,7 @@ export type ExactEffectResultRead =
 
 export type ExactEffectCancellationClaim =
   | { status: "cancelled" }
+  | { status: "started" }
   | { status: "completed" }
   | { status: "not_found" }
   | { status: "conflict" };
@@ -503,7 +658,6 @@ export function validateExactEffectCancellationCandidate(input: {
   try { prepared = parsePreparedToolCallV1(effect.payload.preparedToolCall); } catch { return "conflict"; }
   if (
     prepared.sessionId !== requested.sessionId ||
-    prepared.runId !== requested.runId ||
     prepared.callId !== requested.idempotencyKey
   ) return "conflict";
   return "ready";
@@ -548,7 +702,6 @@ export function validateExactEffectResultRead(input: {
   try { prepared = parsePreparedToolCallV1(effect.payload.preparedToolCall); } catch { return { status: "conflict" }; }
   if (
     prepared.sessionId !== requested.sessionId ||
-    prepared.runId !== requested.runId ||
     prepared.callId !== requested.idempotencyKey
   ) return { status: "conflict" };
   if (effect.status !== "DONE" || effectResult === null) return { status: "incomplete" };
@@ -559,6 +712,7 @@ export function validateExactEffectResultRead(input: {
   if (
     result.toolCallId !== requested.idempotencyKey ||
     result.toolName !== prepared.activation.descriptor.toolId ||
+    result.outcome.callId !== requested.idempotencyKey ||
     canonicalJson(result.activation) !== canonicalJson(prepared.activation) ||
     canonicalJson(result.outcome.activation) !== canonicalJson(prepared.activation) ||
     canonicalJson(result.auditRecord.input) !== canonicalJson(prepared.effectiveInput)

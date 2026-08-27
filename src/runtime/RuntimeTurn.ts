@@ -63,6 +63,9 @@ export interface RuntimeTurnInput {
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
   recoveryOptionId?: string | undefined;
+  decision?: "decline" | "approve_once" | "remember_approval" | undefined;
+  decidingActor?: RuntimeTurnActor | undefined;
+  preparedApprovalCleanup?: import("@kestrel-agents/protocol").RunnerPreparedApprovalCleanupV1 | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: InteractionMode | undefined;
@@ -245,6 +248,15 @@ export function materializeCompiledRuntimeTurn(
       : {}),
     ...(prepared.input.recoveryOptionId !== undefined
       ? { recoveryOptionId: prepared.input.recoveryOptionId }
+      : {}),
+    ...(prepared.input.decision !== undefined
+      ? { decision: prepared.input.decision }
+      : {}),
+    ...(prepared.input.decidingActor !== undefined
+      ? { decidingActor: prepared.input.decidingActor }
+      : {}),
+    ...(prepared.input.preparedApprovalCleanup !== undefined
+      ? { preparedApprovalCleanup: prepared.input.preparedApprovalCleanup }
       : {}),
     metadata: prepared.metadata,
     orchestration: {

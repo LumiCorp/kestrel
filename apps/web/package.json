@@ -73,7 +73,9 @@
     "canary:environment:preview": "tsx scripts/environment-preview-canary.ts",
     "canary:workspace-backup-retry": "node --conditions=react-server --import ./scripts/register-server-only.mjs --import tsx scripts/workspace-backup-retry-canary.ts",
     "canary:github:oauth": "tsx scripts/github-oauth-canary.ts",
-    "canary:github:approval": "tsx scripts/github-approval-canary.ts",
+    "canary:github:approval": "node --conditions=react-server --import ./scripts/register-server-only.mjs --import tsx scripts/github-approval-canary.ts",
+    "hosted-approval:drain-report": "node --conditions=react-server --import ./scripts/register-server-only.mjs --import tsx scripts/hosted-approval-drain-report.ts",
+    "hosted-approval:proof": "node --conditions=react-server --import ./scripts/register-server-only.mjs --import tsx scripts/hosted-approval-proof-report.ts",
     "test:unit": "pnpm run check:brand && pnpm run check:kestrel-boundary && node ../../scripts/validate.mjs --leaf hermetic apps/web",
     "test": "pnpm run test:unit",
     "test:integration": "node --conditions=react-server --import tsx --test lib/**/*.postgres.test.ts"

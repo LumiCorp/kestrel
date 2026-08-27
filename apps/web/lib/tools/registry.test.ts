@@ -10,6 +10,14 @@ import {
 test("tool registry includes seeded built-in and external providers", () => {
   const providers = listToolProviders();
   assert.ok(providers.some((provider) => provider.key === "built_in.weather"));
+  const workspace = getToolProviderDefinition("built_in.workspace");
+  assert.deepEqual(
+    workspace?.capabilities.map((capability) => [
+      capability.runtimeName,
+      capability.defaultPolicy.approvalMode,
+    ]),
+    [["exec_command", "ask"]],
+  );
   const previews = getToolProviderDefinition("built_in.previews");
   assert.equal(
     getToolProviderDefinition(["n", "g", "r", "o", "k"].join("")),

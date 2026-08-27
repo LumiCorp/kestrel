@@ -17,7 +17,11 @@ import type {
   RunnerTelemetry,
   RunnerStream,
 } from "@kestrel-agents/sdk";
-import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
+import type {
+  RunnerActorMetadata,
+  RunnerPreparedApprovalCleanupV1,
+  RunnerTurnAttachment,
+} from "@kestrel-agents/protocol";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -58,6 +62,8 @@ export type KestrelOneAgentTurnInput = KestrelAgentTurnInput & {
   signal?: AbortSignal;
   abortBehavior?: "cancel" | "detach" | undefined;
   resumeRequestId?: string | undefined;
+  decision?: "decline" | "approve_once" | "remember_approval" | undefined;
+  decidingActor?: RunnerActorMetadata | undefined;
 };
 
 export type KestrelOneRunnerStreamEvent = RunnerRunStreamEvent;
@@ -164,6 +170,9 @@ export type KestrelOneAgentResponseInput = {
         eventType: string;
         message: string;
         approved?: boolean | undefined;
+        decision?: "decline" | "approve_once" | "remember_approval" | undefined;
+        decidingActor?: RunnerActorMetadata | undefined;
+        preparedApprovalCleanup?: RunnerPreparedApprovalCleanupV1 | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;
       }
@@ -289,8 +298,20 @@ export function createKestrelOneAgentResponseFromAgent(
                 ? { systemInstructions: [formatThreadFileInventory(fileInventory)] }
                 : {}),
               ...(interactionResponse !== undefined
-                ? {
+                  ? {
                     resumeRequestId: interactionResponse.requestId,
+                    ...(interactionResponse.decision !== undefined
+                      ? { decision: interactionResponse.decision }
+                      : {}),
+                    ...(interactionResponse.decidingActor !== undefined
+                      ? { decidingActor: interactionResponse.decidingActor }
+                      : {}),
+                    ...(interactionResponse.preparedApprovalCleanup !== undefined
+                      ? {
+                          preparedApprovalCleanup:
+                            interactionResponse.preparedApprovalCleanup,
+                        }
+                      : {}),
                     ...(interactionResponse.recoveryOptionId !== undefined
                       ? { recoveryOptionId: interactionResponse.recoveryOptionId }
                       : {}),
@@ -402,7 +423,7 @@ export function createKestrelOneAgentResponseFromAgent(
         assistantMessageId: streamResult.message.id,
         runId: streamResult.message.metadata?.kestrelRunId ?? null,
         selectedInteractionMode: requestedInteractionMode,
-        telemetry: null,
+        telemetry: streamResult.telemetry ?? null,
       });
     },
     onError: (error) => {

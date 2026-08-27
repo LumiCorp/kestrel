@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION } from "@kestrel-agents/protocol";
+
 import type { TuiProfile } from "../../cli/contracts.js";
 import {
   createKestrelEnvironmentBindingV1,
@@ -28,6 +30,12 @@ import {
   resolveModelEconomicsProfileV1,
 } from "../economics/policy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
+import { DEV_SHELL_TOOL_NAMES } from "../../tools/index.js";
+import {
+  buildExecutionPolicyFromPack,
+  getApprovalPolicyPack,
+} from "../mode/approvalPolicyPacks.js";
 
 export const KESTREL_POLICY_ID = "kestrel";
 export const KESTREL_POLICY_LABEL = "Kestrel";
@@ -303,7 +311,10 @@ export const KESTREL_ONE_ENVIRONMENT_PRESETS: Readonly<
     id: "desktop_dev_local",
     version: 1,
   }),
-  workspace_hosted: Object.freeze({ id: "workspace_hosted", version: 2 }),
+  workspace_hosted: Object.freeze({
+    id: "workspace_hosted",
+    version: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+  }),
 });
 
 export interface KestrelOneProfileOverlay {
@@ -328,6 +339,9 @@ export interface KestrelOneProfileOverlay {
     | undefined;
   kestrelOneAppApprovalPolicies?:
     | TuiProfile["kestrelOneAppApprovalPolicies"]
+    | undefined;
+  rememberedToolApprovalEvidence?:
+    | TuiProfile["rememberedToolApprovalEvidence"]
     | undefined;
   additionalToolNames?: string[] | undefined;
   mcpServers?: TuiProfile["mcpServers"] | undefined;
@@ -478,6 +492,13 @@ function composeLegacyKestrelOneProfile(
             input.overlay.kestrelOneAppApprovalPolicies,
         }
       : {}),
+    ...(input.overlay?.rememberedToolApprovalEvidence === undefined
+      ? {}
+      : {
+          rememberedToolApprovalEvidence: structuredClone(
+            input.overlay.rememberedToolApprovalEvidence,
+          ),
+        }),
     mcpServers: input.overlay?.mcpServers ?? [],
     ...(input.overlay?.ociMcpEgressBindings !== undefined
       ? {
@@ -772,7 +793,7 @@ export function defaultApprovalPolicyPackForPreset(
   return presetId === "cli_safe_local" || presetId === "desktop_safe_local"
     ? "isolated_code"
     : presetId === "workspace_hosted"
-      ? "ci_bot"
+      ? "hosted_workspace"
     : "dev";
 }
 
@@ -780,17 +801,29 @@ function assertToolPolicySatisfiable(
   toolAllowlist: readonly string[],
   policyPackId: NonNullable<TuiProfile["approvalPolicyPackId"]>,
 ): void {
-  const permitsCode = policyPackId === "isolated_code" || policyPackId === "ci_bot";
-  const permitsShell = policyPackId === "dev" || policyPackId === "ci_bot";
-  if (toolAllowlist.includes("code.execute") && !permitsCode) {
-    throw new Error(
-      `Approval policy pack '${policyPackId}' does not authorize advertised tool 'code.execute'.`,
-    );
-  }
-  if (toolAllowlist.includes("exec_command") && !permitsShell) {
-    throw new Error(
-      `Approval policy pack '${policyPackId}' does not authorize advertised tool 'exec_command'.`,
-    );
+  const pack = getApprovalPolicyPack(policyPackId);
+  const compiledPolicy = buildExecutionPolicyFromPack(policyPackId);
+  const qualifyingToolNames = pack.id === "hosted_workspace"
+    ? toolAllowlist
+    : ["code.execute", ...DEV_SHELL_TOOL_NAMES].filter((toolName) =>
+        toolAllowlist.includes(toolName)
+      );
+  for (const toolName of qualifyingToolNames) {
+    const descriptor = defaultToolCatalog.getDescriptor(toolName);
+    if (descriptor === undefined) continue;
+    const toolClass = descriptor.capability.executionClass;
+    if (compiledPolicy.toolClassPolicy?.[toolClass] === false) {
+      throw new Error(
+        `Approval policy pack '${pack.id}' does not authorize advertised tool '${toolName}' class '${toolClass}'.`,
+      );
+    }
+    for (const capability of descriptor.capability.approvalCapabilities ?? []) {
+      if (compiledPolicy.capabilityPolicy?.[capability] !== true) {
+        throw new Error(
+          `Approval policy pack '${pack.id}' does not authorize advertised tool '${toolName}' capability '${capability}'.`,
+        );
+      }
+    }
   }
 }
 

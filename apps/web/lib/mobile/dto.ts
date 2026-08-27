@@ -3,6 +3,7 @@ import { z } from "zod";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import type { DbThread } from "@/lib/knowledge/db-types";
 import { parseUrlElicitation } from "@/lib/mcp/interaction-protocol";
+import type { RuntimeApprovalPolicyView } from "@/lib/turns/client-contract";
 
 export const MOBILE_API_VERSION = "1";
 
@@ -170,10 +171,11 @@ export function mobileInteractionDto(
     status: string;
     requestEnvelope: Record<string, unknown>;
     createdAt: Date;
+    approvalPolicy?: RuntimeApprovalPolicyView;
     approvalOutcome?: {
-      decision: "approved" | "denied";
-      authorizationState: "pending" | "accepted" | "failed";
-      effectState: "not_started" | "started" | "unknown";
+      decision: "approved" | "denied" | "expired";
+      authorizationState: "pending" | "accepted" | "denied" | "expired" | "failed";
+      effectState: "not_started" | "started" | "committed" | "unknown";
       failureCode?: string;
       publicMessage?: string;
       retryEligible: boolean;
@@ -195,9 +197,46 @@ export function mobileInteractionDto(
         }
       : {};
   if (kind === "sampling" || kind === "mcp_sampling" || kind === "approval") {
+    const version = interaction.requestEnvelope.version ===
+      "runner_hosted_tool_approval_interaction_v4"
+      ? ("runner_hosted_tool_approval_interaction_v4" as const)
+      : interaction.requestEnvelope.version ===
+          "runner_hosted_tool_approval_interaction_v3"
+        ? ("runner_hosted_tool_approval_interaction_v3" as const)
+      : interaction.requestEnvelope.version ===
+          "runner_hosted_tool_approval_interaction_v2"
+        ? ("runner_hosted_tool_approval_interaction_v2" as const)
+        : ("legacy" as const);
+    const approval = asRecord(interaction.requestEnvelope.approval);
+    const presentation = asRecord(approval?.presentation);
+    const policy = asRecord(presentation?.policy);
+    const currentApprovalActionable =
+      interaction.approvalPolicy !== undefined &&
+      interaction.approvalPolicy.environmentApprovalMode !== "deny" &&
+      interaction.approvalPolicy.projectApprovalMode !== "deny" &&
+      interaction.approvalPolicy.subjectApprovalMode !== "deny" &&
+      interaction.approvalPolicy.approvalResourceAvailable !== false;
+    const rememberEligible =
+      version === "runner_hosted_tool_approval_interaction_v4" &&
+      policy?.rememberApprovalEligible === true &&
+      interaction.approvalPolicy?.rememberApprovalEligible === true &&
+      currentApprovalActionable;
     return {
       id,
       kind: "approval" as const,
+      version,
+      decisions:
+        ["failed", "resolved", "cancelled"].includes(interaction.status)
+          ? ([] as const)
+          : rememberEligible
+          ? (["decline", "approve_once", "remember_approval"] as const)
+          : version === "runner_hosted_tool_approval_interaction_v2" ||
+              version === "runner_hosted_tool_approval_interaction_v3" ||
+              version === "runner_hosted_tool_approval_interaction_v4"
+            ? currentApprovalActionable
+              ? (["decline", "approve_once"] as const)
+              : (["decline"] as const)
+          : (["approve", "deny"] as const),
       title: "Allow this agent request?",
       prompt:
         prompt ??
@@ -224,6 +263,8 @@ export function mobileInteractionDto(
     return {
       id,
       kind: "approval" as const,
+      version: "legacy" as const,
+      decisions: ["approve", "deny"] as const,
       title: "Allow this external step?",
       prompt: urlRequest.message,
       fields: [],

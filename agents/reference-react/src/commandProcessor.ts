@@ -384,6 +384,7 @@ export function createReferenceReactEffectCollectCheckpoint(input: {
   regionReactPatch?: Record<string, unknown> | undefined;
   regionExecPatch?: Record<string, unknown> | undefined;
   artifacts?: Transition["artifacts"] | undefined;
+  effects?: Transition["effects"] | undefined;
   emitEvents?: Transition["emitEvents"] | undefined;
 }): Transition {
   const currentChunk = describeExecutionCheckpoint("collect");
@@ -421,6 +422,7 @@ export function createReferenceReactEffectCollectCheckpoint(input: {
   return {
     status: "RUNNING",
     nextStepAgent: input.nextStepAgent,
+    effects: input.effects,
     ...(input.artifacts !== undefined && input.artifacts.length > 0 ? { artifacts: input.artifacts } : {}),
     emitEvents: input.emitEvents,
     statePatch: createReferenceReactStatePatch({

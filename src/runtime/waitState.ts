@@ -1,3 +1,5 @@
+import { parseRunnerHostedToolApprovalInteractionV2 } from "@kestrel-agents/protocol";
+
 export type RuntimeWaitKind = "approval" | "effect" | "region_merge" | "tool" | "user";
 export type CanonicalRuntimeWaitKind = RuntimeWaitKind;
 
@@ -6,7 +8,7 @@ export interface RuntimeWaitMatcher {
   eventType: string;
   timeoutMs?: number | undefined;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined;
+  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequest | undefined;
 }
 
 export interface ActiveRuntimeWaitState extends RuntimeWaitMatcher {
@@ -28,7 +30,7 @@ export interface CanonicalRuntimeWaitingFor {
   resumeStepAgent?: string | undefined;
   resumeToken?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined;
+  interaction?: import("../kestrel/contracts/execution.js").RuntimeInteractionRequest | undefined;
 }
 
 export interface ClearRuntimeWaitStateOptions {
@@ -125,7 +127,7 @@ function readCanonicalWaitingFor(value: Record<string, unknown> | undefined): Ac
   }
   const timeoutMs = readNonNegativeNumber(value.timeoutMs);
   const metadata = asRecord(value.metadata);
-  const interaction = readRuntimeInteraction(value.interaction);
+  const interaction = readRuntimeInteraction(value.interaction, eventType, kind);
   const resumeStepAgent = readNonEmptyString(value.resumeStepAgent);
   const resumeToken = readNonEmptyString(value.resumeToken);
   const reason = readNonEmptyString(value.reason);
@@ -147,9 +149,22 @@ function readCanonicalWaitingFor(value: Record<string, unknown> | undefined): Ac
 
 function readRuntimeInteraction(
   value: unknown,
-): import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1 | undefined {
+  waitEventType: string,
+  waitKind: RuntimeWaitKind,
+): import("../kestrel/contracts/execution.js").RuntimeInteractionRequest | undefined {
   const interaction = asRecord(value);
   const version = interaction?.version;
+  if (version === "runner_hosted_tool_approval_interaction_v2") {
+    if (waitKind !== "approval") {
+      throw new Error(
+        "hosted tool approval interaction requires an approval wait",
+      );
+    }
+    return parseRunnerHostedToolApprovalInteractionV2(
+      interaction,
+      waitEventType,
+    );
+  }
   const kind = interaction?.kind;
   const eventType = readNonEmptyString(interaction?.eventType);
   const prompt = readNonEmptyString(interaction?.prompt);
@@ -169,7 +184,7 @@ function readRuntimeInteraction(
     eventType,
     prompt,
     ...(requestId !== undefined ? { requestId } : {}),
-  } as import("../kestrel/contracts/execution.js").RuntimeInteractionRequestV1;
+  } as import("../kestrel/contracts/execution.js").RuntimeInteractionRequest;
 }
 
 function readWaitKind(value: unknown): RuntimeWaitKind | undefined {

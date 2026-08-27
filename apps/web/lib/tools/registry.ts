@@ -70,6 +70,36 @@ if (!MICROSOFT_365_APP_MANIFEST) {
 
 export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
   {
+    key: "built_in.workspace",
+    displayName: "Workspace",
+    description: "Work with the hosted project workspace.",
+    type: "built_in",
+    authType: "system",
+    app: {
+      category: "engineering",
+      connectionModel: "none",
+      connectionRequirement: "none",
+      authMethods: ["none"],
+      delivery: "native",
+      installMode: "inherited",
+      icon: "terminal",
+    },
+    metadata: {
+      icon: "terminal",
+      category: "built_in",
+    },
+    capabilities: [
+      createCapability({
+        key: "executeCommand",
+        runtimeName: "exec_command",
+        displayName: "Execute command",
+        description: "Run a command in the hosted project workspace.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "ask" },
+      }),
+    ],
+  },
+  {
     key: "built_in.previews",
     displayName: "Kestrel Edge Previews",
     description:

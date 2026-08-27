@@ -28,7 +28,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { KNOWLEDGE_EMBEDDING_DIMENSIONS } from "@/lib/knowledge/documents/constants";
-import type { RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
+import type { RunnerExternalApprovalBinding } from "@kestrel-agents/protocol";
 import type {
   OciMcpEgressPolicyV1,
   ResolvedOciMcpEgressBindingV1,
@@ -3650,12 +3650,23 @@ export const appOperationApprovals = pgTable(
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     externalApprovalBinding: jsonb(
       "external_approval_binding",
-    ).$type<RunnerExternalApprovalBindingV1>(),
+    ).$type<RunnerExternalApprovalBinding>(),
     authorityRevision: text("authority_revision"),
+    lifecycleVersion: text("lifecycle_version", {
+      enum: ["legacy_v1", "interaction_v2"],
+    })
+      .notNull()
+      .default("legacy_v1"),
+    interactionId: text("interaction_id").references(
+      () => threadInteractions.id,
+      { onDelete: "cascade" },
+    ),
+    availabilityStatus: text("availability_status", {
+      enum: ["available", "consumed", "expired"],
+    }),
     status: text("status", {
       enum: ["pending", "approved", "denied", "consumed", "expired"],
     })
-      .notNull()
       .default("pending"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     decidedByUserId: text("decided_by_user_id").references(() => users.id, {
@@ -3689,6 +3700,14 @@ export const appOperationApprovals = pgTable(
       table.status,
       table.expiresAt,
     ),
+    index("app_operation_approvals_availability_expiry_idx").on(
+      table.lifecycleVersion,
+      table.availabilityStatus,
+      table.expiresAt,
+    ),
+    uniqueIndex("app_operation_approvals_interaction_idx")
+      .on(table.interactionId)
+      .where(sql`${table.interactionId} is not null`),
     index("app_operation_approvals_execution_idx").on(
       table.requestedExecutionId,
     ),
@@ -3698,15 +3717,37 @@ export const appOperationApprovals = pgTable(
     ),
     check(
       "app_operation_approvals_status_check",
-      sql`${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`,
+      sql`${table.status} is null or ${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`,
+    ),
+    check(
+      "app_operation_approvals_lifecycle_version_check",
+      sql`${table.lifecycleVersion} in ('legacy_v1', 'interaction_v2')`,
+    ),
+    check(
+      "app_operation_approvals_availability_status_check",
+      sql`${table.availabilityStatus} is null or ${table.availabilityStatus} in ('available', 'consumed', 'expired')`,
+    ),
+    check(
+      "app_operation_approvals_ownership_check",
+      sql`(
+        (${table.lifecycleVersion} = 'legacy_v1' and ${table.status} is not null and ${table.interactionId} is null and ${table.availabilityStatus} is null)
+        or (${table.lifecycleVersion} = 'interaction_v2' and ${table.status} is null and ${table.decidedByUserId} is null and ${table.decidedAt} is null and ${table.availabilityStatus} is not null)
+      )`,
     ),
     check(
       "app_operation_approvals_lifecycle_check",
       sql`(
-        (${table.status} = 'pending' and ${table.decidedByUserId} is null and ${table.decidedAt} is null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
-        or (${table.status} in ('approved', 'denied') and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
-        or (${table.status} = 'consumed' and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
-        or (${table.status} = 'expired' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+        (${table.lifecycleVersion} = 'legacy_v1' and (
+          (${table.status} = 'pending' and ${table.decidedByUserId} is null and ${table.decidedAt} is null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+          or (${table.status} in ('approved', 'denied') and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+          or (${table.status} = 'consumed' and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
+          or (${table.status} = 'expired' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+        ))
+        or (${table.lifecycleVersion} = 'interaction_v2' and (
+          (${table.availabilityStatus} = 'available' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+          or (${table.availabilityStatus} = 'consumed' and ${table.interactionId} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
+          or (${table.availabilityStatus} = 'expired' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+        ))
       )`,
     ),
   ],
@@ -4831,7 +4872,7 @@ export const threadInteractions = pgTable(
     responseFailureCode: text("response_failure_code"),
     responseFailureMessage: text("response_failure_message"),
     effectStatus: text("effect_status", {
-      enum: ["not_started", "started", "unknown"],
+      enum: ["not_started", "started", "committed", "unknown"],
     }),
     responseRetryable: boolean("response_retryable"),
     resolvedByUserId: text("resolved_by_user_id").references(() => users.id, {
@@ -4869,6 +4910,51 @@ export const threadInteractions = pgTable(
         OR
         (${table.source} = 'mcp' AND ${table.sourceCheckpointId} IS NOT NULL)
       )`,
+    ),
+  ],
+);
+
+/** Thread-lifetime approval evidence written atomically with a V3 remember decision. */
+export const rememberedToolApprovals = pgTable(
+  "remembered_tool_approvals",
+  {
+    id: text("id").primaryKey(),
+    version: text("version").notNull(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    toolId: text("tool_id").notNull(),
+    descriptorContractRevision: text("descriptor_contract_revision").notNull(),
+    approvalAuthorityRevision: text("approval_authority_revision").notNull(),
+    sourceInteractionId: text("source_interaction_id")
+      .notNull()
+      .references(() => threadInteractions.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("remembered_tool_approvals_identity_idx").on(
+      table.organizationId,
+      table.threadId,
+      table.actorUserId,
+      table.toolId,
+      table.descriptorContractRevision,
+      table.approvalAuthorityRevision,
+    ),
+    index("remembered_tool_approvals_thread_actor_idx").on(
+      table.threadId,
+      table.actorUserId,
+    ),
+    check(
+      "remembered_tool_approvals_version_check",
+      sql`${table.version} = 'remembered_tool_approval_v1'`,
     ),
   ],
 );

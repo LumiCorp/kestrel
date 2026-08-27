@@ -145,8 +145,15 @@ test("compileRuntimeTurn preserves resume and attachment payload fields", () => 
     {
       sessionId: "session-resume",
       message: "approved",
-      eventType: "user.message",
+      eventType: "user.approval",
       resumeBlockedRun: true,
+      resumeRequestId: "approval-request",
+      decision: "approve_once",
+      decidingActor: {
+        actorType: "end_user",
+        actorId: "user-1",
+        tenantId: "org-1",
+      },
       recoveryOptionId: "retry.primary",
       attachments,
       interactionMode: "build",
@@ -161,6 +168,11 @@ test("compileRuntimeTurn preserves resume and attachment payload fields", () => 
   );
 
   assert.equal(compiled.payload.resumeBlockedRun, true);
+  assert.deepEqual(compiled.payload.decidingActor, {
+    actorType: "end_user",
+    actorId: "user-1",
+    tenantId: "org-1",
+  });
   assert.equal(compiled.payload.recoveryOptionId, "retry.primary");
   assert.deepEqual(compiled.payload.attachments, attachments);
   assert.equal(compiled.input.resumeBlockedRun, true);

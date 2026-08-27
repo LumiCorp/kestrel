@@ -6,10 +6,17 @@ import type {
 import type { RunToolPhase } from "./events.js";
 import {
   canonicalJson,
+  hashCanonical,
   parseToolActivationRefV1,
   type ToolActivationRefV1,
 } from "./tool-contract.js";
-import { parseRunnerExternalApprovalBindingV1, type RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
+import {
+  parseRunnerExternalApprovalBinding,
+  parseStableToolApprovalIdentityV1,
+  type RunnerApprovalActorAuthorityV1,
+  type RunnerExternalApprovalBinding,
+  type StableToolApprovalIdentityV1,
+} from "@kestrel-agents/protocol";
 
 export const PREPARED_TOOL_CALL_VERSION = "v1" as const;
 export const TOOL_EXECUTION_OUTCOME_VERSION = "v1" as const;
@@ -45,7 +52,42 @@ export interface PreparedToolPolicyDispositionV1 {
 export interface PreparedToolApprovalAuthorityV1 {
   authorityRevision: string;
   approvalId?: string | undefined;
-  externalApprovalBinding?: RunnerExternalApprovalBindingV1 | undefined;
+  externalApprovalBinding?: RunnerExternalApprovalBinding | undefined;
+}
+
+export const PREPARED_TOOL_STABLE_AUTHORITY_VERSION =
+  "prepared_tool_stable_authority_v1" as const;
+export const PREPARED_TOOL_EXECUTION_REQUIREMENTS_VERSION =
+  "prepared_tool_execution_requirements_v1" as const;
+
+export type RenewableToolExecutionCredentialV1 =
+  | "continuation_run_segment"
+  | "mcp_access_grant"
+  | "project_context_grant"
+  | "workspace_lease"
+  | "source_write_grant"
+  | "provider_execution_ticket"
+  | "live_handler_capability";
+
+export interface PreparedToolStableAuthorityV1 {
+  version: typeof PREPARED_TOOL_STABLE_AUTHORITY_VERSION;
+  fingerprint: string;
+  actor: RunnerApprovalActorAuthorityV1;
+  organizationId: string;
+  environmentId: string;
+  projectId: string;
+  threadId: string;
+  resourceAuthority: Record<string, unknown>;
+  policyRevision: string;
+  capabilities: string[];
+  descriptorContractRevision: string;
+  approvalAuthorityRevision: string;
+  normalizedActionHash: string;
+}
+
+export interface PreparedToolExecutionRequirementsV1 {
+  version: typeof PREPARED_TOOL_EXECUTION_REQUIREMENTS_VERSION;
+  credentials: RenewableToolExecutionCredentialV1[];
 }
 
 export interface PreparedToolInputAdapterV1 {
@@ -64,6 +106,9 @@ export interface PreparedToolCallV1 {
   inputAdapters: PreparedToolInputAdapterV1[];
   policy: PreparedToolPolicyDispositionV1;
   approval?: PreparedToolApprovalAuthorityV1 | undefined;
+  stableAuthority?: PreparedToolStableAuthorityV1 | undefined;
+  stableToolIdentity?: StableToolApprovalIdentityV1 | undefined;
+  executionRequirements?: PreparedToolExecutionRequirementsV1 | undefined;
   preparedAt: string;
 }
 
@@ -150,6 +195,9 @@ const PREPARED_KEYS = new Set([
   "inputAdapters",
   "policy",
   "approval",
+  "stableAuthority",
+  "stableToolIdentity",
+  "executionRequirements",
   "preparedAt",
 ]);
 const ORIGIN_KEYS = new Set([
@@ -169,6 +217,32 @@ const APPROVAL_KEYS = new Set([
   "approvalId",
   "externalApprovalBinding",
 ]);
+const STABLE_AUTHORITY_KEYS = new Set([
+  "version",
+  "fingerprint",
+  "actor",
+  "organizationId",
+  "environmentId",
+  "projectId",
+  "threadId",
+  "resourceAuthority",
+  "policyRevision",
+  "capabilities",
+  "descriptorContractRevision",
+  "approvalAuthorityRevision",
+  "normalizedActionHash",
+]);
+const STABLE_AUTHORITY_ACTOR_KEYS = new Set(["actorType", "actorId", "tenantId"]);
+const EXECUTION_REQUIREMENTS_KEYS = new Set(["version", "credentials"]);
+const RENEWABLE_EXECUTION_CREDENTIALS = [
+  "continuation_run_segment",
+  "mcp_access_grant",
+  "project_context_grant",
+  "workspace_lease",
+  "source_write_grant",
+  "provider_execution_ticket",
+  "live_handler_capability",
+] as const;
 const INPUT_ADAPTER_KEYS = new Set(["adapterId", "metadata"]);
 const OUTCOME_KEYS = new Set([
   "version",
@@ -237,6 +311,10 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
   if (input.version !== PREPARED_TOOL_CALL_VERSION) {
     throw new Error("prepared tool call.version must be 'v1'");
   }
+  const callId = parseDurablePreparedInvocationId(
+    input.callId,
+    "prepared tool call.callId",
+  );
   const originInput = record(input.origin, "prepared tool call.origin");
   rejectUnknown(originInput, ORIGIN_KEYS, "prepared tool call.origin");
   const origin: PreparedToolCallOriginV1 =
@@ -291,6 +369,61 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
   const approval = input.approval === undefined
     ? undefined
     : parseApproval(input.approval);
+  const stableAuthority =
+    input.stableAuthority === undefined
+      ? undefined
+      : parsePreparedToolStableAuthorityV1(input.stableAuthority);
+  const stableToolIdentity =
+    input.stableToolIdentity === undefined
+      ? undefined
+      : parseStableToolApprovalIdentityV1(input.stableToolIdentity);
+  const executionRequirements =
+    input.executionRequirements === undefined
+      ? undefined
+      : parsePreparedToolExecutionRequirementsV1(input.executionRequirements);
+  const hasPreparedApprovalV2 =
+    stableAuthority !== undefined ||
+    stableToolIdentity !== undefined ||
+    executionRequirements !== undefined;
+  if (
+    hasPreparedApprovalV2 &&
+    (stableAuthority === undefined ||
+      stableToolIdentity === undefined ||
+      executionRequirements === undefined ||
+      approval?.externalApprovalBinding?.version ===
+        "runner_external_approval_binding_v1")
+  ) {
+    throw new Error(
+      "prepared tool call new-version approval authority is incomplete or mixed",
+    );
+  }
+  if (
+    approval?.externalApprovalBinding?.version ===
+      "runner_external_approval_binding_v2" &&
+    hasPreparedApprovalV2 === false
+  ) {
+    throw new Error(
+      "prepared tool call v2 external approval binding requires stable authority",
+    );
+  }
+  if (
+    approval?.externalApprovalBinding?.version ===
+      "runner_external_approval_binding_v2"
+  ) {
+    assertPreparedV2ApprovalAuthorityConsistent({
+      callId,
+      approvalId: approval.approvalId,
+      activation: parseToolActivationRefV1(input.activation),
+      effectiveInput: jsonRecord(
+        input.effectiveInput,
+        "prepared tool call.effectiveInput",
+      ),
+      policyRevision: policy.policyRevision,
+      stableAuthority: stableAuthority!,
+      stableToolIdentity: stableToolIdentity!,
+      binding: approval.externalApprovalBinding,
+    });
+  }
   if (input.inputAdapters !== undefined && !Array.isArray(input.inputAdapters)) {
     throw new Error("prepared tool call.inputAdapters must be an array");
   }
@@ -322,7 +455,7 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
     version: PREPARED_TOOL_CALL_VERSION,
     runId: stringValue(input.runId, "prepared tool call.runId"),
     sessionId: stringValue(input.sessionId, "prepared tool call.sessionId"),
-    callId: stringValue(input.callId, "prepared tool call.callId"),
+    callId,
     activation: parseToolActivationRefV1(input.activation),
     origin,
     effectiveInput: jsonRecord(
@@ -332,7 +465,224 @@ export function parsePreparedToolCallV1(value: unknown): PreparedToolCallV1 {
     inputAdapters,
     policy,
     ...(approval === undefined ? {} : { approval }),
+    ...(stableAuthority === undefined ? {} : { stableAuthority }),
+    ...(stableToolIdentity === undefined ? {} : { stableToolIdentity }),
+    ...(executionRequirements === undefined ? {} : { executionRequirements }),
     preparedAt: timestamp(input.preparedAt, "prepared tool call.preparedAt"),
+  });
+}
+
+export function parseDurablePreparedInvocationId(
+  value: unknown,
+  path = "prepared invocation id",
+): string {
+  const parsed = stringValue(value, path);
+  for (let index = 0; index < parsed.length; index += 1) {
+    const codeUnit = parsed.charCodeAt(index);
+    if (codeUnit === 0) {
+      throw new Error(`${path} must round-trip through durable JSON unchanged`);
+    }
+    if (codeUnit >= 0xd8_00 && codeUnit <= 0xdb_ff) {
+      const following = index + 1 < parsed.length
+        ? parsed.charCodeAt(index + 1)
+        : undefined;
+      if (
+        following === undefined ||
+        following < 0xdc_00 ||
+        following > 0xdf_ff
+      ) {
+        throw new Error(`${path} must contain valid UTF-16`);
+      }
+      index += 1;
+      continue;
+    }
+    if (codeUnit >= 0xdc_00 && codeUnit <= 0xdf_ff) {
+      throw new Error(`${path} must contain valid UTF-16`);
+    }
+  }
+  if (JSON.parse(JSON.stringify(parsed)) !== parsed) {
+    throw new Error(`${path} must round-trip through durable JSON unchanged`);
+  }
+  return parsed;
+}
+
+/**
+ * Parses a prepared call at a durable approval boundary.
+ *
+ * A hosted V2 prepared call may be temporarily unbound while the policy gate
+ * is constructing its first approval wait. Once persisted, however, its exact
+ * external approval binding is part of the durable authority and may not be
+ * reconstructed from the persisted call itself.
+ */
+export function parseDurablePreparedToolCallV1(
+  value: unknown,
+): PreparedToolCallV1 {
+  const prepared = parsePreparedToolCallV1(value);
+  const hasPreparedApprovalV2 =
+    prepared.stableAuthority !== undefined ||
+    prepared.stableToolIdentity !== undefined ||
+    prepared.executionRequirements !== undefined;
+  if (
+    hasPreparedApprovalV2 &&
+    prepared.approval?.externalApprovalBinding?.version !==
+      "runner_external_approval_binding_v2"
+  ) {
+    throw new Error(
+      "durable prepared tool call new-version approval authority requires a complete v2 external approval binding",
+    );
+  }
+  return prepared;
+}
+
+export function parsePreparedToolStableAuthorityV1(
+  value: unknown,
+): PreparedToolStableAuthorityV1 {
+  const input = record(value, "prepared tool stable authority");
+  rejectUnknown(input, STABLE_AUTHORITY_KEYS, "prepared tool stable authority");
+  if (input.version !== PREPARED_TOOL_STABLE_AUTHORITY_VERSION) {
+    throw new Error(
+      `prepared tool stable authority.version must be '${PREPARED_TOOL_STABLE_AUTHORITY_VERSION}'`,
+    );
+  }
+  const actorInput = record(input.actor, "prepared tool stable authority.actor");
+  rejectUnknown(actorInput, STABLE_AUTHORITY_ACTOR_KEYS, "prepared tool stable authority.actor");
+  const actorType = actorInput.actorType;
+  if (
+    actorType !== "end_user" &&
+    actorType !== "operator" &&
+    actorType !== "service"
+  ) {
+    throw new Error("prepared tool stable authority.actor.actorType is invalid");
+  }
+  const capabilities = canonicalStrings(
+    input.capabilities,
+    "prepared tool stable authority.capabilities",
+  );
+  const actor: RunnerApprovalActorAuthorityV1 = {
+    actorType,
+    actorId: stringValue(actorInput.actorId, "prepared tool stable authority.actor.actorId"),
+    ...(actorInput.tenantId === undefined
+      ? {}
+      : { tenantId: stringValue(actorInput.tenantId, "prepared tool stable authority.actor.tenantId") }),
+  };
+  const organizationId = stringValue(
+    input.organizationId,
+    "prepared tool stable authority.organizationId",
+  );
+  if (actor.tenantId !== undefined && actor.tenantId !== organizationId) {
+    throw new Error(
+      "prepared tool stable authority.actor.tenantId must match organizationId",
+    );
+  }
+  return freeze({
+    version: PREPARED_TOOL_STABLE_AUTHORITY_VERSION,
+    fingerprint: hash(input.fingerprint, "prepared tool stable authority.fingerprint"),
+    actor,
+    organizationId,
+    environmentId: stringValue(input.environmentId, "prepared tool stable authority.environmentId"),
+    projectId: stringValue(input.projectId, "prepared tool stable authority.projectId"),
+    threadId: stringValue(input.threadId, "prepared tool stable authority.threadId"),
+    resourceAuthority: jsonRecord(input.resourceAuthority, "prepared tool stable authority.resourceAuthority"),
+    policyRevision: hash(input.policyRevision, "prepared tool stable authority.policyRevision"),
+    capabilities,
+    descriptorContractRevision: hash(input.descriptorContractRevision, "prepared tool stable authority.descriptorContractRevision"),
+    approvalAuthorityRevision: stringValue(input.approvalAuthorityRevision, "prepared tool stable authority.approvalAuthorityRevision"),
+    normalizedActionHash: hash(input.normalizedActionHash, "prepared tool stable authority.normalizedActionHash"),
+  });
+}
+
+function assertPreparedV2ApprovalAuthorityConsistent(input: {
+  callId: string;
+  approvalId: string | undefined;
+  activation: ToolActivationRefV1;
+  effectiveInput: Record<string, unknown>;
+  policyRevision: string;
+  stableAuthority: PreparedToolStableAuthorityV1;
+  stableToolIdentity: StableToolApprovalIdentityV1;
+  binding: Extract<RunnerExternalApprovalBinding, { version: "runner_external_approval_binding_v2" }>;
+}): void {
+  const { fingerprint: _fingerprint, ...authorityPayload } = input.stableAuthority;
+  if (hashCanonical(authorityPayload) !== input.stableAuthority.fingerprint) {
+    throw new Error(
+      "prepared tool call stable authority fingerprint does not match canonical authority",
+    );
+  }
+  const normalizedActionHash = hashCanonical({
+    toolId: input.activation.descriptor.toolId,
+    effectiveInput: input.effectiveInput,
+  });
+  if (normalizedActionHash !== input.stableAuthority.normalizedActionHash) {
+    throw new Error(
+      "prepared tool call stable authority normalized action does not match activation and effective input",
+    );
+  }
+  const payloadHash = hashCanonical(input.effectiveInput);
+  const binding = input.binding;
+  const authority = input.stableAuthority;
+  const identity = input.stableToolIdentity;
+  const actorMatches = canonicalJson(authority.actor) === canonicalJson(binding.requestingActor);
+  const capabilitiesMatch =
+    canonicalJson(authority.capabilities) === canonicalJson(binding.capabilities);
+  const identitiesMatch =
+    canonicalJson(identity) === canonicalJson(binding.stableToolIdentity);
+  const sourceMatches =
+    authority.resourceAuthority.toolSourceKind ===
+      input.activation.descriptor.sourceKind &&
+    authority.resourceAuthority.toolSourceId ===
+      input.activation.descriptor.sourceId;
+  if (
+    input.callId !== binding.preparedInvocationId ||
+    input.approvalId !== binding.approvalId ||
+    input.activation.descriptor.toolId !== identity.toolId ||
+    input.activation.descriptor.contractRevision !==
+      identity.descriptorContractRevision ||
+    authority.descriptorContractRevision !== identity.descriptorContractRevision ||
+    authority.policyRevision !== input.policyRevision ||
+    authority.approvalAuthorityRevision !==
+      identity.approvalAuthorityRevision ||
+    authority.threadId !== binding.threadId ||
+    authority.fingerprint !== binding.stableAuthorityFingerprint ||
+    binding.actionKey !== identity.toolId ||
+    binding.authorityRevision !== identity.approvalAuthorityRevision ||
+    binding.payloadHash !== payloadHash ||
+    actorMatches === false ||
+    capabilitiesMatch === false ||
+    identitiesMatch === false ||
+    sourceMatches === false
+  ) {
+    throw new Error(
+      "prepared tool call v2 approval authority identities do not agree",
+    );
+  }
+}
+
+export function parsePreparedToolExecutionRequirementsV1(
+  value: unknown,
+): PreparedToolExecutionRequirementsV1 {
+  const input = record(value, "prepared tool execution requirements");
+  rejectUnknown(input, EXECUTION_REQUIREMENTS_KEYS, "prepared tool execution requirements");
+  if (input.version !== PREPARED_TOOL_EXECUTION_REQUIREMENTS_VERSION) {
+    throw new Error(
+      `prepared tool execution requirements.version must be '${PREPARED_TOOL_EXECUTION_REQUIREMENTS_VERSION}'`,
+    );
+  }
+  const credentials = canonicalStrings(
+    input.credentials,
+    "prepared tool execution requirements.credentials",
+  );
+  if (
+    credentials.some(
+      (credential) =>
+        RENEWABLE_EXECUTION_CREDENTIALS.includes(
+          credential as RenewableToolExecutionCredentialV1,
+        ) === false,
+    )
+  ) {
+    throw new Error("prepared tool execution requirements.credentials is invalid");
+  }
+  return freeze({
+    version: PREPARED_TOOL_EXECUTION_REQUIREMENTS_VERSION,
+    credentials: credentials as RenewableToolExecutionCredentialV1[],
   });
 }
 
@@ -576,8 +926,28 @@ function parseApproval(value: unknown): PreparedToolApprovalAuthorityV1 {
       : { approvalId: stringValue(input.approvalId, "prepared tool call.approval.approvalId") }),
     ...(input.externalApprovalBinding === undefined
       ? {}
-      : { externalApprovalBinding: parseRunnerExternalApprovalBindingV1(input.externalApprovalBinding) }),
+      : { externalApprovalBinding: parseRunnerExternalApprovalBinding(input.externalApprovalBinding) }),
   };
+}
+
+function canonicalStrings(value: unknown, path: string): string[] {
+  if (
+    Array.isArray(value) === false ||
+    value.some(
+      (entry) => typeof entry !== "string" || entry.trim().length === 0,
+    )
+  ) {
+    throw new Error(`${path} must be a string array`);
+  }
+  const parsed = value as string[];
+  const canonical = [...new Set(parsed)].sort();
+  if (
+    canonical.length !== parsed.length ||
+    canonical.some((entry, index) => entry !== parsed[index])
+  ) {
+    throw new Error(`${path} must be sorted and contain unique values`);
+  }
+  return [...parsed];
 }
 
 function record(value: unknown, path: string): Record<string, unknown> {

@@ -58,7 +58,7 @@ test("local image publication smokes before push and never deploys or notifies",
   const push = publishImage.indexOf('{ command: "docker", args: ["push"');
   assert.ok(smoke >= 0 && push > smoke);
   assert.match(publishImage, /linux\/amd64/u);
-  assert.doesNotMatch(publishImage, /revision|imagetools|digest/u);
+  assert.match(publishImage, /RepoDigests[\s\S]*repo-digest[\s\S]*sha256/u);
   assert.doesNotMatch(
     publishImage,
     /production-images|KESTREL_ONE_PRODUCTION_URL|PRODUCTION_IMAGE_DEPLOY_TOKEN/u,

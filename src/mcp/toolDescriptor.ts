@@ -104,9 +104,7 @@ export function compileMcpDiscoveredToolV1(
             }
           : {}),
         capabilityClasses: [...tool.presentation.capabilityClasses],
-        ...(tool.presentation.approvalMode === "auto"
-          ? {}
-          : { approvalCapabilities: ["mcp.invoke"] }),
+        approvalCapabilities: ["mcp.invoke"],
       },
       presentation: {
         displayName: tool.presentation.displayName,

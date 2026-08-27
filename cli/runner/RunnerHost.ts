@@ -28,6 +28,7 @@ import type {
   RunEvent,
   RunLogEntry,
   RunToolUpdateV1,
+  RunToolUpdateV2,
   ToolRuntimeStatus,
   UserTerminalReadResult,
   UserTerminalRecord,
@@ -48,6 +49,7 @@ import type {
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import type { ExactEffectResultStore } from "../../src/kestrel/contracts/store.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import { resolveHostedApprovalProtocolVersion } from "../../src/runtime/RuntimeTurnCoordinator.js";
 import { resolveKestrelHome } from "../config/kestrelHome.js";
 import { ProfileStore } from "../config/ProfileStore.js";
 import type { OperatorAssemblySummary, TuiProfile } from "../contracts.js";
@@ -140,6 +142,18 @@ import {
   type KestrelOneProfileOverlay,
 } from "../../src/profile/kestrelOnePolicy.js";
 import {
+  DEFAULT_ACT_SUBMODE,
+  resolveEffectiveToolDecisionV1,
+  resolveToolApprovalDispositionV1,
+  type EffectiveToolDecisionV1,
+} from "../../src/mode/contracts.js";
+import { buildExecutionPolicyFromPack } from "../../src/mode/approvalPolicyPacks.js";
+import {
+  hashCanonical,
+  toToolDescriptorRefV1,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
+import {
   type DelegationTaskUpdate,
   KestrelChatRuntime,
   type KestrelChatRuntimeOptions,
@@ -174,6 +188,7 @@ interface ActiveRunEntry {
   abortController: AbortController;
   runId?: string | undefined;
   cancelRequested?: boolean | undefined;
+  cancellationReason?: CancellationReason | undefined;
   finalizingAnswer?: boolean | undefined;
   exactEffectCandidate?: {
     runId: string;
@@ -709,7 +724,20 @@ export class RunnerHost {
       profile: resolution.resolvedProfile,
       environmentPresetId: payload.environmentPresetId,
     });
-    this.writer.emit("execution-profile.resolved", resolution, { commandId });
+    const exactToolDecisions = payload.exactToolNames === undefined
+      ? undefined
+      : resolveExactToolPreflightDecisions(
+          resolution.resolvedProfile,
+          payload.exactToolNames,
+        );
+    this.writer.emit(
+      "execution-profile.resolved",
+      {
+        ...resolution,
+        ...(exactToolDecisions === undefined ? {} : { exactToolDecisions }),
+      },
+      { commandId },
+    );
   }
 
   runStart(
@@ -931,7 +959,11 @@ export class RunnerHost {
         this.writer.emit("run.cancelled", {
           sessionId: turn.sessionId,
           runId: emittedRunId,
-          result: buildNonResponsiveTerminalResult({ status: "CANCELLED", sessionId: turn.sessionId, runId: emittedRunId }),
+        result: buildCancelledTerminalResult(terminalResult, {
+          sessionId: turn.sessionId,
+          runId: emittedRunId,
+          reason: active.cancellationReason ?? "user_requested",
+        }),
         }, { commandId, runId: emittedRunId, sessionId: turn.sessionId });
         return;
       }
@@ -1477,12 +1509,11 @@ export class RunnerHost {
             rejectDurablyCompletedCancellation();
             return;
           }
-          if (claim.status !== "cancelled") {
+          if (claim.status !== "cancelled" && claim.status !== "started") {
             return this.emitRunCancelNotFound(commandId, payload, active.runId);
           }
         }
-        active.cancelRequested = true;
-        active.abortController.abort();
+        requestActiveRunCancellation(active, "user_requested");
         cancelledRunId = active.runId;
         cancelled = true;
       }
@@ -2031,10 +2062,10 @@ export class RunnerHost {
               this.writer.emit("run.cancelled", {
                 sessionId: completedSessionId,
                 runId,
-                result: buildNonResponsiveTerminalResult({
-                  status: "CANCELLED",
+                result: buildCancelledTerminalResult(result, {
                   sessionId: completedSessionId,
                   runId,
+                  reason: active.cancellationReason ?? "user_requested",
                 }),
               }, { commandId, sessionId: completedSessionId, runId, threadId: payload.threadId });
               return;
@@ -3021,8 +3052,7 @@ export class RunnerHost {
     this.closing = true;
     if (options.abortActiveRuns === true) {
       for (const active of this.activeRuns.values()) {
-        active.cancelRequested = true;
-        active.abortController.abort();
+        requestActiveRunCancellation(active, "runner_shutdown");
       }
     }
     await Promise.allSettled([...this.activeExecutions]);
@@ -3431,7 +3461,7 @@ export class RunnerHost {
     );
   }
 
-  private emitToolUpdate(update: RunToolUpdateV1): void {
+  private emitToolUpdate(update: RunToolUpdateV1 | RunToolUpdateV2): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     if (
       (normalizedUpdate.phase === "started" || normalizedUpdate.phase === "completed") &&
@@ -3806,6 +3836,94 @@ function buildNonResponsiveTerminalResult(input: {
   };
 }
 
+function buildCancelledTerminalResult(
+  result: RunTurnResult,
+  identity: {
+    sessionId: string;
+    runId: string;
+    reason: CancellationReason;
+  },
+): RunTurnResult {
+  const telemetry = projectCancellationTelemetry(result.output.telemetry);
+  return {
+    assistantText: null,
+    output: {
+      status: "FAILED",
+      sessionId: identity.sessionId,
+      runId: identity.runId,
+      quality: {
+        citationCoverage: safeNonNegativeNumber(
+          result.output.quality.citationCoverage,
+        ),
+        unresolvedClaims: safeNonNegativeNumber(
+          result.output.quality.unresolvedClaims,
+        ),
+        reworkRate: safeNonNegativeNumber(result.output.quality.reworkRate),
+        thrashIndex: safeNonNegativeNumber(result.output.quality.thrashIndex),
+      },
+      errors: [{
+        code: "RUN_CANCELLED",
+        message: "Run cancelled.",
+        details: {
+          cancellationReason: identity.reason,
+          modelWorkRecorded: telemetry.modelCalls > 0,
+          validationRejections: telemetry.validationRejections ?? 0,
+        },
+      }],
+      telemetry,
+    },
+  };
+}
+
+type CancellationReason = "user_requested" | "runner_shutdown";
+
+function requestActiveRunCancellation(
+  active: ActiveRunEntry,
+  reason: CancellationReason,
+): void {
+  if (active.cancelRequested === true) return;
+  active.cancelRequested = true;
+  active.cancellationReason = reason;
+  active.abortController.abort();
+}
+
+function projectCancellationTelemetry(
+  telemetry: RunTurnResult["output"]["telemetry"],
+): RunTurnResult["output"]["telemetry"] {
+  const required = {
+    stepsExecuted: safeNonNegativeNumber(telemetry.stepsExecuted),
+    toolCalls: safeNonNegativeNumber(telemetry.toolCalls),
+    modelCalls: safeNonNegativeNumber(telemetry.modelCalls),
+    durationMs: safeNonNegativeNumber(telemetry.durationMs),
+  };
+  const optional = {} as Record<string, number>;
+  for (const field of [
+    "effectToolCalls",
+    "actionModelCalls",
+    "maintenanceModelCalls",
+    "inputTokens",
+    "cachedInputTokens",
+    "cacheWriteInputTokens",
+    "outputTokens",
+    "reasoningTokens",
+    "totalTokens",
+    "pricedCostUsd",
+    "validationRejections",
+  ] as const) {
+    const value = telemetry[field];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      optional[field] = value;
+    }
+  }
+  return { ...required, ...optional };
+}
+
+function safeNonNegativeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : 0;
+}
+
 function isSessionVersionConflictError(error: unknown): error is Error {
   return (
     error instanceof Error &&
@@ -3889,6 +4007,12 @@ function createDefaultProfileProvider(): RunnerProfileProvider {
           id: payload.environmentPresetId,
           version: provenance.environmentPreset.version,
         },
+        ...(payload.environmentPresetId === "workspace_hosted"
+          ? {
+              hostedApprovalProducerProtocol:
+                resolveHostedApprovalProtocolVersion(process.env),
+            }
+          : {}),
         resolvedProfile: registered.profile,
       };
     },
@@ -3989,4 +4113,96 @@ function buildDefaultExecutionProfileProvenance(
         }
       : {}),
   };
+}
+
+function resolveExactToolPreflightDecisions(
+  profile: TuiProfile,
+  exactToolNames: readonly string[],
+): Record<string, EffectiveToolDecisionV1> {
+  const decisions: Record<string, EffectiveToolDecisionV1> = {};
+  const actorToolAccess = new Set(profile.toolAllowlist ?? []);
+  const executionPolicy = buildExecutionPolicyFromPack(
+    profile.approvalPolicyPackId,
+  );
+
+  for (const toolName of exactToolNames) {
+    const descriptor = defaultToolCatalog.getDescriptor(toolName);
+    if (descriptor === undefined) {
+      throw Object.assign(
+        new Error(
+          `Exact-tool preflight cannot resolve canonical descriptor '${toolName}'.`,
+        ),
+        {
+          code: "EXACT_TOOL_DESCRIPTOR_NOT_FOUND",
+          details: { toolName },
+        },
+      );
+    }
+    const configuredApprovalMode =
+      profile.kestrelOneAppApprovalModes?.[toolName];
+    const approvalPolicyEvidence =
+      profile.kestrelOneAppApprovalPolicies?.[toolName];
+    const hasHostedAppPolicy =
+      configuredApprovalMode !== undefined ||
+      approvalPolicyEvidence !== undefined;
+    const upstreamAuthority = hasHostedAppPolicy
+      ? {
+          kind: "hosted_app_policy" as const,
+          revision: hashCanonical({
+            toolId: toolName,
+            configuredAppApprovalMode: configuredApprovalMode,
+            approvalPolicyEvidence,
+            minimumApprovalMode:
+              descriptor.capability.minimumApprovalMode ?? "auto",
+          }),
+        }
+      : {
+          kind: "runtime_policy" as const,
+          revision: hashCanonical({ toolId: toolName, policy: "runtime" }),
+        };
+    const approvalAuthority = {
+      kind: upstreamAuthority.kind,
+      revision: hashCanonical({
+        version: "tool-approval-authority-v1",
+        descriptor: toToolDescriptorRefV1(descriptor),
+        upstream: upstreamAuthority,
+      }),
+    };
+    const approvalDisposition = approvalPolicyEvidence !== undefined
+      ? resolveToolApprovalDispositionV1({
+          environment: approvalPolicyEvidence.environment,
+          project: approvalPolicyEvidence.project,
+          subject: approvalPolicyEvidence.subject,
+          minimum:
+            descriptor.capability.minimumApprovalMode ??
+            approvalPolicyEvidence.minimum,
+          authority: approvalAuthority,
+        })
+      : resolveToolApprovalDispositionV1({
+          environment: configuredApprovalMode ?? "auto",
+          minimum: descriptor.capability.minimumApprovalMode ?? "auto",
+          authority: approvalAuthority,
+        });
+    const requiredCapabilities = [
+      ...(descriptor.capability.approvalCapabilities ?? []).filter(
+        (capability) => capability !== "external.confirm",
+      ),
+      ...(approvalDisposition.mode === "ask"
+        ? (["external.confirm"] as const)
+        : []),
+    ];
+
+    decisions[toolName] = resolveEffectiveToolDecisionV1({
+      interactionMode: "build",
+      actSubmode: profile.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
+      toolClass: descriptor.capability.executionClass,
+      allowedInteractionModes: descriptor.capability.allowedInteractionModes,
+      executionPolicy,
+      requiredCapabilities: [...new Set(requiredCapabilities)],
+      approvalDisposition,
+      actorAccess: actorToolAccess.has(toolName),
+    });
+  }
+
+  return decisions;
 }

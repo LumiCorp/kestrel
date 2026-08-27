@@ -7,16 +7,25 @@ import type { RunEventType, RuntimeError, TransitionStatus } from "../kestrel/co
 import type { MemorySnapshot, ProgressPhase, ProgressUpdateV1, RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { Effect, GuardrailConfig, ManagedTaskWorktreeBinding, NormalizedOutput, RegionWorkItem, ResolvedEffect, RuntimeDependencies, StepContext, StepIO, StepTransition, Transition } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelRequest, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
-import type { AgentToolResultV2 } from "../kestrel/contracts/tool-invocation.js";
+import {
+  parseDurablePreparedToolCallV1,
+  type AgentToolResultV2,
+} from "../kestrel/contracts/tool-invocation.js";
 import {
   hashCanonical,
   parseToolSurfaceSnapshotV1,
 } from "../kestrel/contracts/tool-contract.js";
-import type { SessionRecord } from "../kestrel/contracts/store.js";
+import type {
+  PersistedEffect,
+  SessionRecord,
+} from "../kestrel/contracts/store.js";
+import { validatePreparedApprovalCleanupDoneEvidence } from "../kestrel/contracts/store.js";
 import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
 import {
   createRunnerStructuredReviewInteractionV1,
   parseRunnerExternalApprovalBindingV1,
+  parseRunnerExternalApprovalBindingV2,
+  parseRunnerPreparedApprovalCleanupV1,
   serializeCanonicalApprovalPayload,
 } from "@kestrel-agents/protocol";
 
@@ -125,6 +134,9 @@ import {
 } from "../events/RuntimeEventProjections.js";
 import { resolveKestrelTurnObjective } from "../runtime/turnObjective.js";
 import { redactDiagnosticText } from "../diagnostics/redaction.js";
+import { isPreparedApprovalCleanupRelease } from "../effects/EffectRunner.js";
+import { parsePreparedApprovalCleanupTerminalV1 } from "../runtime/preparedApprovalCleanupTerminal.js";
+import type { PreparedApprovalCleanupTerminalV1 } from "../runtime/preparedApprovalCleanupTerminal.js";
 
 export { readModelRequestSchemaName } from "./ExecutionEngineSupport.js";
 
@@ -734,15 +746,24 @@ export class ExecutionEngine {
       const resumeOutcome = await this.resumePendingEffects(
         runId,
         event,
-        session.sessionId,
+        session,
         errors,
         options.signal,
       );
       if (resumeOutcome !== undefined) {
-        await this.appendRunEvent(runId, session.sessionId, "run.failed", "WARN", {
-          reason: "resume_pending_effects_stop",
-          status: resumeOutcome.status,
-        });
+        const cleanupCompleted = resumeOutcome.cleanupCompleted === true;
+        await this.appendRunEvent(
+          runId,
+          session.sessionId,
+          cleanupCompleted ? "run.completed" : "run.failed",
+          cleanupCompleted ? "INFO" : "WARN",
+          {
+            reason: cleanupCompleted
+              ? "prepared_approval_cleanup_completed"
+              : "resume_pending_effects_stop",
+            status: resumeOutcome.status,
+          },
+        );
         const terminalOutput = await this.runLifecycleController.returnTerminal({
           runId,
           sessionId: session.sessionId,
@@ -760,8 +781,14 @@ export class ExecutionEngine {
           progressOverride: {
             kind: "stage",
             phase: "engine",
-            code: resumeOutcome.status === "FAILED" ? "RUN_FAILED" : "RUN_TERMINAL",
-            message: `Run terminated while resuming pending effects (${resumeOutcome.status}).`,
+            code: cleanupCompleted
+              ? "RUN_TERMINAL"
+              : resumeOutcome.status === "FAILED"
+                ? "RUN_FAILED"
+                : "RUN_TERMINAL",
+            message: cleanupCompleted
+              ? "Prepared approval cleanup completed."
+              : `Run terminated while resuming pending effects (${resumeOutcome.status}).`,
             stepAgent: session.currentStepAgent,
           },
         });
@@ -1936,6 +1963,10 @@ export class ExecutionEngine {
       },
       inspectTool: (name, input, intent) =>
         runtimeIO.inspectTool(name, input, intent),
+      prepareToolForApproval: (name, input, approval, intent) =>
+        runtimeIO.prepareToolForApproval(name, input, approval, intent),
+      releasePreparedToolCall: (prepared) =>
+        runtimeIO.releasePreparedToolCall(prepared),
     };
   }
 
@@ -3007,6 +3038,91 @@ export class ExecutionEngine {
           },
         );
       }
+      if (payload?.preparedToolCall !== undefined) {
+        const mixedPreparedFields = [
+          "toolName",
+          "toolInput",
+          "modelToolCallId",
+          "toolSurfaceSnapshot",
+        ].filter((field) => Object.hasOwn(payload, field));
+        if (mixedPreparedFields.length > 0) {
+          throw createRuntimeFailure(
+            "TOOL_EFFECT_PREPARATION_FAILED",
+            "A prepared tool effect cannot include reconstructible tool-call fields.",
+            {
+              recoverable: false,
+              effectType: effect.type,
+              fields: mixedPreparedFields,
+            },
+          );
+        }
+        let preparedToolCall;
+        let externalApprovalBinding;
+        try {
+          preparedToolCall = parseDurablePreparedToolCallV1(
+            payload.preparedToolCall,
+          );
+          externalApprovalBinding = parseRunnerExternalApprovalBindingV2(
+            preparedToolCall.approval?.externalApprovalBinding,
+          );
+        } catch (error) {
+          throw createRuntimeFailure(
+            "TOOL_EFFECT_PREPARATION_FAILED",
+            "The approved prepared invocation is invalid.",
+            {
+              recoverable: false,
+              effectType: effect.type,
+              cause: error instanceof Error ? error.message : String(error),
+            },
+          );
+        }
+        const pendingApproval = readPendingToolApproval(session.state);
+        if (
+          preparedToolCall.sessionId !== session.sessionId ||
+          preparedToolCall.callId !== idempotencyKey ||
+          externalApprovalBinding.preparedInvocationId !==
+            preparedToolCall.callId ||
+          pendingApproval?.version !== "hosted_tool_approval_v2" ||
+          pendingApproval.preparedInvocationId !== preparedToolCall.callId ||
+          serializeCanonicalApprovalPayload(
+            pendingApproval.externalApprovalBinding,
+          ) !== serializeCanonicalApprovalPayload(externalApprovalBinding)
+        ) {
+          throw createRuntimeFailure(
+            "TOOL_EFFECT_PREPARATION_FAILED",
+            "The approved prepared invocation does not match the committed approval wait.",
+            {
+              recoverable: false,
+              effectType: effect.type,
+              preparedInvocationId: preparedToolCall.callId,
+            },
+          );
+        }
+        if (this.deps.toolGateway.preRun !== undefined) {
+          await this.deps.toolGateway.preRun({
+            runId,
+            event: {
+              id: `tool-resume:${runId}:${idempotencyKey}`,
+              type: effect.type,
+              sessionId: session.sessionId,
+              payload: runtimePayload ?? {},
+              ...(session.currentStepAgent === undefined
+                ? {}
+                : { stepAgent: session.currentStepAgent }),
+            },
+            session,
+          });
+        }
+        return {
+          type: effect.type,
+          payload: {
+            preparedToolCall,
+            ...(runtimePayload === undefined ? {} : { runtimePayload }),
+          },
+          idempotencyKey,
+          failurePolicy: effect.failurePolicy ?? "STOP",
+        };
+      }
       const toolName = this.asString(payload?.toolName);
       const rawInput = this.asRecord(payload?.toolInput);
       if (payload === undefined || toolName === undefined || rawInput === undefined) {
@@ -3208,13 +3324,26 @@ export class ExecutionEngine {
   private async resumePendingEffects(
     runId: string,
     event: RuntimeEvent,
-    sessionId: string,
+    session: SessionRecord,
     errors: RuntimeError[],
     signal?: AbortSignal,
-  ): Promise<{ status: TransitionStatus; errors: RuntimeError[] } | undefined> {
+  ): Promise<{
+    status: TransitionStatus;
+    errors: RuntimeError[];
+    cleanupCompleted?: boolean | undefined;
+  } | undefined> {
+    const sessionId = session.sessionId;
+    await this.prepareFailedPreparedApprovalCleanupForResume({
+      event,
+      session,
+    });
     const pendingEffects = await this.deps.store.listPendingEffects(sessionId);
     if (pendingEffects.length === 0) {
-      return ;
+      return this.recoverCompletedPreparedApprovalCleanup({
+        event,
+        session,
+        errors,
+      });
     }
 
     await this.logInfo({
@@ -3246,7 +3375,228 @@ export class ExecutionEngine {
       };
     }
 
+    if (pendingEffects.every(isPreparedApprovalCleanupRelease)) {
+      await this.validateCompletedPreparedApprovalCleanupEffects(
+        pendingEffects,
+        sessionId,
+      );
+      return {
+        status: "COMPLETED",
+        errors,
+        cleanupCompleted: true,
+      };
+    }
+
     return ;
+  }
+
+  private async prepareFailedPreparedApprovalCleanupForResume(input: {
+    event: RuntimeEvent;
+    session: SessionRecord;
+  }): Promise<void> {
+    try {
+      const evidence = await this.readPreparedApprovalCleanupRecoveryEvidence(
+        input,
+      );
+      if (evidence?.effect.status !== "FAILED") return;
+      const result = await this.deps.store.getEffectResult(
+        evidence.effect.idempotencyKey,
+      );
+      if (result?.status === "DONE") {
+        const quarantine =
+          await this.deps.store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+            evidence.effect.idempotencyKey,
+            evidence.effect,
+          );
+        if (quarantine === "conflict") {
+          throw new Error(
+            "cleanup DONE evidence could not be validated or quarantined",
+          );
+        }
+        return;
+      }
+      const reset =
+        await this.deps.store.resetPreparedApprovalCleanupEffectExecution(
+          evidence.effect.idempotencyKey,
+          evidence.effect,
+        );
+      if (reset === "done") {
+        const quarantine =
+          await this.deps.store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+            evidence.effect.idempotencyKey,
+            evidence.effect,
+          );
+        if (quarantine === "conflict") {
+          throw new Error(
+            "cleanup reset completion could not be validated or quarantined",
+          );
+        }
+        return;
+      }
+      if (reset !== "reset") {
+        throw new Error(
+          "failed cleanup release could not be reset under its exact identity",
+        );
+      }
+    } catch (error) {
+      throw this.createPreparedApprovalCleanupEvidenceFailure(
+        input.session.sessionId,
+        error,
+      );
+    }
+  }
+
+  private async validateCompletedPreparedApprovalCleanupEffects(
+    effects: PersistedEffect[],
+    sessionId: string,
+  ): Promise<void> {
+    try {
+      if (this.deps.store.getPersistedEffect === undefined) {
+        throw new Error("cleanup completion requires persisted effect lookup");
+      }
+      for (const effect of effects) {
+        const current = await this.deps.store.getPersistedEffect(
+          effect.idempotencyKey,
+        );
+        const result = await this.deps.store.getEffectResult(
+          effect.idempotencyKey,
+        );
+        if (current?.status !== "DONE" || result?.status !== "DONE") {
+          throw new Error(
+            "pending cleanup terminalization lacks exact DONE evidence",
+          );
+        }
+        validatePreparedApprovalCleanupDoneEvidence({
+          effect: current,
+          result,
+        });
+      }
+    } catch (error) {
+      throw this.createPreparedApprovalCleanupEvidenceFailure(
+        sessionId,
+        error,
+      );
+    }
+  }
+
+  private async recoverCompletedPreparedApprovalCleanup(input: {
+    event: RuntimeEvent;
+    session: SessionRecord;
+    errors: RuntimeError[];
+  }): Promise<{
+    status: TransitionStatus;
+    errors: RuntimeError[];
+    cleanupCompleted: true;
+  } | undefined> {
+    try {
+      const evidence = await this.readPreparedApprovalCleanupRecoveryEvidence(
+        input,
+      );
+      if (evidence === undefined) return;
+      const { effect, terminalCleanup } = evidence;
+      const result = await this.deps.store.getEffectResult(
+        terminalCleanup.releaseEffectIdempotencyKey,
+      );
+      if (
+        effect.status !== "DONE" ||
+        result === null ||
+        result.idempotencyKey !== effect.idempotencyKey ||
+        result.status !== "DONE"
+      ) {
+        throw new Error(
+          "cleanup recovery does not have an exact durable DONE effect and result",
+        );
+      }
+      validatePreparedApprovalCleanupDoneEvidence({ effect, result });
+      return {
+        status: "COMPLETED",
+        errors: input.errors,
+        cleanupCompleted: true,
+      };
+    } catch (error) {
+      throw this.createPreparedApprovalCleanupEvidenceFailure(
+        input.session.sessionId,
+        error,
+      );
+    }
+  }
+
+  private async readPreparedApprovalCleanupRecoveryEvidence(input: {
+    event: RuntimeEvent;
+    session: SessionRecord;
+  }): Promise<{
+    effect: PersistedEffect;
+    terminalCleanup: PreparedApprovalCleanupTerminalV1;
+  } | undefined> {
+    const eventPayload = this.asRecord(input.event.payload);
+    if (eventPayload?.preparedApprovalCleanup === undefined) return;
+    const agent = this.asRecord(input.session.state.agent);
+    const terminal = this.asRecord(agent?.terminal);
+    if (terminal?.preparedApprovalCleanup === undefined) return;
+    const eventCleanup = parseRunnerPreparedApprovalCleanupV1(
+      eventPayload.preparedApprovalCleanup,
+    );
+    const terminalCleanup = parsePreparedApprovalCleanupTerminalV1(
+      terminal.preparedApprovalCleanup,
+    );
+    if (
+      serializeCanonicalApprovalPayload(eventCleanup) !==
+        serializeCanonicalApprovalPayload(terminalCleanup.cleanup)
+    ) {
+      throw new Error(
+        "cleanup recovery event does not match the terminal cleanup identity",
+      );
+    }
+    if (this.deps.store.getPersistedEffect === undefined) {
+      throw new Error("cleanup recovery requires persisted effect lookup");
+    }
+    const effect = await this.deps.store.getPersistedEffect(
+      terminalCleanup.releaseEffectIdempotencyKey,
+    );
+    if (
+      effect === null ||
+      effect.sessionId !== input.session.sessionId ||
+      effect.idempotencyKey !== terminalCleanup.releaseEffectIdempotencyKey ||
+      !isPreparedApprovalCleanupRelease(effect)
+    ) {
+      throw new Error(
+        "cleanup recovery does not match an exact persisted release effect",
+      );
+    }
+    const effectPayload = this.asRecord(effect.payload);
+    const effectCleanup = parseRunnerPreparedApprovalCleanupV1(
+      effectPayload?.preparedApprovalCleanup,
+    );
+    const preparedToolCall = parseDurablePreparedToolCallV1(
+      effectPayload?.preparedToolCall,
+    );
+    if (
+      serializeCanonicalApprovalPayload(effectCleanup) !==
+        serializeCanonicalApprovalPayload(terminalCleanup.cleanup) ||
+      preparedToolCall.sessionId !== input.session.sessionId ||
+      `${preparedToolCall.callId}:release` !== effect.idempotencyKey
+    ) {
+      throw new Error(
+        "cleanup recovery effect does not match its terminal identity",
+      );
+    }
+    return { effect, terminalCleanup };
+  }
+
+  private createPreparedApprovalCleanupEvidenceFailure(
+    sessionId: string,
+    error: unknown,
+  ) {
+    return createRuntimeFailure(
+      "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+      "Prepared approval cleanup could not prove its exact durable release result.",
+      {
+        subsystem: "runtime",
+        classification: "runtime",
+        sessionId,
+        cause: error instanceof Error ? error.message : "unknown",
+      },
+    );
   }
 
   private resolveRegionLaneCursor(sessionState: Record<string, unknown>): string | undefined {

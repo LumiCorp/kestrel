@@ -1,4 +1,5 @@
 import type { EffectExecutionStatus, RuntimeError, TransitionStatus } from "../../src/kestrel/contracts/base.js";
+import { parseRunnerPreparedApprovalCleanupV1 } from "@kestrel-agents/protocol";
 import type { RunEvent, RunLogEntry, RuntimeEvent } from "../../src/kestrel/contracts/events.js";
 import type { EffectResult, RegionWorkIntent, RegionWorkItem } from "../../src/kestrel/contracts/execution.js";
 import type {
@@ -13,10 +14,12 @@ import type {
   ClaimConversationTurnExecutionResult,
   CommitStepInput,
   CommitStepResult,
+  EffectResultPersistenceIntent,
   LegacySessionArchive,
   OutboxEventRecord,
   PersistedArtifact,
   PersistedClaim,
+  PersistedEffect,
   PersistedRunRecord,
   PersistedRunStateRecord,
   PersistedRunSummaryRecord,
@@ -25,6 +28,17 @@ import type {
   SessionStore,
   UpdateConversationTurnTerminalEnvelopeInput,
 } from "../../src/kestrel/contracts/store.js";
+import {
+  quarantinePreparedApprovalCleanupDoneResult,
+  snapshotEffectResultPersistenceIntent,
+  validatePreparedApprovalCleanupDoneEvidence,
+  validatePreparedApprovalCleanupEffectIdentity,
+} from "../../src/kestrel/contracts/store.js";
+import {
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent,
+  buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot,
+  snapshotPreparedApprovalCleanupResult,
+} from "../../src/runtime/preparedApprovalCleanupAudit.js";
 
 import {
   normalizeRuntimeStateForPersist,
@@ -77,6 +91,18 @@ interface InMemoryRun {
   error: RuntimeError | undefined;
 }
 
+function isPreparedApprovalCleanupEffect(effect: PersistedEffect): boolean {
+  if (effect.type !== "release_prepared_tool_call") return false;
+  const marker = effect.payload.preparedApprovalCleanup;
+  if (marker === undefined) return false;
+  try {
+    parseRunnerPreparedApprovalCleanupV1(marker);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface InMemoryEffect {
   runId: string;
   sessionId: string;
@@ -100,6 +126,10 @@ export class InMemorySessionStore implements SessionStore {
   private readonly runs = new Map<string, InMemoryRun>();
   private readonly effects: InMemoryEffect[] = [];
   private readonly effectResults = new Map<string, EffectResult>();
+  private readonly preparedApprovalCleanupExecutionLocks = new Map<
+    string,
+    Promise<void>
+  >();
   private readonly outboxEvents: OutboxEventRecord[] = [];
   private readonly runLogs: RunLogEntry[] = [];
   private readonly runEvents: RunEvent[] = [];
@@ -609,8 +639,15 @@ export class InMemorySessionStore implements SessionStore {
 
   async listPendingEffects(sessionId: string) {
     return this.effects
-      .filter((effect) => effect.sessionId === sessionId && effect.status === "PENDING")
+      .filter((effect) => effect.sessionId === sessionId && (effect.status === "PENDING" || effect.status === "CLAIMED"))
       .map((effect) => ({ ...effect }));
+  }
+
+  async getPersistedEffect(idempotencyKey: string) {
+    const effect = this.effects.find(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    return effect === undefined ? null : structuredClone(effect);
   }
 
   async getEffectResult(idempotencyKey: string): Promise<EffectResult | null> {
@@ -621,22 +658,382 @@ export class InMemorySessionStore implements SessionStore {
     return { ...result };
   }
 
-  async saveEffectResult(_runId: string, _sessionId: string, result: EffectResult): Promise<void> {
-    if (this.effectResults.has(result.idempotencyKey)) {
+  async saveEffectResult(
+    runId: string,
+    sessionId: string,
+    result: EffectResult,
+    intent?: EffectResultPersistenceIntent | undefined,
+  ): Promise<void> {
+    const materializedIntent = intent === undefined
+      ? null
+      : snapshotEffectResultPersistenceIntent(intent);
+    if (intent !== undefined && materializedIntent === null) {
+      throw new Error("Cleanup persistence intent was unreadable or malformed");
+    }
+    const materialized = materializedIntent === null
+      ? null
+      : snapshotPreparedApprovalCleanupResult({
+          result,
+          expectedIdempotencyKey: materializedIntent.idempotencyKey,
+        });
+    const idempotencyKey = materializedIntent?.idempotencyKey ??
+      result.idempotencyKey;
+    const effect = this.effects.find(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    const cleanup = effect !== undefined && isPreparedApprovalCleanupEffect(effect);
+    if (materializedIntent !== null) {
+      if (
+        !cleanup ||
+        effect.runId !== runId ||
+        effect.sessionId !== sessionId
+      ) {
+        throw new Error(
+          "Cleanup persistence intent does not match the locked durable effect",
+        );
+      }
+      validatePreparedApprovalCleanupEffectIdentity(effect);
+    } else if (cleanup) {
+      throw new Error("Cleanup result persistence requires explicit cleanup intent");
+    }
+    if (this.effectResults.has(idempotencyKey)) {
       return;
     }
+    if (materialized !== null && effect !== undefined) {
+      if (materialized.snapshot?.status === "DONE") {
+        try {
+          validatePreparedApprovalCleanupDoneEvidence({
+            effect,
+            result: materialized.snapshot,
+          });
+          this.effectResults.set(
+            idempotencyKey,
+            structuredClone(materialized.snapshot),
+          );
+          this.operationLog.push(`saveEffectResult:${idempotencyKey}:DONE`);
+          return;
+        } catch {
+          // Invalid cleanup success is quarantined below.
+        }
+      }
+      if (materialized.snapshot?.status === "FAILED") {
+        this.effectResults.set(
+          idempotencyKey,
+          structuredClone(materialized.snapshot),
+        );
+        this.operationLog.push(`saveEffectResult:${idempotencyKey}:FAILED`);
+        return;
+      }
+      const occurredAt = new Date().toISOString();
+      this.runEvents.push(structuredClone(
+        buildPreparedApprovalCleanupDoneEvidenceQuarantineEventFromSnapshot({
+          effect,
+          auditSnapshot: materialized.auditSnapshot,
+          occurredAt,
+        }),
+      ));
+      this.effectResults.set(idempotencyKey, {
+        ...quarantinePreparedApprovalCleanupDoneResult({
+          idempotencyKey,
+          status: "DONE",
+          timestamp: occurredAt,
+        }),
+        timestamp: occurredAt,
+      });
+      effect.status = "PENDING";
+      this.operationLog.push(
+        `quarantineInvalidPreparedApprovalCleanupDoneEvidence:${idempotencyKey}`,
+      );
+      return;
+    }
+    this.effectResults.set(idempotencyKey, { ...result });
+    this.operationLog.push(`saveEffectResult:${idempotencyKey}:${result.status}`);
+  }
 
-    this.effectResults.set(result.idempotencyKey, { ...result });
-    this.operationLog.push(`saveEffectResult:${result.idempotencyKey}:${result.status}`);
+  async claimEffectExecution(
+    idempotencyKey: string,
+    _owner: { runId: string; sessionId: string },
+  ): Promise<"claimed" | "already_claimed" | "terminal"> {
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+    if (effect === undefined) {
+      this.operationLog.push(`claimEffectExecution:${idempotencyKey}`);
+      return "claimed";
+    }
+    if (effect.status === "PENDING") {
+      effect.status = "CLAIMED";
+      this.operationLog.push(`claimEffectExecution:${idempotencyKey}`);
+      return "claimed";
+    }
+    return effect.status === "CLAIMED" ? "already_claimed" : "terminal";
+  }
+
+  async resetPreparedApprovalCleanupEffectExecution(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"reset" | "done" | "conflict"> {
+    return this.withPreparedApprovalCleanupExecutionLock(
+      idempotencyKey,
+      async () => {
+        const effect = this.effects.find(
+          (candidate) => candidate.idempotencyKey === idempotencyKey,
+        );
+        const payload = effect?.payload;
+        try {
+          if (
+            effect === undefined ||
+            effect.runId !== owner.runId ||
+            effect.sessionId !== owner.sessionId ||
+            effect.type !== "release_prepared_tool_call" ||
+            payload?.preparedApprovalCleanup === undefined
+          ) return "conflict";
+          parseRunnerPreparedApprovalCleanupV1(
+            payload.preparedApprovalCleanup,
+          );
+        } catch {
+          return "conflict";
+        }
+        const result = this.effectResults.get(idempotencyKey);
+        if (result?.status === "DONE") return "done";
+        if (result?.status === "FAILED") {
+          this.effectResults.delete(idempotencyKey);
+        }
+        if (effect.status === "DONE") return "conflict";
+        effect.status = "PENDING";
+        this.operationLog.push(
+          `resetPreparedApprovalCleanupEffectExecution:${idempotencyKey}`,
+        );
+        return "reset";
+      },
+    );
+  }
+
+  async quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"done" | "quarantined" | "conflict"> {
+    return this.withPreparedApprovalCleanupExecutionLock(
+      idempotencyKey,
+      async () => {
+        const effect = this.effects.find(
+          (candidate) => candidate.idempotencyKey === idempotencyKey,
+        );
+        const payload = effect?.payload;
+        const result = this.effectResults.get(idempotencyKey);
+        if (
+          effect === undefined ||
+          result?.status !== "DONE" ||
+          effect.runId !== owner.runId ||
+          effect.sessionId !== owner.sessionId ||
+          effect.type !== "release_prepared_tool_call" ||
+          payload?.preparedApprovalCleanup === undefined
+        ) return "conflict";
+        const doneResult: EffectResult & { status: "DONE" } = {
+          ...result,
+          status: "DONE",
+        };
+        try {
+          parseRunnerPreparedApprovalCleanupV1(
+            payload.preparedApprovalCleanup,
+          );
+          validatePreparedApprovalCleanupEffectIdentity(effect);
+        } catch {
+          return "conflict";
+        }
+        try {
+          validatePreparedApprovalCleanupDoneEvidence({
+            effect,
+            result: doneResult,
+          });
+          effect.status = "DONE";
+          return "done";
+        } catch {
+          const auditEvent =
+            buildPreparedApprovalCleanupDoneEvidenceQuarantineEvent({
+              effect,
+              invalidResult: doneResult,
+              occurredAt: new Date().toISOString(),
+            });
+          const quarantinedResult =
+            quarantinePreparedApprovalCleanupDoneResult(doneResult);
+          const preparedAuditEvent = structuredClone(auditEvent);
+          const preparedQuarantinedResult = structuredClone(quarantinedResult);
+          this.runEvents.push(preparedAuditEvent);
+          this.operationLog.push(`runEvent:${auditEvent.type}`);
+          this.effectResults.set(
+            idempotencyKey,
+            preparedQuarantinedResult,
+          );
+          effect.status = "PENDING";
+          this.operationLog.push(
+            `quarantineInvalidPreparedApprovalCleanupDoneEvidence:${idempotencyKey}`,
+          );
+          return "quarantined";
+        }
+      },
+    );
+  }
+
+  async executePreparedApprovalCleanupInCriticalSection(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+    execute: () => Promise<EffectResult & { status: "DONE" }>,
+  ): Promise<
+    | { status: "executed"; result: EffectResult & { status: "DONE" } }
+    | { status: "done"; result: EffectResult & { status: "DONE" } }
+    | { status: "conflict" }
+  > {
+    return this.withPreparedApprovalCleanupExecutionLock(
+      idempotencyKey,
+      async () => {
+        const effect = this.effects.find(
+          (candidate) => candidate.idempotencyKey === idempotencyKey,
+        );
+        const payload = effect?.payload;
+        if (
+          effect === undefined ||
+          effect.runId !== owner.runId ||
+          effect.sessionId !== owner.sessionId ||
+          effect.type !== "release_prepared_tool_call" ||
+          payload?.preparedApprovalCleanup === undefined
+        ) return { status: "conflict" };
+        try {
+          parseRunnerPreparedApprovalCleanupV1(
+            payload.preparedApprovalCleanup,
+          );
+          validatePreparedApprovalCleanupEffectIdentity(effect);
+        } catch {
+          return { status: "conflict" };
+        }
+        const existing = this.effectResults.get(idempotencyKey);
+        if (existing?.status === "DONE") {
+          const doneResult: EffectResult & { status: "DONE" } = {
+            ...existing,
+            status: "DONE",
+          };
+          try {
+            validatePreparedApprovalCleanupDoneEvidence({
+              effect,
+              result: doneResult,
+            });
+          } catch {
+            return { status: "conflict" };
+          }
+          effect.status = "DONE";
+          return { status: "done", result: structuredClone(doneResult) };
+        }
+        if (existing !== undefined || effect.status !== "CLAIMED") {
+          return { status: "conflict" };
+        }
+        const result = await execute();
+        validatePreparedApprovalCleanupDoneEvidence({ effect, result });
+        this.effectResults.set(idempotencyKey, structuredClone(result));
+        effect.status = "DONE";
+        this.operationLog.push(
+          `commitPreparedApprovalCleanupEffectDone:${idempotencyKey}`,
+        );
+        return {
+          status: "executed",
+          result: structuredClone(result),
+        };
+      },
+    );
+  }
+
+  async commitPreparedApprovalCleanupEffectDone(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+    result: EffectResult & { status: "DONE" },
+  ): Promise<void> {
+    const effect = this.effects.find(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    const payload =
+      effect?.payload &&
+      typeof effect.payload === "object" &&
+      !Array.isArray(effect.payload)
+        ? effect.payload as Record<string, unknown>
+        : undefined;
+    if (
+      effect === undefined ||
+      effect.runId !== owner.runId ||
+      effect.sessionId !== owner.sessionId ||
+      result.idempotencyKey !== idempotencyKey ||
+      result.status !== "DONE" ||
+      effect.type !== "release_prepared_tool_call" ||
+      payload?.preparedApprovalCleanup === undefined
+    ) {
+      throw new Error(
+        "Cleanup effect success does not match exact durable authority",
+      );
+    }
+    parseRunnerPreparedApprovalCleanupV1(payload.preparedApprovalCleanup);
+    const suppliedEvidence = validatePreparedApprovalCleanupDoneEvidence({
+      effect,
+      result,
+    });
+    const existing = this.effectResults.get(idempotencyKey);
+    if (existing?.status === "DONE") {
+      const existingEvidence = validatePreparedApprovalCleanupDoneEvidence({
+        effect,
+        result: existing,
+      });
+      if (
+        existingEvidence.canonicalOutput !== suppliedEvidence.canonicalOutput
+      ) {
+        throw new Error(
+          "Cleanup DONE result conflicts with existing exact evidence",
+        );
+      }
+    } else {
+      this.effectResults.set(idempotencyKey, structuredClone(result));
+    }
+    effect.status = "DONE";
+    this.operationLog.push(
+      `commitPreparedApprovalCleanupEffectDone:${idempotencyKey}`,
+    );
   }
 
   async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, _owner: { runId: string; sessionId: string }): Promise<void> {
     for (const effect of this.effects) {
       if (effect.idempotencyKey === idempotencyKey) {
+        if (
+          status === "FAILED" &&
+          (effect.status === "DONE" ||
+            this.effectResults.get(idempotencyKey)?.status === "DONE")
+        ) {
+          return;
+        }
         effect.status = status;
       }
     }
     this.operationLog.push(`markEffectStatus:${idempotencyKey}:${status}`);
+  }
+
+  private async withPreparedApprovalCleanupExecutionLock<T>(
+    idempotencyKey: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.preparedApprovalCleanupExecutionLocks.get(
+      idempotencyKey,
+    ) ?? Promise.resolve();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.then(() => held);
+    this.preparedApprovalCleanupExecutionLocks.set(idempotencyKey, queued);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (
+        this.preparedApprovalCleanupExecutionLocks.get(idempotencyKey) ===
+          queued
+      ) {
+        this.preparedApprovalCleanupExecutionLocks.delete(idempotencyKey);
+      }
+    }
   }
 
   async listUndeliveredOutbox(limit: number, runId?: string): Promise<OutboxEventRecord[]> {

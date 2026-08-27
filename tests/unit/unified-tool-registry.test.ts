@@ -630,6 +630,38 @@ test("UnifiedToolRegistry turns Project App ask policy into a runtime approval g
   ]);
 });
 
+test("UnifiedToolRegistry carries hosted command policy into the canonical manifest", () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["exec_command"],
+    context: {
+      kestrelOne: {
+        appApprovalModes: { exec_command: "ask" },
+        appApprovalPolicies: {
+          exec_command: {
+            environment: "auto",
+            project: "ask",
+            minimum: "auto",
+          },
+        },
+      },
+    },
+  });
+  const capability = registry
+    .getCapabilityManifest()
+    .find((candidate) => candidate.name === "exec_command");
+
+  assert.deepEqual(capability?.approvalCapabilities, [
+    "shell.exec",
+    "external.confirm",
+  ]);
+  assert.equal(capability?.approvalDisposition?.mode, "ask");
+  assert.equal(
+    capability?.approvalDisposition?.reasonCode,
+    "project_restriction",
+  );
+  assert.equal(capability?.approvalAuthority?.kind, "hosted_app_policy");
+});
+
 test("UnifiedToolRegistry lets explicit Automatic App policy override a tool default", () => {
   const toolName = "kestrel_one.google_calendar_create_event";
   const registry = new UnifiedToolRegistry({
@@ -697,6 +729,200 @@ test("UnifiedToolRegistry preserves hosted App policy provenance", () => {
     "subject_restriction",
   );
   assert.equal(capability?.approvalAuthority?.kind, "hosted_app_policy");
+});
+
+test("UnifiedToolRegistry applies exact remembered thread evidence to eligible Ask First", () => {
+  const toolName = "internet.search";
+  const runContext = createToolRunContext({
+    runId: "run-remembered-1",
+    sessionId: "session-remembered-1",
+    payload: {
+      hostedApprovalAuthority: {
+        organizationId: "org-1",
+        environmentId: "environment-1",
+        projectId: "project-1",
+        threadId: "thread-1",
+      },
+      actor: {
+        actorType: "end_user",
+        actorId: "user-1",
+        tenantId: "org-1",
+      },
+    },
+  });
+  const policy = {
+    appApprovalModes: { [toolName]: "ask" as const },
+    appApprovalPolicies: {
+      [toolName]: {
+        environment: "ask" as const,
+        minimum: "auto" as const,
+      },
+    },
+  };
+  const baselineRegistry = new UnifiedToolRegistry({
+    allowlist: [toolName],
+    context: { kestrelOne: policy },
+  });
+  const baseline = baselineRegistry
+    .getCapabilityManifest({ runContext })
+    .find((candidate) => candidate.name === toolName);
+  assert.notEqual(baseline?.descriptorRef, undefined);
+  assert.notEqual(baseline?.approvalAuthority, undefined);
+  const toolIdentity = {
+    version: "stable_tool_approval_identity_v1" as const,
+    toolId: toolName,
+    descriptorContractRevision: baseline!.descriptorRef!.contractRevision,
+    approvalAuthorityRevision: baseline!.approvalAuthority!.revision,
+  };
+  const evidence = {
+    version: "remembered_tool_approval_evidence_v1" as const,
+    organizationId: "org-1",
+    environmentId: "environment-1",
+    projectId: "project-1",
+    threadId: "thread-1",
+    actorUserId: "user-1",
+    toolIdentity,
+    sourceInteractionId: "interaction-1",
+  };
+  const rememberedRegistry = new UnifiedToolRegistry({
+    allowlist: [toolName],
+    context: {
+      kestrelOne: {
+        ...policy,
+        rememberedToolApprovalEvidence: [evidence],
+      },
+    },
+  });
+  const remembered = rememberedRegistry
+    .getCapabilityManifest({ runContext })
+    .find((candidate) => candidate.name === toolName);
+  assert.equal(remembered?.approvalDisposition?.mode, "auto");
+  assert.equal(
+    remembered?.approvalDisposition?.reasonCode,
+    "remembered_thread",
+  );
+  assert.deepEqual(remembered?.approvalCapabilities, undefined);
+
+  for (const mismatchedEvidence of [
+    { ...evidence, threadId: "thread-2" },
+    { ...evidence, actorUserId: "user-2" },
+    { ...evidence, projectId: "project-2" },
+    { ...evidence, environmentId: "environment-2" },
+    {
+      ...evidence,
+      toolIdentity: { ...toolIdentity, toolId: "internet.crawl" },
+    },
+    {
+      ...evidence,
+      toolIdentity: {
+        ...toolIdentity,
+        descriptorContractRevision: `sha256:${"b".repeat(64)}`,
+      },
+    },
+    {
+      ...evidence,
+      toolIdentity: {
+        ...toolIdentity,
+        approvalAuthorityRevision: "changed-authority",
+      },
+    },
+  ]) {
+    const mismatchRegistry = new UnifiedToolRegistry({
+      allowlist: [toolName],
+      context: {
+        kestrelOne: {
+          ...policy,
+          rememberedToolApprovalEvidence: [mismatchedEvidence],
+        },
+      },
+    });
+    const mismatch = mismatchRegistry
+      .getCapabilityManifest({ runContext })
+      .find((candidate) => candidate.name === toolName);
+    assert.equal(mismatch?.approvalDisposition?.mode, "ask");
+    assert.equal(
+      mismatch?.approvalDisposition?.reasonCode,
+      "environment_policy",
+    );
+  }
+});
+
+test("UnifiedToolRegistry keeps stable approval identity across runs and preserves stricter policy", () => {
+  const toolName = "internet.search";
+  const makeRunContext = (runId: string) =>
+    createToolRunContext({
+      runId,
+      sessionId: `session-${runId}`,
+      payload: {
+        hostedApprovalAuthority: {
+          organizationId: "org-1",
+          environmentId: "environment-1",
+          projectId: "project-1",
+          threadId: "thread-1",
+        },
+        actor: {
+          actorType: "end_user",
+          actorId: "user-1",
+          tenantId: "org-1",
+        },
+      },
+    });
+  const policy = {
+    appApprovalModes: { [toolName]: "ask" as const },
+    appApprovalPolicies: {
+      [toolName]: {
+        environment: "auto" as const,
+        subject: "ask" as const,
+        minimum: "auto" as const,
+      },
+    },
+  };
+  const baselineRegistry = new UnifiedToolRegistry({
+    allowlist: [toolName],
+    context: { kestrelOne: policy },
+  });
+  const first = baselineRegistry
+    .getCapabilityManifest({ runContext: makeRunContext("run-1") })
+    .find((candidate) => candidate.name === toolName)!;
+  const second = baselineRegistry
+    .getCapabilityManifest({ runContext: makeRunContext("run-2") })
+    .find((candidate) => candidate.name === toolName)!;
+  assert.equal(
+    first.approvalAuthority?.revision,
+    second.approvalAuthority?.revision,
+  );
+  const evidence = {
+    version: "remembered_tool_approval_evidence_v1" as const,
+    organizationId: "org-1",
+    environmentId: "environment-1",
+    projectId: "project-1",
+    threadId: "thread-1",
+    actorUserId: "user-1",
+    toolIdentity: {
+      version: "stable_tool_approval_identity_v1" as const,
+      toolId: toolName,
+      descriptorContractRevision: first.descriptorRef!.contractRevision,
+      approvalAuthorityRevision: first.approvalAuthority!.revision,
+    },
+    sourceInteractionId: "interaction-1",
+  };
+  const rememberedRegistry = new UnifiedToolRegistry({
+    allowlist: [toolName],
+    context: {
+      kestrelOne: {
+        ...policy,
+        rememberedToolApprovalEvidence: [evidence],
+      },
+    },
+  });
+  const capability = rememberedRegistry
+    .getCapabilityManifest({ runContext: makeRunContext("run-3") })
+    .find((candidate) => candidate.name === toolName);
+  assert.equal(capability?.approvalDisposition?.mode, "ask");
+  assert.equal(
+    capability?.approvalDisposition?.reasonCode,
+    "subject_restriction",
+  );
 });
 
 test("UnifiedToolRegistry inspection validates without reserving a prepared execution", async () => {

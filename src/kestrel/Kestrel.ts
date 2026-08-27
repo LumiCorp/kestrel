@@ -13,6 +13,7 @@ import { ExecutionEngine } from "../engine/ExecutionEngine.js";
 import { EffectRegistry } from "../effects/EffectRegistry.js";
 import { InlineEffectRunner } from "../effects/EffectRunner.js";
 import { createExecuteToolCallHandler } from "../effects/handlers/executeToolCall.js";
+import { createReleasePreparedToolCallHandler } from "../effects/handlers/releasePreparedToolCall.js";
 import { sendMessageHandler } from "../effects/handlers/sendMessage.js";
 import { testNoopHandler } from "../effects/handlers/testNoop.js";
 import { NoopRuntimeEventDispatcher, type RuntimeEventDispatcher } from "../events/InlineDispatcher.js";
@@ -79,12 +80,18 @@ export class Kestrel {
     this.providerReasoningVault = options.providerReasoningVault;
 
     const executeToolCallHandler = createExecuteToolCallHandler(this.toolGateway);
+    const releasePreparedToolCallHandler =
+      createReleasePreparedToolCallHandler(this.toolGateway);
     this.effectRegistry.register("send_message", sendMessageHandler);
     this.effectRegistry.register("assistant.respond", sendMessageHandler);
     this.effectRegistry.register("test_noop", testNoopHandler);
     this.effectRegistry.register("test.noop", testNoopHandler);
     this.effectRegistry.register("execute_tool_call", executeToolCallHandler);
     this.effectRegistry.register("tool.execute", executeToolCallHandler);
+    this.effectRegistry.register(
+      "release_prepared_tool_call",
+      releasePreparedToolCallHandler,
+    );
 
     const baseRunLogger = new StructuredRunLogger(this.store);
     const runLogger =

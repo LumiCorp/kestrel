@@ -19,14 +19,15 @@ import {
   DEFAULT_INTERACTION_MODE,
   formatUserFacingModeLabel,
   isToolClassAllowed,
-  isToolEligibleForInteractionMode,
   needsPerCallApproval,
   normalizeInteractionMode,
   parseExecutionPolicyOverride,
   readBlockedApprovalCapability,
+  resolveEffectiveToolDecisionV1,
   type ActSubmode,
   type ExecutionPolicyOverride,
   type InteractionMode,
+  type ToolApprovalDispositionV1,
   type ToolExecutionClass,
 } from "../../../../src/mode/contracts.js";
 import { resolveBlockedResumeRequest } from "../blockedResume.js";
@@ -997,16 +998,25 @@ function filterDeliberatorToolsForMode(input: {
   const toolAllowedInteractionModesByName = new Map(
     input.capabilityManifest.map((tool) => [tool.name, tool.allowedInteractionModes] as const),
   );
+  const toolApprovalDispositionByName = new Map(
+    input.capabilityManifest.map((tool) => [tool.name, tool.approvalDisposition] as const),
+  );
   return input.tools.filter((tool) =>
     toolClassByName.has(tool.name) &&
-    isToolEligibleForInteractionMode({
+    resolveEffectiveToolDecisionV1({
       interactionMode: input.modeResolution.interactionMode,
       actSubmode: input.modeResolution.actSubmode,
       toolClass: toolClassByName.get(tool.name) ?? "read_only",
       allowedInteractionModes: toolAllowedInteractionModesByName.get(tool.name),
       executionPolicy: input.executionPolicy,
       requiredCapabilities: toolApprovalCapabilitiesByName.get(tool.name),
-    })
+      approvalDisposition:
+        toolApprovalDispositionByName.get(tool.name) ?? {
+          mode: "auto",
+          reasonCode: "environment_policy",
+          authority: { kind: "runtime_policy", revision: "legacy-default:v1" },
+        },
+    }).available
   );
 }
 
@@ -1028,13 +1038,14 @@ function hasModeHiddenWorkspaceTool(input: {
       executionPolicy: input.executionPolicy,
       requiredCapabilities: configured.approvalCapabilities,
     }) !== undefined) return false;
-    return isToolEligibleForInteractionMode({
+    return resolveEffectiveToolDecisionV1({
       interactionMode: input.modeResolution.interactionMode,
       actSubmode: input.modeResolution.actSubmode,
       toolClass: executionClass,
       allowedInteractionModes: configured.allowedInteractionModes,
       requiredCapabilities: configured.approvalCapabilities,
-    }) === false;
+      approvalDisposition: configured.approvalDisposition ?? automaticToolDisposition(),
+    }).available === false;
   });
 }
 
@@ -3045,23 +3056,23 @@ function resolveBlockedActionPolicy(input: {
   const toolNames = readToolNamesFromAction(input.action);
   for (const toolName of toolNames) {
     const toolClass = input.toolExecutionClassByName[toolName] ?? "read_only";
-    if (
-      isToolEligibleForInteractionMode({
-        interactionMode: input.modeResolution.interactionMode,
-        actSubmode: input.modeResolution.actSubmode,
-        toolClass,
-        allowedInteractionModes: input.toolAllowedInteractionModesByName[toolName],
-        executionPolicy: input.executionPolicy,
-      }) === false
-    ) {
-      return { toolName, toolClass };
-    }
-    const blockedCapability = readBlockedApprovalCapability({
+    const decision = resolveEffectiveToolDecisionV1({
+      interactionMode: input.modeResolution.interactionMode,
+      actSubmode: input.modeResolution.actSubmode,
+      toolClass,
+      allowedInteractionModes: input.toolAllowedInteractionModesByName[toolName],
       executionPolicy: input.executionPolicy,
       requiredCapabilities: input.toolApprovalCapabilitiesByName[toolName],
+      approvalDisposition: automaticToolDisposition(),
     });
-    if (blockedCapability !== undefined) {
-      return { toolName, toolClass, blockedCapability };
+    if (decision.available === false) {
+      return {
+        toolName,
+        toolClass,
+        ...(decision.evidence.blockedCapability === undefined
+          ? {}
+          : { blockedCapability: decision.evidence.blockedCapability }),
+      };
     }
   }
   return ;
@@ -3095,13 +3106,17 @@ function remapToolAvailabilityPolicyError(input: {
     return input.error;
   }
   const toolClass = manifestItem.executionClass ?? "read_only";
+  const decision = resolveEffectiveToolDecisionV1({
+    interactionMode: input.interactionMode,
+    toolClass,
+    allowedInteractionModes: manifestItem.allowedInteractionModes,
+    executionPolicy: input.executionPolicy,
+    requiredCapabilities: manifestItem.approvalCapabilities,
+    approvalDisposition: manifestItem.approvalDisposition ?? automaticToolDisposition(),
+  });
   if (
-    isToolEligibleForInteractionMode({
-      interactionMode: input.interactionMode,
-      toolClass,
-      allowedInteractionModes: manifestItem.allowedInteractionModes,
-      executionPolicy: input.executionPolicy,
-    }) === false
+    decision.available === false &&
+    decision.evidence.blockedCapability === undefined
   ) {
     return {
       code: "DECISION_POLICY_FAILED",
@@ -3113,10 +3128,7 @@ function remapToolAvailabilityPolicyError(input: {
       },
     };
   }
-  const blockedCapability = readBlockedApprovalCapability({
-    executionPolicy: input.executionPolicy,
-    requiredCapabilities: manifestItem.approvalCapabilities,
-  });
+  const blockedCapability = decision.evidence.blockedCapability;
   if (blockedCapability === undefined) {
     return input.error;
   }
@@ -3130,6 +3142,14 @@ function remapToolAvailabilityPolicyError(input: {
       blockedCapability,
       blockedActionId: toolName,
     },
+  };
+}
+
+function automaticToolDisposition(): ToolApprovalDispositionV1 {
+  return {
+    mode: "auto",
+    reasonCode: "environment_policy",
+    authority: { kind: "runtime_policy", revision: "legacy-default:v1" },
   };
 }
 

@@ -47,7 +47,11 @@ test(
     const suffix = crypto.randomUUID();
     const organizationId = `turn-org-${suffix}`;
     const userId = `turn-user-${suffix}`;
+    const otherUserId = `turn-other-user-${suffix}`;
+    const memberId = `turn-member-${suffix}`;
+    const otherMemberId = `turn-other-member-${suffix}`;
     const environmentId = `turn-environment-${suffix}`;
+    const projectId = `turn-project-${suffix}`;
     const successfulThreadId = `turn-success-${suffix}`;
     const dispatchFailureThreadId = `turn-dispatch-failure-${suffix}`;
     const groupContendedThreadId = `turn-group-contended-${suffix}`;
@@ -60,12 +64,14 @@ test(
     const resumedThreadId = `turn-resumed-${suffix}`;
     const interactionThreadId = `turn-interaction-${suffix}`;
     const structuredReviewThreadId = `turn-structured-review-${suffix}`;
+    const approvalThreadId = `turn-hosted-approval-${suffix}`;
     const now = new Date();
 
     context.after(async () => {
       await queue.stopDurableThreadTurnWorker();
       await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
       await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+      await sql`DELETE FROM "user" WHERE "id" = ${otherUserId}`;
       await resetDbRuntimeForTests();
       await sql.end({ timeout: 0 });
     });
@@ -74,10 +80,15 @@ test(
       await transaction`
         INSERT INTO "user" (
           "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
-        ) VALUES (
-          ${userId}, 'Turn Worker User', ${`${userId}@example.test`},
-          true, ${now}, ${now}
-        )
+        ) VALUES
+          (
+            ${userId}, 'Turn Worker User', ${`${userId}@example.test`},
+            true, ${now}, ${now}
+          ),
+          (
+            ${otherUserId}, 'Other Project Member', ${`${otherUserId}@example.test`},
+            true, ${now}, ${now}
+          )
       `;
       await transaction`
         INSERT INTO "organization" ("id", "name", "slug", "createdAt")
@@ -94,6 +105,28 @@ test(
           ${environmentId}, ${organizationId}, ${userId}, 'Default', 'default',
           'iad', 'ready', true
         )
+      `;
+      await transaction`
+        INSERT INTO "member" (
+          "id", "organizationId", "userId", "role", "createdAt"
+        ) VALUES
+          (${memberId}, ${organizationId}, ${userId}, 'owner', ${now}),
+          (${otherMemberId}, ${organizationId}, ${otherUserId}, 'member', ${now})
+      `;
+      await transaction`
+        INSERT INTO "projects" (
+          "id", "organization_id", "environment_id", "created_by_user_id", "name"
+        ) VALUES (
+          ${projectId}, ${organizationId}, ${environmentId}, ${userId},
+          'Hosted Approval Project'
+        )
+      `;
+      await transaction`
+        INSERT INTO "project_members" (
+          "project_id", "organization_member_id", "role"
+        ) VALUES
+          (${projectId}, ${memberId}, 'owner'),
+          (${projectId}, ${otherMemberId}, 'member')
       `;
       await transaction`
         INSERT INTO "threads" (
@@ -143,6 +176,10 @@ test(
           (
             ${structuredReviewThreadId}, 'Structured Review Turn', ${userId},
             ${organizationId}, 'mobile'
+          ),
+          (
+            ${approvalThreadId}, 'Hosted Approval Turn', ${userId},
+            ${organizationId}, 'web'
           )
       `;
     });
@@ -645,6 +682,248 @@ test(
       status: "completed",
     });
     assert.equal(resumedCompletion.nextTurnId, queuedWhileWaiting.turn.id);
+
+    const approvalTurn = await createTurn(
+      approvalThreadId,
+      "hosted-v2-approval",
+    );
+    assert.ok(await store.claimDurableThreadTurn(approvalTurn.turn.id));
+    const approvalRequestId = `hosted-v2-approval-${suffix}`;
+    const approvalInteraction = {
+      version: "runner_hosted_tool_approval_interaction_v2" as const,
+      requestId: approvalRequestId,
+      kind: "approval" as const,
+      eventType: "user.approval" as const,
+      prompt: "Approve test.tool? Reply with decision 'approve_once' or 'decline'.",
+      inputSchema: {
+        type: "object" as const,
+        additionalProperties: false as const,
+        required: ["decision"] as ["decision"],
+        properties: {
+          decision: {
+            type: "string" as const,
+            enum: ["decline", "approve_once"] as ["decline", "approve_once"],
+          },
+        },
+      },
+      approval: {
+        preparedInvocationId: `prepared-${suffix}`,
+        toolName: "test.tool",
+        stableToolIdentity: {
+          version: "stable_tool_approval_identity_v1" as const,
+          toolId: "test.tool",
+          descriptorContractRevision: "descriptor-v1",
+          approvalAuthorityRevision: "authority-v1",
+        },
+        requestingActor: {
+          actorType: "end_user" as const,
+          actorId: userId,
+          tenantId: organizationId,
+        },
+      },
+      source: "runtime" as const,
+      status: "pending" as const,
+    };
+    const {
+      source: _approvalSource,
+      status: _approvalStatus,
+      ...approvalRequestEnvelope
+    } = approvalInteraction;
+    await store.persistDurableAssistantOutcome({
+      turnId: approvalTurn.turn.id,
+      messages: [{
+        id: `assistant-hosted-v2-${suffix}`,
+        parts: [{
+          type: "data-kestrel-interaction",
+          id: `interaction:${approvalRequestId}`,
+          data: approvalInteraction,
+        }],
+        model: "kestrel-one",
+        source: "web",
+        projectContextRevisionId: null,
+      }],
+      interaction: approvalInteraction,
+    });
+    await sql`
+      UPDATE "threads"
+      SET "project_id" = ${projectId}
+      WHERE "id" = ${approvalThreadId}
+    `;
+    await assert.rejects(
+      store.resolveDurableRuntimeInteraction({
+        threadId: approvalThreadId,
+        organizationId,
+        userId,
+        requestId: approvalRequestId,
+        eventType: "user.approval",
+        turnId: approvalTurn.turn.id,
+        message: "Legacy approve",
+        approved: true,
+        messageId: `legacy-approval-${suffix}`,
+        source: "web",
+      }),
+      /does not match its version/u,
+    );
+    for (const [decision, source] of [
+      ["decline", "web"],
+      ["approve_once", "mobile"],
+    ] as const) {
+      await assert.rejects(
+        store.resolveDurableRuntimeInteraction({
+          threadId: approvalThreadId,
+          organizationId,
+          userId: otherUserId,
+          requestId: approvalRequestId,
+          eventType: "user.approval",
+          turnId: approvalTurn.turn.id,
+          message: decision,
+          decision,
+          messageId: `other-${decision}-${suffix}`,
+          source,
+        }),
+        /requesting actor/u,
+      );
+    }
+    const wrongTenantApprovalInteraction = {
+      ...approvalRequestEnvelope,
+      approval: {
+        ...approvalRequestEnvelope.approval,
+        requestingActor: {
+          ...approvalRequestEnvelope.approval.requestingActor,
+          tenantId: `other-org-${suffix}`,
+        },
+      },
+    };
+    await sql`
+      UPDATE "thread_interactions"
+      SET "request_envelope" = ${sql.json(wrongTenantApprovalInteraction)}
+      WHERE "request_id" = ${approvalRequestId}
+    `;
+    await assert.rejects(
+      store.resolveDurableRuntimeInteraction({
+        threadId: approvalThreadId,
+        organizationId,
+        userId,
+        requestId: approvalRequestId,
+        eventType: "user.approval",
+        turnId: approvalTurn.turn.id,
+        message: "Approve once",
+        decision: "approve_once",
+        messageId: `wrong-tenant-${suffix}`,
+        source: "web",
+      }),
+      /requesting actor/u,
+    );
+    await sql`
+      UPDATE "thread_interactions"
+      SET "request_envelope" = ${sql.json(approvalRequestEnvelope)}
+      WHERE "request_id" = ${approvalRequestId}
+    `;
+    await store.resolveDurableRuntimeInteraction({
+      threadId: approvalThreadId,
+      organizationId,
+      userId,
+      requestId: approvalRequestId,
+      eventType: "user.approval",
+      turnId: approvalTurn.turn.id,
+      message: "Approve once",
+      decision: "approve_once",
+      messageId: `v2-approval-${suffix}`,
+      source: "web",
+    });
+    assert.deepEqual(
+      (await store.claimDurableThreadTurn(approvalTurn.turn.id))
+        ?.interactionResponse,
+      {
+        requestId: approvalRequestId,
+        eventType: "user.approval",
+        message: "Approve once",
+        decision: "approve_once",
+        decidingActor: {
+          actorType: "end_user",
+          actorId: userId,
+          tenantId: organizationId,
+        },
+      },
+    );
+    assert.equal(
+      await store.recordDurableRuntimeStarted({
+        turnId: approvalTurn.turn.id,
+        eventId: `approval-run-started-${suffix}`,
+        executionId: `approval-execution-${suffix}`,
+        runtimeRunId: `approval-resumed-run-${suffix}`,
+        requestedInteractionMode: "chat",
+        effectiveInteractionMode: "chat",
+      }),
+      true,
+    );
+    assert.equal(
+      (await store.listThreadInteractionsForUser({
+        threadId: approvalThreadId,
+        organizationId,
+        userId,
+      }))[0]?.status,
+      "processing",
+      "V2 approval must not report execution success at run startup",
+    );
+    let releaseSettlementLock!: () => void;
+    const settlementLockRelease = new Promise<void>((resolve) => {
+      releaseSettlementLock = resolve;
+    });
+    let markSettlementLockAcquired!: () => void;
+    const settlementLockAcquired = new Promise<void>((resolve) => {
+      markSettlementLockAcquired = resolve;
+    });
+    const heldSettlementLock = sql.begin(async (transaction) => {
+      await transaction`
+        SELECT "id"
+        FROM "thread_interactions"
+        WHERE "request_id" = ${approvalRequestId}
+        FOR UPDATE
+      `;
+      markSettlementLockAcquired();
+      await settlementLockRelease;
+    });
+    await settlementLockAcquired;
+    const committedSettlement = store.recordDurableRuntimeToolOutcome({
+        turnId: approvalTurn.turn.id,
+        eventId: `approval-tool-completed-${suffix}`,
+        outcome: {
+          callId: approvalInteraction.approval.preparedInvocationId,
+          kind: "success",
+          effectState: "committed",
+        },
+      });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const conflictingFailureSettlement = store.recordDurableRuntimeToolOutcome({
+      turnId: approvalTurn.turn.id,
+      eventId: `approval-tool-failed-${suffix}`,
+      outcome: {
+        callId: approvalInteraction.approval.preparedInvocationId,
+        kind: "failure",
+        effectState: "unknown",
+        normalizedFailureCode: "CONFLICTING_TERMINAL_OUTCOME",
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    releaseSettlementLock();
+    await heldSettlementLock;
+    assert.deepEqual(
+      await Promise.all([committedSettlement, conflictingFailureSettlement]),
+      [true, true],
+    );
+    const settledApproval = (await store.listThreadInteractionsForUser({
+      threadId: approvalThreadId,
+      organizationId,
+      userId,
+    }))[0];
+    assert.equal(settledApproval?.status, "resolved");
+    assert.equal(settledApproval?.approvalOutcome?.authorizationState, "accepted");
+    assert.equal(settledApproval?.approvalOutcome?.effectState, "committed");
+    await store.completeDurableThreadTurn({
+      turnId: approvalTurn.turn.id,
+      status: "completed",
+    });
 
     const reviewTurn = await createTurn(
       structuredReviewThreadId,
@@ -1847,7 +2126,53 @@ test(
 
     const cancelled = await createTurn(cancelledThreadId, "cancelled");
     assert.ok(await store.claimDurableThreadTurn(cancelled.turn.id));
-    const cancelledMessages = presentation("cancelled");
+    const cancelledMessages = [
+      {
+        ...presentation("cancelled")[0]!,
+        inputTokens: 13,
+        cachedInputTokens: 5,
+        outputTokens: 7,
+        reasoningTokens: 3,
+        durationMs: 211,
+      },
+    ];
+    await sql`
+      CREATE FUNCTION "issue_235_fail_terminal_commit"()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $function$
+      BEGIN
+        RAISE EXCEPTION 'issue 07b cancellation terminal commit fault';
+      END;
+      $function$
+    `;
+    await sql`
+      CREATE CONSTRAINT TRIGGER "issue_235_fail_terminal_commit"
+      AFTER INSERT ON "thread_turn_events"
+      DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW
+      WHEN (NEW."type" = 'turn.cancelled')
+      EXECUTE FUNCTION "issue_235_fail_terminal_commit"()
+    `;
+    await assert.rejects(
+      store.completeDurableThreadTurn({
+        turnId: cancelled.turn.id,
+        status: "cancelled",
+        failureCode: "TURN_STOPPED",
+        messages: cancelledMessages,
+        replayChunks: terminalReplayChunks("cancelled", "cancelled"),
+      }),
+      /issue 07b cancellation terminal commit fault/u,
+    );
+    assert.deepEqual(await assistantMessageIds(cancelled.turn.id), []);
+    await dropTerminalFault();
+    await store.completeDurableThreadTurn({
+      turnId: cancelled.turn.id,
+      status: "cancelled",
+      failureCode: "TURN_STOPPED",
+      messages: cancelledMessages,
+      replayChunks: terminalReplayChunks("cancelled", "cancelled"),
+    });
     await store.completeDurableThreadTurn({
       turnId: cancelled.turn.id,
       status: "cancelled",
@@ -1857,6 +2182,47 @@ test(
     });
     assert.deepEqual(await assistantMessageIds(cancelled.turn.id), [
       cancelledMessages[0]?.id,
+    ]);
+    const [persistedCancellationMessage] = await sql<
+      Array<{
+        inputTokens: number | null;
+        cachedInputTokens: number | null;
+        outputTokens: number | null;
+        reasoningTokens: number | null;
+        durationMs: number | null;
+      }>
+    >`
+      SELECT
+        "input_tokens" AS "inputTokens",
+        "cached_input_tokens" AS "cachedInputTokens",
+        "output_tokens" AS "outputTokens",
+        "reasoning_tokens" AS "reasoningTokens",
+        "duration_ms" AS "durationMs"
+      FROM "thread_messages"
+      WHERE "id" = ${cancelledMessages[0]!.id}
+    `;
+    assert.deepEqual(persistedCancellationMessage, {
+      inputTokens: 13,
+      cachedInputTokens: 5,
+      outputTokens: 7,
+      reasoningTokens: 3,
+      durationMs: 211,
+    });
+    const cancellationUsage = await sql<
+      Array<{ meter: string; quantity: string }>
+    >`
+      SELECT "meter", "quantity"
+      FROM "organization_usage_events"
+      WHERE
+        "organization_id" = ${organizationId}
+        AND "source_kind" = 'model_message'
+        AND "source_id" = ${cancelledMessages[0]!.id}
+      ORDER BY "meter"
+    `;
+    assert.deepEqual(cancellationUsage, [
+      { meter: "cached_input_tokens", quantity: "5.00000000" },
+      { meter: "input_tokens", quantity: "8.00000000" },
+      { meter: "output_tokens", quantity: "7.00000000" },
     ]);
     assert.deepEqual(await eventTypes(cancelled.turn.id), [
       "turn.queued",

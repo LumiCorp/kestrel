@@ -64,6 +64,10 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
   { appKey: string; capabilityKey: string }
 >([
   [
+    "exec_command",
+    { appKey: "built_in.workspace", capabilityKey: "executeCommand" },
+  ],
+  [
     "free.weather.current",
     { appKey: "built_in.weather", capabilityKey: "getWeather" },
   ],

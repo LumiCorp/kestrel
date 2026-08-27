@@ -310,6 +310,9 @@ export interface SharedToolContext {
         appApprovalPolicies?:
           | Record<string, ToolApprovalPolicyEvidenceV1>
           | undefined;
+        rememberedToolApprovalEvidence?:
+          | import("@kestrel-agents/protocol").RememberedToolApprovalEvidenceV1[]
+          | undefined;
       }
     | undefined;
 }
@@ -372,6 +375,9 @@ export interface ToolRegistryListOptions {
 }
 
 export interface ToolRegistry extends ToolGateway {
+  releasePreparedToolCall(
+    prepared: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+  ): Promise<void>;
   getDescriptor(
     name: string,
     options?: ToolRegistryListOptions,

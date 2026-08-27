@@ -314,6 +314,7 @@ export function normalizeDesktopSettings(
     : [];
   const approvalPolicyPackId =
     settings?.approvalPolicyPackId === "ci_bot" ||
+    settings?.approvalPolicyPackId === "hosted_workspace" ||
     settings?.approvalPolicyPackId === "production"
       ? settings.approvalPolicyPackId
       : "dev";
@@ -703,6 +704,7 @@ export async function readDesktopSettings(
     const approvalPolicyPackId =
       parsed.approvalPolicyPackId === "dev" ||
       parsed.approvalPolicyPackId === "ci_bot" ||
+      parsed.approvalPolicyPackId === "hosted_workspace" ||
       parsed.approvalPolicyPackId === "production"
         ? parsed.approvalPolicyPackId
         : undefined;

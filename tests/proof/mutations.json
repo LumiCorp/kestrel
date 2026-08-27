@@ -524,8 +524,8 @@
     {
       "id": "tool-descriptor-evidence-omission",
       "target": "src/io/ToolInvocationSupport.ts",
-      "find": "    toolCallId: prepared.callId,\n    activation: prepared.activation,\n    outcome,",
-      "replace": "    toolCallId: prepared.callId,\n    activation: undefined as never,\n    outcome,",
+      "find": "        };\n  return Object.freeze({\n    ...legacy,\n    version: AGENT_TOOL_RESULT_VERSION,\n    toolCallId: prepared.callId,\n    activation: prepared.activation,\n    outcome,",
+      "replace": "        };\n  return Object.freeze({\n    ...legacy,\n    version: AGENT_TOOL_RESULT_VERSION,\n    toolCallId: prepared.callId,\n    activation: undefined as never,\n    outcome,",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=successful tool results require exact descriptor evidence", "tests/unit/tool-invocation-integrity.test.ts"],
       "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
@@ -788,6 +788,24 @@
       "command": "pnpm",
       "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=turn worker uses configured durable capacity", "lib/turns/worker-boundary.test.ts"],
       "testFiles": ["apps/web/lib/turns/worker-boundary.test.ts"]
+    },
+    {
+      "id": "hosted-approval-v2-restart-interaction-omission",
+      "target": "src/runtime/state.ts",
+      "find": "    ...(waitingFor.interaction !== undefined\n      ? {",
+      "replace": "    ...(false\n      ? {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=runtime state restart preserves", "tests/unit/runtime-state-codec.test.ts"],
+      "testFiles": ["tests/unit/runtime-state-codec.test.ts"]
+    },
+    {
+      "id": "hosted-approval-card-prepared-invocation-bypass",
+      "target": "src/runtime/assistantResponseContract.ts",
+      "find": "      preparedInvocationId: prepared.callId,\n      toolName: prepared.activation.descriptor.toolId,\n      stableToolIdentity: prepared.stableToolIdentity,\n      requestingActor: binding.requestingActor,\n      presentation,\n    },\n  }) as RuntimeHostedToolApprovalInteractionV3;",
+      "replace": "      preparedInvocationId: \"mutated-prepared-call\",\n      toolName: prepared.activation.descriptor.toolId,\n      stableToolIdentity: prepared.stableToolIdentity,\n      requestingActor: binding.requestingActor,\n      presentation,\n    },\n  }) as RuntimeHostedToolApprovalInteractionV3;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=new hosted approval card reloads", "tests/unit/assistant-response-contract.test.ts"],
+      "testFiles": ["tests/unit/assistant-response-contract.test.ts"]
     }
   ]
 }

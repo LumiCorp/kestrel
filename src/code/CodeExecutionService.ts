@@ -673,6 +673,7 @@ function requireExactExternalApprovalBinding(input: {
     input.runtime.policy?.decision !== "approval_required" ||
     approval?.approvalId === undefined ||
     binding === undefined ||
+    binding.version !== "runner_external_approval_binding_v1" ||
     binding.approvalId !== approval.approvalId ||
     binding.actionKey !== expectedActionKey ||
     binding.payloadHash !== expectedPayloadHash ||
