@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-- [Quarantine invalid cleanup DONE evidence](06n-quarantine-invalid-cleanup-done-evidence.md)
+None.
 
 ## Blocked
 
@@ -23,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Quarantine invalid cleanup DONE evidence](06n-quarantine-invalid-cleanup-done-evidence.md)
 - [Validate before cleanup DONE repair](06m-validate-before-cleanup-done-repair.md)
 - [Validate exact cleanup DONE evidence](06l-validate-exact-cleanup-done-evidence.md)
 - [Atomically commit cleanup release success](06k-atomically-commit-cleanup-release-success.md)
