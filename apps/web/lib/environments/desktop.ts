@@ -25,6 +25,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { z } from "zod";
+import { parseLocalCoreModelReadiness } from "../../../../src/localCore/contracts";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { issueGatewayCredentialLease } from "@/lib/ai/gateway-credential-lease";
 import { resolveKestrelAppUrl } from "@/lib/app-url";
@@ -73,11 +74,27 @@ export const desktopPresenceSchema = z.object({
   runtimeVersion: z.string().trim().min(1).max(80).optional(),
   models: z
     .array(
-      z.object({
-        provider: z.string().trim().min(1).max(80),
-        model: z.string().trim().min(1).max(200),
-        health: z.enum(["ready", "unavailable"]),
-      }),
+      z.union([
+        z.object({
+          provider: z.string().trim().min(1).max(80),
+          model: z.string().trim().min(1).max(200),
+          health: z.enum(["ready", "unavailable"]),
+        }),
+        z.unknown().transform((value, context) => {
+          try {
+            return parseLocalCoreModelReadiness(value);
+          } catch (error) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Desktop model readiness is invalid.",
+            });
+            return z.NEVER;
+          }
+        }),
+      ]),
     )
     .max(100)
     .default([]),

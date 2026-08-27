@@ -4,6 +4,11 @@ import {
   type DesktopExecutionSelection,
 } from "../desktopShell/configuration.js";
 import {
+  parseModelRegistrationV2,
+  type ModelRegistrationV2,
+} from "../kestrel/contracts/model-registration.js";
+import { deriveLocalCoreEligibleRoles } from "./modelReadiness.js";
+import {
   LOCAL_CORE_LOCK_VERSION,
   LOCAL_CORE_MANIFEST_VERSION,
   LOCAL_CORE_SCHEMA_VERSION,
@@ -29,7 +34,9 @@ export interface LocalCoreBuildIdentityV1 {
   sourceCommit?: string | undefined;
 }
 
-export function parseLocalCoreBuildIdentity(value: unknown): LocalCoreBuildIdentityV1 {
+export function parseLocalCoreBuildIdentity(
+  value: unknown,
+): LocalCoreBuildIdentityV1 {
   const record = requireLocalCoreRecord(value, "build identity");
   rejectUnknownLocalCoreFields(
     record,
@@ -41,21 +48,38 @@ export function parseLocalCoreBuildIdentity(value: unknown): LocalCoreBuildIdent
       `Local Core build identity.version must be ${LOCAL_CORE_BUILD_IDENTITY_VERSION}.`,
     );
   }
-  const buildId = requireLocalCoreString(record.buildId, "build identity.buildId");
+  const buildId = requireLocalCoreString(
+    record.buildId,
+    "build identity.buildId",
+  );
   if (/^sha256:[a-f0-9]{64}$/u.test(buildId) === false) {
-    throw new Error("Local Core build identity.buildId must be a canonical SHA-256 digest.");
+    throw new Error(
+      "Local Core build identity.buildId must be a canonical SHA-256 digest.",
+    );
   }
   if (record.source !== "source_tree" && record.source !== "packaged_payload") {
     throw new Error("Local Core build identity.source is invalid.");
   }
-  const sourceCommit = parseOptionalLocalCoreString(record, "sourceCommit", "build identity");
-  if (sourceCommit !== undefined && /^[a-f0-9]{40}$/u.test(sourceCommit) === false) {
-    throw new Error("Local Core build identity.sourceCommit must be a full Git commit.");
+  const sourceCommit = parseOptionalLocalCoreString(
+    record,
+    "sourceCommit",
+    "build identity",
+  );
+  if (
+    sourceCommit !== undefined &&
+    /^[a-f0-9]{40}$/u.test(sourceCommit) === false
+  ) {
+    throw new Error(
+      "Local Core build identity.sourceCommit must be a full Git commit.",
+    );
   }
   return {
     version: LOCAL_CORE_BUILD_IDENTITY_VERSION,
     buildId: buildId as `sha256:${string}`,
-    suiteVersion: requireLocalCoreString(record.suiteVersion, "build identity.suiteVersion"),
+    suiteVersion: requireLocalCoreString(
+      record.suiteVersion,
+      "build identity.suiteVersion",
+    ),
     source: record.source,
     ...(sourceCommit !== undefined ? { sourceCommit } : {}),
   };
@@ -134,9 +158,9 @@ export function parseLocalCoreExecutionProfileResolveRequest(
     );
     const environmentPresetId = record.environmentPresetId;
     if (
-      environmentPresetId !== undefined
-      && environmentPresetId !== "cli_safe_local"
-      && environmentPresetId !== "cli_dev_local"
+      environmentPresetId !== undefined &&
+      environmentPresetId !== "cli_safe_local" &&
+      environmentPresetId !== "cli_dev_local"
     ) {
       throw new Error(
         "Local Core execution profile resolve request.environmentPresetId must be cli_safe_local or cli_dev_local.",
@@ -408,11 +432,7 @@ export function parseLocalCoreSystemLifecycle(
   return {
     state: record.state,
     owner: {
-      pid: requireLocalCoreInteger(
-        owner.pid,
-        "system lifecycle.owner.pid",
-        1,
-      ),
+      pid: requireLocalCoreInteger(owner.pid, "system lifecycle.owner.pid", 1),
       executable: requireLocalCoreString(
         owner.executable,
         "system lifecycle.owner.executable",
@@ -527,14 +547,17 @@ export function parseLocalCoreRuntimeStoreReset(
     record.storePath,
     "runtime store reset.storePath",
   );
-  const archivedStorePath = record.archivedStorePath === null
-    ? null
-    : requireLocalCoreString(
-        record.archivedStorePath,
-        "runtime store reset.archivedStorePath",
-      );
+  const archivedStorePath =
+    record.archivedStorePath === null
+      ? null
+      : requireLocalCoreString(
+          record.archivedStorePath,
+          "runtime store reset.archivedStorePath",
+        );
   if (archivedStorePath === storePath) {
-    throw new Error("Local Core runtime store reset archive must differ from storePath.");
+    throw new Error(
+      "Local Core runtime store reset archive must differ from storePath.",
+    );
   }
   const resetAt = requireCanonicalIsoTimestamp(
     record.resetAt,
@@ -578,6 +601,19 @@ export interface LocalCoreDesktopExecutionConfig {
   version: typeof LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION;
   profileId: string;
   resolvedProfile: LocalCoreDesktopProfileSnapshot;
+  modelReadiness: LocalCoreModelReadiness;
+}
+
+export interface LocalCoreModelReadiness {
+  version: 1;
+  registration: ModelRegistrationV2;
+  reachability: "unknown" | "reachable" | "unreachable";
+  qualification: "pending" | "qualified" | "failed" | "stale";
+  eligibleRoles: string[];
+  unavailableRoles: Array<{
+    role: string;
+    reason: string;
+  }>;
 }
 
 /**
@@ -591,7 +627,7 @@ export function parseLocalCoreDesktopExecutionConfig(
   const record = requireLocalCoreRecord(value, "Desktop execution config");
   rejectUnknownLocalCoreFields(
     record,
-    new Set(["version", "profileId", "resolvedProfile"]),
+    new Set(["version", "profileId", "resolvedProfile", "modelReadiness"]),
     "Desktop execution config",
   );
   if (record.version !== LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION) {
@@ -601,8 +637,9 @@ export function parseLocalCoreDesktopExecutionConfig(
   }
   if (
     typeof record.profileId !== "string" ||
-    /^kestrel:desktop_(?:safe|dev)_local:[a-f0-9]{64}$/u.test(record.profileId) ===
-      false
+    /^kestrel:desktop_(?:safe|dev)_local:[a-f0-9]{64}$/u.test(
+      record.profileId,
+    ) === false
   ) {
     throw new Error(
       "Local Core Desktop execution config.profileId must be an immutable Kestrel Desktop profile reference.",
@@ -630,55 +667,76 @@ export function parseLocalCoreDesktopExecutionConfig(
     "Desktop execution config.resolvedProfile",
   );
   if (profile.id !== record.profileId) {
-    throw new Error("Local Core Desktop execution config profile id does not match profileId.");
+    throw new Error(
+      "Local Core Desktop execution config profile id does not match profileId.",
+    );
   }
   const label = requireLocalCoreString(
     profile.label,
     "Desktop execution config.resolvedProfile.label",
   );
   if (profile.agent !== "kestrel") {
-    throw new Error("Local Core Desktop execution config resolvedProfile.agent must be 'kestrel'.");
+    throw new Error(
+      "Local Core Desktop execution config resolvedProfile.agent must be 'kestrel'.",
+    );
   }
   if (profile.shellKind !== "desktop") {
-    throw new Error("Local Core Desktop execution config resolvedProfile must target the Desktop shell.");
+    throw new Error(
+      "Local Core Desktop execution config resolvedProfile must target the Desktop shell.",
+    );
   }
   if (
     profile.presetId !== "desktop_safe_local" &&
     profile.presetId !== "desktop_dev_local"
   ) {
-    throw new Error("Local Core Desktop execution config resolvedProfile must use the Desktop preset.");
+    throw new Error(
+      "Local Core Desktop execution config resolvedProfile must use the Desktop preset.",
+    );
   }
   if (
-    profile.modelProvider !== "openrouter"
-    && profile.modelProvider !== "openai"
-    && profile.modelProvider !== "anthropic"
-    && profile.modelProvider !== "ollama"
-    && profile.modelProvider !== "lmstudio"
+    profile.modelProvider !== "openrouter" &&
+    profile.modelProvider !== "openai" &&
+    profile.modelProvider !== "anthropic" &&
+    profile.modelProvider !== "ollama" &&
+    profile.modelProvider !== "lmstudio"
   ) {
-    throw new Error("Local Core Desktop execution config resolvedProfile.modelProvider is invalid.");
+    throw new Error(
+      "Local Core Desktop execution config resolvedProfile.modelProvider is invalid.",
+    );
   }
   const model = requireLocalCoreString(
     profile.model,
     "Desktop execution config.resolvedProfile.model",
   );
   if (profile.modeSystemV2Enabled !== true) {
-    throw new Error("Local Core Desktop execution config resolvedProfile must enable mode-system v2.");
+    throw new Error(
+      "Local Core Desktop execution config resolvedProfile must enable mode-system v2.",
+    );
   }
   if (
-    profile.defaultInteractionMode !== "chat"
-    && profile.defaultInteractionMode !== "plan"
-    && profile.defaultInteractionMode !== "build"
+    profile.defaultInteractionMode !== "chat" &&
+    profile.defaultInteractionMode !== "plan" &&
+    profile.defaultInteractionMode !== "build"
   ) {
-    throw new Error("Local Core Desktop execution config resolvedProfile.defaultInteractionMode is invalid.");
+    throw new Error(
+      "Local Core Desktop execution config resolvedProfile.defaultInteractionMode is invalid.",
+    );
   }
   if (
-    profile.defaultActSubmode !== "strict"
-    && profile.defaultActSubmode !== "safe"
-    && profile.defaultActSubmode !== "full_auto"
+    profile.defaultActSubmode !== "strict" &&
+    profile.defaultActSubmode !== "safe" &&
+    profile.defaultActSubmode !== "full_auto"
   ) {
-    throw new Error("Local Core Desktop execution config resolvedProfile.defaultActSubmode is invalid.");
+    throw new Error(
+      "Local Core Desktop execution config resolvedProfile.defaultActSubmode is invalid.",
+    );
   }
 
+  const modelReadiness = parseLocalCoreModelReadiness(
+    record.modelReadiness,
+    profile.modelProvider,
+    model,
+  );
   return {
     version: LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION,
     profileId: record.profileId,
@@ -694,10 +752,129 @@ export function parseLocalCoreDesktopExecutionConfig(
       defaultInteractionMode: profile.defaultInteractionMode,
       defaultActSubmode: profile.defaultActSubmode,
     },
+    modelReadiness,
   };
 }
 
-function requireLocalCoreRecord(value: unknown, label: string): Record<string, unknown> {
+export function parseLocalCoreModelReadiness(
+  value: unknown,
+  expectedProvider?: LocalCoreDesktopProfileSnapshot["modelProvider"],
+  expectedModel?: string,
+): LocalCoreModelReadiness {
+  const record = requireLocalCoreRecord(value, "model readiness");
+  rejectUnknownLocalCoreFields(
+    record,
+    new Set([
+      "version",
+      "registration",
+      "reachability",
+      "qualification",
+      "eligibleRoles",
+      "unavailableRoles",
+    ]),
+    "model readiness",
+  );
+  if (record.version !== 1) {
+    throw new Error("Local Core model readiness.version must be 1.");
+  }
+  const registration = parseModelRegistrationV2(record.registration);
+  if (
+    (expectedProvider !== undefined &&
+      registration.providerId !== expectedProvider) ||
+    (expectedModel !== undefined && registration.modelId !== expectedModel)
+  ) {
+    throw new Error(
+      "Local Core model readiness registration does not match the resolved profile.",
+    );
+  }
+  if (
+    record.reachability !== "unknown" &&
+    record.reachability !== "reachable" &&
+    record.reachability !== "unreachable"
+  ) {
+    throw new Error("Local Core model readiness.reachability is invalid.");
+  }
+  if (
+    record.qualification !== "pending" &&
+    record.qualification !== "qualified" &&
+    record.qualification !== "failed" &&
+    record.qualification !== "stale"
+  ) {
+    throw new Error("Local Core model readiness.qualification is invalid.");
+  }
+  if (record.qualification !== registration.qualification.state) {
+    throw new Error(
+      "Local Core model readiness qualification does not match the registration.",
+    );
+  }
+  if (Array.isArray(record.eligibleRoles) === false) {
+    throw new Error(
+      "Local Core model readiness.eligibleRoles must be an array.",
+    );
+  }
+  const eligibleRoles = record.eligibleRoles.map((entry) =>
+    requireLocalCoreString(entry, "model readiness eligible role"),
+  );
+  if (new Set(eligibleRoles).size !== eligibleRoles.length) {
+    throw new Error(
+      "Local Core model readiness.eligibleRoles must not contain duplicates.",
+    );
+  }
+  const derivedEligibleRoles = deriveLocalCoreEligibleRoles(registration);
+  if (
+    eligibleRoles.length !== derivedEligibleRoles.length ||
+    eligibleRoles.some((role) => derivedEligibleRoles.includes(role) === false)
+  ) {
+    throw new Error(
+      "Local Core model readiness eligible roles do not match current registration qualification.",
+    );
+  }
+  if (Array.isArray(record.unavailableRoles) === false) {
+    throw new Error(
+      "Local Core model readiness.unavailableRoles must be an array.",
+    );
+  }
+  const unavailableRoles = record.unavailableRoles.map((entry) => {
+    const unavailable = requireLocalCoreRecord(
+      entry,
+      "model readiness unavailable role",
+    );
+    rejectUnknownLocalCoreFields(
+      unavailable,
+      new Set(["role", "reason"]),
+      "model readiness unavailable role",
+    );
+    const role = requireLocalCoreString(
+      unavailable.role,
+      "model readiness unavailable role.role",
+    );
+    if (eligibleRoles.includes(role)) {
+      throw new Error(
+        "Local Core model readiness cannot mark a role both eligible and unavailable.",
+      );
+    }
+    return {
+      role,
+      reason: requireLocalCoreString(
+        unavailable.reason,
+        "model readiness unavailable role.reason",
+      ),
+    };
+  });
+  return {
+    version: 1,
+    registration,
+    reachability: record.reachability,
+    qualification: record.qualification,
+    eligibleRoles,
+    unavailableRoles,
+  };
+}
+
+function requireLocalCoreRecord(
+  value: unknown,
+  label: string,
+): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Local Core ${label} must be an object.`);
   }
@@ -730,9 +907,13 @@ function rejectUnknownLocalCoreFields(
   supported: ReadonlySet<string>,
   label: string,
 ): void {
-  const unknown = Object.keys(value).find((key) => supported.has(key) === false);
+  const unknown = Object.keys(value).find(
+    (key) => supported.has(key) === false,
+  );
   if (unknown !== undefined) {
-    throw new Error(`Local Core ${label} includes unsupported field '${unknown}'.`);
+    throw new Error(
+      `Local Core ${label} includes unsupported field '${unknown}'.`,
+    );
   }
 }
 
@@ -755,7 +936,10 @@ export type LocalCoreConfiguredDatabaseMode = "pglite" | "external";
 // `managed` remains accepted at legacy call sites while the CLI and Desktop
 // migrate to the explicit `pglite` spelling. It is never persisted in a v2
 // manifest and always normalizes to `pglite` at the Core boundary.
-export type LocalCoreDatabaseMode = LocalCoreConfiguredDatabaseMode | "managed" | "unavailable";
+export type LocalCoreDatabaseMode =
+  | LocalCoreConfiguredDatabaseMode
+  | "managed"
+  | "unavailable";
 
 export interface LocalCorePaths {
   productRootPath: string;
@@ -824,13 +1008,33 @@ export type LocalCoreLockState =
 
 export type LocalCoreLockReadResult =
   | { state: "missing"; lockPath: string }
-  | { state: "live" | "stale" | "incompatible"; lockPath: string; lock: LocalCoreLock; reason?: string | undefined }
-  | { state: "repair_required"; lockPath: string; reason: string; raw?: unknown | undefined };
+  | {
+      state: "live" | "stale" | "incompatible";
+      lockPath: string;
+      lock: LocalCoreLock;
+      reason?: string | undefined;
+    }
+  | {
+      state: "repair_required";
+      lockPath: string;
+      reason: string;
+      raw?: unknown | undefined;
+    };
 
 export type LocalCoreMigrationLockReadResult =
   | { state: "missing"; lockPath: string }
-  | { state: "live" | "stale" | "incompatible"; lockPath: string; lock: LocalCoreMigrationLock; reason?: string | undefined }
-  | { state: "repair_required"; lockPath: string; reason: string; raw?: unknown | undefined };
+  | {
+      state: "live" | "stale" | "incompatible";
+      lockPath: string;
+      lock: LocalCoreMigrationLock;
+      reason?: string | undefined;
+    }
+  | {
+      state: "repair_required";
+      lockPath: string;
+      reason: string;
+      raw?: unknown | undefined;
+    };
 
 export type LocalCoreStatusState =
   | "missing"
@@ -928,7 +1132,11 @@ export function parseLocalCoreStatus(value: unknown): LocalCoreStatus {
   const migrations = hasOwnLocalCoreField(record, "migrations")
     ? parseLocalCoreMigrationStatus(record.migrations, "status.migrations")
     : undefined;
-  const databaseUrl = parseOptionalLocalCoreString(record, "databaseUrl", "status");
+  const databaseUrl = parseOptionalLocalCoreString(
+    record,
+    "databaseUrl",
+    "status",
+  );
   const databaseSocketPath = parseOptionalLocalCoreString(
     record,
     "databaseSocketPath",
@@ -949,12 +1157,18 @@ export function parseLocalCoreStatus(value: unknown): LocalCoreStatus {
     ...(migrations !== undefined ? { migrations } : {}),
     ...(databaseUrl !== undefined ? { databaseUrl } : {}),
     ...(databaseSocketPath !== undefined ? { databaseSocketPath } : {}),
-    settingsReady: requireLocalCoreBoolean(record.settingsReady, "status.settingsReady"),
+    settingsReady: requireLocalCoreBoolean(
+      record.settingsReady,
+      "status.settingsReady",
+    ),
     workspaceRegistryReady: requireLocalCoreBoolean(
       record.workspaceRegistryReady,
       "status.workspaceRegistryReady",
     ),
-    diagnosticsPath: requireLocalCoreString(record.diagnosticsPath, "status.diagnosticsPath"),
+    diagnosticsPath: requireLocalCoreString(
+      record.diagnosticsPath,
+      "status.diagnosticsPath",
+    ),
     logsPath: requireLocalCoreString(record.logsPath, "status.logsPath"),
     ...(lastError !== undefined ? { lastError } : {}),
   };
@@ -978,12 +1192,14 @@ function parseKestrelCoreHomeResolution(
     label,
   );
   if (record.stateEpoch !== LOCAL_CORE_STATE_EPOCH) {
-    throw new Error(`Local Core ${label}.stateEpoch must be '${LOCAL_CORE_STATE_EPOCH}'.`);
+    throw new Error(
+      `Local Core ${label}.stateEpoch must be '${LOCAL_CORE_STATE_EPOCH}'.`,
+    );
   }
   if (
-    record.source !== "default"
-    && record.source !== "explicit_core_home"
-    && record.source !== "isolated_dev_home"
+    record.source !== "default" &&
+    record.source !== "explicit_core_home" &&
+    record.source !== "isolated_dev_home"
   ) {
     throw new Error(`Local Core ${label}.source is invalid.`);
   }
@@ -1000,11 +1216,17 @@ function parseKestrelCoreHomeResolution(
     "cygwin",
     "netbsd",
   ]);
-  if (typeof record.platform !== "string" || supportedPlatforms.has(record.platform as NodeJS.Platform) === false) {
+  if (
+    typeof record.platform !== "string" ||
+    supportedPlatforms.has(record.platform as NodeJS.Platform) === false
+  ) {
     throw new Error(`Local Core ${label}.platform is invalid.`);
   }
   return {
-    productRootPath: requireLocalCoreString(record.productRootPath, `${label}.productRootPath`),
+    productRootPath: requireLocalCoreString(
+      record.productRootPath,
+      `${label}.productRootPath`,
+    ),
     homePath: requireLocalCoreString(record.homePath, `${label}.homePath`),
     stateEpoch: LOCAL_CORE_STATE_EPOCH,
     source: record.source,
@@ -1013,7 +1235,10 @@ function parseKestrelCoreHomeResolution(
   };
 }
 
-function parseLocalCoreManifest(value: unknown, label: string): LocalCoreManifest {
+function parseLocalCoreManifest(
+  value: unknown,
+  label: string,
+): LocalCoreManifest {
   const record = requireLocalCoreRecord(value, label);
   rejectUnknownLocalCoreFields(
     record,
@@ -1032,19 +1257,43 @@ function parseLocalCoreManifest(value: unknown, label: string): LocalCoreManifes
     label,
   );
   if (record.version !== LOCAL_CORE_MANIFEST_VERSION) {
-    throw new Error(`Local Core ${label}.version must be ${LOCAL_CORE_MANIFEST_VERSION}.`);
+    throw new Error(
+      `Local Core ${label}.version must be ${LOCAL_CORE_MANIFEST_VERSION}.`,
+    );
   }
   return {
     version: LOCAL_CORE_MANIFEST_VERSION,
-    stateEpoch: requireLocalCoreString(record.stateEpoch, `${label}.stateEpoch`),
-    coreVersion: requireLocalCoreString(record.coreVersion, `${label}.coreVersion`),
-    schemaVersion: requireLocalCoreInteger(record.schemaVersion, `${label}.schemaVersion`, 0),
+    stateEpoch: requireLocalCoreString(
+      record.stateEpoch,
+      `${label}.stateEpoch`,
+    ),
+    coreVersion: requireLocalCoreString(
+      record.coreVersion,
+      `${label}.coreVersion`,
+    ),
+    schemaVersion: requireLocalCoreInteger(
+      record.schemaVersion,
+      `${label}.schemaVersion`,
+      0,
+    ),
     homePath: requireLocalCoreString(record.homePath, `${label}.homePath`),
-    dbMode: requireLocalCoreConfiguredDatabaseMode(record.dbMode, `${label}.dbMode`),
-    capabilities: requireLocalCoreStringArray(record.capabilities, `${label}.capabilities`),
+    dbMode: requireLocalCoreConfiguredDatabaseMode(
+      record.dbMode,
+      `${label}.dbMode`,
+    ),
+    capabilities: requireLocalCoreStringArray(
+      record.capabilities,
+      `${label}.capabilities`,
+    ),
     paths: parseLocalCorePaths(record.paths, `${label}.paths`),
-    createdAt: requireCanonicalIsoTimestamp(record.createdAt, `${label}.createdAt`),
-    updatedAt: requireCanonicalIsoTimestamp(record.updatedAt, `${label}.updatedAt`),
+    createdAt: requireCanonicalIsoTimestamp(
+      record.createdAt,
+      `${label}.createdAt`,
+    ),
+    updatedAt: requireCanonicalIsoTimestamp(
+      record.updatedAt,
+      `${label}.updatedAt`,
+    ),
   };
 }
 
@@ -1092,9 +1341,9 @@ function parseLocalCoreLockReadResult(
     };
   }
   if (
-    record.state === "live"
-    || record.state === "stale"
-    || record.state === "incompatible"
+    record.state === "live" ||
+    record.state === "stale" ||
+    record.state === "incompatible"
   ) {
     rejectUnknownLocalCoreFields(
       record,
@@ -1144,10 +1393,21 @@ function parseLocalCoreLock(value: unknown, label: string): LocalCoreLock {
     label,
   );
   if (record.version !== LOCAL_CORE_LOCK_VERSION) {
-    throw new Error(`Local Core ${label}.version must be ${LOCAL_CORE_LOCK_VERSION}.`);
+    throw new Error(
+      `Local Core ${label}.version must be ${LOCAL_CORE_LOCK_VERSION}.`,
+    );
   }
-  const authorityId = parseOptionalLocalCoreString(record, "authorityId", label);
-  const schemaVersion = parseOptionalLocalCoreInteger(record, "schemaVersion", label, 0);
+  const authorityId = parseOptionalLocalCoreString(
+    record,
+    "authorityId",
+    label,
+  );
+  const schemaVersion = parseOptionalLocalCoreInteger(
+    record,
+    "schemaVersion",
+    label,
+    0,
+  );
   const socketPath = parseOptionalLocalCoreString(record, "socketPath", label);
   const databaseSocketPath = parseOptionalLocalCoreString(
     record,
@@ -1158,11 +1418,23 @@ function parseLocalCoreLock(value: unknown, label: string): LocalCoreLock {
     version: LOCAL_CORE_LOCK_VERSION,
     ownerPid: requireLocalCoreInteger(record.ownerPid, `${label}.ownerPid`, 1),
     ...(authorityId !== undefined ? { authorityId } : {}),
-    ownerExecutable: requireLocalCoreString(record.ownerExecutable, `${label}.ownerExecutable`),
-    coreVersion: requireLocalCoreString(record.coreVersion, `${label}.coreVersion`),
+    ownerExecutable: requireLocalCoreString(
+      record.ownerExecutable,
+      `${label}.ownerExecutable`,
+    ),
+    coreVersion: requireLocalCoreString(
+      record.coreVersion,
+      `${label}.coreVersion`,
+    ),
     ...(schemaVersion !== undefined ? { schemaVersion } : {}),
-    startedAt: requireCanonicalIsoTimestamp(record.startedAt, `${label}.startedAt`),
-    heartbeatAt: requireCanonicalIsoTimestamp(record.heartbeatAt, `${label}.heartbeatAt`),
+    startedAt: requireCanonicalIsoTimestamp(
+      record.startedAt,
+      `${label}.startedAt`,
+    ),
+    heartbeatAt: requireCanonicalIsoTimestamp(
+      record.heartbeatAt,
+      `${label}.heartbeatAt`,
+    ),
     ...(socketPath !== undefined ? { socketPath } : {}),
     ...(databaseSocketPath !== undefined ? { databaseSocketPath } : {}),
   };
@@ -1199,8 +1471,16 @@ function parseLocalCoreDatabaseStatus(
   const pglitePath = parseOptionalLocalCoreString(record, "pglitePath", label);
   const dataPath = parseOptionalLocalCoreString(record, "dataPath", label);
   const socketPath = parseOptionalLocalCoreString(record, "socketPath", label);
-  const metadataPath = parseOptionalLocalCoreString(record, "metadataPath", label);
-  const databaseUrl = parseOptionalLocalCoreString(record, "databaseUrl", label);
+  const metadataPath = parseOptionalLocalCoreString(
+    record,
+    "metadataPath",
+    label,
+  );
+  const databaseUrl = parseOptionalLocalCoreString(
+    record,
+    "databaseUrl",
+    label,
+  );
   const database = parseOptionalLocalCoreString(record, "database", label);
   const user = parseOptionalLocalCoreString(record, "user", label);
   const port = parseOptionalLocalCoreInteger(record, "port", label, 1, 65_535);
@@ -1213,7 +1493,10 @@ function parseLocalCoreDatabaseStatus(
     state: requireLocalCoreStatusState(record.state, `${label}.state`),
     summary: requireLocalCoreString(record.summary, `${label}.summary`),
     managed: requireLocalCoreBoolean(record.managed, `${label}.managed`),
-    initialized: requireLocalCoreBoolean(record.initialized, `${label}.initialized`),
+    initialized: requireLocalCoreBoolean(
+      record.initialized,
+      `${label}.initialized`,
+    ),
     running: requireLocalCoreBoolean(record.running, `${label}.running`),
     identityVerified: requireLocalCoreBoolean(
       record.identityVerified,
@@ -1239,7 +1522,14 @@ function parseLocalCoreMigrationStatus(
   const record = requireLocalCoreRecord(value, label);
   rejectUnknownLocalCoreFields(
     record,
-    new Set(["state", "summary", "schemaVersion", "lock", "migrated", "lastError"]),
+    new Set([
+      "state",
+      "summary",
+      "schemaVersion",
+      "lock",
+      "migrated",
+      "lastError",
+    ]),
     label,
   );
   const lastError = hasOwnLocalCoreField(record, "lastError")
@@ -1248,7 +1538,11 @@ function parseLocalCoreMigrationStatus(
   return {
     state: requireLocalCoreStatusState(record.state, `${label}.state`),
     summary: requireLocalCoreString(record.summary, `${label}.summary`),
-    schemaVersion: requireLocalCoreInteger(record.schemaVersion, `${label}.schemaVersion`, 0),
+    schemaVersion: requireLocalCoreInteger(
+      record.schemaVersion,
+      `${label}.schemaVersion`,
+      0,
+    ),
     lock: parseLocalCoreMigrationLockReadResult(record.lock, `${label}.lock`),
     migrated: requireLocalCoreBoolean(record.migrated, `${label}.migrated`),
     ...(lastError !== undefined ? { lastError } : {}),
@@ -1268,9 +1562,9 @@ function parseLocalCoreMigrationLockReadResult(
     };
   }
   if (
-    record.state === "live"
-    || record.state === "stale"
-    || record.state === "incompatible"
+    record.state === "live" ||
+    record.state === "stale" ||
+    record.state === "incompatible"
   ) {
     rejectUnknownLocalCoreFields(
       record,
@@ -1320,22 +1614,47 @@ function parseLocalCoreMigrationLock(
     label,
   );
   if (record.version !== LOCAL_CORE_LOCK_VERSION) {
-    throw new Error(`Local Core ${label}.version must be ${LOCAL_CORE_LOCK_VERSION}.`);
+    throw new Error(
+      `Local Core ${label}.version must be ${LOCAL_CORE_LOCK_VERSION}.`,
+    );
   }
   return {
     version: LOCAL_CORE_LOCK_VERSION,
     ownerPid: requireLocalCoreInteger(record.ownerPid, `${label}.ownerPid`, 1),
-    ownerExecutable: requireLocalCoreString(record.ownerExecutable, `${label}.ownerExecutable`),
-    coreVersion: requireLocalCoreString(record.coreVersion, `${label}.coreVersion`),
-    schemaVersion: requireLocalCoreInteger(record.schemaVersion, `${label}.schemaVersion`, 0),
-    startedAt: requireCanonicalIsoTimestamp(record.startedAt, `${label}.startedAt`),
-    heartbeatAt: requireCanonicalIsoTimestamp(record.heartbeatAt, `${label}.heartbeatAt`),
+    ownerExecutable: requireLocalCoreString(
+      record.ownerExecutable,
+      `${label}.ownerExecutable`,
+    ),
+    coreVersion: requireLocalCoreString(
+      record.coreVersion,
+      `${label}.coreVersion`,
+    ),
+    schemaVersion: requireLocalCoreInteger(
+      record.schemaVersion,
+      `${label}.schemaVersion`,
+      0,
+    ),
+    startedAt: requireCanonicalIsoTimestamp(
+      record.startedAt,
+      `${label}.startedAt`,
+    ),
+    heartbeatAt: requireCanonicalIsoTimestamp(
+      record.heartbeatAt,
+      `${label}.heartbeatAt`,
+    ),
   };
 }
 
-function parseLocalCoreFailure(value: unknown, label: string): LocalCoreFailure {
+function parseLocalCoreFailure(
+  value: unknown,
+  label: string,
+): LocalCoreFailure {
   const record = requireLocalCoreRecord(value, label);
-  rejectUnknownLocalCoreFields(record, new Set(["code", "message", "details"]), label);
+  rejectUnknownLocalCoreFields(
+    record,
+    new Set(["code", "message", "details"]),
+    label,
+  );
   const details = hasOwnLocalCoreField(record, "details")
     ? requireLocalCoreRecord(record.details, `${label}.details`)
     : undefined;
@@ -1346,25 +1665,31 @@ function parseLocalCoreFailure(value: unknown, label: string): LocalCoreFailure 
   };
 }
 
-function requireLocalCoreStatusState(value: unknown, label: string): LocalCoreStatusState {
+function requireLocalCoreStatusState(
+  value: unknown,
+  label: string,
+): LocalCoreStatusState {
   if (
-    value !== "missing"
-    && value !== "starting"
-    && value !== "healthy"
-    && value !== "degraded"
-    && value !== "blocked"
+    value !== "missing" &&
+    value !== "starting" &&
+    value !== "healthy" &&
+    value !== "degraded" &&
+    value !== "blocked"
   ) {
     throw new Error(`Local Core ${label} is invalid.`);
   }
   return value;
 }
 
-function requireLocalCoreDatabaseMode(value: unknown, label: string): LocalCoreDatabaseMode {
+function requireLocalCoreDatabaseMode(
+  value: unknown,
+  label: string,
+): LocalCoreDatabaseMode {
   if (
-    value !== "pglite"
-    && value !== "external"
-    && value !== "managed"
-    && value !== "unavailable"
+    value !== "pglite" &&
+    value !== "external" &&
+    value !== "managed" &&
+    value !== "unavailable"
   ) {
     throw new Error(`Local Core ${label} is invalid.`);
   }
@@ -1395,12 +1720,14 @@ function requireLocalCoreInteger(
   maximum?: number,
 ): number {
   if (
-    typeof value !== "number"
-    || Number.isInteger(value) === false
-    || (minimum !== undefined && value < minimum)
-    || (maximum !== undefined && value > maximum)
+    typeof value !== "number" ||
+    Number.isInteger(value) === false ||
+    (minimum !== undefined && value < minimum) ||
+    (maximum !== undefined && value > maximum)
   ) {
-    throw new Error(`Local Core ${label} must be an integer in the supported range.`);
+    throw new Error(
+      `Local Core ${label} must be an integer in the supported range.`,
+    );
   }
   return value;
 }
@@ -1409,7 +1736,9 @@ function requireLocalCoreStringArray(value: unknown, label: string): string[] {
   if (Array.isArray(value) === false) {
     throw new Error(`Local Core ${label} must be a string array.`);
   }
-  return value.map((item, index) => requireLocalCoreString(item, `${label}[${index}]`));
+  return value.map((item, index) =>
+    requireLocalCoreString(item, `${label}[${index}]`),
+  );
 }
 
 function requireLocalCoreArray(value: unknown, label: string): unknown[] {
@@ -1437,12 +1766,20 @@ function parseOptionalLocalCoreInteger(
   maximum?: number,
 ): number | undefined {
   return hasOwnLocalCoreField(record, field)
-    ? requireLocalCoreInteger(record[field], `${label}.${field}`, minimum, maximum)
+    ? requireLocalCoreInteger(
+        record[field],
+        `${label}.${field}`,
+        minimum,
+        maximum,
+      )
     : undefined;
 }
 
-function hasOwnLocalCoreField(record: Record<string, unknown>, field: string): boolean {
-  return  Object.hasOwn(record, field);
+function hasOwnLocalCoreField(
+  record: Record<string, unknown>,
+  field: string,
+): boolean {
+  return Object.hasOwn(record, field);
 }
 
 export interface EnsureLocalCoreReadyOptions {

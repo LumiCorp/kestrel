@@ -6,6 +6,8 @@ import {
 } from "../src/kestrel/contracts/model-registration.js";
 import type { ModelQualificationBinding } from "../src/kestrel/model-qualification.js";
 import { createAnthropicModelGatewayFromEnv } from "./anthropic/createAnthropicModelGateway.js";
+import { createLmStudioModelGatewayFromEnv } from "./lmstudio/createLmStudioModelGateway.js";
+import { createOllamaModelGatewayFromEnv } from "./ollama/createOllamaModelGateway.js";
 import { createOpenAiModelGatewayFromEnv } from "./openai/createOpenAiModelGateway.js";
 import { createOpenRouterModelGatewayFromEnv } from "./openrouter/createOpenRouterModelGateway.js";
 import type { OpenRouterQualifiedRouteEvidence } from "./openrouter/OpenRouterV2Codec.js";
@@ -38,12 +40,12 @@ export interface ExactModelQualificationGateway extends ModelGateway {}
  */
 export function createExactModelQualificationGateway(input: {
   registration: ModelRegistrationV2;
-  credential: { revision: string; apiKey: string };
+  credential?: { revision: string; apiKey?: string | undefined } | undefined;
   fetchImpl?: typeof fetch | undefined;
   openRouterRouteEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
 }): ExactModelQualificationGateway {
   const registration = parseModelRegistrationV2(input.registration);
-  if (registration.credentialRevision !== input.credential.revision) {
+  if (registration.credentialRevision !== input.credential?.revision) {
     throw new Error("model qualification credential revision does not match registration");
   }
   if (registration.providerConfiguration.endpoint !== registration.route.apiEndpoint) {
@@ -102,17 +104,17 @@ export function assertExactModelQualificationGateway(input: {
 
 function createRegisteredGateway(input: {
   registration: ModelRegistrationV2;
-  credential: { revision: string; apiKey: string };
+  credential?: { revision: string; apiKey?: string | undefined } | undefined;
   fetchImpl?: typeof fetch | undefined;
   openRouterRouteEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
   endpoint: ExactQualificationEndpoint;
 }): ModelGateway {
-  const { registration, credential } = input;
+  const { registration } = input;
   switch (registration.providerId) {
     case "openai":
       return createOpenAiModelGatewayFromEnv({
         envConfig: {
-          apiKey: credential.apiKey,
+          apiKey: input.credential!.apiKey!,
           model: registration.modelId,
           baseUrl: registration.route.apiEndpoint,
           providerName: "openai",
@@ -123,7 +125,7 @@ function createRegisteredGateway(input: {
     case "anthropic":
       return createAnthropicModelGatewayFromEnv({
         envConfig: {
-          apiKey: credential.apiKey,
+          apiKey: input.credential!.apiKey!,
           model: registration.modelId,
           baseUrl: registration.route.apiEndpoint,
         },
@@ -139,11 +141,33 @@ function createRegisteredGateway(input: {
       assertOpenRouterRouteEvidence(registration, input.openRouterRouteEvidence);
       return createOpenRouterModelGatewayFromEnv({
         envConfig: {
-          apiKey: credential.apiKey,
+          apiKey: input.credential!.apiKey!,
           model: registration.modelId,
           baseUrl: registration.route.apiEndpoint,
         },
         routeEvidence: input.openRouterRouteEvidence,
+        ...(input.fetchImpl !== undefined ? { fetchImpl: input.fetchImpl } : {}),
+      });
+    case "ollama":
+      return createOllamaModelGatewayFromEnv({
+        envConfig: {
+          model: registration.modelId,
+          baseUrl: registration.route.apiEndpoint,
+          ...(input.credential?.apiKey === undefined
+            ? {}
+            : { apiKey: input.credential.apiKey }),
+        },
+        ...(input.fetchImpl !== undefined ? { fetchImpl: input.fetchImpl } : {}),
+      });
+    case "lmstudio":
+      return createLmStudioModelGatewayFromEnv({
+        envConfig: {
+          model: registration.modelId,
+          baseUrl: registration.route.apiEndpoint,
+          ...(input.credential?.apiKey === undefined
+            ? {}
+            : { apiKey: input.credential.apiKey }),
+        },
         ...(input.fetchImpl !== undefined ? { fetchImpl: input.fetchImpl } : {}),
       });
     default:
@@ -195,6 +219,8 @@ function endpointForRegistration(
     matches("anthropic", ["anthropic.messages.v2", "anthropic_messages_v2"], "messages") ??
     matches("openrouter", ["openrouter.chat.v2", "openrouter_chat_v2"], "chat") ??
     matches("openrouter", ["openrouter.responses.v2", "openrouter_responses_v2"], "responses") ??
+    matches("ollama", ["ollama.openai-compatible.v1"], "chat") ??
+    matches("lmstudio", ["lmstudio.openai-compatible.v1"], "chat") ??
     unsupportedCodec(registration)
   );
 }

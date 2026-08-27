@@ -6,11 +6,11 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Publish exact Local Core and Desktop model readiness](12-publish-local-core-model-readiness.md)
-
 ## Blocked
 
 ## Implemented
+
+- [Publish exact Local Core and Desktop model readiness](12-publish-local-core-model-readiness.md)
 
 ## Done
 

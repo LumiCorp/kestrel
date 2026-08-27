@@ -13,7 +13,7 @@ export type LocalCoreManagedCredentialReadiness =
 export type LocalCoreProviderCredentialReadiness =
   | LocalCoreManagedCredentialReadiness
   | {
-      ready: true;
+      ready: boolean;
       credential: "not_required";
       beta: boolean;
     };
@@ -66,8 +66,7 @@ export function parseLocalCoreProviderReadinessResponse(
     }
     if (provider === "ollama" || provider === "lmstudio") {
       if (
-        readiness.ready !== true
-        || readiness.credential !== "not_required"
+        readiness.credential !== "not_required"
         || typeof readiness.beta !== "boolean"
       ) {
         throw new Error(
@@ -75,7 +74,7 @@ export function parseLocalCoreProviderReadinessResponse(
         );
       }
       providerReadiness[provider] = {
-        ready: true,
+        ready: readiness.ready,
         credential: "not_required",
         beta: readiness.beta,
       };

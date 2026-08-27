@@ -16,6 +16,7 @@ import {
   isHostedModelRoleReady,
   readHostedModelReadiness,
 } from "./hosted-model-readiness";
+import { isDesktopModelRoleReady } from "../environments/desktop-model-readiness";
 
 export type RuntimeModelSelectionTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
@@ -147,11 +148,13 @@ export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
     if (unavailable.has(modelId)) continue;
     const desktop = desktopSelections.get(modelId);
     if (desktop) {
-      const advertised = desktopConnection?.advertisedModels.some(
-        (candidate) =>
-          candidate.provider === desktop.provider &&
-          candidate.model === desktop.model &&
-          candidate.health === "ready",
+      const advertised = desktopConnection?.advertisedModels.some((candidate) =>
+        isDesktopModelRoleReady({
+          model: candidate,
+          provider: desktop.provider,
+          modelId: desktop.model,
+          role: input.requiredRole,
+        }),
       );
       if (!advertised) unavailable.add(modelId);
       continue;

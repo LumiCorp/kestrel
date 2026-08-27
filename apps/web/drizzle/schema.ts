@@ -29,6 +29,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { KNOWLEDGE_EMBEDDING_DIMENSIONS } from "@/lib/knowledge/documents/constants";
 import type { RunnerExternalApprovalBinding } from "@kestrel-agents/protocol";
+import type { DesktopAdvertisedModel } from "@/lib/environments/desktop-model-readiness";
 import type {
   OciMcpEgressPolicyV1,
   ResolvedOciMcpEgressBindingV1,
@@ -2062,13 +2063,7 @@ export const desktopEnvironmentConnections = pgTable(
     desktopVersion: text("desktop_version"),
     runtimeVersion: text("runtime_version"),
     advertisedModels: jsonb("advertised_models")
-      .$type<
-        Array<{
-          provider: string;
-          model: string;
-          health: "ready" | "unavailable";
-        }>
-      >()
+      .$type<DesktopAdvertisedModel[]>()
       .notNull()
       .default([]),
     approvedByUserId: text("approved_by_user_id").references(() => users.id, {

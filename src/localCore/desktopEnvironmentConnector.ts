@@ -35,6 +35,8 @@ import {
 } from "../../cli/runtime/gateway-credential-broker.js";
 import type { LocalCoreClient } from "./client.js";
 import type { LocalCoreCredentialStore } from "./credentialStore.js";
+import type { LocalCoreModelReadiness } from "./contracts.js";
+import { isLocalCoreModelRoleReady } from "./modelReadiness.js";
 import {
   LocalCoreDesktopEnvironmentConfigStore,
   type DesktopEnvironmentWorkspaceMapping,
@@ -101,11 +103,7 @@ export type DesktopEnvironmentStatusProjection = {
     connectionStatus: "online" | "offline";
     capacity: number;
     activeRuns: number;
-    models: Array<{
-      provider: string;
-      model: string;
-      health: "ready" | "unavailable";
-    }>;
+    models: LocalCoreModelReadiness[];
     lastConnectedAt?: string | undefined;
     lastError?: string | undefined;
     workspaces: Array<{
@@ -165,11 +163,7 @@ export class LocalCoreDesktopEnvironmentManager {
   #presenceTimer: NodeJS.Timeout | undefined;
   #pollTimer: NodeJS.Timeout | undefined;
   #enrollmentTimer: NodeJS.Timeout | undefined;
-  #advertisedModels: Array<{
-    provider: string;
-    model: string;
-    health: "ready" | "unavailable";
-  }> = [];
+  #advertisedModels: LocalCoreModelReadiness[] = [];
   readonly #activeCommands = new Map<string, ActiveDesktopCommand>();
 
   constructor(input: {
@@ -584,13 +578,7 @@ export class LocalCoreDesktopEnvironmentManager {
     if (!this.#client) return;
     try {
       const configuration = await this.#client.desktopExecutionConfig();
-      this.#advertisedModels = [
-        {
-          provider: configuration.resolvedProfile.modelProvider,
-          model: configuration.resolvedProfile.model,
-          health: "ready",
-        },
-      ];
+      this.#advertisedModels = [configuration.modelReadiness];
     } catch {
       this.#advertisedModels = [];
     }
@@ -777,7 +765,7 @@ export class LocalCoreDesktopEnvironmentManager {
       });
       return;
     }
-    const prepared = this.#prepareRunnerCommand({
+    const prepared = await this.#prepareRunnerCommand({
       environment: input.environment,
       secret: input.secret,
       commandRecord,
@@ -943,17 +931,17 @@ export class LocalCoreDesktopEnvironmentManager {
     }
   }
 
-  #prepareRunnerCommand(input: {
+  async #prepareRunnerCommand(input: {
     environment: LocalCoreDesktopEnvironment;
     secret: EnvironmentSecret;
     commandRecord: Record<string, unknown>;
     executionTicket: string;
     authorizationRenewal: unknown;
     modelGrant: unknown;
-  }): {
+  }): Promise<{
     command: RunnerCommand;
     modelCredentialReference?: GatewayCredentialReference | undefined;
-  } {
+  }> {
     const ticket = verifyEnvironmentExecutionTicket({
       token: input.executionTicket,
       publicKey: input.environment.ticketPublicKey,
@@ -1045,6 +1033,24 @@ export class LocalCoreDesktopEnvironmentManager {
       throw new Error(
         "Desktop received a model grant without a model credential reference.",
       );
+    }
+    if (
+      embeddedModelLease === undefined &&
+      profile !== undefined &&
+      typeof profile.modelProvider === "string" &&
+      typeof profile.model === "string"
+    ) {
+      const configuration = await this.#client?.desktopExecutionConfig();
+      if (configuration === undefined) {
+        throw new Error(
+          "Desktop local model admission requires an active Local Core configuration.",
+        );
+      }
+      assertCurrentDesktopLocalModelAdmission({
+        provider: profile.modelProvider,
+        model: profile.model,
+        readiness: configuration.modelReadiness,
+      });
     }
     const command = parseRunnerCommandV2({
       ...base,
@@ -1262,6 +1268,31 @@ export class LocalCoreDesktopEnvironmentManager {
           : candidate,
       ),
     }));
+  }
+}
+
+/**
+ * Local Core repeats hosted presence admission immediately before the runner
+ * receives a desktop-local command. Presence can be stale; the Core-owned
+ * V2 readiness projection cannot.
+ */
+export function assertCurrentDesktopLocalModelAdmission(input: {
+  provider: string;
+  model: string;
+  readiness: LocalCoreModelReadiness;
+}): void {
+  if (
+    input.readiness.registration.providerId !== input.provider ||
+    input.readiness.registration.modelId !== input.model
+  ) {
+    throw new Error(
+      "Desktop local model route no longer matches the current Local Core configuration.",
+    );
+  }
+  if (!isLocalCoreModelRoleReady(input.readiness, "agent.loop")) {
+    throw new Error(
+      "Desktop local model is not currently qualified for the agent.loop role.",
+    );
   }
 }
 

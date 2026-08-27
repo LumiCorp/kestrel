@@ -44,6 +44,7 @@ import {
 } from "@/lib/agent/kestrel-tool-profile";
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { parseDesktopLocalRuntimeModelId } from "@/lib/ai/gateway-utils";
+import { isDesktopModelRoleReady } from "@/lib/environments/desktop-model-readiness";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
 import type { Session } from "@/lib/auth-types";
 import { getHostedEnvironmentRuntimeMode } from "@/lib/environments/config";
@@ -1624,11 +1625,13 @@ async function resolveDesktopLocalRuntimeModel(input: {
         ),
       columns: { advertisedModels: true },
     });
-  const advertised = connection?.advertisedModels.some(
-    (candidate) =>
-      candidate.provider === provider &&
-      candidate.model === model &&
-      candidate.health === "ready",
+  const advertised = connection?.advertisedModels.some((candidate) =>
+    isDesktopModelRoleReady({
+      model: candidate,
+      provider,
+      modelId: model,
+      role: "agent.loop",
+    }),
   );
   if (!advertised) {
     throw new Error(

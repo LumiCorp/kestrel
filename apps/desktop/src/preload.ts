@@ -149,6 +149,9 @@ const desktopBridge: DesktopBridge = {
   refreshKestrelOneEnrollments() {
     return ipcRenderer.invoke("desktop:refresh-kestrel-one-enrollments");
   },
+  refreshDesktopModelReadiness() {
+    return ipcRenderer.invoke("desktop:refresh-model-readiness");
+  },
   setKestrelOneCapacity(capacity) {
     return ipcRenderer.invoke("desktop:set-kestrel-one-capacity", capacity);
   },

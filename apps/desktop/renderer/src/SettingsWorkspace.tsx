@@ -1281,7 +1281,8 @@ export function SettingsWorkspace({
                 );
                 const localModels =
                   environment?.models.filter(
-                    (candidate) => candidate.health === "ready",
+                    (candidate) =>
+                      candidate.eligibleRoles.includes("agent.loop"),
                   ) ?? [];
                 return localModels.length > 0 ? (
                   <label>
@@ -1294,11 +1295,12 @@ export function SettingsWorkspace({
                     >
                       <option value="">Kestrel One default</option>
                       {localModels.map((candidate) => {
-                        const id = `desktop-local:${candidate.provider}:${encodeURIComponent(candidate.model)}`;
+                        const provider = candidate.registration.providerId;
+                        const model = candidate.registration.modelId;
+                        const id = `desktop-local:${provider}:${encodeURIComponent(model)}`;
                         return (
                           <option value={id} key={id}>
-                            This Desktop · {candidate.provider}/
-                            {candidate.model}
+                            This Desktop · {provider}/{model}
                           </option>
                         );
                       })}
