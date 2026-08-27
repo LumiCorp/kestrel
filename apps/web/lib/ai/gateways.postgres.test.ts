@@ -825,6 +825,7 @@ test("Environment default admission excludes stale hosted evidence across a cred
 
   context.after(async () => {
     await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+    await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
     await resetDbRuntimeForTests();
     await Promise.all([
       sql.end({ timeout: 0 }),
@@ -931,9 +932,19 @@ test("Environment default admission excludes stale hosted evidence across a cred
   });
   await started;
   const selection = selectDefault();
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  releaseRotation();
-  await rotating;
+  let contentionError: unknown;
+  try {
+    await waitForGatewaySelectionContention(sql);
+  } catch (error) {
+    contentionError = error;
+  } finally {
+    releaseRotation();
+    await rotating;
+  }
+  if (contentionError !== undefined) {
+    await selection.catch(() => undefined);
+    throw contentionError;
+  }
   await assert.rejects(selection, /Model is unavailable/u);
   assert.equal(
     (await list()).models.find((candidate) => candidate.id === model.id)
@@ -947,3 +958,24 @@ test("Environment default admission excludes stale hosted evidence across a cred
   `;
   assert.equal(defaultCount?.count, 0);
 });
+
+async function waitForGatewaySelectionContention(
+  sql: ReturnType<typeof postgres>,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const [waiting] = await sql<Array<{ waiting: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND wait_event_type = 'Lock'
+      ) AS "waiting"
+    `;
+    if (waiting?.waiting) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(
+    "Environment default selection did not contend on the rotating gateway row.",
+  );
+}

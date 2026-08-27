@@ -16,6 +16,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Close hosted readiness admission and truth gaps](14-close-hosted-readiness-admission-and-truth-gaps.md)
 - [Make Environment default admission current and atomic](15-make-environment-default-admission-current-and-atomic.md)
 - [Prove Environment default admission behavior](16-prove-environment-default-admission-behavior.md)
+- [Make Environment default concurrency proof deterministic](17-make-environment-default-concurrency-proof-deterministic.md)
 
 ## Done
 
