@@ -44,6 +44,21 @@
   <img src=".github/assets/kestrel-tui-reds-demo.gif" alt="Kestrel TUI researching Cincinnati Reds news and building a static fan site." width="1000" />
 </p>
 
+## Why Kestrel
+
+Most agent failures inside real organizations are operational, not model
+problems: access that was never approved, output nobody reviewed, work that
+cannot be retraced, and sessions that die without recovery. Kestrel is built
+around that reality. Every surface — Desktop, CLI/TUI, Kestrel One — keeps the
+same contracts: approved system access, human review where it matters,
+realistic validation before acceptance, recovery after interruption, and a
+clear record of every run.
+
+That is the layer agents need before an organization can trust them with real
+work: not a bigger model, but execution, approval, memory, and evidence you
+can inspect. It is also why Kestrel is open source under MIT — an operations
+layer earns trust by being auditable.
+
 ## Kestrel Desktop
 
 <p align="center">
