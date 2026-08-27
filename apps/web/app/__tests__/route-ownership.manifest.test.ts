@@ -83,8 +83,8 @@ test(
         "/platform",
         "/projects",
         "/schedules",
-        "/workflows",
         "/triggers",
+        "/workflows",
       ],
     );
 
