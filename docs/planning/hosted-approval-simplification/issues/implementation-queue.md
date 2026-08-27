@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-None.
+- [Validate exact cleanup DONE evidence](06l-validate-exact-cleanup-done-evidence.md)
 
 ## Blocked
 
