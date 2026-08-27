@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
+import { createModelRegistrationV2 } from "../../../../src/kestrel/contracts/model-registration";
 import { withGatewayModelEconomicsProfile } from "@/lib/ai/model-economics-profile";
+import { createHostedModelRegistration } from "@/lib/ai/hosted-model-registration";
 import { EmailReceiptProviderError } from "./provider";
 import type { ReceivedEmailHydration, ReceivedEmailProvider } from "./provider";
 
@@ -55,7 +57,11 @@ test("receipt hydration admits exactly one private Trigger and durably scrubs ev
     plaintext: "re_test_full_access",
   });
   const modelMetadata = withGatewayModelEconomicsProfile({
-    metadata: { context_length: 32_768, max_completion_tokens: 8_192 },
+    metadata: {
+      context_length: 32_768,
+      max_completion_tokens: 8_192,
+      kestrelModelRegistrationV2: qualifiedOpenRouterRegistration(),
+    },
     provider: "openrouter",
     model: "test-email-model",
     approved: true,
@@ -131,9 +137,11 @@ test("receipt hydration admits exactly one private Trigger and durably scrubs ev
     `;
     await transaction`
       INSERT INTO "ai_gateways" (
-        "id", "organization_id", "environment_id", "provider", "display_name"
+        "id", "organization_id", "environment_id", "provider", "display_name",
+        "credential_status", "credential_validated_at"
       ) VALUES (
-        ${ids.gateway}, ${ids.organization}, NULL, 'openrouter', 'Hydration Gateway'
+        ${ids.gateway}, ${ids.organization}, NULL, 'openrouter', 'Hydration Gateway',
+        'ready', ${now}
       )
     `;
     await transaction`
@@ -547,6 +555,88 @@ test("receipt hydration admits exactly one private Trigger and durably scrubs ev
   });
 });
 
+function qualifiedOpenRouterRegistration() {
+  const pending = createHostedModelRegistration({
+    registrationId: "email-receipt-test-openrouter-model",
+    revision: "email-receipt-test-registration-1",
+    observedAt: "2026-08-27T14:00:00.000Z",
+    modelId: "test-email-model",
+    credentialRevision: "1",
+    providerConfiguration: {
+      version: "provider_runtime_configuration_v1",
+      providerId: "openrouter",
+      protocol: "openrouter",
+      authentication: {
+        mode: "required",
+        credentialReference: {
+          source: "hosted",
+          id: "provider.openrouter.hosted",
+        },
+      },
+      endpoint: "https://openrouter.example/api/v1",
+      timeoutMs: 15_000,
+      allowedHeaders: [],
+      dataHandling: "provider_managed",
+    },
+    providerEvidence: {
+      provider: "openrouter",
+      details: {
+        id: "test-email-model",
+        supported_parameters: [
+          "response_format",
+          "tools",
+          "tool_choice",
+          "strict_tool_inputs",
+        ],
+        endpoints: [
+          {
+            id: "email-receipt-test-endpoint",
+            supported_parameters: [
+              "response_format",
+              "tools",
+              "tool_choice",
+              "strict_tool_inputs",
+            ],
+          },
+        ],
+      },
+    },
+  }).registration;
+  const { fingerprint: _fingerprint, ...authoring } = pending;
+  const evidence = {
+    source: "qualification" as const,
+    observedRevision: authoring.revision,
+    observedAt: "2026-08-27T14:00:01.000Z",
+    adapterRevision: authoring.adapterRevision,
+    credentialRevision: "1",
+    qualificationRevision: "hosted-agent-loop-v1",
+    retainedPayloadHash: `sha256:${"a".repeat(64)}`,
+  };
+  const qualified = <T extends { evidence: readonly unknown[] }>(claim: T) => ({
+    ...claim,
+    state: "qualified" as const,
+    evidence: [...claim.evidence, evidence],
+  });
+  return createModelRegistrationV2({
+    ...authoring,
+    qualification: {
+      state: "qualified",
+      revision: "hosted-agent-loop-v1",
+      checkedAt: "2026-08-27T14:00:01.000Z",
+      probeHash: `sha256:${"b".repeat(64)}`,
+    },
+    capabilities: {
+      ...authoring.capabilities,
+      providerStrictSchema: qualified(
+        authoring.capabilities.providerStrictSchema,
+      ),
+      nativeTools: qualified(authoring.capabilities.nativeTools),
+      requiredToolChoice: qualified(authoring.capabilities.requiredToolChoice),
+      strictToolInputs: qualified(authoring.capabilities.strictToolInputs),
+    },
+  });
+}
+
 type TestIds = {
   organization: string;
   connection: string;
@@ -648,7 +738,9 @@ function failingProvider(
 }
 
 async function unexpectedAttachmentDownload(): Promise<never> {
-  throw new Error("Attachment download is not expected during receipt hydration.");
+  throw new Error(
+    "Attachment download is not expected during receipt hydration.",
+  );
 }
 
 async function expectTerminal(input: {
