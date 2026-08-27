@@ -94,6 +94,8 @@ export async function getEnvironmentPrivateInference(input: {
           runtimeEligible: isEligibleHostedLanguageModel({
             gatewayProvider: gateway.provider as import("./gateways").GatewayProvider,
             gatewayEnabled: gateway.enabled,
+            gatewayReachable: gateway.credentialStatus === "ready",
+            credentialRevision: gateway.credentialRevision,
             approved: model.approved,
             modality: model.modality as import("./gateways").GatewayModality,
             metadata: model.metadata,
@@ -346,62 +348,65 @@ export async function setEnvironmentDefaultModel(input: {
   actorUserId: string;
 }) {
   await requireOwnedEnvironment(input);
-  const [row] = await knowledgeDb
-    .select({ model: schema.aiGatewayModels, gateway: schema.aiGateways })
-    .from(schema.aiGatewayModels)
-    .innerJoin(
-      schema.aiGateways,
-      eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId)
-    )
-    .where(
-      and(
-        eq(schema.aiGatewayModels.id, input.modelId),
-        eq(schema.aiGatewayModels.approved, true),
-        eq(schema.aiGatewayModels.modality, "language"),
-        eq(schema.aiGateways.enabled, true),
-        eq(schema.aiGateways.organizationId, input.organizationId),
-        eq(schema.aiGateways.environmentId, input.environmentId)
+  return knowledgeDb.transaction(async (transaction) => {
+    const [row] = await transaction
+      .select({ model: schema.aiGatewayModels, gateway: schema.aiGateways })
+      .from(schema.aiGatewayModels)
+      .innerJoin(
+        schema.aiGateways,
+        eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId)
       )
-    )
-    .limit(1);
-  if (
-    !row ||
-    !isEligibleHostedLanguageModel({
-      gatewayProvider: row.gateway.provider as import("./gateways").GatewayProvider,
-      gatewayEnabled: row.gateway.enabled,
-      gatewayReachable: row.gateway.credentialStatus === "ready",
-      credentialRevision: row.gateway.credentialRevision,
-      approved: row.model.approved,
-      modality: row.model.modality as import("./gateways").GatewayModality,
-      metadata: row.model.metadata,
-      rawModelId: row.model.rawModelId,
-    })
-  ) {
-    throw new Error("Model is unavailable in this Environment.");
-  }
-  const [saved] = await knowledgeDb
-    .insert(schema.environmentAiModelDefaults)
-    .values({
-      organizationId: input.organizationId,
-      environmentId: input.environmentId,
-      modality: "language",
-      modelId: input.modelId,
-      updatedByUserId: input.actorUserId,
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: [
-        schema.environmentAiModelDefaults.environmentId,
-        schema.environmentAiModelDefaults.modality,
-      ],
-      set: {
+      .where(
+        and(
+          eq(schema.aiGatewayModels.id, input.modelId),
+          eq(schema.aiGatewayModels.approved, true),
+          eq(schema.aiGatewayModels.modality, "language"),
+          eq(schema.aiGateways.enabled, true),
+          eq(schema.aiGateways.organizationId, input.organizationId),
+          eq(schema.aiGateways.environmentId, input.environmentId)
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (
+      !row ||
+      !isEligibleHostedLanguageModel({
+        gatewayProvider: row.gateway.provider as import("./gateways").GatewayProvider,
+        gatewayEnabled: row.gateway.enabled,
+        gatewayReachable: row.gateway.credentialStatus === "ready",
+        credentialRevision: row.gateway.credentialRevision,
+        approved: row.model.approved,
+        modality: row.model.modality as import("./gateways").GatewayModality,
+        metadata: row.model.metadata,
+        rawModelId: row.model.rawModelId,
+      })
+    ) {
+      throw new Error("Model is unavailable in this Environment.");
+    }
+    const [saved] = await transaction
+      .insert(schema.environmentAiModelDefaults)
+      .values({
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        modality: "language",
         modelId: input.modelId,
         updatedByUserId: input.actorUserId,
         updatedAt: new Date(),
-      },
-    })
-    .returning();
-  return saved;
+      })
+      .onConflictDoUpdate({
+        target: [
+          schema.environmentAiModelDefaults.environmentId,
+          schema.environmentAiModelDefaults.modality,
+        ],
+        set: {
+          modelId: input.modelId,
+          updatedByUserId: input.actorUserId,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return saved;
+  });
 }
 
 async function setEnvironmentDefaultModelIfMissing(input: {

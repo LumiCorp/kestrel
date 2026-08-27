@@ -23,6 +23,29 @@ test("Environment inference routes use organization-admin authority", () => {
   }
 });
 
+test("Environment default eligibility is current and its write is bound to that snapshot", () => {
+  const inference = read("lib/ai/environment-inference.ts");
+  const selector = inference.slice(
+    inference.indexOf("export async function getEnvironmentPrivateInference"),
+    inference.indexOf("export async function connectEnvironmentRunPodEndpoint"),
+  );
+  const defaultMutation = inference.slice(
+    inference.indexOf("export async function setEnvironmentDefaultModel"),
+    inference.indexOf("async function setEnvironmentDefaultModelIfMissing"),
+  );
+
+  assert.match(
+    selector,
+    /gatewayReachable: gateway\.credentialStatus === "ready"[\s\S]{0,120}credentialRevision: gateway\.credentialRevision/u,
+  );
+  assert.match(defaultMutation, /return knowledgeDb\.transaction/u);
+  assert.match(defaultMutation, /\.for\("update"\)/u);
+  assert.match(
+    defaultMutation,
+    /\.for\("update"\)[\s\S]*isEligibleHostedLanguageModel[\s\S]*environmentAiModelDefaults/u,
+  );
+});
+
 test("connected inference remains independent from the managed feature gate", () => {
   const route = read("app/api/organization/environments/[id]/inference/route.ts");
   const connectedBranch = route.indexOf('body.kind === "connected"');
