@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-None.
+- [Serialize cleanup release and audit quarantine](06o-serialize-cleanup-release-and-audit-quarantine.md)
 
 ## Blocked
 
