@@ -4,16 +4,15 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Let the triggered agent read an email attachment](06-read-email-attachments-on-demand.md)
 
 ## Blocked
-- [Let the triggered agent read an email attachment](06-read-email-attachments-on-demand.md) — blocked by [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md)
 - [Retain and inspect email-triggered work safely](07-retain-and-inspect-email-triggered-work.md) — blocked by [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md)
 - [Safely enable and prove email-triggered work](08-enable-and-prove-email-triggered-work.md) — blocked by [Let the triggered agent read an email attachment](06-read-email-attachments-on-demand.md) and [Retain and inspect email-triggered work safely](07-retain-and-inspect-email-triggered-work.md)
 
 ## In progress
 
-- [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md)
+None.
 
 ## Implemented
 
@@ -21,6 +20,7 @@ None.
 
 ## Done
 
+- [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md)
 - [Hydrate and admit one received email](04-hydrate-and-admit-received-email.md)
 - [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
 - [Reconcile configured Receiving Connections into staged webhooks](41-reconcile-configured-receiving-webhooks.md)
