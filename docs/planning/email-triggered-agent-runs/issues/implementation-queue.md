@@ -4,10 +4,10 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Retain and inspect email-triggered work safely](07-retain-and-inspect-email-triggered-work.md)
+- [Safely enable and prove email-triggered work](08-enable-and-prove-email-triggered-work.md)
 
 ## Blocked
-- [Safely enable and prove email-triggered work](08-enable-and-prove-email-triggered-work.md) — blocked by [Let the triggered agent read an email attachment](06-read-email-attachments-on-demand.md) and [Retain and inspect email-triggered work safely](07-retain-and-inspect-email-triggered-work.md)
+None.
 
 ## In progress
 
@@ -19,6 +19,7 @@ None.
 
 ## Done
 
+- [Retain and inspect email-triggered work safely](07-retain-and-inspect-email-triggered-work.md)
 - [Let the triggered agent read an email attachment](06-read-email-attachments-on-demand.md)
 - [Materialize an admitted email as a durable Project run](05-materialize-email-triggered-project-run.md)
 - [Hydrate and admit one received email](04-hydrate-and-admit-received-email.md)
