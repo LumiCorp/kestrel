@@ -77,6 +77,9 @@ import {
 
 const DEFAULT_PROFILE_ID = "kestrel";
 const DEFAULT_HOSTED_AGENT_ID = "kestrel-one";
+const LEGACY_HOSTED_WORKSPACE_PRESET_VERSION = 2;
+const HOSTED_WORKSPACE_POLICY_ID = "kestrel";
+const HOSTED_WORKSPACE_POLICY_VERSION = 4;
 const HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
   "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
@@ -820,13 +823,24 @@ export function assertHostedWorkspaceProfileCompatibility(
       WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION &&
     (resolution.hostedApprovalProducerProtocol === "v2" ||
       resolution.hostedApprovalProducerProtocol === "v4");
-  const legacyPreset3BridgeSupported =
-    resolution.environmentPreset.version === 3 &&
+  const deployedPreset2BridgeSupported =
+    resolution.environmentPreset.version ===
+      LEGACY_HOSTED_WORKSPACE_PRESET_VERSION &&
     resolution.hostedApprovalProducerProtocol === undefined;
+  const policyIdentitySupported =
+    resolution.policy.id === HOSTED_WORKSPACE_POLICY_ID &&
+    resolution.policy.version === HOSTED_WORKSPACE_POLICY_VERSION &&
+    resolution.resolvedProfile.approvalPolicyPackId === "hosted_workspace";
+  const expectedProfileId =
+    `kestrel:workspace_hosted:${resolution.fingerprint}`;
+  const profileIdentitySupported =
+    resolution.profileId === expectedProfileId &&
+    resolution.resolvedProfile.id === expectedProfileId;
   if (
     resolution.environmentPreset.id !== "workspace_hosted" ||
-    !(preset4ProducerSupported || legacyPreset3BridgeSupported) ||
-    resolution.resolvedProfile.approvalPolicyPackId !== "hosted_workspace"
+    !(preset4ProducerSupported || deployedPreset2BridgeSupported) ||
+    !policyIdentitySupported ||
+    !profileIdentitySupported
   ) {
     throw Object.assign(
       new Error("The runner does not support the current hosted approval contract."),
@@ -836,10 +850,15 @@ export function assertHostedWorkspaceProfileCompatibility(
           environmentPreset: resolution.environmentPreset,
           approvalPolicyPackId:
             resolution.resolvedProfile.approvalPolicyPackId ?? null,
+          profileId: resolution.profileId,
           requiredPresetVersion: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+          policy: resolution.policy,
           hostedApprovalProducerProtocol:
             resolution.hostedApprovalProducerProtocol ?? null,
-          acceptedPresetVersions: [3, WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION],
+          acceptedPresetVersions: [
+            LEGACY_HOSTED_WORKSPACE_PRESET_VERSION,
+            WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+          ],
         },
       },
     );

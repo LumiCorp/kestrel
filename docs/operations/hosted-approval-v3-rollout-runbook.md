@@ -15,11 +15,12 @@ depends_on:
 
 This is the operator procedure for
 [Issue 05](../planning/hosted-approval-simplification/issues/05-contract-legacy-approval-paths.md).
-It first establishes a dual-profile Web bridge against the uniform preset-3
-fleet. It then builds and rolls preset-4 compatibility images that still emit
-V2, proves the inactive V2 boundary, and only afterward builds and activates
-V4 producers on exact targets. Finally it observes legacy drain before
-permitting a separate cleanup release.
+It first establishes a Web bridge against the actual uniform, unmarked
+`workspace_hosted` preset-2 production fleet from baseline `1760c3769`. It
+then builds and rolls marked preset-4 compatibility images that still emit V2,
+proves the inactive V2 boundary, and only afterward builds and activates V4
+producers on exact targets. Finally it observes legacy drain before permitting
+a separate cleanup release.
 
 This runbook does not authorize a deployment. The operator must have an
 approved production change window and must retain every checkpoint named
@@ -31,11 +32,19 @@ provider credentials into the evidence record.
 Use one qualified bridge source release and two separately qualified producer
 artifact modes. Never collapse their production evidence:
 
-1. **Bridge source commit:** V2/V3/V4 readers, a Web assertion accepting
-   only legacy `workspace_hosted` preset 3 or explicitly marked preset 4 with
-   the `hosted_workspace` pack, parameterized producer Dockerfiles, migrations,
-   proof tooling, and telemetry. The compatibility images are built with
-   `KESTREL_HOSTED_APPROVAL_PROTOCOL=v2` and carry the matching OCI label.
+1. **Bridge source commit:** V2/V3/V4 readers and a temporary Web assertion
+   with exactly three accepted hosted producer profiles: unmarked
+   `workspace_hosted` preset 2 with policy `kestrel` version 4 and the
+   `hosted_workspace` pack; preset 4 with that same policy identity, pack, and
+   explicit producer marker `v2`; or preset 4 with that identity, pack, and
+   marker `v4`. Every accepted result also has the canonical
+   `kestrel:workspace_hosted:<fingerprint>` profile identity. Preset 2 with any
+   producer marker, unmarked preset 3, `ci_bot`, another pack or policy
+   identity, an unknown profile or preset, and an unsupported protocol fail
+   closed. This release also contains parameterized producer Dockerfiles,
+   migrations, proof tooling, and telemetry. The compatibility images are
+   built with `KESTREL_HOSTED_APPROVAL_PROTOCOL=v2` and carry the matching OCI
+   label.
 2. **Activation artifacts:** images built from that same qualified source with
    `KESTREL_HOSTED_APPROVAL_PROTOCOL=v4` and the matching OCI label. Record
    different immutable tags and registry digests. A protocol build argument is
@@ -66,7 +75,7 @@ Complete current provider state before changing anything.
 
 Stop if the repository delta proves an “unaffected” target changed.
 
-## Stage 0 — inventory preset 3 and qualify both artifact modes
+## Stage 0 — inventory the deployed preset-2 baseline and qualify both artifact modes
 
 Record:
 
@@ -86,6 +95,8 @@ current runtime pair:
 turn-worker Machine IDs, states, checks, and images:
 rollback image for every target:
 resolved profile for every started producer:
+resolved policy identity and policy pack for every started producer:
+producer protocol marker or confirmed absence for every started producer:
 ```
 
 Refresh the protected branches and inspect the complete delta. Require a clean
@@ -100,11 +111,15 @@ pnpm --dir apps/web build
 ```
 
 Before qualification, resolve every started turn-worker and Environment
-profile. Stop unless the production fleet is uniformly
-`workspace_hosted` preset 3 with the `hosted_workspace` policy pack. Preset 2,
-preset 4, `ci_bot`, an unknown pack, or a mixed fleet is not an accepted
-starting state. The current Web deployment is only a rollback target for this
-uniform preset-3 fleet; this runbook never claims it accepts preset 4.
+profile. Stop unless the production fleet is uniformly the exact deployed
+baseline: `workspace_hosted` preset 2, policy `kestrel` version 4,
+`hosted_workspace`, canonical `kestrel:workspace_hosted:<fingerprint>` profile
+identity, and no `hostedApprovalProducerProtocol` field. Preset 2 with any
+producer marker or contradictory policy metadata, preset 3, preset 4,
+`ci_bot`, another pack, an unknown profile, or a mixed fleet is not the
+reviewed starting state. The current pre-bridge Web deployment is a rollback
+target only while this exact unmarked preset-2 inventory remains uniform; this
+runbook never claims that old Web accepts marked preset 4.
 
 From that exact checkout, build the three affected production images once in
 each producer mode. Use a different local tag for each artifact boundary and
@@ -152,48 +167,50 @@ by `docker image inspect`. Retain the resolved `workspace_hosted` preset version
 4 and `hosted_workspace` policy-pack evidence for the compatibility image. The
 turn-worker does not participate in this local Runtime-pair path and remains
 gated by its extraction/startup smoke above and the production durable-turn
-canary in Stage 1. If the repository cannot route the real-model path through
+canary in Stage 2. If the repository cannot route the real-model path through
 the prebuilt Runtime pair, stop here and repair that test seam; source tests,
 image health, or a later production canary do not replace it.
 
 **Resume evidence:** bridge source commit SHA, four validation results, Web build,
-three image IDs and smokes for each commit, and exact local-image real-model
-results.
+three image IDs and smokes for each artifact mode, and exact local-image
+real-model results.
 
-## Stage 1 — deploy the dual-profile bridge against preset 3
+## Stage 1 — deploy the bridge against the unmarked preset-2 baseline
 
 Promote the exact bridge/compatibility commit through the protected `main` to
-`production` path while every producer remains on the Stage 0 preset-3
-inventory. Wait for native `one` and `docs` deployments, then require the
-`one` migration/build and both production deployments to pass.
+`production` path while every producer remains on the Stage 0 unmarked
+preset-2 inventory. Wait for native `one` and `docs` deployments, then require
+the `one` migration/build and both production deployments to pass.
 
 1. Confirm Web and Mobile read V2, V3, and V4 while old boolean submissions
    remain accepted.
 2. Resolve the profile from every inventoried producer. The bridge must accept
-   exact `workspace_hosted` preset 3 with `hosted_workspace`.
-3. Use a non-executing contract probe to prove preset 2, `ci_bot`, unknown
-   policy packs, and preset 4 without an explicit supported producer marker
-   still fail closed before model spend.
-4. Repeat the exact-tool no-spend preflight on one preset-3 canary Environment.
+   the exact unmarked `workspace_hosted` preset-2, `kestrel` version-4,
+   `hosted_workspace` baseline.
+3. Use a non-executing contract probe to prove preset 2 with `v2`, `v3`, or
+   `v4` producer metadata; preset 3; `ci_bot`; another policy pack or policy
+   identity; an unknown profile; unmarked preset 4; and unsupported protocols
+   all fail closed before model spend.
+4. Repeat the exact-tool no-spend preflight on one preset-2 canary Environment.
    Require `exec_command` Ask First without creating a turn or model request.
-5. Complete one bounded preset-3 V2 decline and require a terminal decision
+5. Complete one bounded baseline V2 decline and require a terminal decision
    with no provider effect.
 
 Do not publish or roll a preset-4 image until all bridge evidence is retained.
 
 **Rollback:** restore the recorded Web deployment. This is safe only because
-the producer fleet is still uniformly preset 3. Never roll back to pre-bridge
-Web after any preset-4 producer is active.
+the producer fleet is still uniformly the exact unmarked preset-2 baseline.
+Never roll back to pre-bridge Web after any preset-4 producer is active.
 
 **Resume evidence:** promotion PR and commit; both Vercel deployment IDs;
-migration/build results; complete preset-3 inventory; dual-profile assertion
+migration/build results; complete preset-2 inventory; exact bridge allowlist
 proof; fail-closed probes; no-spend preflight; V2 decline; and rollback ID.
 
 ## Stage 2 — build, prove, and roll preset-4/V2 compatibility images
 
-Stage 1 must establish the bridge Web while the fleet is still uniformly
-preset 3. Use the exact bridge source checkout qualified in Stage 0 and
-publish new immutable tags only:
+Stage 1 must establish the bridge Web while the fleet is still uniformly the
+unmarked preset-2 baseline. Use the exact bridge source checkout qualified in
+Stage 0 and publish new immutable tags only:
 
 ```bash
 pnpm production:image:publish --role workspace-runtime --tag <compatibility-tag> --approval-protocol v2
@@ -232,8 +249,6 @@ published digests. Then:
 
 Do not roll back Web to its pre-bridge deployment. An old Web cannot accept
 preset 4. Do not start the drain clock; V2 production is still expected.
-
-Do not start the drain clock. V2 production is still expected.
 
 **Rollback:** restore each exact turn-worker Machine to its recorded image.
 Restore the complete Router/Workspace pair on the canary Environment, prove
@@ -438,8 +453,11 @@ completion, and terminal incident evidence.
 Only after Stage 6 evidence is complete, implement the deletion list in Issue
 05 as a separate reviewed change. Remove the incident command only after its
 target rows are terminal. This is also the earliest release that may remove
-the preset-3 Web bridge and restore a strict preset-4 assertion. Run all four
-gates, both image qualifications, and the full acceptance suite again.
+the temporary unmarked preset-2 Web allowance and restore a strict marked
+preset-4 assertion. Remove it only after the Stage 6 report and complete
+Machine and Environment inventory prove that no preset-2 producer remains or
+can re-enter service. Run all four gates, both image qualifications, and the
+full acceptance suite again.
 
 After cleanup, old writers are not a rollback option. Failures are fixed
 forward while preserving canonical interactions, consume-before-provider
