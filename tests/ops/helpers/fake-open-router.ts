@@ -18,7 +18,7 @@ interface FakeOpenRouterScenarioState {
 }
 
 export async function startFakeOpenRouterServer(
-  input: { port?: number | undefined } = {}
+  input: { port?: number | undefined } = {},
 ): Promise<FakeOpenRouterServer> {
   const requests: Array<{ schemaName: string; userMessage: string }> = [];
   const scenarios: FakeOpenRouterScenarioState = {
@@ -74,7 +74,7 @@ async function handleFakeOpenRouterRequest(
   request: IncomingMessage,
   response: ServerResponse,
   requests: Array<{ schemaName: string; userMessage: string }>,
-  scenarios: FakeOpenRouterScenarioState
+  scenarios: FakeOpenRouterScenarioState,
 ): Promise<void> {
   if (request.url === "/health") {
     response.writeHead(200, { "content-type": "application/json" });
@@ -87,20 +87,48 @@ async function handleFakeOpenRouterRequest(
       "content-type": "application/json",
       connection: "close",
     });
-    response.end(JSON.stringify({
-      data: [{
-        id: PRODUCT_CONTRACT_MODEL,
-        context_length: 131_072,
-        top_provider: {
-          context_length: 131_072,
-          max_completion_tokens: 16_384,
-        },
-      }],
-    }));
+    response.end(
+      JSON.stringify({
+        data: [
+          {
+            id: PRODUCT_CONTRACT_MODEL,
+            context_length: 131_072,
+            top_provider: {
+              context_length: 131_072,
+              max_completion_tokens: 16_384,
+            },
+            supported_parameters: [
+              "response_format",
+              "structured_outputs",
+              "tools",
+              "tool_choice",
+              "parallel_tool_calls",
+              "strict_tool_inputs",
+            ],
+            endpoints: [
+              {
+                id: "product-contract-provider",
+                supported_parameters: [
+                  "response_format",
+                  "structured_outputs",
+                  "tools",
+                  "tool_choice",
+                  "parallel_tool_calls",
+                  "strict_tool_inputs",
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
     return;
   }
 
-  if (request.url === "/api/v1/model/z-ai/glm-5.2" && request.method === "GET") {
+  if (
+    request.url === "/api/v1/model/z-ai/glm-5.2" &&
+    request.method === "GET"
+  ) {
     const authorization = request.headers.authorization;
     if (authorization !== "Bearer product-contract-key") {
       response.writeHead(401, {
@@ -114,17 +142,40 @@ async function handleFakeOpenRouterRequest(
       "content-type": "application/json",
       connection: "close",
     });
-    response.end(JSON.stringify({
-      data: {
-        id: PRODUCT_CONTRACT_MODEL,
-        canonical_slug: PRODUCT_CONTRACT_MODEL,
-        context_length: 131_072,
-        top_provider: {
+    response.end(
+      JSON.stringify({
+        data: {
+          id: PRODUCT_CONTRACT_MODEL,
+          canonical_slug: PRODUCT_CONTRACT_MODEL,
           context_length: 131_072,
-          max_completion_tokens: 16_384,
+          top_provider: {
+            context_length: 131_072,
+            max_completion_tokens: 16_384,
+          },
+          supported_parameters: [
+            "response_format",
+            "structured_outputs",
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "strict_tool_inputs",
+          ],
+          endpoints: [
+            {
+              id: "product-contract-provider",
+              supported_parameters: [
+                "response_format",
+                "structured_outputs",
+                "tools",
+                "tool_choice",
+                "parallel_tool_calls",
+                "strict_tool_inputs",
+              ],
+            },
+          ],
         },
-      },
-    }));
+      }),
+    );
     return;
   }
 
@@ -195,28 +246,31 @@ async function handleFakeOpenRouterRequest(
     typeof lastMessage === "string" ? parseFakeModelMessage(lastMessage) : {};
   const userMessage = trimForUnderstanding(
     parsedMessage.userMessage ??
-      (typeof lastMessage === "string" ? lastMessage : "")
+      (typeof lastMessage === "string" ? lastMessage : ""),
   );
   const modeSource = `${body}\n${rawMessage}\n${userMessage}`;
   const toolNames = new Set(
     parsed.tools?.flatMap((tool) =>
-      tool.function?.name ? [tool.function.name] : []
-    ) ?? []
+      tool.function?.name ? [tool.function.name] : [],
+    ) ?? [],
   );
   const finalizeToolName = toolNames.has("kestrel.finalize")
     ? "kestrel.finalize"
     : toolNames.has("kestrel_finalize")
       ? "kestrel_finalize"
       : null;
+  const qualificationToolName = toolNames.has("probe_tool")
+    ? "probe_tool"
+    : null;
   const askUserToolName = toolNames.has("kestrel.ask_user")
     ? "kestrel.ask_user"
     : toolNames.has("kestrel_ask_user")
       ? "kestrel_ask_user"
       : null;
-  const toolMode = finalizeToolName !== null;
+  const toolMode = finalizeToolName !== null || qualificationToolName !== null;
   const callId = parsed.metadata?.callId ?? `request-${requests.length}`;
   process.stderr.write(
-    `[fake-openrouter] url=${request.url ?? "none"} schema=${schemaName ?? "none"} tools=${[...toolNames].join(",") || "none"}\n`
+    `[fake-openrouter] url=${request.url ?? "none"} schema=${schemaName ?? "none"} tools=${[...toolNames].join(",") || "none"}\n`,
   );
 
   if (
@@ -251,7 +305,7 @@ async function handleFakeOpenRouterRequest(
           },
         ],
         usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
-      })
+      }),
     );
     return;
   }
@@ -264,10 +318,29 @@ async function handleFakeOpenRouterRequest(
 
   requests.push({ schemaName: schemaName ?? "tool_call", userMessage });
 
+  if (schemaName === "qualification_probe") {
+    response.writeHead(200, {
+      "content-type": "application/json",
+      connection: "close",
+    });
+    response.end(
+      JSON.stringify({
+        model: PRODUCT_CONTRACT_MODEL,
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { content: JSON.stringify({ ok: true }) },
+          },
+        ],
+      }),
+    );
+    return;
+  }
+
   if (schemaName !== undefined && schemaName !== "kestrel_agent_action") {
     response.writeHead(400, { "content-type": "application/json" });
     response.end(
-      JSON.stringify({ error: `unsupported schema '${schemaName}'` })
+      JSON.stringify({ error: `unsupported schema '${schemaName}'` }),
     );
     return;
   }
@@ -305,7 +378,7 @@ async function handleFakeOpenRouterRequest(
         choices: [
           { message: { content: JSON.stringify({ notNextAction: true }) } },
         ],
-      })
+      }),
     );
     return;
   }
@@ -324,11 +397,12 @@ async function handleFakeOpenRouterRequest(
       (scenarios.waitingCallId === undefined ||
         scenarios.waitingCallId === callId);
     if (waiting) scenarios.waitingCallId ??= callId;
-    const providerToolName = waiting ? askUserToolName : finalizeToolName;
+    const providerToolName =
+      qualificationToolName ?? (waiting ? askUserToolName : finalizeToolName);
     if (!providerToolName) {
       response.writeHead(400, { "content-type": "application/json" });
       response.end(
-        JSON.stringify({ error: `missing tool '${providerToolName}'` })
+        JSON.stringify({ error: `missing tool '${providerToolName}'` }),
       );
       return;
     }
@@ -338,12 +412,14 @@ async function handleFakeOpenRouterRequest(
       type: "function_call",
       name,
       arguments: JSON.stringify(
-        waiting
-          ? { prompt: "Which workspace should I inspect?" }
-          : {
-              status: "goal_satisfied",
-              message: "Hello from the fake cross-surface model.",
-            }
+        qualificationToolName !== null
+          ? {}
+          : waiting
+            ? { prompt: "Which workspace should I inspect?" }
+            : {
+                status: "goal_satisfied",
+                message: "Hello from the fake cross-surface model.",
+              },
       ),
     };
     if (parsed.stream === true) {
@@ -372,7 +448,7 @@ async function handleFakeOpenRouterRequest(
               },
             },
           ],
-        })}\n\n`
+        })}\n\n`,
       );
       response.end("data: [DONE]\n\n");
       return;
@@ -404,7 +480,7 @@ async function handleFakeOpenRouterRequest(
             },
           },
         ],
-      })
+      }),
     );
     return;
   }
@@ -454,12 +530,12 @@ async function handleFakeOpenRouterRequest(
                     },
                     reason:
                       "This deterministic test path can answer directly without tools.",
-                  }
+                  },
             ),
           },
         },
       ],
-    })
+    }),
   );
 }
 
@@ -496,8 +572,8 @@ function parseFakeModelMessage(content: string): {
 }
 
 function extractTaskSource(content: string): string | undefined {
-  const match = content.match(/^Task source:\s*\n(?<task>.+)$/imu);
-  return match?.groups?.task?.trim();
+  const match = content.match(/^Task source:\s*\n(.+)$/imu);
+  return match?.[1]?.trim();
 }
 
 function trimForUnderstanding(value: string): string {
@@ -566,7 +642,7 @@ function readPort(args: string[]): number | undefined {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   void main().catch((error) => {
     process.stderr.write(
-      `${error instanceof Error ? error.message : String(error)}\n`
+      `${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.exitCode = 1;
   });

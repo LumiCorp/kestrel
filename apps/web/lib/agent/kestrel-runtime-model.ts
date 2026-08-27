@@ -14,21 +14,22 @@ import {
   type ModelCredentialRouteBindingV2,
 } from "../../../../src/kestrel/contracts/model-route";
 import {
-  ANTHROPIC_MODELS_API_TRANSLATOR_REVISION,
-} from "../../../../models/anthropic/AnthropicModelManifest";
-import {
-  OPENAI_MODEL_MANIFEST_REVISION,
-} from "../../../../models/openai/OpenAiModelManifest";
-import {
   fingerprintModelRoutingPolicyV2,
   parseModelRegistrationV2,
   type ModelRegistrationV2,
 } from "../../../../src/kestrel/contracts/model-registration";
-import { OPENROUTER_MODEL_DETAIL_TRANSLATOR_REVISION } from "../ai/openrouter-model-resolution";
 import { readHostedOpenRouterRouteEvidence } from "../ai/hosted-model-registration";
+import {
+  currentHostedModelAdapterRevision,
+  hostedModelRoleUnavailableReason,
+  isHostedModelProvider,
+  isHostedModelRoleReady,
+  readHostedModelReadiness,
+} from "../ai/hosted-model-readiness";
 import type { OpenRouterQualifiedRouteEvidence } from "../../../../models/openrouter/OpenRouterV2Codec";
 
 type RunnerModelProvider = NonNullable<RunnerProfile["modelProvider"]>;
+type KestrelOneManagedModelProvider = Exclude<RunnerModelProvider, "lmstudio">;
 
 export type KestrelOneRuntimeModelSelection = {
   id: string;
@@ -36,7 +37,7 @@ export type KestrelOneRuntimeModelSelection = {
   organizationId: string;
   environmentId: string;
   model: string;
-  provider: RunnerModelProvider;
+  provider: KestrelOneManagedModelProvider;
   routeBinding?: ModelCredentialRouteBindingV2 | undefined;
   registration?: ModelRegistrationV2 | undefined;
   openRouterRouteEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
@@ -114,13 +115,39 @@ export function toKestrelOneRuntimeModelSelection(input: {
     throw error;
   }
 
+  const requiredRole = input.requiredRole ?? "agent.loop";
+  const usesHostedRegistration = isHostedModelProvider(input.gatewayProvider);
+  const readiness = readHostedModelReadiness({
+    approved: true,
+    provider,
+    modelId: input.rawModelId,
+    metadata: input.metadata,
+    credentialRevision: input.credentialRevision,
+  });
+  if (
+    usesHostedRegistration &&
+    !isHostedModelRoleReady(readiness, requiredRole)
+  ) {
+    const error = new Error(
+      hostedModelRoleUnavailableReason(readiness, requiredRole) ??
+        `Hosted model \"${input.id}\" is not eligible for runtime role \"${requiredRole}\".`,
+    );
+    Object.assign(error, { code: "HOSTED_MODEL_ROLE_UNAVAILABLE" });
+    throw error;
+  }
+
   const qualifiedRoute = readQualifiedRoute({
     metadata: input.metadata,
     provider: provider as ModelCredentialRouteBindingV2["provider"],
     rawModelId: input.rawModelId,
     credentialRevision: input.credentialRevision,
-    requiredRole: input.requiredRole ?? "agent.loop",
+    requiredRole,
   });
+  if (usesHostedRegistration && qualifiedRoute === undefined) {
+    throw new Error(
+      `Hosted model \"${input.id}\" has no current exact route binding for runtime role \"${requiredRole}\".`,
+    );
+  }
 
   return {
     id: input.id,
@@ -128,7 +155,7 @@ export function toKestrelOneRuntimeModelSelection(input: {
     organizationId: input.organizationId,
     environmentId: input.environmentId,
     model: input.rawModelId,
-    provider: provider as RunnerModelProvider,
+    provider: provider as KestrelOneManagedModelProvider,
     ...(qualifiedRoute === undefined
       ? {}
       : {
@@ -249,7 +276,7 @@ function readQualifiedRoute(input: {
     parsed.qualification.state !== "qualified" ||
     parsed.qualification.revision === undefined ||
     parsed.credentialRevision !== String(input.credentialRevision) ||
-    parsed.adapterRevision !== currentAdapterRevision(parsed.providerId)
+    parsed.adapterRevision !== currentHostedModelAdapterRevision(parsed.providerId)
   ) {
     // Existing registrations that are pending, stale, or from an older
     // adapter revision remain reachable only through the explicit legacy
@@ -288,19 +315,6 @@ function readQualifiedRoute(input: {
       credentialRevision: input.credentialRevision,
     },
   };
-}
-
-function currentAdapterRevision(provider: ModelRegistrationV2["providerId"]): string | undefined {
-  switch (provider) {
-    case "openai":
-      return OPENAI_MODEL_MANIFEST_REVISION;
-    case "openrouter":
-      return OPENROUTER_MODEL_DETAIL_TRANSLATOR_REVISION;
-    case "anthropic":
-      return ANTHROPIC_MODELS_API_TRANSLATOR_REVISION;
-    default:
-      return;
-  }
 }
 
 export function isKestrelOneManagedRuntimeModel(

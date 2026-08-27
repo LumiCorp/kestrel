@@ -6,6 +6,7 @@ import {
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { ModelCredentialRouteBindingV2 } from "../../../../src/kestrel/contracts/model-route";
 import { isGatewayCredentialReadyForRuntime } from "@/lib/ai/gateway-credential-health";
+import { isHostedModelProvider, isHostedModelRoleReady, readHostedModelReadiness } from "@/lib/ai/hosted-model-readiness";
 import type { KestrelOneCapabilityApprovalPolicyEvidence } from "@/lib/agent/kestrel-tool-profile";
 import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
 import { ensureEnvironmentAppPolicies } from "@/lib/apps/service";
@@ -849,6 +850,29 @@ export async function activateEnvironmentModelGrant(input: {
 }) {
   const now = new Date();
   await knowledgeDb.transaction(async (transaction) => {
+    const [existingGrant] = await transaction
+      .select({
+        gatewayId: schema.environmentModelGrants.gatewayId,
+        rawModelId: schema.environmentModelGrants.rawModelId,
+      })
+      .from(schema.environmentModelGrants)
+      .where(
+        and(
+          eq(schema.environmentModelGrants.organizationId, input.organizationId),
+          eq(schema.environmentModelGrants.runId, input.runId),
+        ),
+      )
+      .limit(1)
+      .for("share");
+    if (
+      existingGrant &&
+      (existingGrant.gatewayId !== input.gatewayId ||
+        existingGrant.rawModelId !== input.rawModelId)
+    ) {
+      throw new Error(
+        "Environment model grant historical model identity is immutable.",
+      );
+    }
     const [candidate] = await transaction
       .select({ deploymentId: schema.aiGateways.deploymentId })
       .from(schema.aiGatewayModels)
@@ -889,6 +913,8 @@ export async function activateEnvironmentModelGrant(input: {
     const [model] = await transaction
       .select({
         id: schema.aiGatewayModels.id,
+        approved: schema.aiGatewayModels.approved,
+        metadata: schema.aiGatewayModels.metadata,
         enabled: schema.aiGateways.enabled,
         deploymentId: schema.aiGateways.deploymentId,
         provider: schema.aiGateways.provider,
@@ -929,6 +955,28 @@ export async function activateEnvironmentModelGrant(input: {
       throw new Error("Environment model grant gateway model is unavailable.");
     }
     const routeBinding = input.routeBinding;
+    const requiredRole =
+      routeBinding?.status === "qualified"
+        ? routeBinding.requiredRole
+        : "agent.loop";
+    const readiness = readHostedModelReadiness({
+      approved: model.approved,
+      gatewayEnabled: model.enabled,
+      gatewayReachable: model.credentialStatus === "ready",
+      provider: model.provider,
+      modelId: input.rawModelId,
+      metadata: model.metadata,
+      credentialRevision: model.credentialRevision,
+    });
+    if (
+      isHostedModelProvider(model.provider) &&
+      (routeBinding?.status !== "qualified" ||
+        !isHostedModelRoleReady(readiness, requiredRole))
+    ) {
+      throw new Error(
+        "Environment model grant exact role qualification is unavailable.",
+      );
+    }
     if (
       routeBinding?.status === "qualified" &&
       (routeBinding.rawModelId !== input.rawModelId ||

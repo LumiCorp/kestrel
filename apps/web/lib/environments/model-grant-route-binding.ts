@@ -5,7 +5,7 @@ import {
 
 type StoredModelGrantRouteBinding = {
   routeBindingStatus: "qualified" | "legacy_unqualified" | null;
-  routeProvider: ModelCredentialRouteBindingV2["provider"] | null;
+  routeProvider: string | null;
   rawModelId: string;
   modelRegistrationId: string | null;
   modelRegistrationRevision: string | null;

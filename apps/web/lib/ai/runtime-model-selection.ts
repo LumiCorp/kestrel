@@ -7,7 +7,15 @@ import {
   parseDesktopLocalRuntimeModelId,
   selectGatewayModelSelection,
 } from "./gateway-utils";
-import { getGatewayModelEconomicsProvider, readGatewayModelEconomicsProfile } from "./model-economics-profile";
+import {
+  getGatewayModelEconomicsProvider,
+  readGatewayModelEconomicsProfile,
+} from "./model-economics-profile";
+import {
+  isHostedModelProvider,
+  isHostedModelRoleReady,
+  readHostedModelReadiness,
+} from "./hosted-model-readiness";
 
 export type RuntimeModelSelectionTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
@@ -20,7 +28,11 @@ export type ResolvedKestrelRuntimeModelIdentity = {
 
 async function listAvailableKestrelRuntimeGatewayModels(
   transaction: RuntimeModelSelectionTransaction,
-  input: { organizationId: string; environmentId: string },
+  input: {
+    organizationId: string;
+    environmentId: string;
+    requiredRole?: string | undefined;
+  },
 ) {
   const rows = await transaction
     .select({
@@ -29,6 +41,8 @@ async function listAvailableKestrelRuntimeGatewayModels(
       rawModelId: schema.aiGatewayModels.rawModelId,
       isDefault: schema.aiGatewayModels.isDefault,
       gatewayProvider: schema.aiGateways.provider,
+      credentialRevision: schema.aiGateways.credentialRevision,
+      credentialStatus: schema.aiGateways.credentialStatus,
       metadata: schema.aiGatewayModels.metadata,
     })
     .from(schema.aiGatewayModels)
@@ -57,10 +71,26 @@ async function listAvailableKestrelRuntimeGatewayModels(
         modality: "language",
         metadata: row.metadata,
       });
-      return provider !== undefined && readGatewayModelEconomicsProfile(row.metadata, {
-        provider,
-        model: row.rawModelId,
-      }) !== undefined;
+      return (
+        provider !== undefined &&
+        readGatewayModelEconomicsProfile(row.metadata, {
+          provider,
+          model: row.rawModelId,
+        }) !== undefined &&
+        (!isHostedModelProvider(row.gatewayProvider) ||
+          isHostedModelRoleReady(
+            readHostedModelReadiness({
+              approved: true,
+              gatewayEnabled: true,
+              gatewayReachable: row.credentialStatus === "ready",
+              provider: row.gatewayProvider,
+              modelId: row.rawModelId,
+              metadata: row.metadata,
+              credentialRevision: row.credentialRevision,
+            }),
+            input.requiredRole,
+          ))
+      );
     })
     .map((row) => ({
       ...row,
@@ -74,6 +104,7 @@ export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
     organizationId: string;
     environmentId: string;
     modelIds: readonly string[];
+    requiredRole?: string | undefined;
   },
 ) {
   const modelIds = [...new Set(input.modelIds.map((value) => value.trim()))].filter(
@@ -138,6 +169,7 @@ export async function isKestrelRuntimeModelSelectionAvailableInTransaction(
     organizationId: string;
     environmentId: string;
     modelId: string;
+    requiredRole?: string | undefined;
   },
 ) {
   const modelId = input.modelId.trim();

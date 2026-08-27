@@ -856,8 +856,9 @@ test("Environment update trusts Workspace health after an explicit start when Fl
     calls.push(`provider:wait:${input.machineId}:${input.state}`);
     if (input.machineId === "workspace-machine-id" && input.state === "started") {
       throw new EnvironmentProviderError(
-        "FLY_PROVIDER_TIMEOUT",
+        "FLY_PROVIDER_UNAVAILABLE",
         "Fly reported a stale stopped snapshot after the Machine started",
+        408,
       );
     }
   };

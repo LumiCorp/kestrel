@@ -6,6 +6,7 @@ import {
   getSpeechModelForLanguageSelection,
   listApprovedModels,
 } from "@/lib/ai/gateways";
+import { isHostedRuntimeRole } from "@/lib/ai/hosted-model-readiness";
 import {
   getDefaultOrganizationEnvironment,
   getOrganizationEnvironment,
@@ -22,6 +23,13 @@ const querySchema = z.object({
   pairedWith: z.string().optional(),
   threadId: z.string().min(1).optional(),
   projectId: z.string().min(1).optional(),
+  runtimeRole: z
+    .string()
+    .optional()
+    .default("agent.loop")
+    .refine(isHostedRuntimeRole, {
+      message: "runtimeRole must have a product-owned capability contract",
+    }),
 });
 
 export async function GET(request: NextRequest) {
@@ -73,7 +81,8 @@ export async function GET(request: NextRequest) {
     if (query.modality === "language" || !query.modality) {
       const languageModels = await getApprovedLanguageModels(
         organizationId,
-        environment.id
+        environment.id,
+        query.runtimeRole,
       );
       const desktopConnection =
         environment.provider === "desktop"

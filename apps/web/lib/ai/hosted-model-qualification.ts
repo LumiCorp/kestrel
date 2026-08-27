@@ -18,19 +18,21 @@ import {
 import { hashCanonical } from "../../../../src/kestrel/contracts/tool-contract";
 import { GatewayModelProviderResolutionError } from "./gateway-lifecycle-error";
 import { createHostedModelQualificationProjection } from "./hosted-model-registration";
+import { HOSTED_RUNTIME_ROLE_REQUIREMENTS } from "./hosted-model-readiness";
 
 /** The only automatic approval profile. Advanced capabilities stay opt-in. */
 export const HOSTED_AGENT_LOOP_QUALIFICATION_CAPABILITIES = [
-  "provider_strict_schema",
-  "native_tools",
-  "required_tool_choice",
-  "strict_tool_inputs",
+  ...HOSTED_RUNTIME_ROLE_REQUIREMENTS["agent.loop"],
 ] as const satisfies readonly ModelQualificationCapability[];
 
 export const HOSTED_AGENT_LOOP_PROBE_REVISION = "hosted-agent-loop-v1";
 
 type HostedAgentLoopCapability =
   (typeof HOSTED_AGENT_LOOP_QUALIFICATION_CAPABILITIES)[number];
+type HostedQualificationFetch = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
 
 /**
  * Runs the explicitly approved agent-loop probe set through the installed
@@ -41,7 +43,7 @@ export async function qualifyHostedAgentLoopModel(input: {
   registration: ModelRegistrationV2;
   credential: { revision: string; apiKey: string };
   openRouterRouteEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
-  fetchImpl?: typeof fetch | undefined;
+  fetchImpl?: HostedQualificationFetch | undefined;
   now?: (() => Date) | undefined;
 }): Promise<{
   registration: ModelRegistrationV2;
@@ -54,7 +56,9 @@ export async function qualifyHostedAgentLoopModel(input: {
     ...(input.openRouterRouteEvidence === undefined
       ? {}
       : { openRouterRouteEvidence: input.openRouterRouteEvidence }),
-    ...(input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl }),
+    ...(input.fetchImpl === undefined
+      ? {}
+      : { fetchImpl: input.fetchImpl as typeof fetch }),
   });
   const service = new ModelQualificationService({
     freshnessMs: 0,

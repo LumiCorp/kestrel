@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createExactModelQualificationGateway } from "../../../../models";
+import {
+  createModelRequestV2,
+} from "../../../../src/kestrel/contracts/model-registration";
+import {
+  ModelQualificationService,
+  runLiveModelQualification,
+  type ModelQualificationCapability,
+} from "../../../../src/kestrel/model-qualification";
 import {
   createHostedModelRegistration,
   readHostedOpenRouterRouteEvidence,
@@ -9,13 +18,17 @@ import {
   qualifyHostedAgentLoopModel,
 } from "./hosted-model-qualification";
 import { GatewayModelProviderResolutionError } from "./gateway-lifecycle-error";
+import { startFakeOpenRouterServer } from "../../../../tests/ops/helpers/fake-open-router";
 
-function openRouterRegistrationFixture() {
+function openRouterRegistrationFixture(
+  endpoint = "https://openrouter.example/api/v1",
+  modelId = "z-ai/glm-test",
+) {
   return createHostedModelRegistration({
-    registrationId: "hosted:gateway-1:z-ai/glm-test",
+    registrationId: `hosted:gateway-1:${modelId}`,
     revision: "registration-1",
     observedAt: "2026-08-26T00:00:00.000Z",
-    modelId: "z-ai/glm-test",
+    modelId,
     credentialRevision: "7",
     providerConfiguration: {
       version: "provider_runtime_configuration_v1",
@@ -25,7 +38,7 @@ function openRouterRegistrationFixture() {
         mode: "required",
         credentialReference: { source: "hosted", id: "provider.openrouter.hosted" },
       },
-      endpoint: "https://openrouter.example/api/v1",
+      endpoint,
       timeoutMs: 15_000,
       allowedHeaders: [],
       dataHandling: "provider_managed",
@@ -33,7 +46,7 @@ function openRouterRegistrationFixture() {
     providerEvidence: {
       provider: "openrouter",
       details: {
-        id: "z-ai/glm-test",
+        id: modelId,
         supported_parameters: [
           "response_format",
           "structured_outputs",
@@ -54,6 +67,100 @@ function openRouterRegistrationFixture() {
           ],
         }],
       },
+    },
+  });
+}
+
+test("product-contract fake OpenRouter proves the exact hosted qualification contract", async (t) => {
+  const fake = await startFakeOpenRouterServer();
+  t.after(() => fake.close());
+  const created = openRouterRegistrationFixture(fake.url, "z-ai/glm-5.2");
+  const routeEvidence = readHostedOpenRouterRouteEvidence({
+    metadata: { kestrelModelRegistrationEvidenceV1: created.evidence },
+    registration: created.registration,
+  });
+  assert.ok(routeEvidence);
+
+  const gateway = createExactModelQualificationGateway({
+    registration: created.registration,
+    credential: { revision: "7", apiKey: "product-contract-key" },
+    openRouterRouteEvidence: routeEvidence,
+  });
+  const run = await runLiveModelQualification({
+    service: new ModelQualificationService({ freshnessMs: 0 }),
+    registration: created.registration,
+    credentialRevision: "7",
+    probeRevision: "product-contract-fake-v1",
+    probes: HOSTED_AGENT_LOOP_QUALIFICATION_CAPABILITIES.map((capability) => ({
+      capability,
+      request: productContractQualificationRequest(capability, created.registration.modelId),
+    })),
+    gateway,
+    maxProbes: HOSTED_AGENT_LOOP_QUALIFICATION_CAPABILITIES.length,
+    force: true,
+  });
+
+  assert.deepEqual(
+    run.results.map((result) => result.outcome),
+    ["qualified", "qualified", "qualified", "qualified"],
+    JSON.stringify(run.results),
+  );
+});
+
+function productContractQualificationRequest(
+  capability: ModelQualificationCapability,
+  model: string,
+) {
+  const toolChoice =
+    capability === "native_tools"
+      ? "auto"
+      : capability === "required_tool_choice" || capability === "strict_tool_inputs"
+        ? "required"
+        : "none";
+  return createModelRequestV2({
+    version: "model_request_v2",
+    model,
+    input: toolChoice === "none"
+      ? "Return exactly the JSON object {\"ok\":true}."
+      : "Call probe_tool with an empty object and do not return prose.",
+    responseFormat: capability === "provider_strict_schema" ? "json" : "text",
+    ...(capability === "provider_strict_schema"
+      ? {
+          responseSchema: {
+            type: "object",
+            properties: { ok: { type: "boolean" } },
+            required: ["ok"],
+            additionalProperties: false,
+          },
+        }
+      : {}),
+    ...(toolChoice === "none"
+      ? {}
+      : {
+          tools: [{
+            name: "probe_tool",
+            description: "Qualification probe. Call with an empty object.",
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          }],
+        }),
+    requirements: {
+      runtimeRole: `qualification.${capability}`,
+      output: capability === "provider_strict_schema"
+        ? {
+            kind: "json_schema",
+            assurance: "provider_strict_schema",
+            schemaName: "qualification_probe",
+          }
+        : { kind: "text", assurance: "none" },
+      tools: {
+        choice: toolChoice,
+        strictArguments: capability === "strict_tool_inputs",
+        parallelism: "forbidden",
+      },
+      reasoning: { mode: "off", continuationKinds: [] },
+      streaming: { required: false, terminalBehavior: "not_required" },
+      inputModalities: ["text"],
+      endpoint: "chat",
     },
   });
 }

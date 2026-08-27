@@ -62,7 +62,10 @@ function createUnixSocketFetch(socketPath: string): typeof fetch {
             }
           }
           resolve(new Response(
-            Readable.toWeb(incoming) as ReadableStream<Uint8Array>,
+            // Node exposes the same Web Streams runtime through node:stream/web,
+            // but its declaration is not structurally compatible with the DOM
+            // declaration consumed by Response in this compilation.
+            Readable.toWeb(incoming) as unknown as ReadableStream<Uint8Array>,
             {
               status: incoming.statusCode ?? 500,
               ...(incoming.statusMessage !== undefined

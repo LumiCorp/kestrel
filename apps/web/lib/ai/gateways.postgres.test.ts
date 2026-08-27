@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import postgres from "postgres";
+import { translateOpenAiManifestModel } from "../../../../models/openai/OpenAiModelManifest";
+import { createModelRegistrationV2 } from "../../../../src/kestrel/contracts/model-registration";
 import { withGatewayModelEconomicsProfile } from "./model-economics-profile";
 import { qualifyHostedAgentLoopModel } from "./hosted-model-qualification";
 
@@ -33,6 +35,60 @@ const qualificationRunner: typeof qualifyHostedAgentLoopModel = async (input) =>
   });
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
+
+function qualifiedOpenAiRegistration() {
+  const pending = translateOpenAiManifestModel({
+    registrationId: "registration:gpt-4.1-mini",
+    revision: "registration-revision-1",
+    modelId: "gpt-4.1-mini",
+    endpoint: "responses",
+    credentialRevision: "1",
+    providerConfiguration: {
+      version: "provider_runtime_configuration_v1",
+      providerId: "openai",
+      protocol: "openai",
+      authentication: {
+        mode: "required",
+        credentialReference: { source: "gateway", id: "provider.openai.default" },
+      },
+      endpoint: "https://api.openai.com/v1",
+      timeoutMs: 60_000,
+      allowedHeaders: [],
+      dataHandling: "provider_managed",
+    },
+  });
+  const { fingerprint: _fingerprint, ...authoring } = pending;
+  const evidence = {
+    source: "qualification" as const,
+    observedRevision: authoring.revision,
+    observedAt: "2026-08-26T00:00:00.000Z",
+    adapterRevision: authoring.adapterRevision,
+    credentialRevision: "1",
+    qualificationRevision: "qualification-revision-1",
+    retainedPayloadHash: `sha256:${"a".repeat(64)}`,
+  };
+  const qualified = <T extends { evidence: readonly unknown[] }>(claim: T) => ({
+    ...claim,
+    state: "qualified" as const,
+    evidence: [...claim.evidence, evidence],
+  });
+  return createModelRegistrationV2({
+    ...authoring,
+    qualification: {
+      state: "qualified",
+      revision: "qualification-revision-1",
+      checkedAt: "2026-08-26T00:00:00.000Z",
+      probeHash: `sha256:${"b".repeat(64)}`,
+    },
+    capabilities: {
+      ...authoring.capabilities,
+      providerStrictSchema: qualified(authoring.capabilities.providerStrictSchema),
+      nativeTools: qualified(authoring.capabilities.nativeTools),
+      requiredToolChoice: qualified(authoring.capabilities.requiredToolChoice),
+      strictToolInputs: qualified(authoring.capabilities.strictToolInputs),
+    },
+  });
+}
 
 test("hosted registration evidence commits with economics and default intent or rolls back together", async (context) => {
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
@@ -71,9 +127,11 @@ test("hosted registration evidence commits with economics and default intent or 
     `;
   await sql`
       INSERT INTO "ai_gateways" (
-        "id", "organization_id", "provider", "display_name", "credential_revision"
+        "id", "organization_id", "provider", "display_name", "credential_revision",
+        "credential_status", "credential_validated_at"
       ) VALUES (
-        ${gatewayId}, ${organizationId}, 'openai', 'Registration Gateway', 4
+        ${gatewayId}, ${organizationId}, 'openai', 'Registration Gateway', 4,
+        'ready', now()
       )
     `;
 
@@ -466,17 +524,20 @@ test("closed model grants retain evidence while live gateway resources are delet
   const modelId = `grant-model-${suffix}`;
   const otherModelId = `grant-other-model-${suffix}`;
   const now = new Date();
+  const modelMetadata = {
+    kestrelModelRegistrationV2: qualifiedOpenAiRegistration(),
+  };
   const routeBinding = {
     version: "model_credential_route_binding_v2" as const,
     status: "qualified" as const,
     provider: "openai" as const,
-    rawModelId: "grant-model",
-    registrationId: "registration:grant-model",
+    rawModelId: "gpt-4.1-mini",
+    registrationId: "registration:gpt-4.1-mini",
     registrationRevision: "registration-revision-1",
     registrationFingerprint: `sha256:${"a".repeat(64)}`,
     qualificationRevision: "qualification-revision-1",
     apiEndpoint: "https://api.openai.com/v1",
-    endpointCodec: "openai_responses_v1",
+    endpointCodec: "openai.responses.v2",
     routingPolicyFingerprint: `sha256:${"b".repeat(64)}`,
     requiredRole: "agent.loop",
     credentialRevision: 1,
@@ -534,10 +595,10 @@ test("closed model grants retain evidence while live gateway resources are delet
       `;
     await transaction`
         INSERT INTO "ai_gateway_models" (
-          "id", "organization_id", "gateway_id", "raw_model_id", "modality"
+          "id", "organization_id", "gateway_id", "raw_model_id", "modality", "approved", "metadata"
         ) VALUES
-          (${modelId}, ${organizationId}, ${gatewayId}, 'grant-model', 'language'),
-          (${otherModelId}, ${organizationId}, ${gatewayId}, 'grant-other-model', 'language')
+          (${modelId}, ${organizationId}, ${gatewayId}, 'gpt-4.1-mini', 'language', true, ${JSON.stringify(modelMetadata)}::jsonb),
+          (${otherModelId}, ${organizationId}, ${gatewayId}, 'grant-other-model', 'language', false, '{}'::jsonb)
       `;
     await transaction`
         INSERT INTO "environment_run_executions" (
@@ -556,7 +617,7 @@ test("closed model grants retain evidence while live gateway resources are delet
     threadId,
     runId: executionId,
     gatewayId,
-    rawModelId: "grant-model",
+    rawModelId: "gpt-4.1-mini",
     routeBinding,
   });
 
@@ -588,7 +649,7 @@ test("closed model grants retain evidence while live gateway resources are delet
     threadId,
     runId: executionId,
     gatewayId,
-    rawModelId: "grant-model",
+    rawModelId: "gpt-4.1-mini",
     routeBinding,
   });
   const [reactivated] = await sql<
@@ -617,7 +678,7 @@ test("closed model grants retain evidence while live gateway resources are delet
     routeBindingStatus: "qualified",
     modelRegistrationRevision: "registration-revision-1",
     modelQualificationRevision: "qualification-revision-1",
-    modelEndpointCodec: "openai_responses_v1",
+    modelEndpointCodec: "openai.responses.v2",
     status: "active",
   });
   await sql`
@@ -641,7 +702,7 @@ test("closed model grants retain evidence while live gateway resources are delet
     `;
   assert.deepEqual(preserved, {
     gatewayId,
-    rawModelId: "grant-model",
+    rawModelId: "gpt-4.1-mini",
     gatewayModelId: null,
     status: "closed",
   });

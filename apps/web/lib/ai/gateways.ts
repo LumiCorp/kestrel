@@ -76,6 +76,12 @@ import {
 import {
   qualifyHostedAgentLoopModel,
 } from "./hosted-model-qualification";
+import {
+  isHostedModelProvider,
+  isHostedModelRoleReady,
+  readHostedModelReadiness,
+  type HostedModelReadiness,
+} from "./hosted-model-readiness";
 import type { ProviderRuntimeConfigurationV1 } from "../../../../src/kestrel/contracts/model-registration";
 
 export { fetchOpenRouterModelDetailsWithCredentials } from "./openrouter-model-resolution";
@@ -98,6 +104,8 @@ export type GatewayCatalogModel = ChatModel & {
   metadata: Record<string, unknown> | null;
   environmentId: string | null;
   scope: "platform" | "organization" | "environment";
+  defaultSelection?: "stored" | "substituted" | undefined;
+  readiness?: HostedModelReadiness | undefined;
 };
 
 export type GatewayModelEconomicsAdmission = {
@@ -241,10 +249,13 @@ function getGatewayModelEconomicsAdmission(
 export function isEligibleHostedLanguageModel(input: {
   gatewayProvider: GatewayProvider;
   gatewayEnabled?: boolean;
+  gatewayReachable?: boolean;
+  credentialRevision?: number | undefined;
   approved: boolean;
   modality: GatewayModality;
   metadata: unknown;
   rawModelId: string;
+  requiredRole?: string | undefined;
 }) {
   if (
     !input.approved ||
@@ -263,7 +274,20 @@ export function isEligibleHostedLanguageModel(input: {
     readGatewayModelEconomicsProfile(input.metadata, {
       provider,
       model: input.rawModelId,
-    }) !== undefined
+    }) !== undefined &&
+    (!isHostedModelProvider(input.gatewayProvider) ||
+      isHostedModelRoleReady(
+        readHostedModelReadiness({
+          approved: input.approved,
+          gatewayEnabled: input.gatewayEnabled,
+          gatewayReachable: input.gatewayReachable,
+          provider: input.gatewayProvider,
+          modelId: input.rawModelId,
+          metadata: input.metadata,
+          credentialRevision: input.credentialRevision,
+        }),
+        input.requiredRole,
+      ))
   );
 }
 
@@ -326,10 +350,14 @@ function createHostedProviderRuntimeConfiguration(input: {
   gateway: GatewayRecord;
   provider: HostedModelRegistrationProvider;
 }): ProviderRuntimeConfigurationV1 {
-  const endpoint =
+  const configuredEndpoint =
     input.provider === "anthropic"
       ? input.gateway.baseUrl?.trim() || "https://api.anthropic.com/v1"
       : getOpenAICompatibleBaseUrl(input.gateway);
+  const endpoint =
+    input.provider === "openrouter" && configuredEndpoint?.endsWith("/api/v1")
+      ? configuredEndpoint.slice(0, -"/api/v1".length)
+      : configuredEndpoint;
   if (!endpoint) {
     throw new GatewayModelProviderResolutionError({
       message: `${getProviderDisplayName(input.provider)} gateway base URL is missing.`,
@@ -813,6 +841,19 @@ export async function listAIGatewaysWithModels(organizationId: string) {
         gateway.provider as GatewayProvider,
         model,
       ),
+      ...(model.modality !== "language" || !isHostedModelProvider(gateway.provider)
+        ? {}
+        : {
+            readiness: readHostedModelReadiness({
+              approved: model.approved,
+              gatewayEnabled: gateway.enabled,
+              gatewayReachable: gateway.credentialStatus === "ready",
+              provider: gateway.provider,
+              modelId: model.rawModelId,
+              metadata: model.metadata,
+              credentialRevision: gateway.credentialRevision,
+            }),
+          }),
     })),
   }));
 }
@@ -821,6 +862,7 @@ export async function listApprovedModels(
   modality: GatewayModality,
   organizationId: string,
   environmentId?: string,
+  requiredRole = "agent.loop",
 ) {
   const [rows, environmentDefault] = await Promise.all([
     knowledgeDb
@@ -868,16 +910,20 @@ export async function listApprovedModels(
       : Promise.resolve(undefined),
   ]);
 
-  return rows
+  const models = rows
     .filter(
       ({ gateway, model }) =>
         modality !== "language" ||
         isEligibleHostedLanguageModel({
           gatewayProvider: gateway.provider as GatewayProvider,
+          gatewayEnabled: gateway.enabled,
+          gatewayReachable: gateway.credentialStatus === "ready",
+          credentialRevision: gateway.credentialRevision,
           approved: model.approved,
           modality: model.modality as GatewayModality,
           metadata: model.metadata,
           rawModelId: model.rawModelId,
+          requiredRole,
         }),
     )
     .map(({ gateway, model }) => ({
@@ -903,26 +949,57 @@ export async function listApprovedModels(
         : gateway.organizationId
           ? "organization"
           : "platform",
+      ...(model.modality !== "language" || !isHostedModelProvider(gateway.provider)
+        ? {}
+        : {
+            readiness: readHostedModelReadiness({
+              approved: model.approved,
+              gatewayEnabled: gateway.enabled,
+              gatewayReachable: gateway.credentialStatus === "ready",
+              provider: gateway.provider,
+              modelId: model.rawModelId,
+              metadata: model.metadata,
+              credentialRevision: gateway.credentialRevision,
+            }),
+          }),
       metadata: normalizeGatewayModelMetadata({
         gatewayProvider: gateway.provider as GatewayProvider,
         modality: model.modality as GatewayModality,
         metadata: model.metadata,
       }),
     })) as GatewayCatalogModel[];
+  if (modality !== "language" || models.some((model) => model.isDefault)) {
+    return models.map((model) => ({
+      ...model,
+      ...(modality === "language" ? { defaultSelection: "stored" as const } : {}),
+    }));
+  }
+  return models.map((model, index) => ({
+    ...model,
+    ...(index === 0
+      ? { isDefault: true, defaultSelection: "substituted" as const }
+      : { defaultSelection: "stored" as const }),
+  }));
 }
 
 export async function getApprovedLanguageModels(
   organizationId: string,
   environmentId?: string,
+  requiredRole = "agent.loop",
 ) {
-  return listApprovedModels("language", organizationId, environmentId);
+  return listApprovedModels("language", organizationId, environmentId, requiredRole);
 }
 
 export async function getApprovedKestrelRuntimeLanguageModels(
   organizationId: string,
   environmentId?: string,
+  requiredRole = "agent.loop",
 ) {
-  const models = await getApprovedLanguageModels(organizationId, environmentId);
+  const models = await getApprovedLanguageModels(
+    organizationId,
+    environmentId,
+    requiredRole,
+  );
   return models.filter((model) =>
     isKestrelRuntimeLanguageProvider(model.gatewayProvider),
   );
@@ -1667,6 +1744,25 @@ export async function saveGatewayModel(input: {
       incoming: removeHostedModelCapabilityMetadata(economicsMetadata),
       stored: storedModel?.metadata,
     });
+  }
+  if (input.isDefault && hostedRegistrationProvider !== undefined) {
+    const readiness = readHostedModelReadiness({
+      approved,
+      gatewayEnabled: gateway?.enabled,
+      gatewayReachable: gateway?.credentialStatus === "ready",
+      provider: gatewayProvider ?? "unknown",
+      modelId: input.rawModelId,
+      metadata: economicsMetadata,
+      credentialRevision: hostedGateway?.credentialRevision,
+    });
+    if (!isHostedModelRoleReady(readiness, "agent.loop")) {
+      throw new GatewayModelProviderResolutionError({
+        message:
+          "A default hosted model must have current qualification evidence for the agent.loop role.",
+        status: 422,
+        retryable: false,
+      });
+    }
   }
 
   return knowledgeDb.transaction(async (transaction) => {
