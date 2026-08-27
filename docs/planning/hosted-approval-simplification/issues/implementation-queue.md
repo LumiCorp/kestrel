@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-- [Construct the V4 compatibility release](06f-construct-v4-compatibility-release.md)
+None.
 
 ## Blocked
 
@@ -23,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Construct the V4 compatibility release](06f-construct-v4-compatibility-release.md)
 - [Make prepared approval cleanup durable](06e-make-prepared-cleanup-durable.md)
 - [Order the V4 compatibility rollout](06d-order-v4-compatibility-rollout.md)
 - [Generalize prepared approval cleanup](06c-generalize-prepared-approval-cleanup.md)
