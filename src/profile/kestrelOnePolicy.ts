@@ -31,7 +31,7 @@ import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
 export const KESTREL_POLICY_ID = "kestrel";
 export const KESTREL_POLICY_LABEL = "Kestrel";
-export const KESTREL_POLICY_VERSION = 4;
+export const KESTREL_POLICY_VERSION = 5;
 export const KESTREL_PROMPT_POLICY_ID = "kestrel";
 export const KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
   "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
@@ -61,6 +61,8 @@ export type KestrelPolicyDefinition = KestrelOnePolicyDefinition;
 export const KESTREL_ONE_DIALOG_TOOL_NAMES = Object.freeze([
   "dialog.open",
   "dialog.send",
+  "dialog.read",
+  "dialog.list",
   "dialog.close",
 ] as const);
 

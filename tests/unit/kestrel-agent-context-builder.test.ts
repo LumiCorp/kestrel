@@ -550,6 +550,7 @@ test("Kestrel deliberator system prompt keeps context and build-loop contracts e
   assert.match(systemPrompt, /Never call an unrelated tool to test or verify tool operation/u);
   assert.match(systemPrompt, /merely satisfy the structured tool-call requirement/u);
   assert.match(systemPrompt, /truthfully describes that exact selected action/u);
+  assert.doesNotMatch(systemPrompt, /Named collaborators:/u);
 });
 
 test("V2 compaction prompt and schema contain semantic text only", () => {
