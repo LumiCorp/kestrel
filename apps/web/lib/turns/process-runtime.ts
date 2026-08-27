@@ -654,11 +654,15 @@ export async function processDurableThreadTurn(
       stage: "reading_context",
       milestoneId: `turn:${turn.id}:context`,
     });
+    const continuationExecutionId =
+      reattachExecutionId ??
+      recoveredCompletedExecutionId ??
+      (turn.interactionResponse ? turn.environmentExecutionId : null);
     projectContext = preparedApprovalCleanup
       ? null
       : await loadBoundProjectContext(
           turn,
-          reattachExecutionId ?? recoveredCompletedExecutionId,
+          continuationExecutionId,
         );
     const threadFileInventory = preparedApprovalCleanup
       ? []
