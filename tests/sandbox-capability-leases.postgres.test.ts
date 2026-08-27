@@ -1217,6 +1217,97 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       timestamp: "2026-08-27T00:00:09.500Z",
     });
 
+    const ordinaryDecoyEffectId = `ordinary-decoy-${suffix}`;
+    const cleanupTargetPreparedToolCall = await prepareTestToolCall({
+      gateway,
+      toolName: "code.execute",
+      toolInput: { language: "javascript", code: "return 8" },
+      runId,
+      sessionId,
+      callId: `cleanup-target-${suffix}`,
+    });
+    const cleanupTargetEffectId = `${cleanupTargetPreparedToolCall.callId}:release`;
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json,
+          idempotency_key, failure_policy, status, created_at, tenant_id,
+          tenant_ownership_state)
+       VALUES
+         ($1, $2, 350, 'ordinary_test_effect', '{}'::jsonb, $3,
+          'STOP', 'PENDING', NOW(), $5, 'tenant_bound'),
+         ($1, $2, 351, 'release_prepared_tool_call', $4::jsonb, $6,
+          'STOP', 'PENDING', NOW(), $5, 'tenant_bound')`,
+      [
+        runId,
+        sessionId,
+        ordinaryDecoyEffectId,
+        JSON.stringify({
+          preparedToolCall: cleanupTargetPreparedToolCall,
+          preparedApprovalCleanup: {
+            version: "runner_prepared_approval_cleanup_v1",
+            organizationId: binding.tenantId,
+            threadId: sessionId,
+            turnId: `cleanup-target-turn-${suffix}`,
+            interactionId: `cleanup-target-interaction-${suffix}`,
+            requestId: `cleanup-target-request-${suffix}`,
+            failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+            failureMessage: "Expired.",
+          },
+        }),
+        binding.tenantId,
+        cleanupTargetEffectId,
+      ],
+    );
+    let decoyIdentityReads = 0;
+    let decoyStatusReads = 0;
+    const decoyOutput = {
+      releasedPreparedInvocationId: cleanupTargetPreparedToolCall.callId,
+    };
+    const statefulOrdinaryDecoyResult = {
+      get idempotencyKey(): string {
+        decoyIdentityReads += 1;
+        return decoyIdentityReads === 1
+          ? ordinaryDecoyEffectId
+          : cleanupTargetEffectId;
+      },
+      get status(): "DONE" | "FAILED" {
+        decoyStatusReads += 1;
+        return decoyStatusReads === 1 ? "FAILED" : "DONE";
+      },
+      output: decoyOutput,
+      timestamp: "2026-08-27T00:00:09.600Z",
+    };
+    await store.saveEffectResult(
+      runId,
+      sessionId,
+      statefulOrdinaryDecoyResult,
+    );
+    assert.equal(decoyIdentityReads, 1);
+    assert.equal(decoyStatusReads, 1);
+    assert.deepEqual(await store.getEffectResult(ordinaryDecoyEffectId), {
+      idempotencyKey: ordinaryDecoyEffectId,
+      status: "FAILED",
+      output: decoyOutput,
+      timestamp: "2026-08-27T00:00:09.600Z",
+    });
+    assert.equal(
+      await store.getEffectResult(cleanupTargetEffectId),
+      null,
+      "ordinary persistence must not redirect exact-looking output to a cleanup effect",
+    );
+    await store.saveEffectResult(runId, sessionId, {
+      idempotencyKey: cleanupTargetEffectId,
+      status: "DONE",
+      output: decoyOutput,
+      timestamp: "2026-08-27T00:00:09.700Z",
+    }, cleanupResultPersistenceIntent(cleanupTargetEffectId));
+    assert.deepEqual(await store.getEffectResult(cleanupTargetEffectId), {
+      idempotencyKey: cleanupTargetEffectId,
+      status: "DONE",
+      output: decoyOutput,
+      timestamp: "2026-08-27T00:00:09.700Z",
+    });
+
     await assert.rejects(
       prepareTestToolCall({
         gateway,

@@ -11,7 +11,6 @@ work; this queue does not reopen them.
 
 ## Ready
 
-- [Bind PostgreSQL result insertion to the locked effect identity](06z7-bind-postgres-result-to-locked-effect.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
@@ -24,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Bind PostgreSQL result insertion to the locked effect identity](06z7-bind-postgres-result-to-locked-effect.md)
 - [Require immutable cleanup intent for all result statuses](06z6-require-cleanup-intent-for-all-results.md)
 - [Bind cleanup persistence to one pre-await evidence snapshot](06z5-bind-cleanup-persistence-snapshot.md)
 - [Snapshot exact cleanup evidence once before validation and persistence](06z2-snapshot-exact-cleanup-evidence.md)

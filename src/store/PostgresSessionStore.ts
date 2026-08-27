@@ -1924,6 +1924,11 @@ export class PostgresSessionStore implements SessionStore {
           return;
         }
       }
+      if (resultStatus === null) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Cleanup result persistence did not produce a stable terminal status",
+        );
+      }
       await executor.query(
         `INSERT INTO effect_results
            (run_id, session_id, idempotency_key, status, output_json, error_json, created_at)
@@ -1932,8 +1937,8 @@ export class PostgresSessionStore implements SessionStore {
         [
           runId,
           sessionId,
-          resultToPersist.idempotencyKey,
-          resultToPersist.status,
+          resultIdempotencyKey,
+          resultStatus,
           stringifySanitizedJson(resultToPersist.output ?? null),
           stringifySanitizedJson(resultToPersist.error ?? null),
           normalizeTimestampString(resultToPersist.timestamp),
