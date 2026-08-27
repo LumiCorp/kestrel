@@ -835,12 +835,16 @@ export function DesktopApp(props: {
             ),
       );
       const dialogMessages = (result.view.dialogs ?? [])
-        .flatMap((dialog) => dialog.messages)
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+        .flatMap((dialog) => dialog.messages.map((message) => ({
+          message,
+          dialogStatus: dialog.status,
+          dialogActivity: dialog.activity,
+        })))
+        .sort((left, right) => left.message.createdAt.localeCompare(right.message.createdAt));
       if (dialogMessages.length > 0) {
         setState((current) =>
           dialogMessages.reduce(
-            (next, message) =>
+            (next, { message, dialogStatus, dialogActivity }) =>
               next === undefined
                 ? next
                 : appendRendererTranscript(next, thread.id, {
@@ -855,8 +859,8 @@ export function DesktopApp(props: {
                       name: message.name,
                       childSessionId: message.childSessionId,
                       sender: message.sender,
-                      dialogStatus: dialog.status,
-                      ...(message.dialogActivity !== undefined ? { dialogActivity: message.dialogActivity } : { dialogActivity: dialog.activity }),
+                      dialogStatus,
+                      ...(message.dialogActivity !== undefined ? { dialogActivity: message.dialogActivity } : { dialogActivity }),
                       ...(message.status !== undefined
                         ? { status: message.status }
                         : {}),
