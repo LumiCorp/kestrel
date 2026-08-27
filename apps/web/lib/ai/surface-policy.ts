@@ -14,6 +14,7 @@ export const AI_SURFACE_POLICY = {
   title: "gateway-required",
   artifact: "gateway-required",
   suggestions: "gateway-required",
+  workflow: "gateway-required",
   image: "gateway-required",
   speech: "gateway-required",
   embedding: "runtime-direct",

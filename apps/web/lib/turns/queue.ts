@@ -200,6 +200,25 @@ async function dispatchDueProjectPromptSchedules(boss: PgBoss) {
   for (const runId of runIds) {
     await sendProjectPromptScheduleRun(boss, runId);
   }
+  const { claimDueProjectWorkflowRuns } = await import("@/lib/workflows/store");
+  const { advanceProjectWorkflowRun } = await import("@/lib/workflows/runtime");
+  for (const runId of await claimDueProjectWorkflowRuns()) {
+    const result = await advanceProjectWorkflowRun(runId);
+    for (const turnId of result.turnIds) {
+      await dispatchTurnOrReconcile(boss, turnId);
+    }
+  }
+}
+
+async function advanceActiveProjectWorkflows(boss: PgBoss) {
+  const { listActiveProjectWorkflowRunIds } = await import("@/lib/workflows/store");
+  const { advanceProjectWorkflowRun } = await import("@/lib/workflows/runtime");
+  for (const runId of await listActiveProjectWorkflowRunIds()) {
+    const result = await advanceProjectWorkflowRun(runId);
+    for (const turnId of result.turnIds) {
+      await dispatchTurnOrReconcile(boss, turnId);
+    }
+  }
 }
 
 async function recoverQueuedProjectPromptScheduleRuns(boss: PgBoss) {
@@ -322,6 +341,7 @@ function createWorkerMaintenance(boss: PgBoss) {
   return createSingleFlightOperation(async () => {
     await recoverQueuedProjectPromptScheduleRuns(boss);
     await reconcileDurableThreadTurnQueueWithBoss(boss);
+    await advanceActiveProjectWorkflows(boss);
     await drainMobilePushOutbox().catch(reportPushFailure);
   });
 }
