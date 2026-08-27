@@ -160,6 +160,14 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
       "app/api/desktop/v1/previews/[id]/route.ts",
       "/api/desktop/v1/previews/:id",
     ],
+    [
+      "app/api/desktop/v1/organizations/[organizationId]/email/receiving/route.ts",
+      "/api/desktop/v1/organizations/:organizationId/email/receiving",
+    ],
+    [
+      "app/api/desktop/v1/organizations/[organizationId]/email/receiving/domains/route.ts",
+      "/api/desktop/v1/organizations/:organizationId/email/receiving/domains",
+    ],
   ].map(([file, route]) =>
     api(
       file!,
@@ -2349,6 +2357,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/organization/email/test/route.ts",
     "/api/organization/email/test",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/email/receiving/route.ts",
+    "/api/organization/email/receiving",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/email/receiving/domains/route.ts",
+    "/api/organization/email/receiving/domains",
     "email-delivery",
     "admin",
     "admin-denied",

@@ -6467,6 +6467,77 @@ export const organizationEmailConfig = pgTable("organization_email_config", {
     .defaultNow(),
 });
 
+export const organizationReceivingConnections = pgTable(
+  "organization_receiving_connections",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["resend"] })
+      .notNull()
+      .default("resend"),
+    encryptedApiKey: text("encrypted_api_key"),
+    credentialStatus: text("credential_status", {
+      enum: ["not_configured", "full_access", "insufficient", "error"],
+    })
+      .notNull()
+      .default("not_configured"),
+    credentialValidatedAt: timestamp("credential_validated_at", {
+      withTimezone: true,
+    }),
+    receivingDomainId: text("receiving_domain_id"),
+    receivingDomain: text("receiving_domain"),
+    receivingDomainStatus: text("receiving_domain_status", {
+      enum: ["not_selected", "pending", "verified", "failed"],
+    })
+      .notNull()
+      .default("not_selected"),
+    mxStatus: text("mx_status", {
+      enum: ["unknown", "pending", "verified", "failed"],
+    })
+      .notNull()
+      .default("unknown"),
+    domainCheckedAt: timestamp("domain_checked_at", { withTimezone: true }),
+    routeLocator: text("route_locator").notNull(),
+    providerWebhookId: text("provider_webhook_id"),
+    encryptedSigningSecret: text("encrypted_signing_secret"),
+    webhookStatus: text("webhook_status", {
+      enum: ["not_staged", "staged", "active", "disabled", "error"],
+    })
+      .notNull()
+      .default("not_staged"),
+    inboundEnabled: boolean("inbound_enabled").notNull().default(false),
+    lastHealthCheckedAt: timestamp("last_health_checked_at", {
+      withTimezone: true,
+    }),
+    lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+    lastErrorCode: text("last_error_code"),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("organization_receiving_connections_org_idx").on(
+      table.organizationId,
+    ),
+    uniqueIndex("organization_receiving_connections_route_locator_idx").on(
+      table.routeLocator,
+    ),
+    uniqueIndex("organization_receiving_connections_webhook_idx")
+      .on(table.providerWebhookId)
+      .where(sql`${table.providerWebhookId} IS NOT NULL`),
+  ],
+);
+
 export const organizationInfrastructureSettings = pgTable(
   "organization_infrastructure_settings",
   {

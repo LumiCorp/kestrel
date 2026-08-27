@@ -24,6 +24,8 @@ import type {
   KestrelUninstallScope,
   KestrelOneAccountStatus,
   KestrelOneAuthorizationSessionView,
+  KestrelOneReceivingConnection,
+  KestrelOneReceivingDomain,
   KestrelOneThreadSnapshot,
 } from "../../src/contracts";
 import {
@@ -144,6 +146,15 @@ export function SettingsWorkspace({
     useState<DesktopEnvironmentStatusProjection>();
   const [kestrelOneAccount, setKestrelOneAccount] =
     useState<KestrelOneAccountStatus>();
+  const [receivingOrganizationId, setReceivingOrganizationId] = useState("");
+  const [receivingConnection, setReceivingConnection] =
+    useState<KestrelOneReceivingConnection>();
+  const [receivingDomains, setReceivingDomains] =
+    useState<KestrelOneReceivingDomain[]>([]);
+  const [receivingApiKey, setReceivingApiKey] = useState("");
+  const [receivingDomainId, setReceivingDomainId] = useState("");
+  const [receivingBusy, setReceivingBusy] = useState(false);
+  const [receivingError, setReceivingError] = useState<string>();
   const [kestrelOneAuthorization, setKestrelOneAuthorization] =
     useState<KestrelOneAuthorizationSessionView>();
   const [kestrelOneThreadId, setKestrelOneThreadId] = useState("");
@@ -165,6 +176,7 @@ export function SettingsWorkspace({
   const dialogRef = useRef<HTMLFormElement>(null);
   const savingRef = useRef(false);
   const refreshVersionRef = useRef(0);
+  const receivingSelectionVersionRef = useRef(0);
   const grouped = useMemo(
     () =>
       new Map(
@@ -197,6 +209,54 @@ export function SettingsWorkspace({
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
+
+  useEffect(() => {
+    receivingSelectionVersionRef.current += 1;
+    if (kestrelOneAccount?.status !== "signed_in") {
+      setReceivingOrganizationId("");
+      setReceivingConnection(undefined);
+      setReceivingDomains([]);
+      setReceivingApiKey("");
+      setReceivingDomainId("");
+      setReceivingBusy(false);
+      return;
+    }
+    const organizations = kestrelOneAccount.projection.organizations;
+    if (organizations.length === 1) {
+      setReceivingOrganizationId(organizations[0]?.organizationId ?? "");
+      return;
+    }
+    if (
+      receivingOrganizationId &&
+      !organizations.some(
+        (organization) =>
+          organization.organizationId === receivingOrganizationId,
+      )
+    ) {
+      setReceivingOrganizationId("");
+    }
+  }, [kestrelOneAccount, receivingOrganizationId]);
+
+  useEffect(() => {
+    const organization =
+      kestrelOneAccount?.status === "signed_in"
+        ? kestrelOneAccount.projection.organizations.find(
+            (candidate) =>
+              candidate.organizationId === receivingOrganizationId,
+          )
+        : undefined;
+    if (
+      !organization ||
+      (organization.organizationRole !== "owner" &&
+        organization.organizationRole !== "admin")
+    ) {
+      setReceivingConnection(undefined);
+      setReceivingDomains([]);
+      setReceivingBusy(false);
+      return;
+    }
+    void refreshReceivingConnection(receivingOrganizationId);
+  }, [kestrelOneAccount, receivingOrganizationId]);
 
   useEffect(() => {
     void refresh();
@@ -425,6 +485,86 @@ export function SettingsWorkspace({
       setKestrelOneAccount(await window.kestrelDesktop.getKestrelOneAccount());
     } catch (error) {
       onError(errorMessage(error));
+    }
+  }
+
+  async function refreshReceivingConnection(
+    organizationId = receivingOrganizationId,
+  ): Promise<void> {
+    if (!organizationId) return;
+    const selectionVersion = receivingSelectionVersionRef.current;
+    setReceivingBusy(true);
+    setReceivingError(undefined);
+    try {
+      const connection =
+        await window.kestrelDesktop.getKestrelOneReceivingConnection(
+          organizationId,
+        );
+      if (selectionVersion !== receivingSelectionVersionRef.current) return;
+      setReceivingConnection(connection);
+    } catch (error) {
+      if (selectionVersion !== receivingSelectionVersionRef.current) return;
+      setReceivingError(errorMessage(error));
+    } finally {
+      if (selectionVersion === receivingSelectionVersionRef.current) {
+        setReceivingBusy(false);
+      }
+    }
+  }
+
+  async function inspectReceivingDomains(): Promise<void> {
+    if (!receivingOrganizationId) return;
+    const selectionVersion = receivingSelectionVersionRef.current;
+    setReceivingBusy(true);
+    setReceivingError(undefined);
+    try {
+      const domains =
+        await window.kestrelDesktop.inspectKestrelOneReceivingDomains({
+          organizationId: receivingOrganizationId,
+          ...(receivingApiKey ? { apiKey: receivingApiKey } : {}),
+        });
+      if (selectionVersion !== receivingSelectionVersionRef.current) return;
+      setReceivingDomains(domains);
+      setReceivingDomainId("");
+    } catch (error) {
+      if (selectionVersion !== receivingSelectionVersionRef.current) return;
+      setReceivingError(errorMessage(error));
+    } finally {
+      if (selectionVersion === receivingSelectionVersionRef.current) {
+        setReceivingBusy(false);
+      }
+    }
+  }
+
+  async function saveReceivingConnection(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (!(receivingOrganizationId && receivingDomainId)) return;
+    const selectionVersion = receivingSelectionVersionRef.current;
+    setReceivingBusy(true);
+    setReceivingError(undefined);
+    try {
+      const connection =
+        await window.kestrelDesktop.saveKestrelOneReceivingConnection({
+          organizationId: receivingOrganizationId,
+          receivingDomainId,
+          ...(receivingApiKey ? { apiKey: receivingApiKey } : {}),
+        });
+      if (selectionVersion !== receivingSelectionVersionRef.current) return;
+      setReceivingConnection(connection);
+      setReceivingApiKey("");
+      setReceivingDomainId("");
+      setReceivingDomains([]);
+      setNotice(
+        "Inbound receiving is saved in Kestrel One. Desktop does not need to remain open.",
+      );
+      await refreshReceivingConnection(receivingOrganizationId);
+    } catch (error) {
+      if (selectionVersion !== receivingSelectionVersionRef.current) return;
+      setReceivingError(errorMessage(error));
+    } finally {
+      if (selectionVersion === receivingSelectionVersionRef.current) {
+        setReceivingBusy(false);
+      }
     }
   }
 
@@ -1079,6 +1219,218 @@ export function SettingsWorkspace({
             </div>
           ) : null}
         </div>
+        </section>
+      ) : null}
+
+      {activePage === "connections" ? (
+        <section
+          className="settings-section"
+          aria-labelledby="inbound-receiving-title"
+        >
+          <div className="settings-section-heading">
+            <div>
+              <h2 id="inbound-receiving-title">Inbound receiving</h2>
+              <p>
+                Configure the Organization's hosted Resend receiving connection.
+                Kestrel One keeps receiving when Desktop is closed or offline.
+              </p>
+            </div>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={receivingBusy || !receivingOrganizationId}
+              onClick={() => void refreshReceivingConnection()}
+            >
+              <RefreshCw
+                size={15}
+                className={receivingBusy ? "spin" : undefined}
+                aria-hidden="true"
+              />
+              Refresh
+            </button>
+          </div>
+          <div className="settings-content settings-card">
+            {kestrelOneAccount?.status !== "signed_in" ? (
+              <div className="settings-form">
+                <strong>Sign in to Kestrel One</strong>
+                <p>
+                  Inbound receiving is an Organization resource hosted by Kestrel
+                  One. Sign in above to choose an Organization and manage it.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="settings-form">
+                  <label>
+                    Organization
+                    <select
+                      required
+                      value={receivingOrganizationId}
+                      onChange={(event) => {
+                        receivingSelectionVersionRef.current += 1;
+                        setReceivingOrganizationId(event.target.value);
+                        setReceivingConnection(undefined);
+                        setReceivingDomains([]);
+                        setReceivingApiKey("");
+                        setReceivingDomainId("");
+                        setReceivingError(undefined);
+                        setReceivingBusy(false);
+                      }}
+                    >
+                      <option value="">
+                        {kestrelOneAccount.projection.organizations.length > 1
+                          ? "Choose an Organization"
+                          : "No Organization available"}
+                      </option>
+                      {kestrelOneAccount.projection.organizations.map(
+                        (organization) => (
+                          <option
+                            key={organization.organizationId}
+                            value={organization.organizationId}
+                          >
+                            {organization.organizationName} · {organization.organizationRole}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                </div>
+                {(() => {
+                  const organization =
+                    kestrelOneAccount.projection.organizations.find(
+                      (candidate) =>
+                        candidate.organizationId === receivingOrganizationId,
+                    );
+                  if (!organization) {
+                    return (
+                      <div className="settings-form">
+                        <strong>Choose the Organization to manage</strong>
+                        <p>
+                          Desktop never guesses the tenant for receiving changes.
+                        </p>
+                      </div>
+                    );
+                  }
+                  const canManage =
+                    organization.organizationRole === "owner" ||
+                    organization.organizationRole === "admin";
+                  if (!canManage) {
+                    return (
+                      <div className="settings-form">
+                        <strong>Organization Admin access required</strong>
+                        <p>
+                          Your {organization.organizationRole} role is read-only for
+                          inbound receiving. Ask an Organization owner or admin to
+                          configure it.
+                        </p>
+                      </div>
+                    );
+                  }
+                  const selectedDomain = receivingDomains.find(
+                    (domain) => domain.id === receivingDomainId,
+                  );
+                  const selectedReady =
+                    selectedDomain?.receiving === "enabled" &&
+                    selectedDomain.status === "verified" &&
+                    selectedDomain.mxStatus === "verified";
+                  return (
+                    <form
+                      className="settings-form"
+                      onSubmit={(event) => void saveReceivingConnection(event)}
+                    >
+                      <div className="capability-detail">
+                        <strong>
+                          {receivingConnection?.receivingDomain ?? "Not configured"}
+                        </strong>
+                        <small>
+                          Credential: {receivingConnection?.credentialStatus.replaceAll("_", " ") ?? "loading"}
+                          {" · "}MX: {receivingConnection?.mxStatus ?? "unknown"}
+                          {" · "}Webhook: {receivingConnection?.webhookStatus.replaceAll("_", " ") ?? "not staged"}
+                        </small>
+                        <p>
+                          Delivery is disabled until the full email-to-agent path is
+                          ready. Outbound email is unchanged.
+                        </p>
+                      </div>
+                      {receivingError ? (
+                        <div className="capability-detail" role="alert">
+                          <strong>Receiving setup needs attention</strong>
+                          <p>{receivingError}</p>
+                        </div>
+                      ) : null}
+                      <label>
+                        Resend Full access API key
+                        <input
+                          autoComplete="off"
+                          type="password"
+                          value={receivingApiKey}
+                          placeholder={
+                            receivingConnection?.configured
+                              ? "Configured — enter a new key to rotate"
+                              : "re_..."
+                          }
+                          onChange={(event) =>
+                            setReceivingApiKey(event.target.value)
+                          }
+                        />
+                        <small>
+                          Write-only. The key goes to Kestrel One and is never saved
+                          in Desktop settings, logs, analytics, or support bundles.
+                        </small>
+                      </label>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={
+                          receivingBusy ||
+                          (!receivingApiKey && !receivingConnection?.configured)
+                        }
+                        onClick={() => void inspectReceivingDomains()}
+                      >
+                        {receivingBusy ? "Checking…" : "Check key and domains"}
+                      </button>
+                      {receivingDomains.length > 0 ? (
+                        <label>
+                          Verified receiving subdomain
+                          <select
+                            required
+                            value={receivingDomainId}
+                            onChange={(event) =>
+                              setReceivingDomainId(event.target.value)
+                            }
+                          >
+                            <option value="">Choose a domain</option>
+                            {receivingDomains.map((domain) => {
+                              const ready =
+                                domain.receiving === "enabled" &&
+                                domain.status === "verified" &&
+                                domain.mxStatus === "verified";
+                              return (
+                                <option
+                                  disabled={!ready}
+                                  key={domain.id}
+                                  value={domain.id}
+                                >
+                                  {domain.name} · {ready ? "ready" : `${domain.status}, MX ${domain.mxStatus}`}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </label>
+                      ) : null}
+                      <button
+                        className="primary-button"
+                        type="submit"
+                        disabled={receivingBusy || !selectedReady}
+                      >
+                        {receivingBusy ? "Saving…" : "Save inbound receiving"}
+                      </button>
+                    </form>
+                  );
+                })()}
+              </>
+            )}
+          </div>
         </section>
       ) : null}
 

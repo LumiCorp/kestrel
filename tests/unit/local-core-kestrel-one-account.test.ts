@@ -106,3 +106,58 @@ test(
     );
   },
 );
+
+test("receiving management stays tenant-bound and does not persist the write-only key", async () => {
+  const credentialStore = new MemoryLocalCoreCredentialStore();
+  const storedCredential = JSON.stringify({
+    baseUrl: "https://kestrel.example/",
+    accessToken: "account-access",
+    accessTokenExpiresAt: new Date(Date.now() + 900_000).toISOString(),
+    refreshToken: "account-refresh",
+  });
+  await credentialStore.set("kestrel_one.account", storedCredential);
+  const requests: Array<{ url: URL; init?: RequestInit }> = [];
+  const manager = new LocalCoreKestrelOneAccountManager({
+    credentialStore,
+    fetchImpl: async (request, init) => {
+      const url = new URL(String(request));
+      requests.push({ url, ...(init ? { init } : {}) });
+      return Response.json({
+        connection: {
+          provider: "resend",
+          configured: true,
+          credentialStatus: "full_access",
+          credentialValidatedAt: "2026-08-26T12:00:00.000Z",
+          receivingDomain: "inbound.example.test",
+          receivingDomainStatus: "verified",
+          mxStatus: "verified",
+          domainCheckedAt: "2026-08-26T12:00:00.000Z",
+          webhookStatus: "not_staged",
+          inboundEnabled: false,
+          lastHealthCheckedAt: "2026-08-26T12:00:00.000Z",
+          lastTestedAt: null,
+          lastErrorCode: null,
+          readiness: "ready_inactive",
+        },
+      });
+    },
+  });
+
+  const projection = await manager.saveReceivingConnection({
+    organizationId: "organization-1",
+    receivingDomainId: "domain-1",
+    apiKey: "re_full_access_secret",
+  });
+
+  assert.equal(projection.receivingDomain, "inbound.example.test");
+  assert.equal(requests[0]?.url.pathname, "/api/desktop/v1/organizations/organization-1/email/receiving");
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
+    receivingDomainId: "domain-1",
+    apiKey: "re_full_access_secret",
+  });
+  assert.equal(
+    await credentialStore.get("kestrel_one.account"),
+    storedCredential,
+  );
+  assert.doesNotMatch(storedCredential, /re_full_access_secret|inbound\.example\.test/u);
+});
