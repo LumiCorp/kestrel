@@ -36,7 +36,7 @@ export type ModelContentPart =
 
 export interface ModelRequest {
   /** Present after the explicit legacy-to-V1 provider boundary adapter. */
-  version?: "model_request_v1" | undefined;
+  version?: "model_request_v1" | "model_request_v2" | undefined;
   model?: string | undefined;
   input: unknown;
   messages?: ModelMessage[] | undefined;
@@ -70,6 +70,8 @@ export interface ModelVisibleReasoning {
 export interface ModelReasoningContinuation {
   provider: "openai" | "anthropic" | "openrouter";
   kind: "encrypted_content" | "signature" | "reasoning_details";
+  /** Provider-output position relative to the preceding tool call. */
+  replayAfterToolCallId?: string | undefined;
   /** Opaque provider-returned value. This must never be rendered or logged. */
   value: unknown;
 }
@@ -299,7 +301,7 @@ export interface AnthropicProviderOptions {
 
 export interface ModelResponse<TOutput = unknown> {
   /** Present on responses returned through a shipped provider gateway. */
-  version?: "model_response_v1" | undefined;
+  version?: "model_response_v1" | "model_response_v2" | undefined;
   output?: TOutput | undefined;
   text?: string | undefined;
   toolIntents: ModelToolIntent[];
@@ -321,7 +323,7 @@ export interface ModelResponse<TOutput = unknown> {
       | "lumi"
       | "runpod";
     model: string;
-    endpoint: "chat" | "responses";
+    endpoint: "chat" | "responses" | "messages";
     requestId?: string | undefined;
     structuredOutput?:
       | {
@@ -392,9 +394,13 @@ export interface ToolGatewayCallOptions {
   toolNames?: readonly string[] | undefined;
   runtimeBudgetRemainingMs?: number | undefined;
   /** Durable exact-result sink used by capability-bearing tools before host teardown. */
-  persistCompletedCapabilityResult?: ((result: AgentToolResultV2) => Promise<void>) | undefined;
+  persistCompletedCapabilityResult?:
+    | ((result: AgentToolResultV2) => Promise<void>)
+    | undefined;
   /** @internal Gateway bridge from a raw tool handler to its exact result envelope. */
-  persistCompletedCapabilityRawOutput?: ((rawOutput: unknown) => Promise<void>) | undefined;
+  persistCompletedCapabilityRawOutput?:
+    | ((rawOutput: unknown) => Promise<void>)
+    | undefined;
 }
 
 export type ToolConsoleSink = (event: ToolConsoleEvent) => void | Promise<void>;

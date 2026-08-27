@@ -1855,6 +1855,9 @@ export class ExecutionEngine {
       deps: {
         store: this.deps.store,
         modelGateway: this.deps.modelGateway,
+        ...(this.deps.effectiveModelContractResolver !== undefined
+          ? { effectiveModelContractResolver: this.deps.effectiveModelContractResolver }
+          : {}),
         toolGateway: this.deps.toolGateway,
         ...(this.deps.providerReasoningVault !== undefined
           ? { providerReasoningVault: this.deps.providerReasoningVault }

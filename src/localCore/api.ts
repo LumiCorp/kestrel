@@ -131,6 +131,10 @@ import type {
 } from "./providerReadiness.js";
 import { createLocalCoreRuntimeEnvironmentResolver } from "./runtimeEnvironment.js";
 import {
+  LocalCoreModelReadinessStore,
+  qualifyLocalCoreModelReadiness,
+} from "./modelReadiness.js";
+import {
   LocalCoreRuntimeConfigurationError,
   LocalCoreRuntimeConfigurationStore,
   parseLocalCoreRuntimeConfiguration,
@@ -181,6 +185,12 @@ export interface StartLocalCoreApiServerOptions extends EnsureLocalCoreReadyOpti
    * production Keychain backend is activated with the Desktop migration.
    */
   credentialStore?: LocalCoreCredentialStore | undefined;
+  /**
+   * Test-only transport injection for the explicit, operator-triggered model
+   * readiness refresh. Production deliberately uses the installed adapter's
+   * fetch transport.
+   */
+  modelQualificationFetchImpl?: typeof fetch | undefined;
 }
 
 interface LocalCoreExecutionBundle {
@@ -216,12 +226,14 @@ export async function startLocalCoreApiServer(
   }
   const home = resolveKestrelCoreHome(options.env, options.platform);
   const paths = resolveLocalCorePaths(home.homePath);
-  const buildIdentity = options.buildIdentity ?? {
-    version: "local_core_build_identity_v1",
-    buildId: `sha256:${createHash("sha256").update(`local-core-api:${options.coreVersion}`).digest("hex")}`,
-    suiteVersion: options.coreVersion,
-    source: "source_tree",
-  } satisfies LocalCoreBuildIdentityV1;
+  const buildIdentity =
+    options.buildIdentity ??
+    ({
+      version: "local_core_build_identity_v1",
+      buildId: `sha256:${createHash("sha256").update(`local-core-api:${options.coreVersion}`).digest("hex")}`,
+      suiteVersion: options.coreVersion,
+      source: "source_tree",
+    } satisfies LocalCoreBuildIdentityV1);
   const runtimeConfigurationStore = new LocalCoreRuntimeConfigurationStore(
     home.homePath,
     {
@@ -656,10 +668,8 @@ export async function startLocalCoreApiServer(
     };
 
     server = http.createServer(async (request, response) => {
-      const pathname = new URL(
-        request.url ?? "/",
-        "http://local-core",
-      ).pathname;
+      const pathname = new URL(request.url ?? "/", "http://local-core")
+        .pathname;
       if (
         admissionClosed &&
         pathname !== "/v1/health" &&
@@ -790,10 +800,10 @@ export async function startLocalCoreApiServer(
         idleTimeout = undefined;
       }
       if (
-        options.idleTimeoutMs === undefined
-        || options.idleTimeoutMs <= 0
-        || closePromise !== undefined
-        || admissionClosed
+        options.idleTimeoutMs === undefined ||
+        options.idleTimeoutMs <= 0 ||
+        closePromise !== undefined ||
+        admissionClosed
       ) {
         return;
       }
@@ -877,7 +887,9 @@ async function createExecutionBundle(input: {
   const storeHandle = await ensureLocalCoreStore({
     homePath: input.status.home.homePath,
     mode: input.status.dbMode === "external" ? "external" : "pglite",
-    tenantId: normalizeString((input.options.env ?? process.env).KESTREL_TENANT_ID),
+    tenantId: normalizeString(
+      (input.options.env ?? process.env).KESTREL_TENANT_ID,
+    ),
     ...(input.status.dbMode !== "external" && repoRoot !== undefined
       ? { migrationsDir: path.join(repoRoot, "db", "migrations") }
       : {}),
@@ -928,13 +940,22 @@ async function createExecutionBundle(input: {
     ),
     profileSourcePolicy: "registered-only",
     eventJournal,
-    ...(storeHandle.store.readExactEffectResult === undefined || storeHandle.store.claimExactEffectCancellation === undefined ? {} : {
-      exactEffectResultStore: {
-        readExactEffectResult: storeHandle.store.readExactEffectResult.bind(storeHandle.store),
-        claimExactEffectCancellation: storeHandle.store.claimExactEffectCancellation.bind(storeHandle.store),
-      },
-      exactEffectResultTenantId: (input.options.env ?? process.env).KESTREL_TENANT_ID,
-    }),
+    ...(storeHandle.store.readExactEffectResult === undefined ||
+    storeHandle.store.claimExactEffectCancellation === undefined
+      ? {}
+      : {
+          exactEffectResultStore: {
+            readExactEffectResult: storeHandle.store.readExactEffectResult.bind(
+              storeHandle.store,
+            ),
+            claimExactEffectCancellation:
+              storeHandle.store.claimExactEffectCancellation.bind(
+                storeHandle.store,
+              ),
+          },
+          exactEffectResultTenantId: (input.options.env ?? process.env)
+            .KESTREL_TENANT_ID,
+        }),
   });
   try {
     await handler.ready();
@@ -1106,9 +1127,11 @@ function buildLocalCoreSystemLifecycle(input: {
   maintenanceOperation: LocalCoreMaintenanceOperation | undefined;
 }): LocalCoreSystemLifecycle {
   const blockers: LocalCoreSystemLifecycle["blockers"] = [];
-  const activeProjectRunCount = input.projectRunRegistry.listRuns().filter(
-    (run) => run.status === "running" || run.status === "stopping",
-  ).length;
+  const activeProjectRunCount = input.projectRunRegistry
+    .listRuns()
+    .filter(
+      (run) => run.status === "running" || run.status === "stopping",
+    ).length;
   if (activeProjectRunCount > 0) {
     blockers.push({
       code: "LOCAL_CORE_PROJECT_RUNS_ACTIVE",
@@ -1601,6 +1624,11 @@ async function handleRequest(input: {
       const body = await readJsonBody(input.request);
       const secret = parseCredentialMutationBody(body);
       await credentialStore.set(credentialId, secret);
+      if (isModelProviderCredential(credentialId)) {
+        await input.updateRuntimeConfiguration(async () =>
+          await input.runtimeConfigurationStore.update((current) => current),
+        );
+      }
       writeJson(input.response, 200, {
         ok: true,
         credentials: await readLocalCoreCredentialStoreStatus(credentialStore),
@@ -1612,6 +1640,11 @@ async function handleRequest(input: {
         input.ensureOptions.credentialStore ??
         new UnavailableLocalCoreCredentialStore();
       const deleted = await credentialStore.delete(credentialId);
+      if (deleted && isModelProviderCredential(credentialId)) {
+        await input.updateRuntimeConfiguration(async () =>
+          await input.runtimeConfigurationStore.update((current) => current),
+        );
+      }
       writeJson(input.response, 200, {
         ok: true,
         deleted,
@@ -1872,9 +1905,55 @@ async function handleRequest(input: {
         ok: true,
         executionConfig: await resolveLocalCoreDesktopExecutionConfig(
           input.status.home.homePath,
-          { runtimeConfiguration },
+          {
+            runtimeConfiguration,
+            ...(input.ensureOptions.credentialStore === undefined
+              ? {}
+              : { credentialStore: input.ensureOptions.credentialStore }),
+            baseEnv: input.ensureOptions.env ?? process.env,
+          },
         ),
       });
+      return;
+    }
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/desktop/model-readiness/refresh"
+    ) {
+      const body = await readJsonBody(input.request);
+      if (
+        typeof body !== "object" ||
+        body === null ||
+        Array.isArray(body) ||
+        Object.keys(body).length !== 0
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_MODEL_READINESS_REFRESH_INVALID",
+          "Local Core model readiness refresh does not accept request fields.",
+        );
+      }
+      const runtimeConfiguration = await input.runtimeConfigurationStore.read();
+      const executionConfig = await resolveLocalCoreDesktopExecutionConfig(
+        input.status.home.homePath,
+        {
+          runtimeConfiguration,
+          ...(input.ensureOptions.credentialStore === undefined
+            ? {}
+            : { credentialStore: input.ensureOptions.credentialStore }),
+          baseEnv: input.ensureOptions.env ?? process.env,
+        },
+      );
+      const readiness = await qualifyLocalCoreModelReadiness({
+        readiness: executionConfig.modelReadiness,
+        ...(input.ensureOptions.modelQualificationFetchImpl === undefined
+          ? {}
+          : { fetchImpl: input.ensureOptions.modelQualificationFetchImpl }),
+      });
+      await new LocalCoreModelReadinessStore(input.status.home.homePath).append(
+        readiness,
+      );
+      writeJson(input.response, 200, { ok: true, modelReadiness: readiness });
       return;
     }
     if (
@@ -1961,20 +2040,27 @@ async function handleRequest(input: {
       const attachmentStore = new DesktopAttachmentStore(
         input.status.home.homePath,
       );
-      const attachment = data !== undefined
-        ? await attachmentStore.import({
-            threadId,
-            filename,
-            data: decodeStrictBase64(data),
-            ...(normalizeString(record.mimeType) !== undefined ? { mimeType: normalizeString(record.mimeType) } : {}),
-            ...(normalizeString(record.sha256) !== undefined ? { sha256: normalizeString(record.sha256) } : {}),
-          })
-        : await attachmentStore.importPath({
-            threadId,
-            filename,
-            sourcePath: sourcePath as string,
-            ...(normalizeString(record.mimeType) !== undefined ? { mimeType: normalizeString(record.mimeType) } : {}),
-          });
+      const attachment =
+        data !== undefined
+          ? await attachmentStore.import({
+              threadId,
+              filename,
+              data: decodeStrictBase64(data),
+              ...(normalizeString(record.mimeType) !== undefined
+                ? { mimeType: normalizeString(record.mimeType) }
+                : {}),
+              ...(normalizeString(record.sha256) !== undefined
+                ? { sha256: normalizeString(record.sha256) }
+                : {}),
+            })
+          : await attachmentStore.importPath({
+              threadId,
+              filename,
+              sourcePath: sourcePath as string,
+              ...(normalizeString(record.mimeType) !== undefined
+                ? { mimeType: normalizeString(record.mimeType) }
+                : {}),
+            });
       writeJson(input.response, 201, { ok: true, attachment });
       return;
     }
@@ -2008,10 +2094,17 @@ async function handleRequest(input: {
       writeJson(input.response, 200, { ok: true, attachments });
       return;
     }
-    if (method === "POST" && url.pathname === "/v1/desktop/attachments/submit") {
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/desktop/attachments/submit"
+    ) {
       const body = await readJsonBody(input.request);
       if (typeof body !== "object" || body === null || Array.isArray(body)) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment submission body must be an object.");
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+          "Attachment submission body must be an object.",
+        );
       }
       const record = body as Record<string, unknown>;
       const threadId = normalizeString(record.threadId);
@@ -2019,10 +2112,20 @@ async function handleRequest(input: {
       const attachmentIds = Array.isArray(record.attachmentIds)
         ? record.attachmentIds.flatMap((id) => normalizeString(id) ?? [])
         : undefined;
-      if (threadId === undefined || messageId === undefined || attachmentIds === undefined) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId, messageId, and attachmentIds are required.");
+      if (
+        threadId === undefined ||
+        messageId === undefined ||
+        attachmentIds === undefined
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+          "threadId, messageId, and attachmentIds are required.",
+        );
       }
-      await new DesktopAttachmentStore(input.status.home.homePath).markSubmitted(threadId, attachmentIds, messageId);
+      await new DesktopAttachmentStore(
+        input.status.home.homePath,
+      ).markSubmitted(threadId, attachmentIds, messageId);
       writeJson(input.response, 200, { ok: true });
       return;
     }
@@ -2267,7 +2370,10 @@ async function handleRequest(input: {
       });
       return;
     }
-    if (method === "GET" && url.pathname === "/v1/desktop/conversation-activity") {
+    if (
+      method === "GET" &&
+      url.pathname === "/v1/desktop/conversation-activity"
+    ) {
       const sessionId = normalizeString(url.searchParams.get("sessionId"));
       if (sessionId === undefined) {
         throw new LocalCoreApiRequestError(
@@ -2843,7 +2949,9 @@ function normalizeReplayQueryEventTypes(
       "Replay query field 'eventTypes' must be a non-empty array of non-empty strings.",
     );
   }
-  return [...new Set(value.map((entry) => (entry as string).trim()))] as ReplayQuery["eventTypes"];
+  return [
+    ...new Set(value.map((entry) => (entry as string).trim())),
+  ] as ReplayQuery["eventTypes"];
 }
 
 function normalizeReplayQueryString(
@@ -3289,12 +3397,14 @@ async function runtimeCredentialReadiness(
       available: credentialStatus?.available ?? true,
     }),
     ollama: {
-      ready: true,
+      // A reachable catalog and the absence of a credential requirement do
+      // not prove that this exact route can satisfy an execution role.
+      ready: false,
       credential: "not_required",
       beta: true,
     },
     lmstudio: {
-      ready: true,
+      ready: false,
       credential: "not_required",
       beta: true,
     },
@@ -3331,6 +3441,16 @@ function isCredentialConfigured(
   return (
     status.credentials.find((credential) => credential.id === id)?.configured ??
     false
+  );
+}
+
+function isModelProviderCredential(
+  credentialId: LocalCoreCredentialId,
+): boolean {
+  return (
+    credentialId === "provider.openrouter.default" ||
+    credentialId === "provider.openai.default" ||
+    credentialId === "provider.anthropic.default"
   );
 }
 

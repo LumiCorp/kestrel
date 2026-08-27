@@ -10,8 +10,46 @@ import { MemoryLocalCoreCredentialStore } from "../../src/localCore/credentialSt
 import { LocalCoreDesktopEnvironmentConfigStore } from "../../src/localCore/desktopEnvironmentConfig.js";
 import {
   LocalCoreDesktopEnvironmentManager,
+  assertCurrentDesktopLocalModelAdmission,
   redactDesktopRunnerEventForUpload,
 } from "../../src/localCore/desktopEnvironmentConnector.js";
+import { createLocalCoreModelReadiness } from "../../src/localCore/modelReadiness.js";
+import { createDefaultLocalCoreRuntimeConfiguration } from "../../src/localCore/runtimeConfiguration.js";
+
+test(
+  "Desktop command dispatch rejects an unpublished or stale local route before runner startup",
+  () => {
+    const readiness = createLocalCoreModelReadiness({
+      runtimeConfiguration: createDefaultLocalCoreRuntimeConfiguration({
+        version: 1,
+        provider: "ollama",
+        model: "glm-4.5-air",
+        modelByStage: {},
+        modelCapabilities: { visionInputEnabled: false },
+      }),
+      profile: { modelProvider: "ollama", model: "glm-4.5-air" },
+    });
+
+    assert.throws(
+      () =>
+        assertCurrentDesktopLocalModelAdmission({
+          provider: "ollama",
+          model: "glm-4.5-air",
+          readiness,
+        }),
+      /not currently qualified/u,
+    );
+    assert.throws(
+      () =>
+        assertCurrentDesktopLocalModelAdmission({
+          provider: "ollama",
+          model: "glm-4.5-air-updated",
+          readiness,
+        }),
+      /no longer matches/u,
+    );
+  },
+);
 
 test(
   "Desktop Environment reports a claimed command that fails before runner startup",

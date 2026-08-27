@@ -1,4 +1,8 @@
 import type { ModelGatewayCallOptions, ModelRequest, ModelResponse } from "../../src/kestrel/contracts/model-io.js";
+import {
+  parseModelRequestV2,
+  type ModelRequestV2,
+} from "../../src/kestrel/contracts/model-registration.js";
 
 import type { OpenRouterEnvConfig, OpenRouterInvoker } from "../contracts.js";
 import {
@@ -7,17 +11,23 @@ import {
   mapOpenRouterTransportError,
 } from "./OpenRouterErrors.js";
 import { buildOpenRouterHttpRequest, mapOpenRouterResponse } from "./OpenRouterMapper.js";
+import {
+  buildOpenRouterHttpRequestV2,
+  mapOpenRouterResponseV2,
+  type OpenRouterQualifiedRouteEvidence,
+} from "./OpenRouterV2Codec.js";
 import { readServerSentEvents } from "../SseStream.js";
 
 interface CreateOpenRouterInvokerOptions {
   env: OpenRouterEnvConfig;
   fetchImpl?: typeof fetch;
+  routeEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
 }
 
 export function createOpenRouterInvoker(options: CreateOpenRouterInvokerOptions): OpenRouterInvoker {
   const fetchImpl = options.fetchImpl ?? fetch;
 
-  return async <TOutput>(request: ModelRequest, callOptions: ModelGatewayCallOptions = {}): Promise<ModelResponse<TOutput>> => invokeWithDiagnostics<TOutput>(fetchImpl, options.env, request, callOptions);
+  return async <TOutput>(request: ModelRequest, callOptions: ModelGatewayCallOptions = {}): Promise<ModelResponse<TOutput>> => invokeWithDiagnostics<TOutput>(fetchImpl, options.env, request, callOptions, options.routeEvidence);
 }
 
 async function invokeWithDiagnostics<TOutput>(
@@ -25,8 +35,9 @@ async function invokeWithDiagnostics<TOutput>(
   env: OpenRouterEnvConfig,
   request: ModelRequest,
   callOptions: ModelGatewayCallOptions,
+  routeEvidence: OpenRouterQualifiedRouteEvidence | undefined,
 ): Promise<ModelResponse<TOutput>> {
-  return invokeOnce<TOutput>(fetchImpl, env, request, callOptions);
+  return invokeOnce<TOutput>(fetchImpl, env, request, callOptions, routeEvidence);
 }
 
 async function invokeOnce<TOutput>(
@@ -34,8 +45,19 @@ async function invokeOnce<TOutput>(
   env: OpenRouterEnvConfig,
   request: ModelRequest,
   callOptions: ModelGatewayCallOptions,
+  routeEvidence: OpenRouterQualifiedRouteEvidence | undefined,
 ): Promise<ModelResponse<TOutput>> {
-  const mappedRequest = buildOpenRouterHttpRequest(request, env);
+  const requestV2 = request.version === "model_request_v2"
+    ? parseModelRequestV2(request)
+    : undefined;
+  if (requestV2 !== undefined && routeEvidence === undefined) {
+    throw createOpenRouterBadResponseError(
+      "OpenRouter V2 requests require exact qualified route evidence.",
+    );
+  }
+  const mappedRequest = requestV2 === undefined
+    ? buildOpenRouterHttpRequest(request, env)
+    : buildOpenRouterHttpRequestV2(requestV2, env, routeEvidence!);
   const url = `${trimTrailingSlash(env.baseUrl)}${mappedRequest.path}`;
 
   try {
@@ -64,12 +86,15 @@ async function invokeOnce<TOutput>(
     if (payloadError !== undefined) {
       throw createOpenRouterHttpError(payloadError.status, JSON.stringify(payload), {});
     }
-    const mapped = mapOpenRouterResponse<TOutput>(payload, {
+    const context = {
       endpoint: mappedRequest.endpoint,
       requestedModel: mappedRequest.model,
       requestId,
       structuredOutput: mappedRequest.structuredOutput,
-    });
+    };
+    const mapped = requestV2 === undefined
+      ? mapOpenRouterResponse<TOutput>(payload, context)
+      : mapOpenRouterResponseV2<TOutput>(payload, context);
     if (
       callOptions.onEvent !== undefined &&
       request.reasoning !== undefined &&
@@ -95,8 +120,12 @@ async function readOpenRouterStream(
   const message: Record<string, unknown> = { role: "assistant", content: "", reasoning_details: [], tool_calls: [] };
   const root: Record<string, unknown> = { choices: [{ message }] };
   const startedFormats = new Set<"summary" | "provider_reasoning_text">();
+  let terminalReceived = false;
   await readServerSentEvents(response, async ({ data }) => {
-    if (data === "[DONE]") return;
+    if (data === "[DONE]") {
+      terminalReceived = true;
+      return;
+    }
     const chunk = parseJsonRecord(data);
     if (chunk === undefined) return;
     const payloadError = readOpenRouterPayloadError(chunk);
@@ -149,6 +178,7 @@ async function readOpenRouterStream(
   for (const format of startedFormats) {
     await options.onEvent?.({ type: "reasoning.completed", attempt: 1, format });
   }
+  if (terminalReceived) root.__openRouterTerminalEvent = "[DONE]";
   return root;
 }
 
@@ -158,6 +188,7 @@ async function readOpenRouterResponsesStream(
 ): Promise<unknown> {
   let completed: unknown;
   let started = false;
+  const functionCalls = new Map<string, Record<string, unknown>>();
   await readServerSentEvents(response, async ({ data }) => {
     if (data === "[DONE]") return;
     const event = parseJsonRecord(data);
@@ -172,13 +203,64 @@ async function readOpenRouterResponsesStream(
       await options.onEvent?.({ type: "reasoning.delta", attempt: 1, format: "provider_reasoning_text", delta: event.delta });
     } else if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
       await options.onEvent?.({ type: "output.delta", attempt: 1, delta: event.delta });
+    } else if (event.type === "response.function_call_arguments.delta") {
+      mergeResponsesFunctionCallDelta(functionCalls, event);
     } else if (event.type === "response.completed") {
       completed = event.response;
     }
   });
   if (started) await options.onEvent?.({ type: "reasoning.completed", attempt: 1, format: "provider_reasoning_text" });
   if (completed === undefined) throw createOpenRouterBadResponseError("OpenRouter stream ended without response.completed.");
-  return completed;
+  const root = asRecord(completed);
+  if (root === undefined) {
+    throw createOpenRouterBadResponseError("OpenRouter response.completed did not contain an OpenResponses object.");
+  }
+  const output = asArray(root.output);
+  const completeCallIds = new Set(
+    output
+      .map((item) => asRecord(item))
+      .filter((item): item is Record<string, unknown> => item?.type === "function_call")
+      .map((item) => asString(item.call_id) ?? asString(item.id))
+      .filter((id): id is string => id !== undefined),
+  );
+  const streamedCalls = [...functionCalls.values()].filter((item) => {
+    const id = asString(item.call_id) ?? asString(item.id);
+    return id !== undefined && !completeCallIds.has(id);
+  });
+  return {
+    ...root,
+    ...(streamedCalls.length > 0 ? { output: [...output, ...streamedCalls] } : {}),
+    __openRouterTerminalEvent: "response.completed",
+  };
+}
+
+function mergeResponsesFunctionCallDelta(
+  calls: Map<string, Record<string, unknown>>,
+  event: Record<string, unknown>,
+): void {
+  const callId = asString(event.call_id) ?? asString(event.item_id);
+  if (callId === undefined) {
+    throw createOpenRouterBadResponseError(
+      "OpenRouter function-argument stream event did not include a call ID.",
+    );
+  }
+  const delta = asString(event.delta);
+  if (delta === undefined) {
+    throw createOpenRouterBadResponseError(
+      "OpenRouter function-argument stream event did not include an argument delta.",
+    );
+  }
+  const current = calls.get(callId) ?? {
+    type: "function_call",
+    call_id: callId,
+    ...(asString(event.name) !== undefined ? { name: event.name } : {}),
+    arguments: "",
+  };
+  if (asString(event.name) !== undefined && asString(current.name) === undefined) {
+    current.name = event.name;
+  }
+  current.arguments = `${asString(current.arguments) ?? ""}${delta}`;
+  calls.set(callId, current);
 }
 
 function mergeStreamingToolCalls(message: Record<string, unknown>, chunks: unknown[]): void {
@@ -210,6 +292,10 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function asArray(value: unknown): unknown[] { return Array.isArray(value) ? value : []; }
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
 
 function readOpenRouterPayloadError(payload: unknown): { status: number } | undefined {
   if (typeof payload !== "object" || payload === null) {

@@ -25,6 +25,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { z } from "zod";
+import { parseLocalCoreModelReadiness } from "../../../../src/localCore/contracts";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { issueGatewayCredentialLease } from "@/lib/ai/gateway-credential-lease";
 import { resolveKestrelAppUrl } from "@/lib/app-url";
@@ -34,6 +35,7 @@ import {
   organizationEnvironmentCreateLockKey,
   organizationEnvironmentDefaultLockKey,
 } from "./lifecycle-lock";
+import { modelGrantRouteBinding } from "./model-grant-route-binding";
 import {
   createExecutionAuthorizationRenewalToken,
   EXECUTION_AUTHORIZATION_RENEWAL_VERSION,
@@ -72,11 +74,27 @@ export const desktopPresenceSchema = z.object({
   runtimeVersion: z.string().trim().min(1).max(80).optional(),
   models: z
     .array(
-      z.object({
-        provider: z.string().trim().min(1).max(80),
-        model: z.string().trim().min(1).max(200),
-        health: z.enum(["ready", "unavailable"]),
-      }),
+      z.union([
+        z.object({
+          provider: z.string().trim().min(1).max(80),
+          model: z.string().trim().min(1).max(200),
+          health: z.enum(["ready", "unavailable"]),
+        }),
+        z.unknown().transform((value, context) => {
+          try {
+            return parseLocalCoreModelReadiness(value);
+          } catch (error) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Desktop model readiness is invalid.",
+            });
+            return z.NEVER;
+          }
+        }),
+      ]),
     )
     .max(100)
     .default([]),
@@ -1200,12 +1218,14 @@ async function issueEncryptedDesktopModelGrant(input: {
       ),
   });
   if (!modelGrant) return undefined;
+  const routeBinding = modelGrantRouteBinding(modelGrant);
   const lease = await issueGatewayCredentialLease({
     version: "gateway-credential-lease-v3",
     gatewayId: modelGrant.gatewayId,
     organizationId: modelGrant.organizationId,
     environmentId: modelGrant.environmentId,
     rawModelId: modelGrant.rawModelId,
+    ...(routeBinding !== undefined ? { routeBinding } : {}),
   });
   return encryptDesktopCredential({
     value: lease,

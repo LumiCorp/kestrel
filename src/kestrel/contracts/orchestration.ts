@@ -14,6 +14,10 @@ import type {
   RunnerInteractionRequest,
 } from "@kestrel-agents/protocol";
 import type { RuntimeTurnActor } from "../../runtime/RuntimeTurn.js";
+import {
+  parseEffectiveModelContractV1,
+  type EffectiveModelContractV1,
+} from "../effective-model-contract.js";
 
 export type ThreadStatus = "IDLE" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
 export type DelegationStatus = "PENDING" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED" | "CANCELLED";
@@ -427,11 +431,148 @@ export interface ModelCallProvenanceRecord {
   toolManifestHash?: string | undefined;
   assemblyId?: string | undefined;
   sourceBucketHashes?: Record<string, string> | undefined;
+  /**
+   * Immutable, secret-free admission and terminal proof for this specific
+   * call. Readers must use this captured binding rather than resolving the
+   * model against the current registration catalog.
+   */
+  proof: ModelCallProofV1;
   metadata?: Record<string, unknown> | undefined;
   createdAt: string;
   completedAt?: string | undefined;
   latencyMs?: number | undefined;
   status: "REQUESTED" | "COMPLETED" | "FAILED";
+}
+
+export const MODEL_CALL_PROOF_V1 = "model_call_proof_v1" as const;
+
+export interface ModelCallProofV1 {
+  version: typeof MODEL_CALL_PROOF_V1;
+  evidence: "captured" | "legacy";
+  admission: "pending" | "admitted" | "pre_spend_rejected" | "unknown_legacy";
+  /** The contract is only retained after a successful admission. */
+  effectiveContract?: EffectiveModelContractV1 | undefined;
+  /**
+   * Directly derived from the admitted request requirements. These names are
+   * an inspectable contract dimension, never an inferred model capability.
+   */
+  capabilities: ModelCallRequiredCapabilityV1[];
+  terminal:
+    | "pending"
+    | "completed"
+    | "pre_spend_rejected"
+    | "provider_rejected"
+    | "verifier_rejected"
+    | "interrupted"
+    | "unknown_legacy";
+  validation: "not_requested" | "passed" | "failed" | "unknown_legacy";
+  failureCode?: string | undefined;
+  providerRequestId?: string | undefined;
+}
+
+export type ModelCallRequiredCapabilityV1 =
+  | "structured_output"
+  | "strict_schema"
+  | "tools"
+  | "required_tool_choice"
+  | "strict_tool_inputs"
+  | "streaming_terminal";
+
+/**
+ * Rebuilds the closed, secret-free proof shape before storage. Unknown fields
+ * are intentionally discarded so a caller cannot smuggle model content or
+ * credentials through the provenance ledger.
+ */
+export function parseModelCallProofV1(value: unknown): ModelCallProofV1 {
+  const record = asRecord(value, "model call proof");
+  const evidence = readEnum(record.evidence, ["captured", "legacy"] as const, "evidence");
+  const admission = readEnum(
+    record.admission,
+    ["pending", "admitted", "pre_spend_rejected", "unknown_legacy"] as const,
+    "admission",
+  );
+  const terminal = readEnum(
+    record.terminal,
+    ["pending", "completed", "pre_spend_rejected", "provider_rejected", "verifier_rejected", "interrupted", "unknown_legacy"] as const,
+    "terminal",
+  );
+  const validation = readEnum(
+    record.validation,
+    ["not_requested", "passed", "failed", "unknown_legacy"] as const,
+    "validation",
+  );
+  if (record.version !== MODEL_CALL_PROOF_V1) {
+    throw new Error("model call proof version is invalid");
+  }
+  const capabilities = readModelCallRequiredCapabilities(record.capabilities);
+  const effectiveContract = record.effectiveContract === undefined
+    ? undefined
+    : parseEffectiveModelContractV1(record.effectiveContract);
+  if (evidence === "legacy" && effectiveContract !== undefined) {
+    throw new Error("legacy model call proof must not claim an effective contract");
+  }
+  return {
+    version: MODEL_CALL_PROOF_V1,
+    evidence,
+    admission,
+    ...(effectiveContract !== undefined ? { effectiveContract } : {}),
+    capabilities,
+    terminal,
+    validation,
+    ...(readBoundedProofString(record.failureCode, "failureCode") !== undefined
+      ? { failureCode: readBoundedProofString(record.failureCode, "failureCode") }
+      : {}),
+    ...(readBoundedProofString(record.providerRequestId, "providerRequestId") !== undefined
+      ? { providerRequestId: readBoundedProofString(record.providerRequestId, "providerRequestId") }
+      : {}),
+  };
+}
+
+function readModelCallRequiredCapabilities(value: unknown): ModelCallRequiredCapabilityV1[] {
+  if (!Array.isArray(value)) throw new Error("model call proof capabilities are invalid");
+  const allowed = new Set<ModelCallRequiredCapabilityV1>([
+    "structured_output",
+    "strict_schema",
+    "tools",
+    "required_tool_choice",
+    "strict_tool_inputs",
+    "streaming_terminal",
+  ]);
+  const parsed = value.map((entry) => {
+    if (typeof entry !== "string" || !allowed.has(entry as ModelCallRequiredCapabilityV1)) {
+      throw new Error("model call proof capability is invalid");
+    }
+    return entry as ModelCallRequiredCapabilityV1;
+  });
+  return [...new Set(parsed)];
+}
+
+function asRecord(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function readEnum<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  label: string,
+): T {
+  if (typeof value !== "string" || allowed.includes(value as T) === false) {
+    throw new Error(`model call proof ${label} is invalid`);
+  }
+  return value as T;
+}
+
+function readBoundedProofString(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`model call proof ${label} is invalid`);
+  const normalized = value.trim();
+  if (normalized.length === 0 || normalized.length > 128) {
+    throw new Error(`model call proof ${label} is invalid`);
+  }
+  return normalized;
 }
 
 export interface RunTurnAttachment {

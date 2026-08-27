@@ -12,6 +12,7 @@ import {
   type KestrelProfileDefinitionV1,
 } from "../kestrel/contracts/profile.js";
 import { createRuntimeEvaluationPolicyV1 } from "../kestrel/contracts/evaluation.js";
+import { createLegacyModelCredentialRouteBindingV2 } from "../kestrel/contracts/model-route.js";
 import type { HarnessEconomicsControlV1 } from "../economics/contracts.js";
 import {
   DEFAULT_ACT_SUBMODE,
@@ -618,7 +619,19 @@ export function composeKestrelProfile(
       ? {
           modelProvider: binding.modelRoute.provider,
           model: binding.modelRoute.model,
-          modelCredential: binding.modelRoute.credentialReference,
+          ...(binding.modelRoute.credentialReference !== undefined
+            ? {
+                modelCredential: {
+                  ...binding.modelRoute.credentialReference,
+                  routeBinding:
+                    binding.modelRoute.routeBinding ??
+                    createLegacyModelCredentialRouteBindingV2({
+                      provider: binding.modelRoute.credentialReference.provider,
+                      rawModelId: binding.modelRoute.model,
+                    }),
+                },
+              }
+            : {}),
           modelCapabilities: {
             visionInputEnabled:
               binding.modelRoute.capabilities.visionInputEnabled,
@@ -708,17 +721,23 @@ export function createKestrelEnvironmentBindingFromOverlay(input: {
           capabilities: {
             visionInputEnabled:
               input.overlay.modelCapabilities?.visionInputEnabled === true,
-            toolCallingEnabled: true,
-            structuredOutputEnabled: true,
-            reasoningModes:
-              input.overlay.modelProvider === "ollama" ||
-              input.overlay.modelProvider === "lmstudio"
-                ? ["off", "summary"]
-                : ["off", "summary", "provider_visible"],
+            toolCallingEnabled: false,
+            structuredOutputEnabled: false,
+            reasoningModes: ["off"],
           },
           ...(input.overlay.modelCredential !== undefined
             ? { credentialReference: input.overlay.modelCredential }
             : {}),
+          ...(input.overlay.modelProvider === "lmstudio"
+            ? {}
+            : {
+                routeBinding:
+                  input.overlay.modelCredential?.routeBinding ??
+                  createLegacyModelCredentialRouteBindingV2({
+                    provider: input.overlay.modelProvider,
+                    rawModelId: input.overlay.model,
+                  }),
+              }),
         }
       : {
           kind: "runtime_configuration",

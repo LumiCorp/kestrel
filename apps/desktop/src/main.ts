@@ -1795,6 +1795,13 @@ function registerIpcHandlers(
       ),
   );
   ipcMain.handle(
+    "desktop:refresh-model-readiness",
+    async () =>
+      await requireLocalCoreConnectionManager().executeOnce(
+        async (client) => await client.refreshDesktopModelReadiness(),
+      ),
+  );
+  ipcMain.handle(
     "desktop:set-kestrel-one-capacity",
     async (_event, capacity: unknown) => {
       if (

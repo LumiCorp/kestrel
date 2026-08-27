@@ -81,6 +81,7 @@ import {
   getGatewayCollectionState,
   getGatewayOverview,
 } from "@/lib/settings/gateway-presentation";
+import type { HostedModelReadiness } from "@/lib/ai/hosted-model-readiness";
 import { cn } from "@/lib/utils";
 
 type Gateway = {
@@ -116,6 +117,7 @@ type GatewayModel = {
     source?: string;
     canonicalSlug?: string;
   };
+  readiness?: HostedModelReadiness;
 };
 
 type GatewayBundle = {
@@ -168,6 +170,102 @@ function getEmptyNewModelDraft(gateway: Gateway): NewModelDraft {
 
 function formatModalityLabel(modality: GatewayModel["modality"]) {
   return `${modality.charAt(0).toUpperCase()}${modality.slice(1)}`;
+}
+
+function formatReadinessValue(value: string) {
+  return value
+    .split(/[_-]/u)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function formatReadinessTimestamp(value: string | undefined) {
+  if (!value) return;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value;
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - parsed) / 60_000));
+  if (elapsedMinutes < 60) return `${elapsedMinutes}m ago`;
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 48) return `${elapsedHours}h ago`;
+  return `${Math.floor(elapsedHours / 24)}d ago`;
+}
+
+function HostedModelReadinessSummary({
+  readiness,
+}: {
+  readiness: HostedModelReadiness;
+}) {
+  const evidenceObservedAt = formatReadinessTimestamp(
+    readiness.registration?.evidenceObservedAt,
+  );
+  const qualificationCheckedAt = formatReadinessTimestamp(
+    readiness.registration?.qualificationCheckedAt,
+  );
+
+  return (
+    <div
+      className="mt-2 space-y-1 text-muted-foreground text-xs leading-5"
+      data-testid="hosted-model-readiness"
+    >
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Badge
+          className="rounded-full"
+          variant={readiness.approval === "approved" ? "default" : "outline"}
+        >
+          Admin {readiness.approval}
+        </Badge>
+        <span>
+          Reachability: {formatReadinessValue(readiness.reachability)}
+        </span>
+        <span>
+          Registration: {formatReadinessValue(readiness.identity)} ·{" "}
+          {formatReadinessValue(readiness.declaration)}
+        </span>
+        <span>
+          Qualification: {formatReadinessValue(readiness.qualification)} ·{" "}
+          {formatReadinessValue(readiness.freshness)}
+        </span>
+      </div>
+      <div>
+        Eligible roles:{" "}
+        {readiness.eligibleRoles.length > 0
+          ? readiness.eligibleRoles.join(", ")
+          : "none"}
+      </div>
+      {readiness.unavailableRoles.map((unavailable) => (
+        <div key={unavailable.role}>
+          {unavailable.role} unavailable: {unavailable.reason}
+          {unavailable.missingCapabilities.length > 0 ? (
+            <span>
+              {" "}
+              Missing proofs: {unavailable.missingCapabilities.join(", ")}.
+            </span>
+          ) : null}
+        </div>
+      ))}
+      <div>
+        Capability proofs:{" "}
+        {readiness.capabilities
+          .map(
+            (capability) =>
+              `${capability.capability} (${formatReadinessValue(capability.state)})`,
+          )
+          .join(", ")}
+      </div>
+      {readiness.registration ? (
+        <div>
+          Registration {readiness.registration.revision} ·{" "}
+          {readiness.registration.fingerprint}
+          {evidenceObservedAt
+            ? ` · ${readiness.registration.evidenceSource ?? "provider"} evidence ${evidenceObservedAt}`
+            : ""}
+          {qualificationCheckedAt
+            ? ` · Qualified ${qualificationCheckedAt}`
+            : ""}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function isMetadataRecord(
@@ -1070,7 +1168,7 @@ function GatewayModelCatalogPane({
           </Button>
         }
         className="lg:block"
-        description="Approved and default models appear first. Filter to inspect the full catalog."
+        description="Administratively approved and default models appear first. Language runtime eligibility requires current qualification evidence."
         title={providerLabels[bundle.gateway.provider]}
       >
         <SettingsDisclosure
@@ -1092,8 +1190,9 @@ function GatewayModelCatalogPane({
             </div>
             <div className="mb-5 space-y-4">
               <p className="text-muted-foreground text-xs/5">
-                Add provider model IDs, approve models for runtime, assign
-                aliases, set defaults, or remove imported entries.
+                Add provider model IDs, record administrative approval, assign
+                aliases, set defaults, or remove imported entries. Saving an
+                approved hosted model refreshes its evidence and qualification.
               </p>
               <div className="grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)] xl:grid-cols-[auto_minmax(220px,1fr)_minmax(150px,0.6fr)_minmax(150px,0.6fr)_auto]">
                 <Button
@@ -1388,12 +1487,18 @@ function GatewayModelCatalogPane({
                           )}
                         </TableCell>
                         <TableCell className="py-3 align-top">
-                          <Badge
-                            className="rounded-full"
-                            variant={draft.approved ? "default" : "outline"}
-                          >
-                            {draft.approved ? "Approved" : "Unapproved"}
-                          </Badge>
+                          {model.modality === "language" && model.readiness ? (
+                            <HostedModelReadinessSummary
+                              readiness={model.readiness}
+                            />
+                          ) : (
+                            <Badge
+                              className="rounded-full"
+                              variant={draft.approved ? "default" : "outline"}
+                            >
+                              {draft.approved ? "Approved" : "Unapproved"}
+                            </Badge>
+                          )}
                           {model.economicsAdmission ? (
                             <div className="mt-1 text-muted-foreground text-xs">
                               {model.economicsAdmission.status === "ready" ? (
@@ -1410,7 +1515,8 @@ function GatewayModelCatalogPane({
                                     </div>
                                   ) : null}
                                   <div>
-                                    Kestrel per-run allocation is configured separately.
+                                    Kestrel per-run allocation is configured
+                                    separately.
                                   </div>
                                 </>
                               ) : (
@@ -1519,9 +1625,9 @@ function GatewayModelCatalogPane({
                             <IconActionButton
                               className="h-9 w-9 rounded-lg p-0"
                               disabled={
-                              Boolean(savingModelId) ||
-                              !runPodValidated ||
-                              !economicsReady
+                                Boolean(savingModelId) ||
+                                !runPodValidated ||
+                                !economicsReady
                               }
                               icon={<Star className="size-4" />}
                               label={

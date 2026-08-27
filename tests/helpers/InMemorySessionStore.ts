@@ -9,6 +9,7 @@ import type {
   ConversationTurnTerminalEnvelopeV1,
   ModelCallProvenanceRecord,
 } from "../../src/kestrel/contracts/orchestration.js";
+import { parseModelCallProofV1 } from "../../src/kestrel/contracts/orchestration.js";
 import type {
   ClaimConversationTurnExecutionInput,
   ClaimConversationTurnExecutionResult,
@@ -1431,15 +1432,20 @@ export class InMemorySessionStore implements SessionStore {
     if (this.modelCallProvenance.has(record.callId)) {
       return;
     }
-    this.modelCallProvenance.set(record.callId, structuredClone(record));
+    this.modelCallProvenance.set(record.callId, {
+      ...structuredClone(record),
+      proof: parseModelCallProofV1(record.proof),
+    });
     this.operationLog.push(`appendModelCallProvenance:${record.callId}:${record.status}`);
   }
 
   async updateModelCallProvenance(input: {
     callId: string;
     status: ModelCallProvenanceRecord["status"];
-    completedAt: string;
+    completedAt?: string | undefined;
     latencyMs?: number | undefined;
+    providerPayloadHash?: string | undefined;
+    proof?: ModelCallProvenanceRecord["proof"] | undefined;
     metadata?: Record<string, unknown> | undefined;
   }): Promise<void> {
     const current = this.modelCallProvenance.get(input.callId);
@@ -1449,8 +1455,12 @@ export class InMemorySessionStore implements SessionStore {
     this.modelCallProvenance.set(input.callId, {
       ...current,
       status: input.status,
-      completedAt: input.completedAt,
+      ...(input.completedAt !== undefined ? { completedAt: input.completedAt } : {}),
       ...(input.latencyMs !== undefined ? { latencyMs: input.latencyMs } : {}),
+      ...(input.providerPayloadHash !== undefined
+        ? { providerPayloadHash: input.providerPayloadHash }
+        : {}),
+      ...(input.proof !== undefined ? { proof: parseModelCallProofV1(input.proof) } : {}),
       ...(input.metadata !== undefined
         ? { metadata: { ...(current.metadata ?? {}), ...structuredClone(input.metadata) } }
         : {}),

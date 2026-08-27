@@ -7,7 +7,16 @@ import {
   parseDesktopLocalRuntimeModelId,
   selectGatewayModelSelection,
 } from "./gateway-utils";
-import { getGatewayModelEconomicsProvider, readGatewayModelEconomicsProfile } from "./model-economics-profile";
+import {
+  getGatewayModelEconomicsProvider,
+  readGatewayModelEconomicsProfile,
+} from "./model-economics-profile";
+import {
+  isHostedModelProvider,
+  isHostedModelRoleReady,
+  readHostedModelReadiness,
+} from "./hosted-model-readiness";
+import { isDesktopModelRoleReady } from "../environments/desktop-model-readiness";
 
 export type RuntimeModelSelectionTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
@@ -18,7 +27,7 @@ export type ResolvedKestrelRuntimeModelIdentity = {
   rawModelId: string;
 };
 
-async function listAvailableKestrelRuntimeGatewayModels(
+async function listSelectableKestrelRuntimeGatewayModels(
   transaction: RuntimeModelSelectionTransaction,
   input: { organizationId: string; environmentId: string },
 ) {
@@ -29,6 +38,8 @@ async function listAvailableKestrelRuntimeGatewayModels(
       rawModelId: schema.aiGatewayModels.rawModelId,
       isDefault: schema.aiGatewayModels.isDefault,
       gatewayProvider: schema.aiGateways.provider,
+      credentialRevision: schema.aiGateways.credentialRevision,
+      credentialStatus: schema.aiGateways.credentialStatus,
       metadata: schema.aiGatewayModels.metadata,
     })
     .from(schema.aiGatewayModels)
@@ -57,15 +68,44 @@ async function listAvailableKestrelRuntimeGatewayModels(
         modality: "language",
         metadata: row.metadata,
       });
-      return provider !== undefined && readGatewayModelEconomicsProfile(row.metadata, {
-        provider,
-        model: row.rawModelId,
-      }) !== undefined;
+      return (
+        provider !== undefined &&
+        readGatewayModelEconomicsProfile(row.metadata, {
+          provider,
+          model: row.rawModelId,
+        }) !== undefined
+      );
     })
     .map((row) => ({
       ...row,
       id: row.alias?.trim() || `${row.gatewayProvider}/${row.rawModelId}`,
     }));
+}
+
+async function listAvailableKestrelRuntimeGatewayModels(
+  transaction: RuntimeModelSelectionTransaction,
+  input: {
+    organizationId: string;
+    environmentId: string;
+    requiredRole?: string | undefined;
+  },
+) {
+  return (await listSelectableKestrelRuntimeGatewayModels(transaction, input)).filter(
+    (row) =>
+      !isHostedModelProvider(row.gatewayProvider) ||
+      isHostedModelRoleReady(
+        readHostedModelReadiness({
+          approved: true,
+          gatewayEnabled: true,
+          gatewayReachable: row.credentialStatus === "ready",
+          provider: row.gatewayProvider,
+          modelId: row.rawModelId,
+          metadata: row.metadata,
+          credentialRevision: row.credentialRevision,
+        }),
+        input.requiredRole,
+      ),
+  );
 }
 
 export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
@@ -74,6 +114,7 @@ export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
     organizationId: string;
     environmentId: string;
     modelIds: readonly string[];
+    requiredRole?: string | undefined;
   },
 ) {
   const modelIds = [...new Set(input.modelIds.map((value) => value.trim()))].filter(
@@ -116,11 +157,13 @@ export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
     if (unavailable.has(modelId)) continue;
     const desktop = desktopSelections.get(modelId);
     if (desktop) {
-      const advertised = desktopConnection?.advertisedModels.some(
-        (candidate) =>
-          candidate.provider === desktop.provider &&
-          candidate.model === desktop.model &&
-          candidate.health === "ready",
+      const advertised = desktopConnection?.advertisedModels.some((candidate) =>
+        isDesktopModelRoleReady({
+          model: candidate,
+          provider: desktop.provider,
+          modelId: desktop.model,
+          role: input.requiredRole,
+        }),
       );
       if (!advertised) unavailable.add(modelId);
       continue;
@@ -138,6 +181,7 @@ export async function isKestrelRuntimeModelSelectionAvailableInTransaction(
     organizationId: string;
     environmentId: string;
     modelId: string;
+    requiredRole?: string | undefined;
   },
 ) {
   const modelId = input.modelId.trim();
@@ -160,18 +204,12 @@ export async function resolveKestrelRuntimeModelIdentityInTransaction(
 ): Promise<ResolvedKestrelRuntimeModelIdentity | null> {
   const modelId = input.modelId.trim();
   if (!modelId) return null;
-  const unavailable =
-    await findUnavailableKestrelRuntimeModelSelectionsInTransaction(
-      transaction,
-      { ...input, modelIds: [modelId] },
-    );
-  if (unavailable.has(modelId)) return null;
   const desktop = parseDesktopLocalRuntimeModelId(modelId);
   if (desktop) {
     return { provider: desktop.provider, rawModelId: desktop.model };
   }
   const selected = selectGatewayModelSelection(
-    await listAvailableKestrelRuntimeGatewayModels(transaction, input),
+    await listSelectableKestrelRuntimeGatewayModels(transaction, input),
     modelId,
   );
   return selected

@@ -23,6 +23,7 @@ import type {
 import type { RuntimeReplayBundleV1 } from "../replay/RuntimeReplayBundle.js";
 import {
   parseLocalCoreDesktopExecutionConfig,
+  parseLocalCoreModelReadiness,
   parseLocalCoreBuildIdentity,
   parseLocalCoreExecutionProfileResolution,
   parseLocalCoreRuntimeStoreResetResult,
@@ -572,6 +573,17 @@ export class LocalCoreClient {
         response,
         "executionConfig",
         "Desktop execution config",
+      ),
+    );
+  }
+
+  async refreshDesktopModelReadiness() {
+    const response = await this.post("/v1/desktop/model-readiness/refresh", {});
+    return parseLocalCoreModelReadiness(
+      readObjectField<Record<string, unknown>>(
+        response,
+        "modelReadiness",
+        "Desktop model readiness",
       ),
     );
   }

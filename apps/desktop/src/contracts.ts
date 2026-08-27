@@ -508,6 +508,9 @@ export interface DesktopBridge {
     desktopName: string;
   }): Promise<DesktopEnvironmentStatusProjection>;
   refreshKestrelOneEnrollments(): Promise<DesktopEnvironmentStatusProjection>;
+  refreshDesktopModelReadiness(): Promise<
+    import("../../../src/localCore/contracts.js").LocalCoreModelReadiness
+  >;
   setKestrelOneCapacity(
     capacity: number,
   ): Promise<DesktopEnvironmentStatusProjection>;

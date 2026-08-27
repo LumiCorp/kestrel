@@ -192,6 +192,15 @@ test("RunReplayService exposes turn and hash-only model provenance without promp
       transcript: "bucket-transcript",
       toolManifest: "bucket-tools",
     },
+    proof: {
+      version: "model_call_proof_v1",
+      evidence: "captured",
+      admission: "admitted",
+      capabilities: ["structured_output", "tools", "required_tool_choice"],
+      terminal: "completed",
+      validation: "passed",
+      providerRequestId: "request-a",
+    },
     metadata: {
       promptRetention: "hash_only",
       promptDump: {

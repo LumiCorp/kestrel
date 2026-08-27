@@ -74,6 +74,7 @@ import type {
   ThreadAssemblyRecord,
   ThreadRecord,
 } from "../kestrel/contracts/orchestration.js";
+import { parseModelCallProofV1 } from "../kestrel/contracts/orchestration.js";
 import {
   assertSandboxCapabilityLeaseTransitionV1,
   fingerprintSandboxCapabilityLeaseBinding,
@@ -3608,9 +3609,9 @@ export class PostgresSessionStore implements SessionStore {
          (call_id, run_id, session_id, thread_id, turn_id, step_index, step_agent, phase,
           model, provider, response_format, schema_name, provider_payload_hash, component_hash,
           template_ids_json, tool_manifest_hash, assembly_id, source_bucket_hashes_json,
-          metadata_json, status, latency_ms, created_at, completed_at)
+          proof_json, metadata_json, status, latency_ms, created_at, completed_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-               $15::jsonb, $16, $17, $18::jsonb, $19::jsonb, $20, $21, $22::timestamptz, $23::timestamptz)
+               $15::jsonb, $16, $17, $18::jsonb, $19::jsonb, $20::jsonb, $21, $22, $23::timestamptz, $24::timestamptz)
        ON CONFLICT (call_id) DO NOTHING`,
       [
         record.callId,
@@ -3631,6 +3632,7 @@ export class PostgresSessionStore implements SessionStore {
         record.toolManifestHash ?? null,
         record.assemblyId ?? null,
         stringifySanitizedJson(record.sourceBucketHashes ?? null),
+        stringifySanitizedJson(parseModelCallProofV1(record.proof)),
         stringifySanitizedJson(record.metadata ?? null),
         record.status,
         record.latencyMs ?? null,
@@ -3643,23 +3645,29 @@ export class PostgresSessionStore implements SessionStore {
   async updateModelCallProvenance(input: {
     callId: string;
     status: ModelCallProvenanceRecord["status"];
-    completedAt: string;
+    completedAt?: string | undefined;
     latencyMs?: number | undefined;
+    providerPayloadHash?: string | undefined;
+    proof?: ModelCallProvenanceRecord["proof"] | undefined;
     metadata?: Record<string, unknown> | undefined;
   }): Promise<void> {
     await this.ensureSchemaV3();
     await this.db.query(
       `UPDATE model_call_provenance
           SET status = $2,
-              completed_at = $3::timestamptz,
-              latency_ms = $4,
-              metadata_json = COALESCE($5::jsonb, metadata_json)
+              completed_at = COALESCE($3::timestamptz, completed_at),
+              latency_ms = COALESCE($4, latency_ms),
+              provider_payload_hash = COALESCE($5, provider_payload_hash),
+              proof_json = COALESCE($6::jsonb, proof_json),
+              metadata_json = COALESCE($7::jsonb, metadata_json)
         WHERE call_id = $1`,
       [
         input.callId,
         input.status,
-        normalizeTimestampString(input.completedAt),
+        input.completedAt === undefined ? null : normalizeTimestampString(input.completedAt),
         input.latencyMs ?? null,
+        input.providerPayloadHash ?? null,
+        input.proof === undefined ? null : stringifySanitizedJson(parseModelCallProofV1(input.proof)),
         input.metadata === undefined ? null : stringifySanitizedJson(input.metadata),
       ],
     );
@@ -3693,7 +3701,7 @@ export class PostgresSessionStore implements SessionStore {
       `SELECT call_id, run_id, session_id, thread_id, turn_id, step_index, step_agent,
               phase, model, provider, response_format, schema_name, provider_payload_hash,
               component_hash, template_ids_json, tool_manifest_hash, assembly_id,
-              source_bucket_hashes_json, metadata_json, status, latency_ms, created_at, completed_at
+              source_bucket_hashes_json, proof_json, metadata_json, status, latency_ms, created_at, completed_at
          FROM model_call_provenance
          ${whereClause}
         ORDER BY created_at ASC, call_id ASC
@@ -5858,6 +5866,7 @@ interface ModelCallProvenanceRow {
   tool_manifest_hash: string | null;
   assembly_id: string | null;
   source_bucket_hashes_json: Record<string, string> | null;
+  proof_json: ModelCallProvenanceRecord["proof"] | null;
   metadata_json: Record<string, unknown> | null;
   status: ModelCallProvenanceRecord["status"];
   latency_ms: number | null;
@@ -5922,11 +5931,27 @@ function mapModelCallProvenanceRow(row: ModelCallProvenanceRow): ModelCallProven
     ...(row.tool_manifest_hash !== null ? { toolManifestHash: row.tool_manifest_hash } : {}),
     ...(row.assembly_id !== null ? { assemblyId: row.assembly_id } : {}),
     ...(row.source_bucket_hashes_json !== null ? { sourceBucketHashes: row.source_bucket_hashes_json } : {}),
+    proof: row.proof_json === null ? legacyModelCallProof(row) : parseModelCallProofV1(row.proof_json),
     ...(row.metadata_json !== null ? { metadata: row.metadata_json } : {}),
     createdAt: row.created_at,
     ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
     ...(row.latency_ms !== null ? { latencyMs: row.latency_ms } : {}),
     status: row.status,
+  };
+}
+
+function legacyModelCallProof(row: ModelCallProvenanceRow): ModelCallProvenanceRecord["proof"] {
+  return {
+    version: "model_call_proof_v1",
+    evidence: "legacy",
+    admission: "unknown_legacy",
+    capabilities: [],
+    terminal: row.status === "COMPLETED"
+      ? "completed"
+      : row.status === "REQUESTED"
+        ? "pending"
+        : "unknown_legacy",
+    validation: "unknown_legacy",
   };
 }
 

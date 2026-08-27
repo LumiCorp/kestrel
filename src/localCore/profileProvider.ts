@@ -33,6 +33,11 @@ import {
   type ExecutionProfileRevisionProvenance,
 } from "./executionProfileRegistry.js";
 import { readLocalCoreLocalSettings } from "./localSettings.js";
+import {
+  createLocalCoreModelReadiness,
+  LocalCoreModelReadinessStore,
+} from "./modelReadiness.js";
+import type { LocalCoreCredentialStore } from "./credentialStore.js";
 import type { LocalCoreRuntimeConfigurationV1 } from "./runtimeConfiguration.js";
 import { createDefaultLocalCoreRuntimeConfiguration } from "./runtimeConfiguration.js";
 import { createWebDemoProfile } from "../web/profile.js";
@@ -44,6 +49,10 @@ export interface LocalCoreProfileProviderOptions {
    * legacy ModelPolicyStore.
    */
   runtimeConfiguration?: LocalCoreRuntimeConfigurationV1 | undefined;
+  credentialStore?:
+    | Pick<LocalCoreCredentialStore, "has" | "available">
+    | undefined;
+  baseEnv?: Readonly<NodeJS.ProcessEnv> | undefined;
 }
 
 export class LocalCoreReservedProfileIdError extends Error {
@@ -69,8 +78,8 @@ export function resolveLocalCoreDesktopProfile(
       sessionPrefix: LOCAL_CORE_DESKTOP_PROFILE_ID,
       default: false,
     },
-    options.runtimeConfiguration?.modelPolicy
-      ?? new ModelPolicyStore(homePath).read(),
+    options.runtimeConfiguration?.modelPolicy ??
+      new ModelPolicyStore(homePath).read(),
   );
 }
 
@@ -103,16 +112,14 @@ export async function resolveLocalCoreExecutionProfile(
         ? "desktop_dev_local"
         : "desktop_safe_local";
   } else {
-    if (
-      request.profileId === LOCAL_CORE_DESKTOP_PROFILE_ID
-    ) {
+    if (request.profileId === LOCAL_CORE_DESKTOP_PROFILE_ID) {
       throw new Error(
         `Legacy profile '${request.profileId}' is available for historical inspection only.`,
       );
     }
     const requestedCliPreset =
       request.client === "cli"
-        ? request.environmentPresetId ?? "cli_safe_local"
+        ? (request.environmentPresetId ?? "cli_safe_local")
         : "cli_safe_local";
     const store = new ProfileStore(homePath, {
       managedEnvironmentPresetId: requestedCliPreset,
@@ -151,9 +158,7 @@ export async function resolveLocalCoreExecutionProfile(
             }).profile
           : selected;
     environmentPresetId =
-      request.client === "web"
-        ? "web_balanced"
-        : requestedCliPreset;
+      request.client === "web" ? "web_balanced" : requestedCliPreset;
   }
   const provenance = buildExecutionProfileRevisionProvenance(
     request,
@@ -208,8 +213,7 @@ function buildExecutionProfileRevisionProvenance(
         }))
         .sort(
           (left, right) =>
-            left.id.localeCompare(right.id) ||
-            left.revision - right.revision,
+            left.id.localeCompare(right.id) || left.revision - right.revision,
         ),
     };
   }
@@ -242,8 +246,9 @@ export async function resolveLocalCoreDesktopExecutionConfig(
       ? [createDesktopModelConfiguration(runtimeConfiguration.modelPolicy)]
       : parseDesktopModelConfigurations(settings.modelConfigurations);
   const selectedConfiguration =
-    configurations.find((configuration) => configuration.archivedAt === undefined)
-      ?? configurations[0];
+    configurations.find(
+      (configuration) => configuration.archivedAt === undefined,
+    ) ?? configurations[0];
   if (selectedConfiguration === undefined) {
     throw new Error("Desktop has no model configuration available.");
   }
@@ -262,6 +267,36 @@ export async function resolveLocalCoreDesktopExecutionConfig(
     options,
   );
   const profile = resolution.resolvedProfile;
+  if (profile.modelProvider === undefined || profile.model === undefined) {
+    throw new Error(
+      "Local Core Desktop execution config requires an exact model provider and model.",
+    );
+  }
+  const credentialRevision = await readModelCredentialRevision(
+    profile.modelProvider,
+    options.credentialStore,
+    runtimeConfiguration.generation,
+  );
+  const modelConfigurationRevision = selectedConfiguration.revisions.find(
+    (entry) => entry.revision === selectedConfiguration.currentRevision,
+  );
+  if (modelConfigurationRevision === undefined) {
+    throw new Error("Desktop has no current model configuration revision.");
+  }
+  const pendingReadiness = createLocalCoreModelReadiness({
+    runtimeConfiguration,
+    profile: {
+      modelProvider: profile.modelProvider,
+      model: profile.model,
+    },
+    ...(credentialRevision === undefined ? {} : { credentialRevision }),
+    ...(options.baseEnv === undefined ? {} : { baseEnv: options.baseEnv }),
+    observedAt: modelConfigurationRevision.createdAt,
+  });
+  const modelReadiness =
+    (await new LocalCoreModelReadinessStore(homePath).readCurrent(
+      pendingReadiness.registration,
+    )) ?? pendingReadiness;
   return parseLocalCoreDesktopExecutionConfig({
     version: LOCAL_CORE_DESKTOP_EXECUTION_CONFIG_VERSION,
     profileId: resolution.profileId,
@@ -277,13 +312,40 @@ export async function resolveLocalCoreDesktopExecutionConfig(
       defaultInteractionMode: profile.defaultInteractionMode,
       defaultActSubmode: profile.defaultActSubmode,
     },
+    modelReadiness,
   });
+}
+
+async function readModelCredentialRevision(
+  provider: NonNullable<
+    LocalCoreDesktopExecutionConfig["resolvedProfile"]["modelProvider"]
+  >,
+  credentialStore: LocalCoreProfileProviderOptions["credentialStore"],
+  runtimeConfigurationGeneration: number,
+): Promise<string | undefined> {
+  const credentialId =
+    provider === "openrouter"
+      ? "provider.openrouter.default"
+      : provider === "openai"
+        ? "provider.openai.default"
+        : provider === "anthropic"
+          ? "provider.anthropic.default"
+          : undefined;
+  if (credentialId === undefined) return;
+  if (credentialStore?.available !== true)
+    return "local-core:credential-unavailable";
+  const configured = await credentialStore.has(credentialId);
+  return configured === false
+    ? "local-core:credential-missing"
+    : `local-core:credential-generation-${runtimeConfigurationGeneration}`;
 }
 
 export function assertNoLocalCoreReservedProfileCollision(
   profiles: readonly Pick<TuiProfile, "id">[],
 ): void {
-  if (profiles.some((profile) => profile.id === LOCAL_CORE_DESKTOP_PROFILE_ID)) {
+  if (
+    profiles.some((profile) => profile.id === LOCAL_CORE_DESKTOP_PROFILE_ID)
+  ) {
     throw new LocalCoreReservedProfileIdError();
   }
 }
@@ -293,7 +355,7 @@ export function resolveLocalCoreConfiguredProfiles(
   runtimeConfiguration: LocalCoreRuntimeConfigurationV1,
 ): TuiProfile[] {
   return profiles.map((profile) =>
-    resolveProfileWithModelPolicy(profile, runtimeConfiguration.modelPolicy)
+    resolveProfileWithModelPolicy(profile, runtimeConfiguration.modelPolicy),
   );
 }
 

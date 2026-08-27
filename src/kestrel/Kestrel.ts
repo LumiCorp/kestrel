@@ -39,6 +39,7 @@ import { RunReplayService, type ReplayQuery, type ReplayResult } from "../replay
 import type { HeapDiagnosticsReporter } from "../runtime/heapDiagnostics.js";
 import type { ProviderReasoningVault } from "../runtime/ProviderReasoningVault.js";
 import type { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
+import type { EffectiveModelContractResolverV1 } from "./effective-model-contract.js";
 
 export interface KestrelOptions {
   store: SessionStore;
@@ -59,6 +60,7 @@ export interface KestrelOptions {
   heapDiagnostics?: HeapDiagnosticsReporter | undefined;
   evaluationRuntime?: import("../evaluation/RuntimeEvaluationCoordinator.js").RuntimeEvaluationRuntimeConfiguration | undefined;
   executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
+  effectiveModelContractResolver?: EffectiveModelContractResolverV1 | undefined;
 }
 
 export class Kestrel {
@@ -148,6 +150,9 @@ export class Kestrel {
         ...(options.evaluationRuntime !== undefined ? { evaluationRuntime: options.evaluationRuntime } : {}),
         ...(options.executionBoundaryRuntime !== undefined
           ? { executionBoundaryRuntime: options.executionBoundaryRuntime }
+          : {}),
+        ...(options.effectiveModelContractResolver !== undefined
+          ? { effectiveModelContractResolver: options.effectiveModelContractResolver }
           : {}),
         outputNormalizer: new DefaultOutputNormalizer(),
       },

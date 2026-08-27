@@ -7,7 +7,7 @@ import type {
 import type { OpenRouterEnvConfig } from "../contracts.js";
 import { loadOpenRouterEnv } from "./OpenRouterEnv.js";
 import { createOpenRouterInvoker } from "./OpenRouterInvoker.js";
-import { createVersionedProviderInvokerV1 } from "../VersionedModelBoundary.js";
+import type { OpenRouterQualifiedRouteEvidence } from "./OpenRouterV2Codec.js";
 
 export interface OpenRouterGatewayFactoryOptions {
   env?: NodeJS.ProcessEnv | undefined;
@@ -15,6 +15,7 @@ export interface OpenRouterGatewayFactoryOptions {
   fetchImpl?: typeof fetch | undefined;
   timeoutMs?: number | undefined;
   retryCount?: number | undefined;
+  routeEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
 }
 
 export function createOpenRouterModelGatewayFromEnv(
@@ -34,12 +35,13 @@ export function createOpenRouterModelGatewayFromEnv(
     baseUrl: options.envConfig?.baseUrl ?? loaded.baseUrl,
   };
 
-  const invoker = createVersionedProviderInvokerV1(createOpenRouterInvoker({
+  const invoker = createOpenRouterInvoker({
     env: config,
     ...(options.fetchImpl !== undefined
       ? { fetchImpl: options.fetchImpl }
       : {}),
-  }));
+    ...(options.routeEvidence !== undefined ? { routeEvidence: options.routeEvidence } : {}),
+  });
 
   return new RetryingModelGateway(
     async <T>(request: ModelRequest, callOptions?: ModelGatewayCallOptions) =>
@@ -51,6 +53,7 @@ export function createOpenRouterModelGatewayFromEnv(
       ...(options.retryCount !== undefined
         ? { retryCount: options.retryCount }
         : {}),
+      providerId: "openrouter",
     }
   );
 }
