@@ -462,6 +462,10 @@ export interface EffectStore {
     idempotencyKey: string,
     owner: { runId: string; sessionId: string },
   ): Promise<"reset" | "done" | "conflict">;
+  quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"done" | "quarantined" | "conflict">;
   commitPreparedApprovalCleanupEffectDone(
     idempotencyKey: string,
     owner: { runId: string; sessionId: string },
@@ -486,24 +490,10 @@ export function validatePreparedApprovalCleanupDoneEvidence(input: {
   preparedToolCall: PreparedToolCallV1;
   canonicalOutput: string;
 } {
-  if (input.effect.type !== "release_prepared_tool_call") {
-    throw new SandboxCapabilityExactResultConflictError(
-      "Cleanup DONE evidence requires a release effect",
-    );
-  }
-  let preparedToolCall: PreparedToolCallV1;
-  try {
-    preparedToolCall = parseDurablePreparedToolCallV1(
-      input.effect.payload.preparedToolCall,
-    );
-  } catch {
-    throw new SandboxCapabilityExactResultConflictError(
-      "Cleanup DONE evidence requires an exact durable prepared tool call",
-    );
-  }
+  const preparedToolCall = validatePreparedApprovalCleanupEffectIdentity(
+    input.effect,
+  );
   if (
-    preparedToolCall.sessionId !== input.effect.sessionId ||
-    `${preparedToolCall.callId}:release` !== input.effect.idempotencyKey ||
     input.result.idempotencyKey !== input.effect.idempotencyKey ||
     input.result.status !== "DONE" ||
     input.result.error !== undefined ||
@@ -527,6 +517,52 @@ export function validatePreparedApprovalCleanupDoneEvidence(input: {
   return {
     preparedToolCall,
     canonicalOutput: canonicalJson(output),
+  };
+}
+
+export function validatePreparedApprovalCleanupEffectIdentity(
+  effect: PersistedEffect,
+): PreparedToolCallV1 {
+  if (effect.type !== "release_prepared_tool_call") {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE evidence requires a release effect",
+    );
+  }
+  let preparedToolCall: PreparedToolCallV1;
+  try {
+    preparedToolCall = parseDurablePreparedToolCallV1(
+      effect.payload.preparedToolCall,
+    );
+  } catch {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE evidence requires an exact durable prepared tool call",
+    );
+  }
+  if (
+    preparedToolCall.sessionId !== effect.sessionId ||
+    `${preparedToolCall.callId}:release` !== effect.idempotencyKey
+  ) {
+    throw new SandboxCapabilityExactResultConflictError(
+      "Cleanup DONE evidence does not match the exact prepared invocation",
+    );
+  }
+  return preparedToolCall;
+}
+
+export function quarantinePreparedApprovalCleanupDoneResult(
+  result: EffectResult,
+): EffectResult {
+  return {
+    idempotencyKey: result.idempotencyKey,
+    status: "FAILED",
+    ...(result.output === undefined ? {} : { output: result.output }),
+    error: {
+      code: "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+      message:
+        "Prepared approval cleanup DONE evidence was invalid and quarantined for retry.",
+      details: { retryable: true, quarantined: true },
+    },
+    timestamp: result.timestamp,
   };
 }
 

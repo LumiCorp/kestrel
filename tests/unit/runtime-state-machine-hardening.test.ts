@@ -8,7 +8,6 @@ import { promisify } from "node:util";
 
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
-import type { EffectResult } from "../../src/kestrel/contracts/execution.js";
 import type { RuntimeWorkspaceCheckpointService, SessionRecord } from "../../src/kestrel/contracts/store.js";
 
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
@@ -231,7 +230,7 @@ test("completed cleanup release survives Web requeue without scheduler or duplic
   );
 });
 
-test("malformed cleanup DONE evidence stays FAILED until reset-race evidence becomes exact", async () => {
+test("malformed cleanup DONE evidence is quarantined and released exactly once before terminal recovery", async () => {
   const store = new InMemorySessionStore();
   const sessionId = "prepared-cleanup-invalid-done";
   const runId = "prepared-cleanup-invalid-run";
@@ -301,17 +300,15 @@ test("malformed cleanup DONE evidence stays FAILED until reset-race evidence bec
   (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push(
     structuredClone(effect),
   );
-  const effectResults = (
-    store as unknown as { effectResults: Map<string, EffectResult> }
-  ).effectResults;
-  const setDoneOutput = (output: Record<string, unknown>) => {
-    effectResults.set(idempotencyKey, {
-      idempotencyKey,
-      status: "DONE",
-      output,
-      timestamp: "2026-08-27T00:00:01.000Z",
-    });
-  };
+  await store.saveEffectResult(runId, sessionId, {
+    idempotencyKey,
+    status: "DONE",
+    output: {
+      releasedPreparedInvocationId: "wrong-call",
+      unexpected: true,
+    },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  });
   const kestrel = createRuntime(store, {}, { toolGateway: gateway });
   const run = (id: string) => kestrel.run({
     id,
@@ -320,67 +317,29 @@ test("malformed cleanup DONE evidence stays FAILED until reset-race evidence bec
     payload: { preparedApprovalCleanup: cleanup },
   });
 
-  setDoneOutput({ releasedPreparedInvocationId: "wrong-call" });
-  const wrongCall = await run("evt-cleanup-wrong-call");
-  assert.equal(wrongCall.status, "FAILED");
-  assert.equal(
-    wrongCall.errors[0]?.code,
-    "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
-  );
-  assert.equal((await store.getPersistedEffect(idempotencyKey))?.status, "FAILED");
-
-  setDoneOutput({
-    releasedPreparedInvocationId: preparedCallId,
-    unexpected: true,
-  });
-  const extraField = await run("evt-cleanup-extra-field");
-  assert.equal(extraField.status, "FAILED");
-  assert.equal(
-    extraField.errors[0]?.code,
-    "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
-  );
-  assert.equal((await store.getPersistedEffect(idempotencyKey))?.status, "FAILED");
-
-  effectResults.set(idempotencyKey, {
-    idempotencyKey,
-    status: "FAILED",
-    error: {
-      code: "EFFECT_EXECUTION_FAILED",
-      message: "retryable cleanup failure",
-    },
-    timestamp: "2026-08-27T00:00:03.000Z",
-  });
-  store.resetPreparedApprovalCleanupEffectExecution = async () => {
-    setDoneOutput({ releasedPreparedInvocationId: "reset-raced-wrong-call" });
-    return "done";
-  };
-  const malformedResetRace = await run("evt-cleanup-reset-raced-invalid");
-  assert.equal(malformedResetRace.status, "FAILED");
-  assert.equal(
-    malformedResetRace.errors[0]?.code,
-    "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
-  );
-  assert.equal((await store.getPersistedEffect(idempotencyKey))?.status, "FAILED");
-
-  effectResults.set(idempotencyKey, {
-    idempotencyKey,
-    status: "FAILED",
-    error: {
-      code: "EFFECT_EXECUTION_FAILED",
-      message: "retryable cleanup failure after reset race",
-    },
-    timestamp: "2026-08-27T00:00:04.000Z",
-  });
-  store.resetPreparedApprovalCleanupEffectExecution = async () => {
-    setDoneOutput({ releasedPreparedInvocationId: preparedCallId });
-    return "done";
-  };
-  const corrected = await run("evt-cleanup-reset-raced-done");
+  const corrected = await run("evt-cleanup-quarantine-and-release");
   assert.equal(corrected.status, "COMPLETED", JSON.stringify(corrected));
   assert.equal((await store.getPersistedEffect(idempotencyKey))?.status, "DONE");
+  const exactDone = await store.getEffectResult(idempotencyKey);
+  assert.equal(exactDone?.status, "DONE");
+  assert.deepEqual(exactDone?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
   const recovered = await run("evt-cleanup-corrected-recovery");
   assert.equal(recovered.status, "COMPLETED", JSON.stringify(recovered));
-  assert.equal(releaseCalls, 0);
+  assert.equal(releaseCalls, 1);
+  assert.equal(
+    store.operationLog.filter((entry) => entry ===
+      `quarantineInvalidPreparedApprovalCleanupDoneEvidence:${idempotencyKey}`
+    ).length,
+    1,
+  );
+  assert.equal(
+    store.operationLog.filter((entry) => entry ===
+      `resetPreparedApprovalCleanupEffectExecution:${idempotencyKey}`
+    ).length,
+    1,
+  );
 });
 
 test("managed mutation tools capture pre/post workspace checkpoints and expose changed files", async () => {

@@ -10,6 +10,7 @@ import {
 } from "@kestrel-agents/protocol";
 import {
   validateExactEffectResultRead,
+  validatePreparedApprovalCleanupDoneEvidence,
   type EffectStore,
   type PersistedEffect,
   type SandboxCapabilityLeaseStore,
@@ -68,6 +69,23 @@ export class InlineEffectRunner implements EffectRunner {
           effect,
         );
         if (reset === "reset") existingResult = null;
+        if (reset === "done") {
+          const resolution = await this.resolvePreparedApprovalCleanupDone(
+            effect,
+          );
+          if (resolution === "done") continue;
+          existingResult = null;
+        }
+      }
+      if (
+        existingResult?.status === "DONE" &&
+        isPreparedApprovalCleanupRelease(effect)
+      ) {
+        const resolution = await this.resolvePreparedApprovalCleanupDone(
+          effect,
+        );
+        if (resolution === "done") continue;
+        existingResult = null;
       }
       if (existingResult !== null) {
         if (existingResult.status === "DONE") {
@@ -108,6 +126,22 @@ export class InlineEffectRunner implements EffectRunner {
           )) === "reset"
         ) {
           claim = await this.store.claimEffectExecution(effect.idempotencyKey, effect);
+        }
+        if (claim !== "claimed") {
+          const racedResult = await this.store.getEffectResult(effect.idempotencyKey);
+          if (
+            racedResult?.status === "DONE" &&
+            isPreparedApprovalCleanupRelease(effect)
+          ) {
+            const resolution = await this.resolvePreparedApprovalCleanupDone(
+              effect,
+            );
+            if (resolution === "done") continue;
+            claim = await this.store.claimEffectExecution(
+              effect.idempotencyKey,
+              effect,
+            );
+          }
         }
         if (claim !== "claimed") {
           const racedResult = await this.store.getEffectResult(effect.idempotencyKey);
@@ -348,6 +382,46 @@ export class InlineEffectRunner implements EffectRunner {
     };
   }
 
+  private async resolvePreparedApprovalCleanupDone(
+    effect: PersistedEffect,
+  ): Promise<"done" | "retry"> {
+    const quarantine =
+      await this.store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      );
+    if (quarantine === "done") return "done";
+    if (quarantine !== "quarantined") {
+      throw new Error(
+        "Prepared approval cleanup DONE evidence could not be validated or quarantined",
+      );
+    }
+    const reset = await this.store.resetPreparedApprovalCleanupEffectExecution(
+      effect.idempotencyKey,
+      effect,
+    );
+    if (reset === "reset") return "retry";
+    if (reset === "done") {
+      const racedCompletion =
+        await this.store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+          effect.idempotencyKey,
+          effect,
+        );
+      if (racedCompletion === "done") return "done";
+      if (racedCompletion === "quarantined") {
+        const racedReset =
+          await this.store.resetPreparedApprovalCleanupEffectExecution(
+            effect.idempotencyKey,
+            effect,
+          );
+        if (racedReset === "reset") return "retry";
+      }
+    }
+    throw new Error(
+      "Quarantined prepared approval cleanup evidence could not be reset",
+    );
+  }
+
   private async persistCompletedEffectResult(
     effect: PersistedEffect,
     result: {
@@ -425,7 +499,12 @@ function validatePreparedEffectForExecution(
 }
 
 function assertExactRecordedToolResult(effect: PersistedEffect, result: Awaited<ReturnType<EffectStore["getEffectResult"]>>): void {
-  if (result === null || (effect.type !== "execute_tool_call" && effect.type !== "tool.execute")) return;
+  if (result === null) return;
+  if (isPreparedApprovalCleanupRelease(effect)) {
+    validatePreparedApprovalCleanupDoneEvidence({ effect, result });
+    return;
+  }
+  if (effect.type !== "execute_tool_call" && effect.type !== "tool.execute") return;
   const payload = parseOptionalRecord(effect.payload);
   if (payload?.preparedToolCall === undefined) return;
   const read = validateExactEffectResultRead({

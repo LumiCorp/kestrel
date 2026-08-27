@@ -393,6 +393,18 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       "2026-08-27T00:00:02.000Z",
       "same-output success must preserve the first exact DONE evidence",
     );
+    const immutableCleanupResult = await store.getEffectResult(cleanupEffectId);
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        cleanupEffectId,
+        cleanupOwner,
+      ),
+      "done",
+    );
+    assert.deepEqual(
+      await store.getEffectResult(cleanupEffectId),
+      immutableCleanupResult,
+    );
     await assert.rejects(
       store.commitPreparedApprovalCleanupEffectDone(
         cleanupEffectId,
@@ -407,6 +419,14 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         },
       ),
       /exact durable authority/u,
+    );
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        binding.toolCallId,
+        cleanupOwner,
+      ),
+      "conflict",
+      "ordinary effects must refuse cleanup evidence quarantine",
     );
     await assert.rejects(
       wrongTenantStore.commitPreparedApprovalCleanupEffectDone(
@@ -502,25 +522,56 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         "2026-08-27T00:00:01.000Z",
       ],
     );
-    await assert.rejects(
-      store.commitPreparedApprovalCleanupEffectDone(
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
         conflictingEffectId,
         cleanupOwner,
-        {
-          idempotencyKey: conflictingEffectId,
-          status: "DONE",
-          output: {
-            releasedPreparedInvocationId: conflictingPreparedToolCall.callId,
-          },
-          timestamp: "2026-08-27T00:00:02.000Z",
-        },
       ),
-      /exact prepared invocation release/u,
+      "quarantined",
     );
     assert.equal(
       (await store.getPersistedEffect(conflictingEffectId))?.status,
-      "FAILED",
-      "conflicting DONE evidence cannot terminalize cleanup",
+      "PENDING",
+      "conflicting DONE evidence must become claimable cleanup work",
+    );
+    const quarantinedConflict = await store.getEffectResult(
+      conflictingEffectId,
+    );
+    assert.equal(quarantinedConflict?.status, "FAILED");
+    assert.equal(
+      quarantinedConflict?.error?.code,
+      "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+    );
+    assert.deepEqual(quarantinedConflict?.output, {
+      releasedPreparedInvocationId: "wrong-call",
+    });
+    assert.equal(
+      quarantinedConflict?.timestamp,
+      "2026-08-27T00:00:01.000Z",
+    );
+    assert.equal(
+      await store.resetPreparedApprovalCleanupEffectExecution(
+        conflictingEffectId,
+        cleanupOwner,
+      ),
+      "reset",
+    );
+    assert.equal(await store.getEffectResult(conflictingEffectId), null);
+    await store.commitPreparedApprovalCleanupEffectDone(
+      conflictingEffectId,
+      cleanupOwner,
+      {
+        idempotencyKey: conflictingEffectId,
+        status: "DONE",
+        output: {
+          releasedPreparedInvocationId: conflictingPreparedToolCall.callId,
+        },
+        timestamp: "2026-08-27T00:00:02.000Z",
+      },
+    );
+    assert.equal(
+      (await store.getPersistedEffect(conflictingEffectId))?.status,
+      "DONE",
     );
     const cancelledToolCallId = `cancelled-call-${suffix}`;
     const cancelledLeaseId = `cancelled-lease-${suffix}`;

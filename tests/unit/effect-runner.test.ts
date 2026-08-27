@@ -26,6 +26,51 @@ import {
   type SandboxCapabilityLeaseBindingV1,
   type SandboxCapabilityLeaseTransitionRecordV1,
 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import type { PersistedEffect } from "../../src/kestrel/contracts/store.js";
+
+async function buildPreparedApprovalCleanupEffect(input: {
+  suffix: string;
+  status: PersistedEffect["status"];
+}): Promise<{ effect: PersistedEffect; preparedCallId: string }> {
+  const runId = `run-cleanup-${input.suffix}`;
+  const sessionId = `session-cleanup-${input.suffix}`;
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: adaptLegacyTestToolGateway({
+      call: async () => ({ unreachable: true }),
+    }),
+    toolName: "exec_command",
+    toolInput: { cmd: "true" },
+    runId,
+    sessionId,
+    callId: `prepared-cleanup-${input.suffix}`,
+  });
+  return {
+    preparedCallId: preparedToolCall.callId,
+    effect: {
+      runId,
+      sessionId,
+      stepIndex: 1,
+      type: "release_prepared_tool_call",
+      payload: {
+        preparedToolCall,
+        preparedApprovalCleanup: {
+          version: "runner_prepared_approval_cleanup_v1",
+          organizationId: `org-cleanup-${input.suffix}`,
+          threadId: sessionId,
+          turnId: `turn-cleanup-${input.suffix}`,
+          interactionId: `interaction-cleanup-${input.suffix}`,
+          requestId: `approval-cleanup-${input.suffix}`,
+          failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+          failureMessage: "Expired.",
+        },
+      },
+      idempotencyKey: `${preparedToolCall.callId}:release`,
+      failurePolicy: "STOP",
+      status: input.status,
+      createdAt: "2026-08-27T00:00:00.000Z",
+    },
+  };
+}
 
 
 test("Effect runner reports compiled tool activity", async () => {
@@ -426,6 +471,262 @@ test("two cleanup runners converge when FAILED commits before atomic release suc
     ).length,
     2,
   );
+});
+
+test("cleanup DONE quarantine preserves malformed audit evidence across effect states", async () => {
+  for (const status of ["PENDING", "CLAIMED", "FAILED"] as const) {
+    const store = new InMemorySessionStore();
+    const { effect } = await buildPreparedApprovalCleanupEffect({
+      suffix: `audit-${status.toLowerCase()}`,
+      status,
+    });
+    (store as unknown as { effects: PersistedEffect[] }).effects.push(
+      structuredClone(effect),
+    );
+    const malformedOutput = {
+      releasedPreparedInvocationId: "wrong-prepared-call",
+      unexpected: true,
+    };
+    const timestamp = "2026-08-27T00:00:01.000Z";
+    await store.saveEffectResult(effect.runId, effect.sessionId, {
+      idempotencyKey: effect.idempotencyKey,
+      status: "DONE",
+      output: malformedOutput,
+      timestamp,
+    });
+
+    assert.equal(
+      await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+        effect.idempotencyKey,
+        effect,
+      ),
+      "quarantined",
+    );
+    assert.equal(
+      (await store.getPersistedEffect(effect.idempotencyKey))?.status,
+      "PENDING",
+    );
+    const quarantined = await store.getEffectResult(effect.idempotencyKey);
+    assert.equal(quarantined?.status, "FAILED");
+    assert.equal(quarantined?.timestamp, timestamp);
+    assert.deepEqual(quarantined?.output, malformedOutput);
+    assert.equal(
+      quarantined?.error?.code,
+      "PREPARED_APPROVAL_CLEANUP_DONE_EVIDENCE_INVALID",
+    );
+  }
+});
+
+test("cleanup DONE quarantine preserves exact evidence and refuses ordinary effects", async () => {
+  const store = new InMemorySessionStore();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "exact-immutable",
+    status: "FAILED",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  const exactResult = {
+    idempotencyKey: effect.idempotencyKey,
+    status: "DONE" as const,
+    output: { releasedPreparedInvocationId: preparedCallId },
+    timestamp: "2026-08-27T00:00:02.000Z",
+  };
+  await store.saveEffectResult(effect.runId, effect.sessionId, exactResult);
+  assert.equal(
+    await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+      effect.idempotencyKey,
+      effect,
+    ),
+    "done",
+  );
+  assert.deepEqual(await store.getEffectResult(effect.idempotencyKey), exactResult);
+  assert.equal(
+    (await store.getPersistedEffect(effect.idempotencyKey))?.status,
+    "DONE",
+  );
+
+  const ordinary = {
+    ...effect,
+    idempotencyKey: `${effect.idempotencyKey}:ordinary`,
+    payload: { preparedToolCall: effect.payload.preparedToolCall },
+    status: "PENDING" as const,
+  };
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(ordinary),
+  );
+  const ordinaryResult = {
+    idempotencyKey: ordinary.idempotencyKey,
+    status: "DONE" as const,
+    output: { releasedPreparedInvocationId: preparedCallId },
+    timestamp: "2026-08-27T00:00:03.000Z",
+  };
+  await store.saveEffectResult(ordinary.runId, ordinary.sessionId, ordinaryResult);
+  assert.equal(
+    await store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+      ordinary.idempotencyKey,
+      ordinary,
+    ),
+    "conflict",
+  );
+  assert.deepEqual(
+    await store.getEffectResult(ordinary.idempotencyKey),
+    ordinaryResult,
+  );
+  assert.equal(
+    (await store.getPersistedEffect(ordinary.idempotencyKey))?.status,
+    "PENDING",
+  );
+});
+
+test("effect runner quarantines an existing malformed cleanup DONE and releases once", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "existing-done",
+    status: "PENDING",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  await store.saveEffectResult(effect.runId, effect.sessionId, {
+    idempotencyKey: effect.idempotencyKey,
+    status: "DONE",
+    output: { releasedPreparedInvocationId: "wrong-call" },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  });
+  let releases = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    releases += 1;
+    return { releasedPreparedInvocationId: preparedCallId };
+  });
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    },
+  );
+
+  assert.equal(outcome.stop, false);
+  assert.equal(releases, 1);
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
+});
+
+test("effect runner quarantines malformed cleanup DONE from a claim race", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "claim-race",
+    status: "PENDING",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  const claimEffectExecution = store.claimEffectExecution.bind(store);
+  let injectRace = true;
+  store.claimEffectExecution = async (idempotencyKey, owner) => {
+    if (injectRace) {
+      injectRace = false;
+      await store.saveEffectResult(effect.runId, effect.sessionId, {
+        idempotencyKey,
+        status: "DONE",
+        output: { releasedPreparedInvocationId: "claim-race-wrong-call" },
+        timestamp: "2026-08-27T00:00:01.000Z",
+      });
+      return "terminal";
+    }
+    return claimEffectExecution(idempotencyKey, owner);
+  };
+  let releases = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    releases += 1;
+    return { releasedPreparedInvocationId: preparedCallId };
+  });
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    },
+  );
+
+  assert.equal(outcome.stop, false);
+  assert.equal(releases, 1);
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
+});
+
+test("effect runner validates and quarantines malformed cleanup DONE from a reset race", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const { effect, preparedCallId } = await buildPreparedApprovalCleanupEffect({
+    suffix: "reset-race",
+    status: "FAILED",
+  });
+  (store as unknown as { effects: PersistedEffect[] }).effects.push(
+    structuredClone(effect),
+  );
+  await store.saveEffectResult(effect.runId, effect.sessionId, {
+    idempotencyKey: effect.idempotencyKey,
+    status: "FAILED",
+    error: { code: "EFFECT_EXECUTION_FAILED", message: "retryable failure" },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  });
+  const resetPreparedApprovalCleanupEffectExecution =
+    store.resetPreparedApprovalCleanupEffectExecution.bind(store);
+  let injectRace = true;
+  store.resetPreparedApprovalCleanupEffectExecution = async (
+    idempotencyKey,
+    owner,
+  ) => {
+    const reset = await resetPreparedApprovalCleanupEffectExecution(
+      idempotencyKey,
+      owner,
+    );
+    if (injectRace) {
+      injectRace = false;
+      assert.equal(reset, "reset");
+      await store.saveEffectResult(effect.runId, effect.sessionId, {
+        idempotencyKey,
+        status: "DONE",
+        output: { releasedPreparedInvocationId: "reset-race-wrong-call" },
+        timestamp: "2026-08-27T00:00:02.000Z",
+      });
+      return "done";
+    }
+    return reset;
+  };
+  let releases = 0;
+  registry.register("release_prepared_tool_call", async () => {
+    releases += 1;
+    return { releasedPreparedInvocationId: preparedCallId };
+  });
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    },
+  );
+
+  assert.equal(outcome.stop, false);
+  assert.equal(releases, 1);
+  assert.equal((await store.getPersistedEffect(effect.idempotencyKey))?.status, "DONE");
+  assert.deepEqual((await store.getEffectResult(effect.idempotencyKey))?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
 });
 
 test("ordinary failed release remains terminal and is never retried", async () => {

@@ -12,6 +12,8 @@ import {
   validateExactEffectCancellationTenantBinding,
   validateExactEffectResultRead,
   validateExactEffectResultTenantBinding,
+  quarantinePreparedApprovalCleanupDoneResult,
+  validatePreparedApprovalCleanupEffectIdentity,
   validatePreparedApprovalCleanupDoneEvidence,
 } from "../kestrel/contracts/store.js";
 import type {
@@ -1920,6 +1922,126 @@ export class PostgresSessionStore implements SessionStore {
         [idempotencyKey],
       );
       return "reset";
+    });
+  }
+
+  async quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"done" | "quarantined" | "conflict"> {
+    await this.ensureSchemaV3();
+    return this.withTransaction(async (executor) => {
+      const selected = await executor.query<{
+        run_id: string;
+        session_id: string;
+        status: PersistedEffect["status"];
+        effect_type: string;
+        payload_json: Record<string, unknown>;
+        step_index: number;
+        failure_policy: PersistedEffect["failurePolicy"];
+        created_at: string;
+        tenant_id: string | null;
+        tenant_ownership_state:
+          | "legacy_unknown"
+          | "explicit_unbound"
+          | "tenant_bound";
+      }>(
+        `SELECT run_id, session_id, status, effect_type, payload_json,
+                step_index, failure_policy, created_at, tenant_id,
+                tenant_ownership_state
+           FROM effects
+          WHERE idempotency_key = $1
+          FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const row = selected.rows[0];
+      if (
+        row === undefined ||
+        row.run_id !== owner.runId ||
+        row.session_id !== owner.sessionId ||
+        !isPreparedApprovalCleanupReleaseEffect(
+          row.effect_type,
+          row.payload_json,
+        )
+      ) return "conflict";
+      const effect: PersistedEffect = {
+        runId: row.run_id,
+        sessionId: row.session_id,
+        stepIndex: row.step_index,
+        type: row.effect_type,
+        payload: row.payload_json,
+        idempotencyKey,
+        failurePolicy: row.failure_policy,
+        status: row.status,
+        createdAt: normalizeTimestampString(row.created_at),
+      };
+      try {
+        validatePreparedApprovalCleanupEffectIdentity(effect);
+      } catch {
+        return "conflict";
+      }
+      const recorded = await executor.query<{
+        status: "DONE" | "FAILED";
+        output_json: unknown;
+        error_json: RuntimeError | null;
+        created_at: string;
+        run_id: string;
+        session_id: string;
+      }>(
+        `SELECT status, output_json, error_json, created_at, run_id, session_id
+           FROM effect_results
+          WHERE idempotency_key = $1
+          FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const resultRow = recorded.rows[0];
+      if (
+        resultRow === undefined ||
+        resultRow.status !== "DONE" ||
+        resultRow.run_id !== owner.runId ||
+        resultRow.session_id !== owner.sessionId
+      ) return "conflict";
+      const result: EffectResult = {
+        idempotencyKey,
+        status: "DONE",
+        ...(resultRow.output_json === null
+          ? {}
+          : { output: resultRow.output_json }),
+        ...(resultRow.error_json === null
+          ? {}
+          : { error: resultRow.error_json }),
+        timestamp: normalizeTimestampString(resultRow.created_at),
+      };
+      if (
+        !await this.hasTrustedPostgresEffectTenant(
+          executor,
+          effect,
+          row.tenant_id,
+          row.tenant_ownership_state,
+          result,
+        )
+      ) return "conflict";
+      try {
+        validatePreparedApprovalCleanupDoneEvidence({ effect, result });
+        await executor.query(
+          `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1`,
+          [idempotencyKey],
+        );
+        return "done";
+      } catch {
+        const quarantined = quarantinePreparedApprovalCleanupDoneResult(result);
+        await executor.query(
+          `UPDATE effect_results
+              SET status = 'FAILED', error_json = $2::jsonb
+            WHERE idempotency_key = $1`,
+          [idempotencyKey, stringifySanitizedJson(quarantined.error)],
+        );
+        await executor.query(
+          `UPDATE effects SET status = 'PENDING' WHERE idempotency_key = $1`,
+          [idempotencyKey],
+        );
+        return "quarantined";
+      }
     });
   }
 

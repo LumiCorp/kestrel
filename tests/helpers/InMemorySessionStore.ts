@@ -26,7 +26,11 @@ import type {
   SessionStore,
   UpdateConversationTurnTerminalEnvelopeInput,
 } from "../../src/kestrel/contracts/store.js";
-import { validatePreparedApprovalCleanupDoneEvidence } from "../../src/kestrel/contracts/store.js";
+import {
+  quarantinePreparedApprovalCleanupDoneResult,
+  validatePreparedApprovalCleanupDoneEvidence,
+  validatePreparedApprovalCleanupEffectIdentity,
+} from "../../src/kestrel/contracts/store.js";
 
 import {
   normalizeRuntimeStateForPersist,
@@ -683,6 +687,51 @@ export class InMemorySessionStore implements SessionStore {
     effect.status = "PENDING";
     this.operationLog.push(`resetPreparedApprovalCleanupEffectExecution:${idempotencyKey}`);
     return "reset";
+  }
+
+  async quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"done" | "quarantined" | "conflict"> {
+    const effect = this.effects.find(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    const payload =
+      effect?.payload &&
+      typeof effect.payload === "object" &&
+      !Array.isArray(effect.payload)
+        ? effect.payload as Record<string, unknown>
+        : undefined;
+    const result = this.effectResults.get(idempotencyKey);
+    if (
+      effect === undefined ||
+      result?.status !== "DONE" ||
+      effect.runId !== owner.runId ||
+      effect.sessionId !== owner.sessionId ||
+      effect.type !== "release_prepared_tool_call" ||
+      payload?.preparedApprovalCleanup === undefined
+    ) return "conflict";
+    try {
+      parseRunnerPreparedApprovalCleanupV1(payload.preparedApprovalCleanup);
+      validatePreparedApprovalCleanupEffectIdentity(effect);
+    } catch {
+      return "conflict";
+    }
+    try {
+      validatePreparedApprovalCleanupDoneEvidence({ effect, result });
+      effect.status = "DONE";
+      return "done";
+    } catch {
+      this.effectResults.set(
+        idempotencyKey,
+        structuredClone(quarantinePreparedApprovalCleanupDoneResult(result)),
+      );
+      effect.status = "PENDING";
+      this.operationLog.push(
+        `quarantineInvalidPreparedApprovalCleanupDoneEvidence:${idempotencyKey}`,
+      );
+      return "quarantined";
+    }
   }
 
   async commitPreparedApprovalCleanupEffectDone(

@@ -3376,6 +3376,10 @@ export class ExecutionEngine {
     }
 
     if (pendingEffects.every(isPreparedApprovalCleanupRelease)) {
+      await this.validateCompletedPreparedApprovalCleanupEffects(
+        pendingEffects,
+        sessionId,
+      );
       return {
         status: "COMPLETED",
         errors,
@@ -3399,15 +3403,16 @@ export class ExecutionEngine {
         evidence.effect.idempotencyKey,
       );
       if (result?.status === "DONE") {
-        validatePreparedApprovalCleanupDoneEvidence({
-          effect: evidence.effect,
-          result,
-        });
-        await this.deps.store.markEffectStatus(
-          evidence.effect.idempotencyKey,
-          "DONE",
-          evidence.effect,
-        );
+        const quarantine =
+          await this.deps.store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+            evidence.effect.idempotencyKey,
+            evidence.effect,
+          );
+        if (quarantine === "conflict") {
+          throw new Error(
+            "cleanup DONE evidence could not be validated or quarantined",
+          );
+        }
         return;
       }
       const reset =
@@ -3416,30 +3421,16 @@ export class ExecutionEngine {
           evidence.effect,
         );
       if (reset === "done") {
-        const currentEvidence =
-          await this.readPreparedApprovalCleanupRecoveryEvidence(input);
-        if (currentEvidence === undefined) {
+        const quarantine =
+          await this.deps.store.quarantineInvalidPreparedApprovalCleanupDoneEvidence(
+            evidence.effect.idempotencyKey,
+            evidence.effect,
+          );
+        if (quarantine === "conflict") {
           throw new Error(
-            "cleanup reset completion lost its exact recovery identity",
+            "cleanup reset completion could not be validated or quarantined",
           );
         }
-        const currentResult = await this.deps.store.getEffectResult(
-          currentEvidence.effect.idempotencyKey,
-        );
-        if (currentResult?.status !== "DONE") {
-          throw new Error(
-            "cleanup reset completion has no exact durable DONE result",
-          );
-        }
-        validatePreparedApprovalCleanupDoneEvidence({
-          effect: currentEvidence.effect,
-          result: currentResult,
-        });
-        await this.deps.store.markEffectStatus(
-          currentEvidence.effect.idempotencyKey,
-          "DONE",
-          currentEvidence.effect,
-        );
         return;
       }
       if (reset !== "reset") {
@@ -3450,6 +3441,39 @@ export class ExecutionEngine {
     } catch (error) {
       throw this.createPreparedApprovalCleanupEvidenceFailure(
         input.session.sessionId,
+        error,
+      );
+    }
+  }
+
+  private async validateCompletedPreparedApprovalCleanupEffects(
+    effects: PersistedEffect[],
+    sessionId: string,
+  ): Promise<void> {
+    try {
+      if (this.deps.store.getPersistedEffect === undefined) {
+        throw new Error("cleanup completion requires persisted effect lookup");
+      }
+      for (const effect of effects) {
+        const current = await this.deps.store.getPersistedEffect(
+          effect.idempotencyKey,
+        );
+        const result = await this.deps.store.getEffectResult(
+          effect.idempotencyKey,
+        );
+        if (current?.status !== "DONE" || result?.status !== "DONE") {
+          throw new Error(
+            "pending cleanup terminalization lacks exact DONE evidence",
+          );
+        }
+        validatePreparedApprovalCleanupDoneEvidence({
+          effect: current,
+          result,
+        });
+      }
+    } catch (error) {
+      throw this.createPreparedApprovalCleanupEvidenceFailure(
+        sessionId,
         error,
       );
     }
