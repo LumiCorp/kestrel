@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
-import { ResendReceivingProviderError } from "./receiving-provider";
+import {
+  ResendHttpReceivingProvider,
+  ResendReceivingProviderError,
+} from "./receiving-provider";
 import type {
   ResendReceivingDomain,
   ResendReceivingProvider,
@@ -404,6 +407,59 @@ test("stored receiving checks persist failure and recovery without poisoning the
     `;
   const [saved] = await readStored();
   assert.ok(saved);
+
+  const initiallyHealthy =
+    await receiving.getPublicReceivingConnection(organizationId);
+  await assert.rejects(
+    receiving.inspectReceivingDomains({
+      organizationId,
+      provider: new ResendHttpReceivingProvider({
+        baseUrl: "https://resend.test",
+        fetchImpl: async () =>
+          Response.json({ object: "list", has_more: true, data: [] }),
+      }),
+    }),
+    (error: unknown) =>
+      error instanceof receiving.ReceivingConfigError &&
+      error.code === "RESEND_RECEIVING_RESPONSE_INVALID",
+  );
+  const afterIncompleteList =
+    await receiving.getPublicReceivingConnection(organizationId);
+  assert.equal(afterIncompleteList.credentialStatus, "error");
+  assert.equal(
+    afterIncompleteList.lastErrorCode,
+    "RESEND_RECEIVING_RESPONSE_INVALID",
+  );
+  assert.equal(afterIncompleteList.receivingDomainStatus, "verified");
+  assert.equal(afterIncompleteList.mxStatus, "verified");
+  assert.equal(
+    afterIncompleteList.domainCheckedAt,
+    initiallyHealthy.domainCheckedAt,
+  );
+
+  assert.deepEqual(
+    await receiving.inspectReceivingDomains({
+      organizationId,
+      provider: new ResendHttpReceivingProvider({
+        baseUrl: "https://resend.test",
+        fetchImpl: async () =>
+          Response.json({ object: "list", has_more: false, data: [] }),
+      }),
+    }),
+    [],
+  );
+  const afterCompleteEmptyList =
+    await receiving.getPublicReceivingConnection(organizationId);
+  assert.equal(afterCompleteEmptyList.credentialStatus, "full_access");
+  assert.equal(afterCompleteEmptyList.lastErrorCode, null);
+  assert.equal(afterCompleteEmptyList.receivingDomainStatus, "failed");
+  assert.equal(afterCompleteEmptyList.mxStatus, "unknown");
+  assert.equal(afterCompleteEmptyList.readiness, "domain_unready");
+
+  await receiving.inspectReceivingDomains({
+    organizationId,
+    provider: healthyListProvider("domain-health"),
+  });
 
   await assert.rejects(
     receiving.inspectReceivingDomains({

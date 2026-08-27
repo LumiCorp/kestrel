@@ -4,7 +4,10 @@ import test from "node:test";
 import { z } from "zod";
 import { DesktopUserAuthorizationError } from "@/lib/desktop-account";
 import { ReceivingConfigError } from "./receiving-config";
-import { getSafeReceivingAdminError } from "./receiving-admin-error";
+import {
+  getSafeReceivingAdminError,
+  parseReceivingAdminJson,
+} from "./receiving-admin-error";
 
 const receivingRoutes = [
   "../../app/api/organization/email/receiving/route.ts",
@@ -107,6 +110,64 @@ test("invalid receiving request bodies are non-retryable correction responses", 
       error: "Invalid inbound receiving request.",
     },
   });
+});
+
+test("malformed receiving JSON is a non-retryable correction response", async () => {
+  await assert.rejects(
+    parseReceivingAdminJson(
+      new Request("http://localhost/api/organization/email/receiving", {
+        method: "PUT",
+        body: "{",
+        headers: { "content-type": "application/json" },
+      }),
+    ),
+    (error: unknown) => {
+      assert.deepEqual(getSafeReceivingAdminError(error), {
+        status: 422,
+        body: {
+          code: "RESEND_RECEIVING_REQUEST_INVALID",
+          error: "Invalid inbound receiving request.",
+        },
+      });
+      return true;
+    },
+  );
+});
+
+test("only JSON parsing syntax errors use the invalid-request contract", async () => {
+  const internalSyntaxError = new SyntaxError("internal detail");
+  assert.deepEqual(getSafeReceivingAdminError(internalSyntaxError), {
+    status: 500,
+    body: {
+      code: "RESEND_RECEIVING_OPERATION_FAILED",
+      error: "Inbound receiving operation failed.",
+    },
+  });
+
+  const request = new Request("http://localhost/api/organization/email/receiving", {
+    method: "PUT",
+    body: "{}",
+  });
+  request.json = async () => {
+    throw new Error("internal detail");
+  };
+  await assert.rejects(parseReceivingAdminJson(request), /internal detail/u);
+});
+
+test("all four receiving mutations authorize before using the shared JSON parser", () => {
+  for (const route of receivingRoutes) {
+    assert.equal(
+      route.match(/parseReceivingAdminJson\(request\)/gu)?.length,
+      1,
+    );
+    const authorizationOffset = Math.max(
+      route.indexOf("await requireOrganizationAdmin()"),
+      route.indexOf("await requireDesktopReceivingAdmin(request, organizationId)"),
+    );
+    const parsingOffset = route.indexOf("parseReceivingAdminJson(request)");
+    assert.ok(authorizationOffset >= 0);
+    assert.ok(parsingOffset > authorizationOffset);
+  }
 });
 
 test("unknown receiving config errors fail closed without leaking details", () => {

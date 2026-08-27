@@ -5,7 +5,10 @@ import {
   getPublicReceivingConnection,
   saveReceivingConnection,
 } from "@/lib/email/receiving-config";
-import { getSafeReceivingAdminError } from "@/lib/email/receiving-admin-error";
+import {
+  getSafeReceivingAdminError,
+  parseReceivingAdminJson,
+} from "@/lib/email/receiving-admin-error";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 
 const bodySchema = z.object({
@@ -28,7 +31,7 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   try {
     const { organizationId, session } = await requireOrganizationAdmin();
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(await parseReceivingAdminJson(request));
     const connection = await saveReceivingConnection({
       organizationId,
       actorUserId: session.user.id,

@@ -14,6 +14,8 @@ test("domain inspection retrieves receiving DNS details and accepts partially ve
       requests.push({ url, init });
       if (url.endsWith("/domains")) {
         return Response.json({
+          object: "list",
+          has_more: false,
           data: [
             {
               id: "domain-1",
@@ -51,6 +53,51 @@ test("domain inspection retrieves receiving DNS details and accepts partially ve
     assert.equal(
       (request.init?.headers as Record<string, string>)["user-agent"],
       "Kestrel-One/1.0",
+    );
+  }
+});
+
+test("domain inspection accepts a complete empty list", async () => {
+  const provider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async () =>
+      Response.json({ object: "list", has_more: false, data: [] }),
+  });
+
+  assert.deepEqual(await provider.listDomains("re_full_access"), []);
+});
+
+test("domain inspection rejects incomplete and malformed list envelopes", async () => {
+  const cases: unknown[] = [
+    {
+      object: "list",
+      has_more: true,
+      data: [
+        {
+          id: "domain-1",
+          name: "mail.example.test",
+          status: "verified",
+          capabilities: { sending: "enabled", receiving: "disabled" },
+        },
+      ],
+    },
+    { object: "list", has_more: true, data: [] },
+    { object: "domain", has_more: false, data: [] },
+    { object: "list", data: [] },
+    { object: "list", has_more: "false", data: [] },
+    { object: "list", has_more: false, data: {} },
+  ];
+
+  for (const payload of cases) {
+    const provider = new ResendHttpReceivingProvider({
+      baseUrl: "https://resend.test",
+      fetchImpl: async () => Response.json(payload),
+    });
+    await assert.rejects(
+      provider.listDomains("re_full_access"),
+      (error: unknown) =>
+        error instanceof ResendReceivingProviderError &&
+        error.code === "RESEND_RECEIVING_RESPONSE_INVALID",
     );
   }
 });

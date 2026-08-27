@@ -6,10 +6,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 - [Show redacted receiving status to non-Admin Organization members](14-show-redacted-receiving-status-to-members.md)
 - [Recover an ambiguous Resend webhook create without creating another webhook](15-recover-ambiguous-resend-webhook-creates.md)
-- [Reject incomplete Resend domain lists as health evidence](16-reject-incomplete-resend-domain-lists.md)
-- [Prevent an older One receiving check from repainting newer health](17-prevent-stale-one-receiving-refreshes.md)
 - [Keep removed-domain failures separate from credential health](18-separate-domain-and-credential-health.md)
-- [Classify malformed receiving JSON as an invalid request](19-classify-malformed-receiving-json.md)
 
 ## In progress
 
@@ -31,6 +28,9 @@ None.
 - [Keep receiving health evidence truthful after failed checks](10-persist-and-present-receiving-health.md)
 - [Make Resend webhook staging recoverable after every provider step](11-stage-resend-webhooks-recoverably.md)
 - [Distinguish provider outages from invalid receiving configuration](13-classify-receiving-provider-failures.md)
+- [Reject incomplete Resend domain lists as health evidence](16-reject-incomplete-resend-domain-lists.md)
+- [Prevent an older One receiving check from repainting newer health](17-prevent-stale-one-receiving-refreshes.md)
+- [Classify malformed receiving JSON as an invalid request](19-classify-malformed-receiving-json.md)
 
 ## Done
 

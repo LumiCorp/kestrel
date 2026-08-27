@@ -3,8 +3,21 @@ import { GatewayCredentialEncryptionError } from "@/lib/ai/gateway-credential-cr
 import { DesktopUserAuthorizationError } from "@/lib/desktop-account";
 import { ReceivingConfigError } from "./receiving-config";
 
+class ReceivingAdminJsonSyntaxError extends Error {}
+
+export async function parseReceivingAdminJson(request: Request) {
+  try {
+    return await request.json();
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new ReceivingAdminJsonSyntaxError();
+    }
+    throw error;
+  }
+}
+
 export function getSafeReceivingAdminError(error: unknown) {
-  if (error instanceof ZodError) {
+  if (error instanceof ZodError || error instanceof ReceivingAdminJsonSyntaxError) {
     return {
       status: 422,
       body: {

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { inspectReceivingDomains } from "@/lib/email/receiving-config";
-import { getSafeReceivingAdminError } from "@/lib/email/receiving-admin-error";
+import {
+  getSafeReceivingAdminError,
+  parseReceivingAdminJson,
+} from "@/lib/email/receiving-admin-error";
 import { requireDesktopReceivingAdmin } from "@/lib/email/desktop-receiving-auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 
@@ -14,7 +17,7 @@ export async function POST(request: Request, context: Context) {
       (await context.params).organizationId,
     );
     await requireDesktopReceivingAdmin(request, organizationId);
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(await parseReceivingAdminJson(request));
     return NextResponse.json({
       domains: await inspectReceivingDomains({
         organizationId,

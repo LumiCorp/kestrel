@@ -82,9 +82,7 @@ export class ResendHttpReceivingProvider implements ResendReceivingProvider {
   }
 
   async listDomains(apiKey: string): Promise<ResendReceivingDomain[]> {
-    const payload = await this.#request(apiKey, "/domains");
-    const rows = record(payload).data;
-    if (!Array.isArray(rows)) throw invalidResponse();
+    const rows = parseCompleteList(await this.#request(apiKey, "/domains"));
     const summaries = rows.map(parseDomain);
     return await Promise.all(
       summaries.map((domain) =>
@@ -236,6 +234,18 @@ export class ResendHttpReceivingProvider implements ResendReceivingProvider {
       throw invalidResponse();
     }
   }
+}
+
+function parseCompleteList(value: unknown): unknown[] {
+  const envelope = record(value);
+  if (
+    envelope.object !== "list" ||
+    envelope.has_more !== false ||
+    !Array.isArray(envelope.data)
+  ) {
+    throw invalidResponse();
+  }
+  return envelope.data;
 }
 
 function parseDomain(value: unknown): ResendReceivingDomain {

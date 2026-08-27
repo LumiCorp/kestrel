@@ -1,7 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import {
+  OrganizationReceivingController,
+  type ReceivingConnection,
+  type ReceivingDomain,
+} from "@/components/settings/receiving-client-controller";
 import {
   SettingsRow,
   SettingsRows,
@@ -20,102 +25,42 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-type ReceivingConnection = {
-  provider: "resend";
-  configured: boolean;
-  credentialStatus: "not_configured" | "full_access" | "insufficient" | "error";
-  credentialValidatedAt: string | null;
-  receivingDomain: string | null;
-  receivingDomainStatus: "not_selected" | "pending" | "verified" | "failed";
-  mxStatus: "unknown" | "pending" | "verified" | "failed";
-  domainCheckedAt: string | null;
-  webhookStatus: "not_staged" | "staged" | "active" | "disabled" | "error";
-  inboundEnabled: boolean;
-  lastHealthCheckedAt: string | null;
-  lastTestedAt: string | null;
-  lastErrorCode: string | null;
-  readiness: string;
-};
-
-type Domain = {
-  id: string;
-  name: string;
-  status: "pending" | "verified" | "failed";
-  receiving: "enabled" | "disabled";
-  mxStatus: "unknown" | "pending" | "verified" | "failed";
-};
-
 export function OrganizationReceivingClient() {
   const [connection, setConnection] = useState<ReceivingConnection>();
-  const [domains, setDomains] = useState<Domain[]>([]);
+  const [domains, setDomains] = useState<ReceivingDomain[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [domainId, setDomainId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const controllerRef = useRef<OrganizationReceivingController | null>(null);
 
-  const load = useCallback(async () => {
-    const response = await fetch("/api/organization/email/receiving", {
-      cache: "no-store",
+  useEffect(() => {
+    const controller = new OrganizationReceivingController({
+      setApiKey,
+      setBusy,
+      setConnection,
+      setDomainId,
+      setDomains,
+      setError,
+      showInfo: (message) => toast.info(message),
+      showSuccess: (message) => toast.success(message),
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      setError(body.error || "Could not load inbound receiving.");
-      return;
-    }
-    setConnection(body.connection);
-    setError(undefined);
+    controllerRef.current = controller;
+    void controller.load();
+    return () => {
+      controller.deactivate();
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+      }
+    };
   }, []);
 
-  useEffect(() => void load(), [load]);
-
   async function inspectDomains() {
-    setBusy(true);
-    const response = await fetch(
-      "/api/organization/email/receiving/domains",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ apiKey: apiKey || undefined }),
-      },
-    );
-    const body = await response.json().catch(() => ({}));
-    setBusy(false);
-    if (!response.ok) {
-      await load();
-      setError(body.error || "Could not inspect Resend receiving domains.");
-      return;
-    }
-    setDomains(body.domains || []);
-    setError(undefined);
-    await load();
-    if (!(body.domains || []).length) {
-      toast.info("No Resend receiving domains are available for this key.");
-    }
+    await controllerRef.current?.inspectDomains(apiKey);
   }
 
   async function save() {
-    setBusy(true);
-    const response = await fetch("/api/organization/email/receiving", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        apiKey: apiKey || undefined,
-        receivingDomainId: domainId,
-      }),
-    });
-    const body = await response.json().catch(() => ({}));
-    setBusy(false);
-    if (!response.ok) {
-      setError(body.error || "Could not save inbound receiving.");
-      return;
-    }
-    setConnection(body.connection);
-    setApiKey("");
-    setDomainId("");
-    setDomains([]);
-    setError(undefined);
-    toast.success("Inbound receiving configuration saved.");
-    await load();
+    await controllerRef.current?.save(apiKey, domainId);
   }
 
   const selected = domains.find((domain) => domain.id === domainId);

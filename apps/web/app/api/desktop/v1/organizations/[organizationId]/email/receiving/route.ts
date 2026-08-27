@@ -4,7 +4,10 @@ import {
   getPublicReceivingConnection,
   saveReceivingConnection,
 } from "@/lib/email/receiving-config";
-import { getSafeReceivingAdminError } from "@/lib/email/receiving-admin-error";
+import {
+  getSafeReceivingAdminError,
+  parseReceivingAdminJson,
+} from "@/lib/email/receiving-admin-error";
 import { requireDesktopReceivingAdmin } from "@/lib/email/desktop-receiving-auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 
@@ -36,7 +39,7 @@ export async function PUT(request: Request, context: Context) {
       (await context.params).organizationId,
     );
     const user = await requireDesktopReceivingAdmin(request, organizationId);
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(await parseReceivingAdminJson(request));
     return NextResponse.json({
       connection: await saveReceivingConnection({
         organizationId,
