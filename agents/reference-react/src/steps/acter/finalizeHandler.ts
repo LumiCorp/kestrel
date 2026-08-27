@@ -6,21 +6,26 @@ import {
   makeModelTranscriptItem,
 } from "../../../../../src/runtime/modelTranscript.js";
 import { readActiveTaskGoalFromState } from "../../../../../src/runtime/turnObjective.js";
-import { createReferenceReactFinalizeCheckpoint } from "../../commandProcessor.js";
+import {
+  createReferenceReactEffectCollectCheckpoint,
+  createReferenceReactFinalizeCheckpoint,
+} from "../../commandProcessor.js";
 import {
   createReferenceReactAssistantTextPatch,
   createReferenceReactFinalOutputPatch,
+  createReferenceReactLastActionResultPatch,
   createReferenceReactNextActionPatch,
 } from "../../state.js";
 import { buildFinalizePayload } from "./finalizePayload.js";
 import { unwrapAgentToolOutput } from "../../../../../tools/toolResult.js";
-import type {
-  ActerStepConfig,
-  CannotSatisfyAction,
-  FinalizeAction,
-  SwitchModeAction,
+import {
+  appendAgentObservation,
+  type ActerStepConfig,
+  type CannotSatisfyAction,
+  type FinalizeAction,
+  type SwitchModeAction,
 } from "./shared.js";
-import { buildModeSwitchMessage } from "../../modeSwitch.js";
+import { readSelectedModeSwitch } from "../../modeSwitch.js";
 
 export async function handleSwitchModeAction(input: {
   action: SwitchModeAction;
@@ -28,57 +33,41 @@ export async function handleSwitchModeAction(input: {
   reactState: Record<string, unknown>;
   activeRegion: string | undefined;
   stepIndex: number;
-  io: StepIO;
+  sourceEventId: string;
 }): Promise<Transition> {
-  const assistantText = buildModeSwitchMessage(input.action.mode);
-  const finalToolResult = await input.io.useTool!(input.config.finalizeToolName, {
-    message: assistantText,
-    data: {
-      modeSwitch: {
-        mode: input.action.mode,
-      },
+  const lastActionResult = {
+    ok: true,
+    kind: "mode_switch",
+    status: "applied",
+    mode: input.action.mode,
+  };
+  const modelTranscript = appendToolResultToTranscript({
+    transcript: input.reactState.modelTranscript,
+    toolName: "kestrel.switch_mode",
+    toolInput: {
+      mode: input.action.mode,
     },
+    toolOutput: lastActionResult,
+    stepIndex: input.stepIndex,
   });
-  const finalOutput = unwrapAgentToolOutput(finalToolResult);
-  const modelTranscript = appendModelTranscriptItems(
-    appendToolResultToTranscript({
-      transcript: input.reactState.modelTranscript,
-      toolName: "kestrel.switch_mode",
-      toolInput: {
-        mode: input.action.mode,
-      },
-      toolOutput: finalToolResult,
-      stepIndex: input.stepIndex,
-    }),
-    [
-      makeModelTranscriptItem("assistant_text", {
-        content: assistantText,
-        stepIndex: input.stepIndex,
-      }),
-    ],
-  );
-  return createReferenceReactFinalizeCheckpoint({
+  return createReferenceReactEffectCollectCheckpoint({
     reactState: input.reactState,
     currentStepAgent: input.config.acterStepId,
+    nextStepAgent: input.config.deliberationStepId,
     stepIndex: input.stepIndex,
-    emitEvents: [
-      {
-        type: "agent.completed",
-        payload: {
-          finalizedBy: input.config.finalizeToolName,
-          output: finalOutput,
-        },
-      },
-    ],
     activeRegion: input.activeRegion,
-    phase: "ACT",
+    phase: "THINK",
     reactPatch: {
       ...createReferenceReactNextActionPatch(undefined),
+      ...createReferenceReactLastActionResultPatch(lastActionResult),
+      commandBatch: undefined,
+      interactionMode: input.action.mode,
+      modeSwitch: {
+        mode: input.action.mode,
+        sourceEventId: input.sourceEventId,
+      },
       modelTranscript,
-      finalized: true,
-      ...createReferenceReactAssistantTextPatch(assistantText),
-      ...createReferenceReactFinalOutputPatch(finalOutput),
-      activeTurnIntent: undefined,
+      observations: appendAgentObservation(input.reactState, lastActionResult),
       decisionTrace: [
         {
           eventType: "decision.executed",
@@ -90,8 +79,11 @@ export async function handleSwitchModeAction(input: {
     },
     execPatch: { pendingBatch: undefined },
     regionReactPatch: {
-      finalized: true,
-      ...createReferenceReactAssistantTextPatch(assistantText),
+      interactionMode: input.action.mode,
+      modeSwitch: {
+        mode: input.action.mode,
+        sourceEventId: input.sourceEventId,
+      },
     },
     regionExecPatch: { pendingBatch: undefined },
   });
@@ -106,6 +98,7 @@ export async function handleCannotSatisfyAction(input: {
   io: StepIO;
 }): Promise<Transition> {
   const activeGoal = readActiveTaskGoalFromState(input.reactState);
+  const selectedMode = readSelectedModeSwitch(input.reactState.modeSwitch);
   const finalToolResult = await input.io.useTool!(input.config.finalizeToolName, {
     message: input.action.message,
     data: {
@@ -116,6 +109,9 @@ export async function handleCannotSatisfyAction(input: {
         reasonCode: input.action.reasonCode,
         ...(input.action.details !== undefined ? { details: input.action.details } : {}),
       },
+      ...(selectedMode !== undefined
+        ? { modeSwitch: { mode: selectedMode } }
+        : {}),
     },
   });
   const finalOutput = unwrapAgentToolOutput(finalToolResult);

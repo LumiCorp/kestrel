@@ -102,6 +102,7 @@ import {
   createReferenceReactWaitingForPatch,
   getAgentStateFromRuntimeState,
 } from "../state.js";
+import { readActiveModeSwitch } from "../modeSwitch.js";
 import { buildReferenceReactCommandBatchFromAction } from "../commandProcessor.js";
 import { isFilesystemInspectionToolName } from "../filesystemInspection.js";
 import {
@@ -336,7 +337,13 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       ...(resumeRequest.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
     };
     const modeResolution = normalizeInteractionMode({
-      interactionMode: eventPayload.interactionMode ?? reactState.interactionMode,
+      interactionMode:
+        readActiveModeSwitch({
+          value: reactState.modeSwitch,
+          sourceEventId: ctx.event.id,
+        }) ??
+        eventPayload.interactionMode ??
+        reactState.interactionMode,
       actSubmode: eventPayload.actSubmode ?? reactState.actSubmode,
       defaultInteractionMode: DEFAULT_INTERACTION_MODE,
       defaultActSubmode: DEFAULT_ACT_SUBMODE,
@@ -884,6 +891,7 @@ function resetTaskScopedStateForFreshUserMessageEpoch(input: {
     assistantText: null,
     finalOutput: undefined,
     finalized: undefined,
+    modeSwitch: undefined,
     activeTurnIntent: undefined,
     phase: undefined,
   } as ReferenceReactAgentState;

@@ -5,6 +5,22 @@ import { buildFinalizePayload } from "../../agents/reference-react/src/steps/act
 import { appendUserTurnToTranscript } from "../../src/runtime/modelTranscript.js";
 
 
+test("buildFinalizePayload carries an applied mode switch into the terminal payload", () => {
+  const payload = buildFinalizePayload(
+    {
+      goal: "Implement the request",
+      modeSwitch: {
+        mode: "build",
+        sourceEventId: "event-1",
+      },
+    },
+    { message: "Implemented the request." },
+  );
+
+  assert.deepEqual(payload.payload.data.modeSwitch, { mode: "build" });
+});
+
+
 test("buildFinalizePayload forwards inconclusive artifact verification as report data", () => {
   const payload = buildFinalizePayload(
     {

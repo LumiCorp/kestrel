@@ -376,7 +376,7 @@ export function createKestrelOneAgentResponseFromAgent(
 
       const requestedInteractionMode = readRequestedInteractionMode(
         streamResult.finalizedPayload
-      );
+      ) ?? readInteractionModeSwitch(streamResult.interaction?.metadata);
       if (requestedInteractionMode) {
         mirroredWriter.write({
           type: "data-interaction-mode",
@@ -436,7 +436,23 @@ export function readRequestedInteractionMode(
     data?.modeSwitch && typeof data.modeSwitch === "object"
       ? (data.modeSwitch as Record<string, unknown>)
       : null;
-  const mode = modeSwitch?.mode;
+  return readInteractionModeSwitch(modeSwitch);
+}
+
+export function readInteractionModeSwitch(
+  value: unknown
+): KestrelOneInteractionMode | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const nested =
+    record.modeSwitch &&
+    typeof record.modeSwitch === "object" &&
+    !Array.isArray(record.modeSwitch)
+      ? (record.modeSwitch as Record<string, unknown>)
+      : record;
+  const mode = nested.mode;
   return mode === "chat" || mode === "plan" || mode === "build" ? mode : null;
 }
 

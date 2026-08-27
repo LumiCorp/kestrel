@@ -325,7 +325,14 @@ test("createReferenceReactWaitCheckpoint records processor-owned approval waits"
     },
   };
   const transition = createReferenceReactWaitCheckpoint({
-    reactState: { goal: "edit file" },
+    reactState: {
+      goal: "edit file",
+      interactionMode: "build",
+      modeSwitch: {
+        mode: "build",
+        sourceEventId: "event-1",
+      },
+    },
     currentStepAgent: "agent.exec.dispatch",
     nextStepAgent: "agent.exec.dispatch",
     stepIndex: 10,
@@ -356,6 +363,9 @@ test("createReferenceReactWaitCheckpoint records processor-owned approval waits"
       kind: "approval",
       eventType: "user.approval",
       prompt: "Approve fs.write_text?",
+      metadata: {
+        modeSwitch: { mode: "build" },
+      },
     },
   });
   assert.equal(react.assistantText, "Approve fs.write_text?");
