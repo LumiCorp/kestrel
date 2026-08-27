@@ -11,6 +11,9 @@ work; this queue does not reopen them.
 
 ## Ready
 
+- [Bound and canonicalize cleanup audit identities](06q-bound-and-canonicalize-cleanup-audit-identities.md)
+- [Make in-memory cleanup quarantine atomic](06r-make-in-memory-quarantine-atomic.md)
+- [Align hosted approval contract gates](06s-align-hosted-approval-contract-gates.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
