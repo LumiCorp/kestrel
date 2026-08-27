@@ -11,6 +11,7 @@ work; this queue does not reopen them.
 
 ## Ready
 
+- [Bind cleanup persistence to one pre-await evidence snapshot](06z5-bind-cleanup-persistence-snapshot.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
