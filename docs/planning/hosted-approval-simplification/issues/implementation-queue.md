@@ -11,11 +11,12 @@ work; this queue does not reopen them.
 
 ## Ready
 
+- [Construct the V4 compatibility release](06f-construct-v4-compatibility-release.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
 
-None.
+- [Make prepared approval cleanup durable](06e-make-prepared-cleanup-durable.md)
 
 ## Blocked
 
