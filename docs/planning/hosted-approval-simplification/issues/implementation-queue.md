@@ -11,6 +11,7 @@ work; this queue does not reopen them.
 
 ## Ready
 
+- [Bind PostgreSQL result insertion to the locked effect identity](06z7-bind-postgres-result-to-locked-effect.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
