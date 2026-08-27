@@ -6,7 +6,7 @@ import postgres from "postgres";
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 const ownerLossMigration = fs.readFileSync(
   new URL(
-    "../db/migrations/0086_project_email_trigger_owner_loss.sql",
+    "../db/migrations/0090_project_email_trigger_owner_loss.sql",
     import.meta.url,
   ),
   "utf8",

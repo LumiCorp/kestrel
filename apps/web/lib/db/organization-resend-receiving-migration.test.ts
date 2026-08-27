@@ -10,7 +10,7 @@ const migration = fs.readFileSync(
   "utf8",
 );
 const healthCheckSequenceMigration = fs.readFileSync(
-  path.join(directory, "migrations/0084_receiving_health_check_sequence.sql"),
+  path.join(directory, "migrations/0088_receiving_health_check_sequence.sql"),
   "utf8",
 );
 const journal = JSON.parse(
@@ -45,13 +45,13 @@ test("stored receiving health checks have a durable monotonic sequence", () => {
   );
   assert.deepEqual(
     journal.entries.find(
-      (entry) => entry.tag === "0084_receiving_health_check_sequence",
+      (entry) => entry.tag === "0088_receiving_health_check_sequence",
     ),
     {
-      idx: 84,
+      idx: 88,
       version: "7",
-      when: 1_787_804_969_000,
-      tag: "0084_receiving_health_check_sequence",
+      when: 1_787_911_200_000,
+      tag: "0088_receiving_health_check_sequence",
       breakpoints: true,
     },
   );
