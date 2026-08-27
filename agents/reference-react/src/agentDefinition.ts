@@ -257,6 +257,13 @@ export function createReferenceReactAgentDefinitionFromResolvedOptions(
             }
             return;
           }
+          if (
+            transition.status === "RUNNING" &&
+            transition.nextStepAgent === AGENT_STEP_IDS.loop &&
+            hasModeSwitchContinuationTrace(transition)
+          ) {
+            return;
+          }
           if (transition.status !== "COMPLETED") {
             throw contractError("agent.exec.finalize must terminate with COMPLETED status");
           }
@@ -268,6 +275,18 @@ export function createReferenceReactAgentDefinitionFromResolvedOptions(
       },
     ],
   };
+}
+
+function hasModeSwitchContinuationTrace(transition: {
+  statePatch?: Record<string, unknown> | undefined;
+}): boolean {
+  const agent = asRecord(transition.statePatch?.agent);
+  const traces = Array.isArray(agent?.decisionTrace) ? agent.decisionTrace : [];
+  return traces.some((trace) => {
+    const record = asRecord(trace);
+    return record?.eventType === "decision.executed" &&
+      record?.decisionCode === "switch_mode";
+  });
 }
 
 function hasAllowedLoopSelfTransitionTrace(agent: Record<string, unknown>): boolean {

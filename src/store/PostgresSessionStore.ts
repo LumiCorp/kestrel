@@ -4364,6 +4364,16 @@ export class PostgresSessionStore implements SessionStore {
     return this.orchestrationStore.upsertDelegation(record);
   }
 
+  async createDialog(record: DelegationRecord): Promise<boolean> {
+    await this.ensureSchemaV3();
+    return this.orchestrationStore.createDialog(record);
+  }
+
+  async compareAndSetDialog(record: DelegationRecord, expectedRevision: number): Promise<boolean> {
+    await this.ensureSchemaV3();
+    return this.orchestrationStore.compareAndSetDialog(record, expectedRevision);
+  }
+
   async getDelegation(delegationId: string): Promise<DelegationRecord | null> {
     await this.ensureSchemaV3();
     return this.orchestrationStore.getDelegation(delegationId);

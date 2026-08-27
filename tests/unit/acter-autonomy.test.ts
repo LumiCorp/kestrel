@@ -2437,11 +2437,20 @@ test("exec.finalize converts handoff_to_build into a user reply wait", async () 
   });
 });
 
-test("exec.finalize commits switch_mode as a terminal mode-switch payload", async () => {
+test("exec.finalize applies switch_mode and continues the active request", async () => {
   const step = createExecFinalizeStep(buildExecConfig());
-  let finalizedInput: unknown;
+  let toolCalled = false;
   const transition = await step(
     buildContext({
+      event: {
+        id: "event-mode-switch",
+        type: "user.message",
+        sessionId: "session-mode-switch",
+        payload: {
+          interactionMode: "chat",
+          message: "Switch to Build mode and implement the request.",
+        },
+      },
       session: {
         sessionId: "session-mode-switch",
         version: 1,
@@ -2462,30 +2471,29 @@ test("exec.finalize commits switch_mode as a terminal mode-switch payload", asyn
       useModel: async () => {
         throw new Error("not expected");
       },
-      useTool: async (name, input) => {
-        assert.equal(name, "FinalizeAnswer");
-        finalizedInput = input;
-        return buildAgentToolSuccessResult({
-          toolName: name,
-          input,
-          output: { finalized: true, payload: input },
-        });
+      useTool: async () => {
+        toolCalled = true;
+        throw new Error("not expected");
       },
     },
   );
 
   const react = transition.statePatch?.agent as Record<string, unknown>;
-  const finalOutput = react.finalOutput as Record<string, unknown>;
-  assert.equal(transition.status, "COMPLETED");
-  assert.deepEqual(finalizedInput, {
-    message: "Build mode is selected and will apply to your next message.",
-    data: { modeSwitch: { mode: "build" } },
+  assert.equal(toolCalled, false);
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(transition.nextStepAgent, "agent.loop");
+  assert.equal(react.nextAction, undefined);
+  assert.deepEqual(react.modeSwitch, {
+    mode: "build",
+    sourceEventId: "event-mode-switch",
   });
-  assert.deepEqual(finalOutput, {
-    finalized: true,
-    payload: finalizedInput,
+  assert.deepEqual(react.lastActionResult, {
+    ok: true,
+    kind: "mode_switch",
+    status: "applied",
+    mode: "build",
   });
-  assert.equal(react.assistantText, "Build mode is selected and will apply to your next message.");
+  assertReferenceFinalizeContractAccepts(transition);
 });
 
 test("exec.wait_user clears stale waitingFor when action is no longer ask_user", async () => {

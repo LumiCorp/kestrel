@@ -53,6 +53,7 @@ export function ConversationTimeline(props: {
     (entry, index) =>
       index > lastRunIndex &&
       entry.type === "transcript" &&
+      entry.line.dialog === undefined &&
       entry.line.role === "assistant",
   );
   const terminalState =
@@ -122,6 +123,8 @@ export function ConversationTimeline(props: {
               </Fragment>
             );
           }
+
+          if (entry.line.dialog !== undefined) return null;
 
           const transition =
             index === terminalAssistantIndex &&
@@ -257,7 +260,7 @@ function MessageEntry({
 }) {
   const sender =
     entry.line.dialog?.sender === "collaborator"
-      ? entry.line.dialog.name
+      ? `Collaborator: ${entry.line.dialog.name}`
       : entry.line.dialog?.sender === "kestrel"
         ? "Kestrel"
         : entry.line.role === "user"
@@ -265,6 +268,15 @@ function MessageEntry({
           : entry.line.role === "assistant"
             ? "Kestrel"
             : "System";
+  const dialogLifecycle = entry.line.dialog?.dialogStatus === "closed"
+    ? "Closed"
+    : entry.line.dialog?.dialogActivity === "working"
+      ? "Working"
+      : entry.line.dialog?.dialogActivity === "waiting"
+        ? "Waiting for input"
+        : entry.line.dialog?.dialogActivity === "interrupted"
+          ? "Interrupted"
+          : entry.line.dialog === undefined ? undefined : "Idle";
 
   return (
     <li
@@ -282,6 +294,8 @@ function MessageEntry({
       <article className="timeline-entry-content">
         <div className="timeline-entry-meta">
           <strong>{sender}</strong>
+          {dialogLifecycle !== undefined ? <span className="timeline-entry-dialog-status">{dialogLifecycle}</span> : null}
+          {entry.line.dialog?.status === "failed" ? <span className="timeline-entry-dialog-failure">Needs attention</span> : null}
           <time dateTime={entry.line.timestamp}>
             {formatMessageTime(entry.line.timestamp)}
           </time>

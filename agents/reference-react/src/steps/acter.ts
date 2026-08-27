@@ -103,6 +103,7 @@ import {
   handleFinalizeAction,
   handleSwitchModeAction,
 } from "./acter/finalizeHandler.js";
+import { readActiveModeSwitch } from "../modeSwitch.js";
 import { handlePendingEffect } from "./acter/pendingEffectHandler.js";
 import {
   handlePendingToolBatch,
@@ -150,8 +151,15 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       capabilityManifest.map((tool) => [tool.name, tool.allowedInteractionModes]),
     );
     const reactState = getAgentStateFromRuntimeState(ctx.session.state);
+    const activeModeSwitch = readActiveModeSwitch({
+      value: reactState.modeSwitch,
+      sourceEventId: ctx.event.id,
+    });
     const modeResolution = normalizeInteractionMode({
-      interactionMode: ctx.event.payload.interactionMode ?? reactState.interactionMode,
+      interactionMode:
+        activeModeSwitch ??
+        ctx.event.payload.interactionMode ??
+        reactState.interactionMode,
       actSubmode: ctx.event.payload.actSubmode ?? reactState.actSubmode,
       defaultInteractionMode: DEFAULT_INTERACTION_MODE,
       defaultActSubmode: DEFAULT_ACT_SUBMODE,
@@ -1029,7 +1037,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         reactState,
         activeRegion,
         stepIndex: ctx.stepIndex,
-        io,
+        sourceEventId: ctx.event.id,
       });
     }
     if (action.kind === "request_mode_switch") {

@@ -471,6 +471,7 @@ test("createKestrelOneAgentResponse propagates autonomous turn policy", async ()
 test("createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text", async () => {
   let persistedText = "";
   let persistedTerminalStatus = "";
+  let persistedMode: string | null | undefined;
   const response = createKestrelOneAgentResponseFromAgent({
     request: new Request("http://example.test/api/threads/thread_waiting", {
       method: "POST",
@@ -497,6 +498,9 @@ test("createKestrelOneAgentResponse persists a completed WAITING prompt as assis
                   kind: "user_input",
                   eventType: "user.reply",
                   prompt: "What city or location should I check?",
+                  metadata: {
+                    modeSwitch: { mode: "plan" },
+                  },
                 },
                 metadata: {
                   prompt: "What city or location should I check?",
@@ -527,14 +531,17 @@ test("createKestrelOneAgentResponse persists a completed WAITING prompt as assis
       const part = messages[0]?.parts.find((candidate) => candidate.type === "text");
       persistedText = part?.type === "text" && "text" in part ? part.text : "";
       persistedTerminalStatus = meta.terminalStatus;
+      persistedMode = meta.selectedInteractionMode;
     },
   });
 
   const body = await response.text();
 
   assert.match(body, /What city or location should I check\?/u);
+  assert.match(body, /data-interaction-mode/u);
   assert.equal(persistedText, "What city or location should I check?");
   assert.equal(persistedTerminalStatus, "waiting");
+  assert.equal(persistedMode, "plan");
 });
 
 test("createKestrelOneAgentResponse isolates transient title failures from the agent stream", async () => {

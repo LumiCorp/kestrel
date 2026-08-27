@@ -2973,6 +2973,8 @@ test("UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn
     allowlist: [
       "dialog.open",
       "dialog.send",
+      "dialog.read",
+      "dialog.list",
       "dialog.close",
       "agent.spawn",
       "delegate.spawn_child",
@@ -2983,6 +2985,12 @@ test("UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn
           throw new Error("not called");
         },
         async send() {
+          throw new Error("not called");
+        },
+        async read() {
+          throw new Error("not called");
+        },
+        async list() {
           throw new Error("not called");
         },
         async close() {
@@ -3001,7 +3009,7 @@ test("UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn
 
   assert.deepEqual(
     registry.getModelTools().map((tool) => tool.name),
-    ["dialog.open", "dialog.send", "dialog.close"],
+    ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"],
   );
 });
 
@@ -3033,7 +3041,7 @@ test("Kestrel-One profile exposes only model-visible collaborator dialogs", asyn
           toolName.startsWith("delegate.") ||
           toolName === "agent.spawn",
       ),
-    ["dialog.open", "dialog.send", "dialog.close"],
+    ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"],
   );
 });
 
@@ -3077,7 +3085,7 @@ test("every canonical Kestrel One environment exposes dialogs without legacy del
             name.startsWith("delegate.") ||
             name === "agent.spawn",
         ),
-      ["dialog.open", "dialog.send", "dialog.close"],
+      ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"],
     );
   }
 });
@@ -3141,6 +3149,12 @@ test("dialog.open validates its minimal name and message contract", async () => 
         async send() {
           throw new Error("not called");
         },
+        async read() {
+          throw new Error("not called");
+        },
+        async list() {
+          throw new Error("not called");
+        },
         async close() {
           throw new Error("not called");
         },
@@ -3174,6 +3188,15 @@ test("dialog.open validates its minimal name and message contract", async () => 
       }),
     /parentSessionId/,
   );
+  await assert.rejects(
+    () =>
+      validateToolInput(registry, "dialog.open", {
+        name: "Peregrine",
+        message: "Investigate failing tests",
+        agentId: "external-agent",
+      }),
+    /agentId/,
+  );
 });
 
 test("dialog.open uses active thread identity and forbids nested dialogs", async () => {
@@ -3187,9 +3210,11 @@ test("dialog.open uses active thread identity and forbids nested dialogs", async
           requests.push(input);
           return {
             dialogId: "dialog-child",
+            created: true,
             name: input.name,
             parentSessionId: input.parentSessionId,
             status: "open",
+            activity: "working",
             active: true,
             childSessionId: "child-session",
             createdAt: now,
@@ -3197,6 +3222,12 @@ test("dialog.open uses active thread identity and forbids nested dialogs", async
           };
         },
         async send() {
+          throw new Error("not called");
+        },
+        async read() {
+          throw new Error("not called");
+        },
+        async list() {
           throw new Error("not called");
         },
         async close() {
@@ -3271,7 +3302,7 @@ test("dialog.open uses active thread identity and forbids nested dialogs", async
     String(
       (nested.auditRecord.error as { message?: string } | undefined)?.message,
     ),
-    /Only Kestrel can open collaborator dialogs/,
+    /Only Kestrel in the main conversation can open collaborators/,
   );
 });
 

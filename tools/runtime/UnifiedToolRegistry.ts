@@ -151,6 +151,8 @@ interface WorkspaceSkillReadProgress {
 const MODEL_VISIBLE_RUNTIME_TOOL_NAMES = new Set([
   "dialog.open",
   "dialog.send",
+  "dialog.read",
+  "dialog.list",
   "dialog.close",
 ]);
 export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {

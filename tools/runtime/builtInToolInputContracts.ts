@@ -69,6 +69,8 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "agent.spawn": { mode: "schema-only" },
   "dialog.open": { mode: "schema-only" },
   "dialog.send": { mode: "schema-only" },
+  "dialog.read": { mode: "schema-only" },
+  "dialog.list": { mode: "schema-only" },
   "dialog.close": { mode: "schema-only" },
   "delegate.spawn_child": { mode: "schema-only" },
   "delegate.list_children": { mode: "schema-only" },

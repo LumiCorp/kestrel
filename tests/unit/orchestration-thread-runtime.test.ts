@@ -131,6 +131,129 @@ class RunForeignKeyEnforcingStore extends InMemorySessionStore {
   }
 }
 
+test("ThreadRuntime gives only fully equipped root turns the named collaborator instructions", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    { output: buildOutput({ runId: "dialog-parent", status: "COMPLETED" }) },
+    { output: buildOutput({ runId: "dialog-child", status: "COMPLETED" }) },
+  ]);
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor,
+    profile: buildProfile({ toolAllowlist: ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"] }),
+  });
+  await runtime.startThread({ threadId: "dialog-root", title: "Root" });
+  await runtime.startThread({ threadId: "dialog-child", title: "Child", parentThreadId: "dialog-root" });
+  await runtime.submitTurn({ threadId: "dialog-root", message: "work", eventType: "user.message" });
+  await runtime.submitTurn({ threadId: "dialog-child", message: "work", eventType: "user.message" });
+
+  const parentInstructions = executor.inputs[0]?.runtimeTurn?.systemInstructions?.join("\n") ?? "";
+  assert.match(parentInstructions, /You can ask named collaborators to help with the current task\./u);
+  assert.match(parentInstructions, /Do not open one when nobody can continue until the user answers a question\./u);
+  assert.match(parentInstructions, /dialog\.send only when it is open and idle\./u);
+  assert.match(parentInstructions, /Use dialog\.read when you want to see their status, messages, or results without asking them to do more\./u);
+  assert.match(parentInstructions, /Collaborators cannot open other collaborators\./u);
+  assert.equal(parentInstructions.match(/You can ask named collaborators to help with the current task\./gu)?.length, 1);
+  assert.equal(executor.inputs[1]?.runtimeTurn?.systemInstructions, undefined);
+});
+
+test("ThreadRuntime delivers a saved collaborator reply once with current dialog identity", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    { output: buildOutput({ runId: "child-reply", status: "COMPLETED" }), assistantText: "The review is complete." },
+    { output: buildOutput({ runId: "parent-follow-up", status: "COMPLETED" }), assistantText: "Thanks." },
+  ]);
+  const profile = buildProfile({ toolAllowlist: ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"] });
+  const runtime = new ThreadRuntime({ sessionStore, executor, profile });
+  const parent = await runtime.startThread({ threadId: "dialog-reply-parent", title: "Parent" });
+  await sessionStore.upsertThread({ ...parent, status: "RUNNING", updatedAt: new Date().toISOString() });
+  const dialog = runtime.getDialogService();
+  assert.notEqual(dialog, undefined);
+  const opened = await dialog!.open({ parentSessionId: parent.threadId, name: "Reviewer", message: "Review this." });
+
+  for (let attempt = 0; attempt < 50 && (await runtime.getOperatorThreadView(parent.threadId))?.followUpQueue?.items.length !== 1; attempt += 1) {
+    await tick();
+  }
+  assert.equal((await runtime.getOperatorThreadView(parent.threadId))?.followUpQueue?.items.length, 1);
+  await dialog!.close({ parentSessionId: parent.threadId, dialogId: opened.dialogId });
+  const readyParent = await sessionStore.getThread(parent.threadId);
+  await sessionStore.upsertThread({ ...readyParent!, status: "COMPLETED", activeRunId: undefined, updatedAt: new Date().toISOString() });
+  const restartedBeforeDelivery = new ThreadRuntime({ sessionStore, executor, profile });
+  await restartedBeforeDelivery.startThread({ threadId: parent.threadId, title: parent.title });
+  for (let attempt = 0; attempt < 50 && executor.inputs.length !== 2; attempt += 1) {
+    await tick();
+  }
+
+  const followUp = executor.inputs[1];
+  assert.equal(followUp?.eventType, "dialog.message");
+  assert.deepEqual(followUp?.runtimeTurn?.actor, { actorType: "service", actorId: opened.dialogId, displayName: "Reviewer" });
+  assert.equal(followUp?.runtimeTurn?.metadata?.source, "dialog");
+  assert.equal(followUp?.runtimeTurn?.metadata?.dialogId, opened.dialogId);
+  assert.equal(followUp?.runtimeTurn?.metadata?.dialogName, "Reviewer");
+  assert.equal(followUp?.runtimeTurn?.metadata?.sourceMessageId, followUp?.metadata?.sourceMessageId);
+  assert.equal(followUp?.runtimeTurn?.metadata?.dialogStatus, "closed");
+  assert.equal(followUp?.runtimeTurn?.metadata?.dialogActivity, "idle");
+  assert.match(followUp?.runtimeTurn?.systemInstructions?.join("\n") ?? "", /This is not a message from the user\./);
+  assert.equal(followUp?.runtimeTurn?.runId, `run-dialog-follow-up-${followUp?.metadata?.sourceMessageId}`);
+  for (let attempt = 0; attempt < 50 && ((asRecord(asRecord((await sessionStore.getDelegation(opened.dialogId))?.policy)?.dialog)?.messages as Array<Record<string, unknown>> | undefined) ?? []).find((message) => message.sender === "collaborator")?.delivery !== "delivered"; attempt += 1) {
+    await tick();
+  }
+  const messages = (asRecord(asRecord((await sessionStore.getDelegation(opened.dialogId))?.policy)?.dialog)?.messages as Array<Record<string, unknown>> | undefined) ?? [];
+  assert.equal(messages.find((message) => message.sender === "collaborator")?.delivery, "delivered");
+
+  const reply = messages.find((message) => message.sender === "collaborator")!;
+  const delegation = await sessionStore.getDelegation(opened.dialogId);
+  const storedDialog = asRecord(delegation?.policy?.dialog)!;
+  await sessionStore.upsertDelegation({
+    ...delegation!,
+    policy: {
+      ...(delegation!.policy ?? {}),
+      dialog: {
+        ...storedDialog,
+        messages: messages.map((message) => message.messageId === reply.messageId
+          ? { ...message, delivery: "enqueued" }
+          : message),
+      },
+    },
+  });
+  const completedParent = await sessionStore.getThread(parent.threadId);
+  await sessionStore.upsertThread({
+    ...completedParent!,
+    status: "COMPLETED",
+    activeRunId: undefined,
+    metadata: {
+      ...(completedParent!.metadata ?? {}),
+      operatorControl: {
+        ...asRecord(completedParent!.metadata?.operatorControl),
+        followUpQueue: {
+          state: "ready",
+          items: [{
+            followUpId: reply.messageId,
+            message: `Reviewer: ${reply.text}`,
+            attachmentIds: [],
+            createdAt: reply.createdAt,
+            state: "starting",
+            source: "dialog",
+            dialogId: opened.dialogId,
+            dialogName: "Reviewer",
+            sourceMessageId: reply.messageId,
+            dialogStatus: "closed",
+            dialogActivity: "idle",
+          }],
+        },
+      },
+    },
+    updatedAt: new Date().toISOString(),
+  });
+
+  const restartedAfterParentCompleted = new ThreadRuntime({ sessionStore, executor, profile });
+  await restartedAfterParentCompleted.startThread({ threadId: parent.threadId, title: parent.title });
+  for (let attempt = 0; attempt < 50 && ((asRecord(asRecord((await sessionStore.getDelegation(opened.dialogId))?.policy)?.dialog)?.messages as Array<Record<string, unknown>> | undefined) ?? []).find((message) => message.messageId === reply.messageId)?.delivery !== "delivered"; attempt += 1) {
+    await tick();
+  }
+  assert.equal(executor.inputs.length, 2);
+});
+
 test("ThreadRuntime applies one boundary runtime to submitted content and durable output", async () => {
   const sessionStore = new InMemorySessionStore();
   const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();

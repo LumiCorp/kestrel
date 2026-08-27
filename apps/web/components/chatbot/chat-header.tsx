@@ -8,7 +8,9 @@ import {
   Pencil,
   RotateCcw,
   Trash2,
+  UsersRound,
 } from "lucide-react";
+import type { CollaboratorGroup } from "@kestrel-agents/conversation";
 import { useRouter } from "next/navigation";
 import { memo, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -53,6 +55,8 @@ function PureChatHeader({
   projects,
   selectedVisibilityType,
   isReadonly,
+  collaborators = [],
+  onOpenCollaborators,
 }: {
   archived: boolean;
   canManage: boolean;
@@ -62,6 +66,8 @@ function PureChatHeader({
   projects: Array<{ id: string; name: string }>;
   selectedVisibilityType: VisibilityType;
   isReadonly: boolean;
+  collaborators?: readonly CollaboratorGroup[];
+  onOpenCollaborators?: (() => void) | undefined;
 }) {
   const router = useRouter();
   const { mutate } = useSWRConfig();
@@ -86,6 +92,15 @@ function PureChatHeader({
   const cancelTitleSaveRef = useRef(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const saveTitleRef = useRef<(value: string) => void>(() => {});
+  const workingNames = collaborators
+    .filter((group) => group.visibleState === "working")
+    .slice(0, 2)
+    .map((group) => group.name);
+  const collaboratorLabel = workingNames.length === 1
+    ? `Collaborators · ${workingNames[0]} is working`
+    : workingNames.length > 1
+      ? `Collaborators · ${workingNames.join(" and ")} are working`
+      : `Collaborators · ${collaborators.length}`;
 
   useEffect(() => {
     setDisplayTitle(initialTitle);
@@ -305,6 +320,22 @@ function PureChatHeader({
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          {collaborators.length > 0 && onOpenCollaborators !== undefined ? (
+            <>
+              <Button
+                aria-label={`Open ${collaboratorLabel}`}
+                className="h-9 px-2.5"
+                onClick={onOpenCollaborators}
+                variant="outline"
+              >
+                <UsersRound className="size-4" />
+                <span className="hidden lg:inline">{collaboratorLabel}</span>
+              </Button>
+              <span className="sr-only" role="status">
+                {collaboratorLabel}
+              </span>
+            </>
+          ) : null}
           {isReadonly ? null : (
             <Button
               aria-label="Open Thread workspace"
@@ -476,5 +507,7 @@ export const ChatHeader = memo(
     prevProps.project?.name === nextProps.project?.name &&
     prevProps.projects === nextProps.projects &&
     prevProps.selectedVisibilityType === nextProps.selectedVisibilityType &&
-    prevProps.isReadonly === nextProps.isReadonly,
+    prevProps.isReadonly === nextProps.isReadonly &&
+    prevProps.collaborators === nextProps.collaborators &&
+    prevProps.onOpenCollaborators === nextProps.onOpenCollaborators,
 );

@@ -17,6 +17,7 @@ import {
   createReferenceReactAssistantTextPatch,
   createReferenceReactWaitingForPatch,
 } from "./state.js";
+import { readSelectedModeSwitch } from "./modeSwitch.js";
 import type { ReactAction } from "./types.js";
 
 export type ReferenceReactCommandClass = "read" | "write" | "effect" | "finalize" | "wait" | "observe";
@@ -230,9 +231,22 @@ export function createReferenceReactWaitCheckpoint(input: {
   regionExecPatch?: Record<string, unknown> | undefined;
   emitEvents?: Transition["emitEvents"] | undefined;
 }): Transition {
-  const runtimeWaitFor = materializeUserFacingWaitInteraction(
+  const materializedWaitFor = materializeUserFacingWaitInteraction(
     toReferenceReactWaitMatcher(input.waitFor),
   );
+  const selectedMode = readSelectedModeSwitch(input.reactState.modeSwitch);
+  const runtimeWaitFor = selectedMode === undefined || materializedWaitFor.interaction === undefined
+    ? materializedWaitFor
+    : {
+        ...materializedWaitFor,
+        interaction: {
+          ...materializedWaitFor.interaction,
+          metadata: {
+            ...(asRecord(materializedWaitFor.interaction.metadata) ?? {}),
+            modeSwitch: { mode: selectedMode },
+          },
+        },
+      };
   const assistantText = readInteractionPrompt(runtimeWaitFor) ?? null;
   const currentChunk = describeExecutionCheckpoint(input.substate);
   const waitReason = describeWaitReason(runtimeWaitFor);

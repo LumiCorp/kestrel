@@ -362,7 +362,7 @@ test("ProfileStore keeps hosted tools out of the local Kestrel One policy", asyn
         toolName.startsWith("delegate.") ||
         toolName === "agent.spawn",
     ),
-    ["dialog.open", "dialog.send", "dialog.close"],
+    ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"],
   );
 });
 
@@ -431,7 +431,7 @@ test("ProfileStore reconciles persisted Kestrel-One collaborator dialogs idempot
         toolName.startsWith("delegate.") ||
         toolName === "agent.spawn",
     ),
-    ["dialog.open", "dialog.send", "dialog.close"],
+    ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"],
   );
   assert.deepEqual(firstLoad, secondLoad);
   assert.equal(firstPersisted, secondPersisted);
@@ -494,7 +494,7 @@ test("ProfileStore replaces legacy authored profiles with canonical Kestrel", as
   assert.equal(kestrelOne?.default, true);
   assert.deepEqual(
     kestrelOne?.toolAllowlist?.filter((name) => name.startsWith("dialog.")),
-    ["dialog.open", "dialog.send", "dialog.close"],
+    ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"],
   );
 
   const saved = JSON.parse(await readFile(filePath, "utf8"));

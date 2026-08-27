@@ -188,7 +188,7 @@ const CONTROL_TOOLS: ModelToolSpec[] = [
   },
   {
     name: "kestrel.switch_mode",
-    description: "Switch the conversation to the mode explicitly requested by the user. Use this only when the user directly asks to switch to Chat, Plan, or Build mode; do not infer a mode change from the kind of work they requested. The selected mode applies to the next turn.",
+    description: "Switch the active request to the mode explicitly requested by the user, then continue that same request immediately in the selected mode. Use this only when the user directly asks to switch to Chat, Plan, or Build mode; do not infer a mode change from the kind of work they requested.",
     inputSchema: {
       type: "object",
       additionalProperties: false,

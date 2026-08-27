@@ -62,7 +62,7 @@ test("canonical Kestrel policy composes parity across product environments", () 
   ]) {
     assert.equal(composed.profile.agentProfileId, "kestrel");
     assert.equal(composed.provenance.policyId, "kestrel");
-    assert.equal(composed.provenance.policyVersion, 4);
+    assert.equal(composed.provenance.policyVersion, 5);
     assert.equal(composed.provenance.policyVersion, KESTREL_POLICY_VERSION);
     assert.equal(composed.provenance.promptPolicyId, "kestrel");
     assert.equal(
@@ -162,7 +162,7 @@ test("canonical Kestrel One policy and presets are immutable versioned definitio
     true,
   );
   assert.equal(KESTREL_ONE_POLICY.allowNestedCollaborators, false);
-  assert.equal(KESTREL_POLICY_VERSION, 4);
+  assert.equal(KESTREL_POLICY_VERSION, 5);
   assert.deepEqual(
     KESTREL_HARNESS_ECONOMICS.modelProfiles.find(
       (profile) =>
@@ -556,7 +556,7 @@ test("legacy composition fingerprint includes Kestrel and economics policy revis
   });
   const expected = digestCanonical({
     policyId: "kestrel",
-    policyVersion: 4,
+    policyVersion: 5,
     promptPolicyId: "kestrel",
     harnessEconomicsControlVersion: 1,
     harnessEconomicsPolicyId: "economics:kestrel:v2",

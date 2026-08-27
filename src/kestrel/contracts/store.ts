@@ -876,6 +876,10 @@ export interface ThreadStore {
     status?: ThreadStatus | undefined;
   }): Promise<ThreadRecord[]>;
   upsertDelegation(record: DelegationRecord): Promise<void>;
+  /** Atomically saves a local dialog only when its parent has not reserved its name. */
+  createDialog(record: DelegationRecord): Promise<boolean>;
+  /** Atomically saves a local dialog only when the persisted dialog revision matches. */
+  compareAndSetDialog(record: DelegationRecord, expectedRevision: number): Promise<boolean>;
   getDelegation(delegationId: string): Promise<DelegationRecord | null>;
   getDelegationByChildThreadId(childThreadId: string): Promise<DelegationRecord | null>;
   listDelegations(input?: {

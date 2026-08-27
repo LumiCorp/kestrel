@@ -222,6 +222,7 @@ export interface ConversationDialogMessagePresentation {
   text: string;
   createdAt: string;
   dialogStatus: "open" | "closed";
+  dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
   status?: "failed" | "cancelled" | undefined;
 }
 

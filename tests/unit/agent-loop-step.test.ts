@@ -7007,6 +7007,68 @@ test("agent loop omits plan-only handoff control tool in build mode", async () =
   assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
 });
 
+test("agent loop continues the active request in an agent-selected mode", async () => {
+  const switchedContext = context();
+  switchedContext.event = {
+    id: "evt-switch-and-continue",
+    type: "user.message",
+    sessionId: "session-1",
+    payload: {
+      message: "Switch to Build mode and implement the request.",
+      interactionMode: "chat",
+      modeSystemV2Enabled: true,
+    },
+  };
+  switchedContext.session.state.agent = {
+    interactionMode: "build",
+    modeSystemV2Enabled: true,
+    modeSwitch: {
+      mode: "build",
+      sourceEventId: switchedContext.event.id,
+    },
+    activeTurnIntent: {
+      version: "v1",
+      turnId: switchedContext.event.id,
+      rootEventId: switchedContext.event.id,
+      objective: "Switch to Build mode and implement the request.",
+      activeTranscriptItemId: "active-user-request",
+    },
+  };
+  let selectedMode: unknown;
+  let requestToolNames: string[] = [];
+
+  const transition = await buildStep({
+    tools: [WRITE_TEXT_TOOL],
+    capabilityManifest: [
+      {
+        name: "fs.write_text",
+        description: "Write a text file",
+        capabilityClasses: ["filesystem.write"],
+        executionClass: "sandboxed_only",
+      },
+    ],
+  })(switchedContext, {
+    useModel: async (request: ModelRequest) => {
+      selectedMode = (request.input as Record<string, unknown>).interactionMode;
+      requestToolNames = (request.tools ?? []).map((tool) => tool.name);
+      return modelResponse({
+        version: "v1",
+        reason: "Continue the original request with the newly available Build tool.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.write_text",
+          input: { path: "result.txt", content: "done" },
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(selectedMode, "build");
+  assert.equal(requestToolNames.includes("fs_write_text"), true);
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+});
+
 test("agent loop rejects capability-blocked tools with explicit policy feedback", async () => {
   const buildContext = context();
   buildContext.event.payload = {
