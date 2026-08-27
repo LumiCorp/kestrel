@@ -163,11 +163,38 @@ export class ResendHttpReceivingProvider
     intent: ResendWebhookCreateIntent;
   }): Promise<CreatedResendWebhook> {
     const intent = parseWebhookCreateIntent(input.intent);
-    const matches = parseCompleteList(
-      await this.#request(input.apiKey, "/webhooks"),
-    )
-      .map(parseWebhook)
-      .filter((webhook) => webhookMatchesCreateIntent(webhook, intent));
+    const webhooks: ResendWebhookProjection[] = [];
+    const cursors = new Set<string>();
+    const webhookIds = new Set<string>();
+    let after: string | undefined;
+    while (true) {
+      const page = parseWebhookListPage(
+        await this.#request(
+          input.apiKey,
+          `/webhooks?limit=100${
+            after === undefined ? "" : `&after=${encodeURIComponent(after)}`
+          }`,
+        ),
+      );
+      if (after && page.data.some((webhook) => webhook.id === after)) {
+        throw invalidResponse();
+      }
+      for (const webhook of page.data) {
+        if (webhookIds.has(webhook.id)) throw invalidResponse();
+        webhookIds.add(webhook.id);
+      }
+      webhooks.push(...page.data);
+      if (!page.hasMore) break;
+      const nextCursor = page.data.at(-1)?.id;
+      if (!nextCursor || nextCursor === after || cursors.has(nextCursor)) {
+        throw invalidResponse();
+      }
+      cursors.add(nextCursor);
+      after = nextCursor;
+    }
+    const matches = webhooks.filter((webhook) =>
+      webhookMatchesCreateIntent(webhook, intent),
+    );
     if (matches.length !== 1) throw invalidResponse();
 
     const match = matches[0];
@@ -314,6 +341,23 @@ function parseCompleteList(value: unknown): unknown[] {
     throw invalidResponse();
   }
   return envelope.data;
+}
+
+function parseWebhookListPage(value: unknown): {
+  data: ResendWebhookProjection[];
+  hasMore: boolean;
+} {
+  const envelope = record(value);
+  if (
+    envelope.object !== "list" ||
+    typeof envelope.has_more !== "boolean" ||
+    !Array.isArray(envelope.data)
+  ) {
+    throw invalidResponse();
+  }
+  const data = envelope.data.map(parseWebhook);
+  if (envelope.has_more && data.length === 0) throw invalidResponse();
+  return { data, hasMore: envelope.has_more };
 }
 
 function parseDomain(value: unknown): ResendReceivingDomain {

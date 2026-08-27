@@ -552,6 +552,97 @@ test("stored receiving checks persist failure and recovery without poisoning the
       organizationId,
       actorUserId: userId,
       receivingDomainId: "domain-health",
+      provider: new ResendHttpReceivingProvider({
+        baseUrl: "https://resend.test",
+        fetchImpl: async () => new Response(null, { status: 404 }),
+      }),
+    }),
+    (error: unknown) =>
+      error instanceof receiving.ReceivingConfigError &&
+      error.code === "RESEND_RECEIVING_DOMAIN_INVALID",
+  );
+  const removedConfiguredDomain =
+    await receiving.getPublicReceivingConnection(organizationId);
+  assert.equal(removedConfiguredDomain.credentialStatus, "full_access");
+  assert.equal(
+    removedConfiguredDomain.receivingDomain,
+    "domain-health.example.test",
+  );
+  assert.equal(removedConfiguredDomain.receivingDomainStatus, "failed");
+  assert.equal(removedConfiguredDomain.mxStatus, "unknown");
+  assert.equal(removedConfiguredDomain.readiness, "domain_unready");
+  assert.equal(
+    removedConfiguredDomain.lastErrorCode,
+    "RESEND_RECEIVING_DOMAIN_INVALID",
+  );
+  assert.ok(removedConfiguredDomain.credentialValidatedAt);
+  assert.ok(removedConfiguredDomain.domainCheckedAt);
+  assert.ok(removedConfiguredDomain.lastHealthCheckedAt);
+  assert.equal(
+    removedConfiguredDomain.domainCheckedAt,
+    removedConfiguredDomain.lastHealthCheckedAt,
+  );
+  assert.equal(
+    removedConfiguredDomain.credentialValidatedAt,
+    removedConfiguredDomain.lastHealthCheckedAt,
+  );
+
+  await receiving.inspectReceivingDomains({
+    organizationId,
+    provider: healthyListProvider("domain-health"),
+  });
+  const recoveredFromRemovedDomain =
+    await receiving.getPublicReceivingConnection(organizationId);
+  assert.equal(recoveredFromRemovedDomain.credentialStatus, "full_access");
+  assert.equal(recoveredFromRemovedDomain.receivingDomainStatus, "verified");
+  assert.equal(recoveredFromRemovedDomain.mxStatus, "verified");
+  assert.equal(recoveredFromRemovedDomain.readiness, "ready_inactive");
+  assert.equal(recoveredFromRemovedDomain.lastErrorCode, null);
+
+  await assert.rejects(
+    receiving.saveReceivingConnection({
+      organizationId,
+      actorUserId: userId,
+      receivingDomainId: "domain-candidate-missing",
+      provider: new ResendHttpReceivingProvider({
+        baseUrl: "https://resend.test",
+        fetchImpl: async () => new Response(null, { status: 404 }),
+      }),
+    }),
+    (error: unknown) =>
+      error instanceof receiving.ReceivingConfigError &&
+      error.code === "RESEND_RECEIVING_DOMAIN_INVALID",
+  );
+  assert.deepEqual(
+    await receiving.getPublicReceivingConnection(organizationId),
+    recoveredFromRemovedDomain,
+  );
+
+  await assert.rejects(
+    receiving.saveReceivingConnection({
+      organizationId,
+      actorUserId: userId,
+      apiKey: "re_failed_candidate_replacement",
+      receivingDomainId: "domain-health",
+      provider: new ResendHttpReceivingProvider({
+        baseUrl: "https://resend.test",
+        fetchImpl: async () => new Response(null, { status: 404 }),
+      }),
+    }),
+    (error: unknown) =>
+      error instanceof receiving.ReceivingConfigError &&
+      error.code === "RESEND_RECEIVING_DOMAIN_INVALID",
+  );
+  assert.deepEqual(
+    await receiving.getPublicReceivingConnection(organizationId),
+    recoveredFromRemovedDomain,
+  );
+
+  await assert.rejects(
+    receiving.saveReceivingConnection({
+      organizationId,
+      actorUserId: userId,
+      receivingDomainId: "domain-health",
       provider: coordinatedProvider({
         async getDomain(_apiKey, id) {
           return {

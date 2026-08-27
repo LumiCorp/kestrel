@@ -73,6 +73,18 @@ export type KestrelOneReceivingDomain = {
   mxStatus: "unknown" | "pending" | "verified" | "failed";
 };
 
+export class KestrelOneReceivingAuthorizationError extends Error {
+  readonly statusCode: 401 | 403;
+
+  constructor(statusCode: 401 | 403) {
+    super(
+      "Kestrel One rejected access to this Organization's receiving status.",
+    );
+    this.name = "KestrelOneReceivingAuthorizationError";
+    this.statusCode = statusCode;
+  }
+}
+
 export type KestrelOneAuthorizationSessionView = {
   sessionId: string;
   state: "awaiting_user" | "complete" | "failed" | "expired";
@@ -282,7 +294,7 @@ export class LocalCoreKestrelOneAccountManager {
     );
     if (response.status === 401) {
       await this.#store.delete(ACCOUNT_CREDENTIAL_ID);
-      throw new Error("Kestrel One rejected this account.");
+      return { status: "signed_out" };
     }
     if (!response.ok) {
       throw new Error(
@@ -650,6 +662,9 @@ export class LocalCoreKestrelOneAccountManager {
     );
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        throw new KestrelOneReceivingAuthorizationError(response.status);
+      }
       const error = requireRecord(payload, "receiving error");
       throw new Error(
         typeof error.error === "string"

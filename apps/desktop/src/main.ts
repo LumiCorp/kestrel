@@ -42,7 +42,10 @@ import {
   type LocalCoreDaemonReady,
 } from "../../../src/localCore/daemon.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "../../../src/localCore/home.js";
-import type { LocalCoreClient } from "../../../src/localCore/client.js";
+import {
+  LocalCoreApiError,
+  type LocalCoreClient,
+} from "../../../src/localCore/client.js";
 import {
   LocalCoreConnectionManager,
   type LocalCoreConnectionState,
@@ -1674,10 +1677,30 @@ function registerIpcHandlers(
       if (typeof organizationId !== "string" || !organizationId.trim()) {
         throw new Error("Kestrel One Organization ID is required.");
       }
-      return await requireLocalCoreConnectionManager().executeIdempotent(
-        async (client) =>
-          await client.kestrelOneReceivingConnection(organizationId.trim()),
-      );
+      try {
+        return {
+          status: "ok",
+          connection:
+            await requireLocalCoreConnectionManager().executeIdempotent(
+              async (client) =>
+                await client.kestrelOneReceivingConnection(
+                  organizationId.trim(),
+                ),
+            ),
+        };
+      } catch (error) {
+        if (
+          error instanceof LocalCoreApiError &&
+          (error.statusCode === 401 || error.statusCode === 403) &&
+          error.code === "KESTREL_ONE_RECEIVING_AUTHORIZATION_REJECTED"
+        ) {
+          return {
+            status: "authorization_rejected",
+            httpStatus: error.statusCode,
+          };
+        }
+        throw error;
+      }
     },
   );
   ipcMain.handle(

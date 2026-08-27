@@ -4,11 +4,8 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Keep removed-domain failures separate from credential health](18-separate-domain-and-credential-health.md)
 - [Execute malformed JSON contracts through every receiving route](21-execute-malformed-json-route-contracts.md)
 - [Scope malformed JSON classification to the explicit parse operation](24-scope-json-syntax-classification.md)
-- [Clear revoked Desktop receiving status](28-clear-revoked-desktop-receiving-status.md)
-- [Prove durable paginated webhook recovery](29-prove-durable-paginated-webhook-recovery.md)
 
 ## In progress
 
@@ -33,6 +30,9 @@ None.
 - [Classify malformed receiving JSON as an invalid request](19-classify-malformed-receiving-json.md)
 - [Show redacted receiving status to non-Admin Organization members](14-show-redacted-receiving-status-to-members.md)
 - [Recover an ambiguous Resend webhook create without creating another webhook](15-recover-ambiguous-resend-webhook-creates.md)
+- [Keep removed-domain failures separate from credential health](18-separate-domain-and-credential-health.md)
+- [Clear revoked Desktop receiving status](28-clear-revoked-desktop-receiving-status.md)
+- [Prove durable paginated webhook recovery](29-prove-durable-paginated-webhook-recovery.md)
 
 ## Done
 

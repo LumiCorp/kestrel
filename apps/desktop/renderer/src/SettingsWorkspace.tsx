@@ -155,6 +155,7 @@ export function SettingsWorkspace({
   const [receivingDomainId, setReceivingDomainId] = useState("");
   const [receivingBusy, setReceivingBusy] = useState(false);
   const [receivingError, setReceivingError] = useState<string>();
+  const [receivingStatusStale, setReceivingStatusStale] = useState(false);
   const [kestrelOneAuthorization, setKestrelOneAuthorization] =
     useState<KestrelOneAuthorizationSessionView>();
   const [kestrelOneThreadId, setKestrelOneThreadId] = useState("");
@@ -176,6 +177,7 @@ export function SettingsWorkspace({
   const dialogRef = useRef<HTMLFormElement>(null);
   const savingRef = useRef(false);
   const refreshVersionRef = useRef(0);
+  const kestrelOneAccountRefreshVersionRef = useRef(0);
   const receivingSelectionVersionRef = useRef(0);
   const grouped = useMemo(
     () =>
@@ -217,6 +219,7 @@ export function SettingsWorkspace({
     setReceivingApiKey("");
     setReceivingDomainId("");
     setReceivingError(undefined);
+    setReceivingStatusStale(false);
     setReceivingBusy(false);
     if (kestrelOneAccount?.status !== "signed_in") {
       setReceivingOrganizationId("");
@@ -477,12 +480,48 @@ export function SettingsWorkspace({
     }
   }
 
-  async function refreshKestrelOneAccount(): Promise<void> {
+  async function refreshKestrelOneAccount(
+    excludedOrganizationId?: string,
+  ): Promise<void> {
+    const refreshVersion = ++kestrelOneAccountRefreshVersionRef.current;
     try {
-      setKestrelOneAccount(await window.kestrelDesktop.getKestrelOneAccount());
+      const account = await window.kestrelDesktop.getKestrelOneAccount();
+      if (refreshVersion !== kestrelOneAccountRefreshVersionRef.current) return;
+      setKestrelOneAccount(
+        excludedOrganizationId
+          ? withoutOrganizationAuthority(account, excludedOrganizationId)
+          : account,
+      );
     } catch (error) {
+      if (refreshVersion !== kestrelOneAccountRefreshVersionRef.current) return;
       onError(errorMessage(error));
     }
+  }
+
+  function invalidateReceivingOrganizationAuthority(
+    organizationId: string,
+    httpStatus: 401 | 403,
+  ): void {
+    receivingSelectionVersionRef.current += 1;
+    kestrelOneAccountRefreshVersionRef.current += 1;
+    setReceivingConnection(undefined);
+    setReceivingDomains([]);
+    setReceivingApiKey("");
+    setReceivingDomainId("");
+    setReceivingStatusStale(false);
+    setReceivingError(undefined);
+    setReceivingBusy(false);
+    setNotice(
+      httpStatus === 403
+        ? "Your access to this Organization's receiving status changed."
+        : "Kestrel One must re-check your access to this Organization.",
+    );
+    setKestrelOneAccount((current) =>
+      current
+        ? withoutOrganizationAuthority(current, organizationId)
+        : current,
+    );
+    void refreshKestrelOneAccount(organizationId);
   }
 
   async function refreshReceivingConnection(
@@ -493,15 +532,24 @@ export function SettingsWorkspace({
     setReceivingBusy(true);
     setReceivingError(undefined);
     try {
-      const connection =
+      const result =
         await window.kestrelDesktop.getKestrelOneReceivingConnection(
           organizationId,
         );
       if (selectionVersion !== receivingSelectionVersionRef.current) return;
-      setReceivingConnection(connection);
+      if (result.status === "authorization_rejected") {
+        invalidateReceivingOrganizationAuthority(
+          organizationId,
+          result.httpStatus,
+        );
+        return;
+      }
+      setReceivingConnection(result.connection);
+      setReceivingStatusStale(false);
     } catch (error) {
       if (selectionVersion !== receivingSelectionVersionRef.current) return;
       setReceivingError(errorMessage(error));
+      setReceivingStatusStale(receivingConnection !== undefined);
     } finally {
       if (selectionVersion === receivingSelectionVersionRef.current) {
         setReceivingBusy(false);
@@ -1275,6 +1323,7 @@ export function SettingsWorkspace({
                         setReceivingApiKey("");
                         setReceivingDomainId("");
                         setReceivingError(undefined);
+                        setReceivingStatusStale(false);
                         setReceivingBusy(false);
                       }}
                     >
@@ -1326,6 +1375,7 @@ export function SettingsWorkspace({
                         </p>
                         <ReceivingConnectionStatus
                           connection={receivingConnection}
+                          stale={receivingStatusStale}
                         />
                         {receivingError ? (
                           <div className="capability-detail" role="alert">
@@ -1348,7 +1398,10 @@ export function SettingsWorkspace({
                       className="settings-form"
                       onSubmit={(event) => void saveReceivingConnection(event)}
                     >
-                      <ReceivingConnectionStatus connection={receivingConnection} />
+                      <ReceivingConnectionStatus
+                        connection={receivingConnection}
+                        stale={receivingStatusStale}
+                      />
                       {receivingError ? (
                         <div className="capability-detail" role="alert">
                           <strong>Receiving setup needs attention</strong>
@@ -2460,8 +2513,10 @@ export function SettingsWorkspace({
 
 function ReceivingConnectionStatus({
   connection,
+  stale,
 }: {
   connection: KestrelOneReceivingConnection | undefined;
+  stale: boolean;
 }) {
   return (
     <div className="capability-detail">
@@ -2470,6 +2525,12 @@ function ReceivingConnectionStatus({
           ? "Loading receiving status…"
           : (connection.receivingDomain ?? "Not configured")}
       </strong>
+      {stale ? (
+        <p role="status">
+          Last-known receiving status — refresh failed and this status may be
+          stale.
+        </p>
+      ) : null}
       <small>
         Credential: {connection?.credentialStatus.replaceAll("_", " ") ?? "loading"}
         {" · "}MX: {connection?.mxStatus ?? "unknown"}
@@ -2494,6 +2555,33 @@ function ReceivingConnectionStatus({
       </p>
     </div>
   );
+}
+
+function withoutOrganizationAuthority(
+  account: KestrelOneAccountStatus,
+  organizationId: string,
+): KestrelOneAccountStatus {
+  if (account.status !== "signed_in") return account;
+  const removedProjectIds = new Set(
+    account.projection.projects
+      .filter((project) => project.organizationId === organizationId)
+      .map((project) => project.id),
+  );
+  return {
+    ...account,
+    projection: {
+      ...account.projection,
+      organizations: account.projection.organizations.filter(
+        (organization) => organization.organizationId !== organizationId,
+      ),
+      projects: account.projection.projects.filter(
+        (project) => project.organizationId !== organizationId,
+      ),
+      threads: account.projection.threads.filter(
+        (thread) => !removedProjectIds.has(thread.projectId),
+      ),
+    },
+  };
 }
 
 function supportsEnablement(capability: DesktopCapability): boolean {

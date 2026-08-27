@@ -156,11 +156,26 @@ export async function saveReceivingConnection(input: {
   } catch (error) {
     const normalized = normalizeProviderError(error);
     if (storedHealthCheck) {
+      const configuredDomainWasRemoved =
+        normalized.code === "RESEND_RECEIVING_DOMAIN_INVALID" &&
+        input.receivingDomainId.trim() === existing?.receivingDomainId;
       const persistence = await persistStoredCredentialHealth({
         organizationId: input.organizationId,
         expectedEncryptedApiKey: storedHealthCheck.expectedEncryptedApiKey,
         healthCheckSequence: storedHealthCheck.healthCheckSequence,
-        outcome: credentialFailureOutcome(normalized),
+        ...(configuredDomainWasRemoved
+          ? {
+              outcome: {
+                credentialStatus: "full_access" as const,
+                errorCode: normalized.code,
+              },
+            }
+          : normalized.code === "RESEND_RECEIVING_DOMAIN_INVALID"
+            ? {}
+            : { outcome: credentialFailureOutcome(normalized) }),
+        ...(configuredDomainWasRemoved
+          ? { failedConfiguredDomainId: input.receivingDomainId.trim() }
+          : {}),
       });
       rejectSupersededStoredSave(persistence);
     }
@@ -325,11 +340,12 @@ async function persistStoredCredentialHealth(input: {
   organizationId: string;
   expectedEncryptedApiKey: string;
   healthCheckSequence: number;
-  outcome: {
+  outcome?: {
     credentialStatus: "full_access" | "insufficient" | "error";
     errorCode: string | null;
-  };
+  } | undefined;
   checkedDomains?: readonly ReceivingDomainOption[] | undefined;
+  failedConfiguredDomainId?: string | undefined;
 }) {
   const now = new Date();
   return knowledgeDb.transaction(async (transaction) => {
@@ -350,6 +366,7 @@ async function persistStoredCredentialHealth(input: {
     if (lockedExisting.healthCheckSequence !== input.healthCheckSequence) {
       return "superseded" as const;
     }
+    if (!input.outcome) return "persisted" as const;
     const checkedDomain = lockedExisting.receivingDomainId
       ? input.checkedDomains?.find(
           (domain) => domain.id === lockedExisting.receivingDomainId,
@@ -364,6 +381,14 @@ async function persistStoredCredentialHealth(input: {
             domainCheckedAt: now,
           }
         : {};
+    const failedConfiguredDomain =
+      input.failedConfiguredDomainId === lockedExisting.receivingDomainId
+        ? {
+            receivingDomainStatus: "failed" as const,
+            mxStatus: "unknown" as const,
+            domainCheckedAt: now,
+          }
+        : {};
     await transaction
       .update(schema.organizationReceivingConnections)
       .set({
@@ -374,6 +399,7 @@ async function persistStoredCredentialHealth(input: {
         lastHealthCheckedAt: now,
         lastErrorCode: input.outcome.errorCode,
         ...checkedConfiguredDomain,
+        ...failedConfiguredDomain,
         updatedAt: now,
       })
       .where(
@@ -495,12 +521,15 @@ function readinessFor(
   row: NonNullable<Awaited<ReturnType<typeof findConnection>>>,
 ): PublicReceivingConnection["readiness"] {
   if (row.credentialStatus === "insufficient") return "credential_insufficient";
+  if (
+    row.lastErrorCode === "RESEND_RECEIVING_DOMAIN_INVALID" &&
+    (row.receivingDomainStatus !== "verified" || row.mxStatus !== "verified")
+  ) {
+    return "domain_unready";
+  }
   if (row.credentialStatus === "error" || row.lastErrorCode) return "error";
   if (!row.encryptedApiKey) return "not_configured";
-  if (
-    row.receivingDomainStatus !== "verified" ||
-    row.mxStatus !== "verified"
-  ) {
+  if (row.receivingDomainStatus !== "verified" || row.mxStatus !== "verified") {
     return "domain_unready";
   }
   if (row.inboundEnabled && row.webhookStatus === "active") return "active";

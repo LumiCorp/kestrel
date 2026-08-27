@@ -282,6 +282,16 @@ export type {
   KestrelOneSubmittedTurn,
   KestrelOneThreadSnapshot,
 } from "../../../src/localCore/kestrelOneAccount.js";
+
+export type DesktopKestrelOneReceivingConnectionReadResult =
+  | {
+      status: "ok";
+      connection: KestrelOneReceivingConnection;
+    }
+  | {
+      status: "authorization_rejected";
+      httpStatus: 401 | 403;
+    };
 export type {
   KestrelUninstallApplyResultV1,
   KestrelUninstallPlanOptions,
@@ -492,7 +502,7 @@ export interface DesktopBridge {
   signOutKestrelOneAccount(): Promise<KestrelOneAccountStatus>;
   getKestrelOneReceivingConnection(
     organizationId: string,
-  ): Promise<KestrelOneReceivingConnection>;
+  ): Promise<DesktopKestrelOneReceivingConnectionReadResult>;
   inspectKestrelOneReceivingDomains(input: {
     organizationId: string;
     apiKey?: string | undefined;

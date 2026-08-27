@@ -81,7 +81,10 @@ import {
 } from "./connection.js";
 import { LocalCoreClient } from "./client.js";
 import { LocalCoreDesktopEnvironmentManager } from "./desktopEnvironmentConnector.js";
-import { LocalCoreKestrelOneAccountManager } from "./kestrelOneAccount.js";
+import {
+  KestrelOneReceivingAuthorizationError,
+  LocalCoreKestrelOneAccountManager,
+} from "./kestrelOneAccount.js";
 import {
   createDesktopProjectRunLedger,
   DesktopProjectRunRegistry,
@@ -2802,13 +2805,20 @@ async function handleRequest(input: {
   } catch (error) {
     const requestError =
       error instanceof LocalCoreApiRequestError ? error : undefined;
+    const receivingAuthorizationError =
+      error instanceof KestrelOneReceivingAuthorizationError
+        ? error
+        : undefined;
     const runtimeConfigurationError =
       error instanceof LocalCoreRuntimeConfigurationError ? error : undefined;
     writeJson(
       input.response,
-      requestError?.statusCode ?? 500,
+      requestError?.statusCode ?? receivingAuthorizationError?.statusCode ?? 500,
       errorBody(
         requestError?.code ??
+          (receivingAuthorizationError
+            ? "KESTREL_ONE_RECEIVING_AUTHORIZATION_REJECTED"
+            : undefined) ??
           runtimeConfigurationError?.code ??
           "LOCAL_CORE_API_ERROR",
         error instanceof Error ? error.message : String(error),

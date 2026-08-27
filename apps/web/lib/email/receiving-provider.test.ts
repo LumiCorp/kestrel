@@ -6,6 +6,15 @@ import {
   ResendReceivingProviderError,
 } from "./receiving-provider";
 
+function webhookListRow(id: string) {
+  return {
+    id,
+    endpoint: `https://example.test/unrelated/${id}`,
+    status: "enabled",
+    events: ["email.received"],
+  };
+}
+
 test("domain inspection retrieves receiving DNS details and accepts partially verified sending state", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const provider = new ResendHttpReceivingProvider({
@@ -227,57 +236,85 @@ test("webhook creation returns its recovery identity and one-time secret before 
 test("restart after an ambiguous create recovers from durable intent without another POST", async () => {
   const endpoint =
     "https://example.test/api/webhooks/resend/inbound/opaque-locator";
-  const intent = prepareResendWebhookCreateIntent(endpoint);
+  // The exact create intent crosses a durable serialization boundary before
+  // the create process is allowed to issue its POST.
+  const persistedIntentJson = JSON.stringify(
+    prepareResendWebhookCreateIntent(endpoint),
+  );
   const calls: Array<{ path: string; method: string }> = [];
-  const provider = new ResendHttpReceivingProvider({
-    baseUrl: "https://resend.test",
-    fetchImpl: async (input, init) => {
-      const path = new URL(String(input)).pathname;
-      const method = init?.method ?? "GET";
-      calls.push({ path, method });
-      if (method === "POST") {
-        // Resend accepted the request, but the response was lost. No create
-        // evidence crosses this simulated process boundary.
-        throw new Error("connection closed after provider acceptance");
-      }
-      if (path === "/webhooks") {
-        return Response.json({
-          object: "list",
-          has_more: false,
-          data: [
-            {
-              id: "webhook-recovered",
-              endpoint,
-              status: "enabled",
-              events: ["email.received"],
-            },
-          ],
-        });
-      }
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const path = `${url.pathname}${url.search}`;
+    const method = init?.method ?? "GET";
+    calls.push({ path, method });
+    if (method === "POST") {
+      // Resend accepted the request, but the response was lost. No create
+      // evidence crosses this simulated process boundary.
+      throw new Error("connection closed after provider acceptance");
+    }
+    if (url.pathname === "/webhooks" && !url.searchParams.has("after")) {
       return Response.json({
-        id: "webhook-recovered",
-        endpoint,
-        status: "enabled",
-        events: ["email.received"],
-        signing_secret: "whsec_recovered",
+        object: "list",
+        has_more: true,
+        data: [
+          {
+            id: "webhook-page-1",
+            endpoint: "https://example.test/unrelated",
+            status: "enabled",
+            events: ["email.received"],
+          },
+        ],
       });
-    },
+    }
+    if (url.pathname === "/webhooks") {
+      assert.equal(url.searchParams.get("after"), "webhook-page-1");
+      return Response.json({
+        object: "list",
+        has_more: false,
+        data: [
+          {
+            id: "webhook-recovered",
+            endpoint,
+            status: "enabled",
+            events: ["email.received"],
+          },
+        ],
+      });
+    }
+    return Response.json({
+      id: "webhook-recovered",
+      endpoint,
+      status: "enabled",
+      events: ["email.received"],
+      signing_secret: "whsec_recovered",
+    });
+  };
+
+  const createProvider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl,
   });
 
   await assert.rejects(
-    provider.createWebhook({ apiKey: "re_full_access", intent }),
+    createProvider.createWebhook({
+      apiKey: "re_full_access",
+      intent: JSON.parse(persistedIntentJson),
+    }),
     (error: unknown) =>
       error instanceof ResendReceivingProviderError &&
       error.code === "RESEND_RECEIVING_PROVIDER_UNAVAILABLE",
   );
 
-  // Recreate the value as persisted JSON so recovery cannot depend on the
-  // failed call's in-memory result.
-  const persistedIntent = JSON.parse(JSON.stringify(intent));
+  // A fresh provider process and a second rehydration prove recovery does not
+  // depend on the failed process's provider or intent object.
+  const recoveryProvider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl,
+  });
   assert.deepEqual(
-    await provider.reconcileWebhookCreate({
+    await recoveryProvider.reconcileWebhookCreate({
       apiKey: "re_full_access",
-      intent: persistedIntent,
+      intent: JSON.parse(persistedIntentJson),
     }),
     {
       id: "webhook-recovered",
@@ -286,10 +323,177 @@ test("restart after an ambiguous create recovers from durable intent without ano
   );
   assert.deepEqual(calls, [
     { path: "/webhooks", method: "POST" },
-    { path: "/webhooks", method: "GET" },
+    { path: "/webhooks?limit=100", method: "GET" },
+    {
+      path: "/webhooks?limit=100&after=webhook-page-1",
+      method: "GET",
+    },
     { path: "/webhooks/webhook-recovered", method: "GET" },
   ]);
   assert.equal(calls.filter(({ method }) => method === "POST").length, 1);
+});
+
+test("ambiguous create reconciliation rejects intent matches split across pages without a POST", async () => {
+  const endpoint = "https://example.test/inbound/opaque";
+  const intent = prepareResendWebhookCreateIntent(endpoint);
+  const calls: string[] = [];
+  const provider = new ResendHttpReceivingProvider({
+    baseUrl: "https://resend.test",
+    fetchImpl: async (input, init) => {
+      const url = new URL(String(input));
+      calls.push(`${init?.method ?? "GET"} ${url.pathname}${url.search}`);
+      const after = url.searchParams.get("after");
+      return Response.json({
+        object: "list",
+        has_more: after === null,
+        data: [
+          {
+            id: after === null ? "webhook-1" : "webhook-2",
+            endpoint,
+            status: "enabled",
+            events: ["email.received"],
+          },
+        ],
+      });
+    },
+  });
+
+  await assert.rejects(
+    provider.reconcileWebhookCreate({ apiKey: "re_full_access", intent }),
+    (error: unknown) =>
+      error instanceof ResendReceivingProviderError &&
+      error.code === "RESEND_RECEIVING_RESPONSE_INVALID" &&
+      !error.message.includes(endpoint),
+  );
+  assert.deepEqual(calls, [
+    "GET /webhooks?limit=100",
+    "GET /webhooks?limit=100&after=webhook-1",
+  ]);
+});
+
+test("ambiguous create reconciliation rejects empty continuing pages and cursor loops", async () => {
+  const intent = prepareResendWebhookCreateIntent(
+    "https://example.test/inbound/opaque",
+  );
+  const cases = [
+    {
+      pages: [{ object: "list", has_more: true, data: [] }],
+      expectedCalls: 1,
+    },
+    {
+      pages: [
+        {
+          object: "list",
+          has_more: true,
+          data: [webhookListRow("cursor-1")],
+        },
+        {
+          object: "list",
+          has_more: true,
+          data: [webhookListRow("cursor-1")],
+        },
+      ],
+      expectedCalls: 2,
+    },
+    {
+      pages: [
+        {
+          object: "list",
+          has_more: true,
+          data: [webhookListRow("cursor-1")],
+        },
+        {
+          object: "list",
+          has_more: true,
+          data: [webhookListRow("cursor-2")],
+        },
+        {
+          object: "list",
+          has_more: true,
+          data: [webhookListRow("cursor-1")],
+        },
+      ],
+      expectedCalls: 3,
+    },
+    {
+      pages: [
+        {
+          object: "list",
+          has_more: true,
+          data: [webhookListRow("cursor-1")],
+        },
+        {
+          object: "list",
+          has_more: false,
+          data: [
+            webhookListRow("cursor-1"),
+            webhookListRow("cursor-2"),
+          ],
+        },
+      ],
+      expectedCalls: 2,
+    },
+  ];
+
+  for (const testCase of cases) {
+    let page = 0;
+    const calls: string[] = [];
+    const provider = new ResendHttpReceivingProvider({
+      baseUrl: "https://resend.test",
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        calls.push(`${init?.method ?? "GET"} ${url.pathname}${url.search}`);
+        return Response.json(testCase.pages[page++]);
+      },
+    });
+    await assert.rejects(
+      provider.reconcileWebhookCreate({ apiKey: "re_full_access", intent }),
+      (error: unknown) =>
+        error instanceof ResendReceivingProviderError &&
+        error.code === "RESEND_RECEIVING_RESPONSE_INVALID" &&
+        !error.message.includes(intent.endpoint),
+    );
+    assert.equal(calls.length, testCase.expectedCalls);
+    assert.equal(
+      calls.every((call) => call.startsWith("GET ")),
+      true,
+    );
+  }
+});
+
+test("ambiguous create reconciliation rejects a malformed page without retrieval or POST", async () => {
+  const intent = prepareResendWebhookCreateIntent(
+    "https://example.test/inbound/opaque",
+  );
+  const malformedPages: unknown[] = [
+    { object: "list", has_more: "false", data: [] },
+    { object: "list", has_more: false, data: {} },
+    {
+      object: "list",
+      has_more: false,
+      data: [{ ...webhookListRow("webhook-1"), events: "email.received" }],
+    },
+  ];
+
+  for (const page of malformedPages) {
+    const calls: string[] = [];
+    const provider = new ResendHttpReceivingProvider({
+      baseUrl: "https://resend.test",
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        calls.push(`${init?.method ?? "GET"} ${url.pathname}${url.search}`);
+        return Response.json(page);
+      },
+    });
+    await assert.rejects(
+      provider.reconcileWebhookCreate({ apiKey: "re_full_access", intent }),
+      (error: unknown) =>
+        error instanceof ResendReceivingProviderError &&
+        error.code === "RESEND_RECEIVING_RESPONSE_INVALID" &&
+        !error.message.includes(intent.endpoint),
+    );
+    assert.deepEqual(calls, ["GET /webhooks?limit=100"]);
+  }
 });
 
 test("malformed create evidence fails closed without disclosing secret input", async () => {
