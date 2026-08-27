@@ -129,6 +129,7 @@ import {
 } from "../events/RuntimeEventProjections.js";
 import { resolveKestrelTurnObjective } from "../runtime/turnObjective.js";
 import { redactDiagnosticText } from "../diagnostics/redaction.js";
+import { isPreparedApprovalCleanupRelease } from "../effects/EffectRunner.js";
 
 export { readModelRequestSchemaName } from "./ExecutionEngineSupport.js";
 
@@ -743,10 +744,19 @@ export class ExecutionEngine {
         options.signal,
       );
       if (resumeOutcome !== undefined) {
-        await this.appendRunEvent(runId, session.sessionId, "run.failed", "WARN", {
-          reason: "resume_pending_effects_stop",
-          status: resumeOutcome.status,
-        });
+        const cleanupCompleted = resumeOutcome.cleanupCompleted === true;
+        await this.appendRunEvent(
+          runId,
+          session.sessionId,
+          cleanupCompleted ? "run.completed" : "run.failed",
+          cleanupCompleted ? "INFO" : "WARN",
+          {
+            reason: cleanupCompleted
+              ? "prepared_approval_cleanup_completed"
+              : "resume_pending_effects_stop",
+            status: resumeOutcome.status,
+          },
+        );
         const terminalOutput = await this.runLifecycleController.returnTerminal({
           runId,
           sessionId: session.sessionId,
@@ -764,8 +774,14 @@ export class ExecutionEngine {
           progressOverride: {
             kind: "stage",
             phase: "engine",
-            code: resumeOutcome.status === "FAILED" ? "RUN_FAILED" : "RUN_TERMINAL",
-            message: `Run terminated while resuming pending effects (${resumeOutcome.status}).`,
+            code: cleanupCompleted
+              ? "RUN_TERMINAL"
+              : resumeOutcome.status === "FAILED"
+                ? "RUN_FAILED"
+                : "RUN_TERMINAL",
+            message: cleanupCompleted
+              ? "Prepared approval cleanup completed."
+              : `Run terminated while resuming pending effects (${resumeOutcome.status}).`,
             stepAgent: session.currentStepAgent,
           },
         });
@@ -3304,7 +3320,11 @@ export class ExecutionEngine {
     sessionId: string,
     errors: RuntimeError[],
     signal?: AbortSignal,
-  ): Promise<{ status: TransitionStatus; errors: RuntimeError[] } | undefined> {
+  ): Promise<{
+    status: TransitionStatus;
+    errors: RuntimeError[];
+    cleanupCompleted?: boolean | undefined;
+  } | undefined> {
     const pendingEffects = await this.deps.store.listPendingEffects(sessionId);
     if (pendingEffects.length === 0) {
       return ;
@@ -3336,6 +3356,14 @@ export class ExecutionEngine {
       return {
         status: outcome.terminalStatus ?? "FAILED",
         errors,
+      };
+    }
+
+    if (pendingEffects.every(isPreparedApprovalCleanupRelease)) {
+      return {
+        status: "COMPLETED",
+        errors,
+        cleanupCompleted: true,
       };
     }
 

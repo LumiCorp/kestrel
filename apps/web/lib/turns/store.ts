@@ -308,7 +308,7 @@ async function lockPreparedApprovalCleanupThread(
     )
     .limit(1)
     .for("update");
-  if (!thread || thread.archivedAt) {
+  if (!thread) {
     throw new DurableTurnError("TURN_NOT_FOUND", "Thread not found.");
   }
   return thread;
@@ -3105,6 +3105,12 @@ async function completePreparedApprovalCleanupInTransaction(
 export async function resetDurablePreparedApprovalCleanupForRetry(input: {
   turnId: string;
 }) {
+  return reconcileDurablePreparedApprovalCleanupForRetry(input);
+}
+
+export async function reconcileDurablePreparedApprovalCleanupForRetry(input: {
+  turnId: string;
+}) {
   return knowledgeDb.transaction(async (tx) => {
     const [candidate] = await tx
       .select()
@@ -3125,7 +3131,10 @@ export async function resetDurablePreparedApprovalCleanupForRetry(input: {
       .where(eq(schema.threadTurns.id, input.turnId))
       .limit(1)
       .for("update");
-    if (!turn || turn.status !== "running") return false;
+    if (
+      !turn ||
+      (turn.status !== "running" && turn.status !== "waiting_for_input")
+    ) return false;
     const [interaction] = await tx
       .select()
       .from(schema.threadInteractions)
@@ -3154,29 +3163,42 @@ export async function resetDurablePreparedApprovalCleanupForRetry(input: {
       .limit(1)
       .for("update");
     if (queueState?.activeTurnId !== turn.id) return false;
-    assertThreadTurnTransition(turn.status, "waiting_for_input");
+    const requiresStateReset =
+      turn.status === "running" ||
+      turn.environmentExecutionId !== null ||
+      interaction.resumedAt !== null ||
+      queueState.state !== "running" ||
+      queueState.pauseReason !== null;
+    if (!requiresStateReset) return true;
     const now = new Date();
-    await tx
-      .update(schema.threadTurns)
-      .set({
-        status: "waiting_for_input",
-        environmentExecutionId: null,
-        updatedAt: now,
-      })
-      .where(eq(schema.threadTurns.id, turn.id));
-    await tx
-      .update(schema.threadInteractions)
-      .set({ resumedAt: null, updatedAt: now })
-      .where(eq(schema.threadInteractions.id, interaction.id));
-    await tx
-      .update(schema.threadTurnQueueState)
-      .set({
-        state: "running",
-        pauseReason: null,
-        version: queueState.version + 1,
-        updatedAt: now,
-      })
-      .where(eq(schema.threadTurnQueueState.threadId, turn.threadId));
+    if (turn.status === "running") {
+      assertThreadTurnTransition(turn.status, "waiting_for_input");
+      await tx
+        .update(schema.threadTurns)
+        .set({
+          status: "waiting_for_input",
+          environmentExecutionId: null,
+          updatedAt: now,
+        })
+        .where(eq(schema.threadTurns.id, turn.id));
+    }
+    if (interaction.resumedAt !== null) {
+      await tx
+        .update(schema.threadInteractions)
+        .set({ resumedAt: null, updatedAt: now })
+        .where(eq(schema.threadInteractions.id, interaction.id));
+    }
+    if (queueState.state !== "running" || queueState.pauseReason !== null) {
+      await tx
+        .update(schema.threadTurnQueueState)
+        .set({
+          state: "running",
+          pauseReason: null,
+          version: queueState.version + 1,
+          updatedAt: now,
+        })
+        .where(eq(schema.threadTurnQueueState.threadId, turn.threadId));
+    }
     await appendTurnEvent(tx, {
       turnId: turn.id,
       type: "interaction.cleanup_retry_scheduled",
@@ -3184,6 +3206,66 @@ export async function resetDurablePreparedApprovalCleanupForRetry(input: {
     });
     return true;
   });
+}
+
+export async function hasDurablePreparedApprovalCleanupPending(input: {
+  turnId: string;
+}) {
+  const [binding] = await knowledgeDb
+    .select({
+      activeTurnId: schema.threadTurnQueueState.activeTurnId,
+      interactionOrganizationId: schema.threadInteractions.organizationId,
+      interactionResponse: schema.threadInteractions.responseEnvelope,
+      interactionStatus: schema.threadInteractions.status,
+      interactionThreadId: schema.threadInteractions.threadId,
+      interactionTurnId: schema.threadInteractions.turnId,
+      source: schema.threadInteractions.source,
+      turnOrganizationId: schema.threadTurns.organizationId,
+      turnStatus: schema.threadTurns.status,
+      turnThreadId: schema.threadTurns.threadId,
+    })
+    .from(schema.threadTurns)
+    .innerJoin(
+      schema.threadTurnQueueState,
+      eq(schema.threadTurnQueueState.threadId, schema.threadTurns.threadId),
+    )
+    .innerJoin(
+      schema.threadInteractions,
+      or(
+        and(
+          isNotNull(schema.threadTurns.resumeInteractionId),
+          eq(
+            schema.threadInteractions.id,
+            schema.threadTurns.resumeInteractionId,
+          ),
+        ),
+        and(
+          isNull(schema.threadTurns.resumeInteractionId),
+          eq(schema.threadInteractions.turnId, schema.threadTurns.id),
+        ),
+      ),
+    )
+    .where(
+      and(
+        eq(schema.threadTurns.id, input.turnId),
+        eq(schema.threadInteractions.source, "runtime"),
+        eq(schema.threadInteractions.status, "processing"),
+      ),
+    )
+    .limit(1);
+  return Boolean(
+    binding &&
+      (binding.turnStatus === "running" ||
+        binding.turnStatus === "waiting_for_input") &&
+      binding.activeTurnId === input.turnId &&
+      binding.source === "runtime" &&
+      binding.interactionStatus === "processing" &&
+      binding.interactionOrganizationId === binding.turnOrganizationId &&
+      binding.interactionThreadId === binding.turnThreadId &&
+      binding.interactionTurnId === input.turnId &&
+      readPreparedApprovalCleanupFromResponse(binding.interactionResponse) !==
+        null,
+  );
 }
 
 export type DurableInteractionFailureEvidence = {
@@ -4007,7 +4089,7 @@ export async function completeDurableThreadTurn(input: {
         input.interactionFailure,
       );
     }
-    if (input.status === "failed") {
+    if (input.status === "failed" || input.status === "cancelled") {
       await completePreparedApprovalCleanupInTransaction(tx, turn);
     }
     await terminalizeTurnEnvironmentExecution(tx, turn, input.status, now, {
@@ -4388,8 +4470,28 @@ export async function requestDurableTurnStop(input: {
     if (turn.cancelRequestedAt) {
       return turn;
     }
+    const cleanupInteraction = await tx.query.threadInteractions.findFirst({
+      where: and(
+        turn.resumeInteractionId
+          ? eq(schema.threadInteractions.id, turn.resumeInteractionId)
+          : eq(schema.threadInteractions.turnId, turn.id),
+        eq(schema.threadInteractions.organizationId, turn.organizationId),
+        eq(schema.threadInteractions.threadId, turn.threadId),
+        eq(schema.threadInteractions.turnId, turn.id),
+        eq(schema.threadInteractions.source, "runtime"),
+        eq(schema.threadInteractions.status, "processing"),
+      ),
+    });
+    const preservesPreparedCleanup =
+      cleanupInteraction !== undefined &&
+      readPreparedApprovalCleanupFromResponse(
+        cleanupInteraction.responseEnvelope,
+      ) !== null;
     const now = new Date();
-    if (turn.status === "queued" || turn.status === "waiting_for_input") {
+    if (
+      !preservesPreparedCleanup &&
+      (turn.status === "queued" || turn.status === "waiting_for_input")
+    ) {
       assertThreadTurnTransition(turn.status, "cancelled");
       const [cancelled] = await tx
         .update(schema.threadTurns)
@@ -4444,10 +4546,16 @@ export async function requestDurableTurnStop(input: {
       type: "turn.stop_requested",
       data: {
         requestedByUserId: input.userId,
-        interruptMode: "safe_boundary_deadline",
-        interruptDeadlineAt: new Date(
-          now.getTime() + DURABLE_TURN_STOP_GRACE_MS,
-        ).toISOString(),
+        interruptMode: preservesPreparedCleanup
+          ? "prepared_cleanup_after_release"
+          : "safe_boundary_deadline",
+        ...(preservesPreparedCleanup
+          ? {}
+          : {
+              interruptDeadlineAt: new Date(
+                now.getTime() + DURABLE_TURN_STOP_GRACE_MS,
+              ).toISOString(),
+            }),
       },
     });
     return updated ?? turn;

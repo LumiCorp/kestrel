@@ -52,6 +52,7 @@ test(
       mcpGrant,
       appApprovals,
       turnStore,
+      turnQueue,
       runtimeApprovalPolicy,
       knowledgeDbModule,
     ] = await Promise.all([
@@ -73,6 +74,7 @@ test(
       import("@/lib/mcp/grant-service"),
       import("./app-operation-approvals"),
       import("@/lib/turns/store"),
+      import("@/lib/turns/queue"),
       import("./runtime-approval-policy"),
       import("@/lib/knowledge/db"),
     ]);
@@ -2578,11 +2580,6 @@ test(
         "project_id", "organization_member_id", "role"
       ) VALUES (${projectId}, ${maintenanceOwnerMemberId}, 'owner')
     `;
-    await sql`
-      DELETE FROM "project_members"
-      WHERE "project_id" = ${projectId}
-        AND "organization_member_id" = ${memberId}
-    `;
     const backgroundExpiredClaim = await turnStore.claimDurableThreadTurn(
       backgroundExpired.turnId,
     );
@@ -2611,10 +2608,47 @@ test(
           "The prepared authorization expired before it could execute.",
       },
     });
+    await turnStore.requestDurableTurnStop({
+      turnId: backgroundExpired.turnId,
+      organizationId,
+      userId,
+    });
+    assert.equal(
+      (await turnStore.getDurableTurn(backgroundExpired.turnId))?.status,
+      "running",
+    );
+    await sql`
+      DELETE FROM "project_members"
+      WHERE "project_id" = ${projectId}
+        AND "organization_member_id" = ${memberId}
+    `;
+    await sql`
+      UPDATE "threads" SET "archived_at" = ${new Date()}
+      WHERE "id" = ${threadId}
+    `;
+    assert.equal(
+      await turnStore.reconcileDurablePreparedApprovalCleanupForRetry({
+        turnId: backgroundExpired.turnId,
+      }),
+      true,
+    );
+    assert.equal(
+      await turnStore.hasDurablePreparedApprovalCleanupPending({
+        turnId: backgroundExpired.turnId,
+      }),
+      true,
+    );
+    assert.equal(
+      await turnQueue.finalizeExhaustedDurableTurnJob({
+        turnId: backgroundExpired.turnId,
+        retryCount: 3,
+        retryLimit: 3,
+      }),
+      false,
+    );
     assert.deepEqual(
-      (await turnStore.claimDurableThreadTurn(backgroundExpired.turnId, {
-        resumeRunning: true,
-      }))?.interactionResponse,
+      (await turnStore.claimDurableThreadTurn(backgroundExpired.turnId))
+        ?.interactionResponse,
       backgroundExpiredClaim?.interactionResponse,
     );
     await sql`
@@ -2632,10 +2666,9 @@ test(
     `;
     await turnStore.completeDurableThreadTurn({
       turnId: backgroundExpired.turnId,
-      status: "failed",
-      failureCode: "EXTERNAL_APPROVAL_EXPIRED",
-      failureMessage:
-        "The prepared authorization expired before it could execute.",
+      status: "cancelled",
+      failureCode: "TURN_STOPPED",
+      failureMessage: null,
     });
     const [backgroundExpiredFinal] = await sql<
       Array<{ interactionStatus: string; turnStatus: string; failureCode: string | null }>
@@ -2649,9 +2682,43 @@ test(
     `;
     assert.deepEqual(backgroundExpiredFinal, {
       interactionStatus: "failed",
-      turnStatus: "failed",
+      turnStatus: "cancelled",
       failureCode: "EXTERNAL_APPROVAL_EXPIRED",
     });
+    const unrelatedArchivedTurnId = `apps-unrelated-archived-${suffix}`;
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "thread_turns" (
+          "id", "organization_id", "thread_id", "author_user_id",
+          "approval_id", "approval_approved",
+          "requested_environment_id", "idempotency_key", "sequence",
+          "queue_ordinal", "status"
+        ) VALUES (
+          ${unrelatedArchivedTurnId}, ${organizationId}, ${threadId}, ${userId},
+          ${`unrelated-approval-${suffix}`}, true,
+          ${environmentId}, ${unrelatedArchivedTurnId}, 106, 106, 'queued'
+        )
+      `;
+      await transaction`
+        UPDATE "thread_turn_queue_state"
+        SET "active_turn_id" = ${unrelatedArchivedTurnId}, "state" = 'running',
+            "pause_reason" = NULL, "version" = "version" + 1
+        WHERE "thread_id" = ${threadId}
+      `;
+    });
+    await assert.rejects(
+      turnStore.claimDurableThreadTurn(unrelatedArchivedTurnId),
+      (error: unknown) =>
+        (error as { code?: unknown }).code === "TURN_NOT_FOUND",
+    );
+    await sql`DELETE FROM "thread_turns" WHERE "id" = ${unrelatedArchivedTurnId}`;
+    await sql`
+      UPDATE "thread_turn_queue_state"
+      SET "active_turn_id" = NULL, "state" = 'paused',
+          "pause_reason" = 'turn_cancelled', "version" = "version" + 1
+      WHERE "thread_id" = ${threadId}
+    `;
+    await sql`UPDATE "threads" SET "archived_at" = NULL WHERE "id" = ${threadId}`;
 
     const mixedClient = await createAdditionalRememberInteraction({
       label: "mixed-client",
@@ -2955,6 +3022,15 @@ test(
       interactionStatus: "processing",
       turnStatus: "waiting_for_input",
     });
+    await turnStore.requestDurableTurnStop({
+      turnId: expiredApproveOnce.turnId,
+      organizationId,
+      userId,
+    });
+    assert.equal(
+      (await turnStore.getDurableTurn(expiredApproveOnce.turnId))?.status,
+      "waiting_for_input",
+    );
     const expiredApproveOnceClaim = await turnStore.claimDurableThreadTurn(
       expiredApproveOnce.turnId,
     );
@@ -2964,18 +3040,24 @@ test(
         ?.preparedApprovalCleanupFailureCode,
       "EXTERNAL_APPROVAL_EXPIRED",
     );
-    assert.equal(
-      await turnStore.recordDurablePreparedApprovalCleanupCompleted({
-        turnId: expiredApproveOnce.turnId,
-      }),
-      true,
-    );
     await turnStore.completeDurableThreadTurn({
       turnId: expiredApproveOnce.turnId,
-      status: "failed",
-      failureCode: "EXTERNAL_APPROVAL_EXPIRED",
-      failureMessage:
-        "The prepared authorization expired before it could execute.",
+      status: "cancelled",
+      failureCode: "TURN_STOPPED",
+      failureMessage: null,
+    });
+    const [expiredApproveOnceFinal] = await sql<
+      Array<{ interactionStatus: string; turnStatus: string }>
+    >`
+      SELECT interaction."status" AS "interactionStatus",
+             turn."status" AS "turnStatus"
+      FROM "thread_interactions" interaction
+      JOIN "thread_turns" turn ON turn."id" = interaction."turn_id"
+      WHERE interaction."id" = ${expiredApproveOnce.interactionId}
+    `;
+    assert.deepEqual(expiredApproveOnceFinal, {
+      interactionStatus: "failed",
+      turnStatus: "cancelled",
     });
 
     const closedResourceApproveOnce = await createAdditionalRememberInteraction({

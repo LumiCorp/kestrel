@@ -17,7 +17,10 @@ import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { buildAgentToolSuccessResult, rawOutputRefFor, unwrapAgentToolOutput } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
+import {
+  adaptLegacyTestToolGateway,
+  prepareTestToolCall,
+} from "../helpers/createTestToolGateway.js";
 
 
 const execFileAsync = promisify(execFile);
@@ -89,6 +92,99 @@ function createRuntime(
         }),
   });
 }
+
+test("resumed cleanup release terminalizes before scheduler or model work", async () => {
+  const store = new InMemorySessionStore();
+  const sessionId = "prepared-cleanup-resume";
+  const runId = "prepared-cleanup-original-run";
+  const idempotencyKey = "prepared-cleanup-release";
+  await store.ensureSession(sessionId);
+  let modelCalls = 0;
+  let releases = 0;
+  const baseGateway = adaptLegacyTestToolGateway({
+    call: async () => {
+      throw new Error("cleanup must not execute the prepared tool");
+    },
+  });
+  const gateway = {
+    ...baseGateway,
+    releasePreparedToolCall: async () => {
+      releases += 1;
+    },
+  };
+  const preparedToolCall = await prepareTestToolCall({
+    gateway,
+    toolName: "exec_command",
+    toolInput: { cmd: "true" },
+    runId,
+    sessionId,
+    callId: idempotencyKey,
+  });
+  const effect = {
+    runId,
+    sessionId,
+    stepIndex: 1,
+    type: "release_prepared_tool_call",
+    payload: {
+      preparedToolCall,
+      preparedApprovalCleanup: {
+        version: "runner_prepared_approval_cleanup_v1" as const,
+        organizationId: "org-cleanup",
+        threadId: sessionId,
+        turnId: "turn-cleanup",
+        interactionId: "interaction-cleanup",
+        requestId: "approval-cleanup",
+        failureCode: "EXTERNAL_APPROVAL_EXPIRED" as const,
+        failureMessage: "Expired.",
+      },
+    },
+    idempotencyKey,
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-27T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push(
+    structuredClone(effect),
+  );
+  await store.saveEffectResult(runId, sessionId, {
+    idempotencyKey,
+    status: "FAILED",
+    error: {
+      code: "EFFECT_EXECUTION_FAILED",
+      message: "Transient release failure.",
+    },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  });
+  const kestrel = createRuntime(store, {}, {
+    toolGateway: gateway,
+    modelGateway: new RetryingModelGateway(async () => {
+      modelCalls += 1;
+      throw new Error("cleanup must not use a model");
+    }),
+  });
+
+  const output = await kestrel.run({
+    id: "evt-prepared-cleanup-resume",
+    type: "system.resume",
+    sessionId,
+    payload: {},
+  });
+
+  assert.equal(output.status, "COMPLETED");
+  assert.equal(releases, 1);
+  assert.equal(modelCalls, 0);
+  assert.equal(
+    (await store.getEffectResult(idempotencyKey))?.status,
+    "DONE",
+  );
+  assert.equal(
+    store.getRunEvents().some((event) =>
+      event.type === "run.completed" &&
+      event.metadata?.reason === "prepared_approval_cleanup_completed"
+    ),
+    true,
+  );
+});
 
 test("managed mutation tools capture pre/post workspace checkpoints and expose changed files", async () => {
   const store = new InMemorySessionStore();

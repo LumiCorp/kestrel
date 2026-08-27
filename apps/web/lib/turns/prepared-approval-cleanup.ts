@@ -7,6 +7,24 @@ import { setInteractionPresentationStatus } from "@/lib/turns/interaction-projec
 export const PREPARED_APPROVAL_CLEANUP_VERSION =
   "prepared_approval_cleanup_v1" as const;
 
+export class PreparedApprovalCleanupRetryError extends Error {
+  readonly code = "PREPARED_APPROVAL_CLEANUP_RETRY" as const;
+
+  constructor() {
+    super("Prepared approval cleanup release will retry.");
+    this.name = "PreparedApprovalCleanupRetryError";
+  }
+}
+
+export function isPreparedApprovalCleanupRetryError(
+  error: unknown,
+): error is PreparedApprovalCleanupRetryError {
+  return error instanceof PreparedApprovalCleanupRetryError ||
+    (error instanceof Error &&
+      "code" in error &&
+      error.code === "PREPARED_APPROVAL_CLEANUP_RETRY");
+}
+
 export function preparedApprovalQueueLockKey(threadId: string) {
   return `thread-turn-queue:${threadId}`;
 }

@@ -99,6 +99,27 @@ test(
 );
 
 test(
+  "prepared cleanup bypasses ordinary exhaustion through explicit reconciliation",
+  async () => {
+    const queueSource = await readFile(
+      new URL("./queue.ts", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(queueSource, /isPreparedApprovalCleanupRetryError/u);
+    assert.match(queueSource, /cleanupReconciliation \? 0 : 3/u);
+    assert.match(
+      queueSource,
+      /hasDurablePreparedApprovalCleanupPending[\s\S]*reconcileDurablePreparedApprovalCleanupForRetry/u,
+    );
+    assert.match(
+      queueSource,
+      /isPreparedApprovalCleanupRetryError\(error\)[\s\S]*sendTurn\(boss, turnId, \{[\s\S]*cleanupReconciliation: true[\s\S]*continue/u,
+    );
+  },
+);
+
+test(
   "the running worker reconciles missing jobs and interrupted turns",
   async () => {
     const queueSource = await readFile(
@@ -255,7 +276,7 @@ test(
 
     assert.match(
       runtimeSource,
-      /const completionStatus = terminalTurnStatus\(terminal\.status\)/u,
+      /let completionStatus = terminalTurnStatus\(terminal\.status\)/u,
     );
     assert.doesNotMatch(
       runtimeSource,
@@ -317,7 +338,8 @@ test(
     assert.match(runtimeSource, /scheduleCancellationDeadline/u);
     assert.match(runtimeSource, /shouldInterruptDurableTurnAtRuntimeEvent/u);
     assert.match(runtimeSource, /status: stopped \? "cancelled" : "failed"/u);
-    assert.match(storeSource, /interruptMode: "safe_boundary_deadline"/u);
+    assert.match(storeSource, /"prepared_cleanup_after_release"/u);
+    assert.match(storeSource, /"safe_boundary_deadline"/u);
     assert.match(storeSource, /interruptDeadlineAt:/u);
   },
 );

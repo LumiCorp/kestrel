@@ -59,6 +59,7 @@ import {
   type DurableReplayChunk,
   getDurableTurn,
   getDurableTurnOpenReplayScaffold,
+  hasDurablePreparedApprovalCleanupPending,
   isDurableTurnCancellationRequested,
   listMessagesForDurableTurn,
   persistDurableAssistantOutcome,
@@ -74,15 +75,9 @@ import {
   convertToUIMessages,
   isPersistableAssistantMessage,
 } from "@/lib/utils";
+import { PreparedApprovalCleanupRetryError } from "@/lib/turns/prepared-approval-cleanup";
 
 const TITLE_FAILURE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,119}$/u;
-
-class PreparedApprovalCleanupRetryError extends Error {
-  constructor() {
-    super("Prepared approval cleanup release will retry.");
-    this.name = "PreparedApprovalCleanupRetryError";
-  }
-}
 
 function readDurableRuntimeToolOutcome(
   value: unknown,
@@ -380,12 +375,18 @@ export async function processDurableThreadTurn(
       },
     });
     if (interrupted?.status === "running") {
+      const interruptedCleanup =
+        await hasDurablePreparedApprovalCleanupPending({ turnId });
       let interruptedTerminalStatus:
         | "completed"
         | "failed"
         | "cancelled"
         | null = null;
-      if (interrupted.cancelRequestedAt && interrupted.environmentExecutionId) {
+      if (
+        !interruptedCleanup &&
+        interrupted.cancelRequestedAt &&
+        interrupted.environmentExecutionId
+      ) {
         const confirmed = await cancelInterruptedKestrelOneExecution({
           organizationId: interrupted.organizationId,
           executionId: interrupted.environmentExecutionId,
@@ -420,6 +421,7 @@ export async function processDurableThreadTurn(
         }
       }
       const stopped =
+        !interruptedCleanup &&
         Boolean(interrupted.cancelRequestedAt) &&
         interruptedTerminalStatus !== "completed" &&
         interruptedTerminalStatus !== "failed";
@@ -551,6 +553,7 @@ export async function processDurableThreadTurn(
         if (requested) {
           cancellationRequested = true;
           if (
+            !preparedApprovalCleanup &&
             !finalizeAnswerCompleted &&
             environmentExecutionId &&
             !runtimeCancellationSent
@@ -561,7 +564,7 @@ export async function processDurableThreadTurn(
               executionId: environmentExecutionId,
             }).catch(() => {});
           }
-          if (!finalizeAnswerCompleted) {
+          if (!preparedApprovalCleanup && !finalizeAnswerCompleted) {
             scheduleCancellationDeadline();
           }
         }
@@ -850,11 +853,14 @@ export async function processDurableThreadTurn(
             // Runtime telemetry is best effort and must not fail the turn.
           }
         });
-        if (shouldInterruptDurableTurnAtRuntimeEvent({
-          cancellationRequested,
-          finalizeAnswerCompleted,
-          eventType: event.type,
-        })) {
+        if (
+          !preparedApprovalCleanup &&
+          shouldInterruptDurableTurnAtRuntimeEvent({
+            cancellationRequested,
+            finalizeAnswerCompleted,
+            eventType: event.type,
+          })
+        ) {
           cancellation.abort(
             new Error("The user interrupted this turn at a safe boundary."),
           );
@@ -985,11 +991,16 @@ export async function processDurableThreadTurn(
     let completionStatus = terminalTurnStatus(terminal.status);
     const preparedCleanupFailureCode = preparedApprovalCleanup?.failureCode;
     const preparedCleanupFailureMessage = preparedApprovalCleanup?.failureMessage;
+    const preparedCleanupStopRequested = preparedApprovalCleanup
+      ? await isDurableTurnCancellationRequested(turn.id)
+      : false;
     if (
       completionStatus === "completed" &&
       preparedCleanupFailureCode !== undefined
     ) {
-      completionStatus = "failed";
+      completionStatus = preparedCleanupStopRequested
+        ? "cancelled"
+        : "failed";
     } else if (
       preparedCleanupFailureCode !== undefined &&
       await resetDurablePreparedApprovalCleanupForRetry({ turnId: turn.id })
@@ -1023,7 +1034,9 @@ export async function processDurableThreadTurn(
       messages: terminal.messages,
       replayChunks: terminal.replayChunks,
       failureCode:
-        completionStatus === "failed"
+        completionStatus === "cancelled"
+          ? "TURN_STOPPED"
+          : completionStatus === "failed"
           ? preparedCleanupFailureCode ?? (workerInterrupted
             ? "TURN_WORKER_INTERRUPTED"
             : terminal.status === "contract_failure"
@@ -1031,7 +1044,9 @@ export async function processDurableThreadTurn(
               : terminal.errorCode ?? "RUNTIME_FAILED")
           : null,
       failureMessage:
-        preparedCleanupFailureMessage ?? terminal.error,
+        completionStatus === "cancelled"
+          ? null
+          : preparedCleanupFailureMessage ?? terminal.error,
       interactionFailure,
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
@@ -1052,6 +1067,17 @@ export async function processDurableThreadTurn(
     ) {
       // The runner owns a continue-on-disconnect execution. Leave the durable
       // turn running so the queue retry can reattach from its persisted cursor.
+      throw error;
+    }
+    if (preparedApprovalCleanup) {
+      // A canonical cleanup turn cannot become terminal through Web failure or
+      // Stop handling until the runner has durably completed the exact release.
+      // Requeue the same cleanup marker so recovery can retry idempotently.
+      if (
+        await resetDurablePreparedApprovalCleanupForRetry({ turnId: turn.id })
+      ) {
+        throw new PreparedApprovalCleanupRetryError();
+      }
       throw error;
     }
     if (

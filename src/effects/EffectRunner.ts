@@ -362,7 +362,9 @@ export class InlineEffectRunner implements EffectRunner {
   }
 }
 
-function isPreparedApprovalCleanupRelease(effect: PersistedEffect): boolean {
+export function isPreparedApprovalCleanupRelease(
+  effect: PersistedEffect,
+): boolean {
   if (effect.type !== "release_prepared_tool_call") return false;
   const payload = parseOptionalRecord(effect.payload);
   if (payload?.preparedApprovalCleanup === undefined) return false;
