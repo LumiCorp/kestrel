@@ -12,10 +12,11 @@ work; this queue does not reopen them.
 ## Ready
 
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
+- [Order the V4 compatibility rollout](06d-order-v4-compatibility-rollout.md)
 
 ## In progress
 
-None.
+- [Generalize prepared approval cleanup](06c-generalize-prepared-approval-cleanup.md)
 
 ## Blocked
 
