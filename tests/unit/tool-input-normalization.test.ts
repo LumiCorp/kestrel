@@ -1295,6 +1295,8 @@ test("normalizeToolActionInput canonicalizes exec_command cwd to the active work
     {
       command: "pwd",
       cwd: ".",
+      envNames: [],
+      envMode: "inherit",
     },
   );
 });
@@ -1308,6 +1310,8 @@ test("normalizeToolActionInput preserves an exec_command subdirectory relative t
     {
       command: "pnpm test",
       cwd: "apps/web",
+      envNames: [],
+      envMode: "inherit",
     },
   );
 });

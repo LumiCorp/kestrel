@@ -197,16 +197,13 @@ export function mobileInteractionDto(
         }
       : {};
   if (kind === "sampling" || kind === "mcp_sampling" || kind === "approval") {
-    const version = interaction.requestEnvelope.version ===
-      "runner_hosted_tool_approval_interaction_v4"
+    const isCanonicalHostedApproval =
+      kind === "approval" &&
+      interaction.requestEnvelope.version ===
+        "runner_hosted_tool_approval_interaction_v4";
+    const version = isCanonicalHostedApproval
       ? ("runner_hosted_tool_approval_interaction_v4" as const)
-      : interaction.requestEnvelope.version ===
-          "runner_hosted_tool_approval_interaction_v3"
-        ? ("runner_hosted_tool_approval_interaction_v3" as const)
-      : interaction.requestEnvelope.version ===
-          "runner_hosted_tool_approval_interaction_v2"
-        ? ("runner_hosted_tool_approval_interaction_v2" as const)
-        : ("legacy" as const);
+      : ("legacy" as const);
     const approval = asRecord(interaction.requestEnvelope.approval);
     const presentation = asRecord(approval?.presentation);
     const policy = asRecord(presentation?.policy);
@@ -228,11 +225,13 @@ export function mobileInteractionDto(
       decisions:
         ["failed", "resolved", "cancelled"].includes(interaction.status)
           ? ([] as const)
+          : kind === "approval" &&
+              interaction.source === "runtime" &&
+              !isCanonicalHostedApproval
+            ? ([] as const)
           : rememberEligible
           ? (["decline", "approve_once", "remember_approval"] as const)
-          : version === "runner_hosted_tool_approval_interaction_v2" ||
-              version === "runner_hosted_tool_approval_interaction_v3" ||
-              version === "runner_hosted_tool_approval_interaction_v4"
+          : version === "runner_hosted_tool_approval_interaction_v4"
             ? currentApprovalActionable
               ? (["decline", "approve_once"] as const)
               : (["decline"] as const)

@@ -1,4 +1,8 @@
-import type { StepContext, UserWaitForMatcher, } from "../../../src/kestrel/contracts/execution.js";
+import type {
+  RuntimeInteractionRequest,
+  StepContext,
+  UserWaitForMatcher,
+} from "../../../src/kestrel/contracts/execution.js";
 import type { ModelReasoningRequest, ModelToolSpec } from "../../../src/kestrel/contracts/model-io.js";
 import type {
   ToolActivationRefV1,
@@ -1142,6 +1146,7 @@ export interface ReactWaitState {
   resumeStepAgent: string;
   resumeToken: string;
   metadata?: Record<string, unknown> | undefined;
+  interaction?: RuntimeInteractionRequest | undefined;
 }
 
 export interface ReactTerminalState {

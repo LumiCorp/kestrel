@@ -490,7 +490,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
     try {
       return await this.submitAcceptedTurn({
         ...input,
-        actor: input.actor ?? localOperatorActor(),
+        actor: input.actor ?? input.runtimeTurn?.actor ?? localOperatorActor(),
       });
     } finally {
       input.signal?.removeEventListener("abort", cancelDialogs);
@@ -1424,7 +1424,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
         actorId: "kestrel-local-operator",
         displayName: "Local Kestrel Operator",
       },
-      approve: true,
+      approve: input.runtimeTurn?.decision === "decline" ? false : true,
       ...(input.runtimeTurn !== undefined ? { runtimeTurn: input.runtimeTurn } : {}),
     });
   }

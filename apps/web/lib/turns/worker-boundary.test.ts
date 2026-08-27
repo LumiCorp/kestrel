@@ -126,6 +126,14 @@ test(
       /preparedApprovalCleanup &&[\s\S]*runnerRunStartedObserved &&[\s\S]*!runtimeStartedRecorded[\s\S]*resetDurablePreparedApprovalCleanupForRetry/u,
     );
     assert.match(
+      runtimeSource,
+      /onUiChunk\(chunk\)[\s\S]*workerInterrupted \|\| preparedApprovalCleanup[\s\S]*return/u,
+    );
+    assert.match(
+      runtimeSource,
+      /const assistantMessages = preparedApprovalCleanup[\s\S]*\? \[\][\s\S]*: messagesForPersistence\.filter/u,
+    );
+    assert.match(
       queueSource,
       /hasDurablePreparedApprovalCleanupPending[\s\S]*reconcileDurablePreparedApprovalCleanupForRetry/u,
     );

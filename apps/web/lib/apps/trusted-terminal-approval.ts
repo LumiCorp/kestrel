@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import {
   parseRunnerExternalApprovalBinding,
   RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
-  RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2,
+  RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4,
   serializeCanonicalApprovalPayload,
   type RunnerExternalApprovalBinding,
 } from "@kestrel-agents/protocol";
@@ -66,12 +66,10 @@ export function parseTrustedTerminalApproval(input: {
     throw new TrustedTerminalApprovalError("HOSTED_APPROVAL_TERMINAL_METADATA_INVALID");
   }
   const requestId = readString(interaction.requestId);
-  const isV2 =
-    interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V2;
+  const isCanonical =
+    interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4;
   const preparedInvocationId = readString(approval.preparedInvocationId);
-  const runtimeApprovalId = isV2
-    ? requestId
-    : readString(approval.toolCallId);
+  const runtimeApprovalId = requestId;
   const approvalToolName = readString(approval.toolName);
   const metadataApprovalId = readString(metadata.approvalId);
   const metadataToolName = readString(metadata.toolName);
@@ -85,6 +83,7 @@ export function parseTrustedTerminalApproval(input: {
     .update(serializeCanonicalApprovalPayload(toolInput))
     .digest("hex")}`;
   if (
+    !isCanonical ||
     !requestId ||
     !runtimeApprovalId ||
     !approvalToolName ||
@@ -106,7 +105,7 @@ export function parseTrustedTerminalApproval(input: {
     const preparedApproval = asRecord(prepared?.approval);
     const preparedAuthority = asRecord(prepared?.stableAuthority);
     if (
-      !isV2 ||
+      !isCanonical ||
       !preparedInvocationId ||
       preparedInvocationId !== binding.preparedInvocationId ||
       readString(prepared?.callId) !== binding.preparedInvocationId ||
@@ -127,7 +126,7 @@ export function parseTrustedTerminalApproval(input: {
         "HOSTED_APPROVAL_TERMINAL_BINDING_MISMATCH",
       );
     }
-  } else if (isV2) {
+  } else {
     throw new TrustedTerminalApprovalError(
       "HOSTED_APPROVAL_TERMINAL_BINDING_MISMATCH",
     );

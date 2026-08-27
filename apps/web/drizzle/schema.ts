@@ -5297,7 +5297,7 @@ export const threadInteractions = pgTable(
   ],
 );
 
-/** Thread-lifetime approval evidence written atomically with a V3 remember decision. */
+/** Thread-lifetime approval evidence written atomically with a canonical remember decision. */
 export const rememberedToolApprovals = pgTable(
   "remembered_tool_approvals",
   {
@@ -5315,6 +5315,9 @@ export const rememberedToolApprovals = pgTable(
     toolId: text("tool_id").notNull(),
     descriptorContractRevision: text("descriptor_contract_revision").notNull(),
     approvalAuthorityRevision: text("approval_authority_revision").notNull(),
+    scopeKind: text("scope_kind").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    scopePayload: jsonb("scope_payload").$type<Record<string, unknown> | null>(),
     sourceInteractionId: text("source_interaction_id")
       .notNull()
       .references(() => threadInteractions.id, { onDelete: "cascade" }),
@@ -5330,6 +5333,8 @@ export const rememberedToolApprovals = pgTable(
       table.toolId,
       table.descriptorContractRevision,
       table.approvalAuthorityRevision,
+      table.scopeKind,
+      table.scopeKey,
     ),
     index("remembered_tool_approvals_thread_actor_idx").on(
       table.threadId,

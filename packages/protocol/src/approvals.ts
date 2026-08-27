@@ -147,6 +147,16 @@ export interface StableToolApprovalIdentityV1 {
   approvalAuthorityRevision: string;
 }
 
+export type RememberedApprovalScope =
+  | { kind: "tool_identity" }
+  | {
+      kind: "exec_command_exact";
+      command: string;
+      cwd: string;
+      envNames: string[];
+      envMode: string;
+    };
+
 export interface RememberedToolApprovalV1 {
   version: typeof REMEMBERED_TOOL_APPROVAL_VERSION;
   id: string;
@@ -154,6 +164,7 @@ export interface RememberedToolApprovalV1 {
   threadId: string;
   actorUserId: string;
   toolIdentity: StableToolApprovalIdentityV1;
+  scope: RememberedApprovalScope;
   sourceInteractionId: string;
   createdAt: string;
 }
@@ -166,6 +177,7 @@ export interface RememberedToolApprovalEvidenceV1 {
   threadId: string;
   actorUserId: string;
   toolIdentity: StableToolApprovalIdentityV1;
+  scope: RememberedApprovalScope;
   sourceInteractionId: string;
 }
 
@@ -261,6 +273,7 @@ const STABLE_TOOL_IDENTITY_FIELDS = new Set([
 ]);
 const ACTOR_AUTHORITY_FIELDS = new Set(["actorType", "actorId", "tenantId"]);
 const REMEMBERED_APPROVAL_FIELDS = new Set([
+  "scope",
   "version",
   "id",
   "organizationId",
@@ -271,6 +284,7 @@ const REMEMBERED_APPROVAL_FIELDS = new Set([
   "createdAt",
 ]);
 const REMEMBERED_EVIDENCE_FIELDS = new Set([
+  "scope",
   "version",
   "organizationId",
   "projectId",
@@ -493,6 +507,38 @@ export function parseStableToolApprovalIdentityV1(
   };
 }
 
+export function parseRememberedApprovalScope(
+  value: unknown,
+): RememberedApprovalScope {
+  const scope = requireRecord(value, "remembered approval scope");
+  if (scope.kind === "tool_identity") {
+    rejectUnknown(scope, new Set(["kind"]), "remembered approval scope");
+    return { kind: "tool_identity" };
+  }
+  if (scope.kind !== "exec_command_exact") {
+    throw new Error("remembered approval scope.kind is invalid");
+  }
+  rejectUnknown(
+    scope,
+    new Set(["kind", "command", "cwd", "envNames", "envMode"]),
+    "remembered approval scope",
+  );
+  if (!Array.isArray(scope.envNames) || scope.envNames.some((name) => typeof name !== "string" || name.length === 0)) {
+    throw new Error("remembered approval scope.envNames must contain non-empty strings");
+  }
+  const envNames = [...scope.envNames].sort();
+  if (new Set(envNames).size !== envNames.length) {
+    throw new Error("remembered approval scope.envNames must be unique");
+  }
+  return {
+    kind: "exec_command_exact",
+    command: requireNonEmptyString(scope.command, "remembered approval scope.command"),
+    cwd: requireNonEmptyString(scope.cwd, "remembered approval scope.cwd"),
+    envNames,
+    envMode: requireNonEmptyString(scope.envMode, "remembered approval scope.envMode"),
+  };
+}
+
 export function parseRememberedToolApprovalV1(
   value: unknown,
 ): RememberedToolApprovalV1 {
@@ -510,6 +556,7 @@ export function parseRememberedToolApprovalV1(
     threadId: requireNonEmptyString(approval.threadId, "remembered tool approval.threadId"),
     actorUserId: requireNonEmptyString(approval.actorUserId, "remembered tool approval.actorUserId"),
     toolIdentity: parseStableToolApprovalIdentityV1(approval.toolIdentity),
+    scope: parseRememberedApprovalScope(approval.scope),
     sourceInteractionId: requireNonEmptyString(approval.sourceInteractionId, "remembered tool approval.sourceInteractionId"),
     createdAt: requireTimestamp(approval.createdAt, "remembered tool approval.createdAt"),
   };
@@ -533,6 +580,7 @@ export function parseRememberedToolApprovalEvidenceV1(
     threadId: requireNonEmptyString(evidence.threadId, "remembered tool approval evidence.threadId"),
     actorUserId: requireNonEmptyString(evidence.actorUserId, "remembered tool approval evidence.actorUserId"),
     toolIdentity: parseStableToolApprovalIdentityV1(evidence.toolIdentity),
+    scope: parseRememberedApprovalScope(evidence.scope),
     sourceInteractionId: requireNonEmptyString(evidence.sourceInteractionId, "remembered tool approval evidence.sourceInteractionId"),
   };
 }

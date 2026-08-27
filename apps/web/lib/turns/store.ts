@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import "server-only";
 
 import type { KestrelInteractionPresentation } from "@kestrel-agents/ai-sdk";
@@ -11,8 +12,6 @@ import {
   RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   parseRememberedToolApprovalEvidenceSetV1,
   parseRememberedToolApprovalV1,
-  parseRunnerHostedToolApprovalInteractionV2,
-  parseRunnerHostedToolApprovalInteractionV3,
   parseRunnerHostedToolApprovalInteractionV4,
   RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION,
   parseRunnerStructuredReviewInteractionV1,
@@ -334,9 +333,6 @@ function buildPreparedApprovalCleanupResponse(
     requestId: interaction.requestId,
     eventType: response.eventType,
     message: response.message,
-    ...(typeof response.approved === "boolean"
-      ? { approved: response.approved }
-      : {}),
     decision: "decline" as const,
     decidingActor: {
       actorType: "end_user" as const,
@@ -584,7 +580,9 @@ export async function insertRememberedToolApprovalInTransaction(
     approval.toolIdentity.descriptorContractRevision !==
       sourceToolIdentity.descriptorContractRevision ||
     approval.toolIdentity.approvalAuthorityRevision !==
-      sourceToolIdentity.approvalAuthorityRevision
+      sourceToolIdentity.approvalAuthorityRevision ||
+    JSON.stringify(approval.scope) !==
+      JSON.stringify(sourceRequest.approval.rememberedApprovalScope)
   ) {
     throw new DurableTurnError(
       "TURN_CONFLICT",
@@ -602,6 +600,9 @@ export async function insertRememberedToolApprovalInTransaction(
       toolId: sourceToolIdentity.toolId,
       descriptorContractRevision: sourceToolIdentity.descriptorContractRevision,
       approvalAuthorityRevision: sourceToolIdentity.approvalAuthorityRevision,
+      scopeKind: approval.scope.kind,
+      scopeKey: createHash("sha256").update(JSON.stringify(approval.scope)).digest("hex"),
+      scopePayload: approval.scope,
       sourceInteractionId: source.id,
       createdAt: new Date(approval.createdAt),
     })
@@ -624,6 +625,7 @@ export async function insertRememberedToolApprovalInTransaction(
       descriptorContractRevision: stored.descriptorContractRevision,
       approvalAuthorityRevision: stored.approvalAuthorityRevision,
     },
+    scope: stored.scopePayload,
     sourceInteractionId: stored.sourceInteractionId,
     createdAt: stored.createdAt.toISOString(),
   });
@@ -676,6 +678,7 @@ export async function listRememberedToolApprovalEvidenceForRuntime(input: {
           descriptorContractRevision: row.descriptorContractRevision,
           approvalAuthorityRevision: row.approvalAuthorityRevision,
         },
+        scope: row.scopePayload,
         sourceInteractionId: row.sourceInteractionId,
       })),
     );
@@ -1695,9 +1698,6 @@ export async function claimDurableThreadTurn(
                   requestId: interaction.requestId,
                   eventType: response.eventType,
                   message: response.message,
-                  ...(typeof response.approved === "boolean"
-                    ? { approved: response.approved }
-                    : {}),
                   ...(preparedApprovalCleanup !== null ||
                   response.decision === "decline" ||
                   response.decision === "approve_once" ||
@@ -2048,7 +2048,9 @@ export async function persistDurableAssistantOutcome(input: {
       interaction &&
       input.runtimeApprovalId &&
       input.interaction.kind === "approval" &&
-      isHostedMutationToolName(input.interaction.approval?.toolName)
+      isHostedMutationToolName(
+        readPlainRecord(input.interaction.approval)?.toolName,
+      )
     ) {
       await linkAppOperationApprovalToInteractionInTransaction(tx, {
         organizationId: turn.organizationId,
@@ -2245,8 +2247,7 @@ export async function resolveDurableRuntimeInteraction(input: {
   requestId: string;
   eventType: string;
   turnId: string;
-  message: string;
-  approved?: boolean | undefined;
+  message?: string | undefined;
   decision?: "decline" | "approve_once" | "remember_approval" | undefined;
   reason?: string | undefined;
   recoveryOptionId?: string | undefined;
@@ -2293,12 +2294,8 @@ export async function resolveDurableRuntimeInteraction(input: {
     const rawHostedApprovalVersion = requestEnvelopeRecord?.version;
     const isRawPreparedApproval =
       interaction.kind === "approval" &&
-      (rawHostedApprovalVersion ===
-        "runner_hosted_tool_approval_interaction_v2" ||
-        rawHostedApprovalVersion ===
-          "runner_hosted_tool_approval_interaction_v3" ||
-        rawHostedApprovalVersion ===
-          "runner_hosted_tool_approval_interaction_v4");
+      rawHostedApprovalVersion ===
+        "runner_hosted_tool_approval_interaction_v4";
     const existingCleanup = readPreparedApprovalCleanupFromResponse(
       interaction.responseEnvelope,
     );
@@ -2315,22 +2312,7 @@ export async function resolveDurableRuntimeInteraction(input: {
         hostedApprovalMalformed = true;
       }
     }
-    const decision =
-      input.decision ??
-      ((hostedApproval?.version ?? rawHostedApprovalVersion) ===
-          "runner_hosted_tool_approval_interaction_v3" &&
-        typeof input.approved === "boolean"
-        ? input.approved
-          ? "approve_once"
-          : "decline"
-        : undefined);
-    const approved =
-      (hostedApproval?.version ?? rawHostedApprovalVersion) ===
-        "runner_hosted_tool_approval_interaction_v3" ||
-      (hostedApproval?.version ?? rawHostedApprovalVersion) ===
-        "runner_hosted_tool_approval_interaction_v4"
-        ? undefined
-        : input.approved;
+    const decision = input.decision;
     if (
       hostedApproval !== null &&
       (hostedApproval.approval.requestingActor.actorType !== "end_user" ||
@@ -2348,9 +2330,7 @@ export async function resolveDurableRuntimeInteraction(input: {
       if (
         interaction.resolvedByUserId !== input.userId ||
         (interaction.kind === "approval" &&
-          (recordedResponse?.decision !== undefined || decision !== undefined
-            ? recordedResponse?.decision !== decision
-            : recordedResponse?.approved !== approved))
+          recordedResponse?.decision !== decision)
       ) {
         throw new DurableTurnError(
           "TURN_CONFLICT",
@@ -2387,17 +2367,16 @@ export async function resolveDurableRuntimeInteraction(input: {
     let invalidPreparedDecision = false;
     if (interaction.kind === "approval") {
       const validDecision = hostedApproval
-        ? approved === undefined &&
-          (decision === "decline" ||
+        ? decision === "decline" ||
             decision === "approve_once" ||
             (hostedApproval.version ===
               "runner_hosted_tool_approval_interaction_v4" &&
-              decision === "remember_approval"))
-        : decision === undefined && typeof approved === "boolean";
+              decision === "remember_approval")
+        : false;
       if (!validDecision) {
         if (
           isRawPreparedApproval &&
-          (decision !== undefined || typeof approved === "boolean")
+          decision !== undefined
         ) {
           invalidPreparedDecision = true;
         } else {
@@ -2489,30 +2468,43 @@ export async function resolveDurableRuntimeInteraction(input: {
         "Only the waiting turn author may reject invalid prepared authority.",
       );
     }
+    if (hostedApprovalActorMismatch && decision !== "decline") {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The hosted approval requesting actor does not match authenticated durable authority.",
+      );
+    }
     const now = new Date();
+    const responseMessage = interaction.kind === "approval"
+      ? input.decision === "remember_approval"
+        ? "Remember approval"
+        : input.decision === "approve_once"
+          ? "Approve once"
+          : "Decline"
+      : input.message;
+    if (responseMessage === undefined) {
+      throw new DurableTurnError("TURN_CONFLICT", "The interaction response message is required.");
+    }
     const responseEnvelope = {
       requestId: input.requestId,
       eventType: input.eventType,
-      message: input.message,
+      message: responseMessage,
       messageId: input.messageId,
-      ...(typeof approved === "boolean"
-        ? { approved }
-        : {}),
       ...(decision !== undefined ? { decision } : {}),
       ...(input.reason ? { reason: input.reason } : {}),
       ...(input.recoveryOptionId !== undefined
         ? { recoveryOptionId: input.recoveryOptionId }
         : {}),
     };
-    await tx.insert(schema.threadMessages).values({
+    if (interaction.kind !== "approval") await tx.insert(schema.threadMessages).values({
       id: input.messageId,
       threadId: input.threadId,
       turnId: turn.id,
       role: "user",
       authorUserId: input.userId,
       projectContextRevisionId: turn.projectContextRevisionId,
-      parts: [{ type: "text", text: input.message }],
-      searchText: input.message,
+      parts: [{ type: "text", text: responseMessage }],
+      searchText: responseMessage,
       source: input.source,
       createdAt: now,
     });
@@ -2523,8 +2515,7 @@ export async function resolveDurableRuntimeInteraction(input: {
     const presentationPolicy = readPlainRecord(presentation?.policy);
     const approvesPreparedDecision =
       decision === "approve_once" || decision === "remember_approval";
-    const approvesCurrentInvocation =
-      approvesPreparedDecision || approved === true;
+    const approvesCurrentInvocation = approvesPreparedDecision;
     let preparedApprovalCleanup: PreparedApprovalCleanupV1 | null =
       hostedApprovalMalformed ||
       hostedApprovalActorMismatch ||
@@ -2704,6 +2695,9 @@ export async function resolveDurableRuntimeInteraction(input: {
           threadId: input.threadId,
           actorUserId: input.userId,
           toolIdentity: hostedApproval.approval.stableToolIdentity,
+              scope: "rememberedApprovalScope" in hostedApproval.approval
+                ? hostedApproval.approval.rememberedApprovalScope
+                : (() => { throw new DurableTurnError("TURN_CONFLICT", "Legacy hosted approvals cannot be remembered."); })(),
           sourceInteractionId: interaction.id,
           createdAt: now.toISOString(),
         },
@@ -2727,10 +2721,9 @@ export async function resolveDurableRuntimeInteraction(input: {
               {
                 decision:
                   decision === "approve_once" ||
-                  decision === "remember_approval" ||
-                  approved === true
-                    ? "approved"
-                    : "denied",
+                  decision === "remember_approval"
+                  ? "approved"
+                  : "denied",
                 authorizationState: "pending",
                 effectState: "not_started",
                 retryEligible: false,
@@ -3082,10 +3075,9 @@ async function completePreparedApprovalCleanupInTransaction(
     await updateInteractionMessagePresentation(tx, interaction, "failed", {
       decision:
         response?.decision === "approve_once" ||
-        response?.decision === "remember_approval" ||
-        response?.approved === true
+        response?.decision === "remember_approval"
           ? "approved"
-          : response?.decision === "decline" || response?.approved === false
+          : response?.decision === "decline"
             ? "denied"
             : "expired",
       authorizationState: "failed",
@@ -3700,37 +3692,21 @@ function isApprovedResponseEnvelope(
   value: Record<string, unknown> | null,
 ): boolean {
   return value?.decision === "approve_once" ||
-    value?.decision === "remember_approval" ||
-    value?.approved === true;
+    value?.decision === "remember_approval";
 }
 
 function parseHostedPreparedApprovalInteraction(
   interaction: typeof schema.threadInteractions.$inferSelect,
-):
-  | ReturnType<typeof parseRunnerHostedToolApprovalInteractionV2>
-  | ReturnType<typeof parseRunnerHostedToolApprovalInteractionV3>
-  | ReturnType<typeof parseRunnerHostedToolApprovalInteractionV4>
-  | null {
+): ReturnType<typeof parseRunnerHostedToolApprovalInteractionV4> | null {
   if (interaction.kind !== "approval") return null;
   if (readPlainRecord(interaction.requestEnvelope)?.version === "v1") {
     return null;
   }
   try {
-    const version = readPlainRecord(interaction.requestEnvelope)?.version;
-    const parsed = version === "runner_hosted_tool_approval_interaction_v4"
-      ? parseRunnerHostedToolApprovalInteractionV4(
-          interaction.requestEnvelope,
-          interaction.eventType,
-        )
-      : version === "runner_hosted_tool_approval_interaction_v3"
-        ? parseRunnerHostedToolApprovalInteractionV3(
-          interaction.requestEnvelope,
-          interaction.eventType,
-        )
-        : parseRunnerHostedToolApprovalInteractionV2(
-          interaction.requestEnvelope,
-          interaction.eventType,
-        );
+    const parsed = parseRunnerHostedToolApprovalInteractionV4(
+      interaction.requestEnvelope,
+      interaction.eventType,
+    );
     if (parsed.requestId !== interaction.requestId) {
       throw new Error("request identity mismatch");
     }

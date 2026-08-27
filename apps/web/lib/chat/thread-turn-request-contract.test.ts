@@ -40,7 +40,6 @@ test(
             requestId: "request-v2",
             eventType: "user.approval",
             turnId: "turn-v2",
-            message: decision,
             decision,
           },
         }).success,
@@ -104,7 +103,7 @@ test("Thread turn boundary rejects mixed approval decision versions", () => {
   );
 });
 
-test("Thread turn boundary does not broaden legacy boolean compatibility", () => {
+test("Thread turn boundary rejects legacy boolean compatibility", () => {
   assert.equal(
     threadTurnBodySchema.safeParse({
       interactionResponse: {
@@ -115,7 +114,7 @@ test("Thread turn boundary does not broaden legacy boolean compatibility", () =>
         approved: true,
       },
     }).success,
-    true,
+    false,
   );
   assert.equal(
     threadTurnBodySchema.safeParse({

@@ -35,8 +35,7 @@ export function projectSafeThreadInteraction(
   const approvalOutcome =
     interaction.kind === "approval" &&
     ((responseEnvelope &&
-      (typeof responseEnvelope.approved === "boolean" ||
-        responseEnvelope.decision === "decline" ||
+      (responseEnvelope.decision === "decline" ||
         (responseEnvelope.decision === "approve_once" ||
           responseEnvelope.decision === "remember_approval"))) ||
       interaction.responseFailureCode === "EXTERNAL_APPROVAL_EXPIRED")
@@ -45,8 +44,7 @@ export function projectSafeThreadInteraction(
             interaction.responseFailureCode === "EXTERNAL_APPROVAL_EXPIRED"
               ? "expired" as const
               : responseEnvelope?.decision === "approve_once" ||
-                  responseEnvelope?.decision === "remember_approval" ||
-                  responseEnvelope?.approved === true
+                  responseEnvelope?.decision === "remember_approval"
                 ? "approved" as const
                 : "denied" as const,
           authorizationState:
@@ -54,8 +52,7 @@ export function projectSafeThreadInteraction(
               ? "expired" as const
               : interaction.status === "failed"
                 ? "failed" as const
-                : responseEnvelope?.decision === "decline" ||
-                    responseEnvelope?.approved === false
+                : responseEnvelope?.decision === "decline"
                   ? "denied" as const
                   : interaction.status === "resolved"
                     ? "accepted" as const

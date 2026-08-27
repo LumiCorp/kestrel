@@ -187,11 +187,9 @@ export async function schedulePreparedApprovalCleanupInTransaction(
             {
               decision:
                 submittedDecision === "approve_once" ||
-                submittedDecision === "remember_approval" ||
-                responseEnvelope.approved === true
+                submittedDecision === "remember_approval"
                   ? "approved"
-                  : submittedDecision === "decline" ||
-                      responseEnvelope.approved === false
+                  : submittedDecision === "decline"
                     ? "denied"
                     : "expired",
               authorizationState: "cleanup_pending",

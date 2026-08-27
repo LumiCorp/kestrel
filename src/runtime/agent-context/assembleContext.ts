@@ -183,21 +183,24 @@ export function buildKestrelAgentContext(
     goal: input.goal,
     userMessage,
   });
-  let transcript = appendUserTurnToTranscript({
-    transcript: seedTaskMessage === undefined
-      ? existingTranscript
-      : appendUserTurnToTranscript({
-          transcript: existingTranscript,
-          message: seedTaskMessage,
-          stepIndex: input.stepIndex,
-          ...(sourceEventId !== undefined ? { sourceEventId: `${sourceEventId}:seed` } : {}),
-          ...(sourceTurnId !== undefined ? { sourceTurnId } : {}),
-        }),
-    message: userMessage,
-    stepIndex: input.stepIndex,
-    ...(sourceEventId !== undefined ? { sourceEventId } : {}),
-    ...(sourceTurnId !== undefined ? { sourceTurnId } : {}),
-  });
+  const modelVisibleUserTurn = input.eventType !== "user.approval";
+  let transcript = modelVisibleUserTurn
+    ? appendUserTurnToTranscript({
+        transcript: seedTaskMessage === undefined
+          ? existingTranscript
+          : appendUserTurnToTranscript({
+              transcript: existingTranscript,
+              message: seedTaskMessage,
+              stepIndex: input.stepIndex,
+              ...(sourceEventId !== undefined ? { sourceEventId: `${sourceEventId}:seed` } : {}),
+              ...(sourceTurnId !== undefined ? { sourceTurnId } : {}),
+            }),
+        message: userMessage,
+        stepIndex: input.stepIndex,
+        ...(sourceEventId !== undefined ? { sourceEventId } : {}),
+        ...(sourceTurnId !== undefined ? { sourceTurnId } : {}),
+      })
+    : existingTranscript;
   const correction = readCorrection(input.retryContext);
   if (correction !== undefined) {
     const existingCorrection = transcript.items.some((item) =>

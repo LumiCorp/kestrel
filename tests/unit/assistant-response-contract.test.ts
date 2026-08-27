@@ -39,51 +39,23 @@ test("finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stal
   });
 });
 
-test("finalizeRuntimeAssistantResponse canonicalizes an approval wait over stale assistant text", () => {
-  const result = finalizeRuntimeAssistantResponse({
-    output: output("WAITING", {
-      waitFor: {
-        kind: "approval",
-        eventType: "user.approval",
-        metadata: {
-          prompt: "Approve writing package.json?",
-          toolCallId: "call-package-json",
-          toolName: "fs.write_text",
-          toolInput: { path: "package.json" },
+test("finalizeRuntimeAssistantResponse rejects approval without a prepared invocation", () => {
+  assert.throws(
+    () => finalizeRuntimeAssistantResponse({
+      output: output("WAITING", {
+        waitFor: {
+          kind: "approval",
+          eventType: "user.approval",
+          metadata: {
+            prompt: "Approve writing package.json?",
+            toolName: "fs.write_text",
+          },
         },
-      },
+      }),
+      assistantText: "Tool confirmation pending.",
     }),
-    assistantText: "Tool confirmation pending.",
-  });
-
-  assert.equal(result.output.status, "WAITING");
-  assert.equal(result.assistantText, "Approve writing package.json?");
-  assert.deepEqual(result.output.waitFor?.interaction, {
-    version: "v1",
-    requestId: "request-run-contract",
-    kind: "approval",
-    eventType: "user.approval",
-    prompt: "Approve writing package.json?",
-    approval: {
-      toolCallId: "call-package-json",
-      toolName: "fs.write_text",
-      presentation: {
-        title: "Approve tool operation",
-        summary:
-          "Request details are hidden because this tool does not provide a safe approval preview.",
-        fields: [],
-        warnings: [],
-        policy: {
-          mode: "ask",
-          reasonCode: "tool_minimum",
-            authorityKind: "runtime_policy",
-            authorityRevision: "legacy-external-confirm",
-            explanation: "This invocation requires approval.",
-            rememberApprovalEligible: false,
-        },
-      },
-    },
-  });
+    /exact prepared invocation/u,
+  );
 });
 
 test("new hosted approval card reloads its action from the persisted prepared call", () => {
@@ -178,42 +150,6 @@ test("new hosted approval card reloads its action from the persisted prepared ca
     preparedAt: "2026-08-26T12:00:00.000Z",
   });
   const restartedPrepared = JSON.parse(JSON.stringify(prepared)) as unknown;
-  const compatibilityResult = finalizeRuntimeAssistantResponse({
-    output: output("WAITING", {
-      waitFor: {
-        kind: "approval",
-        eventType: "user.approval",
-        metadata: {
-          prompt: "Approve search?",
-          preparedToolCall: restartedPrepared,
-        },
-      },
-    }),
-    assistantText: "stale",
-  });
-  assert.equal(
-    compatibilityResult.output.waitFor?.interaction?.version,
-    "runner_hosted_tool_approval_interaction_v2",
-  );
-  const legacyV3Result = finalizeRuntimeAssistantResponse({
-    output: output("WAITING", {
-      waitFor: {
-        kind: "approval",
-        eventType: "user.approval",
-        metadata: {
-          prompt: "Approve search?",
-          preparedToolCall: restartedPrepared,
-        },
-      },
-    }),
-    assistantText: "stale",
-    hostedApprovalProtocolVersion: "v3",
-  });
-  assert.equal(
-    legacyV3Result.output.waitFor?.interaction?.version,
-    "runner_hosted_tool_approval_interaction_v3",
-  );
-  assert.equal(legacyV3Result.output.waitFor?.interaction?.metadata, undefined);
   const result = finalizeRuntimeAssistantResponse({
     output: output("WAITING", {
       waitFor: {
@@ -222,19 +158,19 @@ test("new hosted approval card reloads its action from the persisted prepared ca
         metadata: {
           prompt: "Approve search?",
           preparedToolCall: restartedPrepared,
+          reasonCode: "environment_policy",
           toolName: "forged.tool",
           toolInput: { query: "forged query" },
         },
       },
     }),
     assistantText: "stale",
-    hostedApprovalProtocolVersion: "v4",
   });
   const interaction = result.output.waitFor?.interaction;
   assert.equal(interaction?.version, "runner_hosted_tool_approval_interaction_v4");
   assert.equal(
     interaction?.prompt,
-    "Approve internet.search? Choose 'decline', 'approve_once', or 'remember_approval'.",
+    "Review this action before it runs.",
   );
   assert.deepEqual(
     interaction?.inputSchema?.properties.decision.enum,
@@ -270,8 +206,25 @@ test("new hosted approval card reloads its action from the persisted prepared ca
   );
   assert.doesNotMatch(JSON.stringify(interaction), /forged query|forged\.tool/u);
 
+  assert.throws(
+    () => finalizeRuntimeAssistantResponse({
+      output: output("WAITING", {
+        waitFor: {
+          kind: "approval",
+          eventType: "user.approval",
+          metadata: {
+            prompt: "Approve search?",
+            preparedToolCall: restartedPrepared,
+          },
+        },
+      }),
+      assistantText: "stale",
+    }),
+    /resolved approval reason code/u,
+  );
+
   const projectAskPrepared = structuredClone(prepared);
-  projectAskPrepared.policy.reasonCode = "project_restriction";
+  projectAskPrepared.policy.reasonCode = "tool_minimum";
   const projectAskResult = finalizeRuntimeAssistantResponse({
     output: output("WAITING", {
       waitFor: {
@@ -280,15 +233,27 @@ test("new hosted approval card reloads its action from the persisted prepared ca
         metadata: {
           prompt: "Approve search?",
           preparedToolCall: projectAskPrepared,
+          reasonCode: "project_restriction",
         },
       },
     }),
     assistantText: "stale",
-    hostedApprovalProtocolVersion: "v4",
   });
   assert.equal(
     projectAskResult.output.waitFor?.interaction?.version,
     "runner_hosted_tool_approval_interaction_v4",
+  );
+  assert.equal(
+    (projectAskResult.output.waitFor?.interaction?.approval?.presentation as {
+      policy: { reasonCode: string; rememberApprovalEligible: boolean };
+    }).policy.reasonCode,
+    "project_restriction",
+  );
+  assert.equal(
+    (projectAskResult.output.waitFor?.interaction?.approval?.presentation as {
+      policy: { reasonCode: string; rememberApprovalEligible: boolean };
+    }).policy.rememberApprovalEligible,
+    true,
   );
 
   const stricterPrepared = structuredClone(prepared);
@@ -301,22 +266,25 @@ test("new hosted approval card reloads its action from the persisted prepared ca
         metadata: {
           prompt: "Approve search?",
           preparedToolCall: stricterPrepared,
+          reasonCode: "subject_restriction",
         },
       },
     }),
     assistantText: "stale",
-    hostedApprovalProtocolVersion: "v4",
   });
   const stricterInteraction = stricterResult.output.waitFor?.interaction;
-  assert.equal(
-    stricterInteraction?.version,
-    "runner_hosted_tool_approval_interaction_v2",
-  );
+  assert.equal(stricterInteraction?.version, "runner_hosted_tool_approval_interaction_v4");
   assert.deepEqual(
     stricterInteraction?.inputSchema?.properties.decision.enum,
-    ["decline", "approve_once"],
+    ["decline", "approve_once", "remember_approval"],
   );
-  assert.doesNotMatch(JSON.stringify(stricterInteraction), /remember_approval/u);
+  assert.match(JSON.stringify(stricterInteraction), /remember_approval/u);
+  assert.equal(
+    (stricterInteraction?.approval?.presentation as {
+      policy: { rememberApprovalEligible: boolean };
+    }).policy.rememberApprovalEligible,
+    false,
+  );
 });
 
 test("finalizeRuntimeAssistantResponse rejects a user-facing wait without a prompt", () => {

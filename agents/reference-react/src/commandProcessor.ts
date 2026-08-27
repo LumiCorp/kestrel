@@ -231,8 +231,14 @@ export function createReferenceReactWaitCheckpoint(input: {
   regionExecPatch?: Record<string, unknown> | undefined;
   emitEvents?: Transition["emitEvents"] | undefined;
 }): Transition {
+  const authoredWaitFor = toReferenceReactWaitMatcher(input.waitFor);
+  const fallbackRequestId = `request-${buildWaitResumeToken({
+    waitFor: authoredWaitFor,
+    resumeStepAgent: input.nextStepAgent,
+  })}`;
   const materializedWaitFor = materializeUserFacingWaitInteraction(
-    toReferenceReactWaitMatcher(input.waitFor),
+    authoredWaitFor,
+    { fallbackRequestId },
   );
   const selectedMode = readSelectedModeSwitch(input.reactState.modeSwitch);
   const runtimeWaitFor = selectedMode === undefined || materializedWaitFor.interaction === undefined
