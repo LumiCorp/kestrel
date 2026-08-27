@@ -5,6 +5,11 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 ## Ready
 
 - [Accept signed Resend deliveries durably](03-accept-signed-resend-deliveries.md)
+- [Create private Triggers before inbound activation](33-create-private-triggers-before-inbound-activation.md)
+- [Disable Triggers on Organization owner loss](34-disable-triggers-on-organization-owner-loss.md)
+- [Preserve Trigger lifecycle disable reasons](35-preserve-trigger-lifecycle-disable-reasons.md)
+- [Preserve unavailable Trigger models while editing](36-preserve-unavailable-trigger-models-in-editing.md)
+- [Execute the Email Trigger route exports](37-execute-email-trigger-route-exports.md)
 
 ## In progress
 
