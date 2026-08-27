@@ -15,7 +15,7 @@ work; this queue does not reopen them.
 
 ## In progress
 
-None.
+- [Make cleanup release state monotonic](06j-make-cleanup-release-state-monotonic.md)
 
 ## Blocked
 
