@@ -11,12 +11,11 @@ work; this queue does not reopen them.
 
 ## Ready
 
-- [Construct the V4 compatibility release](06f-construct-v4-compatibility-release.md)
 - [Preserve completed model telemetry when a run is canceled](07-preserve-cancellation-telemetry.md)
 
 ## In progress
 
-- [Make prepared approval cleanup durable](06e-make-prepared-cleanup-durable.md)
+- [Construct the V4 compatibility release](06f-construct-v4-compatibility-release.md)
 
 ## Blocked
 
@@ -24,6 +23,7 @@ work; this queue does not reopen them.
 
 ## Implemented
 
+- [Make prepared approval cleanup durable](06e-make-prepared-cleanup-durable.md)
 - [Order the V4 compatibility rollout](06d-order-v4-compatibility-rollout.md)
 - [Generalize prepared approval cleanup](06c-generalize-prepared-approval-cleanup.md)
 - [Release a Web-rejected prepared approval](06b-release-web-rejected-prepared-approval.md)
