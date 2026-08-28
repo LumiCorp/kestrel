@@ -27,7 +27,6 @@ export async function POST(
       organizationId,
       userId: session.user.id,
       packs: body.packs,
-      origin: new URL(request.url).origin,
     });
     return NextResponse.json(result, {
       status: 201,

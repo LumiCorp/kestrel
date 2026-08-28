@@ -34,7 +34,8 @@ test("broker has a PKCE single-use session and fixed callback target", () => {
   assert.match(source, /if \(session\.consumedAt\)/u);
   assert.match(source, /OAUTH_SESSION_EXPIRED/u);
   assert.match(source, /RETURN_TARGET = "settings_connections"/u);
-  assert.doesNotMatch(source, /callbackURL|returnUrl: input/u);
+  assert.doesNotMatch(source, /callbackURL|returnUrl: input|origin: input/u);
+  assert.match(source, /callbackUriForPlatformOAuthProvider/u);
 });
 
 test("broker rejects the deferred Microsoft packs and health is redacted", () => {
@@ -44,16 +45,21 @@ test("broker rejects the deferred Microsoft packs and health is redacted", () =>
   const healthEnd = source.indexOf("export async function startHostedPersonalAuthorization", healthStart);
   const healthSource = source.slice(healthStart, healthEnd);
   assert.doesNotMatch(healthSource, /accessToken|refreshToken|encryptedTokenPayload/u);
+  assert.match(source, /OAUTH_ORGANIZATION_PACK_DENIED/u);
 });
 
-test("resolver validates project, selected pack, actual scopes, registration revision, and model admission before token return", () => {
+test("resolver derives operation policy from canonical descriptors before token return", () => {
   for (const check of [
     "resolveEffectiveProjectAppAccess",
     "OAUTH_PROJECT_DENIED",
+    "OAUTH_OPERATION_DENIED",
     "OAUTH_PACK_DENIED",
     "OAUTH_SCOPE_DENIED",
     "OAUTH_RECONNECT_REQUIRED",
-    "await input.assertModelAdmission()",
+    "resolveHostedPersonalOAuthOperation",
+    "authorizeGmailCapability",
+    "admitGmailExecutionRoute",
+    "pg_advisory_xact_lock",
     "markAuthorizationDegraded",
   ]) {
     assert.equal(source.includes(check), true, check);

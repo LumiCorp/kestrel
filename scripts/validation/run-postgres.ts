@@ -83,6 +83,7 @@ const groups = [
       "lib/apps/platform-oauth-registrations.postgres.test.ts",
       "lib/apps/service.postgres.test.ts",
       "lib/db/edge-only-retirement.postgres.test.ts",
+      "lib/integrations/hosted-personal-oauth.postgres.test.ts",
       "lib/email/receiving-config.postgres.test.ts",
       "lib/email/receiving-activation.postgres.test.ts",
       "lib/email/receiving-deletion-fence.postgres.test.ts",

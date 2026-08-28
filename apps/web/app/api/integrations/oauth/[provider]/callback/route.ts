@@ -5,6 +5,7 @@ import {
   HostedPersonalOAuthError,
   parseHostedPersonalOAuthProvider,
 } from "@/lib/integrations/hosted-personal-oauth";
+import { resolveKestrelAppUrl } from "@/lib/app-url";
 import { requireSession } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 
@@ -28,8 +29,8 @@ export async function GET(
     const session = await requireSession(request);
     const { provider: providerPath } = paramsSchema.parse(await context.params);
     const provider = parseHostedPersonalOAuthProvider(providerPath);
-    const url = new URL(request.url);
-    const query = querySchema.parse(Object.fromEntries(url.searchParams));
+    const requestUrl = new URL(request.url);
+    const query = querySchema.parse(Object.fromEntries(requestUrl.searchParams));
     if (query.error) {
       throw new HostedPersonalOAuthError("OAUTH_PROVIDER_DENIED", "The OAuth provider did not approve this authorization.");
     }
@@ -41,9 +42,8 @@ export async function GET(
       sessionId: query.state,
       userId: session.user.id,
       code: query.code,
-      origin: url.origin,
     });
-    const returnUrl = new URL("/settings/connections", url.origin);
+    const returnUrl = new URL("/settings/connections", resolveKestrelAppUrl());
     returnUrl.searchParams.set("integration", provider);
     returnUrl.searchParams.set("status", "connected");
     return NextResponse.redirect(returnUrl, { headers: { "cache-control": "no-store" } });

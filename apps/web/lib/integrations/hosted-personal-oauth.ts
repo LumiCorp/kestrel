@@ -3,6 +3,14 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import {
+  GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS,
+  type GoogleWorkspaceCanonicalOperation,
+} from "../../../../src/apps/googleWorkspace.js";
+import {
+  MICROSOFT_365_OPERATION_DESCRIPTORS,
+  type Microsoft365CanonicalOperation,
+} from "../../../../src/apps/microsoft365.js";
 import { ensureCoreAppCatalog, requireInstalledAppForOrganization } from "@/lib/apps/service";
 import { resolveEffectiveProjectAppAccess } from "@/lib/apps/project-service";
 import {
@@ -13,9 +21,12 @@ import {
   isPlatformOAuthProvider,
   requireActivePlatformOAuthRegistration,
   scopesForPlatformOAuthRegistration,
+  callbackUriForPlatformOAuthProvider,
   type PlatformOAuthProvider,
 } from "@/lib/apps/platform-oauth-registrations";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { admitGmailExecutionRoute, authorizeGmailCapability } from "./gmail-policy";
+import type { GmailCapability } from "./gmail-contract";
 import { getGoogleUserInfo } from "./google-calendar-api";
 import { getMicrosoftIdentity } from "./microsoft-365-oauth";
 
@@ -53,10 +64,6 @@ function providerAppKey(provider: HostedPersonalOAuthProvider) {
   return provider;
 }
 
-function providerPath(provider: HostedPersonalOAuthProvider) {
-  return provider === "google_workspace" ? "google-workspace" : "microsoft-365";
-}
-
 function sessionBindingId(sessionId: string) {
   return `platform-personal-oauth-session:${sessionId}`;
 }
@@ -85,6 +92,43 @@ function normalizePacks(input: {
   return allowed.filter((pack) => requested.includes(pack));
 }
 
+const organizationPackPolicySchema = z.object({
+  /**
+   * Optional Organization App policy. When omitted, installing the App is the
+   * Organization approval for its released Platform packs; when present, it
+   * is an explicit narrowing ceiling for personal authorization starts.
+   */
+  personalOAuthPacks: z.array(z.string()).optional(),
+}).passthrough();
+
+async function requireOrganizationApprovedPacks(input: {
+  organizationId: string;
+  provider: HostedPersonalOAuthProvider;
+  requestedPacks: readonly HostedPersonalOAuthPack[];
+}) {
+  const installation = await knowledgeDb.query.appInstallations.findFirst({
+    where: (table, { and, eq }) => and(
+      eq(table.organizationId, input.organizationId),
+      eq(table.appKey, providerAppKey(input.provider)),
+      eq(table.status, "installed"),
+    ),
+    columns: { settings: true },
+  });
+  if (!installation) {
+    throw new HostedPersonalOAuthError("OAUTH_ORGANIZATION_DENIED", "This App is not approved by the Organization.");
+  }
+  const parsed = organizationPackPolicySchema.safeParse(installation.settings ?? {});
+  if (!parsed.success || parsed.data.personalOAuthPacks === undefined) return;
+  const approved = normalizePacks({
+    provider: input.provider,
+    packs: parsed.data.personalOAuthPacks,
+    platformPacks: allowedPacks(input.provider),
+  });
+  if (!input.requestedPacks.every((pack) => approved.includes(pack))) {
+    throw new HostedPersonalOAuthError("OAUTH_ORGANIZATION_PACK_DENIED", "The Organization has not approved this OAuth capability pack.");
+  }
+}
+
 function pkcePair() {
   const verifier = randomBytes(48).toString("base64url");
   return {
@@ -108,12 +152,38 @@ function authorizationEndpoints(registration: {
   return { authorization: `${base}/authorize`, token: `${base}/token` };
 }
 
-function callbackUri(provider: HostedPersonalOAuthProvider, origin: string) {
-  return new URL(`/api/integrations/oauth/${providerPath(provider)}/callback`, origin).toString();
-}
-
 function normalizeScopes(scopes: readonly string[]) {
   return [...new Set(scopes.map((scope) => scope.trim()).filter(Boolean))];
+}
+
+type HostedPersonalOAuthOperation =
+  | GoogleWorkspaceCanonicalOperation
+  | Microsoft365CanonicalOperation;
+
+/**
+ * The shared operation descriptors are the only authority for a hosted
+ * provider operation's capability pack and OAuth scopes.  Callers therefore
+ * cannot widen a token request by asserting a more permissive pack or scope.
+ */
+function resolveHostedPersonalOAuthOperation(input: {
+  provider: HostedPersonalOAuthProvider;
+  operation: HostedPersonalOAuthOperation;
+}) {
+  const descriptor = (input.provider === "google_workspace"
+    ? GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS
+    : MICROSOFT_365_OPERATION_DESCRIPTORS
+  ).find((candidate) => candidate.serviceOperation === input.operation);
+  if (!descriptor) {
+    throw new HostedPersonalOAuthError(
+      "OAUTH_OPERATION_UNSUPPORTED",
+      "This provider operation is not available through the hosted OAuth broker.",
+    );
+  }
+  return {
+    capabilityKey: descriptor.id,
+    pack: descriptor.pack as HostedPersonalOAuthPack,
+    requiredScopes: descriptor.requiredScopes,
+  };
 }
 
 function scopeSetContains(granted: readonly string[], required: readonly string[]) {
@@ -145,7 +215,6 @@ export async function startHostedPersonalAuthorization(input: {
   organizationId: string;
   userId: string;
   packs: readonly string[];
-  origin: string;
   env?: NodeJS.ProcessEnv;
 }) {
   await ensureCoreAppCatalog();
@@ -158,6 +227,11 @@ export async function startHostedPersonalAuthorization(input: {
     provider: input.provider,
     packs: input.packs,
     platformPacks: registration.enabledPacks,
+  });
+  await requireOrganizationApprovedPacks({
+    organizationId: input.organizationId,
+    provider: input.provider,
+    requestedPacks: packs,
   });
   const existing = await knowledgeDb.query.appConnections.findFirst({
     where: (table, { and, eq }) => and(
@@ -191,7 +265,10 @@ export async function startHostedPersonalAuthorization(input: {
   const endpoint = authorizationEndpoints(registration);
   const url = new URL(endpoint.authorization);
   url.searchParams.set("client_id", registration.clientId);
-  url.searchParams.set("redirect_uri", callbackUri(input.provider, input.origin));
+  url.searchParams.set(
+    "redirect_uri",
+    callbackUriForPlatformOAuthProvider(input.provider, input.env),
+  );
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", scopesForPlatformOAuthRegistration({ provider: input.provider, packs }).join(" "));
   url.searchParams.set("state", id);
@@ -299,7 +376,6 @@ export async function completeHostedPersonalAuthorization(input: {
   sessionId: string;
   userId: string;
   code: string;
-  origin: string;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: FetchLike;
 }) {
@@ -327,7 +403,7 @@ export async function completeHostedPersonalAuthorization(input: {
     fields: {
       grant_type: "authorization_code",
       code: input.code,
-      redirect_uri: callbackUri(input.provider, input.origin),
+      redirect_uri: callbackUriForPlatformOAuthProvider(input.provider, input.env),
       code_verifier: verifier,
     },
     fetchImpl: input.fetchImpl,
@@ -478,9 +554,115 @@ async function markAuthorizationDegraded(input: { connectionId: string; code: st
 }
 
 /**
- * Internal-only provider token boundary. Runtime callers must supply their
- * owned model-admission assertion; the resolver invokes it before returning a
- * token, so a connection alone cannot bypass the model/data policy.
+ * Refreshes one connection under a transaction-scoped PostgreSQL advisory
+ * lock. A waiting request always re-reads the row after the first request has
+ * completed, so a rotated refresh token cannot make the waiting request mark
+ * a freshly repaired authorization as degraded.
+ */
+async function refreshHostedPersonalProviderToken(input: {
+  provider: HostedPersonalOAuthProvider;
+  connectionId: string;
+  registration: Awaited<ReturnType<typeof requireActivePlatformOAuthRegistration>>;
+  env?: NodeJS.ProcessEnv;
+  fetchImpl?: FetchLike;
+}) {
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`platform-personal-oauth-refresh:${input.connectionId}`}, 0))`,
+    );
+    const authorization = await transaction.query.platformPersonalOAuthAuthorizations.findFirst({
+      where: (table, { eq }) => eq(table.connectionId, input.connectionId),
+    });
+    if (!authorization || authorization.provider !== input.provider) {
+      throw new HostedPersonalOAuthError("OAUTH_CONNECTION_DENIED", "This personal OAuth connection is not available.");
+    }
+    if (authorization.reconnectRequired || authorization.registrationRevision !== input.registration.revision) {
+      await transaction.update(schema.platformPersonalOAuthAuthorizations)
+        .set({ reconnectRequired: true, failureCode: "OAUTH_RECONNECT_REQUIRED", updatedAt: new Date() })
+        .where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
+      await transaction.update(schema.appConnections)
+        .set({ status: "degraded", failureCode: "OAUTH_RECONNECT_REQUIRED", failureMessage: safeFailureMessage(), updatedAt: new Date() })
+        .where(eq(schema.appConnections.id, input.connectionId));
+      throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App after the Platform OAuth registration changed.");
+    }
+    let payload: z.infer<typeof tokenPayloadSchema>;
+    try {
+      payload = tokenPayloadSchema.parse(JSON.parse(decryptGatewayCredential({
+        gatewayId: authorizationBindingId(input.connectionId),
+        encrypted: authorization.encryptedTokenPayload,
+        env: input.env,
+      })));
+    } catch {
+      await transaction.update(schema.platformPersonalOAuthAuthorizations)
+        .set({ reconnectRequired: true, failureCode: "OAUTH_TOKEN_UNREADABLE", updatedAt: new Date() })
+        .where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
+      await transaction.update(schema.appConnections)
+        .set({ status: "degraded", failureCode: "OAUTH_TOKEN_UNREADABLE", failureMessage: safeFailureMessage(), updatedAt: new Date() })
+        .where(eq(schema.appConnections.id, input.connectionId));
+      throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App to restore access.");
+    }
+    if (!authorization.expiresAt || authorization.expiresAt.getTime() > Date.now() + TOKEN_REFRESH_SKEW_MS) {
+      return { accessToken: payload.accessToken, expiresAt: authorization.expiresAt };
+    }
+    if (!payload.refreshToken) {
+      await transaction.update(schema.platformPersonalOAuthAuthorizations)
+        .set({ reconnectRequired: true, failureCode: "OAUTH_REFRESH_UNAVAILABLE", updatedAt: new Date() })
+        .where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
+      await transaction.update(schema.appConnections)
+        .set({ status: "degraded", failureCode: "OAUTH_REFRESH_UNAVAILABLE", failureMessage: safeFailureMessage(), updatedAt: new Date() })
+        .where(eq(schema.appConnections.id, input.connectionId));
+      throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App to restore access.");
+    }
+    let refreshed: z.infer<typeof tokenResponseSchema>;
+    try {
+      refreshed = await tokenRequest({
+        provider: input.provider,
+        tokenEndpoint: authorizationEndpoints(input.registration).token,
+        clientId: input.registration.clientId,
+        clientSecret: input.registration.clientSecret,
+        fields: { grant_type: "refresh_token", refresh_token: payload.refreshToken },
+        fetchImpl: input.fetchImpl,
+      });
+    } catch {
+      await transaction.update(schema.platformPersonalOAuthAuthorizations)
+        .set({ reconnectRequired: true, failureCode: "OAUTH_REFRESH_FAILED", updatedAt: new Date() })
+        .where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
+      await transaction.update(schema.appConnections)
+        .set({ status: "degraded", failureCode: "OAUTH_REFRESH_FAILED", failureMessage: safeFailureMessage(), updatedAt: new Date() })
+        .where(eq(schema.appConnections.id, input.connectionId));
+      throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App to restore access.");
+    }
+    const now = new Date();
+    const expiresAt = refreshed.expires_in ? new Date(now.getTime() + refreshed.expires_in * 1000) : null;
+    const nextPayload = JSON.stringify({
+      accessToken: refreshed.access_token,
+      refreshToken: refreshed.refresh_token ?? payload.refreshToken,
+      tokenType: refreshed.token_type ?? payload.tokenType,
+    });
+    await transaction.update(schema.platformPersonalOAuthAuthorizations).set({
+      encryptedTokenPayload: encryptGatewayCredential({ gatewayId: authorizationBindingId(input.connectionId), plaintext: nextPayload, env: input.env }),
+      expiresAt,
+      lastRefreshedAt: now,
+      failureCode: null,
+      reconnectRequired: false,
+      updatedAt: now,
+    }).where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
+    await transaction.update(schema.appConnections).set({
+      status: "connected",
+      failureCode: null,
+      failureMessage: null,
+      lastHealthAt: now,
+      updatedAt: now,
+    }).where(eq(schema.appConnections.id, input.connectionId));
+    return { accessToken: refreshed.access_token, expiresAt };
+  });
+}
+
+/**
+ * Internal-only provider token boundary. Runtime callers identify one shared
+ * operation; this boundary derives its pack, scope, capability, and (for
+ * Gmail) restricted-data admission itself. Provider tokens never depend on
+ * caller-supplied authorization claims.
  */
 export async function resolveHostedPersonalProviderToken(input: {
   provider: HostedPersonalOAuthProvider;
@@ -488,12 +670,18 @@ export async function resolveHostedPersonalProviderToken(input: {
   organizationId: string;
   userId: string;
   projectId: string;
-  pack: HostedPersonalOAuthPack;
-  requiredScopes: readonly string[];
-  assertModelAdmission: () => Promise<void>;
+  operation: HostedPersonalOAuthOperation;
+  /** Required only for canonical Gmail operations. The ticket is verified by
+   * the existing Gmail model-admission boundary; it is not an authorization
+   * assertion supplied by a caller. */
+  gmailExecution?: Parameters<typeof admitGmailExecutionRoute>[0]["ticket"];
   env?: NodeJS.ProcessEnv;
   fetchImpl?: FetchLike;
 }) {
+  const operation = resolveHostedPersonalOAuthOperation({
+    provider: input.provider,
+    operation: input.operation,
+  });
   const registration = await requireActivePlatformOAuthRegistration(input.provider, input.env);
   const [connection, authorization, access] = await Promise.all([
     knowledgeDb.query.appConnections.findFirst({
@@ -522,20 +710,47 @@ export async function resolveHostedPersonalProviderToken(input: {
   if (access?.connectionId !== input.connectionId) {
     throw new HostedPersonalOAuthError("OAUTH_PROJECT_DENIED", "This OAuth connection is not granted to the Project.");
   }
-  if (!allowedPacks(input.provider).includes(input.pack) || !authorization.selectedPacks.includes(input.pack)) {
+  if (!access.capabilities.some((capability) => capability.key === operation.capabilityKey)) {
+    throw new HostedPersonalOAuthError("OAUTH_OPERATION_DENIED", "This OAuth operation is not enabled for the Project.");
+  }
+  if (!allowedPacks(input.provider).includes(operation.pack) || !authorization.selectedPacks.includes(operation.pack)) {
     throw new HostedPersonalOAuthError("OAUTH_PACK_DENIED", "This OAuth capability pack was not selected for the connection.");
   }
-  if (!input.requiredScopes.length) {
-    throw new HostedPersonalOAuthError("OAUTH_SCOPE_REQUIRED", "A provider operation must declare its required OAuth scopes.");
-  }
-  if (!scopeSetContains(authorization.grantedScopes, input.requiredScopes)) {
+  if (!scopeSetContains(authorization.grantedScopes, operation.requiredScopes)) {
     throw new HostedPersonalOAuthError("OAUTH_SCOPE_DENIED", "The connection does not grant the required OAuth scope.");
   }
   if (authorization.reconnectRequired || authorization.registrationRevision !== registration.revision) {
     await markAuthorizationDegraded({ connectionId: input.connectionId, code: "OAUTH_RECONNECT_REQUIRED" });
     throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App after the Platform OAuth registration changed.");
   }
-  await input.assertModelAdmission();
+  if (input.provider === "google_workspace" && operation.pack === "gmail") {
+    if (!input.gmailExecution) {
+      throw new HostedPersonalOAuthError("OAUTH_MODEL_ADMISSION_REQUIRED", "Gmail requires an active Kestrel One execution route.");
+    }
+    let gmailPolicy: Awaited<ReturnType<typeof authorizeGmailCapability>>;
+    try {
+      gmailPolicy = await authorizeGmailCapability({
+        ticket: input.gmailExecution,
+        capability: operation.capabilityKey as GmailCapability,
+      });
+    } catch {
+      throw new HostedPersonalOAuthError("OAUTH_GMAIL_EXECUTION_DENIED", "The active Kestrel One execution route is not authorized for Gmail.");
+    }
+    if (gmailPolicy.projectId !== input.projectId || gmailPolicy.connection.id !== input.connectionId) {
+      throw new HostedPersonalOAuthError("OAUTH_GMAIL_EXECUTION_DENIED", "The active Kestrel One execution route is not authorized for this Gmail connection.");
+    }
+    try {
+      await admitGmailExecutionRoute({
+        ticket: input.gmailExecution,
+        projectAuthorized: true,
+        gmailReadonlyGranted: scopeSetContains(authorization.grantedScopes, [
+          "https://www.googleapis.com/auth/gmail.readonly",
+        ]),
+      });
+    } catch {
+      throw new HostedPersonalOAuthError("OAUTH_MODEL_ADMISSION_DENIED", "The active Kestrel One execution route is not admitted for Gmail.");
+    }
+  }
   let payload: z.infer<typeof tokenPayloadSchema>;
   try {
     payload = tokenPayloadSchema.parse(JSON.parse(decryptGatewayCredential({
@@ -554,45 +769,13 @@ export async function resolveHostedPersonalProviderToken(input: {
     await markAuthorizationDegraded({ connectionId: input.connectionId, code: "OAUTH_REFRESH_UNAVAILABLE" });
     throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App to restore access.");
   }
-  let refreshed: z.infer<typeof tokenResponseSchema>;
-  try {
-    refreshed = await tokenRequest({
-      provider: input.provider,
-      tokenEndpoint: authorizationEndpoints(registration).token,
-      clientId: registration.clientId,
-      clientSecret: registration.clientSecret,
-      fields: { grant_type: "refresh_token", refresh_token: payload.refreshToken },
-      fetchImpl: input.fetchImpl,
-    });
-  } catch {
-    await markAuthorizationDegraded({ connectionId: input.connectionId, code: "OAUTH_REFRESH_FAILED" });
-    throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App to restore access.");
-  }
-  const now = new Date();
-  const expiresAt = refreshed.expires_in ? new Date(now.getTime() + refreshed.expires_in * 1000) : null;
-  const nextPayload = JSON.stringify({
-    accessToken: refreshed.access_token,
-    refreshToken: refreshed.refresh_token ?? payload.refreshToken,
-    tokenType: refreshed.token_type ?? payload.tokenType,
+  return refreshHostedPersonalProviderToken({
+    provider: input.provider,
+    connectionId: input.connectionId,
+    registration,
+    env: input.env,
+    fetchImpl: input.fetchImpl,
   });
-  await knowledgeDb.transaction(async (transaction) => {
-    await transaction.update(schema.platformPersonalOAuthAuthorizations).set({
-      encryptedTokenPayload: encryptGatewayCredential({ gatewayId: authorizationBindingId(input.connectionId), plaintext: nextPayload, env: input.env }),
-      expiresAt,
-      lastRefreshedAt: now,
-      failureCode: null,
-      reconnectRequired: false,
-      updatedAt: now,
-    }).where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
-    await transaction.update(schema.appConnections).set({
-      status: "connected",
-      failureCode: null,
-      failureMessage: null,
-      lastHealthAt: now,
-      updatedAt: now,
-    }).where(eq(schema.appConnections.id, input.connectionId));
-  });
-  return { accessToken: refreshed.access_token, expiresAt };
 }
 
 export function parseHostedPersonalOAuthProvider(value: string) {
