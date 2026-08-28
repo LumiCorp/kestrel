@@ -118,13 +118,22 @@ async function requireOrganizationApprovedPacks(input: {
     throw new HostedPersonalOAuthError("OAUTH_ORGANIZATION_DENIED", "This App is not approved by the Organization.");
   }
   const parsed = organizationPackPolicySchema.safeParse(installation.settings ?? {});
-  if (!parsed.success || parsed.data.personalOAuthPacks === undefined) return;
-  const approved = normalizePacks({
-    provider: input.provider,
-    packs: parsed.data.personalOAuthPacks,
-    platformPacks: allowedPacks(input.provider),
-  });
-  if (!input.requestedPacks.every((pack) => approved.includes(pack))) {
+  if (!parsed.success) {
+    throw new HostedPersonalOAuthError(
+      "OAUTH_ORGANIZATION_POLICY_INVALID",
+      "The Organization OAuth pack policy is invalid. Ask an Organization administrator to correct it.",
+    );
+  }
+  if (parsed.data.personalOAuthPacks === undefined) return;
+  const supported = allowedPacks(input.provider);
+  if (!parsed.data.personalOAuthPacks.every((pack) => supported.includes(pack as HostedPersonalOAuthPack))) {
+    throw new HostedPersonalOAuthError(
+      "OAUTH_ORGANIZATION_POLICY_INVALID",
+      "The Organization OAuth pack policy contains an unsupported capability pack.",
+    );
+  }
+  const approved = new Set(parsed.data.personalOAuthPacks);
+  if (!input.requestedPacks.every((pack) => approved.has(pack))) {
     throw new HostedPersonalOAuthError("OAUTH_ORGANIZATION_PACK_DENIED", "The Organization has not approved this OAuth capability pack.");
   }
 }
@@ -389,6 +398,11 @@ export async function completeHostedPersonalAuthorization(input: {
     packs: session.selectedPacks,
     platformPacks: registration.enabledPacks,
   });
+  await requireOrganizationApprovedPacks({
+    organizationId: session.organizationId,
+    provider: input.provider,
+    requestedPacks: packs,
+  });
   const verifier = decryptGatewayCredential({
     gatewayId: sessionBindingId(session.id),
     encrypted: session.encryptedPkceVerifier,
@@ -563,13 +577,24 @@ async function refreshHostedPersonalProviderToken(input: {
   provider: HostedPersonalOAuthProvider;
   connectionId: string;
   registration: Awaited<ReturnType<typeof requireActivePlatformOAuthRegistration>>;
+  requiredScopes: readonly string[];
   env?: NodeJS.ProcessEnv;
   fetchImpl?: FetchLike;
 }) {
-  return knowledgeDb.transaction(async (transaction) => {
+  const result = await knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`platform-personal-oauth-refresh:${input.connectionId}`}, 0))`,
     );
+    const degrade = async (code: string) => {
+      const now = new Date();
+      await transaction.update(schema.platformPersonalOAuthAuthorizations)
+        .set({ reconnectRequired: true, failureCode: code, updatedAt: now })
+        .where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
+      await transaction.update(schema.appConnections)
+        .set({ status: "degraded", failureCode: code, failureMessage: safeFailureMessage(), updatedAt: now })
+        .where(eq(schema.appConnections.id, input.connectionId));
+      return { kind: "reconnect" as const };
+    };
     const authorization = await transaction.query.platformPersonalOAuthAuthorizations.findFirst({
       where: (table, { eq }) => eq(table.connectionId, input.connectionId),
     });
@@ -577,13 +602,7 @@ async function refreshHostedPersonalProviderToken(input: {
       throw new HostedPersonalOAuthError("OAUTH_CONNECTION_DENIED", "This personal OAuth connection is not available.");
     }
     if (authorization.reconnectRequired || authorization.registrationRevision !== input.registration.revision) {
-      await transaction.update(schema.platformPersonalOAuthAuthorizations)
-        .set({ reconnectRequired: true, failureCode: "OAUTH_RECONNECT_REQUIRED", updatedAt: new Date() })
-        .where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
-      await transaction.update(schema.appConnections)
-        .set({ status: "degraded", failureCode: "OAUTH_RECONNECT_REQUIRED", failureMessage: safeFailureMessage(), updatedAt: new Date() })
-        .where(eq(schema.appConnections.id, input.connectionId));
-      throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App after the Platform OAuth registration changed.");
+      return degrade("OAUTH_RECONNECT_REQUIRED");
     }
     let payload: z.infer<typeof tokenPayloadSchema>;
     try {
@@ -593,25 +612,16 @@ async function refreshHostedPersonalProviderToken(input: {
         env: input.env,
       })));
     } catch {
-      await transaction.update(schema.platformPersonalOAuthAuthorizations)
-        .set({ reconnectRequired: true, failureCode: "OAUTH_TOKEN_UNREADABLE", updatedAt: new Date() })
-        .where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
-      await transaction.update(schema.appConnections)
-        .set({ status: "degraded", failureCode: "OAUTH_TOKEN_UNREADABLE", failureMessage: safeFailureMessage(), updatedAt: new Date() })
-        .where(eq(schema.appConnections.id, input.connectionId));
-      throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App to restore access.");
+      return degrade("OAUTH_TOKEN_UNREADABLE");
+    }
+    if (!scopeSetContains(authorization.grantedScopes, input.requiredScopes)) {
+      return degrade("OAUTH_SCOPE_DENIED");
     }
     if (!authorization.expiresAt || authorization.expiresAt.getTime() > Date.now() + TOKEN_REFRESH_SKEW_MS) {
-      return { accessToken: payload.accessToken, expiresAt: authorization.expiresAt };
+      return { kind: "success" as const, accessToken: payload.accessToken, expiresAt: authorization.expiresAt };
     }
     if (!payload.refreshToken) {
-      await transaction.update(schema.platformPersonalOAuthAuthorizations)
-        .set({ reconnectRequired: true, failureCode: "OAUTH_REFRESH_UNAVAILABLE", updatedAt: new Date() })
-        .where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
-      await transaction.update(schema.appConnections)
-        .set({ status: "degraded", failureCode: "OAUTH_REFRESH_UNAVAILABLE", failureMessage: safeFailureMessage(), updatedAt: new Date() })
-        .where(eq(schema.appConnections.id, input.connectionId));
-      throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App to restore access.");
+      return degrade("OAUTH_REFRESH_UNAVAILABLE");
     }
     let refreshed: z.infer<typeof tokenResponseSchema>;
     try {
@@ -624,16 +634,13 @@ async function refreshHostedPersonalProviderToken(input: {
         fetchImpl: input.fetchImpl,
       });
     } catch {
-      await transaction.update(schema.platformPersonalOAuthAuthorizations)
-        .set({ reconnectRequired: true, failureCode: "OAUTH_REFRESH_FAILED", updatedAt: new Date() })
-        .where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
-      await transaction.update(schema.appConnections)
-        .set({ status: "degraded", failureCode: "OAUTH_REFRESH_FAILED", failureMessage: safeFailureMessage(), updatedAt: new Date() })
-        .where(eq(schema.appConnections.id, input.connectionId));
-      throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App to restore access.");
+      return degrade("OAUTH_REFRESH_FAILED");
     }
     const now = new Date();
     const expiresAt = refreshed.expires_in ? new Date(now.getTime() + refreshed.expires_in * 1000) : null;
+    const grantedScopes = refreshed.scope === undefined
+      ? authorization.grantedScopes
+      : normalizeScopes(refreshed.scope.split(/[\s,]+/u));
     const nextPayload = JSON.stringify({
       accessToken: refreshed.access_token,
       refreshToken: refreshed.refresh_token ?? payload.refreshToken,
@@ -642,20 +649,29 @@ async function refreshHostedPersonalProviderToken(input: {
     await transaction.update(schema.platformPersonalOAuthAuthorizations).set({
       encryptedTokenPayload: encryptGatewayCredential({ gatewayId: authorizationBindingId(input.connectionId), plaintext: nextPayload, env: input.env }),
       expiresAt,
+      grantedScopes,
       lastRefreshedAt: now,
-      failureCode: null,
-      reconnectRequired: false,
+      failureCode: scopeSetContains(grantedScopes, input.requiredScopes) ? null : "OAUTH_SCOPE_REDUCED",
+      reconnectRequired: !scopeSetContains(grantedScopes, input.requiredScopes),
       updatedAt: now,
     }).where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
     await transaction.update(schema.appConnections).set({
-      status: "connected",
-      failureCode: null,
-      failureMessage: null,
+      scopes: grantedScopes,
+      status: scopeSetContains(grantedScopes, input.requiredScopes) ? "connected" : "degraded",
+      failureCode: scopeSetContains(grantedScopes, input.requiredScopes) ? null : "OAUTH_SCOPE_REDUCED",
+      failureMessage: scopeSetContains(grantedScopes, input.requiredScopes) ? null : safeFailureMessage(),
       lastHealthAt: now,
       updatedAt: now,
     }).where(eq(schema.appConnections.id, input.connectionId));
-    return { accessToken: refreshed.access_token, expiresAt };
+    if (!scopeSetContains(grantedScopes, input.requiredScopes)) {
+      return { kind: "reconnect" as const };
+    }
+    return { kind: "success" as const, accessToken: refreshed.access_token, expiresAt };
   });
+  if (result.kind === "reconnect") {
+    throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App to restore access.");
+  }
+  return result;
 }
 
 /**
@@ -710,6 +726,11 @@ export async function resolveHostedPersonalProviderToken(input: {
   if (access?.connectionId !== input.connectionId) {
     throw new HostedPersonalOAuthError("OAUTH_PROJECT_DENIED", "This OAuth connection is not granted to the Project.");
   }
+  await requireOrganizationApprovedPacks({
+    organizationId: input.organizationId,
+    provider: input.provider,
+    requestedPacks: [operation.pack],
+  });
   if (!access.capabilities.some((capability) => capability.key === operation.capabilityKey)) {
     throw new HostedPersonalOAuthError("OAUTH_OPERATION_DENIED", "This OAuth operation is not enabled for the Project.");
   }
@@ -773,6 +794,7 @@ export async function resolveHostedPersonalProviderToken(input: {
     provider: input.provider,
     connectionId: input.connectionId,
     registration,
+    requiredScopes: operation.requiredScopes,
     env: input.env,
     fetchImpl: input.fetchImpl,
   });

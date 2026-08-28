@@ -171,4 +171,137 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
     broker.startHostedPersonalAuthorization({ provider: "google_workspace", organizationId, userId, packs: ["gmail"] }),
     (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_ORGANIZATION_PACK_DENIED",
   );
+
+  await sql`UPDATE "app_installations" SET "settings" = '{}'::jsonb WHERE "organization_id" = ${organizationId} AND "app_key" = 'google_workspace'`;
+  const narrowedPolicyStart = await broker.startHostedPersonalAuthorization({
+    provider: "google_workspace",
+    organizationId,
+    userId,
+    packs: ["gmail"],
+    env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+  });
+  const narrowedPolicySessionId = new URL(narrowedPolicyStart.authorizationUrl).searchParams.get("state");
+  assert.ok(narrowedPolicySessionId);
+  await sql`UPDATE "app_installations" SET "settings" = ${JSON.stringify({ personalOAuthPacks: ["calendar"] })}::jsonb WHERE "organization_id" = ${organizationId} AND "app_key" = 'google_workspace'`;
+  await assert.rejects(
+    broker.completeHostedPersonalAuthorization({
+      provider: "google_workspace",
+      sessionId: narrowedPolicySessionId,
+      userId,
+      code: "narrowed-policy-code",
+      env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+    }),
+    (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_ORGANIZATION_PACK_DENIED",
+  );
+  await assert.rejects(
+    broker.resolveHostedPersonalProviderToken({ provider: "google_workspace", connectionId: completed.connectionId, organizationId, userId, projectId, operation: "gmail.messages.search" }),
+    (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_ORGANIZATION_PACK_DENIED",
+  );
+
+  await sql`UPDATE "app_installations" SET "settings" = '{}'::jsonb WHERE "organization_id" = ${organizationId} AND "app_key" = 'google_workspace'`;
+  const malformedPolicyStart = await broker.startHostedPersonalAuthorization({
+    provider: "google_workspace",
+    organizationId,
+    userId,
+    packs: ["calendar"],
+    env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+  });
+  const malformedPolicySessionId = new URL(malformedPolicyStart.authorizationUrl).searchParams.get("state");
+  assert.ok(malformedPolicySessionId);
+  await sql`UPDATE "app_installations" SET "settings" = ${JSON.stringify({ personalOAuthPacks: "calendar" })}::jsonb WHERE "organization_id" = ${organizationId} AND "app_key" = 'google_workspace'`;
+  await assert.rejects(
+    broker.completeHostedPersonalAuthorization({
+      provider: "google_workspace",
+      sessionId: malformedPolicySessionId,
+      userId,
+      code: "malformed-policy-code",
+      env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+    }),
+    (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_ORGANIZATION_POLICY_INVALID",
+  );
+  await assert.rejects(
+    broker.resolveHostedPersonalProviderToken({ provider: "google_workspace", connectionId: completed.connectionId, organizationId, userId, projectId, operation: "events.list" }),
+    (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_ORGANIZATION_POLICY_INVALID",
+  );
+
+  await sql`UPDATE "app_installations" SET "settings" = '{}'::jsonb WHERE "organization_id" = ${organizationId} AND "app_key" = 'google_workspace'`;
+  await sql`UPDATE "platform_personal_oauth_authorizations" SET "expires_at" = ${new Date(Date.now() - 60_000)} WHERE "connection_id" = ${completed.connectionId}`;
+  await assert.rejects(
+    broker.resolveHostedPersonalProviderToken({
+      provider: "google_workspace",
+      connectionId: completed.connectionId,
+      organizationId,
+      userId,
+      projectId,
+      operation: "events.list",
+      fetchImpl: (async () => Response.json({
+        access_token: "scope-reduced-access",
+        refresh_token: "scope-reduced-refresh",
+        token_type: "Bearer",
+        expires_in: 3600,
+        scope: "https://www.googleapis.com/auth/gmail.readonly",
+      })) as unknown as typeof fetch,
+    }),
+    (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_RECONNECT_REQUIRED",
+  );
+  const [scopeReducedAuthorization] = await sql`SELECT "granted_scopes" AS "grantedScopes", "encrypted_token_payload" AS "tokenPayload", "reconnect_required" AS "reconnectRequired", "failure_code" AS "failureCode" FROM "platform_personal_oauth_authorizations" WHERE "connection_id" = ${completed.connectionId}`;
+  const [scopeReducedConnection] = await sql`SELECT "scopes", "status", "failure_code" AS "failureCode" FROM "app_connections" WHERE "id" = ${completed.connectionId}`;
+  assert.deepEqual(scopeReducedAuthorization.grantedScopes, ["https://www.googleapis.com/auth/gmail.readonly"]);
+  assert.equal(scopeReducedAuthorization.reconnectRequired, true);
+  assert.equal(scopeReducedAuthorization.failureCode, "OAUTH_SCOPE_REDUCED");
+  assert.doesNotMatch(scopeReducedAuthorization.tokenPayload, /scope-reduced-(?:access|refresh)/u);
+  assert.deepEqual(scopeReducedConnection.scopes, ["https://www.googleapis.com/auth/gmail.readonly"]);
+  assert.equal(scopeReducedConnection.status, "degraded");
+  assert.equal(scopeReducedConnection.failureCode, "OAUTH_SCOPE_REDUCED");
+
+  const reconnectStart = await broker.startHostedPersonalAuthorization({
+    provider: "google_workspace",
+    organizationId,
+    userId,
+    packs: ["gmail", "calendar"],
+    env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+  });
+  const reconnectSessionId = new URL(reconnectStart.authorizationUrl).searchParams.get("state");
+  assert.ok(reconnectSessionId);
+  const reconnected = await broker.completeHostedPersonalAuthorization({
+    provider: "google_workspace",
+    sessionId: reconnectSessionId,
+    userId,
+    code: "reconnect-code",
+    env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+    fetchImpl: (async (request) => {
+      const value = String(request);
+      if (value === "https://oauth2.googleapis.com/token") {
+        return Response.json({ access_token: "reconnected-access", refresh_token: "reconnected-refresh", token_type: "Bearer", expires_in: 3600, scope: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events.owned https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.freebusy" });
+      }
+      if (value === "https://openidconnect.googleapis.com/v1/userinfo") {
+        return Response.json({ sub: "provider-user", email: "provider@example.test" });
+      }
+      throw new Error(`Unexpected provider URL: ${value}`);
+    }) as typeof fetch,
+  });
+  assert.equal(reconnected.connectionId, completed.connectionId);
+  await sql`UPDATE "platform_personal_oauth_authorizations" SET "expires_at" = ${new Date(Date.now() - 60_000)} WHERE "connection_id" = ${completed.connectionId}`;
+  await assert.rejects(
+    broker.resolveHostedPersonalProviderToken({
+      provider: "google_workspace",
+      connectionId: completed.connectionId,
+      organizationId,
+      userId,
+      projectId,
+      operation: "events.list",
+      fetchImpl: (async () => Response.json({ error: "invalid_grant" }, { status: 400 })) as unknown as typeof fetch,
+    }),
+    (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_RECONNECT_REQUIRED",
+  );
+  const [failedRefreshAuthorization] = await sql`SELECT "reconnect_required" AS "reconnectRequired", "failure_code" AS "failureCode" FROM "platform_personal_oauth_authorizations" WHERE "connection_id" = ${completed.connectionId}`;
+  const [failedRefreshConnection] = await sql`SELECT "status", "failure_code" AS "failureCode" FROM "app_connections" WHERE "id" = ${completed.connectionId}`;
+  assert.equal(failedRefreshAuthorization.reconnectRequired, true);
+  assert.equal(failedRefreshAuthorization.failureCode, "OAUTH_REFRESH_FAILED");
+  assert.equal(failedRefreshConnection.status, "degraded");
+  assert.equal(failedRefreshConnection.failureCode, "OAUTH_REFRESH_FAILED");
+  await assert.rejects(
+    broker.resolveHostedPersonalProviderToken({ provider: "google_workspace", connectionId: completed.connectionId, organizationId, userId, projectId, operation: "events.list" }),
+    (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_RECONNECT_REQUIRED",
+  );
 });
