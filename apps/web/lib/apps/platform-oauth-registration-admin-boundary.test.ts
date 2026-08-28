@@ -52,5 +52,6 @@ test("Platform OAuth packs derive their capability scopes from operation descrip
   assert.match(registrationSource, /GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS/u);
   assert.match(registrationSource, /MICROSOFT_365_OPERATION_DESCRIPTORS/u);
   assert.doesNotMatch(registrationSource, /_PACK_SCOPES/u);
-  assert.doesNotMatch(registrationSource, /outlook|sharepoint/u);
+  assert.match(registrationSource, /outlook/u);
+  assert.doesNotMatch(registrationSource, /sharepoint/u);
 });

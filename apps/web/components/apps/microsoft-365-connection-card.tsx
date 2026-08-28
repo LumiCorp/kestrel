@@ -18,6 +18,7 @@ type Status = {
   connected: boolean;
   status: "connected" | "degraded" | "disconnected" | null;
   label: string | null;
+  availablePacks: Microsoft365Pack[];
   packs: Microsoft365Pack[];
   grantedScopes: string[];
   health: {
@@ -28,7 +29,14 @@ type Status = {
   } | null;
 };
 
-const TEAMS_PACKS: Microsoft365Pack[] = ["teams"];
+const HOSTED_PACKS = ["outlook", "teams"] as const;
+type HostedMicrosoft365Pack = (typeof HOSTED_PACKS)[number];
+
+function isHostedMicrosoft365Pack(
+  pack: Microsoft365Pack,
+): pack is HostedMicrosoft365Pack {
+  return pack === "outlook" || pack === "teams";
+}
 
 async function readJson<T>(response: Response): Promise<T> {
   return (await response.json().catch(() => ({}))) as T;
@@ -41,6 +49,7 @@ export function Microsoft365ConnectionCard({
 }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [working, setWorking] = useState(false);
+  const [selectedPacks, setSelectedPacks] = useState<HostedMicrosoft365Pack[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -49,6 +58,9 @@ export function Microsoft365ConnectionCard({
       .then((next) => {
         if (!active) return;
         setStatus(next);
+        setSelectedPacks(
+          next.packs.filter(isHostedMicrosoft365Pack),
+        );
       });
     return () => {
       active = false;
@@ -62,7 +74,7 @@ export function Microsoft365ConnectionCard({
         const response = await fetch("/api/apps/microsoft-365", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ packs: TEAMS_PACKS }),
+          body: JSON.stringify({ packs: selectedPacks }),
         });
         const body = await readJson<{
           connected?: boolean;
@@ -101,8 +113,17 @@ export function Microsoft365ConnectionCard({
         setWorking(false);
       }
     },
-    [],
+    [selectedPacks],
   );
+
+  function togglePack(pack: HostedMicrosoft365Pack, checked: boolean) {
+    setSelectedPacks((current) => {
+      const next = checked
+        ? [...current, pack]
+        : current.filter((candidate) => candidate !== pack);
+      return HOSTED_PACKS.filter((candidate) => next.includes(candidate));
+    });
+  }
 
   async function disconnect() {
     setWorking(true);
@@ -133,21 +154,32 @@ export function Microsoft365ConnectionCard({
 
   return (
     <SettingsSection
-      description="Connect a work or school Microsoft account for Teams chat reads and approved sends."
-      title="Microsoft Teams connection"
+      description="Connect a work or school Microsoft account for Outlook mail and calendar access, Teams chat reads, and approved sends."
+      title="Microsoft 365 connection"
     >
       <div className="space-y-4 py-3">
-        <div className="flex items-start gap-3">
-          <Checkbox checked disabled id="microsoft-365-teams" />
-          <span className="min-w-0">
-            <span className="block font-medium text-sm">
-              {MICROSOFT_365_PACKS.teams.name}
+        {HOSTED_PACKS.map((pack) => (
+          <label
+            className="flex items-start gap-3"
+            htmlFor={`microsoft-365-${pack}`}
+            key={pack}
+          >
+            <Checkbox
+              checked={selectedPacks.includes(pack)}
+              disabled={working || status?.connected === true}
+              id={`microsoft-365-${pack}`}
+              onCheckedChange={(checked) => togglePack(pack, checked === true)}
+            />
+            <span className="min-w-0">
+              <span className="block font-medium text-sm">
+                {MICROSOFT_365_PACKS[pack].name}
+              </span>
+              <span className="mt-1 block text-muted-foreground text-sm">
+                {MICROSOFT_365_PACKS[pack].description}
+              </span>
             </span>
-            <span className="mt-1 block text-muted-foreground text-sm">
-              {MICROSOFT_365_PACKS.teams.description}
-            </span>
-          </span>
-        </div>
+          </label>
+        ))}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
           <div className="flex items-center gap-2 text-sm">
             <Badge variant={status?.connected ? "default" : "outline"}>
@@ -165,28 +197,37 @@ export function Microsoft365ConnectionCard({
               disabled={
                 working ||
                 !installed ||
-                status?.configured === false
+                status?.configured === false ||
+                selectedPacks.length === 0
               }
               onClick={() => void connect()}
             >
               {working
-                ? "Connecting…"
-                : status?.connected
-                  ? "Reconnect Teams"
-                  : "Connect Teams"}
+                  ? "Connecting…"
+                  : status?.connected
+                    ? "Reconnect Microsoft 365"
+                    : "Connect Microsoft 365"}
             </Button>
           </div>
         </div>
         {status?.configured === false ? (
           <p className="text-destructive text-sm">
-            Teams has not been configured by this Platform Admin.
+            Microsoft 365 has not been configured by this Platform Admin.
           </p>
         ) : null}
         {status?.connected ? (
           <div className="space-y-1 text-muted-foreground text-sm">
             <p>
-              Granted Teams permissions: {status.grantedScopes
-                .filter((scope) => scope === "Chat.Read" || scope === "ChatMessage.Send")
+              Granted Microsoft permissions: {status.grantedScopes
+                .filter((scope) =>
+                  [
+                    "Mail.Read",
+                    "Mail.Send",
+                    "Calendars.Read",
+                    "Chat.Read",
+                    "ChatMessage.Send",
+                  ].includes(scope),
+                )
                 .join(", ") || "none"}.
             </p>
             {status.grantedScopes.includes("Chat.Read") &&
@@ -197,7 +238,7 @@ export function Microsoft365ConnectionCard({
               </p>
             ) : null}
             {status.health?.reconnectRequired ? (
-              <p>Reconnect Teams to restore this connection.</p>
+              <p>Reconnect Microsoft 365 to restore this connection.</p>
             ) : null}
           </div>
         ) : null}

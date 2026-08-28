@@ -50,7 +50,7 @@ const tokenResponseSchema = z.object({
 }).passthrough();
 
 export type HostedPersonalOAuthProvider = PlatformOAuthProvider;
-export type HostedPersonalOAuthPack = "gmail" | "calendar" | "teams";
+export type HostedPersonalOAuthPack = "gmail" | "calendar" | "outlook" | "teams";
 
 export class HostedPersonalOAuthError extends Error {
   constructor(readonly code: string, message?: string) {
@@ -74,7 +74,7 @@ function authorizationBindingId(connectionId: string) {
 }
 
 function allowedPacks(provider: HostedPersonalOAuthProvider): HostedPersonalOAuthPack[] {
-  return provider === "google_workspace" ? ["gmail", "calendar"] : ["teams"];
+  return provider === "google_workspace" ? ["gmail", "calendar"] : ["outlook", "teams"];
 }
 
 function normalizePacks(input: {
@@ -218,17 +218,27 @@ function scopeSetContains(granted: readonly string[], required: readonly string[
 }
 
 /**
- * A Teams connection is useful only when it can read chats. Sending is
- * deliberately not a completion requirement: Microsoft tenant-admin consent
- * for ChatMessage.Send can be absent while the same connection remains valid
- * for chat reads.
+ * An Outlook connection needs the selected mail and calendar scopes. A Teams
+ * connection needs chat read. Sending remains optional because Microsoft
+ * tenant-admin consent for ChatMessage.Send can be absent while chat reads
+ * remain available.
  */
 function requireMinimumConnectionScopes(input: {
   provider: HostedPersonalOAuthProvider;
   packs: readonly HostedPersonalOAuthPack[];
   grantedScopes: readonly string[];
 }) {
-  if (input.provider !== "microsoft_365" || !input.packs.includes("teams")) return;
+  if (input.provider !== "microsoft_365") return;
+  if (input.packs.includes("outlook")) {
+    const outlookScopes = ["Mail.Read", "Mail.Send", "Calendars.Read"];
+    if (!scopeSetContains(input.grantedScopes, outlookScopes)) {
+      throw new HostedPersonalOAuthError(
+        "OAUTH_CONNECTION_SCOPE_DENIED",
+        "Outlook permissions were not fully granted. Reconnect and approve Mail.Read, Mail.Send, and Calendars.Read.",
+      );
+    }
+  }
+  if (!input.packs.includes("teams")) return;
   const teamsRead = resolveHostedPersonalOAuthOperation({
     provider: input.provider,
     operation: "chats.list",

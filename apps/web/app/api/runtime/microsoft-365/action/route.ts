@@ -4,7 +4,6 @@ import {
 } from "@lumi/kestrel-environment-auth";
 import { NextResponse } from "next/server";
 import { logAdminEvent } from "@/lib/admin/logs";
-import { auth } from "@/lib/auth";
 import {
   AppOperationApprovalError,
   consumeAppOperationApproval,
@@ -21,7 +20,6 @@ import {
 } from "@/lib/integrations/microsoft-365-api";
 import {
   capabilityForMicrosoft365Operation,
-  MICROSOFT_365_AUTH_PROVIDER_ID,
   microsoft365RuntimeInputSchema,
   type Microsoft365RuntimeInput,
 } from "@/lib/integrations/microsoft-365-contract";
@@ -50,6 +48,9 @@ export async function POST(request: Request) {
       throw new Microsoft365PolicyError("MICROSOFT_365_ROUTE_CAPABILITY_DENIED");
     }
     const input = microsoft365RuntimeInputSchema.parse(await request.json());
+    if (input.operation === "sites.search") {
+      throw new Microsoft365PolicyError("MICROSOFT_365_CAPABILITY_DENIED");
+    }
     if (input.operation === "calendar.list") assertCalendarRange(input);
     const capability = capabilityForMicrosoft365Operation(input.operation);
     const policy = await authorizeMicrosoft365Capability({ ticket, capability });
@@ -97,7 +98,6 @@ export async function POST(request: Request) {
       });
     }
     const accessToken = await getAccessToken({
-      accountId: policy.connection.externalAccountId,
       connectionId: policy.connection.id,
       organizationId: ticket.organizationId,
       operation: input.operation,
@@ -190,77 +190,40 @@ async function executeOperation(
 }
 
 async function getAccessToken(input: {
-  accountId: string | null;
   connectionId: string;
   organizationId: string;
-  operation: Microsoft365RuntimeInput["operation"];
+  operation: Exclude<Microsoft365RuntimeInput["operation"], "sites.search">;
   projectId: string;
   userId: string;
 }) {
-  if (isTeamsOperation(input.operation)) {
-    try {
-      const token = await resolveHostedPersonalProviderToken({
-        provider: "microsoft_365",
-        connectionId: input.connectionId,
-        organizationId: input.organizationId,
-        userId: input.userId,
-        projectId: input.projectId,
-        operation: input.operation,
-      });
-      return token.accessToken;
-    } catch (error) {
-      if (error instanceof HostedPersonalOAuthError) {
-        if (
-          input.operation === "chat.send" &&
-          error.code === "OAUTH_SCOPE_DENIED"
-        ) {
-          throw new Microsoft365ProviderError({
-            code: "MICROSOFT_365_TEAMS_SEND_TENANT_CONSENT_REQUIRED",
-            status: 403,
-          });
-        }
-        if (error.code === "OAUTH_RECONNECT_REQUIRED") {
-          throw new Microsoft365ProviderError({
-            code: "MICROSOFT_365_RECONNECT_REQUIRED",
-            status: 401,
-            reconnectRequired: true,
-          });
-        }
-      }
-      throw error;
-    }
-  }
   try {
-    if (!input.accountId) throw new Error("Microsoft account identity is unavailable.");
-    const token = await auth.api.getAccessToken({
-      body: {
-        providerId: MICROSOFT_365_AUTH_PROVIDER_ID,
-        accountId: input.accountId,
-        userId: input.userId,
-      },
+    const token = await resolveHostedPersonalProviderToken({
+      provider: "microsoft_365",
+      connectionId: input.connectionId,
+      organizationId: input.organizationId,
+      userId: input.userId,
+      projectId: input.projectId,
+      operation: input.operation,
     });
     return token.accessToken;
-  } catch {
-    await markMicrosoft365ConnectionDegraded({
-      connectionId: input.connectionId,
-      failureCode: "MICROSOFT_365_RECONNECT_REQUIRED",
-    });
-    throw new Microsoft365ProviderError({
-      code: "MICROSOFT_365_RECONNECT_REQUIRED",
-      status: 401,
-      reconnectRequired: true,
-    });
+  } catch (error) {
+    if (error instanceof HostedPersonalOAuthError) {
+      if (input.operation === "chat.send" && error.code === "OAUTH_SCOPE_DENIED") {
+        throw new Microsoft365ProviderError({
+          code: "MICROSOFT_365_TEAMS_SEND_TENANT_CONSENT_REQUIRED",
+          status: 403,
+        });
+      }
+      if (error.code === "OAUTH_RECONNECT_REQUIRED") {
+        throw new Microsoft365ProviderError({
+          code: "MICROSOFT_365_RECONNECT_REQUIRED",
+          status: 401,
+          reconnectRequired: true,
+        });
+      }
+    }
+    throw error;
   }
-}
-
-function isTeamsOperation(
-  operation: Microsoft365RuntimeInput["operation"],
-): operation is "chats.list" | "chat.messages.list" | "chat.send" {
-  return (
-    operation === "chats.list" ||
-    operation === "chat.messages.list" ||
-    operation === "chat.send"
-  );
 }
 
 function assertCalendarRange(input: { timeMin: string; timeMax: string }) {

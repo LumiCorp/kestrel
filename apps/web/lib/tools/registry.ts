@@ -738,7 +738,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
   {
     key: KESTREL_APP_IDS.MICROSOFT_365,
     displayName: MICROSOFT_365_APP_MANIFEST.name,
-    description: MICROSOFT_365_APP_MANIFEST.description,
+    description: "Work with Outlook and Teams.",
     type: "oauth",
     authType: "oauth",
     app: {
@@ -753,7 +753,9 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     metadata: {
       icon: "microsoft",
       category: "productivity",
-      capabilityPacks: MICROSOFT_365_APP_MANIFEST.capabilityPacks,
+      capabilityPacks: MICROSOFT_365_APP_MANIFEST.capabilityPacks.filter(
+        (pack) => pack.key === "outlook" || pack.key === "teams",
+      ),
     },
     capabilities: [
       createCapability({
@@ -800,19 +802,6 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
         accessMode: "write",
         defaultPolicy: { approvalMode: "ask", loggingMode: "metadata_only" },
         metadata: { group: "teams", audience: "self", pack: "teams" },
-      }),
-      createCapability({
-        key: "sharepoint.sites.search",
-        runtimeName: "kestrel_one.microsoft_365_search_sites",
-        displayName: "Find sites",
-        description: "Find SharePoint sites available to the connected user.",
-        accessMode: "read",
-        defaultPolicy: { loggingMode: "metadata_only" },
-        metadata: {
-          group: "sharepoint",
-          audience: "self",
-          pack: "sharepoint",
-        },
       }),
     ],
   },

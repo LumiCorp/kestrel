@@ -7,10 +7,6 @@ import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import {
-  genericOAuth,
-  microsoftEntraId,
-} from "better-auth/plugins/generic-oauth";
-import {
   admin,
   bearer,
   lastLoginMethod,
@@ -91,9 +87,6 @@ const stripeConfigStatus = getStripeBillingConfigStatus();
 const stripeEnvConfigured = stripeConfigStatus.isReady;
 const githubOAuthConfigured = Boolean(
   process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET,
-);
-const microsoftOAuthConfigured = Boolean(
-  process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET,
 );
 
 export const auth = betterAuth({
@@ -240,25 +233,6 @@ export const auth = betterAuth({
     },
   },
   plugins: [
-    genericOAuth({
-      config: microsoftOAuthConfigured
-        ? [
-            microsoftEntraId({
-              clientId: process.env.MICROSOFT_CLIENT_ID as string,
-              clientSecret: process.env.MICROSOFT_CLIENT_SECRET as string,
-              tenantId: process.env.MICROSOFT_TENANT_ID ?? "organizations",
-              scopes: [
-                "openid",
-                "profile",
-                "email",
-                "offline_access",
-                "User.Read",
-              ],
-              disableImplicitSignUp: true,
-            }),
-          ]
-        : [],
-    }),
     expo(),
     organization({
       invitationExpiresIn: INVITATION_EXPIRY_SECONDS,

@@ -42,7 +42,7 @@ test("Platform registration derives only the in-scope provider packs", () => {
   assert.deepEqual(
     scopesForPlatformOAuthRegistration({
       provider: "microsoft_365",
-      packs: ["teams"],
+      packs: ["outlook", "teams"],
     }),
     [
       "openid",
@@ -50,27 +50,40 @@ test("Platform registration derives only the in-scope provider packs", () => {
       "email",
       "offline_access",
       "User.Read",
+      "Mail.Read",
+      "Mail.Send",
+      "Calendars.Read",
       "Chat.Read",
       "ChatMessage.Send",
     ],
   );
 });
 
-test("Platform registration rejects deferred Outlook and SharePoint packs", () => {
-  for (const pack of ["outlook", "sharepoint"]) {
-    assert.throws(
-      () =>
-        scopesForPlatformOAuthRegistration({
-          provider: "microsoft_365",
-          packs: [pack],
-        }),
-      (error: unknown) => {
-        assert.ok(error instanceof PlatformOAuthRegistrationError);
-        assert.equal(error.code, "OAUTH_PACK_UNSUPPORTED");
-        return true;
-      },
-    );
-  }
+test("Platform registration releases Outlook but excludes SharePoint", () => {
+  assert.deepEqual(
+    scopesForPlatformOAuthRegistration({
+      provider: "microsoft_365",
+      packs: ["outlook"],
+    }),
+    [
+      "openid",
+      "profile",
+      "email",
+      "offline_access",
+      "User.Read",
+      "Mail.Read",
+      "Mail.Send",
+      "Calendars.Read",
+    ],
+  );
+  assert.throws(
+    () => scopesForPlatformOAuthRegistration({ provider: "microsoft_365", packs: ["sharepoint"] }),
+    (error: unknown) => {
+      assert.ok(error instanceof PlatformOAuthRegistrationError);
+      assert.equal(error.code, "OAUTH_PACK_UNSUPPORTED");
+      return true;
+    },
+  );
 });
 
 test("Platform registration accepts only documented Microsoft tenants", () => {

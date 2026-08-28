@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   microsoft365ConnectionInputSchema,
-  requireMicrosoft365TeamsConnectionPacks,
+  requireMicrosoft365HostedConnectionPacks,
 } from "@/lib/integrations/microsoft-365-contract";
 import {
   disconnectMicrosoft365Connection,
@@ -43,6 +43,7 @@ export async function GET() {
       connected: Boolean(authorization) && connection?.status === "connected",
       status: connection?.status ?? null,
       label: connection?.externalAccountLabel ?? null,
+      availablePacks: registration.enabledPacks,
       packs: packsFromMicrosoft365Connection(connection),
       grantedScopes: connection?.scopes ?? [],
       health: authorization
@@ -65,14 +66,14 @@ export async function POST(request: Request) {
     const { packs } = microsoft365ConnectionInputSchema.parse(
       await request.json()
     );
-    const teamsPacks = requireMicrosoft365TeamsConnectionPacks(packs);
+    const hostedPacks = requireMicrosoft365HostedConnectionPacks(packs);
     const result = await startHostedPersonalAuthorization({
       provider: "microsoft_365",
       organizationId,
       userId: session.user.id,
-      packs: teamsPacks,
+      packs: hostedPacks,
     });
-    return NextResponse.json({ url: result.authorizationUrl, packs: teamsPacks });
+    return NextResponse.json({ url: result.authorizationUrl, packs: hostedPacks });
   } catch (error) {
     return errorResponse(error, 400);
   }

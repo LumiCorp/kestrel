@@ -38,8 +38,8 @@ test("broker has a PKCE single-use session and fixed callback target", () => {
   assert.match(source, /callbackUriForPlatformOAuthProvider/u);
 });
 
-test("broker rejects the deferred Microsoft packs and health is redacted", () => {
-  assert.match(source, /return provider === "google_workspace" \? \["gmail", "calendar"\] : \["teams"\]/u);
+test("broker releases Outlook and Teams while health remains redacted", () => {
+  assert.match(source, /return provider === "google_workspace" \? \["gmail", "calendar"\] : \["outlook", "teams"\]/u);
   assert.match(source, /OAUTH_PROVIDER_UNSUPPORTED/u);
   const healthStart = source.indexOf("export function publicHostedPersonalOAuthHealth");
   const healthEnd = source.indexOf("export async function startHostedPersonalAuthorization", healthStart);

@@ -28,7 +28,7 @@ export type PlatformOAuthRegistrationStatus =
   | "ready"
   | "configuration_error";
 
-type SupportedPack = GoogleWorkspacePack | "teams";
+type SupportedPack = GoogleWorkspacePack | "outlook" | "teams";
 
 const OAUTH_SECRET_BINDING_PREFIX = "platform-oauth-registration";
 
@@ -89,7 +89,7 @@ type SaveResult = {
 
 const RELEASED_PACKS = {
   google_workspace: ["gmail", "calendar"],
-  microsoft_365: ["teams"],
+  microsoft_365: ["outlook", "teams"],
 } as const satisfies Record<PlatformOAuthProvider, readonly SupportedPack[]>;
 
 const MICROSOFT_TENANT_GUID =
@@ -114,6 +114,7 @@ function supportedPacks(provider: PlatformOAuthProvider) {
   const labels: Record<SupportedPack, string> = {
     gmail: "Gmail",
     calendar: "Google Calendar",
+    outlook: "Outlook",
     teams: "Microsoft Teams",
   };
   return RELEASED_PACKS[provider].map((id) => ({
