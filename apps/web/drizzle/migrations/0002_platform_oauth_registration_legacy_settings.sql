@@ -7,25 +7,17 @@ SET
   "enabled" = false,
   "revision" = "revision" + 1,
   "updated_at" = now()
-WHERE (
+WHERE
   "provider" = 'google_workspace'
-  AND (
-    "client_id" IS NULL
-    OR "client_id" ~ '[[:space:]]'
-    OR "tenant_or_issuer" IS NOT NULL
-  )
-)
-OR (
+  AND "tenant_or_issuer" IS NOT NULL;
+--> statement-breakpoint
+UPDATE "platform_oauth_registrations"
+SET
+  "enabled" = false,
+  "revision" = "revision" + 1,
+  "updated_at" = now()
+WHERE
   "provider" = 'microsoft_365'
-  AND (
-    "client_id" IS NULL
-    OR "client_id" ~ '[[:space:]]'
-    OR (
-      "tenant_or_issuer" IS NOT NULL
-      AND (
-        lower("tenant_or_issuer") <> 'organizations'
-        AND "tenant_or_issuer" !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-      )
-    )
-  )
-);
+  AND "tenant_or_issuer" IS NOT NULL
+  AND lower("tenant_or_issuer") <> 'organizations'
+  AND "tenant_or_issuer" !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';

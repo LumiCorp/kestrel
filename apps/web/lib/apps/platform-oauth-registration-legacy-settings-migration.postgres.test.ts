@@ -10,7 +10,7 @@ const directory = path.dirname(fileURLToPath(import.meta.url));
 const migration = fs.readFileSync(
   path.resolve(
     directory,
-    "../../drizzle/migrations/0002_platform_oauth_registration_legacy_settings.sql",
+    "../../drizzle/migrations/0003_platform_oauth_registration_identity_recovery.sql",
   ),
   "utf8",
 );
@@ -18,7 +18,7 @@ const migration = fs.readFileSync(
 test("legacy Platform OAuth settings migration disables invalid rows and preserves valid registrations", async (context) => {
   assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");
   const sql = postgres(databaseUrl, { max: 1 });
-  const before = new Date("2026-08-28T12:00:00.000Z");
+  const before = new Date("2020-01-01T00:00:00.000Z");
 
   context.after(async () => {
     await sql.end({ timeout: 0 });
