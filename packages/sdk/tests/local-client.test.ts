@@ -15,6 +15,8 @@ import {
   type RunnerEvent,
 } from "../src/runner.js";
 import { resolveClientTarget } from "../src/internal/clientTarget.js";
+import { LocalRunnerTransport } from "../src/internal/LocalRunnerTransport.js";
+import { ProtocolClient } from "../src/internal/ProtocolClient.js";
 
 
 const context = {
@@ -409,6 +411,83 @@ test("KestrelClient can close immediately after a completed local run stream", a
 
   await client.close();
   await connectionClosed;
+});
+
+test("LocalRunnerTransport keeps conversation streams open through the routing envelope", async (t) => {
+  const { socketPath, close } = await startLocalCoreServer(async (request, response) => {
+    assert.equal(request.url, "/runtime/v2/commands/stream");
+    const command = JSON.parse(await readRequestBody(request)) as { id: string; type: string };
+    assert.equal(command.type, "conversation.message.submit");
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(
+      toSse("run.completed", {
+        id: "evt-local-conversation-completed",
+        type: "run.completed",
+        ts: new Date().toISOString(),
+        commandId: command.id,
+        runId: "run-local-conversation",
+        sessionId: "session-local-conversation",
+        payload: {
+          result: {
+            assistantText: "Local conversation completed.",
+            output: {
+              status: "COMPLETED",
+              sessionId: "session-local-conversation",
+              runId: "run-local-conversation",
+              errors: [],
+            },
+          },
+        },
+      }) +
+        toSse("conversation.message.routed", {
+          id: "evt-local-conversation-routed",
+          type: "conversation.message.routed",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          runId: "run-local-conversation",
+          sessionId: "session-local-conversation",
+          threadId: "thread-main:session-local-conversation",
+          payload: {
+            threadId: "thread-main:session-local-conversation",
+            sessionId: "session-local-conversation",
+            messageId: "message-local-conversation",
+            disposition: "started",
+            runId: "run-local-conversation",
+            view: {},
+          },
+        }),
+    );
+  });
+  t.after(close);
+  const transport = new LocalRunnerTransport({
+    socketPath,
+    authToken: "local-bearer-token",
+  });
+  const client = new ProtocolClient(transport);
+  t.after(async () => client.close());
+  const seen: string[] = [];
+  client.onEvent((event) => seen.push(event.type));
+
+  const response = await withTimeout(
+    client.sendCommandWithId(
+      "cmd-local-conversation",
+      "conversation.message.submit",
+      {
+        profileId: "kestrel",
+        threadId: "thread-main:session-local-conversation",
+        messageId: "message-local-conversation",
+        turn: {
+          sessionId: "session-local-conversation",
+          message: "hello",
+        },
+      },
+    ),
+    1_000,
+    "Local conversation stream did not reach the routing envelope.",
+  );
+
+  assert.equal(response.type, "conversation.message.routed");
+  assert.deepEqual(seen, ["run.completed", "conversation.message.routed"]);
 });
 
 test("KestrelClient rejects a local run stream that ends before a terminal event", async (t) => {
@@ -818,4 +897,16 @@ function rejectAfter(milliseconds: number, message: string): Promise<never> {
     const timer = setTimeout(() => reject(new Error(message)), milliseconds);
     timer.unref();
   });
+}
+
+async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), milliseconds);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

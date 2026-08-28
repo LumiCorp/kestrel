@@ -84,6 +84,74 @@ class ControlledProtocolTransport implements ProtocolTransport {
   async stop(): Promise<void> {}
 }
 
+test("ProtocolClient settles conversation submissions only on the routing envelope", async () => {
+  const transport = new ControlledProtocolTransport();
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  client.onEvent((event) => seen.push(event.type));
+  let settled = false;
+  const pending = client.sendCommandWithId(
+    "cmd-sdk-conversation",
+    "conversation.message.submit",
+    {
+      profileId: "kestrel",
+      threadId: "thread-main:session-sdk-conversation",
+      messageId: "message-sdk-conversation",
+      turn: {
+        sessionId: "session-sdk-conversation",
+        message: "hello",
+      },
+    },
+  ).finally(() => {
+    settled = true;
+  });
+
+  transport.emit({
+    id: "evt-sdk-conversation-completed",
+    type: "run.completed",
+    ts: new Date().toISOString(),
+    commandId: "cmd-sdk-conversation",
+    runId: "run-sdk-conversation",
+    sessionId: "session-sdk-conversation",
+    payload: {
+      result: {
+        assistantText: "Conversation completed.",
+        output: {
+          status: "COMPLETED",
+          sessionId: "session-sdk-conversation",
+          runId: "run-sdk-conversation",
+          errors: [],
+        },
+      },
+    },
+  });
+  await Promise.resolve();
+  assert.equal(settled, false);
+
+  transport.emit({
+    id: "evt-sdk-conversation-routed",
+    type: "conversation.message.routed",
+    ts: new Date().toISOString(),
+    commandId: "cmd-sdk-conversation",
+    runId: "run-sdk-conversation",
+    sessionId: "session-sdk-conversation",
+    threadId: "thread-main:session-sdk-conversation",
+    payload: {
+      threadId: "thread-main:session-sdk-conversation",
+      sessionId: "session-sdk-conversation",
+      messageId: "message-sdk-conversation",
+      disposition: "started",
+      runId: "run-sdk-conversation",
+      view: {},
+    },
+  });
+
+  const response = await pending;
+  assert.equal(response.type, "conversation.message.routed");
+  assert.deepEqual(seen, ["run.completed", "conversation.message.routed"]);
+  await client.close();
+});
+
 function cancelledResult(sessionId: string, runId: string) {
   return {
     assistantText: null,

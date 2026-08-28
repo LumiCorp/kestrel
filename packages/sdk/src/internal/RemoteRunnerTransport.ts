@@ -222,7 +222,7 @@ export class RemoteRunnerTransport implements ProtocolTransport {
             }));
             return false;
           }
-          if (isRunnerTerminalResponseEvent(event.type)) {
+          if (isRunnerExpectedResponseEvent(command.type, event)) {
             streamSettled = true;
             this.emitEvent(event);
             return false;
