@@ -7,6 +7,9 @@ const databaseUrl = process.env.KESTREL_APPS_DB_TEST_URL?.trim();
 
 test("Platform OAuth registrations persist encrypted revisions, conflicts, and redacted audit evidence", async (context) => {
   assert.ok(databaseUrl, "KESTREL_APPS_DB_TEST_URL is required");
+  const originalActiveKeyId =
+    process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID;
+  const originalKeyring = process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS;
   process.env.DATABASE_URL = databaseUrl;
   Reflect.deleteProperty(process.env, "POSTGRES_URL");
   process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID = "test-key";
@@ -33,6 +36,20 @@ test("Platform OAuth registrations persist encrypted revisions, conflicts, and r
     await sql`DELETE FROM "admin_event_logs" WHERE "actor_user_id" = ${actorUserId}`;
     await sql`DELETE FROM "platform_oauth_registrations" WHERE "updated_by_user_id" = ${actorUserId}`;
     await sql`DELETE FROM "user" WHERE "id" = ${actorUserId}`;
+    if (originalActiveKeyId === undefined) {
+      Reflect.deleteProperty(
+        process.env,
+        "KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID",
+      );
+    } else {
+      process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID =
+        originalActiveKeyId;
+    }
+    if (originalKeyring === undefined) {
+      Reflect.deleteProperty(process.env, "KESTREL_GATEWAY_CREDENTIAL_KEYS");
+    } else {
+      process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS = originalKeyring;
+    }
     await resetDbRuntimeForTests();
     await sql.end({ timeout: 0 });
   });
@@ -193,7 +210,10 @@ test("Platform OAuth registrations persist encrypted revisions, conflicts, and r
     WHERE "provider" = 'google_workspace'
   `;
   assert.equal(afterNoop.revision, 5);
-  assert.equal(afterNoop.updated_at.toISOString(), beforeNoop.updated_at.toISOString());
+  assert.equal(
+    afterNoop.updated_at.toISOString(),
+    beforeNoop.updated_at.toISOString(),
+  );
 
   const auditRows = await sql`
       SELECT "action", "metadata"
@@ -293,6 +313,76 @@ test("Platform OAuth registrations persist encrypted revisions, conflicts, and r
     (error: unknown) => {
       assert.ok(error instanceof registrations.PlatformOAuthRegistrationError);
       assert.equal(error.code, "OAUTH_TENANT_INVALID");
+      return true;
+    },
+  );
+
+  await sql.unsafe(
+    `DROP TRIGGER IF EXISTS "${auditFailureTrigger}" ON "admin_event_logs"`,
+  );
+  await sql.unsafe(`DROP FUNCTION IF EXISTS "${auditFailureFunction}"()`);
+
+  const replacementKey = randomBytes(32).toString("base64");
+  process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID = "replacement-key";
+  process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS = JSON.stringify({
+    "replacement-key": replacementKey,
+  });
+  const recoveredFromRetiredKey =
+    await registrations.savePlatformOAuthRegistration({
+      ...google,
+      clientId: "google-client-2",
+      clientSecret: "recovered-google-secret",
+      enabledPacks: ["gmail"],
+      enabled: true,
+      expectedRevision: 5,
+    });
+  assert.equal(recoveredFromRetiredKey.auditAction, "rotate");
+  assert.equal(recoveredFromRetiredKey.config.revision, 6);
+  const recoveredActive =
+    await registrations.requireActivePlatformOAuthRegistration(
+      "google_workspace",
+    );
+  assert.equal(recoveredActive.clientSecret, "recovered-google-secret");
+
+  await sql`
+    UPDATE "platform_oauth_registrations"
+    SET "encrypted_client_secret" = 'corrupt-envelope'
+    WHERE "provider" = 'google_workspace'
+  `;
+  const recoveredFromCorruptEnvelope =
+    await registrations.savePlatformOAuthRegistration({
+      ...google,
+      clientId: "google-client-2",
+      clientSecret: "repaired-google-secret",
+      enabledPacks: ["gmail"],
+      enabled: true,
+      expectedRevision: 6,
+    });
+  assert.equal(recoveredFromCorruptEnvelope.auditAction, "rotate");
+  assert.equal(recoveredFromCorruptEnvelope.config.revision, 7);
+  const repairedActive =
+    await registrations.requireActivePlatformOAuthRegistration(
+      "google_workspace",
+    );
+  assert.equal(repairedActive.clientSecret, "repaired-google-secret");
+
+  await sql`
+    UPDATE "platform_oauth_registrations"
+    SET "client_id" = '  ', "encrypted_client_secret" = 'corrupt-envelope'
+    WHERE "provider" = 'google_workspace'
+  `;
+  const blankStoredClientId =
+    await registrations.resolvePlatformOAuthRegistration("google_workspace");
+  assert.equal(blankStoredClientId.status, "configuration_error");
+  assert.match(
+    blankStoredClientId.configurationError ?? "",
+    /client ID is invalid/u,
+  );
+  await assert.rejects(
+    registrations.requireActivePlatformOAuthRegistration("google_workspace"),
+    (error: unknown) => {
+      assert.ok(error instanceof registrations.PlatformOAuthRegistrationError);
+      assert.equal(error.code, "OAUTH_CLIENT_ID_INVALID");
       return true;
     },
   );

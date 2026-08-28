@@ -208,10 +208,18 @@ export function validatePlatformOAuthRegistrationTenantOrIssuer(
 
 function validateStoredPlatformOAuthRegistration(input: {
   provider: PlatformOAuthProvider;
+  clientId: string | null;
+  persisted: boolean;
   tenantOrIssuer: string | null;
   enabledPacks: readonly string[];
   enabled: boolean;
 }) {
+  if (input.persisted && (!input.clientId || /\s/u.test(input.clientId))) {
+    throw new PlatformOAuthRegistrationError(
+      "OAUTH_CLIENT_ID_INVALID",
+      "The saved OAuth client ID is invalid and requires Platform Admin correction.",
+    );
+  }
   const tenantOrIssuer = validatePlatformOAuthRegistrationTenantOrIssuer(
     input.provider,
     input.tenantOrIssuer,
@@ -249,6 +257,8 @@ export function toPublicPlatformOAuthRegistration(input: {
   try {
     const validated = validateStoredPlatformOAuthRegistration({
       provider: input.provider,
+      clientId: input.clientId ?? null,
+      persisted: input.persisted,
       tenantOrIssuer,
       enabledPacks: input.enabledPacks ?? [],
       enabled: input.enabled ?? false,
@@ -352,7 +362,7 @@ export async function savePlatformOAuthRegistration(input: {
   );
   const enabledPacks = normalizePacks(input.provider, input.enabledPacks);
 
-  if (!clientId) {
+  if (!clientId || /\s/u.test(clientId)) {
     throw new PlatformOAuthRegistrationError(
       "OAUTH_CLIENT_ID_REQUIRED",
       "An OAuth client ID is required.",
@@ -368,14 +378,21 @@ export async function savePlatformOAuthRegistration(input: {
   let encryptedClientSecret = existing?.encryptedClientSecret ?? null;
   let clientSecretChanged = false;
   if (clientSecret) {
-    const existingSecret = existing?.encryptedClientSecret
-      ? decryptGatewayCredential({
-          gatewayId: secretBindingId(input.provider),
-          encrypted: existing.encryptedClientSecret,
-          env,
-        })
-      : null;
-    clientSecretChanged = existingSecret !== clientSecret;
+    try {
+      const existingSecret = existing?.encryptedClientSecret
+        ? decryptGatewayCredential({
+            gatewayId: secretBindingId(input.provider),
+            encrypted: existing.encryptedClientSecret,
+            env,
+          })
+        : null;
+      clientSecretChanged = existingSecret !== clientSecret;
+    } catch {
+      // A supplied secret is an explicit rotation request. The prior envelope
+      // may be unreadable after key retirement or storage corruption, but that
+      // must not prevent the Platform Admin from repairing the registration.
+      clientSecretChanged = true;
+    }
     if (clientSecretChanged) {
       encryptedClientSecret = encryptGatewayCredential({
         gatewayId: secretBindingId(input.provider),
@@ -399,6 +416,8 @@ export async function savePlatformOAuthRegistration(input: {
     try {
       previous = validateStoredPlatformOAuthRegistration({
         provider: input.provider,
+        clientId: existing.clientId,
+        persisted: true,
         tenantOrIssuer: existing.tenantOrIssuer,
         enabledPacks: existing.enabledPacks,
         enabled: existing.enabled,
@@ -447,6 +466,8 @@ export async function savePlatformOAuthRegistration(input: {
       try {
         currentCanonical = validateStoredPlatformOAuthRegistration({
           provider: input.provider,
+          clientId: current.clientId,
+          persisted: true,
           tenantOrIssuer: current.tenantOrIssuer,
           enabledPacks: current.enabledPacks,
           enabled: current.enabled,
@@ -489,10 +510,7 @@ export async function savePlatformOAuthRegistration(input: {
         .where(
           and(
             eq(schema.platformOAuthRegistrations.provider, input.provider),
-            eq(
-              schema.platformOAuthRegistrations.revision,
-              current.revision,
-            ),
+            eq(schema.platformOAuthRegistrations.revision, current.revision),
           ),
         )
         .returning();
@@ -569,6 +587,8 @@ export async function requireActivePlatformOAuthRegistration(
   }
   const validated = validateStoredPlatformOAuthRegistration({
     provider,
+    clientId: row.clientId,
+    persisted: true,
     tenantOrIssuer: row.tenantOrIssuer,
     enabledPacks: row.enabledPacks,
     enabled: row.enabled,

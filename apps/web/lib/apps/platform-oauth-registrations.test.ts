@@ -158,3 +158,33 @@ test("invalid persisted provider settings are unavailable from the public regist
   assert.equal(legacyGoogle.enabledPacks.length, 0);
   assert.match(legacyGoogle.configurationError ?? "", /does not accept/u);
 });
+
+test("blank persisted OAuth identity and tenant values are configuration errors", () => {
+  const blankClientId = toPublicPlatformOAuthRegistration({
+    provider: "google_workspace",
+    clientId: "  ",
+    encryptedClientSecret: "kgc:v1:key:iv:tag:provider-secret",
+    enabled: true,
+    enabledPacks: ["gmail"],
+    persisted: true,
+  });
+  assert.equal(blankClientId.status, "configuration_error");
+  assert.equal(blankClientId.enabledPacks.length, 0);
+  assert.match(blankClientId.configurationError ?? "", /client ID is invalid/u);
+
+  const blankMicrosoftTenant = toPublicPlatformOAuthRegistration({
+    provider: "microsoft_365",
+    clientId: "microsoft-client-id",
+    encryptedClientSecret: "kgc:v1:key:iv:tag:provider-secret",
+    tenantOrIssuer: " ",
+    enabled: true,
+    enabledPacks: ["teams"],
+    persisted: true,
+  });
+  assert.equal(blankMicrosoftTenant.status, "configuration_error");
+  assert.equal(blankMicrosoftTenant.enabledPacks.length, 0);
+  assert.match(
+    blankMicrosoftTenant.configurationError ?? "",
+    /tenant must be/u,
+  );
+});
