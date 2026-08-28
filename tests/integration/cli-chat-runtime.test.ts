@@ -1353,7 +1353,7 @@ test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes 
   await runtime.close();
 });
 
-test("resolveRuntimeThreadedStepAgent defaults entry routing for fresh user messages and jobs", () => {
+test("resolveRuntimeThreadedStepAgent defaults entry routing for fresh user messages, jobs, and dialogs", () => {
   const waitingSession = {
     sessionId: "session-1",
     version: 1,
@@ -1393,6 +1393,14 @@ test("resolveRuntimeThreadedStepAgent defaults entry routing for fresh user mess
   assert.equal(resolveThreadedStepAgent("agent.exec.collect", "user.reply", "agent.loop"), "agent.exec.collect");
   assert.equal(resolveThreadedStepAgent(undefined, "user.message", "agent.loop"), "agent.loop");
   assert.equal(resolveThreadedStepAgent(undefined, "job.run", "agent.loop"), "agent.loop");
+  assert.equal(resolveThreadedStepAgent(undefined, "dialog.message", "agent.loop"), "agent.loop");
+  assert.equal(resolveThreadedStepAgent(undefined, "dialog.message", "agent.loop", {
+    sessionId: "dialog-session",
+    version: 1,
+    state: {},
+    currentStepAgent: "agent.exec.collect",
+    updatedAt: new Date().toISOString(),
+  }), undefined);
   assert.equal(resolveThreadedStepAgent(undefined, "user.reply", "agent.loop", waitingSession), "agent.exec.collect");
   assert.equal(
     resolveThreadedStepAgent(undefined, "user.reply", "agent.loop", waitingSessionWithMatcherAndResumeState),

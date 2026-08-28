@@ -12,7 +12,7 @@ export const dialogOpenTool: SharedToolModule = {
       required: ["name", "message"],
       additionalProperties: false,
     },
-    capability: { freshnessClass: "runtime", latencyClass: "low", costClass: "free", executionClass: "sandboxed_only", capabilityClasses: ["runtime.dialog"] },
+    capability: { freshnessClass: "runtime", latencyClass: "low", costClass: "free", executionClass: "external_side_effect", allowedInteractionModes: ["chat", "plan", "build"], capabilityClasses: ["runtime.dialog"], approvalCapabilities: ["delegation.control"] },
     presentation: { displayName: "Open Dialog", aliases: ["open collaborator dialog"], keywords: ["dialog", "collaborator"], provider: "kestrel", toolFamily: "runtime" },
   },
   createHandler(context) {
