@@ -20,7 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 
 type Provider = "google_workspace" | "microsoft_365";
-type Pack = "gmail" | "calendar" | "teams";
+type Pack = "gmail" | "calendar" | "outlook" | "teams";
 
 type Registration = {
   provider: Provider;
