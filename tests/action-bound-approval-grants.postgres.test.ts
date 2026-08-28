@@ -174,8 +174,8 @@ test("PostgreSQL reserves local dialog names for the parent lifetime and fences 
     await pool.query("INSERT INTO sessions (session_id) VALUES ($1)", [sessionId]);
     await pool.query(
       `INSERT INTO orchestration_threads (thread_id, session_id, title, status)
-       VALUES ($1, $3, 'Dialog parent', 'IDLE'), ($2, $3, 'Dialog child', 'IDLE'), ($4, $3, 'Duplicate child', 'IDLE')`,
-      [parentThreadId, firstChildThreadId, sessionId, secondChildThreadId],
+       VALUES ($1, $2, 'Dialog parent', 'IDLE')`,
+      [parentThreadId, sessionId],
     );
     const first = dialogRecord({
       delegationId: `dialog-first-${suffix}`,
@@ -185,6 +185,7 @@ test("PostgreSQL reserves local dialog names for the parent lifetime and fences 
       revision: 0,
     });
     assert.equal(await store.createDialog(first), true);
+    assert.equal((await store.getThread(firstChildThreadId))?.parentThreadId, parentThreadId);
     assert.equal(await store.createDialog(dialogRecord({
       delegationId: `dialog-second-${suffix}`,
       parentThreadId,
@@ -192,6 +193,7 @@ test("PostgreSQL reserves local dialog names for the parent lifetime and fences 
       name: "scout",
       revision: 0,
     })), false);
+    assert.equal(await store.getThread(secondChildThreadId), null);
 
     const closed = {
       ...first,

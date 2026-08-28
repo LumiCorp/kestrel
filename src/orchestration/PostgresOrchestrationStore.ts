@@ -222,17 +222,36 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
     const result = await this.db.query<{ delegation_id: string }>(
       `WITH name_lock AS (
          SELECT pg_advisory_xact_lock(hashtext($2), hashtext($3))
+       ), available_name AS (
+         SELECT 1
+           FROM name_lock
+          WHERE NOT EXISTS (
+            SELECT 1
+              FROM orchestration_delegations
+             WHERE parent_thread_id = $2
+               AND lower(COALESCE(policy_json -> 'dialog' ->> 'normalizedName', policy_json -> 'dialog' ->> 'name', '')) = $3
+          )
+       ), child_session AS (
+         INSERT INTO sessions (session_id)
+         SELECT $4
+           FROM available_name
+         ON CONFLICT (session_id) DO UPDATE SET session_id = EXCLUDED.session_id
+         RETURNING session_id
+       ), child_thread AS (
+         INSERT INTO orchestration_threads
+           (thread_id, session_id, title, status, parent_thread_id, metadata_json, created_at, updated_at)
+         SELECT $4, child_session.session_id, 'Delegated: ' || $6, 'IDLE', $2,
+                jsonb_build_object('delegationPrompt', $7::text), $18::timestamptz, $19::timestamptz
+           FROM available_name
+           CROSS JOIN child_session
+         ON CONFLICT (thread_id) DO NOTHING
+         RETURNING thread_id
        )
        INSERT INTO orchestration_delegations
         (delegation_id, parent_thread_id, child_thread_id, parent_run_id, title, prompt, status, profile_id, provider, model, skill_pack_id, launched_by, wait_event_type, result_summary, error_message, result_contract, policy_json, created_at, updated_at)
-       SELECT $1, $2, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13, $14, $15, $16, $17::jsonb, $18::timestamptz, $19::timestamptz
-         FROM name_lock
-        WHERE NOT EXISTS (
-          SELECT 1
-            FROM orchestration_delegations
-           WHERE parent_thread_id = $2
-             AND lower(COALESCE(policy_json -> 'dialog' ->> 'normalizedName', policy_json -> 'dialog' ->> 'name', '')) = $3
-        )
+       SELECT $1, $2, child_thread.thread_id, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13, $14, $15, $16, $17::jsonb, $18::timestamptz, $19::timestamptz
+         FROM available_name
+         CROSS JOIN child_thread
        RETURNING delegation_id`,
       [
         record.delegationId,

@@ -7,7 +7,7 @@ export const dialogSendTool: SharedToolModule = {
     name: "dialog.send",
     description: "Send another message to a collaborator you already opened. Use this to answer their question, correct or narrow their work, ask for more detail, or give them another assignment. Their reply will come back to you later. You cannot send a message while they are busy or after you close them.",
     inputSchema: { type: "object", properties: { dialogId: { type: "string", description: "The ID returned by open, read, or list." }, message: { type: "string", description: "The new facts or instructions." } }, required: ["dialogId", "message"], additionalProperties: false },
-    capability: { freshnessClass: "runtime", latencyClass: "low", costClass: "free", executionClass: "sandboxed_only", capabilityClasses: ["runtime.dialog"] },
+    capability: { freshnessClass: "runtime", latencyClass: "low", costClass: "free", executionClass: "external_side_effect", allowedInteractionModes: ["chat", "plan", "build"], capabilityClasses: ["runtime.dialog"], approvalCapabilities: ["delegation.control"] },
     presentation: { displayName: "Send Dialog Message", aliases: ["reply to collaborator"], keywords: ["dialog", "reply"], provider: "kestrel", toolFamily: "runtime" },
   },
   createHandler(context) {
