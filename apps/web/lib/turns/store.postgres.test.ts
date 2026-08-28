@@ -938,35 +938,27 @@ test(
       }],
       interaction: invalidPreparedApprovalInteraction,
     });
-    const invalidPreparedResolution =
-      await store.resolveDurableRuntimeInteraction({
+    await assert.rejects(
+      store.resolveDurableRuntimeInteraction({
         threadId: invalidPreparedApprovalThreadId,
         organizationId,
         userId,
         requestId: invalidPreparedApprovalRequestId,
         eventType: "user.approval",
         turnId: invalidPreparedApprovalTurn.turn.id,
-        message: "Legacy approve",
-        approved: true,
+        message: "Approve once",
+        decision: "approve_once",
         messageId: `invalid-prepared-response-${suffix}`,
         source: "web",
-      });
-    assert.equal(invalidPreparedResolution.shouldDispatch, true);
-    const invalidPreparedClaim = await store.claimDurableThreadTurn(
-      invalidPreparedApprovalTurn.turn.id,
-    );
-    assert.equal(
-      invalidPreparedClaim?.interactionResponse?.preparedApprovalCleanupFailureCode,
-      "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-    );
-    assert.equal(
-      invalidPreparedClaim?.interactionResponse?.decision,
-      "decline",
+      }),
+      (error: unknown) => Boolean(
+        error && typeof error === "object" && "code" in error && error.code === "TURN_CONFLICT"
+      ),
     );
     await store.completeDurableThreadTurn({
       turnId: invalidPreparedApprovalTurn.turn.id,
       status: "failed",
-      failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+      failureCode: "TURN_CONFLICT",
     });
 
     const reviewTurn = await createTurn(

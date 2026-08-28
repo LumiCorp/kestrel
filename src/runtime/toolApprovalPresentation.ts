@@ -30,12 +30,25 @@ type Presenter = {
       | "event_time"
       | "attendees"
       | "string_list"
+      | "json_string_list"
       | undefined;
   }>;
   warnings?: readonly string[] | undefined;
 };
 
 const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
+  exec_command: presenter(
+    "Run command",
+    "Review this command before it runs.",
+    [
+      ["command", "Command"],
+      ["cwd", "Working directory"],
+      ["envNames", "Environment access", "string_list"],
+    ],
+    [
+      "Allow for thread remembers only this exact command in this folder.",
+    ],
+  ),
   "internet.search": presenter("Search the web", "Run a Tavily web search.", [
     ["query", "Query"],
   ]),
@@ -255,7 +268,7 @@ const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
     "Publish an immutable file or ZIP through a temporary preview link.",
     [
       ["mode", "Mode"],
-      ["paths", "Selected files", "string_list"],
+      ["paths", "Selected files", "json_string_list"],
       ["downloadName", "Download name"],
       ["ttlMinutes", "Lifetime (minutes)"],
     ],
@@ -349,7 +362,7 @@ function presenter(
     readonly [
       string,
       string,
-      ("default" | "event_time" | "attendees" | "string_list")?,
+      ("default" | "event_time" | "attendees" | "string_list" | "json_string_list")?,
     ]
   >,
   warnings?: readonly string[],
@@ -388,7 +401,8 @@ function displayValue(
     | "default"
     | "event_time"
     | "attendees"
-    | "string_list" = "default",
+    | "string_list"
+    | "json_string_list" = "default",
 ): string {
   if (format === "event_time") {
     const time = readRecord(value);
@@ -409,6 +423,12 @@ function displayValue(
       : "Configured attendees";
   }
   if (format === "string_list") {
+    return Array.isArray(value) &&
+      value.every((item): item is string => typeof item === "string")
+      ? value.join(", ") || "None"
+      : "Configured selection";
+  }
+  if (format === "json_string_list") {
     return Array.isArray(value) &&
       value.every((item): item is string => typeof item === "string")
       ? JSON.stringify(value)

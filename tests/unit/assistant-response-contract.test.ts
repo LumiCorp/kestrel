@@ -39,7 +39,7 @@ test("finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stal
   });
 });
 
-test("finalizeRuntimeAssistantResponse rejects approval without a prepared invocation", () => {
+test("finalizeRuntimeAssistantResponse rejects an unbound local approval", () => {
   assert.throws(
     () => finalizeRuntimeAssistantResponse({
       output: output("WAITING", {
@@ -54,7 +54,98 @@ test("finalizeRuntimeAssistantResponse rejects approval without a prepared invoc
       }),
       assistantText: "Tool confirmation pending.",
     }),
-    /exact prepared invocation/u,
+    /exact versioned request/u,
+  );
+});
+
+test("finalizeRuntimeAssistantResponse projects an exact local approval", () => {
+  const requestedAt = "2026-08-28T12:00:00.000Z";
+  const expiresAt = "2026-08-28T12:05:00.000Z";
+  const approvalId = "local-approval-1";
+  const toolName = "desktop.host.open";
+  const result = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Review this action before it runs.",
+          approvalId,
+          toolName,
+          toolClass: "external_side_effect",
+          requestedAt,
+          expiresAt,
+          approvalPresentation: { title: "Open in Safari" },
+          externalApprovalBinding: {
+            version: "runner_external_approval_binding_v1",
+            approvalId,
+            threadId: "session-contract",
+            runId: "run-contract",
+            actionKey: toolName,
+            payloadHash: hashCanonical({
+              application: "safari",
+              url: "http://localhost:4173",
+            }),
+            toolClass: "external_side_effect",
+            capabilities: ["external.confirm"],
+            authorityKind: "runtime_policy",
+            authorityRevision: "local-policy-1",
+            requestedAt,
+            expiresAt,
+          },
+        },
+      },
+    }),
+    assistantText: "stale",
+  });
+
+  assert.deepEqual(result.output.waitFor?.interaction, {
+    version: "runner_local_tool_approval_interaction_v1",
+    requestId: "request-run-contract",
+    kind: "approval",
+    eventType: "user.approval",
+    prompt: "Review this action before it runs.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["decision"],
+      properties: {
+        decision: {
+          type: "string",
+          enum: ["decline", "approve_once"],
+        },
+      },
+    },
+    approval: {
+      approvalId,
+      toolName,
+      presentation: { title: "Open in Safari" },
+      requestedAt,
+      expiresAt,
+    },
+  });
+});
+
+test("finalizeRuntimeAssistantResponse rejects a local external approval without its exact binding", () => {
+  assert.throws(
+    () => finalizeRuntimeAssistantResponse({
+      output: output("WAITING", {
+        waitFor: {
+          kind: "approval",
+          eventType: "user.approval",
+          metadata: {
+            prompt: "Review this action before it runs.",
+            approvalId: "local-approval-unbound",
+            toolName: "desktop.host.open",
+            toolClass: "external_side_effect",
+            requestedAt: "2026-08-28T12:00:00.000Z",
+            expiresAt: "2026-08-28T12:05:00.000Z",
+          },
+        },
+      }),
+      assistantText: "stale",
+    }),
+    /requires its exact action binding/u,
   );
 });
 

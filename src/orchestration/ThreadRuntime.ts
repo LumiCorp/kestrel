@@ -1348,6 +1348,14 @@ export class ThreadRuntime implements ThreadRuntimePort {
     const blockedToolScope = asRecord(
       resolved.request.metadata?.blockedToolScope,
     );
+    const localApprovalDecision =
+      resolved.request.kind === "approval" &&
+      resolved.request.interaction?.version ===
+        "runner_local_tool_approval_interaction_v1"
+        ? input.approve === false
+          ? "decline" as const
+          : "approve_once" as const
+        : undefined;
     const result = await this.submitAcceptedTurn({
       threadId: input.threadId,
       message: input.message,
@@ -1370,7 +1378,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
         ...(resolved.grant !== undefined ? { grantId: resolved.grant.grantId } : {}),
         ...(resolved.request.delegationId !== undefined ? { delegationId: resolved.request.delegationId } : {}),
       },
-      ...(input.runtimeTurn !== undefined || input.recoveryOptionId !== undefined
+      ...(input.runtimeTurn !== undefined ||
+        input.recoveryOptionId !== undefined ||
+        localApprovalDecision !== undefined
         ? {
             runtimeTurn: {
               ...(input.runtimeTurn ?? {
@@ -1381,6 +1391,11 @@ export class ThreadRuntime implements ThreadRuntimePort {
               ...(input.recoveryOptionId !== undefined
                 ? { recoveryOptionId: input.recoveryOptionId }
                 : {}),
+              ...(input.runtimeTurn?.decision !== undefined
+                ? { decision: input.runtimeTurn.decision }
+                : localApprovalDecision === undefined
+                  ? {}
+                  : { decision: localApprovalDecision }),
             },
           }
         : {}),

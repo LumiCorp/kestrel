@@ -267,7 +267,10 @@ test(
       queueSource,
       /localConcurrency: PROJECT_PROMPT_SCHEDULE_LOCAL_CONCURRENCY,/u,
     );
-    assert.match(queueSource, /localConcurrency: turnWorkerConcurrency,/u);
+    assert.match(
+      queueSource,
+      /boss\.work\(\s*DURABLE_THREAD_TURN_QUEUE,\s*\{\s*batchSize: 1,\s*localConcurrency: turnWorkerConcurrency,/u,
+    );
     assert.match(queueSource, /groupConcurrency: 1,/u);
   },
 );

@@ -49,10 +49,11 @@ interface BoundedDevShellOutput {
   truncated: boolean;
 }
 
-interface LocalDevShellServiceOptions {
+export interface LocalDevShellServiceOptions {
   startupTimeoutMs?: number | undefined;
   pollIntervalMs?: number | undefined;
   runtimeModuleUrl?: string | undefined;
+  env?: NodeJS.ProcessEnv | undefined;
 }
 
 export interface DevShellServiceLaunchSpec {
@@ -105,25 +106,27 @@ export class LocalDevShellService implements DevShellServicePort {
   private readonly startupTimeoutMs: number;
   private readonly pollIntervalMs: number;
   private readonly runtimeModuleUrl: string;
+  private readonly env: NodeJS.ProcessEnv;
   private ownedChild: ChildProcess | undefined;
 
   constructor(
     baseDir?: string | undefined,
     options: LocalDevShellServiceOptions = {},
   ) {
-    const resolvedBaseDir = baseDir ?? resolveDefaultDevShellBaseDir();
+    this.env = { ...(options.env ?? process.env) };
+    const resolvedBaseDir = baseDir ?? resolveDefaultDevShellBaseDir(this.env);
     this.socketPath = baseDir === undefined
-      ? readOptionalEnvPath("KESTREL_DEV_SHELL_SOCKET_PATH") ?? path.join(resolvedBaseDir, DEV_SHELL_SOCKET_FILE)
+      ? readOptionalEnvPath("KESTREL_DEV_SHELL_SOCKET_PATH", this.env) ?? path.join(resolvedBaseDir, DEV_SHELL_SOCKET_FILE)
       : path.join(resolvedBaseDir, DEV_SHELL_SOCKET_FILE);
     this.logPath = baseDir === undefined
-      ? readOptionalEnvPath("KESTREL_DEV_SHELL_LOG_PATH") ?? path.join(resolvedBaseDir, DEV_SHELL_LOG_FILE)
+      ? readOptionalEnvPath("KESTREL_DEV_SHELL_LOG_PATH", this.env) ?? path.join(resolvedBaseDir, DEV_SHELL_LOG_FILE)
       : path.join(resolvedBaseDir, DEV_SHELL_LOG_FILE);
     this.bootstrapStatusPath = baseDir === undefined
-      ? readOptionalEnvPath("KESTREL_DEV_SHELL_STATUS_PATH") ?? path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE)
+      ? readOptionalEnvPath("KESTREL_DEV_SHELL_STATUS_PATH", this.env) ?? path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE)
       : path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE);
     this.startupTimeoutMs =
       options.startupTimeoutMs ??
-      readOptionalPositiveIntegerEnv("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS") ??
+      readOptionalPositiveIntegerEnv("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS", this.env) ??
       DEV_SHELL_SERVICE_STARTUP_TIMEOUT_MS;
     this.pollIntervalMs = options.pollIntervalMs ?? 100;
     this.runtimeModuleUrl = options.runtimeModuleUrl ?? import.meta.url;
@@ -448,10 +451,10 @@ export class LocalDevShellService implements DevShellServicePort {
   }
 
   private readBootstrapPrerequisiteFailure() {
-    if (process.env.KESTREL_STORE_DRIVER?.trim() !== "postgres") {
+    if (this.env.KESTREL_STORE_DRIVER?.trim() !== "postgres") {
       return ;
     }
-    const databaseUrl = process.env.DATABASE_URL;
+    const databaseUrl = this.env.DATABASE_URL;
     if (typeof databaseUrl === "string" && databaseUrl.trim().length > 0) {
       return ;
     }
@@ -511,12 +514,12 @@ export class LocalDevShellService implements DevShellServicePort {
         detached: true,
         stdio: ["ignore", logFd, logFd],
         env: {
-          ...process.env,
+          ...this.env,
           KESTREL_DEV_SHELL_SOCKET_PATH: this.socketPath,
           KESTREL_DEV_SHELL_LOG_PATH: this.logPath,
           KESTREL_DEV_SHELL_STATUS_PATH: this.bootstrapStatusPath,
           KESTREL_DEV_SHELL_OWNER_PID: String(process.pid),
-          KESTREL_DEV_SHELL_OWNER_KIND: process.env.KESTREL_DEV_SHELL_OWNER_KIND ?? "ks",
+          KESTREL_DEV_SHELL_OWNER_KIND: this.env.KESTREL_DEV_SHELL_OWNER_KIND ?? "ks",
         },
       });
     } finally {
@@ -710,13 +713,19 @@ export function isCompatibleDevShellHealth(health: unknown): health is DevShellH
 
 export { resolveDefaultDevShellBaseDir } from "./paths.js";
 
-function readOptionalEnvPath(name: string): string | undefined {
-  const value = process.env[name];
+function readOptionalEnvPath(
+  name: string,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  const value = env[name];
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
-function readOptionalPositiveIntegerEnv(name: string): number | undefined {
-  const value = process.env[name]?.trim();
+function readOptionalPositiveIntegerEnv(
+  name: string,
+  env: NodeJS.ProcessEnv,
+): number | undefined {
+  const value = env[name]?.trim();
   if (value === undefined || value.length === 0) {
     return ;
   }

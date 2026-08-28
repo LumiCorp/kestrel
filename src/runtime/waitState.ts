@@ -1,4 +1,7 @@
-import { parseRunnerHostedToolApprovalInteractionV4 } from "@kestrel-agents/protocol";
+import {
+  parseRunnerHostedToolApprovalInteractionV4,
+  parseRunnerLocalToolApprovalInteractionV1,
+} from "@kestrel-agents/protocol";
 import { createHash } from "node:crypto";
 
 export type RuntimeWaitKind = "approval" | "effect" | "region_merge" | "tool" | "user";
@@ -156,6 +159,17 @@ function readRuntimeInteraction(
 ): import("../kestrel/contracts/execution.js").RuntimeInteractionRequest | undefined {
   const interaction = asRecord(value);
   const version = interaction?.version;
+  if (version === "runner_local_tool_approval_interaction_v1") {
+    if (waitKind !== "approval") {
+      throw new Error(
+        "local tool approval interaction requires an approval wait",
+      );
+    }
+    return parseRunnerLocalToolApprovalInteractionV1(
+      interaction,
+      waitEventType,
+    );
+  }
   if (version === "runner_hosted_tool_approval_interaction_v4") {
     if (waitKind !== "approval") {
       throw new Error(

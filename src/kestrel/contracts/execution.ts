@@ -64,6 +64,34 @@ export interface RuntimeInteractionRequestV1 extends Record<string, unknown> {
   metadata?: Record<string, unknown> | undefined;
 }
 
+export interface RuntimeLocalToolApprovalInteractionV1
+  extends Record<string, unknown> {
+  version: "runner_local_tool_approval_interaction_v1";
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: {
+    type: "object";
+    additionalProperties: false;
+    required: ["decision"];
+    properties: {
+      decision: {
+        type: "string";
+        enum: Array<"decline" | "approve_once">;
+      };
+    };
+  };
+  metadata?: Record<string, unknown> | undefined;
+  approval: {
+    approvalId: string;
+    toolName: string;
+    presentation?: unknown;
+    requestedAt: string;
+    expiresAt: string;
+  };
+}
+
 export interface RuntimeHostedToolApprovalInteractionV4
   extends Record<string, unknown> {
   version: "runner_hosted_tool_approval_interaction_v4";
@@ -97,6 +125,7 @@ export interface RuntimeHostedToolApprovalInteractionV4
 
 export type RuntimeInteractionRequest =
   | RuntimeInteractionRequestV1
+  | RuntimeLocalToolApprovalInteractionV1
   | RuntimeHostedToolApprovalInteractionV4;
 
 export interface UserWaitForMatcher {

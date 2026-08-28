@@ -603,6 +603,7 @@ test("Kestrel managed configuration parser validates SDK supplied overlays", () 
           descriptorContractRevision: `sha256:${"d".repeat(64)}`,
           approvalAuthorityRevision: "authority-v1",
         },
+        scope: { kind: "tool_identity" },
         sourceInteractionId: "interaction_123",
       },
     ],
@@ -634,6 +635,9 @@ test("Kestrel managed configuration parser validates SDK supplied overlays", () 
     parsed.rememberedToolApprovalEvidence?.[0]?.sourceInteractionId,
     "interaction_123",
   );
+  assert.deepEqual(parsed.rememberedToolApprovalEvidence?.[0]?.scope, {
+    kind: "tool_identity",
+  });
   assert.throws(
     () =>
       parseKestrelManagedConfiguration({

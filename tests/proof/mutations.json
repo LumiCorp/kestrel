@@ -792,8 +792,8 @@
     {
       "id": "durable-turn-worker-concurrency-regression",
       "target": "apps/web/lib/turns/queue.ts",
-      "find": "        localConcurrency: turnWorkerConcurrency,",
-      "replace": "        localConcurrency: 2,",
+      "find": "      DURABLE_THREAD_TURN_QUEUE,\n      {\n        batchSize: 1,\n        localConcurrency: turnWorkerConcurrency,",
+      "replace": "      DURABLE_THREAD_TURN_QUEUE,\n      {\n        batchSize: 1,\n        localConcurrency: 2,",
       "command": "pnpm",
       "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=turn worker uses configured durable capacity", "lib/turns/worker-boundary.test.ts"],
       "testFiles": ["apps/web/lib/turns/worker-boundary.test.ts"]
@@ -810,10 +810,19 @@
     {
       "id": "hosted-approval-card-prepared-invocation-bypass",
       "target": "src/runtime/assistantResponseContract.ts",
-      "find": "      preparedInvocationId: prepared.callId,\n      toolName: prepared.activation.descriptor.toolId,\n      stableToolIdentity: prepared.stableToolIdentity,\n      requestingActor: binding.requestingActor,\n      presentation,\n    },\n  }) as RuntimeHostedToolApprovalInteractionV3;",
-      "replace": "      preparedInvocationId: \"mutated-prepared-call\",\n      toolName: prepared.activation.descriptor.toolId,\n      stableToolIdentity: prepared.stableToolIdentity,\n      requestingActor: binding.requestingActor,\n      presentation,\n    },\n  }) as RuntimeHostedToolApprovalInteractionV3;",
+      "find": "      preparedInvocationId: prepared.callId,",
+      "replace": "      preparedInvocationId: \"mutated-prepared-call\",",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=new hosted approval card reloads", "tests/unit/assistant-response-contract.test.ts"],
+      "testFiles": ["tests/unit/assistant-response-contract.test.ts"]
+    },
+    {
+      "id": "local-approval-exact-binding-omission",
+      "target": "src/runtime/assistantResponseContract.ts",
+      "find": "  if (metadata?.toolClass === \"external_side_effect\") {",
+      "replace": "  if (false) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=rejects a local external approval without its exact binding", "tests/unit/assistant-response-contract.test.ts"],
       "testFiles": ["tests/unit/assistant-response-contract.test.ts"]
     }
   ]

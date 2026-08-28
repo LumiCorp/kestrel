@@ -4111,7 +4111,8 @@ export function resolveDevShellServiceForProfile(
     return;
   }
   return (
-    createTerminalBenchDevShellServiceFromEnv(env) ?? new LocalDevShellService()
+    createTerminalBenchDevShellServiceFromEnv(env) ??
+      new LocalDevShellService(undefined, { env })
   );
 }
 

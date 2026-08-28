@@ -5,11 +5,13 @@ import type {
 import {
   parseRunnerInteractionRequest,
   parseRunnerHostedToolApprovalInteractionV4,
+  parseRunnerLocalToolApprovalInteractionV1,
 } from "@kestrel-agents/protocol";
 import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
 import { parseDurablePreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
 import {
   projectHostedToolApprovalInteractionV4,
+  projectLocalToolApprovalInteractionV1,
 } from "./assistantResponseContract.js";
 import {
   normalizeVisibleTodoState,
@@ -417,6 +419,12 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
         "runner_external_approval_binding_v2" ||
       asRecord(waitMetadata?.externalApprovalBinding)?.version ===
         "runner_external_approval_binding_v2";
+    const hasLocalApprovalV1Evidence =
+      pendingApproval?.version === "local_tool_approval_v1" ||
+      asRecord(pendingApproval?.externalApprovalBinding)?.version ===
+        "runner_external_approval_binding_v1" ||
+      asRecord(waitMetadata?.externalApprovalBinding)?.version ===
+        "runner_external_approval_binding_v1";
     if (
       hasHostedApprovalV2Evidence &&
       interaction?.version !== "runner_hosted_tool_approval_interaction_v4"
@@ -428,6 +436,79 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
           path: "state.agent.waitingFor.interaction",
         },
       };
+    }
+    if (
+      hasLocalApprovalV1Evidence &&
+      interaction?.version !== "runner_local_tool_approval_interaction_v1"
+    ) {
+      return {
+        code: "RUNTIME_STATE_INVALID",
+        message: "state.agent.waitingFor local approval state is incomplete",
+        details: {
+          path: "state.agent.waitingFor.interaction",
+        },
+      };
+    }
+    if (
+      interaction?.version === "runner_local_tool_approval_interaction_v1"
+    ) {
+      try {
+        if (waitingFor.kind !== "approval") {
+          throw new Error(
+            "local tool approval interaction requires an approval wait",
+          );
+        }
+        const parsedInteraction = parseRunnerLocalToolApprovalInteractionV1(
+          interaction,
+          waitingFor.eventType,
+        );
+        const pendingExternalApprovalBinding =
+          pendingApproval?.externalApprovalBinding;
+        const waitExternalApprovalBinding =
+          waitMetadata?.externalApprovalBinding;
+        if (
+          pendingApproval?.version !== "local_tool_approval_v1" ||
+          pendingApproval.approvalId !== parsedInteraction.approval.approvalId ||
+          pendingApproval.toolName !== parsedInteraction.approval.toolName ||
+          canonicalJsonValuesEqual(
+            pendingExternalApprovalBinding,
+            waitExternalApprovalBinding,
+          ) === false
+        ) {
+          throw new Error(
+            "local tool approval must preserve one exact pending action",
+          );
+        }
+        const projectedInteraction = projectLocalToolApprovalInteractionV1({
+          metadata: waitMetadata,
+          requestId: parsedInteraction.requestId,
+        });
+        const {
+          metadata: _parsedInteractionMetadata,
+          ...parsedInteractionContract
+        } = parsedInteraction;
+        const {
+          metadata: _projectedInteractionMetadata,
+          ...projectedInteractionContract
+        } = projectedInteraction;
+        if (
+          canonicalJson(parsedInteractionContract) !==
+            canonicalJson(projectedInteractionContract)
+        ) {
+          throw new Error(
+            "local tool approval card must match its canonical action binding",
+          );
+        }
+      } catch (error) {
+        return {
+          code: "RUNTIME_STATE_INVALID",
+          message: "state.agent.waitingFor.interaction is invalid",
+          details: {
+            path: "state.agent.waitingFor.interaction",
+            cause: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
     }
     if (
       interaction?.version === "runner_hosted_tool_approval_interaction_v4"
@@ -664,12 +745,15 @@ function decodeAgentState(value: Record<string, unknown> | undefined): RuntimeAg
     executionLedger: _legacyExecutionLedger,
     ...stateWithoutLegacyAuthority
   } = state;
+  const upgradedLocalApproval = upgradeLegacyLocalApprovalState(state);
   return {
     ...stateWithoutLegacyAuthority,
     observations: Array.isArray(state.observations) ? state.observations : [],
-    exec: asRecord(state.exec) ?? {},
+    exec: upgradedLocalApproval.exec,
     assistantText: normalizeAssistantText(state.assistantText),
-    ...(asRecord(state.waitingFor) !== undefined ? { waitingFor: asRecord(state.waitingFor) } : {}),
+    ...(upgradedLocalApproval.waitingFor !== undefined
+      ? { waitingFor: upgradedLocalApproval.waitingFor }
+      : {}),
     ...(asRecord(state.terminal) !== undefined ? { terminal: asRecord(state.terminal) } : {}),
     ...(asRecord(state.lastAction) !== undefined ? { lastAction: asRecord(state.lastAction) } : {}),
     ...(state.lastActionResult !== undefined ? { lastActionResult: state.lastActionResult } : {}),
@@ -679,6 +763,65 @@ function decodeAgentState(value: Record<string, unknown> | undefined): RuntimeAg
     ...(visibleTodos !== undefined ? { visibleTodos } : {}),
     ...(modelTranscript !== undefined ? { modelTranscript } : {}),
   };
+}
+
+function upgradeLegacyLocalApprovalState(state: Record<string, unknown>): {
+  exec: Record<string, unknown>;
+  waitingFor?: Record<string, unknown> | undefined;
+} {
+  const exec = { ...(asRecord(state.exec) ?? {}) };
+  const waitingForRecord = asRecord(state.waitingFor);
+  const waitingFor = waitingForRecord === undefined
+    ? undefined
+    : { ...waitingForRecord };
+  const pendingApproval = asRecord(exec.pendingApproval);
+  const binding = asRecord(pendingApproval?.externalApprovalBinding);
+  const interaction = asRecord(waitingFor?.interaction);
+  if (
+    pendingApproval === undefined ||
+    pendingApproval.version !== undefined ||
+    binding?.version !== "runner_external_approval_binding_v1" ||
+    waitingFor?.kind !== "approval" ||
+    waitingFor.eventType !== "user.approval" ||
+    (interaction !== undefined &&
+      (interaction.version !== "v1" || interaction.kind !== "approval"))
+  ) {
+    return { exec, ...(waitingFor === undefined ? {} : { waitingFor }) };
+  }
+  const metadata = {
+    ...(asRecord(waitingFor.metadata) ?? {}),
+    requestedAt: binding.requestedAt,
+  };
+  try {
+    const projected = projectLocalToolApprovalInteractionV1({
+      metadata,
+      requestId:
+        typeof interaction?.requestId === "string"
+          ? interaction.requestId
+          : undefined,
+    });
+    exec.pendingApproval = {
+      ...pendingApproval,
+      version: "local_tool_approval_v1",
+    };
+    return {
+      exec,
+      waitingFor: {
+        ...waitingFor,
+        metadata,
+        interaction: projected,
+      },
+    };
+  } catch {
+    return { exec, ...(waitingFor === undefined ? {} : { waitingFor }) };
+  }
+}
+
+function canonicalJsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (left === undefined || right === undefined) {
+    return left === right;
+  }
+  return canonicalJson(left) === canonicalJson(right);
 }
 
 function parseRuntimeSessionState(
