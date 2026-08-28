@@ -3,6 +3,7 @@ import {
   verifyEnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
 import { NextResponse } from "next/server";
+import type { z } from "zod";
 import { logAdminEvent } from "@/lib/admin/logs";
 import {
   AppOperationApprovalError,
@@ -17,6 +18,10 @@ import {
   queryGoogleCalendarFreeBusy,
   updateGoogleCalendarEvent,
 } from "@/lib/integrations/google-calendar-api";
+import {
+  createGoogleCalendarPageCursor,
+  readGoogleCalendarPageCursor,
+} from "../../../../../../../src/apps/googleCalendarPaging.js";
 import {
   assertGoogleCalendarRange,
   capabilityForGoogleCalendarOperation,
@@ -38,6 +43,20 @@ import { errorResponse } from "@/lib/knowledge/http";
 export async function POST(request: Request) {
   let ticket: EnvironmentExecutionTicket | null = null;
   const connectionIdsUsed = new Set<string>();
+  let mutationAuditContext:
+    | {
+        input: Extract<
+          z.infer<typeof googleCalendarRuntimeInputSchema>,
+          { operation: "events.create" | "events.update" | "events.delete" }
+        >;
+        connectionId: string;
+        accountId: string | null;
+        projectId: string;
+        capability: string;
+        loggingMode: string;
+        runtimeApprovalId: string;
+      }
+    | null = null;
   try {
     ticket = verifyEnvironmentExecutionTicket({
       token: readBearer(request.headers.get("authorization")),
@@ -66,7 +85,6 @@ export async function POST(request: Request) {
       );
     }
     if (
-      input.operation !== "events.list" &&
       input.operation !== "availability.subjects" &&
       input.operation !== "availability.query" &&
       runtimeApprovalId !== null
@@ -102,6 +120,21 @@ export async function POST(request: Request) {
           payload: input,
         },
       });
+      if (
+        input.operation === "events.create" ||
+        input.operation === "events.update" ||
+        input.operation === "events.delete"
+      ) {
+        mutationAuditContext = {
+          input,
+          connectionId: policy.connection.id,
+          accountId: policy.connection.externalAccountId,
+          projectId: policy.projectId,
+          capability,
+          loggingMode: policy.loggingMode,
+          runtimeApprovalId,
+        };
+      }
     }
 
     let result: unknown;
@@ -161,12 +194,40 @@ export async function POST(request: Request) {
       });
       connectionIdsUsed.add(policy.connection.id);
       if (input.operation === "events.list") {
-        result = await listGoogleCalendarEvents({
+        if (!policy.connection.externalAccountId) {
+          throw new GoogleCalendarPolicyError("GOOGLE_CALENDAR_ACCOUNT_DENIED");
+        }
+        const cursorContext = {
+          accountId: policy.connection.externalAccountId,
+          projectId: policy.projectId,
+          timeMin: input.timeMin,
+          timeMax: input.timeMax,
+          maxResults: input.maxResults,
+        };
+        const pageToken = input.cursor === undefined
+          ? undefined
+          : readGoogleCalendarPageCursor({
+              secret: googleCalendarCursorSecret(),
+              cursor: input.cursor,
+              context: cursorContext,
+            }).pageToken;
+        const page = await listGoogleCalendarEvents({
           accessToken,
           timeMin: input.timeMin,
           timeMax: input.timeMax,
           maxResults: input.maxResults,
+          ...(pageToken === undefined ? {} : { pageToken }),
         });
+        result = {
+          events: page.events,
+          nextCursor: page.nextPageToken === null
+            ? null
+            : createGoogleCalendarPageCursor({
+                secret: googleCalendarCursorSecret(),
+                context: cursorContext,
+                pageToken: page.nextPageToken,
+              }),
+        };
       } else if (input.operation === "events.create") {
         result = await createGoogleCalendarEvent({
           accessToken,
@@ -206,6 +267,7 @@ export async function POST(request: Request) {
         ...(runtimeApprovalId === null ? {} : { runtimeApprovalId }),
         loggingMode: policy.loggingMode,
         subjectCount,
+        ...googleCalendarMutationAuditMetadata({ input, result }),
       },
     });
     return NextResponse.json(
@@ -226,6 +288,11 @@ export async function POST(request: Request) {
       );
     }
     if (error instanceof GoogleCalendarProviderError) {
+      await recordGoogleCalendarMutationFailure({
+        ticket,
+        context: mutationAuditContext,
+        error,
+      });
       if (error.reconnectRequired) {
         await Promise.all(
           [...connectionIdsUsed].map((connectionId) =>
@@ -241,6 +308,7 @@ export async function POST(request: Request) {
           error: {
             code: error.code,
             reconnectRequired: error.reconnectRequired,
+            outcomeUnknown: error.outcomeUnknown,
           },
         },
         { status: error.status }
@@ -250,9 +318,103 @@ export async function POST(request: Request) {
   }
 }
 
+function googleCalendarMutationAuditMetadata(input: {
+  input: z.infer<typeof googleCalendarRuntimeInputSchema>;
+  result: unknown;
+  mutationOutcome?: "confirmed" | "rejected" | "outcome_unknown";
+  providerErrorCode?: string;
+}) {
+  if (input.input.operation === "events.create" || input.input.operation === "events.update") {
+    const result = input.result as { id?: unknown; updatedAt?: unknown; attendees?: unknown };
+    const eventInput = input.input.operation === "events.create"
+      ? input.input.event
+      : input.input.patch;
+    return {
+      mutationOutcome: input.mutationOutcome ?? "confirmed",
+      ...(typeof result.id === "string" ? { eventId: result.id } : {}),
+      ...(typeof result.updatedAt === "string" ? { updatedAt: result.updatedAt } : {}),
+      ...(Array.isArray(result.attendees)
+        ? { attendeeCount: result.attendees.length }
+        : Array.isArray(eventInput.attendees)
+          ? { attendeeCount: eventInput.attendees.length }
+          : {}),
+      notifyAttendees: input.input.notifyAttendees,
+      ...(input.providerErrorCode === undefined
+        ? {}
+        : { providerErrorCode: input.providerErrorCode }),
+    };
+  }
+  if (input.input.operation === "events.delete") {
+    return {
+      mutationOutcome: input.mutationOutcome ?? "confirmed",
+      eventId: input.input.eventId,
+      notifyAttendees: input.input.notifyAttendees,
+      ...(input.providerErrorCode === undefined
+        ? {}
+        : { providerErrorCode: input.providerErrorCode }),
+    };
+  }
+  return {};
+}
+
+async function recordGoogleCalendarMutationFailure(input: {
+  ticket: EnvironmentExecutionTicket | null;
+  context: {
+    input: Extract<
+      z.infer<typeof googleCalendarRuntimeInputSchema>,
+      { operation: "events.create" | "events.update" | "events.delete" }
+    >;
+    connectionId: string;
+    accountId: string | null;
+    projectId: string;
+    capability: string;
+    loggingMode: string;
+    runtimeApprovalId: string;
+  } | null;
+  error: GoogleCalendarProviderError;
+}) {
+  if (!input.ticket || !input.context) return;
+  await logAdminEvent({
+    organizationId: input.ticket.organizationId,
+    actorUserId: input.ticket.actorId,
+    category: "environment-tools",
+    action: `google_calendar.${input.context.input.operation}`,
+    targetType: "environment",
+    targetId: input.ticket.environmentId,
+    message: `Google Calendar ${input.context.input.operation} failed.`,
+    metadata: {
+      workspaceId: input.ticket.workspaceId,
+      threadId: input.ticket.threadId,
+      runId: input.ticket.runId,
+      agentId: input.ticket.agentId,
+      capability: input.context.capability,
+      loggingMode: input.context.loggingMode,
+      accountId: input.context.accountId,
+      connectionId: input.context.connectionId,
+      projectId: input.context.projectId,
+      runtimeApprovalId: input.context.runtimeApprovalId,
+      providerStatus: input.error.status,
+      ...googleCalendarMutationAuditMetadata({
+        input: input.context.input,
+        result: { status: "FAILED", errorCode: input.error.code },
+        mutationOutcome: input.error.outcomeUnknown ? "outcome_unknown" : "rejected",
+        providerErrorCode: input.error.code,
+      }),
+    },
+  }).catch(() => {});
+}
+
 function readApprovalId(value: string | null) {
   const normalized = value?.trim();
   return normalized && normalized.length <= 200 ? normalized : null;
+}
+
+function googleCalendarCursorSecret() {
+  const secret = process.env.KESTREL_GOOGLE_CALENDAR_CURSOR_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new GoogleCalendarPolicyError("GOOGLE_CALENDAR_CURSOR_UNAVAILABLE", 503);
+  }
+  return secret;
 }
 
 async function getConnectionAccessToken(input: {
