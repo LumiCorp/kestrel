@@ -9,7 +9,7 @@ note. Take a screenshot when the screen does not match the expected result.
 
 ## 1. Start Kestrel One
 
-- [ ] Open a terminal in the `kestrel-harness` folder and run:
+- [ ] Open a terminal at the repository root and run:
 
   ```bash
   pnpm --filter @kestrel/kestrel-one dev:all
@@ -323,7 +323,7 @@ Kestrel's final summary.
       result.
 - [ ] Save screenshots and the Kestrel terminal output for every failure.
 - [ ] Record the run name, date, and browser.
-- [ ] In the `kestrel-harness` terminal, run `git rev-parse --short HEAD` and
+- [ ] In that terminal, run `git rev-parse --short HEAD` and
       record the commit shown.
 - [ ] If this Project was created only for the smoke, archive or delete it after
       you finish collecting evidence.
