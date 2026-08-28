@@ -40,11 +40,14 @@ test("legacy Platform OAuth settings migration disables invalid rows and preserv
       id, provider, client_id, tenant_or_issuer, enabled, revision, updated_at
     ) VALUES
       ('google-null-tenant', 'google_workspace', 'google-client', NULL, true, 3, ${before}),
+      ('google-null-client', 'google_workspace', NULL, NULL, true, 4, ${before}),
+      ('google-empty-client', 'google_workspace', '', NULL, true, 4, ${before}),
       ('google-blank-client', 'google_workspace', '  ', NULL, true, 4, ${before}),
       ('google-tenant', 'google_workspace', 'google-client', 'legacy-issuer.example.test', true, 5, ${before}),
       ('microsoft-null-tenant', 'microsoft_365', 'microsoft-client', NULL, true, 6, ${before}),
       ('microsoft-organizations', 'microsoft_365', 'microsoft-client', 'organizations', true, 7, ${before}),
       ('microsoft-guid', 'microsoft_365', 'microsoft-client', 'A3A39A57-A605-4DB5-B8C3-A7AF1AD223E7', true, 8, ${before}),
+      ('microsoft-empty-tenant', 'microsoft_365', 'microsoft-client', '', true, 9, ${before}),
       ('microsoft-blank-tenant', 'microsoft_365', 'microsoft-client', ' ', true, 9, ${before}),
       ('microsoft-noncanonical-client', 'microsoft_365', ' microsoft-client ', 'organizations', true, 10, ${before})
   `;
@@ -73,9 +76,12 @@ test("legacy Platform OAuth settings migration disables invalid rows and preserv
   `;
   const byId = new Map(rows.map((row) => [row.id, row]));
   const invalidExpectedRevisions = new Map([
+    ["google-null-client", 5],
+    ["google-empty-client", 5],
     ["google-blank-client", 5],
     ["google-tenant", 6],
     ["microsoft-blank-tenant", 10],
+    ["microsoft-empty-tenant", 10],
     ["microsoft-noncanonical-client", 11],
   ]);
   for (const [id, revision] of invalidExpectedRevisions) {
@@ -101,5 +107,7 @@ test("legacy Platform OAuth settings migration disables invalid rows and preserv
   }
 
   assert.equal(byId.get("google-blank-client")?.clientId, "  ");
+  assert.equal(byId.get("google-empty-client")?.clientId, "");
   assert.equal(byId.get("microsoft-blank-tenant")?.tenantOrIssuer, " ");
+  assert.equal(byId.get("microsoft-empty-tenant")?.tenantOrIssuer, "");
 });
