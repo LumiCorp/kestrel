@@ -124,6 +124,30 @@ const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
     ],
     ["Organization email always requires approval for each send."],
   ),
+  "google_workspace.send_gmail": presenter(
+    "Send a Gmail message",
+    "Review the exact Gmail message and Thread-file revisions before it is sent.",
+    [
+      ["__kestrelGmailPrepared.envelope.to", "To", "string_list"],
+      ["__kestrelGmailPrepared.envelope.cc", "Cc", "string_list"],
+      ["__kestrelGmailPrepared.envelope.subject", "Subject"],
+      ["__kestrelGmailPrepared.envelope.text", "Message"],
+      ["__kestrelGmailPrepared.attachments", "Attachments", "json_string_list"],
+    ],
+    ["Gmail sends require approval for this exact prepared message."],
+  ),
+  "google_workspace.reply_gmail": presenter(
+    "Reply with Gmail",
+    "Review the provider-resolved recipient, thread, message, and Thread-file revisions before sending.",
+    [
+      ["__kestrelGmailPrepared.envelope.threadId", "Thread"],
+      ["__kestrelGmailPrepared.envelope.to", "To", "string_list"],
+      ["__kestrelGmailPrepared.envelope.subject", "Subject"],
+      ["__kestrelGmailPrepared.envelope.text", "Message"],
+      ["__kestrelGmailPrepared.attachments", "Attachments", "json_string_list"],
+    ],
+    ["Gmail supplies the reply recipient and RFC reply headers from the selected message."],
+  ),
   "kestrel_one.google_calendar_create_event": presenter(
     "Create a calendar event",
     "Create an event in Google Calendar.",
@@ -435,10 +459,7 @@ function displayValue(
       : "Configured selection";
   }
   if (format === "json_string_list") {
-    return Array.isArray(value) &&
-      value.every((item): item is string => typeof item === "string")
-      ? JSON.stringify(value)
-      : "Configured selection";
+    return Array.isArray(value) ? JSON.stringify(value) : "Configured selection";
   }
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean")

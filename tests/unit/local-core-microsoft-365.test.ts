@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 
 import { MemoryLocalCoreCredentialStore } from "../../src/localCore/credentialStore.js";
 import { LocalCoreMicrosoft365OAuthSessionManager } from "../../src/localCore/microsoft365OAuthSessions.js";
-import { LocalCoreMicrosoft365Service } from "../../src/localCore/microsoft365Service.js";
+import {
+  LocalCoreMicrosoft365Service,
+  Microsoft365TeamsSendError,
+} from "../../src/localCore/microsoft365Service.js";
 
 test("Microsoft 365 OAuth requests only selected pack scopes and stores tokens in Local Core", async () => {
   const store = new MemoryLocalCoreCredentialStore();
@@ -106,6 +109,125 @@ test("Microsoft 365 rejects Teams send before Graph when ChatMessage.Send is abs
   await assert.rejects(
     service.invoke("chat.send", { chatId: "chat-1", content: "Hello" }),
     /has not granted this operation/u,
+  );
+});
+
+test("Microsoft 365 Teams send returns no message content and preserves Graph authorization identity", async () => {
+  const store = new MemoryLocalCoreCredentialStore();
+  await store.set("mcp.standard.microsoft_365.oauth.tokens", JSON.stringify({
+    accessToken: "access",
+    refreshToken: "refresh",
+    expiresAt: Date.now() + 3_600_000,
+    scope: "openid profile email offline_access User.Read ChatMessage.Send",
+  }));
+  const service = new LocalCoreMicrosoft365Service({
+    credentialStore: store,
+    fetchImpl: (async () => Response.json({
+      id: "message-1",
+      chatId: "chat-1",
+      createdDateTime: "2026-08-27T00:00:00Z",
+      body: { content: "private content" },
+    })) as typeof fetch,
+  });
+  assert.deepEqual(
+    await service.invoke("chat.send", { chatId: "chat-1", content: "private content" }),
+    { id: "message-1", chatId: "chat-1", createdAt: "2026-08-27T00:00:00Z" },
+  );
+
+  const denied = new LocalCoreMicrosoft365Service({
+    credentialStore: store,
+    fetchImpl: (async () => Response.json(
+      { error: { code: "Authorization_RequestDenied" } },
+      { status: 403 },
+    )) as typeof fetch,
+  });
+  await assert.rejects(
+    denied.invoke("chat.send", { chatId: "chat-1", content: "Hello" }),
+    (error: unknown) => {
+      assert.ok(error instanceof Microsoft365TeamsSendError);
+      assert.equal(error.code, "MICROSOFT_365_ACCESS_DENIED");
+      assert.equal(error.providerCode, "Authorization_RequestDenied");
+      assert.equal(error.reconnectRequired, false);
+      return true;
+    },
+  );
+});
+
+test("Microsoft 365 message paging never returns a Graph continuation URL", async () => {
+  const store = new MemoryLocalCoreCredentialStore();
+  await store.set("mcp.standard.microsoft_365.oauth.tokens", JSON.stringify({
+    accessToken: "access",
+    refreshToken: "refresh-token-for-message-cursor-tests",
+    expiresAt: Date.now() + 3_600_000,
+    scope: "openid profile email offline_access User.Read Chat.Read",
+  }));
+  const requested: string[] = [];
+  const service = new LocalCoreMicrosoft365Service({
+    credentialStore: store,
+    fetchImpl: (async (input: string | URL | Request) => {
+      requested.push(String(input));
+      return Response.json({
+        value: [{ id: "message-1" }],
+        "@odata.nextLink": "https://graph.microsoft.com/v1.0/chats/chat-1/messages?$skiptoken=provider-secret",
+      });
+    }) as typeof fetch,
+  });
+  const result = await service.invoke("chat.messages.list", {
+    chatId: "chat-1",
+    maxResults: 20,
+  }, { cursorScope: "/projects/a" }) as { items: unknown[]; nextCursor: string | null };
+  assert.equal(result.items.length, 1);
+  assert.equal(typeof result.nextCursor, "string");
+  assert.doesNotMatch(result.nextCursor!, /graph\.microsoft\.com|provider-secret/u);
+  await service.invoke("chat.messages.list", {
+    chatId: "chat-1",
+    maxResults: 20,
+    cursor: result.nextCursor,
+  }, { cursorScope: "/projects/a" });
+  assert.match(requested[1]!, /\$skiptoken=provider-secret/u);
+  await assert.rejects(
+    service.invoke("chat.messages.list", {
+      chatId: "chat-2",
+      maxResults: 20,
+      cursor: result.nextCursor,
+    }, { cursorScope: "/projects/a" }),
+    /does not match/u,
+  );
+  await assert.rejects(
+    service.invoke("chat.messages.list", {
+      chatId: "chat-1",
+      maxResults: 20,
+      cursor: result.nextCursor,
+    }, { cursorScope: "/projects/b" }),
+    /does not match/u,
+  );
+});
+
+test("Microsoft 365 chat paging never returns a Graph continuation URL", async () => {
+  const store = new MemoryLocalCoreCredentialStore();
+  await store.set("mcp.standard.microsoft_365.oauth.tokens", JSON.stringify({
+    accessToken: "access",
+    refreshToken: "refresh-token-for-chat-cursor-tests",
+    expiresAt: Date.now() + 3_600_000,
+    scope: "openid profile email offline_access User.Read Chat.Read",
+  }));
+  const service = new LocalCoreMicrosoft365Service({
+    credentialStore: store,
+    fetchImpl: (async () => Response.json({
+      value: [{ id: "chat-1" }],
+      "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/chats?$skiptoken=provider-secret",
+    })) as typeof fetch,
+  });
+  const result = await service.invoke("chats.list", { maxResults: 20 }) as {
+    items: unknown[];
+    nextCursor: string | null;
+  };
+  assert.equal(result.items.length, 1);
+  assert.equal(typeof result.nextCursor, "string");
+  assert.doesNotMatch(result.nextCursor!, /graph\.microsoft\.com|provider-secret/u);
+  await assert.rejects(
+    service.invoke("chats.list", { maxResults: 21, cursor: result.nextCursor }),
+    /does not match/u,
   );
 });
 

@@ -7,77 +7,134 @@ import {
   getDesktopStandardAppConnection,
 } from "../../src/desktopShell/standardAppConnections.js";
 import { GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS } from "../../src/apps/googleWorkspace.js";
+import {
+  GOOGLE_WORKSPACE_PACK_SCOPES,
+  scopesForGoogleWorkspacePacks,
+} from "../../src/apps/googleWorkspace.js";
 import { MICROSOFT_365_OPERATION_DESCRIPTORS } from "../../src/apps/microsoft365.js";
 import { hostedMutationOperationKey } from "../../apps/web/lib/apps/hosted-app-operation-identity.js";
-import { MICROSOFT_365_PACKS, scopesForMicrosoft365Packs } from "../../apps/web/lib/integrations/microsoft-365-contract.js";
+import {
+  MICROSOFT_365_PACKS,
+  scopesForMicrosoft365Packs,
+} from "../../apps/web/lib/integrations/microsoft-365-contract.js";
 import { GOOGLE_CALENDAR_SCOPES } from "../../apps/web/lib/integrations/google-calendar-contract.js";
 
-test(
-  "Desktop and Kestrel One share official Notion and Slack connection contracts",
-  () => {
-    for (const appId of ["notion", "slack"] as const) {
-      const desktop = getDesktopStandardAppConnection(appId);
-      const hosted = getOfficialRemoteOauthApp(appId);
-      assert.equal(desktop?.kind, "authorization");
-      assert.equal(desktop?.url, hosted?.remoteUrl);
-    }
+test("Desktop and Kestrel One share official Notion and Slack connection contracts", () => {
+  for (const appId of ["notion", "slack"] as const) {
+    const desktop = getDesktopStandardAppConnection(appId);
+    const hosted = getOfficialRemoteOauthApp(appId);
+    assert.equal(desktop?.kind, "authorization");
+    assert.equal(desktop?.url, hosted?.remoteUrl);
+  }
 
-    const desktopSlack = getDesktopStandardAppConnection("slack");
-    const hostedSlack = getOfficialRemoteOauthApp("slack");
-    assert.equal(desktopSlack?.kind, "authorization");
-    if (desktopSlack?.kind !== "authorization") return;
-    assert.deepEqual(
-      desktopSlack.capabilityPackScopes,
-      hostedSlack?.capabilityPackScopes,
-    );
-  },
-);
+  const desktopSlack = getDesktopStandardAppConnection("slack");
+  const hostedSlack = getOfficialRemoteOauthApp("slack");
+  assert.equal(desktopSlack?.kind, "authorization");
+  if (desktopSlack?.kind !== "authorization") return;
+  assert.deepEqual(
+    desktopSlack.capabilityPackScopes,
+    hostedSlack?.capabilityPackScopes,
+  );
+});
 
-test(
-  "Desktop native App write approvals are explicit capability contracts",
-  () => {
-    assert.equal(
-      desktopStandardAppToolRequiresApproval(
-        "google_workspace",
-        "google_workspace.create_event",
-      ),
-      true,
-    );
-    assert.equal(
-      desktopStandardAppToolRequiresApproval(
-        "microsoft_365",
-        "microsoft_365.send_mail",
-      ),
-      true,
-    );
-    assert.equal(
-      desktopStandardAppToolRequiresApproval(
-        "microsoft_365",
-        "microsoft_365.list_mail",
-      ),
-      false,
-    );
-  },
-);
+test("Desktop native App write approvals are explicit capability contracts", () => {
+  assert.equal(
+    desktopStandardAppToolRequiresApproval(
+      "google_workspace",
+      "google_workspace.create_event",
+    ),
+    true,
+  );
+  assert.equal(
+    desktopStandardAppToolRequiresApproval(
+      "microsoft_365",
+      "microsoft_365.send_mail",
+    ),
+    true,
+  );
+  assert.equal(
+    desktopStandardAppToolRequiresApproval(
+      "microsoft_365",
+      "microsoft_365.list_mail",
+    ),
+    false,
+  );
+});
 
-test("Desktop and Kestrel One share the Google Workspace Calendar scope contract", () => {
+test("Desktop and Kestrel One share the Google Workspace pack scope contract", () => {
   const desktop = getDesktopStandardAppConnection("google_workspace");
   assert.equal(desktop?.kind, "authorization");
   if (desktop?.kind !== "authorization") return;
   assert.equal(desktop.runtime, "native");
   const desktopScopes = desktop.capabilityPackScopes?.calendar ?? [];
-  for (const scope of GOOGLE_CALENDAR_SCOPES) assert.ok(desktopScopes.includes(scope));
-  assert.deepEqual(Object.keys(desktop.capabilityPackScopes ?? {}), ["calendar"]);
+  for (const scope of GOOGLE_CALENDAR_SCOPES)
+    assert.ok(desktopScopes.includes(scope));
+  assert.deepEqual(
+    Object.keys(desktop.capabilityPackScopes ?? {}),
+    Object.keys(GOOGLE_WORKSPACE_PACK_SCOPES),
+  );
+  for (const pack of Object.keys(GOOGLE_WORKSPACE_PACK_SCOPES) as Array<
+    keyof typeof GOOGLE_WORKSPACE_PACK_SCOPES
+  >) {
+    assert.deepEqual(
+      new Set(desktop.capabilityPackScopes?.[pack]),
+      new Set(scopesForGoogleWorkspacePacks([pack])),
+    );
+  }
   assert.deepEqual(
     desktop.capabilityPackTools?.calendar,
-    GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.map(
+    GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.filter(
+      (operation) => operation.pack === "calendar",
+    ).map(
       (operation) => operation.desktopToolName,
     ),
   );
   for (const operation of GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS) {
+    const desktopExposesOperation =
+      operation.pack === "calendar" || operation.pack === "gmail";
     assert.equal(
       desktopStandardAppToolRequiresApproval(
         "google_workspace",
+        operation.desktopToolName,
+      ),
+      desktopExposesOperation && operation.minimumApprovalMode === "ask",
+    );
+    if (operation.sideEffect === "external_side_effect") {
+      assert.equal(
+        hostedMutationOperationKey(operation.hostedToolName),
+        operation.serviceOperation,
+      );
+    }
+  }
+});
+
+test("Desktop and Kestrel One share the Microsoft 365 capability and least-scope contract", () => {
+  const desktop = getDesktopStandardAppConnection("microsoft_365");
+  assert.equal(desktop?.kind, "authorization");
+  if (desktop?.kind !== "authorization") return;
+  assert.equal(desktop.runtime, "native");
+  assert.deepEqual(
+    Object.keys(desktop.capabilityPackScopes ?? {}),
+    Object.keys(MICROSOFT_365_PACKS),
+  );
+  for (const pack of Object.keys(MICROSOFT_365_PACKS) as Array<
+    keyof typeof MICROSOFT_365_PACKS
+  >) {
+    assert.deepEqual(
+      new Set(desktop.capabilityPackScopes?.[pack]),
+      new Set(scopesForMicrosoft365Packs([pack])),
+    );
+  }
+  assert.deepEqual(
+    desktop.capabilityPackTools?.teams,
+    MICROSOFT_365_OPERATION_DESCRIPTORS.map(
+      (operation) => operation.desktopToolName,
+    ),
+  );
+  for (const operation of MICROSOFT_365_OPERATION_DESCRIPTORS) {
+    assert.equal(
+      desktopStandardAppToolRequiresApproval(
+        "microsoft_365",
         operation.desktopToolName,
       ),
       operation.minimumApprovalMode === "ask",
@@ -91,57 +148,20 @@ test("Desktop and Kestrel One share the Google Workspace Calendar scope contract
   }
 });
 
-test(
-  "Desktop and Kestrel One share the Microsoft 365 capability and least-scope contract",
-  () => {
-    const desktop = getDesktopStandardAppConnection("microsoft_365");
-    assert.equal(desktop?.kind, "authorization");
-    if (desktop?.kind !== "authorization") return;
-    assert.equal(desktop.runtime, "native");
-    assert.deepEqual(Object.keys(desktop.capabilityPackScopes ?? {}), Object.keys(MICROSOFT_365_PACKS));
-    for (const pack of Object.keys(MICROSOFT_365_PACKS) as Array<keyof typeof MICROSOFT_365_PACKS>) {
-      assert.deepEqual(
-        new Set(desktop.capabilityPackScopes?.[pack]),
-        new Set(scopesForMicrosoft365Packs([pack])),
-      );
-    }
-    assert.deepEqual(
-      desktop.capabilityPackTools?.teams,
-      MICROSOFT_365_OPERATION_DESCRIPTORS.map(
-        (operation) => operation.desktopToolName,
-      ),
-    );
-    for (const operation of MICROSOFT_365_OPERATION_DESCRIPTORS) {
-      assert.equal(
-        desktopStandardAppToolRequiresApproval(
-          "microsoft_365",
-          operation.desktopToolName,
-        ),
-        operation.minimumApprovalMode === "ask",
-      );
-      if (operation.minimumApprovalMode === "ask") {
-        assert.equal(
-          hostedMutationOperationKey(operation.hostedToolName),
-          operation.serviceOperation,
-        );
-      }
-    }
-  },
-);
-
-test(
-  "Desktop Vercel uses the official OAuth App endpoint with local capability narrowing",
-  () => {
-    const desktop = getDesktopStandardAppConnection("vercel");
-    assert.equal(desktop?.kind, "authorization");
-    assert.equal(desktop?.url, "https://mcp.vercel.com");
-    if (desktop?.kind !== "authorization") return;
-    assert.deepEqual(Object.keys(desktop.capabilityPackTools ?? {}), [
-      "projects",
-      "deployments",
-      "operations",
-    ]);
-    assert.ok(desktop.capabilityPackTools?.operations?.includes("get_runtime_logs"));
-    assert.ok(desktop.capabilityPackTools?.deployments?.includes("deploy_to_vercel"));
-  },
-);
+test("Desktop Vercel uses the official OAuth App endpoint with local capability narrowing", () => {
+  const desktop = getDesktopStandardAppConnection("vercel");
+  assert.equal(desktop?.kind, "authorization");
+  assert.equal(desktop?.url, "https://mcp.vercel.com");
+  if (desktop?.kind !== "authorization") return;
+  assert.deepEqual(Object.keys(desktop.capabilityPackTools ?? {}), [
+    "projects",
+    "deployments",
+    "operations",
+  ]);
+  assert.ok(
+    desktop.capabilityPackTools?.operations?.includes("get_runtime_logs"),
+  );
+  assert.ok(
+    desktop.capabilityPackTools?.deployments?.includes("deploy_to_vercel"),
+  );
+});

@@ -8,6 +8,7 @@ import {
   microsoft365OperationDescriptor,
 } from "../../src/apps/microsoft365.js";
 import {
+  GOOGLE_WORKSPACE_BASE_SCOPES,
   GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS,
   GOOGLE_WORKSPACE_PACK_SCOPES,
   googleWorkspaceMinimumApprovalMode,
@@ -27,6 +28,20 @@ test("the canonical Teams operations map scopes, tools, and service methods", ()
       serviceOperation: "chats.list",
       desktopToolName: "microsoft_365.list_chats",
       hostedToolName: "kestrel_one.microsoft_365_list_chats",
+      sideEffect: "read",
+      minimumApprovalMode: "auto",
+    },
+    {
+      id: "teams.chat.messages.read",
+      inputContractId: "microsoft365.teams.chat.messages.list.input.v1",
+      resultContractId: "microsoft365.teams.chat.messages.list.result.v1",
+      approvalResourceSelector: "chat.input.chatId",
+      auditIdentity: "microsoft365.teams.chat.messages.list",
+      pack: "teams",
+      requiredScopes: ["Chat.Read"],
+      serviceOperation: "chat.messages.list",
+      desktopToolName: "microsoft_365.list_chat_messages",
+      hostedToolName: "kestrel_one.microsoft_365_list_chat_messages",
       sideEffect: "read",
       minimumApprovalMode: "auto",
     },
@@ -69,7 +84,9 @@ test("the canonical Calendar operations require approval for every mutation", ()
     assert.ok(descriptor.approvalResourceSelector.length > 0);
   }
   assert.deepEqual(
-    GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.map(
+    GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.filter(
+      (descriptor) => descriptor.pack === "calendar",
+    ).map(
       (descriptor) => descriptor.desktopToolName,
     ),
     [
@@ -81,19 +98,49 @@ test("the canonical Calendar operations require approval for every mutation", ()
   );
 });
 
-test("deferred Microsoft packs and existing Google pack scopes remain unchanged", () => {
+test("the canonical Gmail operations retain distinct readonly and approval-required contracts", () => {
+  const gmail = GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.filter(
+    (descriptor) => descriptor.pack === "gmail",
+  );
+  assert.deepEqual(
+    gmail.map((descriptor) => descriptor.serviceOperation),
+    [
+      "gmail.messages.search",
+      "gmail.messages.get",
+      "gmail.threads.get",
+      "gmail.attachments.import",
+      "gmail.messages.send",
+      "gmail.messages.reply",
+    ],
+  );
+  for (const descriptor of gmail.filter((descriptor) => descriptor.sideEffect === "read")) {
+    assert.equal(descriptor.sideEffect, "read");
+    assert.equal(descriptor.minimumApprovalMode, "auto");
+    assert.deepEqual(descriptor.requiredScopes, [
+      "https://www.googleapis.com/auth/gmail.readonly",
+    ]);
+  }
+  for (const descriptor of gmail.filter((descriptor) => descriptor.sideEffect === "external_side_effect")) {
+    assert.equal(descriptor.minimumApprovalMode, "ask");
+    assert.deepEqual(descriptor.requiredScopes, ["https://www.googleapis.com/auth/gmail.send"]);
+  }
+});
+
+test("deferred Microsoft packs and Google resource scopes remain explicit", () => {
   assert.deepEqual(MICROSOFT_365_PACK_SCOPES.outlook, [
     "Mail.Read",
     "Mail.Send",
     "Calendars.Read",
   ]);
   assert.deepEqual(MICROSOFT_365_PACK_SCOPES.sharepoint, ["Sites.Read.All"]);
+  assert.deepEqual(GOOGLE_WORKSPACE_BASE_SCOPES, ["openid", "email", "profile"]);
   assert.deepEqual(GOOGLE_WORKSPACE_PACK_SCOPES.calendar, [
-    "openid",
-    "email",
-    "profile",
     "https://www.googleapis.com/auth/calendar.events.owned",
     "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
     "https://www.googleapis.com/auth/calendar.events.freebusy",
+  ]);
+  assert.deepEqual(GOOGLE_WORKSPACE_PACK_SCOPES.gmail, [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
   ]);
 });

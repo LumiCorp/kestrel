@@ -7,6 +7,17 @@ import {
   resourceScopesForMicrosoft365Packs,
   type Microsoft365Pack,
 } from "../apps/microsoft365.js";
+import {
+  createMicrosoft365ChatMessagesCursor,
+  createMicrosoft365TeamsCursor,
+  readMicrosoft365ChatMessagesCursor,
+  readMicrosoft365TeamsCursor,
+} from "../apps/microsoft365Paging.js";
+import { createHash } from "node:crypto";
+import {
+  normalizeMicrosoft365TeamsChats,
+  normalizeMicrosoft365TeamsMessages,
+} from "../apps/microsoft365Teams.js";
 import type {
   LocalCoreCredentialId,
   LocalCoreCredentialStore,
@@ -22,6 +33,27 @@ export interface StoredMicrosoft365Tokens {
   refreshToken: string;
   expiresAt: number;
   scope: string;
+}
+
+export class Microsoft365TeamsSendError extends Error {
+  readonly code: string;
+  readonly outcomeUnknown: boolean;
+  readonly reconnectRequired: boolean;
+  readonly providerCode: string | undefined;
+
+  constructor(input: {
+    code: string;
+    outcomeUnknown?: boolean;
+    reconnectRequired?: boolean;
+    providerCode?: string;
+  }) {
+    super(input.code);
+    this.name = "Microsoft365TeamsSendError";
+    this.code = input.code;
+    this.outcomeUnknown = input.outcomeUnknown ?? false;
+    this.reconnectRequired = input.reconnectRequired ?? false;
+    this.providerCode = input.providerCode;
+  }
 }
 
 export class LocalCoreMicrosoft365Service implements Microsoft365ServicePort {
@@ -42,6 +74,7 @@ export class LocalCoreMicrosoft365Service implements Microsoft365ServicePort {
   async invoke(
     operation: Microsoft365Operation,
     input: Record<string, unknown>,
+    options: { cursorScope?: string | undefined } = {},
   ): Promise<unknown> {
     const tokens = await readTokens(this.#credentialStore);
     if (!microsoft365OperationHasRequiredScopes({
@@ -83,16 +116,100 @@ export class LocalCoreMicrosoft365Service implements Microsoft365ServicePort {
       return await this.#collection(accessToken, url);
     }
     if (operation === "chats.list") {
-      const chatId = optionalString(input.chatId);
-      const url = graphUrl(chatId ? `/chats/${encodeURIComponent(chatId)}/messages` : "/me/chats");
-      url.searchParams.set("$top", String(integer(input.maxResults, 20, 1, 50)));
-      return await this.#collection(accessToken, url);
+      const maxResults = integer(input.maxResults, 20, 1, 50);
+      const cursorContext = {
+        accountId: localAccountId(tokens),
+        projectId: localProjectScopeId(options.cursorScope),
+        operation: "chats.list" as const,
+        maxResults,
+      };
+      const nextLink = optionalString(input.cursor) === undefined
+        ? undefined
+        : readMicrosoft365TeamsCursor({
+            secret: localCursorSecret(tokens),
+            cursor: string(input.cursor, "cursor"),
+            context: cursorContext,
+            now: this.#now(),
+          }).nextLink;
+      const url = graphUrl("/me/chats");
+      if (nextLink === undefined) {
+        url.searchParams.set("$top", String(maxResults));
+        url.searchParams.set(
+          "$select",
+          "id,topic,chatType,createdDateTime,lastUpdatedDateTime,webUrl,members",
+        );
+        url.searchParams.set("$expand", "members");
+      }
+      const result = await this.#collection(
+        accessToken,
+        nextLink === undefined ? url : new URL(nextLink),
+      );
+      return {
+        items: normalizeMicrosoft365TeamsChats(result.items),
+        nextCursor:
+          result.nextPage === null
+            ? null
+            : createMicrosoft365TeamsCursor({
+                secret: localCursorSecret(tokens),
+                context: cursorContext,
+                nextLink: result.nextPage,
+                now: this.#now(),
+              }),
+      };
+    }
+    if (operation === "chat.messages.list") {
+      const chatId = string(input.chatId, "chatId");
+      const maxResults = integer(input.maxResults, 20, 1, 50);
+      const cursorContext = {
+        accountId: localAccountId(tokens),
+        // The Desktop App catalog is Project-scoped before a tool can invoke
+        // this service. Bind to its runtime-provided project scope without
+        // preserving or exposing the workspace path in the cursor.
+        projectId: localProjectScopeId(options.cursorScope),
+        chatId,
+        maxResults,
+      };
+      const nextLink = optionalString(input.cursor) === undefined
+        ? undefined
+        : readMicrosoft365ChatMessagesCursor({
+            secret: localCursorSecret(tokens),
+            cursor: string(input.cursor, "cursor"),
+            context: cursorContext,
+            now: this.#now(),
+          }).nextLink;
+      const url = graphUrl(
+        `/chats/${encodeURIComponent(chatId)}/messages`,
+      );
+      if (nextLink === undefined) {
+        url.searchParams.set("$top", String(maxResults));
+        url.searchParams.set(
+          "$select",
+          "id,chatId,createdDateTime,lastModifiedDateTime,from,body",
+        );
+      }
+      const result = await this.#collection(
+        accessToken,
+        nextLink === undefined ? url : new URL(nextLink),
+      );
+      return {
+        items: normalizeMicrosoft365TeamsMessages({ chatId, items: result.items }),
+        nextCursor:
+          result.nextPage === null
+            ? null
+            : createMicrosoft365ChatMessagesCursor({
+                secret: localCursorSecret(tokens),
+                context: cursorContext,
+                nextLink: result.nextPage,
+                now: this.#now(),
+              }),
+      };
     }
     if (operation === "chat.send") {
-      return await this.#request(
+      const chatId = string(input.chatId, "chatId");
+      return await this.#sendTeamsMessage(
         accessToken,
-        graphUrl(`/chats/${encodeURIComponent(string(input.chatId, "chatId"))}/messages`),
-        { method: "POST", body: { body: { contentType: "text", content: string(input.content, "content") } } },
+        graphUrl(`/chats/${encodeURIComponent(chatId)}/messages`),
+        { body: { contentType: "text", content: string(input.content, "content") } },
       );
     }
     const url = graphUrl("/sites");
@@ -153,6 +270,52 @@ export class LocalCoreMicrosoft365Service implements Microsoft365ServicePort {
     };
   }
 
+  async #sendTeamsMessage(
+    accessToken: string,
+    url: URL,
+    input: { body: unknown },
+  ) {
+    let response: Response;
+    try {
+      response = await this.#fetch(url, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(input.body),
+      });
+    } catch {
+      throw new Microsoft365TeamsSendError({
+        code: "MICROSOFT_365_OUTCOME_UNKNOWN",
+        outcomeUnknown: true,
+      });
+    }
+    if (!response.ok) throw await teamsSendProviderError(response);
+    const result = await response.json().catch(() => {
+      throw new Microsoft365TeamsSendError({
+        code: "MICROSOFT_365_OUTCOME_UNKNOWN",
+        outcomeUnknown: true,
+      });
+    });
+    try {
+      const record = object(result, "Microsoft Teams send response");
+      return {
+        id: string(record.id, "Microsoft Teams message id"),
+        chatId: string(record.chatId, "Microsoft Teams chat id"),
+        createdAt:
+          typeof record.createdDateTime === "string"
+            ? record.createdDateTime
+            : null,
+      };
+    } catch {
+      throw new Microsoft365TeamsSendError({
+        code: "MICROSOFT_365_OUTCOME_UNKNOWN",
+        outcomeUnknown: true,
+      });
+    }
+  }
+
   async #request(
     accessToken: string,
     url: URL,
@@ -175,6 +338,64 @@ export class LocalCoreMicrosoft365Service implements Microsoft365ServicePort {
     if (response.status === 202 || response.status === 204) return {};
     return await response.json();
   }
+}
+
+async function teamsSendProviderError(response: Response) {
+  const providerCode = await response
+    .json()
+    .then((body: unknown) => {
+      const error = body && typeof body === "object" && "error" in body
+        ? (body as { error?: unknown }).error
+        : undefined;
+      return error && typeof error === "object" && "code" in error &&
+          typeof (error as { code?: unknown }).code === "string"
+        ? (error as { code: string }).code
+        : undefined;
+    })
+    .catch(() => undefined);
+  if (response.status === 401) {
+    return new Microsoft365TeamsSendError({
+      code: "MICROSOFT_365_RECONNECT_REQUIRED",
+      reconnectRequired: true,
+      ...(providerCode === undefined ? {} : { providerCode }),
+    });
+  }
+  if (response.status === 403) {
+    return new Microsoft365TeamsSendError({
+      code: "MICROSOFT_365_ACCESS_DENIED",
+      ...(providerCode === undefined ? {} : { providerCode }),
+    });
+  }
+  if (response.status === 429) {
+    return new Microsoft365TeamsSendError({
+      code: "MICROSOFT_365_RATE_LIMITED",
+      ...(providerCode === undefined ? {} : { providerCode }),
+    });
+  }
+  if (response.status >= 500) {
+    return new Microsoft365TeamsSendError({
+      code: "MICROSOFT_365_UNAVAILABLE",
+      ...(providerCode === undefined ? {} : { providerCode }),
+    });
+  }
+  return new Microsoft365TeamsSendError({
+    code: "MICROSOFT_365_PROVIDER_REJECTED",
+    ...(providerCode === undefined ? {} : { providerCode }),
+  });
+}
+
+function localCursorSecret(tokens: StoredMicrosoft365Tokens) {
+  return createHash("sha256").update(tokens.refreshToken).digest("base64url");
+}
+
+function localAccountId(tokens: StoredMicrosoft365Tokens) {
+  return createHash("sha256").update(tokens.refreshToken).digest("hex");
+}
+
+function localProjectScopeId(scope: string | undefined) {
+  return createHash("sha256")
+    .update(scope?.trim() || "local-core-desktop")
+    .digest("hex");
 }
 
 export async function readTokens(store: LocalCoreCredentialStore): Promise<StoredMicrosoft365Tokens> {

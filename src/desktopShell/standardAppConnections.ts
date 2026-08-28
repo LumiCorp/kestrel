@@ -34,9 +34,7 @@ export interface DesktopStandardAppAuthorizationConnectionDefinition extends Des
   capabilityPackScopes?:
     | Readonly<Record<string, readonly string[]>>
     | undefined;
-  capabilityPackTools?:
-    | Readonly<Record<string, readonly string[]>>
-    | undefined;
+  capabilityPackTools?: Readonly<Record<string, readonly string[]>> | undefined;
   capabilityPackRequiredTools?:
     | Readonly<Record<string, readonly string[]>>
     | undefined;
@@ -48,13 +46,26 @@ export type DesktopStandardAppConnectionDefinition =
   | DesktopStandardAppAuthorizationConnectionDefinition;
 
 const GOOGLE_CALENDAR_DESKTOP_TOOLS = Object.freeze(
-  GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.map(
+  GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.filter(
+    (operation) => operation.pack === "calendar",
+  ).map(
     (operation) => operation.desktopToolName,
   ),
 );
 const GOOGLE_CALENDAR_APPROVAL_TOOLS = Object.freeze(
   GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.filter(
-    (operation) => operation.minimumApprovalMode === "ask",
+    (operation) =>
+      operation.pack === "calendar" && operation.minimumApprovalMode === "ask",
+  ).map((operation) => operation.desktopToolName),
+);
+/**
+ * Gmail content remains fail-closed unless its exact model route has qualified
+ * restricted-data evidence. Mutation tools additionally require a provider and
+ * Thread-file preparation before the runtime can bind their approval.
+ */
+const GOOGLE_GMAIL_DESKTOP_TOOLS = Object.freeze(
+  GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.filter(
+    (operation) => operation.pack === "gmail",
   ).map((operation) => operation.desktopToolName),
 );
 const MICROSOFT_TEAMS_DESKTOP_TOOLS = Object.freeze(
@@ -79,14 +90,22 @@ const DESKTOP_STANDARD_APP_CONNECTIONS: readonly DesktopStandardAppConnectionDef
       clientIdEnvironmentVariable: "KESTREL_GOOGLE_WORKSPACE_CLIENT_ID",
       capabilityPackScopes: Object.freeze({
         calendar: Object.freeze(scopesForGoogleWorkspacePacks(["calendar"])),
+        gmail: Object.freeze(scopesForGoogleWorkspacePacks(["gmail"])),
       }),
       capabilityPackTools: Object.freeze({
         calendar: GOOGLE_CALENDAR_DESKTOP_TOOLS,
+        gmail: GOOGLE_GMAIL_DESKTOP_TOOLS,
       }),
       capabilityPackRequiredTools: Object.freeze({
         calendar: GOOGLE_CALENDAR_DESKTOP_TOOLS,
+        gmail: GOOGLE_GMAIL_DESKTOP_TOOLS,
       }),
-      approvalRequiredTools: GOOGLE_CALENDAR_APPROVAL_TOOLS,
+      approvalRequiredTools: Object.freeze([
+        ...GOOGLE_CALENDAR_APPROVAL_TOOLS,
+        ...GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.filter(
+          (operation) => operation.pack === "gmail" && operation.minimumApprovalMode === "ask",
+        ).map((operation) => operation.desktopToolName),
+      ]),
     }),
     Object.freeze({
       appId: KESTREL_APP_IDS.MICROSOFT_365,
@@ -101,12 +120,20 @@ const DESKTOP_STANDARD_APP_CONNECTIONS: readonly DesktopStandardAppConnectionDef
         sharepoint: Object.freeze(scopesForMicrosoft365Packs(["sharepoint"])),
       }),
       capabilityPackTools: Object.freeze({
-        outlook: Object.freeze(["microsoft_365.list_mail", "microsoft_365.send_mail", "microsoft_365.list_events"]),
+        outlook: Object.freeze([
+          "microsoft_365.list_mail",
+          "microsoft_365.send_mail",
+          "microsoft_365.list_events",
+        ]),
         teams: MICROSOFT_TEAMS_DESKTOP_TOOLS,
         sharepoint: Object.freeze(["microsoft_365.search_sites"]),
       }),
       capabilityPackRequiredTools: Object.freeze({
-        outlook: Object.freeze(["microsoft_365.list_mail", "microsoft_365.send_mail", "microsoft_365.list_events"]),
+        outlook: Object.freeze([
+          "microsoft_365.list_mail",
+          "microsoft_365.send_mail",
+          "microsoft_365.list_events",
+        ]),
         teams: MICROSOFT_TEAMS_DESKTOP_TOOLS,
         sharepoint: Object.freeze(["microsoft_365.search_sites"]),
       }),

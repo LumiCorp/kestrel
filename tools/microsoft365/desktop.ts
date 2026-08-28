@@ -22,7 +22,9 @@ function createMicrosoft365DesktopTool(options: {
   readOnly: boolean;
 }): SharedToolModule {
   const canonicalOperation =
-    options.operation === "chats.list" || options.operation === "chat.send"
+    options.operation === "chats.list" ||
+    options.operation === "chat.messages.list" ||
+    options.operation === "chat.send"
       ? microsoft365OperationDescriptor(options.operation)
       : undefined;
   const readOnly = canonicalOperation === undefined
@@ -79,6 +81,11 @@ function createMicrosoft365DesktopTool(options: {
         return await context.microsoft365Service.invoke(
           canonicalOperation?.serviceOperation ?? options.operation,
           parseObjectInput(options.name, input),
+          {
+            ...(context.workspace?.appRoot === undefined
+              ? {}
+              : { cursorScope: context.workspace.appRoot }),
+          },
         );
       };
     },
@@ -92,7 +99,7 @@ export const microsoft365ListMailTool = createMicrosoft365DesktopTool({
   operation: "mail.list",
   family: "outlook",
   readOnly: true,
-  inputSchema: { type: "object", properties: { maxResults: { type: "integer", minimum: 1, maximum: 50, default: 20 } }, additionalProperties: false },
+  inputSchema: { type: "object", properties: { cursor: { type: "string", minLength: 1, maxLength: 4096 }, maxResults: { type: "integer", minimum: 1, maximum: 50, default: 20 } }, additionalProperties: false },
 });
 
 export const microsoft365SendMailTool = createMicrosoft365DesktopTool({
@@ -118,11 +125,21 @@ export const microsoft365ListEventsTool = createMicrosoft365DesktopTool({
 export const microsoft365ListChatsTool = createMicrosoft365DesktopTool({
   name: "microsoft_365.list_chats",
   displayName: "Microsoft 365 List Teams Chats",
-  description: "List Teams chats or messages from one supplied chat ID.",
+  description: "List the connected user's Teams chats.",
   operation: "chats.list",
   family: "teams",
   readOnly: true,
-  inputSchema: { type: "object", properties: { chatId: { type: "string", minLength: 1, maxLength: 512 }, maxResults: { type: "integer", minimum: 1, maximum: 50, default: 20 } }, additionalProperties: false },
+  inputSchema: { type: "object", properties: { cursor: { type: "string", minLength: 1, maxLength: 4096 }, maxResults: { type: "integer", minimum: 1, maximum: 50, default: 20 } }, additionalProperties: false },
+});
+
+export const microsoft365ListChatMessagesTool = createMicrosoft365DesktopTool({
+  name: "microsoft_365.list_chat_messages",
+  displayName: "Microsoft 365 List Teams Chat Messages",
+  description: "List messages from one selected Teams chat.",
+  operation: "chat.messages.list",
+  family: "teams",
+  readOnly: true,
+  inputSchema: { type: "object", properties: { chatId: { type: "string", minLength: 1, maxLength: 512 }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, maxResults: { type: "integer", minimum: 1, maximum: 50, default: 20 } }, required: ["chatId"], additionalProperties: false },
 });
 
 export const microsoft365SendChatMessageTool = createMicrosoft365DesktopTool({

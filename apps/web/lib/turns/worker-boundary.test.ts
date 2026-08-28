@@ -271,8 +271,18 @@ test(
       queueSource,
       /localConcurrency: PROJECT_PROMPT_SCHEDULE_LOCAL_CONCURRENCY,/u,
     );
-    assert.match(queueSource, /localConcurrency: turnWorkerConcurrency,/u);
-    assert.match(queueSource, /groupConcurrency: 1,/u);
+    const durableWorkerStart = queueSource.indexOf(
+      "await boss.work(\n      DURABLE_THREAD_TURN_QUEUE,",
+    );
+    const durableWorkerEnd = queueSource.indexOf(
+      "      async (jobs:",
+      durableWorkerStart,
+    );
+    assert.ok(durableWorkerStart >= 0, "durable turn worker must be registered");
+    assert.ok(durableWorkerEnd > durableWorkerStart, "durable worker options must precede its handler");
+    const durableWorkerOptions = queueSource.slice(durableWorkerStart, durableWorkerEnd);
+    assert.match(durableWorkerOptions, /localConcurrency: turnWorkerConcurrency,/u);
+    assert.match(durableWorkerOptions, /groupConcurrency: 1,/u);
   },
 );
 

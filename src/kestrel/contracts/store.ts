@@ -45,6 +45,10 @@ import {
   type PreparedToolCallV1,
 } from "./tool-invocation.js";
 import { canonicalJson } from "./tool-contract.js";
+import { projectGmailMutationActivityInput } from "../../apps/gmailMutation.js";
+import { projectMicrosoft365TeamsReadAuditInput } from "../../apps/microsoft365TeamsAudit.js";
+import { projectMicrosoft365TeamsSendAuditInput } from "../../apps/microsoft365TeamsSendAudit.js";
+import { projectGoogleCalendarAuditInput } from "../../apps/googleCalendarAudit.js";
 
 export class SandboxCapabilityExactResultCancelledError extends Error {}
 export class SandboxCapabilityExactResultConflictError extends Error {}
@@ -715,7 +719,21 @@ export function validateExactEffectResultRead(input: {
     result.outcome.callId !== requested.idempotencyKey ||
     canonicalJson(result.activation) !== canonicalJson(prepared.activation) ||
     canonicalJson(result.outcome.activation) !== canonicalJson(prepared.activation) ||
-    canonicalJson(result.auditRecord.input) !== canonicalJson(prepared.effectiveInput)
+    canonicalJson(result.auditRecord.input) !== canonicalJson(
+      projectGmailMutationActivityInput(
+        result.toolName,
+        prepared.effectiveInput,
+      ) ?? projectMicrosoft365TeamsReadAuditInput(
+        result.toolName,
+        prepared.effectiveInput,
+      ) ?? projectMicrosoft365TeamsSendAuditInput(
+        result.toolName,
+        prepared.effectiveInput,
+      ) ?? projectGoogleCalendarAuditInput(
+        result.toolName,
+        prepared.effectiveInput,
+      ) ?? prepared.effectiveInput,
+    )
   ) return { status: "conflict" };
   return { status: "found", result };
 }

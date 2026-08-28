@@ -140,7 +140,7 @@ type PinnedExecutionSource = {
   retain?: (() => void) | undefined;
   release?: (() => Promise<void> | void) | undefined;
   transformInput?:
-    | ((input: Record<string, unknown>) => Record<string, unknown>)
+    | ((input: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>)
     | undefined;
   inputAdapterId?: string | undefined;
 };
@@ -722,7 +722,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       const transformedInput =
         source.transformInput === undefined
           ? validatedInput
-          : source.transformInput(validatedInput);
+          : await source.transformInput(validatedInput);
       const transformedValidatedInput = validatePinnedInput(
         source.pinned.descriptor.toolId,
         transformedInput,
@@ -931,7 +931,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       const transformedInput =
         source.transformInput === undefined
           ? validatedInput
-          : source.transformInput(validatedInput);
+          : await source.transformInput(validatedInput);
       const transformedValidatedInput = validatePinnedInput(
         source.pinned.descriptor.toolId,
         transformedInput,
@@ -1802,7 +1802,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       return {
         pinned: { descriptor, activation, validator, normalizer },
         inputAdapterId: "kestrel.builtin-input-normalizer:v1",
-        transformInput: (input) => {
+        transformInput: async (input) => {
           const normalized = normalizeToolActionInput(
             descriptor.toolId,
             input,
@@ -1821,7 +1821,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               { recoverable: false, toolName: descriptor.toolId },
             );
           }
-          return record;
+          return await prepareDesktopGmailMutationInput({
+            toolName: descriptor.toolId,
+            input: record,
+            context: activeContext,
+          });
         },
         createHandler: (handlerOptions: ToolGatewayCallOptions, prepared) => {
           const baseExecutionContext =
@@ -3121,6 +3125,36 @@ function isRuntimeBuiltInTool(
 ): boolean {
   const capability = capabilities.get(name);
   return capability?.freshnessClass === "runtime";
+}
+
+async function prepareDesktopGmailMutationInput(input: {
+  toolName: string;
+  input: Record<string, unknown>;
+  context: SharedToolContext;
+}): Promise<Record<string, unknown>> {
+  const operation = input.toolName === "google_workspace.send_gmail"
+    ? "gmail.messages.send" as const
+    : input.toolName === "google_workspace.reply_gmail"
+      ? "gmail.messages.reply" as const
+      : undefined;
+  if (operation === undefined) return input.input;
+  const threadId = input.context.runtime?.threadId ?? input.context.runtime?.sessionId;
+  if (!threadId?.trim()) {
+    throw createRuntimeFailure(
+      "GOOGLE_WORKSPACE_THREAD_REQUIRED",
+      "Gmail sends require an active Desktop Thread.",
+      { subsystem: "tooling", classification: "configuration", recoverable: true, toolName: input.toolName },
+    );
+  }
+  const prepare = input.context.googleWorkspaceService?.prepareApprovalInput;
+  if (prepare === undefined) {
+    throw createRuntimeFailure(
+      "GOOGLE_WORKSPACE_GMAIL_PREPARATION_UNAVAILABLE",
+      "Desktop Gmail exact-approval preparation is unavailable.",
+      { subsystem: "tooling", classification: "configuration", recoverable: true, toolName: input.toolName },
+    );
+  }
+  return await prepare(operation, input.input, { threadId });
 }
 
 function isBuiltInToolDisabledByContext(

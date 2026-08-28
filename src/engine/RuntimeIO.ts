@@ -11,6 +11,10 @@ import type { ToolActivationRefV1 } from "../kestrel/contracts/tool-contract.js"
 import type { GuardrailConfig, RuntimeDependencies } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelGatewayStreamEvent, ModelRequest, ModelResponse, ModelUsage, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
 import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
+import { projectGmailMutationActivityInput } from "../apps/gmailMutation.js";
+import { projectMicrosoft365TeamsReadAuditInput } from "../apps/microsoft365TeamsAudit.js";
+import { projectMicrosoft365TeamsSendAuditInput } from "../apps/microsoft365TeamsSendAudit.js";
+import { projectGoogleCalendarAuditInput } from "../apps/googleCalendarAudit.js";
 import type { ProviderReasoningRetentionPolicy } from "../runtime/ProviderReasoningVault.js";
 import {
   attributeModelCallPrice,
@@ -1101,8 +1105,21 @@ export class RuntimeIO {
       preparedToolCall = prepared;
       const effectiveToolInput = prepared.effectiveInput;
       recoverySourceInput = effectiveToolInput;
+      const activityToolInput = projectGmailMutationActivityInput(
+        name,
+        effectiveToolInput,
+      ) ?? projectMicrosoft365TeamsReadAuditInput(
+        name,
+        effectiveToolInput,
+      ) ?? projectMicrosoft365TeamsSendAuditInput(
+        name,
+        effectiveToolInput,
+      ) ?? projectGoogleCalendarAuditInput(
+        name,
+        effectiveToolInput,
+      ) ?? effectiveToolInput;
       const toolInputMetadata = {
-        ...buildToolInputEventMetadata(effectiveToolInput),
+        ...buildToolInputEventMetadata(activityToolInput),
         ...prepared.inputAdapters.reduce(
           (metadata, adapter) => ({ ...metadata, ...adapter.metadata }),
           {} as Record<string, unknown>,
@@ -1115,7 +1132,7 @@ export class RuntimeIO {
         phase: "started",
         toolCallId,
         toolName: name,
-        input: effectiveToolInput,
+        input: activityToolInput,
         activation: prepared.activation,
       });
       await this.options.emitProgressFromSequence({
@@ -1155,7 +1172,7 @@ export class RuntimeIO {
         stepIndex: progress.stepIndex,
         toolCallId,
         toolName: name,
-        input: effectiveToolInput,
+        input: activityToolInput,
         sequence: progress.sequence,
         transformText: (text) => {
           toolConsoleStream ??= this.options.executionBoundaryRuntime.openLiveStream({
@@ -1415,7 +1432,7 @@ export class RuntimeIO {
           phase: "failed",
           toolCallId,
           toolName: name,
-          input: effectiveToolInput,
+          input: activityToolInput,
           output: result,
           error: returnedError,
           durationMs,
@@ -1457,7 +1474,7 @@ export class RuntimeIO {
         phase: "completed",
         toolCallId,
         toolName: name,
-        input: effectiveToolInput,
+        input: activityToolInput,
         output: result,
         durationMs: Date.now() - startedAt,
         activation: result.activation,
