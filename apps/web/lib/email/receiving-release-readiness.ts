@@ -23,7 +23,9 @@ const RELEASE_EVIDENCE_ACTION = "email-receiving-release-readiness-passed";
 type ReadinessAuthority = {
   connectionId: string;
   encryptedApiKey: string;
-  receivingDomainId: string;
+  receivingDomainKind: "custom" | "resend_managed";
+  receivingDomainId: string | null;
+  receivingDomain: string;
   providerWebhookId: string;
   endpoint: string;
   stagingSequence: number;
@@ -62,11 +64,13 @@ export async function runReceivingReleaseReadiness(input: {
     env,
   });
   const [domain, webhook] = await Promise.all([
-    provider.getDomain(apiKey, authority.receivingDomainId),
+    authority.receivingDomainKind === "custom"
+      ? provider.getDomain(apiKey, authority.receivingDomainId!)
+      : provider.listDomains(apiKey).then(() => {}),
     provider.getWebhook(apiKey, authority.providerWebhookId),
     assertReceivingDatabaseContracts(),
   ]);
-  assertReadyDomain(domain);
+  if (domain) assertReadyDomain(domain);
   assertStagedWebhook(webhook, authority);
   const readiness: ReceivingReleaseReadiness = {
     buildRevision: buildIdentity.revision,
@@ -157,7 +161,8 @@ async function prepareReadinessAuthority(organizationId: string) {
     !row ||
     row.credentialStatus !== "full_access" ||
     !row.encryptedApiKey ||
-    !row.receivingDomainId ||
+    !row.receivingDomain ||
+    (row.receivingDomainKind === "custom" && !row.receivingDomainId) ||
     !row.providerWebhookId ||
     !row.encryptedSigningSecret ||
     !row.webhookCreateIntent ||
@@ -169,7 +174,9 @@ async function prepareReadinessAuthority(organizationId: string) {
   return {
     connectionId: row.id,
     encryptedApiKey: row.encryptedApiKey,
+    receivingDomainKind: row.receivingDomainKind,
     receivingDomainId: row.receivingDomainId,
+    receivingDomain: row.receivingDomain,
     providerWebhookId: row.providerWebhookId,
     endpoint: row.webhookCreateIntent.endpoint,
     stagingSequence: row.webhookStagingSequence,

@@ -17,6 +17,8 @@ test("Desktop receiving UX is tenant-explicit, role-gated, and hosted", async ()
   assert.match(source, /organizationRole === "admin"/u);
   assert.match(source, /Read-only receiving status/u);
   assert.match(source, /ReceivingConnectionStatus/u);
+  assert.match(source, /Resend-managed receiving domain/u);
+  assert.match(source, /receivingManagedDomain/u);
   assert.match(source, /Kestrel One keeps receiving when Desktop is closed or offline/u);
   assert.match(source, /setReceivingApiKey\(""\)/u);
 });
@@ -32,6 +34,8 @@ test("Desktop receiving crosses the typed account bridge and never DesktopSettin
   for (const source of [contracts, preload, main]) {
     assert.match(source, /KestrelOneReceiving|kestrel-one-receiving/u);
   }
+  assert.match(contracts, /receivingDomain\?: string/u);
+  assert.match(main, /\.resend\\\.app/u);
   for (const source of [settingsStore, supportBundle]) {
     assert.doesNotMatch(
       source,

@@ -53,6 +53,8 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     status = 403;
   } else if (
     code === "PROJECT_CONTEXT_CONFLICT" ||
+    code === "EMAIL_TRIGGER_ADDRESS_CONFLICT" ||
+    code === "EMAIL_TRIGGER_PUBLIC_ALIAS" ||
     code === "EMAIL_TRIGGER_REVISION_CONFLICT" ||
     code === "EMAIL_TRIGGER_NOT_READY" ||
     code === "PROJECT_SKILL_CONFLICT" ||

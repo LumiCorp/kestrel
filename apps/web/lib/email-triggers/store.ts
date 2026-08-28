@@ -55,6 +55,24 @@ export class EmailTriggerReadinessError extends Error {
   }
 }
 
+export class EmailTriggerAddressConflictError extends Error {
+  readonly code = "EMAIL_TRIGGER_ADDRESS_CONFLICT";
+
+  constructor() {
+    super("That email alias is already in use.");
+    this.name = "EmailTriggerAddressConflictError";
+  }
+}
+
+export class EmailTriggerPublicAliasError extends Error {
+  readonly code = "EMAIL_TRIGGER_PUBLIC_ALIAS";
+
+  constructor() {
+    super("Public email aliases are changed by editing the Email Trigger.");
+    this.name = "EmailTriggerPublicAliasError";
+  }
+}
+
 export type ProjectEmailTriggerSummary = {
   id: string;
   organizationId: string;
@@ -65,7 +83,8 @@ export type ProjectEmailTriggerSummary = {
   instruction: string;
   modelId: string;
   claimedFromFilter: string | null;
-  accessMode: "private";
+  accessMode: "private" | "public";
+  alias: string;
   address: string;
   enabled: boolean;
   disabledReason: string | null;
@@ -107,6 +126,33 @@ function generatePrivateAddressLocalPart() {
   return randomBytes(16).toString("hex");
 }
 
+async function withAddressConflict<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    const visited = new Set<unknown>();
+    let current = error;
+    while (current && typeof current === "object" && !visited.has(current)) {
+      visited.add(current);
+      const constraint =
+        "constraint_name" in current
+          ? current.constraint_name
+          : "constraint" in current
+            ? current.constraint
+            : undefined;
+      if (
+        "code" in current &&
+        String(current.code) === "23505" &&
+        constraint === "project_email_triggers_address_idx"
+      ) {
+        throw new EmailTriggerAddressConflictError();
+      }
+      current = "cause" in current ? current.cause : undefined;
+    }
+    throw error;
+  }
+}
+
 function normalizeName(value: string) {
   const name = value.trim();
   if (!name) throw new Error("A Trigger name is required.");
@@ -114,6 +160,20 @@ function normalizeName(value: string) {
     throw new Error("Trigger name must be 120 characters or fewer.");
   }
   return name;
+}
+
+function normalizeAddressAlias(value: string) {
+  const alias = value.trim().toLowerCase();
+  if (
+    alias.length > 64 ||
+    !/^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/u.test(alias) ||
+    alias.includes("..")
+  ) {
+    throw new Error(
+      "Use an email alias with lowercase letters, numbers, dots, underscores, or hyphens.",
+    );
+  }
+  return alias;
 }
 
 function normalizeInstruction(value: string) {
@@ -448,6 +508,7 @@ export async function listProjectEmailTriggersForUser(input: {
           modelId: trigger.modelId,
           claimedFromFilter: trigger.claimedFromFilter,
           accessMode: trigger.accessMode,
+          alias: trigger.addressLocalPart,
           address: `${trigger.addressLocalPart}@${trigger.addressDomain}`,
           enabled: trigger.enabled,
           disabledReason: trigger.disabledReason,
@@ -465,7 +526,7 @@ export async function listProjectEmailTriggersForUser(input: {
           },
           permissions: {
             canEdit: canMutate,
-            canRotate: canMutate,
+            canRotate: canMutate && trigger.accessMode === "private",
             canEnable: canMutate && !trigger.enabled && reason === null,
             canDisable: canMutate && trigger.enabled,
             canDelete: canMutate,
@@ -507,12 +568,14 @@ export async function createProjectEmailTrigger(input: {
   projectId: string;
   userId: string;
   name: string;
+  alias: string;
   instruction?: string;
   modelId: string;
   claimedFromFilter?: string | null;
   enabled?: boolean;
 }) {
   const name = normalizeName(input.name);
+  const alias = normalizeAddressAlias(input.alias);
   const instruction = normalizeInstruction(
     input.instruction ?? DEFAULT_EMAIL_TRIGGER_INSTRUCTION,
   );
@@ -520,7 +583,7 @@ export async function createProjectEmailTrigger(input: {
   const claimedFromFilter = normalizeClaimedFromFilter(
     input.claimedFromFilter,
   );
-  return knowledgeDb.transaction(async (tx) => {
+  return withAddressConflict(() => knowledgeDb.transaction(async (tx) => {
     const access = await lockProjectEmailTriggerAccessInTransaction(tx, input);
     if (!access || access.archivedAt) {
       throw new ProjectAccessError(
@@ -589,8 +652,8 @@ export async function createProjectEmailTrigger(input: {
         instruction,
         modelId,
         claimedFromFilter,
-        accessMode: "private",
-        addressLocalPart: generatePrivateAddressLocalPart(),
+        accessMode: "public",
+        addressLocalPart: alias,
         addressDomain,
         enabled,
         disabledReason: enabled ? null : "manual",
@@ -607,11 +670,11 @@ export async function createProjectEmailTrigger(input: {
       action: "project.email_trigger.created",
       targetType: "project_email_trigger",
       targetId: created.id,
-      metadata: { accessMode: "private", revision: 1, enabled },
+      metadata: { accessMode: "public", revision: 1, enabled },
       createdAt: now,
     });
     return created;
-  });
+  }));
 }
 
 export async function updateProjectEmailTrigger(input: {
@@ -621,12 +684,13 @@ export async function updateProjectEmailTrigger(input: {
   userId: string;
   expectedRevision: number;
   name?: string;
+  alias?: string;
   instruction?: string;
   modelId?: string;
   claimedFromFilter?: string | null;
   enabled?: boolean;
 }) {
-  return knowledgeDb.transaction(async (tx) => {
+  return withAddressConflict(() => knowledgeDb.transaction(async (tx) => {
     const access = await lockProjectEmailTriggerAccessInTransaction(tx, input);
     if (!access) {
       throw new ProjectAccessError(
@@ -662,9 +726,40 @@ export async function updateProjectEmailTrigger(input: {
     if (trigger.revision !== input.expectedRevision) {
       throw new EmailTriggerConflictError();
     }
-
     const name =
       input.name === undefined ? trigger.name : normalizeName(input.name);
+    const alias =
+      input.alias === undefined
+        ? trigger.addressLocalPart
+        : normalizeAddressAlias(input.alias);
+    const aliasChanged = alias !== trigger.addressLocalPart;
+    let addressDomain = trigger.addressDomain;
+    if (aliasChanged) {
+      const [connection] = await tx
+        .select({
+          receivingDomain:
+            schema.organizationReceivingConnections.receivingDomain,
+        })
+        .from(schema.organizationReceivingConnections)
+        .where(
+          eq(
+            schema.organizationReceivingConnections.organizationId,
+            input.organizationId,
+          ),
+        )
+        .limit(1)
+        .for("update");
+      const configuredDomain = connection?.receivingDomain
+        ?.trim()
+        .toLowerCase();
+      if (!configuredDomain) {
+        throw new EmailTriggerReadinessError(
+          "inbound_receiving_unavailable",
+          readinessMessage("inbound_receiving_unavailable"),
+        );
+      }
+      addressDomain = configuredDomain;
+    }
     const instruction =
       input.instruction === undefined
         ? trigger.instruction
@@ -706,6 +801,7 @@ export async function updateProjectEmailTrigger(input: {
       instruction !== trigger.instruction ||
       modelId !== trigger.modelId ||
       claimedFromFilter !== trigger.claimedFromFilter ||
+      aliasChanged ||
       enabled !== trigger.enabled;
     const disableTransition = input.enabled === false && trigger.enabled;
     const disabledReason = disableTransition
@@ -715,6 +811,7 @@ export async function updateProjectEmailTrigger(input: {
         : trigger.disabledReason;
     if (
       name === trigger.name &&
+      alias === trigger.addressLocalPart &&
       !revisionChanges &&
       disabledReason === trigger.disabledReason
     ) {
@@ -726,6 +823,9 @@ export async function updateProjectEmailTrigger(input: {
       .update(schema.projectEmailTriggers)
       .set({
         name,
+        addressLocalPart: alias,
+        addressDomain,
+        accessMode: aliasChanged ? "public" : trigger.accessMode,
         instruction,
         modelId,
         claimedFromFilter,
@@ -758,7 +858,7 @@ export async function updateProjectEmailTrigger(input: {
       createdAt: now,
     });
     return updated;
-  });
+  }));
 }
 
 export async function rotateProjectEmailTriggerAddress(input: {
@@ -799,6 +899,9 @@ export async function rotateProjectEmailTriggerAddress(input: {
     }
     if (trigger.revision !== input.expectedRevision) {
       throw new EmailTriggerConflictError();
+    }
+    if (trigger.accessMode === "public") {
+      throw new EmailTriggerPublicAliasError();
     }
     const [connection] = await tx
       .select({

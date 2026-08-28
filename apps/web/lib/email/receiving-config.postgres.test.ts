@@ -91,6 +91,15 @@ test("Organization receiving persists one encrypted inactive connection without 
     assert.equal(outcome.reason.code, "RESEND_RECEIVING_SAVE_SUPERSEDED");
   }
 
+  const managedProjection = await receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    receivingDomain: "Raixaro.Resend.App",
+    provider,
+  });
+  assert.equal(managedProjection.receivingDomainKind, "resend_managed");
+  assert.equal(managedProjection.receivingDomain, "raixaro.resend.app");
+
   const rows = await sql<
     Array<{
       organizationId: string;
@@ -99,6 +108,8 @@ test("Organization receiving persists one encrypted inactive connection without 
       providerWebhookId: string | null;
       encryptedSigningSecret: string | null;
       inboundEnabled: boolean;
+      receivingDomainId: string | null;
+      receivingDomainKind: string;
     }>
   >`
     SELECT
@@ -107,7 +118,9 @@ test("Organization receiving persists one encrypted inactive connection without 
       "route_locator" AS "routeLocator",
       "provider_webhook_id" AS "providerWebhookId",
       "encrypted_signing_secret" AS "encryptedSigningSecret",
-      "inbound_enabled" AS "inboundEnabled"
+      "inbound_enabled" AS "inboundEnabled",
+      "receiving_domain_id" AS "receivingDomainId",
+      "receiving_domain_kind" AS "receivingDomainKind"
     FROM "organization_receiving_connections"
     WHERE "organization_id" = ${organizationId}
   `;
@@ -115,6 +128,8 @@ test("Organization receiving persists one encrypted inactive connection without 
   assert.equal(rows[0]?.inboundEnabled, false);
   assert.equal(rows[0]?.providerWebhookId, null);
   assert.equal(rows[0]?.encryptedSigningSecret, null);
+  assert.equal(rows[0]?.receivingDomainId, null);
+  assert.equal(rows[0]?.receivingDomainKind, "resend_managed");
   assert.match(rows[0]?.encryptedApiKey ?? "", /^kgc:v1:/u);
   assert.doesNotMatch(rows[0]?.encryptedApiKey ?? "", /re_full_access/u);
   assert.notEqual(rows[0]?.routeLocator, organizationId);
@@ -124,6 +139,7 @@ test("Organization receiving persists one encrypted inactive connection without 
     organizationId,
   );
   assert.equal(publicProjection.readiness, "ready_inactive");
+  assert.equal(publicProjection.receivingDomainKind, "resend_managed");
   assert.doesNotMatch(
     JSON.stringify(publicProjection),
     /apiKey|signingSecret|routeLocator|providerWebhookId/u,
@@ -1376,6 +1392,7 @@ test("Desktop receiving GET permits only members while inspection and mutation r
     "provider",
     "readiness",
     "receivingDomain",
+    "receivingDomainKind",
     "receivingDomainStatus",
     "webhookStatus",
   ]);

@@ -91,7 +91,7 @@ function qualifiedOpenRouterModelMetadata(input: {
   };
 }
 
-test("Project Email Triggers preserve private authority, rotation, and lifecycle contracts", async (context) => {
+test("Project Email Triggers preserve public aliases, authority, and lifecycle contracts", async (context) => {
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
   const previousDrizzleMaxConnections = process.env.DB_DRIZZLE_MAX_CONNECTIONS;
   process.env.DATABASE_URL = databaseUrl;
@@ -234,6 +234,7 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
       projectId: ids.project,
       userId: ids.member,
       name: "Forbidden Trigger",
+      alias: "forbidden",
       modelId: "openrouter/email-trigger-model",
     }),
     (error: unknown) =>
@@ -247,6 +248,7 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
       projectId: ids.project,
       userId: ids.creator,
       name: "Unavailable model",
+      alias: "unavailable",
       modelId: "openrouter/not-approved",
     }),
     (error: unknown) =>
@@ -259,16 +261,17 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
     projectId: ids.project,
     userId: ids.creator,
     name: "Invoice intake",
+    alias: "invoices",
     modelId: "openrouter/email-trigger-model",
     claimedFromFilter: "billing@example.test",
   });
-  assert.equal(created.accessMode, "private");
+  assert.equal(created.accessMode, "public");
   assert.equal(created.executionOwnerUserId, ids.creator);
   assert.equal(created.createdByUserId, ids.creator);
   assert.equal(created.revision, 1);
   assert.equal(created.enabled, true);
   assert.equal(created.disabledReason, null);
-  assert.match(created.addressLocalPart, /^[a-f0-9]{32}$/u);
+  assert.equal(created.addressLocalPart, "invoices");
   assert.equal(created.addressDomain, "inbound.example.test");
   assert.equal(
     created.instruction,
@@ -296,33 +299,26 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
     [],
   );
 
-  await sql`
-    UPDATE "organization_receiving_connections"
-    SET "receiving_domain_id" = 'domain-2',
-        "receiving_domain" = 'new-inbound.example.test',
-        "updated_at" = ${now}
-    WHERE "organization_id" = ${ids.organization}
-  `;
-  const rotated = await triggers.rotateProjectEmailTriggerAddress({
+  await assert.rejects(
+    triggers.rotateProjectEmailTriggerAddress({
+      triggerId: created.id,
+      projectId: ids.project,
+      organizationId: ids.organization,
+      userId: ids.owner,
+      expectedRevision: 1,
+    }),
+    triggers.EmailTriggerPublicAliasError,
+  );
+  const renamedAddress = await triggers.updateProjectEmailTrigger({
     triggerId: created.id,
     projectId: ids.project,
     organizationId: ids.organization,
     userId: ids.owner,
     expectedRevision: 1,
+    alias: "invoices-updated",
   });
-  assert.equal(rotated.revision, 2);
-  assert.notEqual(rotated.addressLocalPart, created.addressLocalPart);
-  assert.equal(rotated.addressDomain, "new-inbound.example.test");
-  assert.match(rotated.addressLocalPart, /^[a-f0-9]{32}$/u);
-  const [oldAddress] = await sql<Array<{ count: number }>>`
-    SELECT count(*)::int AS "count"
-    FROM "project_email_triggers"
-    WHERE "address_local_part" = ${created.addressLocalPart}
-      AND "address_domain" = ${created.addressDomain}
-      AND "enabled" = true
-      AND "deleted_at" IS NULL
-  `;
-  assert.equal(oldAddress?.count, 0);
+  assert.equal(renamedAddress.revision, 2);
+  assert.equal(renamedAddress.addressLocalPart, "invoices-updated");
 
   await assert.rejects(
     triggers.updateProjectEmailTrigger({
@@ -352,6 +348,7 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
     projectId: ids.project,
     userId: ids.creator,
     name: "Manual pause",
+    alias: "manual-pause",
     modelId: "openrouter/email-trigger-model",
   });
   const manual = await triggers.updateProjectEmailTrigger({
@@ -431,6 +428,7 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
     projectId: ids.project,
     userId: ids.owner,
     name: "Archive target",
+    alias: "archive-target",
     modelId: "openrouter/email-trigger-model",
   });
   const archiveManualTarget = await triggers.createProjectEmailTrigger({
@@ -438,6 +436,7 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
     projectId: ids.project,
     userId: ids.owner,
     name: "Archive manual target",
+    alias: "archive-manual-target",
     modelId: "openrouter/email-trigger-model",
   });
   await triggers.updateProjectEmailTrigger({
@@ -524,6 +523,7 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
     projectId: ids.project,
     userId: ids.owner,
     name: "Concurrent revision target",
+    alias: "race-target",
     instruction: "Original concurrent instruction.",
     modelId: "openrouter/email-trigger-model",
   });
@@ -536,12 +536,13 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
       expectedRevision: 1,
       instruction: "The concurrent definition won.",
     }),
-    triggers.rotateProjectEmailTriggerAddress({
+    triggers.updateProjectEmailTrigger({
       triggerId: raceTarget.id,
       projectId: ids.project,
       organizationId: ids.organization,
       userId: ids.owner,
       expectedRevision: 1,
+      alias: "race-target-renamed",
     }),
   ]);
   assert.equal(
@@ -585,6 +586,7 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
     userId: ids.owner,
     ...createEmailTriggerInputSchema.parse({
       name: "Prepared before activation",
+      alias: "inactive",
       instruction: triggers.DEFAULT_EMAIL_TRIGGER_INSTRUCTION,
       modelId: "openrouter/email-trigger-model",
       claimedFromFilter: null,
@@ -598,6 +600,7 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
       projectId: ids.project,
       userId: ids.owner,
       name: "Explicit activation before receiving",
+      alias: "explicit-active",
       modelId: "openrouter/email-trigger-model",
       enabled: true,
     }),
@@ -610,6 +613,7 @@ test("Project Email Triggers preserve private authority, rotation, and lifecycle
     projectId: ids.project,
     userId: ids.owner,
     name: "Explicitly prepared before activation",
+    alias: "explicit-inactive",
     modelId: "openrouter/email-trigger-model",
     enabled: false,
   });

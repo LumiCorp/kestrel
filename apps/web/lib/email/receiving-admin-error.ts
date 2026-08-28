@@ -154,6 +154,24 @@ function safeConfigError(error: ReceivingConfigError) {
           error: "Resend rejected the receiving request.",
         },
       };
+    case "RESEND_RECEIVING_PUBLIC_WEBHOOK_URL_REQUIRED":
+      return {
+        status: 422,
+        body: {
+          code: error.code,
+          error:
+            "Paste a public HTTPS tunnel URL before connecting local inbound email.",
+        },
+      };
+    case "RESEND_RECEIVING_WEBHOOK_URL_INVALID":
+      return {
+        status: 422,
+        body: {
+          code: error.code,
+          error:
+            "Enter a public HTTPS origin with no path, query, or fragment.",
+        },
+      };
     case "RESEND_RECEIVING_WEBHOOK_KEY_AUTHORITY_CONFLICT":
       return {
         status: 409,
@@ -200,8 +218,7 @@ function safeConfigError(error: ReceivingConfigError) {
         status: 409,
         body: {
           code: error.code,
-          error:
-            "Run the current inbound receiving release readiness check before enabling.",
+          error: "Inbound email readiness did not pass for this connection.",
         },
       };
     case "RESEND_RECEIVING_WEBHOOK_ACTIVATION_FAILED":

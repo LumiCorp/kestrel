@@ -4430,7 +4430,8 @@ function parseDesktopReceivingInput(
   requireDomain: true,
 ): {
   organizationId: string;
-  receivingDomainId: string;
+  receivingDomainId?: string | undefined;
+  receivingDomain?: string | undefined;
   apiKey?: string | undefined;
 };
 function parseDesktopReceivingInput(
@@ -4440,32 +4441,51 @@ function parseDesktopReceivingInput(
 function parseDesktopReceivingInput(
   value: unknown,
   requireDomain: boolean,
-): {
-  organizationId: string;
-  receivingDomainId: string;
-  apiKey?: string | undefined;
-} | {
-  organizationId: string;
-  apiKey?: string | undefined;
-} {
+):
+  | {
+      organizationId: string;
+      receivingDomainId?: string | undefined;
+      receivingDomain?: string | undefined;
+      apiKey?: string | undefined;
+    }
+  | {
+      organizationId: string;
+      apiKey?: string | undefined;
+    } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Kestrel One receiving request must be an object.");
   }
   const record = value as Record<string, unknown>;
-  if (typeof record.organizationId !== "string" || !record.organizationId.trim()) {
+  if (
+    typeof record.organizationId !== "string" ||
+    !record.organizationId.trim()
+  ) {
     throw new Error("Kestrel One Organization ID is required.");
   }
+  const receivingDomainId =
+    typeof record.receivingDomainId === "string"
+      ? record.receivingDomainId.trim()
+      : "";
+  const receivingDomain =
+    typeof record.receivingDomain === "string"
+      ? record.receivingDomain.trim().toLowerCase()
+      : "";
   if (
     requireDomain &&
-    (typeof record.receivingDomainId !== "string" ||
-      !record.receivingDomainId.trim())
+    (Boolean(receivingDomainId) === Boolean(receivingDomain) ||
+      (receivingDomain &&
+        !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.resend\.app$/u.test(
+          receivingDomain,
+        )))
   ) {
     throw new Error("A Resend receiving domain is required.");
   }
   return {
     organizationId: record.organizationId.trim(),
     ...(requireDomain
-      ? { receivingDomainId: (record.receivingDomainId as string).trim() }
+      ? receivingDomain
+        ? { receivingDomain }
+        : { receivingDomainId }
       : {}),
     ...(typeof record.apiKey === "string" && record.apiKey.trim()
       ? { apiKey: record.apiKey.trim() }

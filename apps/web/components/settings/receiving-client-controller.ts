@@ -1,6 +1,7 @@
 export type ReceivingConnection = {
   provider: "resend";
   configured: boolean;
+  receivingDomainKind: "custom" | "resend_managed" | null;
   credentialStatus: "not_configured" | "full_access" | "insufficient" | "error";
   credentialValidatedAt: string | null;
   receivingDomain: string | null;
@@ -37,6 +38,8 @@ type ReceivingPresentation = {
   setDomainId(value: string): void;
   setDomains(value: ReceivingDomain[]): void;
   setError(value: string | undefined): void;
+  setManagedDomain(value: string): void;
+  setWebhookBaseUrl(value: string): void;
   showInfo(message: string): void;
   showSuccess(message: string): void;
 };
@@ -61,7 +64,7 @@ export class OrganizationReceivingController {
 
   constructor(present: ReceivingPresentation, request: Request = fetch) {
     this.#present = present;
-    this.#request = request;
+    this.#request = (input, init) => request(input, init);
   }
 
   deactivate(): void {
@@ -77,6 +80,11 @@ export class OrganizationReceivingController {
       }
       operation.commit(() => {
         this.#present.setConnection(connection);
+        this.#present.setManagedDomain(
+          connection.receivingDomainKind === "resend_managed"
+            ? (connection.receivingDomain ?? "")
+            : "",
+        );
         this.#present.setError(undefined);
       });
     });
@@ -131,7 +139,12 @@ export class OrganizationReceivingController {
     );
   }
 
-  async save(apiKey: string, domainId: string): Promise<void> {
+  async save(
+    apiKey: string,
+    domainId: string,
+    managedDomain: string,
+    webhookBaseUrl: string,
+  ): Promise<void> {
     await this.#run("Could not save inbound receiving.", async (operation) => {
       const response = await this.#request(
         "/api/organization/email/receiving",
@@ -140,7 +153,10 @@ export class OrganizationReceivingController {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             apiKey: apiKey || undefined,
-            receivingDomainId: domainId,
+            webhookBaseUrl: webhookBaseUrl.trim() || undefined,
+            ...(managedDomain.trim()
+              ? { receivingDomain: managedDomain.trim() }
+              : { receivingDomainId: domainId }),
           }),
         },
       );
@@ -167,6 +183,12 @@ export class OrganizationReceivingController {
         this.#present.setApiKey("");
         this.#present.setDomainId("");
         this.#present.setDomains([]);
+        this.#present.setManagedDomain(
+          connection.receivingDomainKind === "resend_managed"
+            ? (connection.receivingDomain ?? "")
+            : "",
+        );
+        this.#present.setWebhookBaseUrl("");
         this.#present.setError(undefined);
         this.#present.showSuccess("Inbound receiving configuration saved.");
       });
@@ -337,6 +359,7 @@ function readConnection(body: Record<string, unknown>): ReceivingConnection {
   assertExactKeys(connection, [
     "provider",
     "configured",
+    "receivingDomainKind",
     "credentialStatus",
     "credentialValidatedAt",
     "receivingDomain",
@@ -353,6 +376,13 @@ function readConnection(body: Record<string, unknown>): ReceivingConnection {
   return {
     provider: assertEnum(connection.provider, ["resend"]),
     configured: assertBoolean(connection.configured),
+    receivingDomainKind:
+      connection.receivingDomainKind === null
+        ? null
+        : assertEnum(connection.receivingDomainKind, [
+            "custom",
+            "resend_managed",
+          ]),
     credentialStatus: assertEnum(connection.credentialStatus, [
       "not_configured",
       "full_access",

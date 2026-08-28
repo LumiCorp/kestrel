@@ -26,7 +26,9 @@ type ActivationAuthority = {
   organizationId: string;
   connectionId: string;
   encryptedApiKey: string;
-  receivingDomainId: string;
+  receivingDomainKind: "custom" | "resend_managed";
+  receivingDomainId: string | null;
+  receivingDomain: string;
   providerWebhookId: string;
   endpoint: string;
   stagingSequence: number;
@@ -56,11 +58,15 @@ export async function setReceivingInboundEnabled(input: {
         encryptedApiKey: authority.encryptedApiKey,
         env: input.env,
       });
-      const domain = await provider.getDomain(
-        apiKey,
-        authority.receivingDomainId,
-      );
-      assertReadyDomain(domain);
+      if (authority.receivingDomainKind === "custom") {
+        const domain = await provider.getDomain(
+          apiKey,
+          authority.receivingDomainId!,
+        );
+        assertReadyDomain(domain);
+      } else {
+        await provider.listDomains(apiKey);
+      }
       let webhook = await provider.getWebhook(
         apiKey,
         authority.providerWebhookId,
@@ -180,7 +186,8 @@ async function prepareEnableAuthority(input: {
       !row.domainCheckedAt ||
       !row.lastHealthCheckedAt ||
       !row.encryptedApiKey ||
-      !row.receivingDomainId ||
+      !row.receivingDomain ||
+      (row.receivingDomainKind === "custom" && !row.receivingDomainId) ||
       !row.providerWebhookId ||
       !row.encryptedSigningSecret ||
       !row.webhookCreateIntent
@@ -201,7 +208,9 @@ async function prepareEnableAuthority(input: {
       organizationId,
       connectionId: row.id,
       encryptedApiKey: row.encryptedApiKey,
+      receivingDomainKind: row.receivingDomainKind,
       receivingDomainId: row.receivingDomainId,
+      receivingDomain: row.receivingDomain,
       providerWebhookId: row.providerWebhookId,
       endpoint: row.webhookCreateIntent.endpoint,
       stagingSequence: row.webhookStagingSequence,
@@ -243,7 +252,9 @@ async function closeIngressAndPrepareDisable(input: {
       organizationId,
       connectionId: row.id,
       encryptedApiKey: row.encryptedApiKey,
-      receivingDomainId: row.receivingDomainId ?? "",
+      receivingDomainKind: row.receivingDomainKind,
+      receivingDomainId: row.receivingDomainId,
+      receivingDomain: row.receivingDomain ?? "",
       providerWebhookId: row.providerWebhookId,
       endpoint: row.webhookCreateIntent.endpoint,
       stagingSequence,
@@ -403,7 +414,7 @@ async function withReceivingLifecycleLock<T>(
   } finally {
     await client
       .query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [lockKey])
-      .catch(() => undefined);
+      .catch(() => {});
     client.release();
   }
 }
