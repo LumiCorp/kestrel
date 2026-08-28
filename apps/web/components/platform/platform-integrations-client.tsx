@@ -33,7 +33,8 @@ type Registration = {
   callbackUri: string;
   baseScopes: string[];
   scopes: string[];
-  status: "not_configured" | "disabled" | "ready";
+  status: "not_configured" | "disabled" | "ready" | "configuration_error";
+  configurationError: string | null;
   credentialConfigured: boolean;
   revision: number | null;
   persisted: boolean;
@@ -60,6 +61,7 @@ const empty: Registration[] = [
     baseScopes: [],
     scopes: [],
     status: "not_configured",
+    configurationError: null,
     credentialConfigured: false,
     revision: null,
     persisted: false,
@@ -77,6 +79,7 @@ const empty: Registration[] = [
     baseScopes: [],
     scopes: [],
     status: "not_configured",
+    configurationError: null,
     credentialConfigured: false,
     revision: null,
     persisted: false,
@@ -258,7 +261,9 @@ function RegistrationCard({
             <div className="flex items-center gap-3">
               <SettingsStatusSummary
                 detail={
-                  configured
+                  registration.configurationError
+                    ? registration.configurationError
+                    : configured
                     ? "Hosted client and encrypted secret are configured"
                     : "Client ID and secret required"
                 }

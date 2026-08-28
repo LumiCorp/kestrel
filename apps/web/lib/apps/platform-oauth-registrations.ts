@@ -25,7 +25,8 @@ export type PlatformOAuthProvider = (typeof PLATFORM_OAUTH_PROVIDERS)[number];
 export type PlatformOAuthRegistrationStatus =
   | "not_configured"
   | "disabled"
-  | "ready";
+  | "ready"
+  | "configuration_error";
 
 type SupportedPack = GoogleWorkspacePack | "teams";
 
@@ -57,6 +58,8 @@ export type PublicPlatformOAuthRegistration = {
   baseScopes: string[];
   scopes: string[];
   status: PlatformOAuthRegistrationStatus;
+  /** A safe, administrator-actionable explanation for unusable stored state. */
+  configurationError: string | null;
   credentialConfigured: boolean;
   revision: number | null;
   persisted: boolean;
@@ -74,7 +77,14 @@ export type ActivePlatformOAuthRegistration = {
 
 type SaveResult = {
   config: PublicPlatformOAuthRegistration;
-  auditAction: "create" | "update" | "rotate" | "enable" | "disable" | "narrow";
+  auditAction:
+    | "create"
+    | "update"
+    | "rotate"
+    | "enable"
+    | "disable"
+    | "narrow"
+    | "none";
 };
 
 const RELEASED_PACKS = {
@@ -136,7 +146,8 @@ function normalizePacks(
   provider: PlatformOAuthProvider,
   values: readonly string[],
 ): SupportedPack[] {
-  const allowed = new Set(supportedPacks(provider).map((pack) => pack.id));
+  const released = RELEASED_PACKS[provider];
+  const allowed = new Set(released);
   const unique = Array.from(new Set(values));
   if (!unique.every((pack) => allowed.has(pack as SupportedPack))) {
     throw new PlatformOAuthRegistrationError(
@@ -144,7 +155,9 @@ function normalizePacks(
       `${providerDisplayName(provider)} supports only ${Array.from(allowed).join(", ")} in this release.`,
     );
   }
-  return unique as SupportedPack[];
+  // Capability packs are a set. Persist and compare their canonical provider
+  // order so a UI ordering difference cannot stale existing authorizations.
+  return released.filter((pack) => unique.includes(pack)) as SupportedPack[];
 }
 
 export function scopesForPlatformOAuthRegistration(input: {
@@ -193,6 +206,31 @@ export function validatePlatformOAuthRegistrationTenantOrIssuer(
   );
 }
 
+function validateStoredPlatformOAuthRegistration(input: {
+  provider: PlatformOAuthProvider;
+  tenantOrIssuer: string | null;
+  enabledPacks: readonly string[];
+  enabled: boolean;
+}) {
+  const tenantOrIssuer = validatePlatformOAuthRegistrationTenantOrIssuer(
+    input.provider,
+    input.tenantOrIssuer,
+  );
+  const enabledPacks = normalizePacks(input.provider, input.enabledPacks);
+  if (input.enabled && enabledPacks.length === 0) {
+    throw new PlatformOAuthRegistrationError(
+      "OAUTH_PACK_REQUIRED",
+      "Enable at least one supported capability before enabling this registration.",
+    );
+  }
+  return { tenantOrIssuer, enabledPacks };
+}
+
+function safeStoredRegistrationError(error: unknown) {
+  if (error instanceof PlatformOAuthRegistrationError) return error.message;
+  return "The saved OAuth registration is invalid and requires Platform Admin correction.";
+}
+
 export function toPublicPlatformOAuthRegistration(input: {
   provider: PlatformOAuthProvider;
   clientId?: string | null;
@@ -205,7 +243,21 @@ export function toPublicPlatformOAuthRegistration(input: {
   persisted: boolean;
   env?: NodeJS.ProcessEnv;
 }): PublicPlatformOAuthRegistration {
-  const packs = normalizePacks(input.provider, input.enabledPacks ?? []);
+  let packs: SupportedPack[] = [];
+  let tenantOrIssuer = input.tenantOrIssuer ?? null;
+  let configurationError: string | null = null;
+  try {
+    const validated = validateStoredPlatformOAuthRegistration({
+      provider: input.provider,
+      tenantOrIssuer,
+      enabledPacks: input.enabledPacks ?? [],
+      enabled: input.enabled ?? false,
+    });
+    packs = validated.enabledPacks;
+    tenantOrIssuer = validated.tenantOrIssuer;
+  } catch (error) {
+    configurationError = safeStoredRegistrationError(error);
+  }
   const credentialConfigured = Boolean(
     input.clientId && input.encryptedClientSecret,
   );
@@ -215,7 +267,7 @@ export function toPublicPlatformOAuthRegistration(input: {
     displayName: providerDisplayName(input.provider),
     enabled,
     clientId: input.clientId ?? null,
-    tenantOrIssuer: input.tenantOrIssuer ?? null,
+    tenantOrIssuer,
     enabledPacks: packs,
     supportedPacks: supportedPacks(input.provider),
     callbackUri: callbackUriForPlatformOAuthProvider(input.provider, input.env),
@@ -227,11 +279,14 @@ export function toPublicPlatformOAuthRegistration(input: {
       provider: input.provider,
       packs,
     }),
-    status: credentialConfigured
-      ? enabled
-        ? "ready"
-        : "disabled"
-      : "not_configured",
+    status: configurationError
+      ? "configuration_error"
+      : credentialConfigured
+        ? enabled
+          ? "ready"
+          : "disabled"
+        : "not_configured",
+    configurationError,
     credentialConfigured,
     revision: input.revision ?? null,
     persisted: input.persisted,
@@ -311,12 +366,23 @@ export async function savePlatformOAuthRegistration(input: {
   }
 
   let encryptedClientSecret = existing?.encryptedClientSecret ?? null;
+  let clientSecretChanged = false;
   if (clientSecret) {
-    encryptedClientSecret = encryptGatewayCredential({
-      gatewayId: secretBindingId(input.provider),
-      plaintext: clientSecret,
-      env,
-    });
+    const existingSecret = existing?.encryptedClientSecret
+      ? decryptGatewayCredential({
+          gatewayId: secretBindingId(input.provider),
+          encrypted: existing.encryptedClientSecret,
+          env,
+        })
+      : null;
+    clientSecretChanged = existingSecret !== clientSecret;
+    if (clientSecretChanged) {
+      encryptedClientSecret = encryptGatewayCredential({
+        gatewayId: secretBindingId(input.provider),
+        plaintext: clientSecret,
+        env,
+      });
+    }
   }
   if (!encryptedClientSecret) {
     throw new PlatformOAuthRegistrationError(
@@ -325,12 +391,29 @@ export async function savePlatformOAuthRegistration(input: {
     );
   }
 
-  const previousPacks = new Set(existing?.enabledPacks ?? []);
+  let previous: {
+    tenantOrIssuer: string | null;
+    enabledPacks: SupportedPack[];
+  } | null = null;
+  if (existing) {
+    try {
+      previous = validateStoredPlatformOAuthRegistration({
+        provider: input.provider,
+        tenantOrIssuer: existing.tenantOrIssuer,
+        enabledPacks: existing.enabledPacks,
+        enabled: existing.enabled,
+      });
+    } catch {
+      // A Platform Admin can correct a legacy invalid row with a valid save.
+      // It is never treated as a canonical no-op.
+    }
+  }
+  const previousPacks = new Set(previous?.enabledPacks ?? []);
   const narrowed = [...previousPacks].some(
     (pack) => !enabledPacks.includes(pack as SupportedPack),
   );
   const auditAction: SaveResult["auditAction"] = existing
-    ? clientSecret
+    ? clientSecretChanged
       ? "rotate"
       : existing.enabled !== input.enabled
         ? input.enabled
@@ -346,11 +429,50 @@ export async function savePlatformOAuthRegistration(input: {
   const saved = await knowledgeDb.transaction(async (transaction) => {
     let row;
     if (existing) {
-      if (input.expectedRevision !== existing.revision) {
+      const [current] = await transaction
+        .select()
+        .from(schema.platformOAuthRegistrations)
+        .where(eq(schema.platformOAuthRegistrations.provider, input.provider))
+        .for("update");
+      if (!current || input.expectedRevision !== current.revision) {
         throw new PlatformOAuthRegistrationError(
           "OAUTH_REGISTRATION_CONFLICT",
           "This OAuth registration changed. Reload it before saving again.",
         );
+      }
+      let currentCanonical: {
+        tenantOrIssuer: string | null;
+        enabledPacks: SupportedPack[];
+      } | null = null;
+      try {
+        currentCanonical = validateStoredPlatformOAuthRegistration({
+          provider: input.provider,
+          tenantOrIssuer: current.tenantOrIssuer,
+          enabledPacks: current.enabledPacks,
+          enabled: current.enabled,
+        });
+      } catch {
+        // Invalid persisted state must be corrected, not accepted as unchanged.
+      }
+      const unchanged =
+        current.clientId === clientId &&
+        !clientSecretChanged &&
+        currentCanonical?.tenantOrIssuer === tenantOrIssuer &&
+        current.enabled === input.enabled &&
+        currentCanonical?.enabledPacks.length === enabledPacks.length &&
+        currentCanonical.enabledPacks.every(
+          (pack, index) => pack === enabledPacks[index],
+        );
+      if (unchanged) {
+        return {
+          config: toPublicPlatformOAuthRegistration({
+            ...current,
+            provider: input.provider,
+            persisted: true,
+            env,
+          }),
+          auditAction: "none" as const,
+        };
       }
       [row] = await transaction
         .update(schema.platformOAuthRegistrations)
@@ -369,7 +491,7 @@ export async function savePlatformOAuthRegistration(input: {
             eq(schema.platformOAuthRegistrations.provider, input.provider),
             eq(
               schema.platformOAuthRegistrations.revision,
-              input.expectedRevision,
+              current.revision,
             ),
           ),
         )
@@ -425,13 +547,10 @@ export async function savePlatformOAuthRegistration(input: {
         clientSecretSupplied: Boolean(clientSecret),
       },
     });
-    return config;
+    return { config, auditAction };
   });
 
-  return {
-    config: saved,
-    auditAction,
-  };
+  return saved;
 }
 
 /** Internal-only provider authority for the hosted authorization broker. */
@@ -448,6 +567,12 @@ export async function requireActivePlatformOAuthRegistration(
       `${providerDisplayName(provider)} is not configured and enabled by the Platform Admin.`,
     );
   }
+  const validated = validateStoredPlatformOAuthRegistration({
+    provider,
+    tenantOrIssuer: row.tenantOrIssuer,
+    enabledPacks: row.enabledPacks,
+    enabled: row.enabled,
+  });
   return {
     provider,
     clientId: row.clientId,
@@ -456,8 +581,8 @@ export async function requireActivePlatformOAuthRegistration(
       encrypted: row.encryptedClientSecret,
       env,
     }),
-    tenantOrIssuer: row.tenantOrIssuer,
-    enabledPacks: normalizePacks(provider, row.enabledPacks),
+    tenantOrIssuer: validated.tenantOrIssuer,
+    enabledPacks: validated.enabledPacks,
     revision: row.revision,
   };
 }

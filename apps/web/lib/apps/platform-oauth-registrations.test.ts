@@ -142,3 +142,19 @@ test("public Platform registration state never serializes an encrypted secret", 
   assert.equal(publicRegistration.revision, 4);
   assert.equal(publicRegistration.status, "ready");
 });
+
+test("invalid persisted provider settings are unavailable from the public registration state", () => {
+  const legacyGoogle = toPublicPlatformOAuthRegistration({
+    provider: "google_workspace",
+    clientId: "google-client-id",
+    encryptedClientSecret: "kgc:v1:key:iv:tag:provider-secret",
+    tenantOrIssuer: "legacy-issuer.example.test",
+    enabled: true,
+    enabledPacks: ["gmail"],
+    revision: 4,
+    persisted: true,
+  });
+  assert.equal(legacyGoogle.status, "configuration_error");
+  assert.equal(legacyGoogle.enabledPacks.length, 0);
+  assert.match(legacyGoogle.configurationError ?? "", /does not accept/u);
+});

@@ -67,6 +67,21 @@ test("Platform OAuth registrations persist encrypted revisions, conflicts, and r
   assert.notEqual(firstStored.encrypted_client_secret, "google-secret-1");
   assert.equal(firstStored.revision, 1);
 
+  const canonicalNoop = await registrations.savePlatformOAuthRegistration({
+    ...google,
+    enabledPacks: ["calendar", "gmail"],
+    expectedRevision: 1,
+  });
+  assert.equal(canonicalNoop.auditAction, "none");
+  assert.equal(canonicalNoop.config.revision, 1);
+  const [afterCanonicalNoop] = await sql`
+    SELECT "revision", "enabled_packs"
+    FROM "platform_oauth_registrations"
+    WHERE "provider" = 'google_workspace'
+  `;
+  assert.equal(afterCanonicalNoop.revision, 1);
+  assert.deepEqual(afterCanonicalNoop.enabled_packs, ["gmail", "calendar"]);
+
   const clientIdChanged = await registrations.savePlatformOAuthRegistration({
     ...google,
     clientId: "google-client-2",
@@ -158,6 +173,28 @@ test("Platform OAuth registrations persist encrypted revisions, conflicts, and r
     "a3a39a57-a605-4db5-b8c3-a7af1ad223e7",
   );
 
+  const [beforeNoop] = await sql`
+    SELECT "revision", "updated_at"
+    FROM "platform_oauth_registrations"
+    WHERE "provider" = 'google_workspace'
+  `;
+  const unchanged = await registrations.savePlatformOAuthRegistration({
+    ...google,
+    clientId: "google-client-2",
+    enabledPacks: ["gmail"],
+    enabled: false,
+    expectedRevision: 5,
+  });
+  assert.equal(unchanged.auditAction, "none");
+  assert.equal(unchanged.config.revision, 5);
+  const [afterNoop] = await sql`
+    SELECT "revision", "updated_at"
+    FROM "platform_oauth_registrations"
+    WHERE "provider" = 'google_workspace'
+  `;
+  assert.equal(afterNoop.revision, 5);
+  assert.equal(afterNoop.updated_at.toISOString(), beforeNoop.updated_at.toISOString());
+
   const auditRows = await sql`
       SELECT "action", "metadata"
       FROM "admin_event_logs"
@@ -216,4 +253,47 @@ test("Platform OAuth registrations persist encrypted revisions, conflicts, and r
       AND "category" = 'platform_oauth_registration'
   `;
   assert.equal(auditRowsAfterFailure.length, 7);
+
+  const microsoftBeforeLegacyRepair =
+    await registrations.resolvePlatformOAuthRegistration("microsoft_365");
+  assert.equal(microsoftBeforeLegacyRepair.status, "ready");
+  assert.equal(microsoftBeforeLegacyRepair.configurationError, null);
+
+  await sql`
+    UPDATE "platform_oauth_registrations"
+    SET "tenant_or_issuer" = 'legacy-google-issuer.example.test', "enabled" = true
+    WHERE "provider" = 'google_workspace'
+  `;
+  const googleLegacy =
+    await registrations.resolvePlatformOAuthRegistration("google_workspace");
+  assert.equal(googleLegacy.status, "configuration_error");
+  assert.equal(googleLegacy.enabledPacks.length, 0);
+  assert.match(googleLegacy.configurationError ?? "", /does not accept/u);
+  await assert.rejects(
+    registrations.requireActivePlatformOAuthRegistration("google_workspace"),
+    (error: unknown) => {
+      assert.ok(error instanceof registrations.PlatformOAuthRegistrationError);
+      assert.equal(error.code, "OAUTH_TENANT_UNSUPPORTED");
+      return true;
+    },
+  );
+
+  await sql`
+    UPDATE "platform_oauth_registrations"
+    SET "tenant_or_issuer" = 'legacy-tenant.example.test', "enabled" = true
+    WHERE "provider" = 'microsoft_365'
+  `;
+  const microsoftLegacy =
+    await registrations.resolvePlatformOAuthRegistration("microsoft_365");
+  assert.equal(microsoftLegacy.status, "configuration_error");
+  assert.equal(microsoftLegacy.enabledPacks.length, 0);
+  assert.match(microsoftLegacy.configurationError ?? "", /tenant must be/u);
+  await assert.rejects(
+    registrations.requireActivePlatformOAuthRegistration("microsoft_365"),
+    (error: unknown) => {
+      assert.ok(error instanceof registrations.PlatformOAuthRegistrationError);
+      assert.equal(error.code, "OAUTH_TENANT_INVALID");
+      return true;
+    },
+  );
 });

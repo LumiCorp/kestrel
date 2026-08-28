@@ -79,6 +79,7 @@ const groups = [
     databaseUrl: required("KESTREL_APPS_DB_TEST_URL"),
     files: [
       "lib/apps/hosted-approval-proof.postgres.test.ts",
+      "lib/apps/platform-oauth-registrations.postgres.test.ts",
       "lib/apps/service.postgres.test.ts",
       "lib/db/edge-only-retirement.postgres.test.ts",
       "lib/email/receiving-config.postgres.test.ts",

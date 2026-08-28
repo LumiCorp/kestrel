@@ -15,6 +15,13 @@
       "when": 1787920000000,
       "tag": "0001_platform_oauth_registrations",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787923600000,
+      "tag": "0002_platform_oauth_registration_legacy_settings",
+      "breakpoints": true
     }
   ]
 }
