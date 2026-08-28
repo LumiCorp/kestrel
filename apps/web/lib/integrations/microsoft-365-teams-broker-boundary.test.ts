@@ -25,6 +25,7 @@ test("Outlook and Teams use the hosted broker with no static Microsoft authority
     /configured:\s*registration\.status === "ready"/u,
     "A malformed Platform registration must not appear connectable.",
   );
+  assert.match(connectionRoute, /availablePacks:\s*registration\.enabledPacks/u);
   assert.match(card, /const HOSTED_PACKS = \["outlook", "teams"\] as const/u);
   assert.match(card, /useState<HostedMicrosoft365Pack\[\]>\(\[\]\)/u);
   assert.match(
@@ -32,6 +33,8 @@ test("Outlook and Teams use the hosted broker with no static Microsoft authority
     /next\.packs\.filter\(isHostedMicrosoft365Pack\)/u,
   );
   assert.match(card, /Reconnect Microsoft 365/u);
+  assert.match(card, /status\.availablePacks\.filter\(isHostedMicrosoft365Pack\)/u);
+  assert.match(card, /availablePacks\.map\(\(pack\) =>/u);
   assert.doesNotMatch(card, /sharepoint/iu);
   assert.match(runtimeRoute, /resolveHostedPersonalProviderToken\(\{/u);
   assert.match(runtimeRoute, /provider:\s*"microsoft_365"/u);

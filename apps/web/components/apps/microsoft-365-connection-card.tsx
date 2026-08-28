@@ -50,6 +50,9 @@ export function Microsoft365ConnectionCard({
   const [status, setStatus] = useState<Status | null>(null);
   const [working, setWorking] = useState(false);
   const [selectedPacks, setSelectedPacks] = useState<HostedMicrosoft365Pack[]>([]);
+  const availablePacks = status
+    ? status.availablePacks.filter(isHostedMicrosoft365Pack)
+    : [];
 
   useEffect(() => {
     let active = true;
@@ -158,7 +161,7 @@ export function Microsoft365ConnectionCard({
       title="Microsoft 365 connection"
     >
       <div className="space-y-4 py-3">
-        {HOSTED_PACKS.map((pack) => (
+        {availablePacks.map((pack) => (
           <label
             className="flex items-start gap-3"
             htmlFor={`microsoft-365-${pack}`}
@@ -197,6 +200,7 @@ export function Microsoft365ConnectionCard({
               disabled={
                 working ||
                 !installed ||
+                !status ||
                 status?.configured === false ||
                 selectedPacks.length === 0
               }
