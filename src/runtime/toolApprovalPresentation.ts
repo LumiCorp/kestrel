@@ -362,7 +362,13 @@ function presenter(
     readonly [
       string,
       string,
-      ("default" | "event_time" | "attendees" | "string_list")?,
+      (
+        | "default"
+        | "event_time"
+        | "attendees"
+        | "string_list"
+        | "json_string_list"
+      )?,
     ]
   >,
   warnings?: readonly string[],
