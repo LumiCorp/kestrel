@@ -66,6 +66,15 @@ test.beforeEach(async ({ page, request }) => {
                 enabled: true,
                 resourceReady: true,
                 runtimeName: "github.issue.create",
+                accessMode: "write",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    title: { type: "string", description: "Issue title" },
+                    body: { type: "string", description: "Issue body" },
+                  },
+                  required: ["title"],
+                },
               },
               {
                 displayName: "Delete repository",
@@ -73,6 +82,8 @@ test.beforeEach(async ({ page, request }) => {
                 enabled: false,
                 resourceReady: true,
                 runtimeName: "github.repository.delete",
+                accessMode: "write",
+                inputSchema: { type: "object", properties: {} },
               },
             ],
           },
@@ -197,17 +208,19 @@ test("canvas-first controls expose project tools and node dialogs", async ({
   expect(Math.abs(kestrelBox!.x - outputBox!.x)).toBeLessThan(3);
 
   await expect(page.getByRole("toolbar", { name: "Workflow tools" })).toBeVisible();
-  await page.getByRole("button", { name: "Add Tool step" }).click();
-  await expect(page.getByRole("dialog", { name: "Tool call" })).toBeVisible();
+  await page.getByRole("button", { name: "Add Action step" }).click();
+  await expect(page.getByRole("dialog", { name: "Action" })).toBeVisible();
 
-  await page.getByRole("combobox", { name: "Project tool" }).click();
-  await expect(page.getByRole("option", { name: /Create issue/u })).toBeVisible();
-  await expect(page.getByRole("option", { name: /Delete repository/u })).toHaveCount(0);
-  await page.getByRole("option", { name: /Create issue/u }).click();
+  await expect(page.getByRole("textbox", { name: "Search project tools" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Create issue/u })).toBeVisible();
+  await expect(page.getByText("Delete repository", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: /Create issue/u }).click();
+  await expect(page.getByText("Issue title", { exact: true })).toBeVisible();
+  await expect(page.getByText("Fixed value", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "Done" }).click({ force: true });
 
-  await page.locator(".react-flow__node").filter({ hasText: "Tool call" }).dblclick();
-  await expect(page.getByRole("dialog", { name: "Tool call" })).toBeVisible();
+  await page.locator(".react-flow__node").filter({ hasText: "Action" }).dblclick();
+  await expect(page.getByRole("dialog", { name: "Action" })).toBeVisible();
   await page.getByRole("button", { name: "Done" }).click({ force: true });
 
   await page.locator(".react-flow__node").filter({ hasText: "Run manually" }).dblclick();

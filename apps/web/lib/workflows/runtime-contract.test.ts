@@ -16,6 +16,9 @@ test("workflow work steps enter the ordinary durable Kestrel runtime", () => {
   assert.match(runtime, /createDurableThreadTurnInTransaction/u);
   assert.match(runtime, /requestedInteractionMode: "build"/u);
   assert.match(runtime, /noninteractive: true/u);
+  assert.match(runtime, /WORKFLOW_INTERACTION_REQUIRED/u);
+  assert.match(runtime, /attentionCode: code\.slice/u);
+  assert.match(runtime, /enabled: false/u);
   assert.match(runtime, /WORKFLOW_TOOL_CONTRACT_VIOLATION/u);
 });
 

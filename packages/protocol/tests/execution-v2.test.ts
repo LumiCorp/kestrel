@@ -63,6 +63,65 @@ test("run.start accepts the autonomous turn marker", () => {
   }
 });
 
+test("run.start accepts only canonical per-step workflow authority", () => {
+  const workflowRunAuthority = {
+    version: "runner_workflow_run_authority_v2",
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    workflowId: "workflow-1",
+    workflowVersionId: "version-1",
+    workflowRunId: "run-1",
+    activationActorId: "actor-1",
+    manifestDigest: "sha256:manifest",
+    manifest: {
+      version: "workflow_capability_manifest_v2",
+      nativeTools: [],
+      actions: [],
+    },
+    activeStep: { kind: "kestrel", nodeId: "research" },
+  };
+  const parsed = parseRunnerCommandV2({
+    id: "command-workflow",
+    type: "run.start",
+    payload: { profileId: "kestrel", turn: { ...turn, noninteractive: true, workflowRunAuthority } },
+  });
+  assert.equal(parsed.type, "run.start");
+  assert.throws(() => parseRunnerCommandV2({
+    id: "command-workflow-legacy",
+    type: "run.start",
+    payload: {
+      profileId: "kestrel",
+      turn: {
+        ...turn,
+        noninteractive: true,
+        workflowRunAuthority: { ...workflowRunAuthority, version: "runner_workflow_run_authority_v1" },
+      },
+    },
+  }));
+  assert.throws(() => parseRunnerCommandV2({
+    id: "command-workflow-unknown-action",
+    type: "run.start",
+    payload: {
+      profileId: "kestrel",
+      turn: {
+        ...turn,
+        noninteractive: true,
+        workflowRunAuthority: {
+          ...workflowRunAuthority,
+          activeStep: { kind: "action", nodeId: "not-activated", resolvedInput: {} },
+        },
+      },
+    },
+  }));
+  const { activeStep: _activeStep, ...incompleteAuthority } = workflowRunAuthority;
+  assert.throws(() => parseRunnerCommandV2({
+    id: "command-workflow-incomplete",
+    type: "run.start",
+    payload: { profileId: "kestrel", turn: { ...turn, noninteractive: true, workflowRunAuthority: incompleteAuthority } },
+  }));
+});
+
 test("run.start carries only strict hosted approval decisions", () => {
   for (const decision of [
     "decline",

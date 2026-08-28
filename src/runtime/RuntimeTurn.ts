@@ -54,6 +54,7 @@ export interface RuntimeTurnMissionControlExecution {
 
 export interface RuntimeTurnInput {
   hostedApprovalAuthority?: import("@kestrel-agents/protocol").RunnerHostedApprovalAuthorityV1;
+  workflowRunAuthority?: import("@kestrel-agents/protocol").RunnerWorkflowRunAuthorityV1;
   sessionId: string;
   runId?: string | undefined;
   eventId?: string | undefined;
@@ -219,6 +220,9 @@ export function materializeCompiledRuntimeTurn(
     message: prepared.input.message,
     ...(prepared.input.hostedApprovalAuthority !== undefined
       ? { hostedApprovalAuthority: prepared.input.hostedApprovalAuthority }
+      : {}),
+    ...(prepared.input.workflowRunAuthority !== undefined
+      ? { workflowRunAuthority: prepared.input.workflowRunAuthority }
       : {}),
     ...(prepared.input.actor !== undefined
       ? { actor: prepared.input.actor }

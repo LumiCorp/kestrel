@@ -84,12 +84,23 @@ export function WorkflowRunClient({ initialRun }: { initialRun: WorkflowRunView 
         {run.definition.nodes.map((node) => {
           const step = byNode.get(node.id);
           const evidence = step?.output as { text?: string; model?: string; toolCalls?: Array<{ toolName: string; state?: string; input?: unknown; output?: unknown; error?: string }> } | null;
+          const resolvedInput = node.kind === "tool" && step?.input?.resolvedInput && typeof step.input.resolvedInput === "object" && !Array.isArray(step.input.resolvedInput)
+            ? step.input.resolvedInput as Record<string, unknown>
+            : null;
           return (
             <details className="group rounded-xl border bg-card" key={node.id}>
               <summary className="flex cursor-pointer list-none items-center gap-3 p-4"><span className="rounded-md bg-muted p-1.5">{node.kind === "kestrel" ? <Bot className="size-4" /> : node.kind === "tool" ? <Wrench className="size-4" /> : <ChevronDown className="size-4" />}</span><span className="flex-1 font-medium text-sm">{node.label}</span><Badge variant={statusVariant(step?.status ?? "pending")}>{(step?.status ?? "pending").replaceAll("_", " ")}</Badge><ChevronDown className="size-4 transition-transform group-open:rotate-180" /></summary>
               <div className="space-y-3 border-t p-4 text-sm">
                 {step?.threadId ? <Link className="underline underline-offset-2" href={`/threads/${step.threadId}`}>Open Kestrel task</Link> : null}
-                <JsonEvidence label="Step input" value={step?.input ?? null} />
+                {node.kind === "tool" ? <>
+                  <JsonEvidence label="Resolved Action values" value={resolvedInput} />
+                  {Object.entries(node.config.inputBindings).map(([pointer, binding]) => {
+                    const source = run.definition.nodes.find((candidate) => candidate.id === binding.sourceNodeId);
+                    return <p className="w-fit rounded-full bg-muted px-2 py-0.5 text-xs" key={pointer}>
+                      {pointer.slice(1).replaceAll("/", " › ")} · {source?.label ?? "Kestrel step"} → Response text
+                    </p>;
+                  })}
+                </> : <JsonEvidence label="Step input" value={step?.input ?? null} />}
                 {evidence?.model ? <p><span className="text-muted-foreground">Model:</span> {evidence.model}</p> : null}
                 {evidence?.toolCalls?.length ? <div><p className="mb-2 text-muted-foreground">Internal tool calls</p><div className="space-y-2">{evidence.toolCalls.map((call, index) => <div className="rounded-lg bg-muted/50 p-3" key={`${call.toolName}-${index}`}><p className="font-mono text-xs">{call.toolName}</p><p className="text-muted-foreground text-xs">{call.state ?? "recorded"}</p>{call.input !== undefined ? <pre className="mt-2 max-h-48 overflow-auto text-xs">{JSON.stringify(call.input, null, 2)}</pre> : null}{call.output !== undefined ? <pre className="mt-2 max-h-48 overflow-auto text-xs">{JSON.stringify(call.output, null, 2)}</pre> : null}</div>)}</div></div> : node.kind === "kestrel" || node.kind === "tool" ? <p className="text-muted-foreground">No tool calls recorded yet.</p> : null}
                 {evidence?.text ? <div><p className="mb-1 text-muted-foreground">Step output</p><p className="whitespace-pre-wrap">{evidence.text}</p></div> : null}

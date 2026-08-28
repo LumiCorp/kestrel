@@ -84,6 +84,8 @@ import {
   type ToolApprovalDispositionV1,
 } from "../../src/mode/contracts.js";
 import { isFileTextReadToolName } from "../../src/runtime/fileTextReadTools.js";
+import { withPreparedExecCommandApprovalContext } from "./approvedExecCommandContext.js";
+import type { RunnerWorkflowRunAuthorityV1 } from "@kestrel-agents/protocol";
 
 type CapabilityManifestItem = ToolCapabilityMetadata & {
   name: string;
@@ -297,6 +299,17 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       });
     }
     this.activateRegistryGeneration();
+  }
+
+  bindOrchestrationServices(
+    services: Pick<SharedToolContext, "delegationService" | "dialogService">,
+  ): void {
+    if (services.delegationService !== undefined) {
+      this.builtInContext.delegationService = services.delegationService;
+    }
+    if (services.dialogService !== undefined) {
+      this.builtInContext.dialogService = services.dialogService;
+    }
   }
 
   updateAllowlist(names: string[]): void {
@@ -739,6 +752,16 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         input.activation.descriptor.toolId === "exec_command" &&
         typeof normalizedEffectiveInput?.sessionId === "string" &&
         normalizedEffectiveInput.command === undefined;
+      const workflowAuthorityAllows = authorizeWorkflowRunToolCall({
+        runContext: options.runContext,
+        toolId: input.activation.descriptor.toolId,
+        toolFamily: this.builtInCapabilities.get(
+          input.activation.descriptor.toolId,
+        )?.toolFamily,
+        descriptorContractRevision: input.activation.descriptor.contractRevision,
+        effectiveInput: normalizedEffectiveInput ?? {},
+        execCommandContinuation,
+      });
       const hostedApprovalScope = options.runContext === undefined
         ? undefined
         : readHostedStableApprovalContext(options.runContext);
@@ -776,6 +799,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       }
       const stableApproval =
         input.policy.decision === "approval_required" &&
+        !workflowAuthorityAllows &&
+        !rememberedExecCommandMatch &&
         !execCommandContinuation &&
         input.approval !== undefined &&
         options.runContext !== undefined
@@ -795,7 +820,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         activation: input.activation,
         origin: input.origin,
         effectiveInput: asRecord(effectiveInput) ?? {},
-        policy: rememberedExecCommandMatch || execCommandContinuation
+        policy: workflowAuthorityAllows || rememberedExecCommandMatch || execCommandContinuation
           ? { ...input.policy, decision: "allow" }
           : input.policy,
         ...(input.approval === undefined ? {} : { approval: input.approval }),
@@ -1286,8 +1311,17 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     const allowlist = scopedContext.allowlist;
     const activeBuiltInContext = scopedContext.builtInContext;
     const mcpStatus = this.resolveMcpSnapshot(options.runContext);
+    const workflowAuthority = readWorkflowRunAuthority(options.runContext);
 
     for (const name of allowlist) {
+      if (
+        workflowAuthority !== undefined &&
+        (workflowAuthority.activeStep.kind === "kestrel"
+          ? workflowAuthority.manifest.nativeTools.some(entry => entry.toolId === name)
+          : workflowAuthority.manifest.actions.some(entry => entry.nodeId === workflowAuthority.activeStep.nodeId && entry.toolId === name)) === false
+      ) {
+        continue;
+      }
       const builtIn = this.builtInToolSpecs.get(name);
       if (builtIn !== undefined) {
         if (
@@ -1790,7 +1824,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           return record;
         },
         createHandler: (handlerOptions: ToolGatewayCallOptions, prepared) => {
-          const executionContext =
+          const baseExecutionContext =
             prepared === undefined
               ? activeContext
               : {
@@ -1815,6 +1849,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                       }
                     : {}),
                 };
+          const executionContext = prepared === undefined
+            ? baseExecutionContext
+            : withPreparedExecCommandApprovalContext(
+                baseExecutionContext,
+                prepared,
+              );
           const contextWithResultPersistence =
             handlerOptions.persistCompletedCapabilityRawOutput === undefined
               ? executionContext
@@ -2727,6 +2767,80 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function readWorkflowRunAuthority(
+  runContext: ToolRunContext | undefined,
+): RunnerWorkflowRunAuthorityV1 | undefined {
+  const value = asRecord(asRecord(runContext?.payload)?.workflowRunAuthority);
+  if (value === undefined) return undefined;
+  if (
+    value.version !== "runner_workflow_run_authority_v2" ||
+    asRecord(value.manifest)?.version !== "workflow_capability_manifest_v2"
+  ) {
+    throw createRuntimeFailure(
+      "WORKFLOW_RUN_AUTHORITY_INVALID",
+      "Workflow run authority is malformed.",
+      { recoverable: false, subsystem: "tooling" },
+    );
+  }
+  return value as unknown as RunnerWorkflowRunAuthorityV1;
+}
+
+export function authorizeWorkflowRunToolCall(input: {
+  runContext?: ToolRunContext | undefined;
+  toolId: string;
+  toolFamily?: string | undefined;
+  descriptorContractRevision: string;
+  effectiveInput: Record<string, unknown>;
+  execCommandContinuation: boolean;
+}): boolean {
+  const authority = readWorkflowRunAuthority(input.runContext);
+  if (authority === undefined) return false;
+  if (input.toolFamily === "runtime") return true;
+  if (authority.activeStep.kind === "kestrel") {
+    const native = authority.manifest.nativeTools.find(entry => entry.toolId === input.toolId);
+    if (native?.descriptorContractRevision === input.descriptorContractRevision) return true;
+  }
+
+  if (authority.activeStep.kind !== "action") throw createRuntimeFailure("WORKFLOW_RUN_AUTHORITY_EXCEEDED", `Workflow activation does not authorize tool '${input.toolId}' in this Kestrel step.`, { recoverable: false, subsystem: "tooling", toolName: input.toolId });
+  const resolvedActionInput = authority.activeStep.resolvedInput;
+  const matchingIdentity = authority.manifest.actions.filter(
+    (entry) =>
+      entry.nodeId === authority.activeStep.nodeId &&
+      entry.toolId === input.toolId &&
+      entry.descriptorContractRevision === input.descriptorContractRevision,
+  );
+  const allowed = matchingIdentity.some((entry) => {
+    if (input.toolId === "exec_command") {
+      if (input.execCommandContinuation) return true;
+      const scope = entry.rememberedApprovalScope;
+      return scope.kind === "exec_command_exact" &&
+        scope.command === input.effectiveInput.command &&
+        scope.cwd === input.effectiveInput.cwd &&
+        scope.envMode === input.effectiveInput.envMode &&
+        JSON.stringify(scope.envNames) === JSON.stringify(
+          Array.isArray(input.effectiveInput.envNames)
+            ? [...input.effectiveInput.envNames].sort()
+            : [],
+        );
+    }
+    return hashCanonical(resolvedActionInput) === hashCanonical(input.effectiveInput);
+  });
+  if (allowed) return true;
+
+  throw createRuntimeFailure(
+    "WORKFLOW_RUN_AUTHORITY_EXCEEDED",
+    `Workflow activation does not authorize tool '${input.toolId}' with this input.`,
+    {
+      recoverable: false,
+      subsystem: "tooling",
+      toolName: input.toolId,
+      workflowId: authority.workflowId,
+      workflowVersionId: authority.workflowVersionId,
+      workflowRunId: authority.workflowRunId,
+    },
+  );
 }
 
 function resolveBlockedResumeScope(runContext: ToolRunContext | undefined):

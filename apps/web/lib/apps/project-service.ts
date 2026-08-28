@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { defaultToolCatalog } from "../../../../tools/catalog";
 import { getProjectEnvironmentBinding } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
@@ -30,6 +31,7 @@ import {
   listAuthorizedGitHubResources,
 } from "@/lib/integrations/github-resource-access";
 import type { GitHubCapability } from "@/lib/integrations/github-policy-contract";
+import { classifyWorkflowCapability, type WorkflowCapabilityUse } from "@/lib/workflows/capabilities";
 
 export type ProjectAppConnection = AppConnectionSummary & {
   scope: "shared" | "personal";
@@ -52,7 +54,37 @@ export type ProjectAppCapability = {
   rateLimitMode: ToolRateLimitMode;
   inherited: boolean;
   resourceReady: boolean;
+  inputSchema: Record<string, unknown>;
+  accessMode: import("@/lib/tools/types").ToolAccessMode;
+  workflowUse: WorkflowCapabilityUse;
+  descriptorContractRevision: string | null;
 };
+
+function capabilityInputSchema(capability: {
+  runtimeName: string | null;
+  metadata: Record<string, unknown> | null;
+}): Record<string, unknown> {
+  const descriptor = capability.runtimeName
+    ? defaultToolCatalog.getDescriptor(capability.runtimeName)
+    : undefined;
+  if (descriptor) return descriptor.inputSchema;
+  const candidate = capability.metadata?.inputSchema;
+  return candidate && typeof candidate === "object" && !Array.isArray(candidate)
+    ? (candidate as Record<string, unknown>)
+    : { type: "object", properties: {}, additionalProperties: false };
+}
+
+function capabilityDescriptorContractRevision(capability: {
+  runtimeName: string | null;
+  metadata: Record<string, unknown> | null;
+}) {
+  const descriptor = capability.runtimeName
+    ? defaultToolCatalog.getDescriptor(capability.runtimeName)
+    : undefined;
+  if (descriptor) return descriptor.contractRevision;
+  const candidate = capability.metadata?.descriptorContractRevision ?? capability.metadata?.definitionDigest;
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
+}
 
 export type ProjectAppConfiguration = {
   projectId: string;
@@ -368,6 +400,10 @@ export async function listProjectAppConfigurations(input: {
               rateLimitMode: grant?.rateLimitMode ?? "strict",
               inherited: !policy,
               resourceReady: true,
+              inputSchema: capabilityInputSchema(capability),
+              accessMode: capability.accessMode,
+              workflowUse: classifyWorkflowCapability(capability),
+              descriptorContractRevision: capabilityDescriptorContractRevision(capability),
             };
           }),
         dependencies: [],
@@ -443,6 +479,10 @@ export async function resolveEffectiveProjectAppsAccess(input: {
               loggingMode: capability.loggingMode,
               rateLimitMode: capability.rateLimitMode,
               settings: {},
+              inputSchema: capability.inputSchema,
+              accessMode: capability.accessMode,
+              workflowUse: capability.workflowUse,
+              descriptorContractRevision: capability.descriptorContractRevision,
             },
           ]
         : [],
@@ -1031,6 +1071,10 @@ export async function resolveEffectiveProjectAppAccess(input: {
         loggingMode: grant.loggingMode,
         rateLimitMode: grant.rateLimitMode,
         settings: grant.settings ?? {},
+        inputSchema: capabilityInputSchema(capability),
+        accessMode: capability.accessMode,
+        workflowUse: classifyWorkflowCapability(capability),
+        descriptorContractRevision: capabilityDescriptorContractRevision(capability),
       },
     ];
   });

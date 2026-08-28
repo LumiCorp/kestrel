@@ -140,6 +140,7 @@ function toolDefinition(schedule = false): WorkflowDefinition {
             config: {
               toolName: "github.issue.create",
               input: { title: "Workflow issue" },
+              inputBindings: {},
             },
           }
         : node;
