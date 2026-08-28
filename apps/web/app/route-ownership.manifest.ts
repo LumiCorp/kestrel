@@ -1378,6 +1378,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "api-unauthorized",
   ),
   api(
+    "app/api/integrations/oauth/[provider]/start/route.ts",
+    "/api/integrations/oauth/:provider/start",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/integrations/oauth/[provider]/callback/route.ts",
+    "/api/integrations/oauth/:provider/callback",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/environments/[environmentId]/apps/[appKey]/route.ts",
     "/api/environments/:environmentId/apps/:appKey",
     "apps",
