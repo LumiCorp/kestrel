@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { parseDesktopRendererSettingsUpdate } from "../../../src/desktopShell/contracts.js";
 import { createDefaultModelPolicy } from "../../../src/profile/modelPolicy.js";
 
 import {
@@ -141,9 +142,39 @@ test(
     });
 
     assert.equal(settings.projects[0]?.id, projectId);
+    assert.deepEqual(settings.projects[0]?.personalAppIds, []);
     assert.equal(settings.projectTombstones[0]?.path, projectPath);
   },
 );
+
+test("legacy Projects and unknown App IDs fail closed for personal App selection", () => {
+  const settings = normalizeDesktopSettings({
+    projects: [
+      { path: "/workspace/legacy", label: "Legacy" },
+      {
+        path: "/workspace/selected",
+        label: "Selected",
+        personalAppIds: ["google_workspace", "unknown.app", "built_in.weather"],
+      },
+    ],
+  });
+
+  assert.deepEqual(settings.projects[0]?.personalAppIds, []);
+  assert.deepEqual(settings.projects[1]?.personalAppIds, ["google_workspace"]);
+
+  assert.deepEqual(
+    parseDesktopRendererSettingsUpdate({
+      projects: [
+        {
+          path: "/workspace/renderer",
+          label: "Renderer",
+          personalAppIds: ["microsoft_365", "unknown.app", "built_in.weather"],
+        },
+      ],
+    }).projects?.[0]?.personalAppIds,
+    ["microsoft_365"],
+  );
+});
 
 test(
   "persisted Desktop connections cannot spoof a standard App identity",
@@ -472,8 +503,12 @@ test(
     assert.deepEqual(
       saved.projects.map(({ id: _id, ...project }) => project),
       [
-        { path: path.resolve("../workspace-a"), label: "Workspace A" },
-        { path: "/tmp/workspace-b", label: "workspace-b" },
+        {
+          path: path.resolve("../workspace-a"),
+          label: "Workspace A",
+          personalAppIds: [],
+        },
+        { path: "/tmp/workspace-b", label: "workspace-b", personalAppIds: [] },
       ],
     );
     assert.ok(

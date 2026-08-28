@@ -88,8 +88,17 @@ export function isDesktopBuiltInAppId(appId: string): appId is KestrelAppId {
   return isPublishedStandardAppId(normalized) && getKestrelStandardAppManifest(normalized)?.preinstalled === true;
 }
 
+export function isDesktopPersonalAppId(appId: string): appId is KestrelAppId {
+  const normalized = normalizeDesktopAppId(appId);
+  return isPublishedStandardAppId(normalized) && !isDesktopBuiltInAppId(normalized);
+}
+
 export function filterDesktopBuiltInAppIds(appIds: readonly string[]): KestrelAppId[] {
   return [...new Set(appIds.map(normalizeDesktopAppId).filter(isDesktopBuiltInAppId))].sort();
+}
+
+export function filterDesktopPersonalAppIds(appIds: readonly string[]): KestrelAppId[] {
+  return [...new Set(appIds.map(normalizeDesktopAppId).filter(isDesktopPersonalAppId))].sort();
 }
 
 export function desktopAppIdForServer(

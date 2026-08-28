@@ -142,6 +142,7 @@ export const KESTREL_ONE_WORKSPACE_TOOL_NAMES = Object.freeze([
   "kestrel_one.microsoft_365_send_mail",
   "kestrel_one.microsoft_365_list_events",
   "kestrel_one.microsoft_365_list_chats",
+  "kestrel_one.microsoft_365_list_chat_messages",
   "kestrel_one.microsoft_365_send_chat_message",
   "kestrel_one.microsoft_365_search_sites",
   "kestrel_one.vercel_list_projects",

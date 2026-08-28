@@ -394,6 +394,20 @@
 .project-overview-heading h2 { margin: 0; font-size: 14px; font-weight: 500; }
 .project-overview-heading p { margin: var(--space-1) 0 0; color: var(--text-tertiary); font-size: 11px; }
 
+.project-overview .workspace-panel { display: grid; gap: var(--space-3); padding: var(--space-3); }
+.project-overview .settings-list { gap: 0; border-top: var(--border-width) solid var(--border-subtle); }
+.project-overview .settings-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-width) solid var(--border-subtle);
+}
+.project-overview .settings-row > span { display: grid; gap: 2px; }
+.project-overview .settings-row strong { font-size: 12px; font-weight: 500; }
+.project-overview .settings-row small { color: var(--text-tertiary); font-size: 10px; }
+
 .project-overview-threads { display: grid; gap: var(--space-1); }
 .project-overview-threads > button {
   display: grid;

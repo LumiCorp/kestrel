@@ -113,6 +113,193 @@ test("exact effect result reads return the complete persisted AgentToolResult on
   assert.deepEqual(validateExactEffectResultRead({ requested, effect, effectResult }), { status: "found", result });
 });
 
+test("exact effect recovery accepts a Teams page with content-free audit evidence", async () => {
+  const teamsRequested = {
+    sessionId: "teams-session",
+    runId: "teams-run",
+    idempotencyKey: "teams-call",
+  };
+  const teamsGateway = createTestToolGateway({
+    "microsoft_365.list_chat_messages": async () => ({
+      items: [{
+        id: "message-1",
+        chatId: "chat-1",
+        body: { content: "live Teams content" },
+      }],
+      nextCursor: "sealed-next-cursor",
+    }),
+  });
+  const teamsPrepared = await prepareTestToolCall({
+    gateway: teamsGateway,
+    toolName: "microsoft_365.list_chat_messages",
+    toolInput: { chatId: "chat-1", cursor: "sealed-cursor", maxResults: 20 },
+    runId: teamsRequested.runId,
+    sessionId: teamsRequested.sessionId,
+    callId: teamsRequested.idempotencyKey,
+  });
+  const teamsResult = await teamsGateway.executePreparedToolCall(teamsPrepared);
+  const teamsEffect: PersistedEffect = {
+    runId: teamsRequested.runId,
+    sessionId: teamsRequested.sessionId,
+    stepIndex: 1,
+    type: "execute_tool_call",
+    payload: { preparedToolCall: teamsPrepared },
+    idempotencyKey: teamsRequested.idempotencyKey,
+    failurePolicy: "STOP",
+    status: "DONE",
+    createdAt: timestamp,
+  };
+  const teamsEffectResult = {
+    idempotencyKey: teamsRequested.idempotencyKey,
+    status: "DONE" as const,
+    output: teamsResult,
+    timestamp,
+  };
+
+  assert.deepEqual(teamsResult.auditRecord.input, {
+    operation: "chat.messages.list",
+    cursorState: "continued",
+    providerChatId: "chat-1",
+    maxResults: 20,
+  });
+  assert.doesNotMatch(JSON.stringify(teamsResult.auditRecord), /content|sealed-cursor/u);
+  assert.deepEqual(
+    validateExactEffectResultRead({
+      requested: teamsRequested,
+      effect: teamsEffect,
+      effectResult: teamsEffectResult,
+    }),
+    { status: "found", result: teamsResult },
+  );
+});
+
+test("exact effect recovery accepts a Teams send with a content commitment", async () => {
+  const teamsRequested = {
+    sessionId: "teams-send-session",
+    runId: "teams-send-run",
+    idempotencyKey: "teams-send-call",
+  };
+  const teamsGateway = createTestToolGateway({
+    "microsoft_365.send_chat_message": async () => ({
+      id: "message-1",
+      chatId: "chat-1",
+      createdAt: "2026-08-28T12:00:00Z",
+    }),
+  });
+  const teamsPrepared = await prepareTestToolCall({
+    gateway: teamsGateway,
+    toolName: "microsoft_365.send_chat_message",
+    toolInput: { chatId: "chat-1", content: "live Teams send content" },
+    runId: teamsRequested.runId,
+    sessionId: teamsRequested.sessionId,
+    callId: teamsRequested.idempotencyKey,
+  });
+  const teamsResult = await teamsGateway.executePreparedToolCall(teamsPrepared);
+  const teamsEffect: PersistedEffect = {
+    runId: teamsRequested.runId,
+    sessionId: teamsRequested.sessionId,
+    stepIndex: 1,
+    type: "execute_tool_call",
+    payload: { preparedToolCall: teamsPrepared },
+    idempotencyKey: teamsRequested.idempotencyKey,
+    failurePolicy: "STOP",
+    status: "DONE",
+    createdAt: timestamp,
+  };
+  const teamsEffectResult = {
+    idempotencyKey: teamsRequested.idempotencyKey,
+    status: "DONE" as const,
+    output: teamsResult,
+    timestamp,
+  };
+
+  assert.deepEqual(teamsResult.auditRecord.input, {
+    operation: "chat.send",
+    providerChatId: "chat-1",
+    contentBytes: 23,
+    contentHash: "6468bcf450e11bc6051d3c2583eb5ab29627933a3e9a6ec4a104683bab2a096e",
+  });
+  assert.doesNotMatch(JSON.stringify(teamsResult.auditRecord), /live Teams send content/u);
+  assert.deepEqual(
+    validateExactEffectResultRead({
+      requested: teamsRequested,
+      effect: teamsEffect,
+      effectResult: teamsEffectResult,
+    }),
+    { status: "found", result: teamsResult },
+  );
+});
+
+test("exact effect recovery accepts a Calendar page with content-free audit evidence", async () => {
+  const calendarRequested = {
+    sessionId: "calendar-session",
+    runId: "calendar-run",
+    idempotencyKey: "calendar-call",
+  };
+  const calendarGateway = createTestToolGateway({
+    "google_workspace.list_events": async () => ({
+      events: [{
+        id: "event-1",
+        summary: "live calendar content",
+        description: "private event details",
+        attendees: [{ email: "attendee@example.com" }],
+      }],
+      nextCursor: "sealed-next-cursor",
+    }),
+  });
+  const calendarPrepared = await prepareTestToolCall({
+    gateway: calendarGateway,
+    toolName: "google_workspace.list_events",
+    toolInput: {
+      timeMin: "2026-08-28T00:00:00Z",
+      timeMax: "2026-08-29T00:00:00Z",
+      cursor: "sealed-cursor",
+      maxResults: 20,
+    },
+    runId: calendarRequested.runId,
+    sessionId: calendarRequested.sessionId,
+    callId: calendarRequested.idempotencyKey,
+  });
+  const calendarResult = await calendarGateway.executePreparedToolCall(calendarPrepared);
+  const calendarEffect: PersistedEffect = {
+    runId: calendarRequested.runId,
+    sessionId: calendarRequested.sessionId,
+    stepIndex: 1,
+    type: "execute_tool_call",
+    payload: { preparedToolCall: calendarPrepared },
+    idempotencyKey: calendarRequested.idempotencyKey,
+    failurePolicy: "STOP",
+    status: "DONE",
+    createdAt: timestamp,
+  };
+  const calendarEffectResult = {
+    idempotencyKey: calendarRequested.idempotencyKey,
+    status: "DONE" as const,
+    output: calendarResult,
+    timestamp,
+  };
+
+  assert.deepEqual(calendarResult.auditRecord.input, {
+    operation: "events.list",
+    timeMin: "2026-08-28T00:00:00Z",
+    timeMax: "2026-08-29T00:00:00Z",
+    maxResults: 20,
+    cursorState: "continued",
+  });
+  assert.doesNotMatch(
+    JSON.stringify(calendarResult.auditRecord),
+    /calendar content|private event|attendee@example.com|sealed-cursor/u,
+  );
+  assert.deepEqual(
+    validateExactEffectResultRead({
+      requested: calendarRequested,
+      effect: calendarEffect,
+      effectResult: calendarEffectResult,
+    }),
+    { status: "found", result: calendarResult },
+  );
+});
+
 test("exact effect result replay permits continuation run ownership without weakening prepared identity", () => {
   const continuation = { ...requested, runId: "run-continuation" };
   assert.deepEqual(validateExactEffectResultRead({

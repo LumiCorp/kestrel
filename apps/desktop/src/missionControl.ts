@@ -77,10 +77,12 @@ export async function getDesktopMissionControlProject(input: {
 }
 
 export async function executeDesktopMissionControlAction(input: {
-  adapter: Pick<WebRunnerAdapter, "sendControl">;
   intent: unknown;
   registeredProjectIds: string[];
-  profileId: string;
+  profileForProject: (projectId: string) => Promise<{
+    profileId: string;
+    adapter: Pick<WebRunnerAdapter, "sendControl">;
+  }>;
   actionId: string;
   actionTs: string;
   context: WebRunnerRequestContext;
@@ -101,6 +103,11 @@ export async function executeDesktopMissionControlAction(input: {
       message: "Desktop Mission Control commands require a registered project.",
     });
   }
+  let projectProfile:
+    | Promise<{ profileId: string; adapter: Pick<WebRunnerAdapter, "sendControl"> }>
+    | undefined;
+  const resolveProjectProfile = () =>
+    (projectProfile ??= input.profileForProject(intent.projectId));
   const base = {
     projectId: intent.projectId,
     actionId: input.actionId,
@@ -167,7 +174,7 @@ export async function executeDesktopMissionControlAction(input: {
                         type: "execution.start",
                         attemptId: randomUUID(),
                         initiatedBy: "operator",
-                        profileId: input.profileId,
+                        profileId: (await resolveProjectProfile()).profileId,
                         sessionId: randomUUID(),
                         threadId: undefined,
                       }
@@ -238,7 +245,7 @@ export async function executeDesktopMissionControlAction(input: {
     const sessionId = action.sessionId as string;
     action.threadId = sessionId;
   }
-  const event = await input.adapter.sendControl(
+  const event = await (await resolveProjectProfile()).adapter.sendControl(
     { type: "mission_control.action.execute", action },
     input.context,
   );

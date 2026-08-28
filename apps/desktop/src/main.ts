@@ -1,6 +1,20 @@
 import { existsSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { spawn } from "node:child_process";
-import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -41,7 +55,10 @@ import {
   isLocalCoreDaemonElectronAppLaunch,
   type LocalCoreDaemonReady,
 } from "../../../src/localCore/daemon.js";
-import { resolveKestrelCoreHome, resolveLocalCorePaths } from "../../../src/localCore/home.js";
+import {
+  resolveKestrelCoreHome,
+  resolveLocalCorePaths,
+} from "../../../src/localCore/home.js";
 import {
   LocalCoreApiError,
   type LocalCoreClient,
@@ -165,9 +182,7 @@ import {
   type DesktopShutdownPreparation,
 } from "./lifecycle.js";
 import { createElectronUpdaterAdapter } from "./electronUpdaterAdapter.js";
-import {
-  DesktopUpdateCoordinator,
-} from "./updater.js";
+import { DesktopUpdateCoordinator } from "./updater.js";
 import {
   canReuseDesktopOnboardingProviderVerification,
   createDesktopOnboardingProviderFailure,
@@ -211,6 +226,7 @@ import {
   prepareDesktopMcpVerification,
 } from "./mcpVerification.js";
 import { DesktopProjectFileIndex } from "./projectFileIndex.js";
+import { resolveProjectScopedDesktopAppIds } from "./projectPersonalApps.js";
 import {
   getEffectiveDesktopEnabledAppIds,
   toDesktopRendererSettings,
@@ -296,10 +312,7 @@ declare global {
     | undefined;
   var __kestrelDesktopProfileOverride:
     | {
-        presetId?:
-          | "desktop_safe_local"
-          | "desktop_dev_local"
-          | undefined;
+        presetId?: "desktop_safe_local" | "desktop_dev_local" | undefined;
         capabilityPacks?:
           | Array<
               | "balanced"
@@ -313,7 +326,9 @@ declare global {
       }
     | undefined;
   var __kestrelDesktopUninstallHelperRunner:
-    | ((input: DesktopUninstallHelperRunnerInput) => Promise<DesktopUninstallHelperReport>)
+    | ((
+        input: DesktopUninstallHelperRunnerInput,
+      ) => Promise<DesktopUninstallHelperReport>)
     | undefined;
 }
 
@@ -390,12 +405,22 @@ const linkPreviewService = new LinkPreviewService();
 
 function resolveAuthoritativeDesktopExecutionSelection(
   requested: DesktopExecutionSelection,
+  projectPath?: string | undefined,
 ): DesktopExecutionSelection {
-  const authoritativeIds = getEffectiveDesktopEnabledAppIds(desktopSettings);
+  const authoritativeIds = resolveProjectScopedDesktopAppIds({
+    ...(projectPath !== undefined ? { projectPath } : {}),
+    projects: desktopSettings.projects,
+    requested,
+    enabledAppIds: getEffectiveDesktopEnabledAppIds(desktopSettings),
+  });
   return {
     modelConfiguration: requested.modelConfiguration,
     apps: authoritativeIds.flatMap((id) => {
-      const definition = getDesktopAppDefinition(id, undefined, desktopSettings.mcpServers);
+      const definition = getDesktopAppDefinition(
+        id,
+        undefined,
+        desktopSettings.mcpServers,
+      );
       return definition === undefined
         ? []
         : [{ id: definition.id, contractVersion: definition.contractVersion }];
@@ -419,15 +444,18 @@ const fileEditorWindows = new Map<string, BrowserWindow>();
 const projectFileWatchers = new Map<string, DesktopProjectFileWatcher>();
 const projectFileIndex = new DesktopProjectFileIndex();
 const activeDesktopWorkspaceRunCounts = new Map<string, number>();
-const activeDesktopAttachmentImports = new Map<string, {
-  filePath: string;
-  handle: FileHandle;
-  threadId: string;
-  filename: string;
-  mimeType?: string | undefined;
-  expectedBytes: number;
-  receivedBytes: number;
-}>();
+const activeDesktopAttachmentImports = new Map<
+  string,
+  {
+    filePath: string;
+    handle: FileHandle;
+    threadId: string;
+    filename: string;
+    mimeType?: string | undefined;
+    expectedBytes: number;
+    receivedBytes: number;
+  }
+>();
 const activatedDesktopWorkspaceSkills = new Set<string>();
 const desktopWorkspaceSkillManagers = new Map<string, WorkspaceSkillManager>();
 const EDITABLE_TEXT_FILE_MAX_BYTES = 1024 * 1024;
@@ -473,7 +501,9 @@ const preloadPath = path.join(currentDir, "preload.js");
 const { autoUpdater } = electronUpdater;
 let desktopUpdateCoordinator: DesktopUpdateCoordinator | undefined;
 let desktopShutdownPreparation: DesktopShutdownPreparation | undefined;
-let desktopStartupRecoveryCoordinator: DesktopStartupRecoveryCoordinator | undefined;
+let desktopStartupRecoveryCoordinator:
+  | DesktopStartupRecoveryCoordinator
+  | undefined;
 
 async function main(): Promise<void> {
   await app.whenReady();
@@ -489,7 +519,10 @@ async function main(): Promise<void> {
   }
   const isolatedPackageSmokeCredentials =
     isApprovedPackageSmokeEnvironmentCredentialStore();
-  if (process.platform === "darwin" && isolatedPackageSmokeCredentials === false) {
+  if (
+    process.platform === "darwin" &&
+    isolatedPackageSmokeCredentials === false
+  ) {
     process.env.KESTREL_CORE_CREDENTIAL_STORE = "macos_keychain";
   }
   desktopConfig = resolveDesktopPathConfig({
@@ -517,7 +550,9 @@ async function main(): Promise<void> {
   configureEmbeddedPreviewSecurity();
   desktopShutdownPreparation = createMainDesktopShutdownPreparation();
   desktopStartupRecoveryCoordinator = createDesktopStartupRecoveryCoordinator({
-    operations: createDesktopLocalCoreRecoveryOperations(localCoreHome.homePath),
+    operations: createDesktopLocalCoreRecoveryOperations(
+      localCoreHome.homePath,
+    ),
     prepareDesktop: async () => {
       await requireDesktopShutdownPreparation().prepare({
         cancelActiveWork: false,
@@ -638,7 +673,8 @@ async function startDesktopServices(): Promise<void> {
         ...(resumeExistingSetup
           ? { provider: desktopSettings.selectedProvider }
           : {}),
-        ...(resumeExistingSetup && currentProviderModel(desktopSettings) !== undefined
+        ...(resumeExistingSetup &&
+        currentProviderModel(desktopSettings) !== undefined
           ? { model: currentProviderModel(desktopSettings) }
           : {}),
         ...(resumeExistingSetup && desktopSettings.projects[0] !== undefined
@@ -818,11 +854,12 @@ function createMainDesktopUpdateCoordinator(
 async function reportDesktopStartupFailure(error: unknown): Promise<void> {
   const recovery = await requireDesktopStartupRecoveryCoordinator()
     .recoverStartupFailure()
-    .catch(() => undefined);
+    .catch(() => {});
   if (recovery?.status === "restarting") return;
-  const recoveryDetails = recovery?.status === "blocked"
-    ? recovery.blockers.map((blocker) => blocker.message).join("\n")
-    : undefined;
+  const recoveryDetails =
+    recovery?.status === "blocked"
+      ? recovery.blockers.map((blocker) => blocker.message).join("\n")
+      : undefined;
   if (databaseController !== undefined) {
     databaseStatus = await databaseController
       .getStatus()
@@ -835,7 +872,9 @@ async function reportDesktopStartupFailure(error: unknown): Promise<void> {
       ...(readDesktopErrorCode(error) !== undefined
         ? { code: readDesktopErrorCode(error) }
         : {}),
-      details: recoveryDetails ?? (error instanceof Error ? error.message : String(error)),
+      details:
+        recoveryDetails ??
+        (error instanceof Error ? error.message : String(error)),
       database: databaseStatus,
     },
     mainWindow?.webContents,
@@ -846,7 +885,9 @@ async function reportDesktopStartupFailure(error: unknown): Promise<void> {
     ...(readDesktopErrorCode(error) !== undefined
       ? { code: readDesktopErrorCode(error) }
       : {}),
-    details: recoveryDetails ?? (error instanceof Error ? error.message : String(error)),
+    details:
+      recoveryDetails ??
+      (error instanceof Error ? error.message : String(error)),
   });
 }
 
@@ -1376,11 +1417,13 @@ function registerBootIpcHandlers(): void {
     const approvedSmokePath = readApprovedPackageSmokeProjectPath();
     const selectedPath =
       approvedSmokePath ??
-      await dialog.showOpenDialog({
-        properties: ["openDirectory", "createDirectory"],
-        title: "Choose a Kestrel project",
-        buttonLabel: "Choose Project",
-      }).then((result) => result.canceled ? undefined : result.filePaths[0]);
+      (await dialog
+        .showOpenDialog({
+          properties: ["openDirectory", "createDirectory"],
+          title: "Choose a Kestrel project",
+          buttonLabel: "Choose Project",
+        })
+        .then((result) => (result.canceled ? undefined : result.filePaths[0])));
     return selectedPath === undefined
       ? undefined
       : await createDesktopOnboardingProjectCandidate(selectedPath, {
@@ -1426,43 +1469,40 @@ function registerBootIpcHandlers(): void {
     requireCurrentMainWindowIpcSender(event);
     return await completeDesktopOnboarding();
   });
-  ipcMain.handle(
-    "desktop:get-model-catalog",
-    async (event, input: unknown) => {
-      requireCurrentMainWindowIpcSender(event);
-      const request = parseDesktopProviderModelCatalogRequest(input);
-      return await resolveProviderModelCatalog(
-        request.provider,
-        {
-          ...process.env,
-          ...(desktopSettings.openrouterBaseUrl !== undefined
-            ? { OPENROUTER_BASE_URL: desktopSettings.openrouterBaseUrl }
+  ipcMain.handle("desktop:get-model-catalog", async (event, input: unknown) => {
+    requireCurrentMainWindowIpcSender(event);
+    const request = parseDesktopProviderModelCatalogRequest(input);
+    return await resolveProviderModelCatalog(
+      request.provider,
+      {
+        ...process.env,
+        ...(desktopSettings.openrouterBaseUrl !== undefined
+          ? { OPENROUTER_BASE_URL: desktopSettings.openrouterBaseUrl }
+          : {}),
+        ...(desktopSettings.openaiBaseUrl !== undefined
+          ? { OPENAI_BASE_URL: desktopSettings.openaiBaseUrl }
+          : {}),
+        ...(desktopSettings.anthropicBaseUrl !== undefined
+          ? { ANTHROPIC_BASE_URL: desktopSettings.anthropicBaseUrl }
+          : {}),
+        ...(request.provider === "ollama" && request.baseUrl !== undefined
+          ? { OLLAMA_BASE_URL: request.baseUrl }
+          : desktopSettings.ollamaBaseUrl !== undefined
+            ? { OLLAMA_BASE_URL: desktopSettings.ollamaBaseUrl }
             : {}),
-          ...(desktopSettings.openaiBaseUrl !== undefined
-            ? { OPENAI_BASE_URL: desktopSettings.openaiBaseUrl }
+        ...(request.provider === "lmstudio" && request.baseUrl !== undefined
+          ? { LMSTUDIO_BASE_URL: request.baseUrl }
+          : desktopSettings.lmstudioBaseUrl !== undefined
+            ? { LMSTUDIO_BASE_URL: desktopSettings.lmstudioBaseUrl }
             : {}),
-          ...(desktopSettings.anthropicBaseUrl !== undefined
-            ? { ANTHROPIC_BASE_URL: desktopSettings.anthropicBaseUrl }
-            : {}),
-          ...((request.provider === "ollama" && request.baseUrl !== undefined)
-            ? { OLLAMA_BASE_URL: request.baseUrl }
-            : desktopSettings.ollamaBaseUrl !== undefined
-              ? { OLLAMA_BASE_URL: desktopSettings.ollamaBaseUrl }
-              : {}),
-          ...((request.provider === "lmstudio" && request.baseUrl !== undefined)
-            ? { LMSTUDIO_BASE_URL: request.baseUrl }
-            : desktopSettings.lmstudioBaseUrl !== undefined
-              ? { LMSTUDIO_BASE_URL: desktopSettings.lmstudioBaseUrl }
-              : {}),
-        },
-        fetch,
-        {
-          requireLiveLocalCatalog: true,
-          preserveProviderOrder: true,
-        },
-      );
-    },
-  );
+      },
+      fetch,
+      {
+        requireLiveLocalCatalog: true,
+        preserveProviderOrder: true,
+      },
+    );
+  });
   ipcMain.handle("desktop:open-external", async (_event, url: unknown) => {
     requireCurrentMainWindowIpcSender(_event);
     let parsedUrl: URL | undefined;
@@ -1479,8 +1519,7 @@ function registerBootIpcHandlers(): void {
     ) {
       throw createDesktopError({
         code: "desktop.invalid_external_url",
-        message:
-          "desktop.openExternal requires a credential-free http(s) URL.",
+        message: "desktop.openExternal requires a credential-free http(s) URL.",
       });
     }
     await shell.openExternal(url as string);
@@ -1519,7 +1558,9 @@ function registerBootIpcHandlers(): void {
     "desktop:apply-uninstall-plan",
     async (_event, input: unknown) => {
       assertDesktopAdmissionOpen("uninstall");
-      return await applyDesktopUninstallPlan(parseDesktopUninstallApplyInput(input));
+      return await applyDesktopUninstallPlan(
+        parseDesktopUninstallApplyInput(input),
+      );
     },
   );
   ipcMain.handle(
@@ -1530,48 +1571,45 @@ function registerBootIpcHandlers(): void {
     app.relaunch();
     app.exit(0);
   });
-  ipcMain.handle(
-    "desktop:restart-kestrel",
-    async (_event, value: unknown) => {
-      const request = parseDesktopRestartKestrelInput(value);
+  ipcMain.handle("desktop:restart-kestrel", async (_event, value: unknown) => {
+    const request = parseDesktopRestartKestrelInput(value);
+    updateBootState(
+      {
+        phase: "starting_runtime",
+        message: request.force
+          ? "Force restarting Kestrel…"
+          : "Restarting Kestrel…",
+      },
+      mainWindow?.webContents,
+    );
+    const result =
+      await requireDesktopStartupRecoveryCoordinator().restart(request);
+    if (result.status === "blocked") {
       updateBootState(
         {
-          phase: "starting_runtime",
-          message: request.force
-            ? "Force restarting Kestrel…"
-            : "Restarting Kestrel…",
+          phase: "failed",
+          message: "Kestrel restart needs confirmation.",
+          details: result.blockers.map((blocker) => blocker.message).join("\n"),
         },
         mainWindow?.webContents,
       );
-      const result = await requireDesktopStartupRecoveryCoordinator().restart(
-        request,
-      );
-      if (result.status === "blocked") {
-        updateBootState(
-          {
-            phase: "failed",
-            message: "Kestrel restart needs confirmation.",
-            details: result.blockers
-              .map((blocker) => blocker.message)
-              .join("\n"),
-          },
-          mainWindow?.webContents,
-        );
-      }
-      return result;
-    },
-  );
+    }
+    return result;
+  });
   ipcMain.handle("desktop:get-update-state", () =>
     requireDesktopUpdateCoordinator().state(),
   );
-  ipcMain.handle("desktop:check-for-updates", async () =>
-    await requireDesktopUpdateCoordinator().checkForUpdates(),
+  ipcMain.handle(
+    "desktop:check-for-updates",
+    async () => await requireDesktopUpdateCoordinator().checkForUpdates(),
   );
-  ipcMain.handle("desktop:download-update", async () =>
-    await requireDesktopUpdateCoordinator().downloadUpdate(),
+  ipcMain.handle(
+    "desktop:download-update",
+    async () => await requireDesktopUpdateCoordinator().downloadUpdate(),
   );
-  ipcMain.handle("desktop:install-update", async () =>
-    await requireDesktopUpdateCoordinator().installUpdate(),
+  ipcMain.handle(
+    "desktop:install-update",
+    async () => await requireDesktopUpdateCoordinator().installUpdate(),
   );
   ipcMain.handle("desktop:open-diagnostics", async () => {
     const runtimeLogPath =
@@ -1617,8 +1655,7 @@ async function buildCurrentDesktopSupportBundle() {
     projectRuns,
     ...(runtimeStatus !== undefined ? { runtimeStatus } : {}),
     paths: {
-      runtimeLogPath:
-        runtimeStatus?.logPath ?? desktopConfig?.runtimeLogPath,
+      runtimeLogPath: runtimeStatus?.logPath ?? desktopConfig?.runtimeLogPath,
     },
     ...(localCoreStatus !== undefined ? { localCoreStatus } : {}),
     ...(coreSupportBundle !== undefined ? { coreSupportBundle } : {}),
@@ -1718,7 +1755,8 @@ function registerIpcHandlers(
     async (_event, input: unknown) => {
       const parsed = parseDesktopReceivingInput(input, true);
       return await requireLocalCoreConnectionManager().executeOnce(
-        async (client) => await client.saveKestrelOneReceivingConnection(parsed),
+        async (client) =>
+          await client.saveKestrelOneReceivingConnection(parsed),
       );
     },
   );
@@ -2121,104 +2159,132 @@ function registerIpcHandlers(
     await acknowledgePersistedDesktopOnboardingHandoff(result.state.entries);
     return result;
   });
-  ipcMain.handle("desktop:conversation-message-submit", async (_event, input: unknown): Promise<DesktopConversationMessageResult> => {
-    let request: DesktopConversationMessageRequest;
-    try {
-      request = parseDesktopConversationMessageRequest(input);
-    } catch (error) {
-      throw createDesktopError({
-        code: "desktop.invalid_conversation_message",
-        message: "Desktop conversation message request is invalid.",
-        details: error instanceof Error ? error.message : String(error),
-      });
-    }
-    const {
-      projectPath,
-      workspaceMode,
-      workspaceBaseRef,
-      workspaceSetup,
-      threadId,
-      messageId,
-      attachmentIds,
-      executionSelection,
-      ...turnRequest
-    } = request;
-    const canonicalThreadId = `thread-main:${request.sessionId}`;
-    if (threadId !== canonicalThreadId) {
-      throw createDesktopError({
-        code: "desktop.invalid_run_thread",
-        message: "Desktop conversation thread does not match its Local Core session.",
-      });
-    }
-    const globalExecutionSelection = resolveAuthoritativeDesktopExecutionSelection(executionSelection);
-    const executionProfile = await requireLocalCoreConnectionManager().executeIdempotent(
-      async (client) => await client.resolveExecutionProfile({
-        client: "desktop",
-        selection: globalExecutionSelection,
-      }),
-    );
-    const runProfile = executionProfile.resolvedProfile;
-    if (attachmentIds !== undefined) {
-      const listed = await requireLocalCoreConnectionManager().executeIdempotent(
-        async (client) => await client.listDesktopAttachments(canonicalThreadId),
-      );
-      const selected = attachmentIds.map((attachmentId) =>
-        listed.find((entry) => entry.attachmentId === attachmentId),
-      );
-      if (selected.some((entry) => entry === undefined)) {
+  ipcMain.handle(
+    "desktop:conversation-message-submit",
+    async (
+      _event,
+      input: unknown,
+    ): Promise<DesktopConversationMessageResult> => {
+      let request: DesktopConversationMessageRequest;
+      try {
+        request = parseDesktopConversationMessageRequest(input);
+      } catch (error) {
         throw createDesktopError({
-          code: "desktop.attachment_unavailable",
-          message: "One or more attachments are unavailable for this thread.",
+          code: "desktop.invalid_conversation_message",
+          message: "Desktop conversation message request is invalid.",
+          details: error instanceof Error ? error.message : String(error),
         });
       }
-      if (
-        selected.some((entry) => entry?.kind === "image") &&
-        runProfile.modelCapabilities?.visionInputEnabled !== true
-      ) {
+      const {
+        projectPath,
+        workspaceMode,
+        workspaceBaseRef,
+        workspaceSetup,
+        threadId,
+        messageId,
+        attachmentIds,
+        executionSelection,
+        ...turnRequest
+      } = request;
+      const canonicalThreadId = `thread-main:${request.sessionId}`;
+      if (threadId !== canonicalThreadId) {
         throw createDesktopError({
-          code: "desktop.model_vision_unavailable",
-          message: "The selected model does not accept image attachments.",
+          code: "desktop.invalid_run_thread",
+          message:
+            "Desktop conversation thread does not match its Local Core session.",
         });
       }
-    }
-    const attachments = attachmentIds === undefined
-      ? undefined
-      : await requireLocalCoreConnectionManager().executeIdempotent(
-          async (client) => await client.resolveDesktopAttachments(canonicalThreadId, attachmentIds),
+      const globalExecutionSelection =
+        resolveAuthoritativeDesktopExecutionSelection(
+          executionSelection,
+          projectPath,
         );
-    const workspace = resolveDesktopThreadWorkspace({
-      ...(projectPath !== undefined ? { projectPath } : {}),
-      projects: desktopSettings.projects,
-      defaultKestrelRoot: requireLocalCoreStatus().home.productRootPath,
-      ...(workspaceMode !== undefined ? { workspaceMode } : {}),
-      ...(workspaceBaseRef !== undefined ? { workspaceBaseRef } : {}),
-      ...(workspaceSetup !== undefined ? { workspaceSetup } : {}),
-    });
-    assertDesktopAdmissionOpen("a conversation message");
-    const event = await requireDesktopRunnerAdapter(
-      runnerTransport,
-      executionProfile.profileId,
-      runProfile,
-    ).submitConversationMessage({
-      threadId,
-      messageId,
-      turn: {
-        ...turnRequest,
-        ...(attachments !== undefined ? { attachments } : {}),
-        workspace,
-        metadata: { desktopExecutionSelection: globalExecutionSelection },
-      },
-    }, DESKTOP_RUNNER_REQUEST_CONTEXT);
-    if (attachmentIds !== undefined && attachmentIds.length > 0) {
-      await requireLocalCoreConnectionManager().executeIdempotent(
-        async (client) => await client.markDesktopAttachmentsSubmitted(canonicalThreadId, attachmentIds, messageId),
+      const executionProfile =
+        await requireLocalCoreConnectionManager().executeIdempotent(
+          async (client) =>
+            await client.resolveExecutionProfile({
+              client: "desktop",
+              selection: globalExecutionSelection,
+            }),
+        );
+      const runProfile = executionProfile.resolvedProfile;
+      if (attachmentIds !== undefined) {
+        const listed =
+          await requireLocalCoreConnectionManager().executeIdempotent(
+            async (client) =>
+              await client.listDesktopAttachments(canonicalThreadId),
+          );
+        const selected = attachmentIds.map((attachmentId) =>
+          listed.find((entry) => entry.attachmentId === attachmentId),
+        );
+        if (selected.some((entry) => entry === undefined)) {
+          throw createDesktopError({
+            code: "desktop.attachment_unavailable",
+            message: "One or more attachments are unavailable for this thread.",
+          });
+        }
+        if (
+          selected.some((entry) => entry?.kind === "image") &&
+          runProfile.modelCapabilities?.visionInputEnabled !== true
+        ) {
+          throw createDesktopError({
+            code: "desktop.model_vision_unavailable",
+            message: "The selected model does not accept image attachments.",
+          });
+        }
+      }
+      const attachments =
+        attachmentIds === undefined
+          ? undefined
+          : await requireLocalCoreConnectionManager().executeIdempotent(
+              async (client) =>
+                await client.resolveDesktopAttachments(
+                  canonicalThreadId,
+                  attachmentIds,
+                ),
+            );
+      const workspace = resolveDesktopThreadWorkspace({
+        ...(projectPath !== undefined ? { projectPath } : {}),
+        projects: desktopSettings.projects,
+        defaultKestrelRoot: requireLocalCoreStatus().home.productRootPath,
+        ...(workspaceMode !== undefined ? { workspaceMode } : {}),
+        ...(workspaceBaseRef !== undefined ? { workspaceBaseRef } : {}),
+        ...(workspaceSetup !== undefined ? { workspaceSetup } : {}),
+      });
+      assertDesktopAdmissionOpen("a conversation message");
+      const event = await requireDesktopRunnerAdapter(
+        runnerTransport,
+        executionProfile.profileId,
+        runProfile,
+      ).submitConversationMessage(
+        {
+          threadId,
+          messageId,
+          turn: {
+            ...turnRequest,
+            ...(attachments !== undefined ? { attachments } : {}),
+            workspace,
+            metadata: { desktopExecutionSelection: globalExecutionSelection },
+          },
+        },
+        DESKTOP_RUNNER_REQUEST_CONTEXT,
       );
-    }
-    return {
-      ...event.payload,
-      view: parseDesktopRuntimeThreadInspection(event.payload.view),
-    };
-  });
+      if (attachmentIds !== undefined && attachmentIds.length > 0) {
+        await requireLocalCoreConnectionManager().executeIdempotent(
+          async (client) =>
+            await client.markDesktopAttachmentsSubmitted(
+              canonicalThreadId,
+              attachmentIds,
+              messageId,
+            ),
+        );
+      }
+      return {
+        ...event.payload,
+        view: parseDesktopRuntimeThreadInspection(event.payload.view),
+      };
+    },
+  );
 
   ipcMain.handle("desktop:run-turn", async (_event, input: unknown) => {
     let request: DesktopRunTurnRequest;
@@ -2241,7 +2307,11 @@ function registerIpcHandlers(
       executionSelection,
       ...turnRequest
     } = request;
-    const globalExecutionSelection = resolveAuthoritativeDesktopExecutionSelection(executionSelection);
+    const globalExecutionSelection =
+      resolveAuthoritativeDesktopExecutionSelection(
+        executionSelection,
+        projectPath,
+      );
     const executionProfile =
       await requireLocalCoreConnectionManager().executeIdempotent(
         async (client) =>
@@ -2355,25 +2425,35 @@ function registerIpcHandlers(
           ? await dialog.showOpenDialog(dialogOptions)
           : await dialog.showOpenDialog(mainWindow, dialogOptions);
       if (selection.canceled) return [];
-      const existingDrafts = (await requireLocalCoreConnectionManager().executeIdempotent(
-        async (client) => await client.listDesktopAttachments(normalizedThreadId),
-      )).filter((attachment) => attachment.submittedAt === undefined);
+      const existingDrafts = (
+        await requireLocalCoreConnectionManager().executeIdempotent(
+          async (client) =>
+            await client.listDesktopAttachments(normalizedThreadId),
+        )
+      ).filter((attachment) => attachment.submittedAt === undefined);
       if (existingDrafts.length + selection.filePaths.length > 20)
         throw createDesktopError({
           code: "desktop.too_many_attachments",
           message: "Select no more than 20 attachments at once.",
         });
-      const selectedStats = await Promise.all(selection.filePaths.map(async (filePath) => await stat(filePath)));
-      if (selectedStats.some((entry) => !entry.isFile() || entry.size > 100 * 1024 * 1024)) {
+      const selectedStats = await Promise.all(
+        selection.filePaths.map(async (filePath) => await stat(filePath)),
+      );
+      if (
+        selectedStats.some(
+          (entry) => !entry.isFile() || entry.size > 100 * 1024 * 1024,
+        )
+      ) {
         throw createDesktopError({
           code: "desktop.attachment_too_large",
-          message: "Each attachment must be a regular file no larger than 100 MiB.",
+          message:
+            "Each attachment must be a regular file no larger than 100 MiB.",
         });
       }
       if (
-        existingDrafts.reduce((sum, entry) => sum + entry.sizeBytes, 0)
-        + selectedStats.reduce((sum, entry) => sum + entry.size, 0)
-        > 500 * 1024 * 1024
+        existingDrafts.reduce((sum, entry) => sum + entry.sizeBytes, 0) +
+          selectedStats.reduce((sum, entry) => sum + entry.size, 0) >
+        500 * 1024 * 1024
       ) {
         throw createDesktopError({
           code: "desktop.attachments_too_large",
@@ -2410,23 +2490,52 @@ function registerIpcHandlers(
     "desktop:attachment-stream-begin",
     async (_event, value: unknown): Promise<string> => {
       if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        throw createDesktopError({ code: "desktop.invalid_attachment_input", message: "Attachment stream metadata is invalid." });
+        throw createDesktopError({
+          code: "desktop.invalid_attachment_input",
+          message: "Attachment stream metadata is invalid.",
+        });
       }
       const input = value as Record<string, unknown>;
       const threadId = parseDesktopAttachmentThreadId(input.threadId);
-      const filename = typeof input.filename === "string" ? input.filename.trim() : "";
-      const mimeType = typeof input.mimeType === "string" && input.mimeType.trim() ? input.mimeType.trim() : undefined;
+      const filename =
+        typeof input.filename === "string" ? input.filename.trim() : "";
+      const mimeType =
+        typeof input.mimeType === "string" && input.mimeType.trim()
+          ? input.mimeType.trim()
+          : undefined;
       const expectedBytes = input.sizeBytes;
-      if (!filename || typeof expectedBytes !== "number" || !Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes > 100 * 1024 * 1024) {
-        throw createDesktopError({ code: "desktop.invalid_attachment_input", message: "Attachment stream filename or size is invalid." });
+      if (
+        !filename ||
+        typeof expectedBytes !== "number" ||
+        !Number.isSafeInteger(expectedBytes) ||
+        expectedBytes < 0 ||
+        expectedBytes > 100 * 1024 * 1024
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_attachment_input",
+          message: "Attachment stream filename or size is invalid.",
+        });
       }
-      const drafts = (await requireLocalCoreConnectionManager().executeIdempotent(
-        async (client) => await client.listDesktopAttachments(threadId),
-      )).filter((attachment) => attachment.submittedAt === undefined);
-      if (drafts.length >= 20 || drafts.reduce((sum, entry) => sum + entry.sizeBytes, 0) + expectedBytes > 500 * 1024 * 1024) {
-        throw createDesktopError({ code: "desktop.attachments_too_large", message: "Attachment count or message total exceeds the configured limit." });
+      const drafts = (
+        await requireLocalCoreConnectionManager().executeIdempotent(
+          async (client) => await client.listDesktopAttachments(threadId),
+        )
+      ).filter((attachment) => attachment.submittedAt === undefined);
+      if (
+        drafts.length >= 20 ||
+        drafts.reduce((sum, entry) => sum + entry.sizeBytes, 0) +
+          expectedBytes >
+          500 * 1024 * 1024
+      ) {
+        throw createDesktopError({
+          code: "desktop.attachments_too_large",
+          message:
+            "Attachment count or message total exceeds the configured limit.",
+        });
       }
-      const importRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-attachment-import-"));
+      const importRoot = await mkdtemp(
+        path.join(os.tmpdir(), "kestrel-desktop-attachment-import-"),
+      );
       const filePath = path.join(importRoot, "upload.bin");
       const handle = await open(filePath, "wx", 0o600);
       const uploadId = `attachment-upload-${randomUUID()}`;
@@ -2445,17 +2554,35 @@ function registerIpcHandlers(
   ipcMain.handle(
     "desktop:attachment-stream-append",
     async (_event, uploadId: unknown, value: unknown): Promise<void> => {
-      const upload = typeof uploadId === "string" ? activeDesktopAttachmentImports.get(uploadId) : undefined;
-      const chunk = value instanceof Uint8Array ? Buffer.from(value) : undefined;
-      if (upload === undefined || chunk === undefined || chunk.byteLength > 1024 * 1024) {
-        throw createDesktopError({ code: "desktop.invalid_attachment_input", message: "Attachment stream chunk is invalid." });
+      const upload =
+        typeof uploadId === "string"
+          ? activeDesktopAttachmentImports.get(uploadId)
+          : undefined;
+      const chunk =
+        value instanceof Uint8Array ? Buffer.from(value) : undefined;
+      if (
+        upload === undefined ||
+        chunk === undefined ||
+        chunk.byteLength > 1024 * 1024
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_attachment_input",
+          message: "Attachment stream chunk is invalid.",
+        });
       }
       if (upload.receivedBytes + chunk.byteLength > upload.expectedBytes) {
-        throw createDesktopError({ code: "desktop.attachment_too_large", message: "Attachment stream exceeded its declared size." });
+        throw createDesktopError({
+          code: "desktop.attachment_too_large",
+          message: "Attachment stream exceeded its declared size.",
+        });
       }
       let offset = 0;
       while (offset < chunk.byteLength) {
-        const { bytesWritten } = await upload.handle.write(chunk, offset, chunk.byteLength - offset);
+        const { bytesWritten } = await upload.handle.write(
+          chunk,
+          offset,
+          chunk.byteLength - offset,
+        );
         offset += bytesWritten;
       }
       upload.receivedBytes += chunk.byteLength;
@@ -2467,25 +2594,37 @@ function registerIpcHandlers(
       const normalizedId = typeof uploadId === "string" ? uploadId : "";
       const upload = activeDesktopAttachmentImports.get(normalizedId);
       if (upload === undefined) {
-        throw createDesktopError({ code: "desktop.invalid_attachment_input", message: "Attachment stream is unavailable." });
+        throw createDesktopError({
+          code: "desktop.invalid_attachment_input",
+          message: "Attachment stream is unavailable.",
+        });
       }
       activeDesktopAttachmentImports.delete(normalizedId);
       try {
         await upload.handle.close();
         if (upload.receivedBytes !== upload.expectedBytes) {
-          throw createDesktopError({ code: "desktop.invalid_attachment_input", message: "Attachment stream ended before its declared size." });
+          throw createDesktopError({
+            code: "desktop.invalid_attachment_input",
+            message: "Attachment stream ended before its declared size.",
+          });
         }
         return await requireLocalCoreConnectionManager().executeOnce(
-          async (client) => await client.importDesktopAttachmentPath({
-            threadId: upload.threadId,
-            filename: upload.filename,
-            sourcePath: upload.filePath,
-            ...(upload.mimeType !== undefined ? { mimeType: upload.mimeType } : {}),
-          }),
+          async (client) =>
+            await client.importDesktopAttachmentPath({
+              threadId: upload.threadId,
+              filename: upload.filename,
+              sourcePath: upload.filePath,
+              ...(upload.mimeType !== undefined
+                ? { mimeType: upload.mimeType }
+                : {}),
+            }),
         );
       } finally {
         await upload.handle.close().catch(() => {});
-        await rm(path.dirname(upload.filePath), { recursive: true, force: true });
+        await rm(path.dirname(upload.filePath), {
+          recursive: true,
+          force: true,
+        });
       }
     },
   );
@@ -2523,25 +2662,37 @@ function registerIpcHandlers(
   );
   ipcMain.handle(
     "desktop:save-attachment",
-    async (_event, threadId: unknown, attachmentId: unknown): Promise<string | null> => {
+    async (
+      _event,
+      threadId: unknown,
+      attachmentId: unknown,
+    ): Promise<string | null> => {
       const normalizedThreadId = parseDesktopAttachmentThreadId(threadId);
       const normalizedAttachmentId = parseDesktopAttachmentId(attachmentId);
-      const listed = await requireLocalCoreConnectionManager().executeIdempotent(
-        async (client) => await client.listDesktopAttachments(normalizedThreadId),
+      const listed =
+        await requireLocalCoreConnectionManager().executeIdempotent(
+          async (client) =>
+            await client.listDesktopAttachments(normalizedThreadId),
+        );
+      const attachment = listed.find(
+        (entry) => entry.attachmentId === normalizedAttachmentId,
       );
-      const attachment = listed.find((entry) => entry.attachmentId === normalizedAttachmentId);
       if (!attachment) {
         throw createDesktopError({
           code: "desktop.attachment_unavailable",
           message: "The attachment is unavailable for this thread.",
         });
       }
-      const selection = mainWindow === undefined
-        ? await dialog.showSaveDialog({ defaultPath: attachment.filename })
-        : await dialog.showSaveDialog(mainWindow, { defaultPath: attachment.filename });
+      const selection =
+        mainWindow === undefined
+          ? await dialog.showSaveDialog({ defaultPath: attachment.filename })
+          : await dialog.showSaveDialog(mainWindow, {
+              defaultPath: attachment.filename,
+            });
       if (selection.canceled || !selection.filePath) return null;
       const source = path.join(
-        resolveLocalCorePaths(requireLocalCoreStatus().home.homePath).stateRootPath,
+        resolveLocalCorePaths(requireLocalCoreStatus().home.homePath)
+          .stateRootPath,
         "attachments",
         "blobs",
         attachment.sha256,
@@ -2613,13 +2764,25 @@ function registerIpcHandlers(
     "desktop:conversation-messages",
     async (_event, threadId: unknown, afterCursor: unknown, limit: unknown) => {
       if (typeof threadId !== "string" || threadId.trim().length === 0) {
-        throw createDesktopError({ code: "desktop.invalid_thread_id", message: "Conversation message threadId is required." });
+        throw createDesktopError({
+          code: "desktop.invalid_thread_id",
+          message: "Conversation message threadId is required.",
+        });
       }
       if (afterCursor !== undefined && typeof afterCursor !== "string") {
-        throw createDesktopError({ code: "desktop.invalid_message_cursor", message: "Conversation message cursor is invalid." });
+        throw createDesktopError({
+          code: "desktop.invalid_message_cursor",
+          message: "Conversation message cursor is invalid.",
+        });
       }
-      if (limit !== undefined && (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 500)) {
-        throw createDesktopError({ code: "desktop.invalid_message_limit", message: "Conversation message limit must be from 1 to 500." });
+      if (
+        limit !== undefined &&
+        (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 500)
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_message_limit",
+          message: "Conversation message limit must be from 1 to 500.",
+        });
       }
       return listDesktopConversationMessages({
         adapter: requireDesktopRunnerAdapter(runnerTransport),
@@ -2632,22 +2795,40 @@ function registerIpcHandlers(
   );
   ipcMain.handle(
     "desktop:conversation-activity",
-    async (_event, sessionId: unknown, afterCursor: unknown, limit: unknown) => {
+    async (
+      _event,
+      sessionId: unknown,
+      afterCursor: unknown,
+      limit: unknown,
+    ) => {
       if (typeof sessionId !== "string" || sessionId.trim().length === 0) {
-        throw createDesktopError({ code: "desktop.invalid_session_id", message: "Conversation activity sessionId is required." });
+        throw createDesktopError({
+          code: "desktop.invalid_session_id",
+          message: "Conversation activity sessionId is required.",
+        });
       }
       if (afterCursor !== undefined && typeof afterCursor !== "string") {
-        throw createDesktopError({ code: "desktop.invalid_activity_cursor", message: "Conversation activity cursor is invalid." });
+        throw createDesktopError({
+          code: "desktop.invalid_activity_cursor",
+          message: "Conversation activity cursor is invalid.",
+        });
       }
-      if (limit !== undefined && (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 500)) {
-        throw createDesktopError({ code: "desktop.invalid_activity_limit", message: "Conversation activity limit must be from 1 to 500." });
+      if (
+        limit !== undefined &&
+        (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 500)
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_activity_limit",
+          message: "Conversation activity limit must be from 1 to 500.",
+        });
       }
       return requireLocalCoreConnectionManager().executeIdempotent(
-        async (client) => await client.listDesktopConversationActivity({
-          sessionId: sessionId.trim(),
-          ...(typeof afterCursor === "string" ? { afterCursor } : {}),
-          ...(typeof limit === "number" ? { limit } : {}),
-        }),
+        async (client) =>
+          await client.listDesktopConversationActivity({
+            sessionId: sessionId.trim(),
+            ...(typeof afterCursor === "string" ? { afterCursor } : {}),
+            ...(typeof limit === "number" ? { limit } : {}),
+          }),
       );
     },
   );
@@ -2722,7 +2903,8 @@ function registerIpcHandlers(
             update.defaultModelConfigurationId ??
             desktopSettings.defaultModelConfigurationId,
           defaultEnabledBuiltInAppIds:
-            update.defaultEnabledBuiltInAppIds ?? desktopSettings.defaultEnabledBuiltInAppIds,
+            update.defaultEnabledBuiltInAppIds ??
+            desktopSettings.defaultEnabledBuiltInAppIds,
           appearanceTheme:
             update.appearanceTheme ?? desktopSettings.appearanceTheme,
         },
@@ -3494,7 +3676,7 @@ function registerIpcHandlers(
               ),
             ),
           ];
-          if (toolNames.length === 0)
+          if ((configuration.capabilityPacks ?? []).length === 0)
             throw new Error("Choose at least one App capability.");
           const verification =
             await requireLocalCoreConnectionManager().executeOnce(
@@ -3843,7 +4025,8 @@ function registerIpcHandlers(
       if (project === undefined) {
         throw createDesktopError({
           code: "desktop.unregistered_mission_control_project",
-          message: "Mission Control project setup requires a registered project.",
+          message:
+            "Mission Control project setup requires a registered project.",
         });
       }
       const catalog = await discoverWorkspaceValidationCatalog(project.path);
@@ -3858,12 +4041,73 @@ function registerIpcHandlers(
     "desktop:execute-mission-control-action",
     async (_event, intent: unknown) =>
       executeDesktopMissionControlAction({
-        adapter: requireDesktopRunnerAdapter(runnerTransport),
         intent,
         registeredProjectIds: desktopSettings.projects.flatMap((project) =>
           project.id === undefined ? [] : [project.id],
         ),
-        profileId: requireDefaultDesktopRunnerProfileId(),
+        profileForProject: async (projectId) => {
+          const project = desktopSettings.projects.find(
+            (candidate) => candidate.id === projectId,
+          );
+          if (project === undefined) {
+            throw createDesktopError({
+              code: "desktop.unregistered_mission_control_project",
+              message:
+                "Desktop Mission Control commands require a registered project.",
+            });
+          }
+          const configuration =
+            desktopSettings.modelConfigurations.find(
+              (candidate) =>
+                candidate.id === desktopSettings.defaultModelConfigurationId,
+            ) ?? desktopSettings.modelConfigurations[0];
+          if (configuration === undefined) {
+            throw createDesktopError({
+              code: "desktop.model_configuration_not_found",
+              message: "Desktop has no default model configuration.",
+            });
+          }
+          const requested: DesktopExecutionSelection = {
+            modelConfiguration:
+              currentDesktopModelConfigurationRef(configuration),
+            apps: getEffectiveDesktopEnabledAppIds(desktopSettings).flatMap(
+              (appId) => {
+                const definition = getDesktopAppDefinition(
+                  appId,
+                  undefined,
+                  desktopSettings.mcpServers,
+                );
+                return definition === undefined
+                  ? []
+                  : [
+                      {
+                        id: definition.id,
+                        contractVersion: definition.contractVersion,
+                      },
+                    ];
+              },
+            ),
+          };
+          const resolution =
+            await requireLocalCoreConnectionManager().executeIdempotent(
+              async (client) =>
+                await client.resolveExecutionProfile({
+                  client: "desktop",
+                  selection: resolveAuthoritativeDesktopExecutionSelection(
+                    requested,
+                    project.path,
+                  ),
+                }),
+            );
+          return {
+            profileId: resolution.profileId,
+            adapter: requireDesktopRunnerAdapter(
+              runnerTransport,
+              resolution.profileId,
+              resolution.resolvedProfile,
+            ),
+          };
+        },
         actionId: randomUUID(),
         actionTs: new Date().toISOString(),
         context: DESKTOP_RUNNER_REQUEST_CONTEXT,
@@ -5045,8 +5289,7 @@ function parseDesktopUninstallPlanOptions(
     if (typeof value.exportWorktreesDirectory !== "string") {
       throw createDesktopError({
         code: "desktop.invalid_input",
-        message:
-          "Desktop uninstall exportWorktreesDirectory must be a string.",
+        message: "Desktop uninstall exportWorktreesDirectory must be a string.",
       });
     }
     options.exportWorktreesDirectory = value.exportWorktreesDirectory;
@@ -5100,10 +5343,20 @@ function parseDesktopUninstallApplyInput(
     plan,
     confirmPlanId: record.confirmPlanId,
     ...(record.deleteDataPhrase !== undefined
-      ? { deleteDataPhrase: requireOptionalDesktopString(record.deleteDataPhrase, "deleteDataPhrase") }
+      ? {
+          deleteDataPhrase: requireOptionalDesktopString(
+            record.deleteDataPhrase,
+            "deleteDataPhrase",
+          ),
+        }
       : {}),
     ...(record.discardWorktreesPhrase !== undefined
-      ? { discardWorktreesPhrase: requireOptionalDesktopString(record.discardWorktreesPhrase, "discardWorktreesPhrase") }
+      ? {
+          discardWorktreesPhrase: requireOptionalDesktopString(
+            record.discardWorktreesPhrase,
+            "discardWorktreesPhrase",
+          ),
+        }
       : {}),
   };
 }
@@ -5138,12 +5391,15 @@ async function applyDesktopUninstallPlan(
 ): Promise<KestrelUninstallApplyResultV1> {
   const helperTargets = selectedDesktopHelperTargets(input.plan.targets);
   const helperTargetIds = helperTargets.map((target) => target.id);
-  const removesDesktopBundle = helperTargets.some((target) => target.kind === "desktop_bundle");
+  const removesDesktopBundle = helperTargets.some(
+    (target) => target.kind === "desktop_bundle",
+  );
   if (removesDesktopBundle && app.isPackaged === false) {
     return blockedDesktopUninstallResult(input.plan, [
       {
         code: "DESKTOP_UNINSTALL_RELEASE_BUILD_REQUIRED",
-        message: "Desktop app self-removal requires a packaged release-signed build.",
+        message:
+          "Desktop app self-removal requires a packaged release-signed build.",
       },
     ]);
   }
@@ -5151,7 +5407,9 @@ async function applyDesktopUninstallPlan(
   const coordinatorResult = await applyKestrelUninstallPlan({
     plan: input.plan,
     confirmPlanId: input.confirmPlanId,
-    ...(input.deleteDataPhrase !== undefined ? { deleteDataPhrase: input.deleteDataPhrase } : {}),
+    ...(input.deleteDataPhrase !== undefined
+      ? { deleteDataPhrase: input.deleteDataPhrase }
+      : {}),
     ...(input.discardWorktreesPhrase !== undefined
       ? { discardWorktreesPhrase: input.discardWorktreesPhrase }
       : {}),
@@ -5161,9 +5419,13 @@ async function applyDesktopUninstallPlan(
     return coordinatorResult;
   }
 
-  const helperReport = await runDesktopUninstallHelper(input.plan, helperTargets, {
-    waitsForParentExit: true,
-  });
+  const helperReport = await runDesktopUninstallHelper(
+    input.plan,
+    helperTargets,
+    {
+      waitsForParentExit: true,
+    },
+  );
   const merged = mergeDesktopHelperReport(coordinatorResult, helperReport);
   if (
     globalThis.__kestrelDesktopUninstallHelperRunner === undefined &&
@@ -5179,16 +5441,15 @@ async function applyDesktopUninstallPlan(
 function selectedDesktopHelperTargets(
   targets: readonly KestrelUninstallTarget[],
 ): KestrelUninstallTarget[] {
-  return targets.filter((target) =>
-    target.selected &&
-    (
-      target.kind === "desktop_bundle" ||
-      target.kind === "state_root" ||
-      target.kind === "electron_profile" ||
-      target.kind === "preferences" ||
-      target.kind === "cache" ||
-      target.kind === "saved_state"
-    ),
+  return targets.filter(
+    (target) =>
+      target.selected &&
+      (target.kind === "desktop_bundle" ||
+        target.kind === "state_root" ||
+        target.kind === "electron_profile" ||
+        target.kind === "preferences" ||
+        target.kind === "cache" ||
+        target.kind === "saved_state"),
   );
 }
 
@@ -5219,15 +5480,23 @@ async function runDesktopUninstallHelper(
     return {
       status: "blocked",
       removedTargets: [],
-      failures: [{
-        code: "DESKTOP_UNINSTALL_PLAN_ID_INVALID",
-        message: "Desktop uninstall helper requires a coordinator-generated plan id.",
-      }],
+      failures: [
+        {
+          code: "DESKTOP_UNINSTALL_PLAN_ID_INVALID",
+          message:
+            "Desktop uninstall helper requires a coordinator-generated plan id.",
+        },
+      ],
       reportPath: "",
     };
   }
-  const helperPath = path.join(process.resourcesPath, "kestrel-uninstall-helper");
-  const handoffRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-uninstall-"));
+  const helperPath = path.join(
+    process.resourcesPath,
+    "kestrel-uninstall-helper",
+  );
+  const handoffRoot = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-desktop-uninstall-"),
+  );
   await chmod(handoffRoot, 0o700);
   const planPath = path.join(handoffRoot, "plan.json");
   const reportBase = "/private/var/tmp/com.kestrel.uninstall";
@@ -5243,10 +5512,13 @@ async function runDesktopUninstallHelper(
     return {
       status: "blocked",
       removedTargets: [],
-      failures: [{
-        code: "DESKTOP_UNINSTALL_REPORT_ROOT_INVALID",
-        message: "Desktop uninstall report root is not a verified current-user directory.",
-      }],
+      failures: [
+        {
+          code: "DESKTOP_UNINSTALL_REPORT_ROOT_INVALID",
+          message:
+            "Desktop uninstall report root is not a verified current-user directory.",
+        },
+      ],
       reportPath: "",
     };
   }
@@ -5279,32 +5551,40 @@ async function runDesktopUninstallHelper(
     return {
       status: "blocked",
       removedTargets: [],
-      failures: [{
-        code: "DESKTOP_UNINSTALL_HELPER_MISSING",
-        message: "Packaged Desktop uninstall helper is missing.",
-      }],
+      failures: [
+        {
+          code: "DESKTOP_UNINSTALL_HELPER_MISSING",
+          message: "Packaged Desktop uninstall helper is missing.",
+        },
+      ],
       reportPath,
     };
   }
-  const child = spawn(helperPath, [
-    "--plan",
-    planPath,
-    "--report",
-    reportPath,
-    "--parent-pid",
-    String(process.pid),
-  ], {
-    detached: true,
-    stdio: "ignore",
-  });
+  const child = spawn(
+    helperPath,
+    [
+      "--plan",
+      planPath,
+      "--report",
+      reportPath,
+      "--parent-pid",
+      String(process.pid),
+    ],
+    {
+      detached: true,
+      stdio: "ignore",
+    },
+  );
   child.unref();
   return {
     status: "scheduled",
     removedTargets: [],
-    failures: [{
-      code: "DESKTOP_UNINSTALL_HELPER_SCHEDULED",
-      message: `Desktop uninstall helper scheduled. Report: ${reportPath}`,
-    }],
+    failures: [
+      {
+        code: "DESKTOP_UNINSTALL_HELPER_SCHEDULED",
+        message: `Desktop uninstall helper scheduled. Report: ${reportPath}`,
+      },
+    ],
     reportPath,
   };
 }
@@ -5317,9 +5597,9 @@ function mergeDesktopHelperReport(
   const helperBlockers = helperReport.failures
     .filter((failure) => failure.code !== "DESKTOP_UNINSTALL_HELPER_SCHEDULED")
     .map((failure) => ({
-    code: failure.code,
-    message: failure.message,
-    ...(failure.targetId !== undefined ? { targetId: failure.targetId } : {}),
+      code: failure.code,
+      message: failure.message,
+      ...(failure.targetId !== undefined ? { targetId: failure.targetId } : {}),
     }));
   const blockers = [...coordinatorResult.blockers, ...helperBlockers];
   const removedTargets = [
@@ -5328,10 +5608,9 @@ function mergeDesktopHelperReport(
   ];
   return {
     ...coordinatorResult,
-    status:
-      scheduled
-        ? "partial"
-        : blockers.length === 0
+    status: scheduled
+      ? "partial"
+      : blockers.length === 0
         ? coordinatorResult.status
         : removedTargets.length > 0 || helperReport.status === "partial"
           ? "partial"
@@ -5369,7 +5648,7 @@ async function readPendingDesktopUninstallResult(): Promise<
       directory.name,
       "desktop-helper.json",
     );
-    const reportStat = await lstat(reportPath).catch(() => undefined);
+    const reportStat = await lstat(reportPath).catch(() => {});
     const currentUid = process.getuid?.();
     if (
       reportStat !== undefined &&
@@ -5423,7 +5702,7 @@ async function readPendingDesktopUninstallResult(): Promise<
       // Ignore malformed or foreign report files.
     }
   }
-  return undefined;
+  return;
 }
 
 function deriveRuntimeHealth(
@@ -5446,8 +5725,7 @@ function deriveRuntimeHealth(
   }
   if (nextBootState.phase === "failed") {
     if (
-      nextBootState.code ===
-      DESKTOP_LOCAL_CORE_EXECUTION_PROFILE_INCOMPATIBLE
+      nextBootState.code === DESKTOP_LOCAL_CORE_EXECUTION_PROFILE_INCOMPATIBLE
     ) {
       return {
         state: "blocked",
@@ -5477,9 +5755,10 @@ function deriveRuntimeHealth(
     return {
       state: "degraded",
       connection,
-      summary: connection === "connecting"
-        ? "Reconnecting to Kestrel Local Core…"
-        : "Kestrel Local Core is disconnected.",
+      summary:
+        connection === "connecting"
+          ? "Reconnecting to Kestrel Local Core…"
+          : "Kestrel Local Core is disconnected.",
       running: status?.running ?? false,
       ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
       database: databaseStatus,
@@ -5715,7 +5994,8 @@ function requireDesktopRunnerAdapter(
   profileId?: string | undefined,
   resolvedProfile?: WebRunnerRegisteredProfileSnapshot | undefined,
 ): WebRunnerAdapter {
-  const effectiveProfileId = profileId ?? requireDefaultDesktopRunnerProfileId();
+  const effectiveProfileId =
+    profileId ?? requireDefaultDesktopRunnerProfileId();
   let adapter = desktopRunnerAdapters.get(effectiveProfileId);
   if (adapter === undefined) {
     if (resolvedProfile === undefined) {
@@ -5778,16 +6058,18 @@ async function prepareDefaultDesktopRunnerAdapter(
       message: "Desktop has no default model configuration.",
     });
   }
-  const apps = getEffectiveDesktopEnabledAppIds(desktopSettings).flatMap((id) => {
-    const definition = getDesktopAppDefinition(
-      id,
-      undefined,
-      desktopSettings.mcpServers,
-    );
-    return definition === undefined
-      ? []
-      : [{ id: definition.id, contractVersion: definition.contractVersion }];
-  });
+  const apps = getEffectiveDesktopEnabledAppIds(desktopSettings).flatMap(
+    (id) => {
+      const definition = getDesktopAppDefinition(
+        id,
+        undefined,
+        desktopSettings.mcpServers,
+      );
+      return definition === undefined
+        ? []
+        : [{ id: definition.id, contractVersion: definition.contractVersion }];
+    },
+  );
   const resolution =
     await requireLocalCoreConnectionManager().executeIdempotent(
       async (client) =>
@@ -6052,9 +6334,10 @@ function updateLaunchState(state: DesktopLaunchState): void {
 
 async function readDesktopOnboardingState(): Promise<DesktopOnboardingStateV1> {
   const record = desktopSettings.desktopOnboarding;
-  const credentials = await requireLocalCoreConnectionManager().executeIdempotent(
-    async (client) => await client.credentialStatus(),
-  );
+  const credentials =
+    await requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) => await client.credentialStatus(),
+    );
   const projects = await Promise.all(
     desktopSettings.projects.map(async (project) => ({
       path: project.path,
@@ -6073,7 +6356,8 @@ async function readDesktopOnboardingState(): Promise<DesktopOnboardingStateV1> {
       : credentials.credentials.some(
           (entry) =>
             entry.id === providerCredentialId(provider) && entry.configured,
-        ) || readApprovedPackageSmokeEnvironmentCredential(provider) !== undefined;
+        ) ||
+        readApprovedPackageSmokeEnvironmentCredential(provider) !== undefined;
   const configuredModel = providerModel(desktopSettings, provider);
   const providerVerified =
     credentialConfigured &&
@@ -6110,7 +6394,8 @@ async function readDesktopOnboardingState(): Promise<DesktopOnboardingStateV1> {
     providerVerified,
     credentialConfigured,
     secureStorageAvailable:
-      credentials.available || isApprovedPackageSmokeEnvironmentCredentialStore(),
+      credentials.available ||
+      isApprovedPackageSmokeEnvironmentCredentialStore(),
     ...(projectPath !== undefined ? { projectPath } : {}),
     projects,
     canComplete: providerVerified && projectReady,
@@ -6149,9 +6434,10 @@ async function applyDesktopOnboardingProvider(
   const usesApprovedSmokeCredential =
     approvedSmokeCredential !== undefined &&
     approvedSmokeCredential === input.credential;
-  const credentialStatus = await requireLocalCoreConnectionManager().executeIdempotent(
-    async (client) => await client.credentialStatus(),
-  );
+  const credentialStatus =
+    await requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) => await client.credentialStatus(),
+    );
   if (
     input.provider !== "ollama" &&
     input.provider !== "lmstudio" &&
@@ -6264,13 +6550,14 @@ async function createDesktopOnboardingProjectCandidate(
     kind: inspection.kind,
     requiresGitBootstrap: inspection.requiresGitBootstrap,
   } satisfies Omit<DesktopOnboardingProjectCandidate, "selectionId">;
-  const candidate = selectionSource.source === "picker"
-    ? {
-        ...publicCandidate,
-        source: "picker" as const,
-        selectedPath: path.resolve(selectedPath),
-      }
-    : { ...publicCandidate, ...selectionSource };
+  const candidate =
+    selectionSource.source === "picker"
+      ? {
+          ...publicCandidate,
+          source: "picker" as const,
+          selectedPath: path.resolve(selectedPath),
+        }
+      : { ...publicCandidate, ...selectionSource };
   onboardingProjectSelections.set(selectionId, candidate);
   return { selectionId, ...publicCandidate };
 }
@@ -6291,7 +6578,7 @@ async function confirmDesktopOnboardingProject(input: {
       (project) => project.path === candidate.registeredPath,
     );
     const registeredCanonicalPath = stillRegistered
-      ? await realpath(candidate.registeredPath).catch(() => undefined)
+      ? await realpath(candidate.registeredPath).catch(() => {})
       : undefined;
     if (
       stillRegistered === false ||
@@ -6304,7 +6591,7 @@ async function confirmDesktopOnboardingProject(input: {
     }
   } else {
     const selectedCanonicalPath = await realpath(candidate.selectedPath).catch(
-      () => undefined,
+      () => {},
     );
     if (selectedCanonicalPath !== candidate.path) {
       throw createDesktopError({
@@ -6369,11 +6656,13 @@ async function confirmDesktopOnboardingProject(input: {
       projectPath,
     },
   });
-  await requireLocalCoreConnectionManager().executeOnce(
-    async (client) => await client.syncKestrelOneProjects(projects),
-  ).catch(() => {
-    // Kestrel One is optional and must not block local project onboarding.
-  });
+  await requireLocalCoreConnectionManager()
+    .executeOnce(
+      async (client) => await client.syncKestrelOneProjects(projects),
+    )
+    .catch(() => {
+      // Kestrel One is optional and must not block local project onboarding.
+    });
   onboardingProjectSelections.delete(input.selectionId);
   return await readDesktopOnboardingState();
 }
@@ -6548,8 +6837,7 @@ function parseDesktopRendererBootstrapReport(
   }
   if (
     record.status === "failed" &&
-    (record.reason === "react_error" ||
-      record.reason === "stylesheet_missing")
+    (record.reason === "react_error" || record.reason === "stylesheet_missing")
   ) {
     return {
       generation: record.generation,
@@ -6683,7 +6971,7 @@ function readApprovedPackageSmokeEnvironmentCredential(
   provider: Exclude<DesktopModelProvider, "ollama" | "lmstudio">,
 ): string | undefined {
   if (isApprovedPackageSmokeEnvironmentCredentialStore() === false) {
-    return undefined;
+    return;
   }
   const value =
     provider === "openrouter"
@@ -6696,7 +6984,7 @@ function readApprovedPackageSmokeEnvironmentCredential(
 
 function readApprovedPackageSmokeProjectPath(): string | undefined {
   if (isApprovedPackageSmokeEnvironmentCredentialStore() === false) {
-    return undefined;
+    return;
   }
   const value = process.env.KESTREL_DESKTOP_PACKAGE_SMOKE_PROJECT_PATH;
   return typeof value === "string" && value.trim().length > 0
@@ -6827,7 +7115,8 @@ function subscribeToCoreProjectRuns(client?: LocalCoreClient): void {
         console.warn("Desktop project run event stream recovery failed", {
           phase: "reconnect_failed",
           disconnectCode: (error as NodeJS.ErrnoException).code,
-          recoveryCode: (recoveryError as NodeJS.ErrnoException | undefined)?.code,
+          recoveryCode: (recoveryError as NodeJS.ErrnoException | undefined)
+            ?.code,
           error: recoveryError,
         });
       });
@@ -7104,7 +7393,10 @@ async function ensureDesktopLocalCoreReady(
 }
 
 function resolveDesktopLocalCoreSuiteVersion(runtimeRoot: string): string {
-  const buildManifestPath = path.join(runtimeRoot, LOCAL_CORE_BUILD_MANIFEST_NAME);
+  const buildManifestPath = path.join(
+    runtimeRoot,
+    LOCAL_CORE_BUILD_MANIFEST_NAME,
+  );
   if (existsSync(buildManifestPath)) {
     return parseLocalCoreBuildIdentity(
       JSON.parse(readFileSync(buildManifestPath, "utf8")),
@@ -7113,8 +7405,13 @@ function resolveDesktopLocalCoreSuiteVersion(runtimeRoot: string): string {
   const packageManifest = JSON.parse(
     readFileSync(path.join(runtimeRoot, "package.json"), "utf8"),
   ) as { version?: unknown };
-  if (typeof packageManifest.version !== "string" || packageManifest.version.trim().length === 0) {
-    throw new Error("Kestrel Desktop could not resolve its Local Core runtime suite version.");
+  if (
+    typeof packageManifest.version !== "string" ||
+    packageManifest.version.trim().length === 0
+  ) {
+    throw new Error(
+      "Kestrel Desktop could not resolve its Local Core runtime suite version.",
+    );
   }
   return packageManifest.version.trim();
 }

@@ -441,6 +441,7 @@ export interface DesktopProjectRegistration {
     id?: string | undefined;
     path: string;
     label: string;
+    personalAppIds?: string[] | undefined;
 }
 export type DesktopPackageManager = "npm" | "pnpm";
 export interface DesktopProjectLauncherScript {

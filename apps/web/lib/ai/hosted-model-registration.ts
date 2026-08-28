@@ -17,6 +17,7 @@ import {
   translateOpenRouterModelDetails,
 } from "./openrouter-model-resolution";
 import type { OpenRouterQualifiedRouteEvidence } from "../../../../models/openrouter/OpenRouterV2Codec";
+import { GMAIL_RESTRICTED_DATA_EVIDENCE_KEY } from "../integrations/gmail-restricted-data-admission";
 
 export const HOSTED_MODEL_REGISTRATION_KEY = "kestrelModelRegistrationV2";
 export const HOSTED_MODEL_REGISTRATION_EVIDENCE_KEY =
@@ -156,6 +157,7 @@ export function removeHostedModelCapabilityMetadata(
     [HOSTED_MODEL_REGISTRATION_KEY]: _registration,
     [HOSTED_MODEL_REGISTRATION_EVIDENCE_KEY]: _evidence,
     [HOSTED_MODEL_QUALIFICATION_PROJECTION_KEY]: _qualification,
+    [GMAIL_RESTRICTED_DATA_EVIDENCE_KEY]: _gmailRestrictedDataEvidence,
     kestrelOpenRouterCapabilityEvidence: _openRouterCapabilityEvidence,
     ...remaining
   } = metadata;
@@ -412,6 +414,7 @@ function pickHostedModelCapabilityMetadata(
       HOSTED_MODEL_REGISTRATION_KEY,
       HOSTED_MODEL_REGISTRATION_EVIDENCE_KEY,
       HOSTED_MODEL_QUALIFICATION_PROJECTION_KEY,
+      GMAIL_RESTRICTED_DATA_EVIDENCE_KEY,
     ].flatMap((key) =>
       metadata[key] === undefined ? [] : [[key, metadata[key]]],
     ),

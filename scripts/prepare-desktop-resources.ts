@@ -29,6 +29,7 @@ export const DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS = [
   "agents",
   "src",
   "cli",
+  "tools",
   "db/migrations",
   "packages/mcp-security",
 ] as const;

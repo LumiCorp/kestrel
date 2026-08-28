@@ -13,6 +13,10 @@ import {
   readTrustedTerminalApprovalToolName,
   TrustedTerminalApprovalError,
 } from "./trusted-terminal-approval";
+import {
+  attachHostedAppApprovalPresentation,
+  buildGmailApprovalPresentation,
+} from "./hosted-app-approval-presentation";
 
 test("approval tool-name classification is available before strict hosted parsing", () => {
   const event = waitingEvent();
@@ -42,6 +46,58 @@ test("trusted terminal approval accepts the canonical V2 prepared invocation", (
     RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   );
   assert.deepEqual(parsed?.toolInput, emailInput());
+});
+
+test("provider-resolved Gmail display leaves the exact approval binding immutable", () => {
+  const terminal = waitingV2Event();
+  if (terminal.type !== "run.completed") assert.fail("expected terminal event");
+  const waitFor = terminal.payload.result.output.waitFor!;
+  const rawInput = (waitFor.metadata as Record<string, unknown>).toolInput;
+  const approval = waitFor.interaction as Record<string, unknown>;
+  const approvalDetails = approval.approval as Record<string, unknown>;
+  approvalDetails.presentation = {
+    policy: { reasonCode: "project_restriction" },
+  };
+
+  const projected = attachHostedAppApprovalPresentation(
+    terminal,
+    buildGmailApprovalPresentation({
+      envelope: {
+        to: ["recipient@example.com"],
+        cc: [],
+        subject: "Re: Planning",
+        text: "Here is the update.",
+        threadId: "thread-provider-1",
+        replyHeaders: { inReplyTo: "message-provider-1" },
+      },
+      attachments: [{
+        fileId: "file-1",
+        filename: "plan.pdf",
+        mediaType: "application/pdf",
+        sizeBytes: 42,
+        sha256: "a".repeat(64),
+      }],
+      approvalPayload: {},
+    }),
+  );
+
+  assert.deepEqual(
+    parseTrustedTerminalApproval({ event: projected, threadId: "thread-1" })?.toolInput,
+    rawInput,
+  );
+  if (projected.type !== "run.completed") assert.fail("expected terminal event");
+  const presentation = (projected.payload.result.output.waitFor!.interaction as Record<string, unknown>)
+    .approval as { presentation: Record<string, unknown> };
+  assert.deepEqual(presentation.presentation.policy, {
+    reasonCode: "project_restriction",
+  });
+  assert.deepEqual(presentation.presentation.fields, [
+    { label: "Thread", value: "thread-provider-1" },
+    { label: "To", value: "recipient@example.com" },
+    { label: "Subject", value: "Re: Planning" },
+    { label: "Message", value: "Here is the update." },
+    { label: "Attachments", value: "plan.pdf" },
+  ]);
 });
 
 test("trusted terminal approval rejects a V2 card detached from its prepared invocation", () => {
@@ -102,6 +158,8 @@ test("hosted mutation registry normalizes all named provider payloads", () => {
     ["kestrel_one.google_calendar_create_event", { event: { summary: "Meet", start: { dateTime: "2026-08-25T14:00:00Z" }, end: { dateTime: "2026-08-25T15:00:00Z" } } }, "events.create"],
     ["kestrel_one.google_calendar_update_event", { eventId: "event-1", patch: { summary: "Updated" } }, "events.update"],
     ["kestrel_one.google_calendar_delete_event", { eventId: "event-1" }, "events.delete"],
+    ["kestrel_one.gmail_send_message", { to: ["a@example.com"], subject: "Hi", text: "Body" }, "gmail.messages.send"],
+    ["kestrel_one.gmail_reply_message", { messageId: "message-1", text: "Body" }, "gmail.messages.reply"],
     ["kestrel_one.microsoft_365_send_mail", { to: ["a@example.com"], subject: "Hi", body: "Body" }, "mail.send"],
     ["kestrel_one.microsoft_365_send_chat_message", { chatId: "chat-1", content: "Hello" }, "chat.send"],
   ];

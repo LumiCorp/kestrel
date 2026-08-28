@@ -93,6 +93,7 @@ export { geocodeLookupTool } from "./free/geocodeLookup.js";
 export { exchangeRateTool } from "./free/exchangeRate.js";
 export {
   kestrelOneMicrosoft365ListChatsTool,
+  kestrelOneMicrosoft365ListChatMessagesTool,
   kestrelOneMicrosoft365ListEventsTool,
   kestrelOneMicrosoft365ListMailTool,
   kestrelOneMicrosoft365SearchSitesTool,
@@ -100,14 +101,23 @@ export {
   kestrelOneMicrosoft365SendMailTool,
 } from "./kestrelOne/microsoft-365.js";
 export {
+  kestrelOneGmailGetMessageTool,
+  kestrelOneGmailGetThreadTool,
+  kestrelOneGmailImportAttachmentTool,
+  kestrelOneGmailReplyMessageTool,
+  kestrelOneGmailSearchMessagesTool,
+  kestrelOneGmailSendMessageTool,
+} from "./kestrelOne/gmail.js";
+export {
   microsoft365ListChatsTool,
+  microsoft365ListChatMessagesTool,
   microsoft365ListEventsTool,
   microsoft365ListMailTool,
   microsoft365SearchSitesTool,
   microsoft365SendChatMessageTool,
   microsoft365SendMailTool,
 } from "./microsoft365/desktop.js";
-export { googleWorkspaceCreateEventTool, googleWorkspaceDeleteEventTool, googleWorkspaceListEventsTool, googleWorkspaceUpdateEventTool } from "./googleWorkspace/desktop.js";
+export { googleWorkspaceCreateEventTool, googleWorkspaceDeleteEventTool, googleWorkspaceGetGmailMessageTool, googleWorkspaceGetGmailThreadTool, googleWorkspaceImportGmailAttachmentTool, googleWorkspaceListEventsTool, googleWorkspaceReplyGmailTool, googleWorkspaceSearchGmailTool, googleWorkspaceSendGmailTool, googleWorkspaceUpdateEventTool } from "./googleWorkspace/desktop.js";
 export {
   kestrelOneVercelDeploymentEventsTool,
   kestrelOneVercelListDeploymentsTool,

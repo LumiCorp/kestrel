@@ -67,6 +67,7 @@ import {
   updateEnvironmentExecutionStatus,
 } from "@/lib/environments/execution-route";
 import { recordHostedAppApprovalRequest } from "@/lib/apps/hosted-app-approval-recorder";
+import { attachHostedAppApprovalPresentation } from "@/lib/apps/hosted-app-approval-presentation";
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 import { synchronizeProjectSkills } from "@/lib/projects/skills";
@@ -674,7 +675,7 @@ function createModelAwareKestrelOneAgent(input: {
           mainTerminal = true;
           if (pendingDialogs.size === 0) dialogAbort.abort();
           else retainClientForDialog = true;
-          await recordHostedAppApprovalRequest({
+          const hostedApproval = await recordHostedAppApprovalRequest({
             organizationId: input.organizationId,
             environmentId: route.environmentId,
             workspaceId: route.workspaceId,
@@ -684,13 +685,17 @@ function createModelAwareKestrelOneAgent(input: {
             requestedExecutionId: route.runId,
             event: terminal,
           });
+          const presentedTerminal = attachHostedAppApprovalPresentation(
+            terminal,
+            hostedApproval?.presentation,
+          );
           await updateEnvironmentExecutionStatus({
             organizationId: input.organizationId,
             executionId,
-            status: terminalExecutionStatus(terminal),
-            ...terminalFailureEvidence(terminal),
+            status: terminalExecutionStatus(presentedTerminal),
+            ...terminalFailureEvidence(presentedTerminal),
           });
-          routed.complete(terminal);
+          routed.complete(presentedTerminal);
         } catch (error) {
           if (
             executionId &&

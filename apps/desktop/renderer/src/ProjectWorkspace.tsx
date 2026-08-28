@@ -11,6 +11,7 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
+import { KESTREL_STANDARD_APP_MANIFESTS } from "@kestrel-agents/protocol";
 import React, { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import type {
@@ -42,7 +43,12 @@ export function ProjectWorkspace(props: {
   threadId?: string | undefined;
   workspace?: DesktopThreadWorkspaceContext | undefined;
   openFiles: string[];
+  connectedPersonalAppIds: readonly string[];
   onChat: (project: DesktopProjectRegistration) => void;
+  onPersonalAppIdsChange?: (
+    project: DesktopProjectRegistration,
+    personalAppIds: string[],
+  ) => Promise<void> | void;
   onRemoveProject?: (project: DesktopProjectRegistration) => Promise<void> | void;
   onSelectThread: (threadId: string) => void;
   onAttachFile?: ((
@@ -557,6 +563,29 @@ export function ProjectWorkspace(props: {
     waiting: props.threads.filter((entry) => entry.status === "waiting").length,
     failed: props.threads.filter((entry) => entry.status === "failed").length,
   };
+  const selectedPersonalAppIds = new Set(props.project.personalAppIds ?? []);
+  const connectedPersonalAppIds = new Set(props.connectedPersonalAppIds);
+  const personalApps = KESTREL_STANDARD_APP_MANIFESTS.filter(
+    (app) => app.preinstalled !== true,
+  );
+
+  async function updatePersonalAppSelection(
+    appId: string,
+    selected: boolean,
+  ): Promise<void> {
+    const next = new Set(selectedPersonalAppIds);
+    if (selected) next.add(appId);
+    else next.delete(appId);
+    try {
+      await props.onPersonalAppIdsChange?.(
+        props.project!,
+        [...next].sort(),
+      );
+      props.onError(undefined);
+    } catch (cause) {
+      props.onError(errorMessage(cause));
+    }
+  }
 
   if (tab === "overview") {
     return (
@@ -586,6 +615,43 @@ export function ProjectWorkspace(props: {
             <ProjectStat label="Waiting" value={threadSummary.waiting} tone="waiting" />
             <ProjectStat label="Failed" value={threadSummary.failed} tone="failed" />
           </div>
+          <section className="workspace-panel" aria-label="Personal App access">
+            <div className="project-overview-heading">
+              <div>
+                <h2>Personal Apps</h2>
+                <p>Choose which connected personal accounts this Project may use.</p>
+              </div>
+            </div>
+            <div className="settings-list">
+              {personalApps.map((app) => {
+                const selected = selectedPersonalAppIds.has(app.id);
+                const connected = connectedPersonalAppIds.has(app.id);
+                return (
+                  <label key={app.id} className="settings-row">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      disabled={!connected && !selected}
+                      onChange={(event) =>
+                        void updatePersonalAppSelection(app.id, event.target.checked)}
+                    />
+                    <span>
+                      <strong>{app.name}</strong>
+                      <small>
+                        {selected
+                          ? connected
+                            ? "Selected and connected"
+                            : "Selected but currently unavailable"
+                          : connected
+                            ? "Connected but not selected"
+                            : "Currently unavailable"}
+                      </small>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </section>
           <div className="project-overview-heading"><div><h2>Conversations</h2><p>Work continues while you move between projects.</p></div></div>
           <div className="project-overview-threads">
             {props.threads.map(({ thread, status, activity, updatedAt }) => (
