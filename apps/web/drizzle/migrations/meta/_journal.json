@@ -8,6 +8,13 @@
       "when": 1762808128218,
       "tag": "0000_sticky_boom_boom",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1787920000000,
+      "tag": "0001_platform_oauth_registrations",
+      "breakpoints": true
     }
   ]
 }

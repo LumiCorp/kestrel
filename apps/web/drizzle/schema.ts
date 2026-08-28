@@ -6768,6 +6768,47 @@ export const platformEmailConfig = pgTable("platform_email_config", {
     .defaultNow(),
 });
 
+/**
+ * Global hosted OAuth applications used by Kestrel One personal Apps.  These
+ * are intentionally separate from app_credentials, which is scoped to an
+ * organization Environment and cannot be an authority for a Platform app.
+ */
+export const platformOAuthRegistrations = pgTable(
+  "platform_oauth_registrations",
+  {
+    provider: text("provider", {
+      enum: ["google_workspace", "microsoft_365"],
+    })
+      .primaryKey()
+      .notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    clientId: text("client_id"),
+    encryptedClientSecret: text("encrypted_client_secret"),
+    /** Microsoft tenant ID, or the Google hosted issuer when one is needed. */
+    tenantOrIssuer: text("tenant_or_issuer"),
+    enabledPacks: jsonb("enabled_packs")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    revision: integer("revision").notNull().default(1),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      "platform_oauth_registrations_revision_check",
+      sql`${table.revision} > 0`,
+    ),
+  ],
+);
+
 export const organizationEmailConfig = pgTable("organization_email_config", {
   organizationId: text("organization_id")
     .primaryKey()
@@ -7157,6 +7198,9 @@ export type PlatformTurnWorkerCapacity = InferSelectModel<
   typeof platformTurnWorkerCapacity
 >;
 export type PlatformEmailConfig = InferSelectModel<typeof platformEmailConfig>;
+export type PlatformOAuthRegistration = InferSelectModel<
+  typeof platformOAuthRegistrations
+>;
 export type AdminApiKey = InferSelectModel<typeof adminApiKeys>;
 export type KnowledgeDocument = InferSelectModel<typeof knowledgeDocuments>;
 export type KnowledgeIngestionRun = InferSelectModel<

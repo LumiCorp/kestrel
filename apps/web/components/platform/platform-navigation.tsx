@@ -3,6 +3,7 @@
 import {
   BookOpen,
   CreditCard,
+  KeyRound,
   Mail,
   Gauge,
   ServerCog,
@@ -34,6 +35,11 @@ const platformNavigationGroups: Array<{
         label: "Signup codes",
       },
       { href: "/platform/email", icon: Mail, label: "System email" },
+      {
+        href: "/platform/integrations",
+        icon: KeyRound,
+        label: "Integrations",
+      },
     ],
   },
   {
