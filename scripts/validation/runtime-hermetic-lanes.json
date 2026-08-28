@@ -356,7 +356,6 @@
         "tests/unit/model-timing-policy.test.ts",
         "tests/unit/model-tool-call-actions.test.ts",
         "tests/unit/model-transport-errors.test.ts",
-        "tests/unit/native-app-operation-catalog.test.ts",
         "tests/unit/openai-mapper.test.ts",
         "tests/unit/openai-v2-codecs.test.ts",
         "tests/unit/openrouter-errors.test.ts",
