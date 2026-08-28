@@ -111,8 +111,7 @@ test("Google Calendar reads forward a completed App approval when configured to 
   assert.equal(capturedHeaders.get("x-kestrel-approval-id"), "approval-2");
 });
 
-test("Google Calendar writes configured Automatic do not require a runtime approval ID", async () => {
-  let capturedHeaders = new Headers();
+test("Google Calendar writes cannot lower the canonical ask minimum", async () => {
   const handler = kestrelOneGoogleCalendarCreateEventTool.createHandler({
     kestrelOne: {
       appUrl: "https://app.example.test",
@@ -122,16 +121,17 @@ test("Google Calendar writes configured Automatic do not require a runtime appro
       },
     },
     fetchImpl: async (_url, init) => {
-      capturedHeaders = new Headers(init?.headers);
       return Response.json({ operation: "events.create", result: {} });
     },
   });
-  await handler({
-    event: {
-      summary: "Planning",
-      start: { dateTime: "2026-07-14T13:00:00Z" },
-      end: { dateTime: "2026-07-14T13:30:00Z" },
-    },
-  });
-  assert.equal(capturedHeaders.get("x-kestrel-approval-id"), null);
+  await assert.rejects(
+    handler({
+      event: {
+        summary: "Planning",
+        start: { dateTime: "2026-07-14T13:00:00Z" },
+        end: { dateTime: "2026-07-14T13:30:00Z" },
+      },
+    }),
+    /approval ID/u,
+  );
 });

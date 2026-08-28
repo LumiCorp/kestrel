@@ -38,6 +38,51 @@ test("event creation sends no attendee notifications by default", async () => {
   assert.equal(result.id, "event-1");
 });
 
+test("a Calendar mutation transport failure reports an unknown outcome", async () => {
+  await assert.rejects(
+    createGoogleCalendarEvent({
+      accessToken: "secret-token",
+      event: {
+        summary: "Planning",
+        start: { dateTime: "2026-07-14T13:00:00Z" },
+        end: { dateTime: "2026-07-14T13:30:00Z" },
+      },
+      notifyAttendees: false,
+      fetchImpl: async () => {
+        throw new Error("connection reset after request dispatch");
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof GoogleCalendarProviderError);
+      assert.equal(error.code, "GOOGLE_CALENDAR_OUTCOME_UNKNOWN");
+      assert.equal(error.outcomeUnknown, true);
+      assert.equal(error.reconnectRequired, false);
+      return true;
+    },
+  );
+});
+
+test("a Calendar mutation with an unreadable successful response reports an unknown outcome", async () => {
+  await assert.rejects(
+    createGoogleCalendarEvent({
+      accessToken: "secret-token",
+      event: {
+        summary: "Planning",
+        start: { dateTime: "2026-07-14T13:00:00Z" },
+        end: { dateTime: "2026-07-14T13:30:00Z" },
+      },
+      notifyAttendees: false,
+      fetchImpl: async () => new Response("not json", { status: 200 }),
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof GoogleCalendarProviderError);
+      assert.equal(error.code, "GOOGLE_CALENDAR_OUTCOME_UNKNOWN");
+      assert.equal(error.outcomeUnknown, true);
+      return true;
+    },
+  );
+});
+
 test("free/busy returns only normalized intervals", async () => {
   const result = await queryGoogleCalendarFreeBusy({
     accessToken: "secret-token",

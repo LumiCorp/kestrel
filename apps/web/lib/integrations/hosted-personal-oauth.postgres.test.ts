@@ -206,19 +206,131 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
     // response. Those protocol scopes are not lost App capability authority.
     return Response.json({ access_token: "refreshed-access", refresh_token: "rotated-refresh", token_type: "Bearer", expires_in: 3600, scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events.owned https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.freebusy" });
   }) as typeof fetch;
-  const resolveCalendar = () => broker.resolveHostedPersonalProviderToken({
+  const resolveCalendar = (fetchImpl = refreshFetch) => broker.resolveHostedPersonalProviderToken({
     provider: "google_workspace",
     connectionId: completed.connectionId,
     organizationId,
     userId,
     projectId,
     operation: "events.list",
-    fetchImpl: refreshFetch,
+    fetchImpl,
   });
   const [firstRefresh, secondRefresh] = await Promise.all([resolveCalendar(), resolveCalendar()]);
   assert.equal(firstRefresh.accessToken, "refreshed-access");
   assert.equal(secondRefresh.accessToken, "refreshed-access");
   assert.equal(refreshCalls, 1, "concurrent callers share the serialized refresh");
+
+  // A lifecycle transition that begins while a provider refresh is in flight
+  // waits for that refresh's connection lock, then becomes the durable state.
+  // This prevents the old refresh result from overwriting a disconnect or a
+  // completed reconnect.
+  await sql`UPDATE "platform_personal_oauth_authorizations" SET "expires_at" = ${new Date(Date.now() - 60_000)} WHERE "connection_id" = ${completed.connectionId}`;
+  let releaseDisconnectRefresh: (() => void) | undefined;
+  const disconnectRefreshReleased = new Promise<void>((resolve) => {
+    releaseDisconnectRefresh = resolve;
+  });
+  let notifyDisconnectRefreshStarted: (() => void) | undefined;
+  const disconnectRefreshStarted = new Promise<void>((resolve) => {
+    notifyDisconnectRefreshStarted = resolve;
+  });
+  const inFlightDisconnectRefresh = resolveCalendar({
+    fetchImpl: (async () => {
+      notifyDisconnectRefreshStarted?.();
+      await disconnectRefreshReleased;
+      return Response.json({ access_token: "disconnect-race-access", refresh_token: "disconnect-race-refresh", token_type: "Bearer", expires_in: 3600 });
+    }) as typeof fetch,
+  });
+  await disconnectRefreshStarted;
+  const disconnectWhileRefreshing = appService.disconnectPersonalAppConnection({
+    organizationId,
+    userId,
+    appKey: "google_workspace",
+  });
+  releaseDisconnectRefresh?.();
+  await inFlightDisconnectRefresh;
+  await disconnectWhileRefreshing;
+  const [disconnectedConnection] = await sql`SELECT "status", "disconnected_at" AS "disconnectedAt" FROM "app_connections" WHERE "id" = ${completed.connectionId}`;
+  assert.equal(disconnectedConnection.status, "disconnected");
+  assert.ok(disconnectedConnection.disconnectedAt);
+
+  const reconnectAfterDisconnectStart = await broker.startHostedPersonalAuthorization({
+    provider: "google_workspace",
+    organizationId,
+    userId,
+    packs: ["gmail", "calendar"],
+    env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+  });
+  const reconnectAfterDisconnectSessionId = new URL(reconnectAfterDisconnectStart.authorizationUrl).searchParams.get("state");
+  assert.ok(reconnectAfterDisconnectSessionId);
+  const reconnectedAfterDisconnect = await broker.completeHostedPersonalAuthorization({
+    provider: "google_workspace",
+    sessionId: reconnectAfterDisconnectSessionId,
+    userId,
+    code: "reconnect-after-disconnect-code",
+    env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+    fetchImpl: (async (request) => {
+      if (String(request) === "https://oauth2.googleapis.com/token") {
+        return Response.json({ access_token: "reconnect-after-disconnect-access", refresh_token: "reconnect-after-disconnect-refresh", token_type: "Bearer", expires_in: 3600, scope: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events.owned https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.freebusy" });
+      }
+      if (String(request) === "https://openidconnect.googleapis.com/v1/userinfo") {
+        return Response.json({ sub: "provider-user", email: "provider@example.test" });
+      }
+      throw new Error(`Unexpected provider URL: ${String(request)}`);
+    }) as typeof fetch,
+  });
+  assert.equal(reconnectedAfterDisconnect.connectionId, completed.connectionId);
+
+  await sql`UPDATE "platform_personal_oauth_authorizations" SET "expires_at" = ${new Date(Date.now() - 60_000)} WHERE "connection_id" = ${completed.connectionId}`;
+  let releaseReconnectRefresh: (() => void) | undefined;
+  const reconnectRefreshReleased = new Promise<void>((resolve) => {
+    releaseReconnectRefresh = resolve;
+  });
+  let notifyReconnectRefreshStarted: (() => void) | undefined;
+  const reconnectRefreshStarted = new Promise<void>((resolve) => {
+    notifyReconnectRefreshStarted = resolve;
+  });
+  const inFlightReconnectRefresh = resolveCalendar({
+    fetchImpl: (async () => {
+      notifyReconnectRefreshStarted?.();
+      await reconnectRefreshReleased;
+      return Response.json({ access_token: "stale-refresh-access", refresh_token: "stale-refresh-refresh", token_type: "Bearer", expires_in: 3600 });
+    }) as typeof fetch,
+  });
+  await reconnectRefreshStarted;
+  const reconnectDuringRefreshStart = await broker.startHostedPersonalAuthorization({
+    provider: "google_workspace",
+    organizationId,
+    userId,
+    packs: ["gmail", "calendar"],
+    env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+  });
+  const reconnectDuringRefreshSessionId = new URL(reconnectDuringRefreshStart.authorizationUrl).searchParams.get("state");
+  assert.ok(reconnectDuringRefreshSessionId);
+  const reconnectDuringRefresh = broker.completeHostedPersonalAuthorization({
+    provider: "google_workspace",
+    sessionId: reconnectDuringRefreshSessionId,
+    userId,
+    code: "reconnect-during-refresh-code",
+    env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+    fetchImpl: (async (request) => {
+      if (String(request) === "https://oauth2.googleapis.com/token") {
+        return Response.json({ access_token: "reconnected-during-refresh-access", refresh_token: "reconnected-during-refresh-refresh", token_type: "Bearer", expires_in: 3600, scope: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events.owned https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.freebusy" });
+      }
+      if (String(request) === "https://openidconnect.googleapis.com/v1/userinfo") {
+        return Response.json({ sub: "provider-user", email: "provider@example.test" });
+      }
+      throw new Error(`Unexpected provider URL: ${String(request)}`);
+    }) as typeof fetch,
+  });
+  releaseReconnectRefresh?.();
+  await inFlightReconnectRefresh;
+  await reconnectDuringRefresh;
+  const [reconnectedAfterRefresh] = await sql`SELECT "status", "failure_code" AS "failureCode", "disconnected_at" AS "disconnectedAt" FROM "app_connections" WHERE "id" = ${completed.connectionId}`;
+  assert.deepEqual(reconnectedAfterRefresh, {
+    status: "connected",
+    failureCode: null,
+    disconnectedAt: null,
+  });
   await sql`UPDATE "environment_app_capability_grants" SET "enabled" = false WHERE "environment_id" = ${environmentId} AND "app_key" = 'google_workspace' AND "capability_key" = 'calendar.events.read'`;
   const availabilityToken = await broker.resolveHostedPersonalProviderToken({
     provider: "google_workspace",

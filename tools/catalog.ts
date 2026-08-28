@@ -100,9 +100,18 @@ import {
   kestrelOneGoogleCalendarListEventsTool,
   kestrelOneGoogleCalendarUpdateEventTool,
 } from "./kestrelOne/google-calendar.js";
+import {
+  kestrelOneGmailGetMessageTool,
+  kestrelOneGmailGetThreadTool,
+  kestrelOneGmailImportAttachmentTool,
+  kestrelOneGmailReplyMessageTool,
+  kestrelOneGmailSearchMessagesTool,
+  kestrelOneGmailSendMessageTool,
+} from "./kestrelOne/gmail.js";
 import { kestrelOneEmailSendTool } from "./kestrelOne/email.js";
 import {
   kestrelOneMicrosoft365ListChatsTool,
+  kestrelOneMicrosoft365ListChatMessagesTool,
   kestrelOneMicrosoft365ListEventsTool,
   kestrelOneMicrosoft365ListMailTool,
   kestrelOneMicrosoft365SearchSitesTool,
@@ -202,11 +211,18 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   kestrelOneGoogleCalendarDeleteEventTool,
   kestrelOneGoogleCalendarListAvailabilitySubjectsTool,
   kestrelOneGoogleCalendarCheckAvailabilityTool,
+  kestrelOneGmailSearchMessagesTool,
+  kestrelOneGmailGetMessageTool,
+  kestrelOneGmailGetThreadTool,
+  kestrelOneGmailImportAttachmentTool,
+  kestrelOneGmailSendMessageTool,
+  kestrelOneGmailReplyMessageTool,
   kestrelOneEmailSendTool,
   kestrelOneMicrosoft365ListMailTool,
   kestrelOneMicrosoft365SendMailTool,
   kestrelOneMicrosoft365ListEventsTool,
   kestrelOneMicrosoft365ListChatsTool,
+  kestrelOneMicrosoft365ListChatMessagesTool,
   kestrelOneMicrosoft365SendChatMessageTool,
   kestrelOneMicrosoft365SearchSitesTool,
   microsoft365ListMailTool,

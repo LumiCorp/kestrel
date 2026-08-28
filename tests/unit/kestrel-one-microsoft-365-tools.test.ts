@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   kestrelOneMicrosoft365ListMailTool,
+  kestrelOneMicrosoft365SendChatMessageTool,
   kestrelOneMicrosoft365SendMailTool,
 } from "../../tools/kestrelOne/microsoft-365.js";
 
@@ -56,6 +57,23 @@ test("Outlook send cannot lower the canonical ask minimum", async () => {
       subject: "Decision",
       body: "Automatic.",
     }),
+    /approval ID/u,
+  );
+});
+
+test("Teams send cannot lower the canonical ask minimum", async () => {
+  const handler = kestrelOneMicrosoft365SendChatMessageTool.createHandler({
+    kestrelOne: {
+      appUrl: "https://kestrel.example",
+      executionTicket: "signed-environment-ticket",
+      appApprovalModes: {
+        "kestrel_one.microsoft_365_send_chat_message": "auto",
+      },
+    },
+    fetchImpl: async () => Response.json({ result: { ok: true } }),
+  });
+  await assert.rejects(
+    handler({ chatId: "chat-1", content: "Automatic." }),
     /approval ID/u,
   );
 });

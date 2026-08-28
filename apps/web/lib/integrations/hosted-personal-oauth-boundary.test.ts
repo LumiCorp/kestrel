@@ -12,7 +12,7 @@ const source = fs.readFileSync(
 const migration = fs.readFileSync(
   path.join(
     directory,
-    "../db/migrations/0096_platform_personal_oauth_authorization_broker.sql",
+    "../db/migrations/0093_platform_personal_oauth_authorization_broker.sql",
   ),
   "utf8",
 );

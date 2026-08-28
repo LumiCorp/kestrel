@@ -73,6 +73,10 @@ function authorizationBindingId(connectionId: string) {
   return `platform-personal-oauth-authorization:${connectionId}`;
 }
 
+function personalConnectionLockKey(connectionId: string) {
+  return `personal-app-connection:${connectionId}`;
+}
+
 function allowedPacks(provider: HostedPersonalOAuthProvider): HostedPersonalOAuthPack[] {
   return provider === "google_workspace" ? ["gmail", "calendar"] : ["outlook", "teams"];
 }
@@ -538,8 +542,11 @@ export async function completeHostedPersonalAuthorization(input: {
             eq(table.ownerType, "personal"),
             eq(table.userId, session.userId),
           ),
-        });
+    });
     const connectionId = existing?.id ?? crypto.randomUUID();
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${personalConnectionLockKey(connectionId)}, 0))`,
+    );
     const [saved] = await transaction
       .insert(schema.appConnections)
       .values({
@@ -648,6 +655,9 @@ export async function markHostedPersonalAuthorizationDegraded(input: {
 }) {
   const now = new Date();
   await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${personalConnectionLockKey(input.connectionId)}, 0))`,
+    );
     await transaction.update(schema.platformPersonalOAuthAuthorizations)
       .set({ reconnectRequired: true, failureCode: input.code, updatedAt: now })
       .where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
@@ -658,10 +668,9 @@ export async function markHostedPersonalAuthorizationDegraded(input: {
 }
 
 /**
- * Refreshes one connection under a transaction-scoped PostgreSQL advisory
- * lock. A waiting request always re-reads the row after the first request has
- * completed, so a rotated refresh token cannot make the waiting request mark
- * a freshly repaired authorization as degraded.
+ * Refresh and every connection lifecycle transition use the connection lock.
+ * A reconnect or disconnect therefore cannot interleave with a refresh and
+ * leave a stale refresh result durable.
  */
 async function refreshHostedPersonalProviderToken(input: {
   provider: HostedPersonalOAuthProvider;
@@ -673,7 +682,7 @@ async function refreshHostedPersonalProviderToken(input: {
 }) {
   const result = await knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`platform-personal-oauth-refresh:${input.connectionId}`}, 0))`,
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${personalConnectionLockKey(input.connectionId)}, 0))`,
     );
     const degrade = async (code: string) => {
       const now = new Date();

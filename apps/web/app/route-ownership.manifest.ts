@@ -909,6 +909,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer",
   ),
   api(
+    "app/api/runtime/gmail/action/route.ts",
+    "/api/runtime/gmail/action",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer",
+  ),
+  api(
     "app/api/cron/attachments/cleanup/route.ts",
     "/api/cron/attachments/cleanup",
     "credential-boundary",

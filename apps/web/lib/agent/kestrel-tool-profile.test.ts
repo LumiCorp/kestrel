@@ -112,6 +112,31 @@ test("calendar tools are exposed only for effective Project capabilities", () =>
   });
 });
 
+test("Gmail tools are exposed only for their effective capability and keep send approval", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile: {
+      ...profile,
+      toolAllowlist: [
+        "kestrel_one.gmail_search_messages",
+        "kestrel_one.gmail_get_message",
+        "kestrel_one.gmail_send_message",
+      ],
+    },
+    effectiveCapabilities: [
+      "app:google_workspace.gmail.messages.search:auto",
+      "app:google_workspace.gmail.messages.send:ask",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, [
+    "kestrel_one.gmail_search_messages",
+    "kestrel_one.gmail_send_message",
+  ]);
+  assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    "kestrel_one.gmail_search_messages": "auto",
+    "kestrel_one.gmail_send_message": "ask",
+  });
+});
+
 test("hosted profile carries source policy evidence alongside effective modes", () => {
   const restricted = restrictKestrelOneProfileTools({
     profile,
@@ -151,6 +176,26 @@ test("Microsoft 365 tools follow effective capability packs", () => {
     "kestrel_one.microsoft_365_list_mail": "auto",
     "kestrel_one.microsoft_365_send_mail": "ask",
   });
+});
+
+test("Teams chat messages require their own effective read capability", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile: {
+      ...profile,
+      toolAllowlist: [
+        "kestrel_one.microsoft_365_list_chats",
+        "kestrel_one.microsoft_365_list_chat_messages",
+      ],
+    },
+    effectiveCapabilities: [
+      "app:microsoft_365.teams.chat.read:auto",
+      "app:microsoft_365.teams.chat.messages.read:auto",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, [
+    "kestrel_one.microsoft_365_list_chats",
+    "kestrel_one.microsoft_365_list_chat_messages",
+  ]);
 });
 
 test("calendar tools are removed when the user has no effective capability", () => {
