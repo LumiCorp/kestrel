@@ -15,26 +15,58 @@ export const githubMutationTools = {
   ],
 } as const;
 
-export const googleMutationTools = {
-  "kestrel_one.google_calendar_create_event": "events.create",
-  "kestrel_one.google_calendar_update_event": "events.update",
-  "kestrel_one.google_calendar_delete_event": "events.delete",
-} as const;
+export const googleMutationTools: Readonly<Record<string, string>> =
+  Object.freeze(
+    Object.fromEntries(
+      GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.filter(
+        (operation) =>
+          operation.pack === "calendar" &&
+          (operation.sideEffect === "external_side_effect" ||
+            operation.serviceOperation === "events.list"),
+      ).map((operation) => [
+        operation.hostedToolName,
+        operation.serviceOperation,
+      ]),
+    ),
+  );
 
-export const microsoftMutationTools = {
-  "kestrel_one.microsoft_365_send_mail": "mail.send",
-  "kestrel_one.microsoft_365_send_chat_message": "chat.send",
-} as const;
+export const gmailMutationTools: Readonly<Record<string, string>> =
+  Object.freeze(
+    Object.fromEntries(
+      GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.filter(
+        (operation) =>
+          operation.pack === "gmail" &&
+          operation.sideEffect === "external_side_effect",
+      ).map((operation) => [
+        operation.hostedToolName,
+        operation.serviceOperation,
+      ]),
+    ),
+  );
+
+export const microsoftMutationTools: Readonly<Record<string, string>> =
+  Object.freeze({
+    "kestrel_one.microsoft_365_send_mail": "mail.send",
+    ...Object.fromEntries(
+      MICROSOFT_365_OPERATION_DESCRIPTORS.filter(
+        (operation) => operation.sideEffect === "external_side_effect",
+      ).map((operation) => [
+        operation.hostedToolName,
+        operation.serviceOperation,
+      ]),
+    ),
+  });
 
 export function hostedMutationOperationKey(toolName: string): string | null {
   if (toolName === "kestrel_one.email_send") return "email.send";
-  const github =
-    githubMutationTools[toolName as keyof typeof githubMutationTools];
+  const github = githubMutationTools[toolName as keyof typeof githubMutationTools];
   if (github) return github[0];
-  const google =
-    googleMutationTools[toolName as keyof typeof googleMutationTools];
+  const google = googleMutationTools[toolName];
   if (google) return google;
-  const microsoft =
-    microsoftMutationTools[toolName as keyof typeof microsoftMutationTools];
+  const gmail = gmailMutationTools[toolName];
+  if (gmail) return gmail;
+  const microsoft = microsoftMutationTools[toolName];
   return microsoft ?? null;
 }
+import { GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS } from "../../../../src/apps/googleWorkspace.js";
+import { MICROSOFT_365_OPERATION_DESCRIPTORS } from "../../../../src/apps/microsoft365.js";

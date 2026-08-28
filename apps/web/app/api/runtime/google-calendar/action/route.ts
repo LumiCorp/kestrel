@@ -4,7 +4,6 @@ import {
 } from "@lumi/kestrel-environment-auth";
 import { NextResponse } from "next/server";
 import { logAdminEvent } from "@/lib/admin/logs";
-import { auth } from "@/lib/auth";
 import {
   AppOperationApprovalError,
   consumeAppOperationApproval,
@@ -23,7 +22,11 @@ import {
   capabilityForGoogleCalendarOperation,
   googleCalendarRuntimeInputSchema,
 } from "@/lib/integrations/google-calendar-contract";
-import { markGoogleCalendarConnectionDegraded } from "@/lib/integrations/google-calendar-oauth";
+import {
+  HostedPersonalOAuthError,
+  markHostedPersonalAuthorizationDegraded,
+  resolveHostedPersonalProviderToken,
+} from "@/lib/integrations/hosted-personal-oauth";
 import {
   authorizeGoogleCalendarAvailabilitySubjects,
   authorizeGoogleCalendarCapability,
@@ -137,8 +140,10 @@ export async function POST(request: Request) {
             busy: await queryGoogleCalendarFreeBusy({
               accessToken: await getConnectionAccessToken({
                 connectionId: subject.connectionId,
-                providerAccountId: subject.providerAccountId,
                 userId: subject.userId,
+                organizationId: ticket!.organizationId,
+                projectId: policy.projectId,
+                operation: "availability.query",
               }),
               timeMin: input.timeMin,
               timeMax: input.timeMax,
@@ -149,8 +154,10 @@ export async function POST(request: Request) {
     } else {
       const accessToken = await getConnectionAccessToken({
         connectionId: policy.connection.id,
-        providerAccountId: policy.connection.externalAccountId,
         userId: ticket.actorId,
+        organizationId: ticket.organizationId,
+        projectId: policy.projectId,
+        operation: input.operation,
       });
       connectionIdsUsed.add(policy.connection.id);
       if (input.operation === "events.list") {
@@ -222,9 +229,9 @@ export async function POST(request: Request) {
       if (error.reconnectRequired) {
         await Promise.all(
           [...connectionIdsUsed].map((connectionId) =>
-            markGoogleCalendarConnectionDegraded({
+            markHostedPersonalAuthorizationDegraded({
               connectionId,
-              failureCode: error.code,
+              code: error.code,
             })
           )
         ).catch(() => {});
@@ -250,26 +257,28 @@ function readApprovalId(value: string | null) {
 
 async function getConnectionAccessToken(input: {
   connectionId: string;
-  providerAccountId: string | null;
   userId: string | null;
+  organizationId: string;
+  projectId: string;
+  operation: Parameters<typeof resolveHostedPersonalProviderToken>[0]["operation"];
 }) {
   try {
-    if (!(input.providerAccountId && input.userId)) {
+    if (!input.userId) {
       throw new Error("Google account identity is unavailable.");
     }
-    const token = await auth.api.getAccessToken({
-      body: {
-        providerId: "google",
-        accountId: input.providerAccountId,
-        userId: input.userId,
-      },
+    const token = await resolveHostedPersonalProviderToken({
+      provider: "google_workspace",
+      connectionId: input.connectionId,
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+      userId: input.userId,
+      operation: input.operation,
     });
     return token.accessToken;
-  } catch {
-    await markGoogleCalendarConnectionDegraded({
-      connectionId: input.connectionId,
-      failureCode: "GOOGLE_CALENDAR_RECONNECT_REQUIRED",
-    });
+  } catch (error) {
+    if (error instanceof HostedPersonalOAuthError && error.code !== "OAUTH_RECONNECT_REQUIRED") {
+      throw new GoogleCalendarPolicyError(error.code);
+    }
     throw new GoogleCalendarProviderError({
       code: "GOOGLE_CALENDAR_RECONNECT_REQUIRED",
       status: 401,

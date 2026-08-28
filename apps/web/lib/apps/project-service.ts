@@ -3,8 +3,14 @@ import { getProjectEnvironmentBinding } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   microsoft365PackAllowsCapability,
+  hasMicrosoft365CapabilityScopes,
   parseMicrosoft365Packs,
 } from "@/lib/integrations/microsoft-365-contract";
+import {
+  hasGoogleCalendarCapabilityScopes,
+  parseSelectedGoogleWorkspacePacks,
+} from "@/lib/integrations/google-calendar-contract";
+import { hasGmailCapabilityScopes } from "@/lib/integrations/gmail-contract";
 import type {
   ToolApprovalMode,
   ToolLoggingMode,
@@ -991,6 +997,19 @@ export async function resolveEffectiveProjectAppAccess(input: {
         !microsoft365PackAllowsCapability({
           selectedPacks: [...selectedMicrosoftPacks],
           capabilityMetadata: capability.metadata,
+        })) ||
+      (input.appKey === "microsoft_365" &&
+        !hasMicrosoft365CapabilityScopes({
+          grantedScopes: selectedConnection?.scopes ?? [],
+          capability: capability.key as import("@/lib/integrations/microsoft-365-contract").Microsoft365Capability,
+        })) ||
+      (input.appKey === "google_workspace" &&
+        !googleWorkspaceCapabilityIsEligible({
+          capabilityKey: capability.key,
+          selectedPacks: parseSelectedGoogleWorkspacePacks(
+            selectedConnection?.deliveryConfig,
+          ),
+          grantedScopes: selectedConnection?.scopes ?? [],
         }))
     ) {
       return [];
@@ -1032,6 +1051,23 @@ export async function resolveEffectiveProjectAppAccess(input: {
     connectionId: selectedConnection?.id ?? null,
     capabilities: filteredCapabilities,
   };
+}
+
+function googleWorkspaceCapabilityIsEligible(input: {
+  capabilityKey: string;
+  selectedPacks: readonly string[];
+  grantedScopes: readonly string[];
+}) {
+  if (input.capabilityKey.startsWith("gmail.")) {
+    return input.selectedPacks.includes("gmail") && hasGmailCapabilityScopes({
+      grantedScopes: input.grantedScopes,
+      capability: input.capabilityKey as import("@/lib/integrations/gmail-contract").GmailCapability,
+    });
+  }
+  return input.selectedPacks.includes("calendar") && hasGoogleCalendarCapabilityScopes({
+    grantedScopes: input.grantedScopes,
+    capability: input.capabilityKey as import("@/lib/integrations/google-calendar-contract").GoogleCalendarCapability,
+  });
 }
 
 async function filterGitHubCapabilitiesByResource<T extends { key: string }>(

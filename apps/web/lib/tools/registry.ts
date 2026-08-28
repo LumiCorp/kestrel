@@ -487,6 +487,60 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     },
     capabilities: [
       createCapability({
+        key: "gmail.messages.search",
+        runtimeName: "kestrel_one.gmail_search_messages",
+        displayName: "Search Gmail",
+        description: "Search messages in the connected Gmail account.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: { audience: "self", pack: "gmail", restrictedData: true },
+      }),
+      createCapability({
+        key: "gmail.messages.read",
+        runtimeName: "kestrel_one.gmail_get_message",
+        displayName: "Read Gmail messages",
+        description: "Read a selected message from the connected Gmail account.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: { audience: "self", pack: "gmail", restrictedData: true },
+      }),
+      createCapability({
+        key: "gmail.threads.read",
+        runtimeName: "kestrel_one.gmail_get_thread",
+        displayName: "Read Gmail threads",
+        description: "Read a selected thread from the connected Gmail account.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: { audience: "self", pack: "gmail", restrictedData: true },
+      }),
+      createCapability({
+        key: "gmail.attachments.import",
+        runtimeName: "kestrel_one.gmail_import_attachment",
+        displayName: "Import Gmail attachments",
+        description: "Import a selected Gmail attachment into the Project.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: { audience: "self", pack: "gmail", restrictedData: true },
+      }),
+      createCapability({
+        key: "gmail.messages.send",
+        runtimeName: "kestrel_one.gmail_send_message",
+        displayName: "Send Gmail messages",
+        description: "Send a Gmail message with approval.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "ask", loggingMode: "metadata_only" },
+        metadata: { audience: "self", pack: "gmail", restrictedData: true },
+      }),
+      createCapability({
+        key: "gmail.messages.reply",
+        runtimeName: "kestrel_one.gmail_reply_message",
+        displayName: "Reply in Gmail",
+        description: "Reply to a Gmail message with approval.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "ask", loggingMode: "metadata_only" },
+        metadata: { audience: "self", pack: "gmail", restrictedData: true },
+      }),
+      createCapability({
         key: "calendar.events.read",
         runtimeName: "kestrel_one.google_calendar_list_events",
         displayName: "List calendar events",
@@ -738,7 +792,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
   {
     key: KESTREL_APP_IDS.MICROSOFT_365,
     displayName: MICROSOFT_365_APP_MANIFEST.name,
-    description: MICROSOFT_365_APP_MANIFEST.description,
+    description: "Work with Outlook and Teams.",
     type: "oauth",
     authType: "oauth",
     app: {
@@ -753,7 +807,9 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
     metadata: {
       icon: "microsoft",
       category: "productivity",
-      capabilityPacks: MICROSOFT_365_APP_MANIFEST.capabilityPacks,
+      capabilityPacks: MICROSOFT_365_APP_MANIFEST.capabilityPacks.filter(
+        (pack) => pack.key === "outlook" || pack.key === "teams",
+      ),
     },
     capabilities: [
       createCapability({
@@ -793,6 +849,15 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
         metadata: { group: "teams", audience: "self", pack: "teams" },
       }),
       createCapability({
+        key: "teams.chat.messages.read",
+        runtimeName: "kestrel_one.microsoft_365_list_chat_messages",
+        displayName: "Read chat messages",
+        description: "Read messages in a selected Teams chat.",
+        accessMode: "read",
+        defaultPolicy: { loggingMode: "metadata_only" },
+        metadata: { group: "teams", audience: "self", pack: "teams" },
+      }),
+      createCapability({
         key: "teams.chat.send",
         runtimeName: "kestrel_one.microsoft_365_send_chat_message",
         displayName: "Send chat messages",
@@ -800,19 +865,6 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
         accessMode: "write",
         defaultPolicy: { approvalMode: "ask", loggingMode: "metadata_only" },
         metadata: { group: "teams", audience: "self", pack: "teams" },
-      }),
-      createCapability({
-        key: "sharepoint.sites.search",
-        runtimeName: "kestrel_one.microsoft_365_search_sites",
-        displayName: "Find sites",
-        description: "Find SharePoint sites available to the connected user.",
-        accessMode: "read",
-        defaultPolicy: { loggingMode: "metadata_only" },
-        metadata: {
-          group: "sharepoint",
-          audience: "self",
-          pack: "sharepoint",
-        },
       }),
     ],
   },

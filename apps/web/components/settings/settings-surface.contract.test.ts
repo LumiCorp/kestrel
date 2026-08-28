@@ -157,6 +157,7 @@ test("organization, platform, and personal settings retain separate navigation s
     "/platform/users",
     "/platform/signup-codes",
     "/platform/email",
+    "/platform/integrations",
     "/platform/runtime",
     "/platform/operations",
     "/platform/billing",

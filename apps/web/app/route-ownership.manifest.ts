@@ -747,6 +747,10 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
       "/platform/signup-codes",
     ],
     ["app/(workspace)/platform/email/page.tsx", "/platform/email"],
+    [
+      "app/(workspace)/platform/integrations/page.tsx",
+      "/platform/integrations",
+    ],
     ["app/(workspace)/platform/runtime/page.tsx", "/platform/runtime"],
     ["app/(workspace)/platform/operations/page.tsx", "/platform/operations"],
     ["app/(workspace)/platform/billing/page.tsx", "/platform/billing"],
@@ -900,6 +904,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/runtime/github/push/route.ts",
     "/api/runtime/github/push",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer",
+  ),
+  api(
+    "app/api/runtime/gmail/action/route.ts",
+    "/api/runtime/gmail/action",
     "credential-boundary",
     "service-boundary",
     "service-bearer",
@@ -1276,6 +1287,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_API.unauthorized,
   ),
   api(
+    "app/api/platform/integrations/route.ts",
+    "/api/platform/integrations",
+    "apps",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
     "app/api/organization/audit/route.ts",
     "/api/organization/audit",
     ADMIN_API.owner,
@@ -1365,6 +1383,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "apps",
     "authenticated",
     "api-unauthorized",
+  ),
+  api(
+    "app/api/integrations/oauth/[provider]/start/route.ts",
+    "/api/integrations/oauth/:provider/start",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/integrations/oauth/[provider]/callback/route.ts",
+    "/api/integrations/oauth/:provider/callback",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/environments/[environmentId]/apps/[appKey]/route.ts",

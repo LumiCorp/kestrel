@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   listMicrosoftCalendarEvents,
+  Microsoft365ProviderError,
   searchMicrosoftSharePointSites,
   sendMicrosoftMail,
+  sendMicrosoftTeamsChatMessage,
 } from "./microsoft-365-api";
 
 test("Microsoft 365 reads use bounded Graph queries", async () => {
@@ -58,4 +60,64 @@ test("Microsoft 365 mail sends are explicit and plain text", async () => {
     message: { body: { contentType: string } };
   };
   assert.equal(body.message.body.contentType, "Text");
+});
+
+test("Teams send returns only durable provider identity and timestamp", async () => {
+  const result = await sendMicrosoftTeamsChatMessage({
+    accessToken: "secret",
+    chatId: "chat-1",
+    content: "Private message body",
+    fetchImpl: async () =>
+      Response.json({
+        id: "message-1",
+        chatId: "chat-1",
+        createdDateTime: "2026-08-27T00:00:00Z",
+        body: { content: "Private message body" },
+      }),
+  });
+  assert.deepEqual(result, {
+    id: "message-1",
+    chatId: "chat-1",
+    createdAt: "2026-08-27T00:00:00Z",
+  });
+  assert.equal(JSON.stringify(result).includes("Private message body"), false);
+});
+
+test("Teams send preserves a Graph authorization identity without requesting reconnect", async () => {
+  await assert.rejects(
+    sendMicrosoftTeamsChatMessage({
+      accessToken: "secret",
+      chatId: "chat-1",
+      content: "Hello",
+      fetchImpl: async () =>
+        Response.json(
+          { error: { code: "Authorization_RequestDenied" } },
+          { status: 403 },
+        ),
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Microsoft365ProviderError);
+      assert.equal(error.code, "MICROSOFT_365_ACCESS_DENIED");
+      assert.equal(error.providerCode, "Authorization_RequestDenied");
+      assert.equal(error.reconnectRequired, false);
+      return true;
+    },
+  );
+});
+
+test("Teams send reports an unreadable successful response as an unknown outcome", async () => {
+  await assert.rejects(
+    sendMicrosoftTeamsChatMessage({
+      accessToken: "secret",
+      chatId: "chat-1",
+      content: "Hello",
+      fetchImpl: async () => new Response("not json", { status: 201 }),
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Microsoft365ProviderError);
+      assert.equal(error.code, "MICROSOFT_365_OUTCOME_UNKNOWN");
+      assert.equal(error.outcomeUnknown, true);
+      return true;
+    },
+  );
 });

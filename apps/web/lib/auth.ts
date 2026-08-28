@@ -7,10 +7,6 @@ import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import {
-  genericOAuth,
-  microsoftEntraId,
-} from "better-auth/plugins/generic-oauth";
-import {
   admin,
   bearer,
   lastLoginMethod,
@@ -92,12 +88,6 @@ const stripeEnvConfigured = stripeConfigStatus.isReady;
 const githubOAuthConfigured = Boolean(
   process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET,
 );
-const googleOAuthConfigured = Boolean(
-  process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET,
-);
-const microsoftOAuthConfigured = Boolean(
-  process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET,
-);
 
 export const auth = betterAuth({
   appName: "Kestrel One",
@@ -154,17 +144,6 @@ export const auth = betterAuth({
             clientId: process.env.GITHUB_CLIENT_ID as string,
             clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
             scope: ["repo"],
-            disableImplicitSignUp: true,
-          },
-        }
-      : {}),
-    ...(googleOAuthConfigured
-      ? {
-          google: {
-            clientId: process.env.GOOGLE_CLIENT_ID as string,
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
-            accessType: "offline" as const,
-            prompt: "select_account consent",
             disableImplicitSignUp: true,
           },
         }
@@ -254,25 +233,6 @@ export const auth = betterAuth({
     },
   },
   plugins: [
-    genericOAuth({
-      config: microsoftOAuthConfigured
-        ? [
-            microsoftEntraId({
-              clientId: process.env.MICROSOFT_CLIENT_ID as string,
-              clientSecret: process.env.MICROSOFT_CLIENT_SECRET as string,
-              tenantId: process.env.MICROSOFT_TENANT_ID ?? "organizations",
-              scopes: [
-                "openid",
-                "profile",
-                "email",
-                "offline_access",
-                "User.Read",
-              ],
-              disableImplicitSignUp: true,
-            }),
-          ]
-        : [],
-    }),
     expo(),
     organization({
       invitationExpiresIn: INVITATION_EXPIRY_SECONDS,

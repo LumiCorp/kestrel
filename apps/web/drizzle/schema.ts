@@ -6768,6 +6768,128 @@ export const platformEmailConfig = pgTable("platform_email_config", {
     .defaultNow(),
 });
 
+/**
+ * Global hosted OAuth applications used by Kestrel One personal Apps.  These
+ * are intentionally separate from app_credentials, which is scoped to an
+ * organization Environment and cannot be an authority for a Platform app.
+ */
+export const platformOAuthRegistrations = pgTable(
+  "platform_oauth_registrations",
+  {
+    provider: text("provider", {
+      enum: ["google_workspace", "microsoft_365"],
+    })
+      .primaryKey()
+      .notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    clientId: text("client_id"),
+    encryptedClientSecret: text("encrypted_client_secret"),
+    /** Microsoft tenant ID, or the Google hosted issuer when one is needed. */
+    tenantOrIssuer: text("tenant_or_issuer"),
+    enabledPacks: jsonb("enabled_packs")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    revision: integer("revision").notNull().default(1),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      "platform_oauth_registrations_revision_check",
+      sql`${table.revision} > 0`,
+    ),
+  ],
+);
+
+/**
+ * A short-lived browser authorization attempt for a Platform-owned OAuth app.
+ * The verifier is encrypted at rest; its opaque id is the only state that may
+ * travel through a provider redirect.
+ */
+export const platformPersonalOAuthAuthorizationSessions = pgTable(
+  "platform_personal_oauth_authorization_sessions",
+  {
+    id: text("id").primaryKey().notNull(),
+    provider: text("provider", {
+      enum: ["google_workspace", "microsoft_365"],
+    }).notNull(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    appKey: text("app_key")
+      .notNull()
+      .references(() => appDefinitions.key, { onDelete: "cascade" }),
+    connectionId: text("connection_id").references(() => appConnections.id, {
+      onDelete: "set null",
+    }),
+    selectedPacks: jsonb("selected_packs").$type<string[]>().notNull(),
+    registrationRevision: integer("registration_revision").notNull(),
+    encryptedPkceVerifier: text("encrypted_pkce_verifier").notNull(),
+    returnTarget: text("return_target").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("platform_personal_oauth_session_expiry_idx").on(table.expiresAt),
+    index("platform_personal_oauth_session_user_idx").on(
+      table.userId,
+      table.organizationId,
+    ),
+  ],
+);
+
+/**
+ * Hosted personal provider authority. Tokens are never placed in Better Auth
+ * account rows or Environment-scoped app_credentials.
+ */
+export const platformPersonalOAuthAuthorizations = pgTable(
+  "platform_personal_oauth_authorizations",
+  {
+    connectionId: text("connection_id")
+      .primaryKey()
+      .references(() => appConnections.id, { onDelete: "cascade" }),
+    provider: text("provider", {
+      enum: ["google_workspace", "microsoft_365"],
+    }).notNull(),
+    providerAccountId: text("provider_account_id").notNull(),
+    selectedPacks: jsonb("selected_packs").$type<string[]>().notNull(),
+    grantedScopes: jsonb("granted_scopes").$type<string[]>().notNull(),
+    encryptedTokenPayload: text("encrypted_token_payload").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    registrationRevision: integer("registration_revision").notNull(),
+    reconnectRequired: boolean("reconnect_required").notNull().default(false),
+    failureCode: text("failure_code"),
+    lastRefreshedAt: timestamp("last_refreshed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("platform_personal_oauth_authorization_identity_idx").on(
+      table.provider,
+      table.providerAccountId,
+      table.connectionId,
+    ),
+  ],
+);
+
 export const organizationEmailConfig = pgTable("organization_email_config", {
   organizationId: text("organization_id")
     .primaryKey()
@@ -7157,6 +7279,15 @@ export type PlatformTurnWorkerCapacity = InferSelectModel<
   typeof platformTurnWorkerCapacity
 >;
 export type PlatformEmailConfig = InferSelectModel<typeof platformEmailConfig>;
+export type PlatformOAuthRegistration = InferSelectModel<
+  typeof platformOAuthRegistrations
+>;
+export type PlatformPersonalOAuthAuthorizationSession = InferSelectModel<
+  typeof platformPersonalOAuthAuthorizationSessions
+>;
+export type PlatformPersonalOAuthAuthorization = InferSelectModel<
+  typeof platformPersonalOAuthAuthorizations
+>;
 export type AdminApiKey = InferSelectModel<typeof adminApiKeys>;
 export type KnowledgeDocument = InferSelectModel<typeof knowledgeDocuments>;
 export type KnowledgeIngestionRun = InferSelectModel<

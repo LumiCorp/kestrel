@@ -44,8 +44,6 @@ test(
       googleContract,
       googleOauth,
       googlePolicy,
-      microsoftContract,
-      microsoftOauth,
       githubOauth,
       officialRemoteConnection,
       mcpControl,
@@ -66,8 +64,6 @@ test(
       import("@/lib/integrations/google-calendar-contract"),
       import("@/lib/integrations/google-calendar-oauth"),
       import("@/lib/integrations/google-calendar-policy"),
-      import("@/lib/integrations/microsoft-365-contract"),
-      import("@/lib/integrations/microsoft-365-oauth"),
       import("@/lib/integrations/github-oauth"),
       import("./official-remote-connection"),
       import("@/lib/mcp/control-plane"),
@@ -92,13 +88,11 @@ test(
     const workspaceId = `apps-workspace-${suffix}`;
     const runId = `apps-run-${suffix}`;
     const replayRunId = `apps-replay-run-${suffix}`;
-    const googleAuthAccountId = `apps-google-auth-${suffix}`;
     const googleProviderAccountId = `apps-google-provider-${suffix}`;
+    const googleConnectionId = `apps-google-connection-${suffix}`;
     const isolatedGoogleConnectionId = `apps-isolated-google-${suffix}`;
     const githubAuthAccountId = `apps-github-auth-${suffix}`;
     const githubProviderAccountId = `apps-github-provider-${suffix}`;
-    const microsoftAuthAccountId = `apps-microsoft-auth-${suffix}`;
-    const microsoftProviderAccountId = `apps-microsoft-provider-${suffix}`;
     const mcpSnapshotId = crypto.randomUUID();
     const mcpCapabilityId = crypto.randomUUID();
     const linearSnapshotId = crypto.randomUUID();
@@ -146,24 +140,6 @@ test(
       VALUES (
         ${isolatedOrganizationId}, 'Isolated Apps Org',
         ${`apps-isolated-org-${suffix}`}, ${now}
-      )
-    `;
-    await sql`
-      INSERT INTO "account" (
-        "id", "accountId", "providerId", "userId", "scope", "createdAt", "updatedAt"
-      ) VALUES (
-        ${googleAuthAccountId}, ${googleProviderAccountId}, 'google', ${userId},
-        ${googleContract.GOOGLE_CALENDAR_SCOPES.join(" ")}, ${now}, ${now}
-      )
-    `;
-    await sql`
-      INSERT INTO "account" (
-        "id", "accountId", "providerId", "userId", "scope", "createdAt", "updatedAt"
-      ) VALUES (
-        ${microsoftAuthAccountId}, ${microsoftProviderAccountId},
-        'microsoft-entra-id', ${userId},
-        ${microsoftContract.scopesForMicrosoft365Packs(["outlook"]).join(" ")},
-        ${now}, ${now}
       )
     `;
     await sql`
@@ -1477,26 +1453,31 @@ test(
         },
       });
     }
-    globalThis.fetch = (async (request) => {
-      const url = String(request);
-      if (url.includes("openidconnect.googleapis.com/v1/userinfo")) {
-        return Response.json({
-          sub: googleProviderAccountId,
-          email: `${userId}@example.test`,
-        });
-      }
-      return new Response("{}", { status: 200 });
-    }) as typeof fetch;
-    const googleConnection = await googleOauth.syncGoogleCalendarUserConnection(
-      {
-        organizationId,
-        userId,
-        authAccountId: googleAuthAccountId,
-        providerAccountId: googleProviderAccountId,
-        accessToken: "google-access-token-not-persisted",
-        scopes: [...googleContract.GOOGLE_CALENDAR_SCOPES],
-      },
-    );
+    const googleConnection = { id: googleConnectionId };
+    await sql`
+      INSERT INTO "app_connections" (
+        "id", "organization_id", "app_key", "owner_type", "user_id",
+        "name", "status", "external_account_id", "external_account_label",
+        "scopes", "delivery_config", "last_health_at", "created_at", "updated_at"
+      ) VALUES (
+        ${googleConnection.id}, ${organizationId},
+        ${googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY}, 'personal', ${userId},
+        ${`${userId}@example.test`}, 'connected', ${googleProviderAccountId},
+        ${`${userId}@example.test`},
+        ${sql.json([...googleContract.GOOGLE_CALENDAR_SCOPES])},
+        ${sql.json({ capabilityPacks: ["calendar"] })}, ${now}, ${now}, ${now}
+      )
+    `;
+    await sql`
+      INSERT INTO "app_connection_resources" (
+        "id", "connection_id", "external_id", "resource_type", "label",
+        "enabled", "permissions", "metadata", "created_at", "updated_at"
+      ) VALUES (
+        ${`${googleConnection.id}:primary-calendar`}, ${googleConnection.id},
+        'primary', 'calendar', 'Primary calendar', true, ${sql.json({})},
+        ${sql.json({ logical: true })}, ${now}, ${now}
+      )
+    `;
     assert.equal(
       await projectAppService.resolveEffectiveProjectAppAccess({
         organizationId,
@@ -3199,7 +3180,7 @@ test(
       ) VALUES (
         ${isolatedGoogleConnectionId}, ${isolatedOrganizationId},
         ${googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY}, 'personal', ${userId},
-        ${googleAuthAccountId}, ${`${userId}@example.test`}, 'connected',
+        ${null}, ${`${userId}@example.test`}, 'connected',
         ${googleProviderAccountId}, ${`${userId}@example.test`},
         ${sql.json([...googleContract.GOOGLE_CALENDAR_SCOPES])}, ${now}, ${now}
       )
@@ -3219,7 +3200,6 @@ test(
     );
     const [googleDisconnectState] = await sql<
       Array<{
-        accountCount: string;
         capabilityCount: string;
         connectionStatus: string;
         isolatedStatus: string;
@@ -3228,8 +3208,6 @@ test(
       }>
     >`
       SELECT
-        (SELECT count(*)::text FROM "account"
-          WHERE "id" = ${googleAuthAccountId}) AS "accountCount",
         (SELECT count(*)::text FROM "project_app_user_capabilities"
           WHERE "connection_id" = ${googleConnection.id}) AS "capabilityCount",
         (SELECT "status" FROM "app_connections"
@@ -3242,103 +3220,11 @@ test(
           WHERE "connection_id" = ${googleConnection.id}) AS "resourceCount"
     `;
     assert.deepEqual(googleDisconnectState, {
-      accountCount: "1",
       capabilityCount: "0",
       connectionStatus: "disconnected",
       isolatedStatus: "connected",
       projectConnectionCount: "0",
       resourceCount: "0",
-    });
-
-    await appService.setAppInstallation({
-      organizationId,
-      appKey: microsoftContract.MICROSOFT_365_PROVIDER_KEY,
-      actorUserId: userId,
-      installed: true,
-    });
-    for (const capabilityKey of microsoftContract.MICROSOFT_365_CAPABILITIES) {
-      await appService.saveEnvironmentAppCapabilityGrant({
-        organizationId,
-        environmentId,
-        appKey: microsoftContract.MICROSOFT_365_PROVIDER_KEY,
-        capabilityKey,
-        grant: {
-          enabled: true,
-          approvalMode: microsoftContract.requiresMicrosoft365Approval(
-            capabilityKey,
-          )
-            ? "ask"
-            : "auto",
-          loggingMode: "metadata_only",
-          rateLimitMode: "strict",
-        },
-      });
-    }
-    globalThis.fetch = (async (request) => {
-      if (String(request).includes("graph.microsoft.com/oidc/userinfo")) {
-        return Response.json({
-          sub: microsoftProviderAccountId,
-          name: "Microsoft User",
-          email: `${userId}@example.test`,
-        });
-      }
-      return new Response("{}", { status: 200 });
-    }) as typeof fetch;
-    const microsoftConnection = await microsoftOauth.syncMicrosoft365Connection(
-      {
-        organizationId,
-        userId,
-        authAccountId: microsoftAuthAccountId,
-        providerAccountId: microsoftProviderAccountId,
-        accessToken: "microsoft-access-token-not-persisted",
-        scopes: microsoftContract.scopesForMicrosoft365Packs(["outlook"]),
-        packs: ["outlook"],
-      },
-    );
-    await projectAppService.attachProjectAppConnection({
-      organizationId,
-      projectId,
-      appKey: microsoftContract.MICROSOFT_365_PROVIDER_KEY,
-      connectionId: microsoftConnection.id,
-      actorUserId: userId,
-      scope: "personal",
-      isDefault: true,
-    });
-    const microsoftAccess =
-      await projectAppService.resolveEffectiveProjectAppAccess({
-        organizationId,
-        projectId,
-        appKey: microsoftContract.MICROSOFT_365_PROVIDER_KEY,
-        userId,
-      });
-    assert.equal(microsoftAccess?.connectionId, microsoftConnection.id);
-    assert.deepEqual(
-      microsoftAccess?.capabilities.map((capability) => capability.key).sort(),
-      ["outlook.calendar.read", "outlook.mail.read", "outlook.mail.send"],
-    );
-    await microsoftOauth.disconnectMicrosoft365Connection({
-      organizationId,
-      userId,
-    });
-    const [microsoftDisconnectState] = await sql<
-      Array<{
-        accountCount: string;
-        attachmentCount: string;
-        status: string;
-      }>
-    >`
-      SELECT
-        (SELECT count(*)::text FROM "account"
-          WHERE "id" = ${microsoftAuthAccountId}) AS "accountCount",
-        (SELECT count(*)::text FROM "project_app_connections"
-          WHERE "connection_id" = ${microsoftConnection.id}) AS "attachmentCount",
-        (SELECT "status" FROM "app_connections"
-          WHERE "id" = ${microsoftConnection.id}) AS "status"
-    `;
-    assert.deepEqual(microsoftDisconnectState, {
-      accountCount: "1",
-      attachmentCount: "0",
-      status: "disconnected",
     });
 
     await appService.setAppInstallation({

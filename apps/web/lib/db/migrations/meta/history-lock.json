@@ -91,5 +91,6 @@
   "0089_project_email_triggers": "1787914800000:65312bab559de3b99cc9ffd7034d3705333cabb52240e741a9ebbc11c1d1604e",
   "0090_project_email_trigger_owner_loss": "1787918400000:c3347f9a52bc3b4f2ecc7054051f0f81a5dc376c82ae2c2237d265ae30d7daae",
   "0091_email_delivery_receipts": "1787922000000:1c8702eb85d72d216905e0a156a08262dcf3f9c692c298e70cda104f84a484e6",
-  "0092_email_delivery_attachments": "1787925600000:d6107eeccce81e2c4869228f8110f61f8dde18c4fc08241447e4b520e24c2dd4"
+  "0092_email_delivery_attachments": "1787925600000:d6107eeccce81e2c4869228f8110f61f8dde18c4fc08241447e4b520e24c2dd4",
+  "0093_platform_personal_oauth_authorization_broker": "1787940000000:cb07df8af4ca3df84ed58ead0ba4d8af410ca969da6d919c439485ac6b32ebbf"
 }

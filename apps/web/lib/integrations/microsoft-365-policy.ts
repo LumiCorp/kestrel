@@ -179,5 +179,10 @@ export async function authorizeMicrosoft365Capability(input: {
   if (approvalMode === "deny") {
     throw new Microsoft365PolicyError("MICROSOFT_365_CAPABILITY_DENIED");
   }
-  return { connection, approvalMode, loggingMode: capability.loggingMode };
+  return {
+    connection,
+    projectId: thread.projectId,
+    approvalMode,
+    loggingMode: capability.loggingMode,
+  };
 }

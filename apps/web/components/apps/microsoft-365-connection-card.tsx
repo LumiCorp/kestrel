@@ -7,7 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Microsoft365Pack } from "@/lib/integrations/microsoft-365-contract";
-import { MICROSOFT_365_PACKS } from "@/lib/integrations/microsoft-365-contract";
+import {
+  MICROSOFT_365_PACKS,
+  microsoft365TeamsSendEligibility,
+} from "@/lib/integrations/microsoft-365-contract";
 
 type Status = {
   configured: boolean;
@@ -15,10 +18,25 @@ type Status = {
   connected: boolean;
   status: "connected" | "degraded" | "disconnected" | null;
   label: string | null;
+  availablePacks: Microsoft365Pack[];
   packs: Microsoft365Pack[];
+  grantedScopes: string[];
+  health: {
+    status: "connected" | "degraded" | "disconnected";
+    reconnectRequired: boolean;
+    failureCode: string | null;
+    registrationRevision: number;
+  } | null;
 };
 
-const PACK_KEYS = Object.keys(MICROSOFT_365_PACKS) as Microsoft365Pack[];
+const HOSTED_PACKS = ["outlook", "teams"] as const;
+type HostedMicrosoft365Pack = (typeof HOSTED_PACKS)[number];
+
+function isHostedMicrosoft365Pack(
+  pack: Microsoft365Pack,
+): pack is HostedMicrosoft365Pack {
+  return pack === "outlook" || pack === "teams";
+}
 
 async function readJson<T>(response: Response): Promise<T> {
   return (await response.json().catch(() => ({}))) as T;
@@ -30,8 +48,11 @@ export function Microsoft365ConnectionCard({
   installed: boolean;
 }) {
   const [status, setStatus] = useState<Status | null>(null);
-  const [packs, setPacks] = useState<Microsoft365Pack[]>(["outlook"]);
   const [working, setWorking] = useState(false);
+  const [selectedPacks, setSelectedPacks] = useState<HostedMicrosoft365Pack[]>([]);
+  const availablePacks = status
+    ? status.availablePacks.filter(isHostedMicrosoft365Pack)
+    : [];
 
   useEffect(() => {
     let active = true;
@@ -40,29 +61,23 @@ export function Microsoft365ConnectionCard({
       .then((next) => {
         if (!active) return;
         setStatus(next);
-        if (next.packs.length) setPacks(next.packs);
+        setSelectedPacks(
+          next.packs.filter(isHostedMicrosoft365Pack),
+        );
       });
     return () => {
       active = false;
     };
   }, []);
 
-  function togglePack(pack: Microsoft365Pack, enabled: boolean) {
-    setPacks((current) =>
-      enabled
-        ? [...new Set([...current, pack])]
-        : current.filter((candidate) => candidate !== pack)
-    );
-  }
-
   const connect = useCallback(
-    async (nextPacks = packs) => {
+    async () => {
       setWorking(true);
       try {
         const response = await fetch("/api/apps/microsoft-365", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ packs: nextPacks }),
+          body: JSON.stringify({ packs: selectedPacks }),
         });
         const body = await readJson<{
           connected?: boolean;
@@ -88,7 +103,6 @@ export function Microsoft365ConnectionCard({
           await fetch("/api/apps/microsoft-365"),
         );
         setStatus(nextStatus);
-        setPacks(body.packs ?? nextPacks);
         toast.success("Microsoft 365 is connected", {
           description: "Only the selected capability packs were authorized.",
         });
@@ -102,35 +116,17 @@ export function Microsoft365ConnectionCard({
         setWorking(false);
       }
     },
-    [packs],
+    [selectedPacks],
   );
 
-  useEffect(() => {
-    const query = new URLSearchParams(window.location.search);
-    const result = query.get("microsoft365");
-    if (!result) return;
-    const callbackPacks = query
-      .get("packs")
-      ?.split(",")
-      .filter((pack): pack is Microsoft365Pack =>
-        PACK_KEYS.includes(pack as Microsoft365Pack),
-      );
-    const cleanUrl = new URL(window.location.href);
-    cleanUrl.searchParams.delete("microsoft365");
-    cleanUrl.searchParams.delete("packs");
-    window.history.replaceState({}, "", cleanUrl);
-    if (result === "error") {
-      toast.error("Microsoft 365 authorization was not completed.");
-    } else if (result === "linked" && callbackPacks?.length) {
-      if (installed) {
-        void connect(callbackPacks);
-      } else {
-        toast.error(
-          "An organization admin must install Microsoft 365 before it can be connected.",
-        );
-      }
-    }
-  }, [connect, installed]);
+  function togglePack(pack: HostedMicrosoft365Pack, checked: boolean) {
+    setSelectedPacks((current) => {
+      const next = checked
+        ? [...current, pack]
+        : current.filter((candidate) => candidate !== pack);
+      return HOSTED_PACKS.filter((candidate) => next.includes(candidate));
+    });
+  }
 
   async function disconnect() {
     setWorking(true);
@@ -161,33 +157,32 @@ export function Microsoft365ConnectionCard({
 
   return (
     <SettingsSection
-      description="Choose the Microsoft 365 services Kestrel may use. Adding another service extends the same connection."
+      description="Connect a work or school Microsoft account for Outlook mail and calendar access, Teams chat reads, and approved sends."
       title="Microsoft 365 connection"
     >
       <div className="space-y-4 py-3">
-        {PACK_KEYS.map((pack) => {
-          const definition = MICROSOFT_365_PACKS[pack];
-          return (
-            <label
-              className="flex cursor-pointer items-start gap-3"
-              htmlFor={`microsoft-365-${pack}`}
-              key={pack}
-            >
-              <Checkbox
-                checked={packs.includes(pack)}
-                disabled={working || !installed}
-                id={`microsoft-365-${pack}`}
-                onCheckedChange={(checked) => togglePack(pack, checked === true)}
-              />
-              <span className="min-w-0">
-                <span className="block font-medium text-sm">{definition.name}</span>
-                <span className="mt-1 block text-muted-foreground text-sm">
-                  {definition.description}
-                </span>
+        {availablePacks.map((pack) => (
+          <label
+            className="flex items-start gap-3"
+            htmlFor={`microsoft-365-${pack}`}
+            key={pack}
+          >
+            <Checkbox
+              checked={selectedPacks.includes(pack)}
+              disabled={working || status?.connected === true}
+              id={`microsoft-365-${pack}`}
+              onCheckedChange={(checked) => togglePack(pack, checked === true)}
+            />
+            <span className="min-w-0">
+              <span className="block font-medium text-sm">
+                {MICROSOFT_365_PACKS[pack].name}
               </span>
-            </label>
-          );
-        })}
+              <span className="mt-1 block text-muted-foreground text-sm">
+                {MICROSOFT_365_PACKS[pack].description}
+              </span>
+            </span>
+          </label>
+        ))}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
           <div className="flex items-center gap-2 text-sm">
             <Badge variant={status?.connected ? "default" : "outline"}>
@@ -205,23 +200,51 @@ export function Microsoft365ConnectionCard({
               disabled={
                 working ||
                 !installed ||
-                packs.length === 0 ||
-                status?.configured === false
+                !status ||
+                status?.configured === false ||
+                selectedPacks.length === 0
               }
               onClick={() => void connect()}
             >
               {working
-                ? "Connecting…"
-                : status?.connected
-                  ? "Update capabilities"
-                  : "Connect Microsoft 365"}
+                  ? "Connecting…"
+                  : status?.connected
+                    ? "Reconnect Microsoft 365"
+                    : "Connect Microsoft 365"}
             </Button>
           </div>
         </div>
         {status?.configured === false ? (
           <p className="text-destructive text-sm">
-            Microsoft 365 has not been configured for this Kestrel deployment.
+            Microsoft 365 has not been configured by this Platform Admin.
           </p>
+        ) : null}
+        {status?.connected ? (
+          <div className="space-y-1 text-muted-foreground text-sm">
+            <p>
+              Granted Microsoft permissions: {status.grantedScopes
+                .filter((scope) =>
+                  [
+                    "Mail.Read",
+                    "Mail.Send",
+                    "Calendars.Read",
+                    "Chat.Read",
+                    "ChatMessage.Send",
+                  ].includes(scope),
+                )
+                .join(", ") || "none"}.
+            </p>
+            {status.grantedScopes.includes("Chat.Read") &&
+            microsoft365TeamsSendEligibility(status.grantedScopes) ===
+              "tenant_admin_consent_required" ? (
+              <p>
+                Sending needs Microsoft tenant-admin approval; Teams reads remain available.
+              </p>
+            ) : null}
+            {status.health?.reconnectRequired ? (
+              <p>Reconnect Microsoft 365 to restore this connection.</p>
+            ) : null}
+          </div>
         ) : null}
         {installed ? null : (
           <p className="text-muted-foreground text-sm">

@@ -340,8 +340,7 @@ BETTER_AUTH_URL=http://127.0.0.1:43103
 # BETTER_AUTH_REPLY_TO=support@yourdomain.com
 
 # Social Providers (optional)
-# NEXT_PUBLIC_GOOGLE_CLIENT_ID=your_google_client_id
-# GOOGLE_CLIENT_SECRET=your_google_client_secret
+# Google Workspace and Teams are configured by a Platform Admin in Kestrel One.
 # GITHUB_CLIENT_ID=your_github_client_id
 # GITHUB_CLIENT_SECRET=your_github_client_secret
 

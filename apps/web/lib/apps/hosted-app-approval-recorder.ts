@@ -1,9 +1,26 @@
 import "server-only";
 
 import type { RunnerRunTerminalEvent } from "@kestrel-agents/sdk";
+import type { EnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import { and, eq } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { authorizeGitHubCapability, type GitHubCapability } from "@/lib/integrations/github-policy";
+import {
+  capabilityForGmailOperation,
+  gmailRuntimeInputSchema,
+  hasGmailCapabilityScopes,
+  type GmailCapability,
+} from "@/lib/integrations/gmail-contract";
+import {
+  admitGmailExecutionRoute,
+  authorizeGmailCapability,
+} from "@/lib/integrations/gmail-policy";
+import { prepareGmailMutation } from "@/lib/integrations/gmail-mutation-preparation";
+import { resolveHostedPersonalProviderToken } from "@/lib/integrations/hosted-personal-oauth";
+import {
+  buildGmailApprovalPresentation,
+  type HostedAppApprovalPresentation,
+} from "./hosted-app-approval-presentation";
 import { recordAppOperationApprovalRequest } from "./app-operation-approvals";
 import {
   isHostedMutationToolName,
@@ -49,6 +66,8 @@ export async function recordHostedAppApprovalRequest(input: {
 
   let connectionId: string;
   let resourceId: string;
+  let approvalPayload = operation.providerInput;
+  let presentation: HostedAppApprovalPresentation | undefined;
   if (operation.appKey === "github") {
     if (!operation.resourceLabel) throw new Error("HOSTED_APPROVAL_RESOURCE_INVALID");
     const policy = await authorizeGitHubCapability({
@@ -95,6 +114,72 @@ export async function recordHostedAppApprovalRequest(input: {
     if (!resource) throw new Error("HOSTED_APPROVAL_RESOURCE_UNAVAILABLE");
     connectionId = access.connectionId;
     resourceId = resource.id;
+    if (
+      operation.operationKey === "gmail.messages.send" ||
+      operation.operationKey === "gmail.messages.reply"
+    ) {
+      const issuedAt = Math.floor(Date.now() / 1000);
+      const ticket: EnvironmentExecutionTicket = {
+        version: 1,
+        audience: "kestrel-environment-router",
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        threadId: input.threadId,
+        actorId: input.actorUserId,
+        agentId: input.agentId,
+        runId: input.requestedExecutionId,
+        flyAppName: "approval-recorder",
+        flyMachineId: "approval-recorder",
+        capabilities: ["kestrel.tools.invoke"],
+        issuedAt,
+        expiresAt: issuedAt + 300,
+        nonce: crypto.randomUUID(),
+      };
+      const gmailPolicy = await authorizeGmailCapability({
+        ticket,
+        capability: operation.capabilityKey as GmailCapability,
+      });
+      if (
+        gmailPolicy.connection.id !== connectionId ||
+        !gmailPolicy.connection.externalAccountId
+      ) {
+        throw new Error("HOSTED_APPROVAL_GMAIL_CONNECTION_DENIED");
+      }
+      await admitGmailExecutionRoute({
+        ticket,
+        projectAuthorized: true,
+        gmailReadonlyGranted: hasGmailCapabilityScopes({
+          grantedScopes: gmailPolicy.connection.scopes,
+          capability: operation.capabilityKey as GmailCapability,
+        }),
+      });
+      const gmailInput = gmailRuntimeInputSchema.parse(operation.providerInput);
+      if (
+        gmailInput.operation !== "gmail.messages.send" &&
+        gmailInput.operation !== "gmail.messages.reply"
+      ) {
+        throw new Error("HOSTED_APPROVAL_GMAIL_OPERATION_DENIED");
+      }
+      const accessToken = await resolveHostedPersonalProviderToken({
+        provider: "google_workspace",
+        connectionId,
+        organizationId: input.organizationId,
+        projectId: thread.projectId,
+        userId: input.actorUserId,
+        operation: gmailInput.operation,
+        gmailExecution: ticket,
+      });
+      const prepared = await prepareGmailMutation({
+        accessToken: accessToken.accessToken,
+        operation: gmailInput,
+        threadId: input.threadId,
+        organizationId: input.organizationId,
+        userId: input.actorUserId,
+      });
+      approvalPayload = prepared.approvalPayload;
+      presentation = buildGmailApprovalPresentation(prepared);
+    }
   }
 
   const expiresAt = new Date(
@@ -119,7 +204,7 @@ export async function recordHostedAppApprovalRequest(input: {
       resourceType: operation.resourceType,
       operationKey: operation.operationKey,
       runtimeApprovalId: terminal.runtimeApprovalId,
-      payload: operation.providerInput,
+      payload: approvalPayload,
     },
   });
   return {
@@ -127,5 +212,6 @@ export async function recordHostedAppApprovalRequest(input: {
     runtimeApprovalId: terminal.runtimeApprovalId,
     sourceRuntimeRunId: terminal.runId,
     approvalId: approval.id,
+    ...(presentation === undefined ? {} : { presentation }),
   };
 }

@@ -4,11 +4,16 @@ import {
   googleCalendarRuntimeInputSchema,
 } from "@/lib/integrations/google-calendar-contract";
 import {
+  capabilityForGmailOperation,
+  gmailRuntimeInputSchema,
+} from "@/lib/integrations/gmail-contract";
+import {
   capabilityForMicrosoft365Operation,
   microsoft365RuntimeInputSchema,
 } from "@/lib/integrations/microsoft-365-contract";
 import {
   githubMutationTools as githubTools,
+  gmailMutationTools as gmailTools,
   googleMutationTools as googleTools,
   microsoftMutationTools as microsoftTools,
 } from "@/lib/apps/hosted-app-operation-identity";
@@ -60,6 +65,18 @@ export function parseHostedMutation(toolName: string, toolInput: Record<string, 
     const providerInput = googleCalendarRuntimeInputSchema.parse({ operation: googleOperation, ...toolInput });
     return { appKey: "google_workspace", capabilityKey: capabilityForGoogleCalendarOperation(providerInput.operation), operationKey: googleOperation, resourceType: "calendar", resourceExternalId: "primary", providerInput };
   }
+  const gmailOperation = gmailTools[toolName as keyof typeof gmailTools];
+  if (gmailOperation) {
+    const providerInput = gmailRuntimeInputSchema.parse({ operation: gmailOperation, ...toolInput });
+    return {
+      appKey: "google_workspace",
+      capabilityKey: capabilityForGmailOperation(providerInput.operation),
+      operationKey: gmailOperation,
+      resourceType: "account",
+      resourceExternalId: "primary",
+      providerInput,
+    };
+  }
   const microsoftOperation = microsoftTools[toolName as keyof typeof microsoftTools];
   if (microsoftOperation) {
     const providerInput = microsoft365RuntimeInputSchema.parse({ operation: microsoftOperation, ...toolInput });
@@ -73,6 +90,7 @@ export function isHostedMutationToolName(toolName: unknown): boolean {
     toolName === "kestrel_one.email_send" ||
     toolName in githubTools ||
     toolName in googleTools ||
+    toolName in gmailTools ||
     toolName in microsoftTools
   );
 }
