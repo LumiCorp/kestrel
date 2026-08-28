@@ -44,6 +44,7 @@
         "tests/unit/dev-shell-runtime-bootstrap.test.ts",
         "tests/unit/devshell-lifecycle.test.ts",
         "tests/unit/devshell-normalize-command.test.ts",
+        "tests/unit/dialog-tool-mode-contract.test.ts",
         "tests/unit/docker-sandbox-executor.test.ts",
         "tests/unit/effect-runner.test.ts",
         "tests/unit/exact-effect-result-read.test.ts",
