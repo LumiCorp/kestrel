@@ -19,6 +19,9 @@ export type WorkflowSummary = {
   description: string;
   modelId: string;
   currentVersion: number;
+  state: "Draft" | "Active" | "Needs attention";
+  hasDraft: boolean;
+  attentionMessage: string | null;
   enabled: boolean;
   cronExpression: string | null;
   timeZone: string | null;
@@ -35,6 +38,7 @@ export function WorkflowsClient({ workflows, canCreate }: { workflows: WorkflowS
   async function run(workflow: WorkflowSummary) {
     setBusy(true);
     try {
+      if (workflow.state !== "Active") throw new Error("Review and activate this workflow before running it.");
       const response = await fetch(`/api/projects/${workflow.project.id}/workflows/${workflow.id}/run`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -71,7 +75,7 @@ export function WorkflowsClient({ workflows, canCreate }: { workflows: WorkflowS
     <>
       <PageHeader
         actions={<Button asChild disabled={!canCreate}><Link href="/workflows/new"><Plus className="size-4" /> New workflow</Link></Button>}
-        description="Compose named Kestrel workflows from autonomous work, exact tool calls, deterministic gates, joins, and a final output. Run them now or on a schedule."
+        description="Compose named Kestrel workflows from autonomous work, explicit Actions, deterministic gates, joins, and a final output. Run them now or on a schedule."
         eyebrow="Work"
         title="Workflows"
       />
@@ -79,11 +83,11 @@ export function WorkflowsClient({ workflows, canCreate }: { workflows: WorkflowS
         <ResourceList>
           {workflows.map((workflow) => (
             <ResourceRow
-              actions={<DropdownMenu><DropdownMenuTrigger asChild><Button aria-label="Workflow actions" disabled={busy} size="icon" variant="ghost"><MoreHorizontal className="size-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">{workflow.permissions.canRun ? <DropdownMenuItem onSelect={() => void run(workflow)}><Play className="size-4" /> Run</DropdownMenuItem> : null}<DropdownMenuItem asChild><Link href={`/workflows/${workflow.id}`}>Open graph</Link></DropdownMenuItem>{workflow.permissions.canDelete ? <><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => void remove(workflow)} variant="destructive"><Trash2 className="size-4" /> Delete</DropdownMenuItem></> : null}</DropdownMenuContent></DropdownMenu>}
-              description={workflow.description || `${workflow.definition.nodes.length} steps · ${workflow.definition.edges.length} connections`}
+              actions={<DropdownMenu><DropdownMenuTrigger asChild><Button aria-label="Workflow actions" disabled={busy} size="icon" variant="ghost"><MoreHorizontal className="size-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">{workflow.permissions.canRun && workflow.state === "Active" ? <DropdownMenuItem onSelect={() => void run(workflow)}><Play className="size-4" /> Run</DropdownMenuItem> : null}<DropdownMenuItem asChild><Link href={`/workflows/${workflow.id}`}>Open graph</Link></DropdownMenuItem>{workflow.permissions.canDelete ? <><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => void remove(workflow)} variant="destructive"><Trash2 className="size-4" /> Delete</DropdownMenuItem></> : null}</DropdownMenuContent></DropdownMenu>}
+              description={workflow.attentionMessage ?? (workflow.description || `${workflow.definition.nodes.length} steps · ${workflow.definition.edges.length} connections`)}
               key={workflow.id}
               metadata={<span>{workflow.project.name} · {workflow.modelId} · v{workflow.currentVersion}{workflow.cronExpression ? ` · ${workflow.cronExpression} ${workflow.timeZone}` : " · Manual"}{workflow.latestRun ? <> · Latest: <Link className="underline underline-offset-2" href={`/workflows/runs/${workflow.latestRun.id}`}>{workflow.latestRun.status.replaceAll("_", " ")}</Link></> : null}</span>}
-              status={<Badge variant={workflow.latestRun?.status === "failed" ? "destructive" : workflow.enabled ? "default" : "secondary"}>{workflow.enabled ? "Scheduled" : "Ready"}</Badge>}
+              status={<Badge variant={workflow.state === "Needs attention" ? "destructive" : workflow.state === "Active" ? "default" : "secondary"}>{workflow.state}{workflow.hasDraft ? " · New draft" : ""}</Badge>}
               title={<Link className="flex items-center gap-2 hover:underline" href={`/workflows/${workflow.id}`}><GitBranch className="size-4 text-muted-foreground" />{workflow.title}</Link>}
             />
           ))}

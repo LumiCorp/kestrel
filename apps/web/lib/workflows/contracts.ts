@@ -21,6 +21,13 @@ const baseNodeSchema = z.object({
   position: positionSchema,
 });
 
+const workflowActionInputBindingSchema = z.object({
+  kind: z.literal("kestrel_response_text"),
+  sourceNodeId: z.string().trim().min(1).max(80),
+}).strict();
+
+export type WorkflowActionInputBinding = z.infer<typeof workflowActionInputBindingSchema>;
+
 export const workflowNodeSchema = z.discriminatedUnion("kind", [
   baseNodeSchema.extend({
     kind: z.literal("trigger"),
@@ -44,6 +51,7 @@ export const workflowNodeSchema = z.discriminatedUnion("kind", [
       .object({
         toolName: z.string().trim().min(1).max(240),
         input: z.record(z.string(), z.unknown()),
+        inputBindings: z.record(z.string().regex(/^\/(?:[^~\/]|~[01])+(?:\/(?:[^~\/]|~[01])+)*$/u), workflowActionInputBindingSchema).default({}),
       })
       .strict(),
   }),
@@ -96,6 +104,19 @@ export class WorkflowDefinitionError extends Error {
   }
 }
 
+function jsonPointerSegments(pointer: string) {
+  return pointer.slice(1).split("/").map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
+}
+
+function hasJsonPointer(value: Record<string, unknown>, pointer: string) {
+  let current: unknown = value;
+  for (const segment of jsonPointerSegments(pointer)) {
+    if (!current || typeof current !== "object" || Array.isArray(current) || !Object.prototype.hasOwnProperty.call(current, segment)) return false;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return true;
+}
+
 export function validateWorkflowDefinition(input: unknown): WorkflowDefinition {
   const definition = rawDefinitionSchema.parse(input);
   const nodeIds = new Set<string>();
@@ -136,6 +157,19 @@ export function validateWorkflowDefinition(input: unknown): WorkflowDefinition {
     outgoing.get(edge.source)?.push(edge.target);
   }
 
+  const reaches = (sourceNodeId: string, targetNodeId: string) => {
+    const pending = [sourceNodeId];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      if (current === targetNodeId) return true;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      pending.push(...(outgoing.get(current) ?? []));
+    }
+    return false;
+  };
+
   const triggers = definition.nodes.filter((node) => node.kind === "trigger");
   const outputs = definition.nodes.filter((node) => node.kind === "output");
   if (triggers.length !== 1) {
@@ -159,6 +193,17 @@ export function validateWorkflowDefinition(input: unknown): WorkflowDefinition {
     }
     if (node.kind === "join" && (incoming.get(node.id) ?? 0) < 2) {
       throw new WorkflowDefinitionError(`Join "${node.label}" needs at least two inputs.`);
+    }
+    if (node.kind === "tool") {
+      if (node.config.toolName === "exec_command" && Object.keys(node.config.inputBindings).length > 0) {
+        throw new WorkflowDefinitionError("Run command Actions cannot use dynamic values.");
+      }
+      for (const [pointer, binding] of Object.entries(node.config.inputBindings)) {
+        const source = definition.nodes.find(candidate => candidate.id === binding.sourceNodeId);
+        if (source?.kind !== "kestrel") throw new WorkflowDefinitionError(`Action "${node.label}" must use output from a Kestrel step.`);
+        if (!reaches(binding.sourceNodeId, node.id)) throw new WorkflowDefinitionError(`Action "${node.label}" can only use output from an upstream Kestrel step.`);
+        if (hasJsonPointer(node.config.input, pointer)) throw new WorkflowDefinitionError(`Action "${node.label}" cannot set ${pointer} as both a fixed and dynamic value.`);
+      }
     }
     if (
       node.kind === "trigger" &&

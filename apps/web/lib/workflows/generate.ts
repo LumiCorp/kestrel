@@ -32,7 +32,7 @@ function instructions(toolNames: string[]) {
     '- join: {mode:"all"}; use only when two or more branches converge',
     "- output: {}",
     "Edges are {id,source,target}. Never invent conditional branches or loops.",
-    "Use tool nodes only when the user specifies a concrete tool and its complete fixed JSON input. Otherwise use a Kestrel node.",
+    "Use Action nodes only for consequential write tools. Read-only and status tools belong inside Kestrel steps. An Action may bind a string field to an upstream Kestrel response with inputBindings using a JSON Pointer target and {kind:'kestrel_response_text',sourceNodeId}.",
     `Known runtime tool names include: ${toolNames.slice(0, 160).join(", ")}`,
   ].join("\n");
 }

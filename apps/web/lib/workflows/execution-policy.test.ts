@@ -102,6 +102,7 @@ test("workflow definitions reject tools outside project-effective access", () =>
             config: {
               toolName: "github.issue.create",
               input: { title: "Fix workflow" },
+              inputBindings: {},
             },
           }
         : node,

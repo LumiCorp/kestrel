@@ -772,6 +772,7 @@ type DurableThreadTurnInput = {
   requestedModelId?: string | null;
   requestedInteractionMode?: KestrelOneInteractionMode;
   noninteractive?: boolean;
+  workflowRunAuthority?: Record<string, unknown>;
   source: ThreadTurnSource;
 } & (
   | {
@@ -1144,6 +1145,9 @@ export async function createDurableThreadTurnInTransaction(
       status: "queued",
       sequence,
       ...(input.noninteractive === true ? { noninteractive: true } : {}),
+      ...(input.workflowRunAuthority
+        ? { workflowRunAuthority: input.workflowRunAuthority }
+        : {}),
     },
   });
   const resumesTerminallyPausedQueue = Boolean(

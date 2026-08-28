@@ -434,6 +434,10 @@ test("createKestrelOneAgentResponse carries strict hosted approval decisions", a
 
 test("createKestrelOneAgentResponse propagates autonomous turn policy", async () => {
   let capturedInput: KestrelOneAgentTurnInput | undefined;
+  const workflowRunAuthority = {
+    version: "runner_workflow_run_authority_v2",
+    workflowRunId: "workflow_run_autonomous",
+  };
   const agent = fakeAgent({
     terminal: completedTerminal("Autonomous run complete", undefined),
     onStream(input) {
@@ -456,6 +460,7 @@ test("createKestrelOneAgentResponse propagates autonomous turn policy", async ()
     threadId: "thread_autonomous",
     interactionMode: "build",
     noninteractive: true,
+    workflowRunAuthority,
     messages: [{
       id: "msg_autonomous",
       role: "user",
@@ -466,6 +471,7 @@ test("createKestrelOneAgentResponse propagates autonomous turn policy", async ()
   await response.text();
 
   assert.equal(capturedInput?.noninteractive, true);
+  assert.deepEqual(capturedInput?.workflowRunAuthority, workflowRunAuthority);
 });
 
 test("createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text", async () => {

@@ -352,6 +352,8 @@ export type KestrelOneAgentResponseInput = {
   workspaceBaseRef?: string | null;
   parentThreadId?: string | null;
   durableTurnId?: string | undefined;
+  noninteractive?: boolean | undefined;
+  workflowRunAuthority?: Record<string, unknown> | undefined;
   messages: UIMessage[];
   resolvedAttachments?: RunnerTurnAttachment[] | null | undefined;
   threadFileInventory?: Array<{
@@ -584,6 +586,16 @@ function createModelAwareKestrelOneAgent(input: {
             input.parentThreadId,
             input.workspaceBaseRef,
           );
+          const effectiveWorkspace = turn.workflowRunAuthority
+            ? {
+                ...runtimeWorkspace,
+                managedWorktreeRequired: true as const,
+                managedWorktreeIsolation: "scoped" as const,
+                managedWorktreeScope: "workflow_run" as const,
+                managedWorktreeScopeId:
+                  turn.workflowRunAuthority.workflowRunId,
+              }
+            : runtimeWorkspace;
           const normalizedTurn = {
             ...turn,
             eventType,
@@ -598,7 +610,7 @@ function createModelAwareKestrelOneAgent(input: {
                   },
                 }
               : {}),
-            ...(runtimeWorkspace ? { workspace: runtimeWorkspace } : {}),
+            ...(effectiveWorkspace ? { workspace: effectiveWorkspace } : {}),
             ...(projectSkills
               ? { workspaceSkills: projectSkills.catalog }
               : {}),
@@ -1313,6 +1325,8 @@ export async function createKestrelOneAgentResponse(
     correlation: readRequestCorrelation(input.request),
     threadId: input.threadId,
     durableTurnId: input.durableTurnId,
+    noninteractive: input.noninteractive,
+    workflowRunAuthority: input.workflowRunAuthority,
     messages: input.messages,
     resolvedAttachments: input.resolvedAttachments,
     threadFileInventory: input.threadFileInventory,

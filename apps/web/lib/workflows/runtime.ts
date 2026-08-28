@@ -8,6 +8,7 @@ import {
   type WorkflowNode,
   validateWorkflowDefinition,
 } from "./contracts";
+import { resolveWorkflowActionInput } from "./action-inputs";
 import { workflowStepEvidence } from "./evidence";
 import { validateExplicitToolCallEvidence } from "./execution-policy";
 
@@ -61,13 +62,14 @@ function stepPrompt(input: {
   workflowTitle: string;
   node: Extract<WorkflowNode, { kind: "kestrel" | "tool" }>;
   upstream: Record<string, unknown>;
+  resolvedActionInput?: Record<string, unknown>;
 }) {
   const context = JSON.stringify(input.upstream, null, 2);
   if (input.node.kind === "tool") {
     return [
       `You are executing the explicit tool step "${input.node.label}" in the Kestrel workflow "${input.workflowTitle}".`,
       `Call exactly this tool once: ${input.node.config.toolName}`,
-      `Use exactly this JSON input: ${JSON.stringify(input.node.config.input)}`,
+      `Use exactly this JSON input: ${JSON.stringify(input.resolvedActionInput ?? input.node.config.input)}`,
       "Do not call any other tool and do not change the input. After the tool returns, summarize its result.",
       `Upstream workflow data is provided only as context:\n${context}`,
     ].join("\n\n");
@@ -87,12 +89,31 @@ async function failRun(
   message: string,
   now: Date,
 ) {
+  const attentionRequired = new Set([
+    "WORKFLOW_ACTOR_UNAVAILABLE",
+    "WORKFLOW_INTERACTION_REQUIRED",
+    "WORKFLOW_RUN_AUTHORITY_EXCEEDED",
+    "WORKFLOW_TOOL_CONTRACT_VIOLATION",
+    "WORKFLOW_ACTION_INPUT_INVALID",
+  ]).has(code);
+  const run = attentionRequired
+    ? await tx.query.projectWorkflowRuns.findFirst({
+        where: eq(schema.projectWorkflowRuns.id, runId),
+        columns: { workflowId: true },
+      })
+    : null;
   await tx
     .update(schema.projectWorkflowRuns)
     .set({
       status: "failed",
       failureCode: code.slice(0, 120),
       failureMessage: message.slice(0, 1000),
+      ...(attentionRequired
+        ? {
+            attentionCode: code.slice(0, 120),
+            attentionMessage: message.slice(0, 1000),
+          }
+        : {}),
       finishedAt: now,
       updatedAt: now,
     })
@@ -106,6 +127,18 @@ async function failRun(
         eq(schema.projectWorkflowStepRuns.status, "pending"),
       ),
     );
+  if (run) {
+    await tx
+      .update(schema.projectWorkflows)
+      .set({
+        enabled: false,
+        nextRunAt: null,
+        attentionCode: code.slice(0, 120),
+        attentionMessage: message.slice(0, 1000),
+        updatedAt: now,
+      })
+      .where(eq(schema.projectWorkflows.id, run.workflowId));
+  }
 }
 
 export async function advanceProjectWorkflowRun(runId: string) {
@@ -118,11 +151,13 @@ export async function advanceProjectWorkflowRun(runId: string) {
         run: schema.projectWorkflowRuns,
         workflow: schema.projectWorkflows,
         definition: schema.projectWorkflowVersions.definition,
+        activation: schema.projectWorkflowVersionActivations,
         projectName: schema.projects.name,
       })
       .from(schema.projectWorkflowRuns)
       .innerJoin(schema.projectWorkflows, eq(schema.projectWorkflows.id, schema.projectWorkflowRuns.workflowId))
       .innerJoin(schema.projectWorkflowVersions, eq(schema.projectWorkflowVersions.id, schema.projectWorkflowRuns.workflowVersionId))
+      .innerJoin(schema.projectWorkflowVersionActivations, eq(schema.projectWorkflowVersionActivations.workflowVersionId, schema.projectWorkflowVersions.id))
       .innerJoin(schema.projects, eq(schema.projects.id, schema.projectWorkflows.projectId))
       .where(eq(schema.projectWorkflowRuns.id, runId))
       .limit(1);
@@ -141,8 +176,18 @@ export async function advanceProjectWorkflowRun(runId: string) {
     for (const { step, turn } of stepRows) {
       if (!(step.turnId && turn && (step.status === "running" || step.status === "waiting_for_input"))) continue;
       if (turn.status === "waiting_for_input") {
-        step.status = "waiting_for_input";
-        await tx.update(schema.projectWorkflowStepRuns).set({ status: "waiting_for_input", updatedAt: now }).where(eq(schema.projectWorkflowStepRuns.id, step.id));
+        const code = "WORKFLOW_INTERACTION_REQUIRED";
+        const message = "This workflow requested input that was not included in its activated design.";
+        step.status = "failed";
+        await tx.update(schema.projectWorkflowStepRuns).set({
+          status: "failed",
+          failureCode: code,
+          failureMessage: message,
+          finishedAt: now,
+          updatedAt: now,
+        }).where(eq(schema.projectWorkflowStepRuns.id, step.id));
+        await failRun(tx, runId, code, message, now);
+        return { turnIds: [] as string[], terminal: true };
       } else if (turn.status === "failed" || turn.status === "cancelled") {
         step.status = "failed";
         await tx.update(schema.projectWorkflowStepRuns).set({
@@ -161,9 +206,11 @@ export async function advanceProjectWorkflowRun(runId: string) {
         const evidence = workflowStepEvidence({ model: message?.model, parts: message?.parts });
         const node = definition.nodes.find((candidate) => candidate.id === step.nodeId);
         if (node?.kind === "tool") {
+          const storedInput = step.input && typeof step.input === "object" && !Array.isArray(step.input) ? step.input as Record<string, unknown> : {};
+          const expectedInput = storedInput.resolvedInput && typeof storedInput.resolvedInput === "object" && !Array.isArray(storedInput.resolvedInput) ? storedInput.resolvedInput as Record<string, unknown> : node.config.input;
           const contract = validateExplicitToolCallEvidence({
             toolName: node.config.toolName,
-            expectedInput: node.config.input,
+            expectedInput,
             evidence,
           });
           if (!contract.valid) {
@@ -239,6 +286,17 @@ export async function advanceProjectWorkflowRun(runId: string) {
       const prior = predecessors(definition, node.id).map((source) => steps.get(source.id));
       if (!prior.every((candidate) => candidate?.status === "completed")) continue;
       const upstream = aggregateInput(definition, node, steps);
+      let resolvedActionInput: Record<string, unknown> | undefined;
+      if (node.kind === "tool") {
+        try {
+          resolvedActionInput = resolveWorkflowActionInput(
+            node,
+            new Map([...steps].map(([nodeId, step]) => [nodeId, step.output])),
+            definition,
+          );
+        }
+        catch (error) { const message = error instanceof Error ? error.message : "Action input could not be resolved."; await failRun(tx, runId, "WORKFLOW_ACTION_INPUT_INVALID", message, now); return { turnIds: [] as string[], terminal: true }; }
+      }
       if (!row.run.actorUserId) {
         await failRun(tx, runId, "WORKFLOW_ACTOR_UNAVAILABLE", "The workflow creator is no longer available.", now);
         return { turnIds: [] as string[], terminal: true };
@@ -263,22 +321,36 @@ export async function advanceProjectWorkflowRun(runId: string) {
         organizationId: row.workflow.organizationId,
         authorUserId: row.run.actorUserId,
         messageId: crypto.randomUUID(),
-        messageParts: [{ type: "text", text: stepPrompt({ workflowTitle: row.workflow.title, node, upstream }) }],
+        messageParts: [{ type: "text", text: stepPrompt({ workflowTitle: row.workflow.title, node, upstream, resolvedActionInput }) }],
         idempotencyKey: `workflow:${runId}:node:${node.id}:attempt:1`,
         requestedEnvironmentId: row.run.environmentIdSnapshot,
         projectContextRevisionId: row.run.projectContextRevisionIdSnapshot,
         requestedModelId: row.run.modelIdSnapshot,
         requestedInteractionMode: "build",
         noninteractive: true,
+        workflowRunAuthority: {
+          version: "runner_workflow_run_authority_v2",
+          organizationId: row.workflow.organizationId,
+          environmentId: row.run.environmentIdSnapshot,
+          projectId: row.workflow.projectId,
+          workflowId: row.workflow.id,
+          workflowVersionId: row.run.workflowVersionId,
+          workflowRunId: row.run.id,
+          activationActorId: row.activation.activatedByUserId,
+          manifestDigest: row.activation.manifestDigest,
+          manifest: row.activation.manifest,
+          activeStep: node.kind === "tool" ? { kind: "action", nodeId: node.id, resolvedInput: resolvedActionInput! } : { kind: "kestrel", nodeId: node.id },
+        },
         source: "web",
       });
       step.status = "running";
-      step.input = upstream;
+      const durableInput = node.kind === "tool" ? { upstream, resolvedInput: resolvedActionInput } : upstream;
+      step.input = durableInput;
       step.threadId = threadId;
       step.turnId = durable.turn.id;
       await tx.update(schema.projectWorkflowStepRuns).set({
         status: "running",
-        input: upstream,
+        input: durableInput,
         threadId,
         turnId: durable.turn.id,
         startedAt: now,
@@ -286,9 +358,8 @@ export async function advanceProjectWorkflowRun(runId: string) {
       }).where(eq(schema.projectWorkflowStepRuns.id, step.id));
       if (durable.shouldDispatch) turnIds.push(durable.dispatchTurnId ?? durable.turn.id);
     }
-    const active = [...steps.values()].some((step) => step.status === "waiting_for_input");
     await tx.update(schema.projectWorkflowRuns).set({
-      status: active ? "waiting_for_input" : "running",
+      status: "running",
       startedAt: row.run.startedAt ?? now,
       updatedAt: now,
     }).where(eq(schema.projectWorkflowRuns.id, runId));

@@ -94,6 +94,9 @@ type ProjectAppsResponse = {
       enabled: boolean;
       resourceReady: boolean;
       runtimeName: string | null;
+      inputSchema: Record<string, unknown>;
+      workflowUse: "native" | "action" | "hidden";
+      descriptorContractRevision: string | null;
     }>;
   }>;
   error?: string;
@@ -106,12 +109,60 @@ export type EditableWorkflow = {
   description: string;
   modelId: string;
   enabled: boolean;
+  activeVersionId: string | null;
+  state: "Draft" | "Active" | "Needs attention";
+  attentionMessage: string | null;
   currentVersion: number;
   definition: WorkflowDefinition;
   permissions: { canEdit: boolean; canRun: boolean; canDelete: boolean };
 };
 
 const addableKinds = ["kestrel", "tool", "gate", "join"] as const;
+
+function ActivationToolSummary({
+  node,
+  definition,
+}: {
+  node: Extract<WorkflowNode, { kind: "tool" }>;
+  definition: WorkflowDefinition;
+}) {
+  const input = node.config.input;
+  if (node.config.toolName === "exec_command") {
+    const command = typeof input.command === "string" ? input.command : "Command unavailable";
+    const cwd = typeof input.cwd === "string" ? input.cwd : ".";
+    const envNames = Array.isArray(input.envNames)
+      ? input.envNames.filter((name): name is string => typeof name === "string")
+      : input.env && typeof input.env === "object" && !Array.isArray(input.env)
+        ? Object.keys(input.env)
+        : [];
+    return (
+      <div className="rounded-lg border px-3 py-2" key={node.id}>
+        <p className="font-medium">{node.label}</p>
+        <p className="line-clamp-2 break-all font-mono text-muted-foreground text-xs" title={command}>
+          {command}
+        </p>
+        <p className="mt-1 text-muted-foreground text-xs">
+          Folder: {cwd} · Environment: {envNames.length ? envNames.join(", ") : "None"}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-lg border px-3 py-2" key={node.id}>
+      <p className="font-medium">{node.label}</p>
+      <p className="text-muted-foreground text-xs">{node.config.toolName}</p>
+      <p className="truncate font-mono text-muted-foreground text-xs" title={JSON.stringify(input)}>
+        {JSON.stringify(input)}
+      </p>
+      {Object.entries(node.config.inputBindings).map(([pointer, binding]) => {
+        const source = definition.nodes.find((candidate) => candidate.id === binding.sourceNodeId);
+        return <p className="mt-1 w-fit rounded-full bg-muted px-2 py-0.5 text-xs" key={pointer}>
+          {pointer.slice(1).replaceAll("/", " › ")} · {source?.label ?? "Kestrel step"} → Response text
+        </p>;
+      })}
+    </div>
+  );
+}
 
 const palette = {
   kestrel: {
@@ -122,8 +173,8 @@ const palette = {
   },
   tool: {
     icon: Wrench,
-    label: "Tool",
-    help: "Add an exact project tool call",
+    label: "Action",
+    help: "Add a consequential project action",
     className: "text-amber-700 hover:bg-amber-500/12 dark:text-amber-300",
   },
   gate: {
@@ -159,9 +210,9 @@ function newNode(kind: (typeof addableKinds)[number], index: number): WorkflowNo
     return {
       id,
       kind,
-      label: "Tool call",
+      label: "Action",
       position,
-      config: { toolName: "", input: {} },
+      config: { toolName: "", input: {}, inputBindings: {} },
     };
   }
   if (kind === "gate") {
@@ -201,6 +252,7 @@ function toolsFromApps(response: ProjectAppsResponse): WorkflowToolOption[] {
       continue;
     }
     for (const capability of configuration.capabilities) {
+      if (capability.workflowUse !== "action") continue;
       if (
         !(
           capability.enabled &&
@@ -215,12 +267,31 @@ function toolsFromApps(response: ProjectAppsResponse): WorkflowToolOption[] {
         label: capability.displayName,
         description: capability.description,
         appName: configuration.app.displayName,
+        inputSchema: capability.inputSchema,
       });
     }
   }
   return [...tools.values()].sort((left, right) =>
     `${left.appName} ${left.label}`.localeCompare(`${right.appName} ${right.label}`),
   );
+}
+
+function upstreamKestrelSources(definition: WorkflowDefinition, targetNodeId: string | undefined) {
+  if (!targetNodeId) return [];
+  const incoming = new Map<string, string[]>();
+  for (const node of definition.nodes) incoming.set(node.id, []);
+  for (const edge of definition.edges) incoming.get(edge.target)?.push(edge.source);
+  const ancestors = new Set<string>();
+  const pending = [...(incoming.get(targetNodeId) ?? [])];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (ancestors.has(current)) continue;
+    ancestors.add(current);
+    pending.push(...(incoming.get(current) ?? []));
+  }
+  return definition.nodes
+    .filter((candidate) => candidate.kind === "kestrel" && ancestors.has(candidate.id))
+    .map((candidate) => ({ id: candidate.id, label: candidate.label }));
 }
 
 export function WorkflowEditor({
@@ -246,6 +317,7 @@ export function WorkflowEditor({
   );
   const [modelId, setModelId] = useState(initialWorkflow?.modelId ?? "");
   const [enabled, setEnabled] = useState(initialWorkflow?.enabled ?? false);
+  const [activationOpen, setActivationOpen] = useState(false);
   const [definition, setDefinition] = useState<WorkflowDefinition>(
     initialWorkflow?.definition ?? createStarterWorkflowDefinition(),
   );
@@ -254,6 +326,7 @@ export function WorkflowEditor({
   const [models, setModels] = useState<WorkflowModel[]>([]);
   const [modelWarning, setModelWarning] = useState("");
   const [tools, setTools] = useState<WorkflowToolOption[]>([]);
+  const [nativeAccess, setNativeAccess] = useState<Array<{ app: string; capabilities: string[] }>>([]);
   const [toolsLoading, setToolsLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -336,10 +409,19 @@ export function WorkflowEditor({
           throw new Error(result.error ?? "Project tools could not be loaded.");
         }
         setTools(toolsFromApps(result));
+        setNativeAccess((result.apps ?? []).flatMap((app) => {
+          const capabilities = app.capabilities
+            .filter((capability) => capability.enabled && capability.resourceReady && capability.workflowUse === "native")
+            .map((capability) => capability.displayName);
+          return app.enabled && app.dependencyReady && capabilities.length
+            ? [{ app: app.app.displayName, capabilities }]
+            : [];
+        }));
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
           setTools([]);
+          setNativeAccess([]);
           toast.error(
             error instanceof Error
               ? error.message
@@ -458,7 +540,7 @@ export function WorkflowEditor({
         throw new Error(result.error ?? "Workflow could not be saved.");
       }
       toast.success(
-        initialWorkflow ? "Workflow version saved." : "Workflow created.",
+        initialWorkflow ? "Draft saved." : "Workflow draft created.",
       );
       router.push(`/workflows/${result.workflow.id}`);
       router.refresh();
@@ -500,6 +582,30 @@ export function WorkflowEditor({
     }
   }
 
+  async function activate() {
+    if (!initialWorkflow) return;
+    setBusy(true);
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(initialWorkflow.project.id)}/workflows/${encodeURIComponent(initialWorkflow.id)}/activate`,
+        { method: "POST" },
+      );
+      const result = (await response.json()) as { workflow?: unknown; error?: string };
+      if (!(response.ok && result.workflow)) {
+        throw new Error(result.error ?? "Workflow could not be activated.");
+      }
+      setActivationOpen(false);
+      toast.success("Workflow activated.");
+      router.refresh();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Workflow could not be activated.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div
       className="relative h-full min-h-150 w-full overflow-hidden bg-background"
@@ -531,7 +637,7 @@ export function WorkflowEditor({
               </h1>
               {initialWorkflow ? (
                 <Badge className="hidden sm:inline-flex" variant="outline">
-                  v{initialWorkflow.currentVersion}
+                  {initialWorkflow.state} · v{initialWorkflow.currentVersion}
                 </Badge>
               ) : null}
             </div>
@@ -544,9 +650,20 @@ export function WorkflowEditor({
 
         <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border bg-background/88 p-1.5 shadow-lg backdrop-blur-xl">
           {initialWorkflow?.permissions.canRun ? (
-            <Button disabled={busy || !selectedModel} onClick={() => void run()} size="sm" variant="ghost">
+            <Button disabled={busy || !selectedModel || !initialWorkflow.activeVersionId} onClick={() => void run()} size="sm" variant="ghost">
               <Play className="size-4" />
               <span className="hidden sm:inline">Run</span>
+            </Button>
+          ) : null}
+          {initialWorkflow?.permissions.canEdit ? (
+            <Button
+              disabled={busy || !selectedModel}
+              onClick={() => setActivationOpen(true)}
+              size="sm"
+              variant="outline"
+            >
+              <ShieldCheck className="size-4" />
+              <span className="hidden sm:inline">Review &amp; activate</span>
             </Button>
           ) : null}
           <Button onClick={() => setDetailsOpen(true)} size="sm" variant="ghost">
@@ -559,8 +676,8 @@ export function WorkflowEditor({
             size="sm"
           >
             <Save className="size-4" />
-            <span className="hidden sm:inline">Save version</span>
-            <span className="sr-only sm:hidden">Save version</span>
+            <span className="hidden sm:inline">Save draft</span>
+            <span className="sr-only sm:hidden">Save draft</span>
           </Button>
         </div>
       </header>
@@ -686,11 +803,64 @@ export function WorkflowEditor({
               disabled={busy || !modelId || Boolean(initialWorkflow && !initialWorkflow.permissions.canEdit)}
               onClick={() => void save()}
             >
-              <Save className="size-4" /> Save version
+              <Save className="size-4" /> Save draft
             </Button>
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      <Dialog onOpenChange={setActivationOpen} open={activationOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Review &amp; activate version {initialWorkflow?.currentVersion}</DialogTitle>
+            <DialogDescription>
+              Confirm the workspace access and configured actions this version can use.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-3 rounded-xl border bg-muted/30 p-3">
+              <div>
+                <p className="text-muted-foreground text-xs">Model</p>
+                <p className="font-medium">{selectedModel?.name ?? modelId}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">Environment</p>
+                <p className="font-medium">{selectedProject?.name ?? "Project"} default</p>
+              </div>
+            </div>
+            <div className="rounded-xl border bg-muted/30 p-3">
+              <p className="font-medium">Project files</p>
+              <p className="text-muted-foreground">
+                Kestrel can read and edit files in one isolated Project copy shared by every step in this run.
+              </p>
+            </div>
+            <div className="rounded-xl border bg-muted/30 p-3">
+              <p className="font-medium">Kestrel access</p>
+              {nativeAccess.length ? nativeAccess.map((group) => (
+                <p className="text-muted-foreground" key={group.app}>
+                  {group.app}: {group.capabilities.join(", ")}
+                </p>
+              )) : <p className="text-muted-foreground">No additional App access.</p>}
+            </div>
+            <div className="space-y-2">
+              <p className="font-medium">Configured actions</p>
+              {definition.nodes.filter((node) => node.kind === "tool").length ? (
+                definition.nodes.filter((node) => node.kind === "tool").map((node) => (
+                  <ActivationToolSummary definition={definition} key={node.id} node={node} />
+                ))
+              ) : (
+                <p className="text-muted-foreground">No external actions are configured.</p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setActivationOpen(false)} variant="ghost">Cancel</Button>
+            <Button disabled={busy} onClick={() => void activate()}>
+              Activate workflow
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog onOpenChange={setGeneratorOpen} open={generatorOpen}>
         <DialogContent
@@ -738,6 +908,7 @@ export function WorkflowEditor({
         open={nodeDialogOpen}
         tools={tools}
         toolsLoading={toolsLoading}
+        bindingSources={upstreamKestrelSources(definition, selected?.id)}
       />
     </div>
   );

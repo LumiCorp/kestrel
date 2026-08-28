@@ -321,10 +321,14 @@ export class WorkspaceLifecycleCoordinator {
     const baseRef = asString(workspace?.managedWorktreeBaseRef);
     const parentThreadId = asString(workspace?.managedWorktreeParentThreadId);
     const requestedScope = asString(workspace?.managedWorktreeScope);
-    if (requestedScope !== undefined && requestedScope !== "thread") {
+    if (
+      requestedScope !== undefined &&
+      requestedScope !== "thread" &&
+      requestedScope !== "workflow_run"
+    ) {
       throw createRuntimeFailure(
         "MANAGED_WORKTREE_SCOPE_INVALID",
-        "Managed worktree scope must be 'thread' when provided.",
+        "Managed worktree scope must be 'thread' or 'workflow_run' when provided.",
         {
           subsystem: "workspace",
           classification: "contract",
@@ -334,6 +338,19 @@ export class WorkspaceLifecycleCoordinator {
       );
     }
     const threadScoped = requestedScope === "thread";
+    const workflowRunScoped = requestedScope === "workflow_run";
+    const workflowRunScopeId = asString(workspace?.managedWorktreeScopeId);
+    if (workflowRunScoped && workflowRunScopeId === undefined) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SCOPE_ID_REQUIRED",
+        "Workflow-run managed worktree scope requires a durable scope identity.",
+        {
+          subsystem: "workspace",
+          classification: "contract",
+          recoverable: false,
+        },
+      );
+    }
     const setup = parseManagedTaskWorktreeSetupSpec(workspace?.managedWorktreeSetup);
     const isolation = asManagedWorktreeIsolation(workspace?.managedWorktreeIsolation);
     const taskId = threadScoped
@@ -341,7 +358,9 @@ export class WorkspaceLifecycleCoordinator {
       : asString(asRecord(input.event.payload.orchestration)?.taskId) ??
         asString(asRecord(input.event.payload.metadata)?.taskId);
     const taskKey =
-      isolation === "session" || threadScoped
+      workflowRunScoped
+        ? `workflow-run:${workflowRunScopeId}`
+        : isolation === "session" || threadScoped
         ? undefined
         : asString(asRecord(input.event.payload.orchestration)?.taskKey) ??
           asString(asRecord(input.event.payload.metadata)?.taskKey) ??

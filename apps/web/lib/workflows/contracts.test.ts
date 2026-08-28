@@ -73,3 +73,56 @@ test("scheduled triggers require cron and timezone", () => {
     /cron expression and time zone/u,
   );
 });
+
+function workflowWithBoundAction() {
+  const definition = createStarterWorkflowDefinition();
+  definition.nodes.splice(2, 0, {
+    id: "action-1",
+    kind: "tool",
+    label: "Create issue",
+    position: { x: 340, y: 440 },
+    config: {
+      toolName: "github.issue.create",
+      input: {},
+      inputBindings: {
+        "/title": { kind: "kestrel_response_text", sourceNodeId: "kestrel-1" },
+      },
+    },
+  });
+  definition.edges = [
+    { id: "trigger-kestrel", source: "trigger", target: "kestrel-1" },
+    { id: "kestrel-action", source: "kestrel-1", target: "action-1" },
+    { id: "action-output", source: "action-1", target: "output" },
+  ];
+  return definition;
+}
+
+test("Action bindings accept an upstream Kestrel response and omit its fixed field", () => {
+  assert.deepEqual(validateWorkflowDefinition(workflowWithBoundAction()), workflowWithBoundAction());
+});
+
+test("Action bindings reject downstream Kestrel sources", () => {
+  const definition = workflowWithBoundAction();
+  definition.edges = [
+    { id: "trigger-action", source: "trigger", target: "action-1" },
+    { id: "action-kestrel", source: "action-1", target: "kestrel-1" },
+    { id: "kestrel-output", source: "kestrel-1", target: "output" },
+  ];
+  assert.throws(() => validateWorkflowDefinition(definition), /upstream Kestrel step/u);
+});
+
+test("Action bindings reject fixed and dynamic values for the same field", () => {
+  const definition = workflowWithBoundAction();
+  const action = definition.nodes.find((node) => node.id === "action-1");
+  if (action?.kind !== "tool") throw new Error("Action fixture is missing.");
+  action.config.input = { title: "Fixed title" };
+  assert.throws(() => validateWorkflowDefinition(definition), /both a fixed and dynamic value/u);
+});
+
+test("Run command Actions reject every dynamic binding", () => {
+  const definition = workflowWithBoundAction();
+  const action = definition.nodes.find((node) => node.id === "action-1");
+  if (action?.kind !== "tool") throw new Error("Action fixture is missing.");
+  action.config.toolName = "exec_command";
+  assert.throws(() => validateWorkflowDefinition(definition), /cannot use dynamic values/u);
+});
