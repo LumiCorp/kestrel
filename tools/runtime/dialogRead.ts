@@ -7,7 +7,7 @@ export const dialogReadTool: SharedToolModule = {
     name: "dialog.read",
     description: "Check a collaborator's saved status, messages, and results without sending a message or starting more work. Use afterCursor to see new messages since an earlier read, or beforeCursor to read older saved history.",
     inputSchema: { type: "object", properties: { dialogId: { type: "string", description: "The collaborator to read." }, afterCursor: { type: "string", description: "Return only messages after this opaque cursor." }, beforeCursor: { type: "string", description: "Return older messages before this opaque cursor. Do not use with afterCursor." }, limit: { type: "integer", minimum: 1, maximum: 100, default: 20, description: "The maximum messages to return." } }, required: ["dialogId"], additionalProperties: false },
-    capability: { freshnessClass: "runtime", latencyClass: "low", costClass: "free", executionClass: "sandboxed_only", capabilityClasses: ["runtime.dialog"] },
+    capability: { freshnessClass: "runtime", latencyClass: "low", costClass: "free", executionClass: "external_side_effect", allowedInteractionModes: ["chat", "plan", "build"], capabilityClasses: ["runtime.dialog"], approvalCapabilities: ["delegation.control"] },
     presentation: { displayName: "Read Dialog", aliases: ["read collaborator dialog"], keywords: ["dialog", "read"], provider: "kestrel", toolFamily: "runtime" },
   },
   createHandler(context) {

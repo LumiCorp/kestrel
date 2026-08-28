@@ -67,6 +67,7 @@ import {
   updateEnvironmentExecutionStatus,
 } from "@/lib/environments/execution-route";
 import { recordHostedAppApprovalRequest } from "@/lib/apps/hosted-app-approval-recorder";
+import { attachHostedAppApprovalPresentation } from "@/lib/apps/hosted-app-approval-presentation";
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 import { synchronizeProjectSkills } from "@/lib/projects/skills";
@@ -352,6 +353,8 @@ export type KestrelOneAgentResponseInput = {
   workspaceBaseRef?: string | null;
   parentThreadId?: string | null;
   durableTurnId?: string | undefined;
+  noninteractive?: boolean | undefined;
+  workflowRunAuthority?: Record<string, unknown> | undefined;
   messages: UIMessage[];
   resolvedAttachments?: RunnerTurnAttachment[] | null | undefined;
   threadFileInventory?: Array<{
@@ -584,6 +587,16 @@ function createModelAwareKestrelOneAgent(input: {
             input.parentThreadId,
             input.workspaceBaseRef,
           );
+          const effectiveWorkspace = turn.workflowRunAuthority
+            ? {
+                ...runtimeWorkspace,
+                managedWorktreeRequired: true as const,
+                managedWorktreeIsolation: "scoped" as const,
+                managedWorktreeScope: "workflow_run" as const,
+                managedWorktreeScopeId:
+                  turn.workflowRunAuthority.workflowRunId,
+              }
+            : runtimeWorkspace;
           const normalizedTurn = {
             ...turn,
             eventType,
@@ -598,7 +611,7 @@ function createModelAwareKestrelOneAgent(input: {
                   },
                 }
               : {}),
-            ...(runtimeWorkspace ? { workspace: runtimeWorkspace } : {}),
+            ...(effectiveWorkspace ? { workspace: effectiveWorkspace } : {}),
             ...(projectSkills
               ? { workspaceSkills: projectSkills.catalog }
               : {}),
@@ -662,7 +675,7 @@ function createModelAwareKestrelOneAgent(input: {
           mainTerminal = true;
           if (pendingDialogs.size === 0) dialogAbort.abort();
           else retainClientForDialog = true;
-          await recordHostedAppApprovalRequest({
+          const hostedApproval = await recordHostedAppApprovalRequest({
             organizationId: input.organizationId,
             environmentId: route.environmentId,
             workspaceId: route.workspaceId,
@@ -672,13 +685,17 @@ function createModelAwareKestrelOneAgent(input: {
             requestedExecutionId: route.runId,
             event: terminal,
           });
+          const presentedTerminal = attachHostedAppApprovalPresentation(
+            terminal,
+            hostedApproval?.presentation,
+          );
           await updateEnvironmentExecutionStatus({
             organizationId: input.organizationId,
             executionId,
-            status: terminalExecutionStatus(terminal),
-            ...terminalFailureEvidence(terminal),
+            status: terminalExecutionStatus(presentedTerminal),
+            ...terminalFailureEvidence(presentedTerminal),
           });
-          routed.complete(terminal);
+          routed.complete(presentedTerminal);
         } catch (error) {
           if (
             executionId &&
@@ -840,8 +857,7 @@ export function assertHostedWorkspaceProfileCompatibility(
   const preset4ProducerSupported =
     resolution.environmentPreset.version ===
       WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION &&
-    (resolution.hostedApprovalProducerProtocol === "v2" ||
-      resolution.hostedApprovalProducerProtocol === "v4");
+    resolution.hostedApprovalProducerProtocol === "v4";
   const deployedPreset2BridgeSupported =
     resolution.environmentPreset.version ===
       LEGACY_HOSTED_WORKSPACE_PRESET_VERSION &&
@@ -1314,6 +1330,8 @@ export async function createKestrelOneAgentResponse(
     correlation: readRequestCorrelation(input.request),
     threadId: input.threadId,
     durableTurnId: input.durableTurnId,
+    noninteractive: input.noninteractive,
+    workflowRunAuthority: input.workflowRunAuthority,
     messages: input.messages,
     resolvedAttachments: input.resolvedAttachments,
     threadFileInventory: input.threadFileInventory,

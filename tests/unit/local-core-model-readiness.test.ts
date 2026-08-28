@@ -6,9 +6,12 @@ import path from "node:path";
 
 import { createDefaultLocalCoreRuntimeConfiguration } from "../../src/localCore/runtimeConfiguration.js";
 import {
+  assertLocalCoreGmailRestrictedDataAdmission,
+  assertLocalCoreGmailRestrictedDataAdmissions,
   createLocalCoreModelReadiness,
   isLocalCoreModelRoleReady,
   LocalCoreModelReadinessStore,
+  localCoreGmailRestrictedDataRouteFingerprint,
   qualifyLocalCoreModelReadiness,
 } from "../../src/localCore/modelReadiness.js";
 
@@ -146,5 +149,87 @@ test("Local Core readiness binds the inherited endpoint that the runtime will us
   assert.equal(
     readiness.registration.route.apiEndpoint,
     "http://127.0.0.1:19191",
+  );
+});
+
+test("Local Core Gmail admission is bound to durable evidence for the exact model route", () => {
+  const unqualified = createDefaultLocalCoreRuntimeConfiguration();
+  const primary = createLocalCoreModelReadiness({
+    runtimeConfiguration: unqualified,
+    profile: { modelProvider: "ollama", model: "glm-4.5-air" },
+    now: () => new Date("2026-08-27T00:00:00.000Z"),
+  });
+
+  assert.throws(
+    () =>
+      assertLocalCoreGmailRestrictedDataAdmission({
+        readiness: primary,
+        runtimeConfiguration: unqualified,
+      }),
+    /exact model route/u,
+  );
+
+  const fallback = createLocalCoreModelReadiness({
+    runtimeConfiguration: unqualified,
+    profile: { modelProvider: "ollama", model: "glm-4.5-air-maintenance" },
+    now: () => new Date("2026-08-27T00:00:00.000Z"),
+  });
+
+  const qualified = {
+    ...unqualified,
+    gmailRestrictedData: [{
+      routeFingerprint: localCoreGmailRestrictedDataRouteFingerprint(
+        primary.registration,
+      ),
+      processorId: "kestrel-approved-gmail-processor",
+      purpose: "user_authorized_productivity" as const,
+      retention: "documented" as const,
+      trainingUse: "prohibited" as const,
+      deletion: "documented" as const,
+      qualification: "qualified" as const,
+      evidenceRevision: "qualification-2026-08-27",
+      observedAt: "2026-08-27T00:01:00.000Z",
+    }, {
+      routeFingerprint: localCoreGmailRestrictedDataRouteFingerprint(
+        fallback.registration,
+      ),
+      processorId: "kestrel-approved-gmail-processor",
+      purpose: "user_authorized_productivity" as const,
+      retention: "documented" as const,
+      trainingUse: "prohibited" as const,
+      deletion: "documented" as const,
+      qualification: "qualified" as const,
+      evidenceRevision: "qualification-2026-08-27",
+      observedAt: "2026-08-27T00:01:00.000Z",
+    }],
+  };
+  const qualifiedPrimary = createLocalCoreModelReadiness({
+    runtimeConfiguration: qualified,
+    profile: { modelProvider: "ollama", model: "glm-4.5-air" },
+    now: () => new Date("2026-08-27T00:00:00.000Z"),
+  });
+  assert.doesNotThrow(() =>
+    assertLocalCoreGmailRestrictedDataAdmissions({
+      readinesses: [qualifiedPrimary, createLocalCoreModelReadiness({
+        runtimeConfiguration: qualified,
+        profile: { modelProvider: "ollama", model: "glm-4.5-air-maintenance" },
+        now: () => new Date("2026-08-27T00:00:00.000Z"),
+      })],
+      runtimeConfiguration: qualified,
+    }),
+  );
+
+  const changedRoute = createLocalCoreModelReadiness({
+    runtimeConfiguration: qualified,
+    profile: { modelProvider: "ollama", model: "glm-4.5-air-replacement" },
+    now: () => new Date("2026-08-27T00:00:00.000Z"),
+  });
+  assert.throws(
+    () =>
+      assertLocalCoreGmailRestrictedDataAdmission({
+        readiness: changedRoute,
+        runtimeConfiguration: qualified,
+      }),
+    /exact model route/u,
   );
 });

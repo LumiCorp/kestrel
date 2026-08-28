@@ -1,6 +1,8 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, lte } from "drizzle-orm";
+import { defaultToolCatalog } from "../../../../tools/catalog";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   type ProjectRole,
@@ -20,8 +22,96 @@ import {
 } from "./contracts";
 import {
   assertWorkflowModelSupportedInTransaction,
+  getAllowedProjectWorkflowToolNames,
+  getProjectWorkflowCapabilities,
   validateProjectWorkflowTools,
 } from "./server-policy";
+import { WORKFLOW_NATIVE_WORKSPACE_TOOL_IDS } from "./capabilities";
+
+function workflowManifestDigest(value: unknown) {
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(value))
+    .digest("hex")}`;
+}
+
+function compileWorkflowCapabilityManifest(input: {
+  definition: WorkflowDefinition;
+  allowedToolNames: Set<string>;
+  capabilities: Awaited<ReturnType<typeof getProjectWorkflowCapabilities>>;
+}) {
+  const nativeNames = new Set(input.capabilities.filter(capability => capability.workflowUse === "native").map(capability => capability.runtimeName!));
+  for (const name of WORKFLOW_NATIVE_WORKSPACE_TOOL_IDS) nativeNames.add(name);
+  const nativeTools = [...nativeNames].map(toolId => {
+    const capability = input.capabilities.find((candidate) => candidate.runtimeName === toolId);
+    const descriptorContractRevision = capability?.descriptorContractRevision ?? defaultToolCatalog.getDescriptor(toolId)?.contractRevision;
+    if (!descriptorContractRevision) throw Object.assign(new Error(`Native capability ${toolId} has no current runtime descriptor.`), { code: "WORKFLOW_TOOL_UNAVAILABLE" });
+    return {
+      toolId,
+      descriptorContractRevision,
+      authorityRevision: workflowManifestDigest({
+        toolId,
+        descriptorContractRevision,
+        environmentApprovalMode: capability?.environmentApprovalMode,
+        projectApprovalMode: capability?.projectApprovalMode,
+      }),
+    };
+  });
+  const actions = input.definition.nodes.flatMap((node) => {
+    if (node.kind !== "tool") return [];
+    if (!input.allowedToolNames.has(node.config.toolName)) {
+      throw Object.assign(
+        new Error(`Action ${node.config.toolName} is not available in this Project.`),
+        { code: "WORKFLOW_TOOL_UNAVAILABLE" },
+      );
+    }
+    const capability = input.capabilities.find((candidate) => candidate.runtimeName === node.config.toolName && candidate.workflowUse === "action");
+    const descriptorContractRevision = capability?.descriptorContractRevision ?? defaultToolCatalog.getDescriptor(node.config.toolName)?.contractRevision;
+    if (!descriptorContractRevision) {
+      throw Object.assign(
+        new Error(`Action ${node.config.toolName} has no current runtime descriptor.`),
+        { code: "WORKFLOW_TOOL_UNAVAILABLE" },
+      );
+    }
+    const authorityRevision = workflowManifestDigest({
+      toolId: node.config.toolName,
+      descriptorContractRevision,
+      environmentApprovalMode: capability?.environmentApprovalMode,
+      projectApprovalMode: capability?.projectApprovalMode,
+    });
+    const normalizedInput = node.config.input;
+    const command =
+      node.config.toolName === "exec_command" &&
+      typeof normalizedInput.command === "string"
+        ? normalizedInput.command
+        : null;
+    return [{
+      nodeId: node.id,
+      toolId: node.config.toolName,
+      descriptorContractRevision,
+      approvalAuthorityRevision: authorityRevision,
+      fixedInput: normalizedInput,
+      inputBindings: node.config.inputBindings,
+      rememberedApprovalScope: command === null
+        ? { kind: "tool_identity" as const }
+        : {
+            kind: "exec_command_exact" as const,
+            command,
+            cwd: typeof normalizedInput.cwd === "string" ? normalizedInput.cwd : ".",
+            envNames: normalizedInput.env && typeof normalizedInput.env === "object"
+              ? Object.keys(normalizedInput.env).sort()
+              : [],
+            envMode: typeof normalizedInput.envMode === "string"
+              ? normalizedInput.envMode
+              : "inherit",
+          },
+    }];
+  });
+  return {
+    version: "workflow_capability_manifest_v2" as const,
+    nativeTools,
+    actions,
+  };
+}
 
 type WorkflowStatus =
   | "queued"
@@ -178,6 +268,15 @@ export async function listProjectWorkflowsForUser(input: {
         : null,
       definition: validateWorkflowDefinition(row.definition),
       versionId: row.versionId,
+      state: row.workflow.attentionCode
+        ? ("Needs attention" as const)
+        : row.workflow.activeVersionId === row.versionId
+          ? ("Active" as const)
+          : ("Draft" as const),
+      hasDraft: Boolean(
+        row.workflow.activeVersionId &&
+        row.workflow.activeVersionId !== row.versionId,
+      ),
       permissions: permissions({
         creatorUserId: row.workflow.createdByUserId,
         role: row.role,
@@ -237,7 +336,7 @@ export async function createProjectWorkflow(input: {
       environmentId: access.project.environmentId,
       modelId,
     });
-    const schedule = scheduleFields(definition, input.enabled ?? false, now);
+    const schedule = scheduleFields(definition, false, now);
     const workflowId = crypto.randomUUID();
     const [workflow] = await tx
       .insert(schema.projectWorkflows)
@@ -260,6 +359,7 @@ export async function createProjectWorkflow(input: {
       id: crypto.randomUUID(),
       workflowId,
       version: 1,
+      modelId,
       definition,
       createdByUserId: input.userId,
       createdAt: now,
@@ -333,11 +433,11 @@ export async function updateProjectWorkflow(input: {
       modelId,
     });
     const nextVersion = current.currentVersion + 1;
-    const schedule = scheduleFields(definition, input.enabled ?? current.enabled, now);
     await tx.insert(schema.projectWorkflowVersions).values({
       id: crypto.randomUUID(),
       workflowId: current.id,
       version: nextVersion,
+      modelId,
       definition,
       createdByUserId: input.userId,
       createdAt: now,
@@ -349,12 +449,99 @@ export async function updateProjectWorkflow(input: {
         description,
         modelId,
         currentVersion: nextVersion,
-        ...schedule,
         updatedAt: now,
       })
       .where(eq(schema.projectWorkflows.id, current.id))
       .returning();
     return updated!;
+  });
+}
+
+export async function activateProjectWorkflowVersion(input: {
+  workflowId: string;
+  projectId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  const access = await requireProjectRole({
+    projectId: input.projectId,
+    organizationId: input.organizationId,
+    userId: input.userId,
+    minimumRole: "member",
+    includeArchived: true,
+  });
+  if (access.project.archivedAt) {
+    throw new Error("Restore the Project before activating this workflow.");
+  }
+  const workflow = await getProjectWorkflowForUser(input);
+  if (!workflow.permissions.canEdit) {
+    throw new ProjectAccessError(
+      "PROJECT_FORBIDDEN",
+      "Only the workflow creator can activate it.",
+    );
+  }
+  const definition = validateWorkflowDefinition(workflow.definition);
+  await validateProjectWorkflowTools({
+    organizationId: input.organizationId,
+    projectId: input.projectId,
+    userId: input.userId,
+    definition,
+  });
+  const manifest = compileWorkflowCapabilityManifest({
+    definition,
+    allowedToolNames: await getAllowedProjectWorkflowToolNames(input),
+    capabilities: await getProjectWorkflowCapabilities(input),
+  });
+  const manifestDigest = workflowManifestDigest(manifest);
+  const now = new Date();
+  return knowledgeDb.transaction(async (tx) => {
+    const [version] = await tx
+      .select()
+      .from(schema.projectWorkflowVersions)
+      .where(and(
+        eq(schema.projectWorkflowVersions.workflowId, input.workflowId),
+        eq(schema.projectWorkflowVersions.version, workflow.currentVersion),
+      ))
+      .limit(1);
+    if (!version) throw new Error("Workflow version is unavailable.");
+    await tx
+      .insert(schema.projectWorkflowVersionActivations)
+      .values({
+        id: crypto.randomUUID(),
+        workflowVersionId: version.id,
+        activatedByUserId: input.userId,
+        environmentId: access.project.environmentId,
+        manifest,
+        manifestDigest,
+        activatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: schema.projectWorkflowVersionActivations.workflowVersionId,
+        set: {
+          activatedByUserId: input.userId,
+          environmentId: access.project.environmentId,
+          manifest,
+          manifestDigest,
+          activatedAt: now,
+        },
+      });
+    const schedule = scheduleFields(definition, true, now);
+    const [activated] = await tx
+      .update(schema.projectWorkflows)
+      .set({
+        activeVersionId: version.id,
+        enabled: schedule.enabled,
+        cronExpression: schedule.cronExpression,
+        timeZone: schedule.timeZone,
+        nextRunAt: schedule.nextRunAt,
+        attentionCode: null,
+        attentionMessage: null,
+        updatedAt: now,
+      })
+      .where(eq(schema.projectWorkflows.id, input.workflowId))
+      .returning();
+    if (!activated) throw new Error("Workflow activation failed.");
+    return { workflow: activated, version, manifest, manifestDigest };
   });
 }
 
@@ -432,17 +619,42 @@ export async function createProjectWorkflowRun(input: {
       )
       .limit(1);
     if (!context) throw new Error("Project context is unavailable.");
+    if (!workflow.activeVersionId) {
+      throw Object.assign(
+        new Error("Review and activate this workflow before running it."),
+        { code: "WORKFLOW_NOT_ACTIVE" },
+      );
+    }
     const [version] = await tx
       .select()
       .from(schema.projectWorkflowVersions)
       .where(
         and(
           eq(schema.projectWorkflowVersions.workflowId, workflow.id),
-          eq(schema.projectWorkflowVersions.version, workflow.currentVersion),
+          eq(schema.projectWorkflowVersions.id, workflow.activeVersionId),
         ),
       )
       .limit(1);
     if (!version) throw new Error("Workflow version is unavailable.");
+    const [activation] = await tx
+      .select()
+      .from(schema.projectWorkflowVersionActivations)
+      .where(eq(
+        schema.projectWorkflowVersionActivations.workflowVersionId,
+        version.id,
+      ))
+      .limit(1);
+    if (!activation) {
+      throw Object.assign(
+        new Error("Workflow activation evidence is unavailable."),
+        { code: "WORKFLOW_ACTIVATION_INVALID" },
+      );
+    }
+    await assertModelAvailable(tx, {
+      organizationId: input.organizationId,
+      environmentId: access.project.environmentId,
+      modelId: version.modelId,
+    });
     const definition = validateWorkflowDefinition(version.definition);
     await validateProjectWorkflowTools({
       organizationId: input.organizationId,
@@ -465,13 +677,15 @@ export async function createProjectWorkflowRun(input: {
         id: runId,
         workflowId: workflow.id,
         workflowVersionId: version.id,
-        actorUserId: input.userId,
+        actorUserId: activation.activatedByUserId,
         trigger: input.trigger ?? "manual",
         requestId: input.requestId,
         scheduledFor: input.scheduledFor ?? null,
         environmentIdSnapshot: access.project.environmentId,
         projectContextRevisionIdSnapshot: context.id,
-        modelIdSnapshot: workflow.modelId,
+        modelIdSnapshot: version.modelId,
+        workflowWorkspaceId: `workflow-run:${runId}`,
+        activationManifestDigest: activation.manifestDigest,
         input: input.runInput ?? {},
         status: "queued",
         createdAt: now,
@@ -604,7 +818,7 @@ export async function claimDueProjectWorkflowRuns(now = new Date()) {
         .where(eq(schema.projectWorkflows.id, candidate.id))
         .limit(1)
         .for("update");
-      if (!(workflow?.enabled && workflow.nextRunAt && workflow.cronExpression && workflow.timeZone)) return null;
+      if (!(workflow?.enabled && workflow.activeVersionId && workflow.nextRunAt && workflow.cronExpression && workflow.timeZone)) return null;
       if (workflow.nextRunAt.getTime() > now.getTime()) return null;
       const [project] = await tx
         .select({
@@ -649,20 +863,6 @@ export async function claimDueProjectWorkflowRuns(now = new Date()) {
           .where(eq(schema.projectWorkflows.id, workflow.id));
         return null;
       }
-      try {
-        await assertWorkflowModelSupportedInTransaction(tx, {
-          organizationId: workflow.organizationId,
-          environmentId: project.environmentId,
-          modelId: workflow.modelId,
-        });
-      } catch (error) {
-        if (!isWorkflowAdmissionError(error)) throw error;
-        await tx
-          .update(schema.projectWorkflows)
-          .set({ enabled: false, nextRunAt: null, updatedAt: now })
-          .where(eq(schema.projectWorkflows.id, workflow.id));
-        return null;
-      }
       const occurrence = latestDueProjectPromptScheduleOccurrence({
         cronExpression: workflow.cronExpression,
         timeZone: workflow.timeZone,
@@ -673,9 +873,17 @@ export async function claimDueProjectWorkflowRuns(now = new Date()) {
       const version = await tx.query.projectWorkflowVersions.findFirst({
         where: and(
           eq(schema.projectWorkflowVersions.workflowId, workflow.id),
-          eq(schema.projectWorkflowVersions.version, workflow.currentVersion),
+          eq(schema.projectWorkflowVersions.id, workflow.activeVersionId),
         ),
       });
+      const activation = version
+        ? await tx.query.projectWorkflowVersionActivations.findFirst({
+            where: eq(
+              schema.projectWorkflowVersionActivations.workflowVersionId,
+              version.id,
+            ),
+          })
+        : null;
       const context = await tx.query.projectContextRevisions.findFirst({
         where: and(
           eq(schema.projectContextRevisions.projectId, workflow.projectId),
@@ -685,10 +893,36 @@ export async function claimDueProjectWorkflowRuns(now = new Date()) {
           ),
         ),
       });
-      if (!(version && context)) {
+      if (!(version && activation && context)) {
         await tx
           .update(schema.projectWorkflows)
-          .set({ enabled: false, nextRunAt: null, updatedAt: now })
+          .set({
+            enabled: false,
+            nextRunAt: null,
+            attentionCode: "WORKFLOW_ACTIVATION_INVALID",
+            attentionMessage: "Review and activate this workflow again.",
+            updatedAt: now,
+          })
+          .where(eq(schema.projectWorkflows.id, workflow.id));
+        return null;
+      }
+      try {
+        await assertWorkflowModelSupportedInTransaction(tx, {
+          organizationId: workflow.organizationId,
+          environmentId: project.environmentId,
+          modelId: version.modelId,
+        });
+      } catch (error) {
+        if (!isWorkflowAdmissionError(error)) throw error;
+        await tx
+          .update(schema.projectWorkflows)
+          .set({
+            enabled: false,
+            nextRunAt: null,
+            attentionCode: "WORKFLOW_MODEL_UNAVAILABLE",
+            attentionMessage: "Choose an available model and activate a new version.",
+            updatedAt: now,
+          })
           .where(eq(schema.projectWorkflows.id, workflow.id));
         return null;
       }
@@ -718,13 +952,15 @@ export async function claimDueProjectWorkflowRuns(now = new Date()) {
           id: crypto.randomUUID(),
           workflowId: workflow.id,
           workflowVersionId: version.id,
-          actorUserId: workflow.createdByUserId,
+          actorUserId: activation.activatedByUserId,
           trigger: "scheduled",
           requestId: null,
           scheduledFor: occurrence.scheduledFor,
           environmentIdSnapshot: project.environmentId,
           projectContextRevisionIdSnapshot: context.id,
-          modelIdSnapshot: workflow.modelId,
+          modelIdSnapshot: version.modelId,
+          workflowWorkspaceId: `workflow-run:${workflow.id}:${occurrence.scheduledFor.toISOString()}`,
+          activationManifestDigest: activation.manifestDigest,
           input: {},
           status: "queued",
           createdAt: now,

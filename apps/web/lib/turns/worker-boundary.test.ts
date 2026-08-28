@@ -219,10 +219,10 @@ test("scheduled prompt materialization stays on its locked database transaction"
 });
 
 test("scheduled and Test turns enter the ordinary worker as autonomous turns", async () => {
-  const runtimeSource = await readFile(
-    new URL("./process-runtime.ts", import.meta.url),
-    "utf8",
-  );
+  const [runtimeSource, agentRuntimeSource] = await Promise.all([
+    readFile(new URL("./process-runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("../agent/kestrel-runtime.ts", import.meta.url), "utf8"),
+  ]);
 
   assert.match(runtimeSource, /projectPromptScheduleRuns\.findFirst/u);
   assert.match(runtimeSource, /eq\(table\.turnId, turn\.id\)/u);
@@ -233,6 +233,10 @@ test("scheduled and Test turns enter the ordinary worker as autonomous turns", a
     /readBooleanField\(turnContract\?\.data, "noninteractive"\)/u,
   );
   assert.match(runtimeSource, /scheduleRun !== undefined/u);
+  assert.match(runtimeSource, /workflowRunAuthority: turnContract\.data\.workflowRunAuthority/u);
+  assert.match(agentRuntimeSource, /workflowRunAuthority\?: Record<string, unknown>/u);
+  assert.match(agentRuntimeSource, /workflowRunAuthority: input\.workflowRunAuthority/u);
+  assert.match(agentRuntimeSource, /noninteractive: input\.noninteractive/u);
 });
 
 test(
@@ -267,11 +271,18 @@ test(
       queueSource,
       /localConcurrency: PROJECT_PROMPT_SCHEDULE_LOCAL_CONCURRENCY,/u,
     );
-    assert.match(
-      queueSource,
-      /boss\.work\(\s*DURABLE_THREAD_TURN_QUEUE,\s*\{\s*batchSize: 1,\s*localConcurrency: turnWorkerConcurrency,/u,
+    const durableWorkerStart = queueSource.indexOf(
+      "await boss.work(\n      DURABLE_THREAD_TURN_QUEUE,",
     );
-    assert.match(queueSource, /groupConcurrency: 1,/u);
+    const durableWorkerEnd = queueSource.indexOf(
+      "      async (jobs:",
+      durableWorkerStart,
+    );
+    assert.ok(durableWorkerStart >= 0, "durable turn worker must be registered");
+    assert.ok(durableWorkerEnd > durableWorkerStart, "durable worker options must precede its handler");
+    const durableWorkerOptions = queueSource.slice(durableWorkerStart, durableWorkerEnd);
+    assert.match(durableWorkerOptions, /localConcurrency: turnWorkerConcurrency,/u);
+    assert.match(durableWorkerOptions, /groupConcurrency: 1,/u);
   },
 );
 
@@ -635,6 +646,18 @@ test(
     assert.match(
       devAllSource,
       /export KESTREL_BUILD_ID="\$\{KESTREL_BUILD_ID:-local-dev\}"/u,
+    );
+    assert.match(
+      devAllSource,
+      /LOCAL_RECEIVING_BUILD_REVISION=.*git -C "\$ROOT_DIR\/\.\.\/\.\." rev-parse --verify 'HEAD\^\{commit\}'/u,
+    );
+    assert.match(
+      devAllSource,
+      /KESTREL_EMAIL_RECEIVING_RELEASE_EVIDENCE_REVISION:-\$LOCAL_RECEIVING_BUILD_REVISION/u,
+    );
+    assert.match(
+      devAllSource,
+      /KESTREL_EMAIL_RECEIVING_SECURITY_REVIEW_REVISION:-\$LOCAL_RECEIVING_BUILD_REVISION/u,
     );
     assert.match(devAllSource, /TURN_WORKER_PID=\$!/u);
     assert.match(devAllSource, /KNOWLEDGE_WORKER_PID=\$!/u);

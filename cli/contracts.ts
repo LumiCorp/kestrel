@@ -155,7 +155,8 @@ export interface WorkspaceRuntimeContext {
   sourceWorkspaceRoot?: string | undefined;
   managedWorktreeBaseRef?: string | undefined;
   managedWorktreeParentThreadId?: string | undefined;
-  managedWorktreeScope?: "thread" | undefined;
+  managedWorktreeScope?: "thread" | "workflow_run" | undefined;
+  managedWorktreeScopeId?: string | undefined;
   managedWorktreeSetup?: ManagedTaskWorktreeSetupSpec | undefined;
 }
 

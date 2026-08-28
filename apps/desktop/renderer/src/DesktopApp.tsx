@@ -1828,6 +1828,19 @@ export function DesktopApp(props: {
     setSurface("chat");
   }
 
+  async function updateProjectPersonalAppIds(
+    project: DesktopProjectRegistration,
+    personalAppIds: string[],
+  ): Promise<void> {
+    if (settings === undefined) return;
+    const saved = await window.kestrelDesktop.saveSettings({
+      projects: settings.projects.map((entry) =>
+        entry.path === project.path ? { ...entry, personalAppIds } : entry,
+      ),
+    });
+    setSettings(saved);
+  }
+
   async function deleteConversation(
     threadId: string,
     force: boolean,
@@ -2722,7 +2735,9 @@ export function DesktopApp(props: {
                 threadId={localCoreThreadId(activeThread.sessionId)}
                 workspace={projectWorkspace}
                 openFiles={projectConversationMatchesActiveThread ? activeThread.openFiles : []}
+                connectedPersonalAppIds={settings?.enabledConnectedAppIds ?? []}
                 onChat={(project) => startProjectConversation(project.path)}
+                onPersonalAppIdsChange={updateProjectPersonalAppIds}
                 onRemoveProject={removeProject}
                 onSelectThread={(threadId) => {
                   setState((current) => current === undefined ? current : selectRendererThread(current, threadId));

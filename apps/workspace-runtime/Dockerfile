@@ -40,10 +40,8 @@ RUN pnpm --filter @lumi/kestrel-environment-auth build \
 
 FROM node:22-bookworm-slim
 ARG KESTREL_BUILD_ID=unknown
-ARG KESTREL_HOSTED_APPROVAL_PROTOCOL=v2
 LABEL org.opencontainers.image.source="https://github.com/LumiCorp/kestrel"
 LABEL org.opencontainers.image.version=$KESTREL_BUILD_ID
-LABEL com.lumicorp.kestrel.hosted-approval-producer=$KESTREL_HOSTED_APPROVAL_PROTOCOL
 ENV COREPACK_HOME=/opt/corepack
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -75,6 +73,6 @@ RUN test -f /app/dist/db/migrations/001_sessions_runs.sql \
     && python3 --version \
     && mkdir -p /workspace \
     && node /app/apps/workspace-runtime/scripts/dev-shell-package-smoke.mjs
-ENV NODE_ENV=production KESTREL_BUILD_ID=$KESTREL_BUILD_ID KESTREL_WORKSPACE_ROOT=/workspace KESTREL_WORKSPACE_PORT=43104 KESTREL_PROFILE_ENVIRONMENT=workspace_hosted KESTREL_HOSTED_APPROVAL_PROTOCOL=$KESTREL_HOSTED_APPROVAL_PROTOCOL
+ENV NODE_ENV=production KESTREL_BUILD_ID=$KESTREL_BUILD_ID KESTREL_WORKSPACE_ROOT=/workspace KESTREL_WORKSPACE_PORT=43104 KESTREL_PROFILE_ENVIRONMENT=workspace_hosted
 EXPOSE 43104
 CMD ["node", "apps/workspace-runtime/dist/server.js"]

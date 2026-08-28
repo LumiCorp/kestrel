@@ -72,6 +72,8 @@ export interface LocalCoreResolvedModelProfile {
 export interface LocalCoreRuntimeEnvironmentSnapshot {
   readonly modelProvider: ModelProviderId;
   readonly model: string;
+  /** Core-owned configuration, kept non-enumerable with the environment views. */
+  readonly runtimeConfiguration?: LocalCoreRuntimeConfigurationV1 | undefined;
   /** Canonical selected-provider configuration and its available credentials. */
   readonly modelEnv: Readonly<NodeJS.ProcessEnv>;
   /** Canonical Tavily configuration and its available credentials. */
@@ -317,12 +319,19 @@ function buildLocalCoreRuntimeEnvironmentSnapshot(input: {
   } as {
     readonly modelProvider: ModelProviderId;
     readonly model: string;
+    readonly runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
     readonly modelEnv: Readonly<NodeJS.ProcessEnv>;
     readonly internetEnv: Readonly<NodeJS.ProcessEnv>;
     readonly runtimeEnv: Readonly<NodeJS.ProcessEnv>;
     readonly mcpEnv: Readonly<NodeJS.ProcessEnv>;
   };
   defineEnvironmentView(snapshot, "modelEnv", modelEnv);
+  Object.defineProperty(snapshot, "runtimeConfiguration", {
+    value: input.runtimeConfiguration,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
   defineEnvironmentView(snapshot, "internetEnv", internetEnv);
   defineEnvironmentView(snapshot, "runtimeEnv", runtimeEnv);
   defineEnvironmentView(snapshot, "mcpEnv", mcpEnv);

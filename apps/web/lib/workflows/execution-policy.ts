@@ -13,7 +13,7 @@ export function assertWorkflowToolsAvailable(
   if (!unavailable || unavailable.kind !== "tool") return definition;
   throw Object.assign(
     new Error(
-      `Tool step "${unavailable.label}" uses ${unavailable.config.toolName}, which is not available in this Project.`,
+      `Action "${unavailable.label}" uses ${unavailable.config.toolName}, which is not available in this Project.`,
     ),
     {
       code: "WORKFLOW_TOOL_UNAVAILABLE",

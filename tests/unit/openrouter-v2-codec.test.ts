@@ -229,6 +229,28 @@ test("OpenRouter V2 sends no optional model-shaping parameters for plain text", 
   ]);
 });
 
+test("OpenRouter V2 lets provider-managed routes qualify advertised tools", () => {
+  const mapped = buildOpenRouterHttpRequestV2(
+    request({ tools: true, parallelism: "forbidden" }),
+    env,
+    route({
+      supportedParameters: ["tools", "tool_choice"],
+      endpoints: [],
+      routing: {
+        kind: "provider",
+        policyId: "glm-provider-managed",
+        allowedEndpointIds: [],
+      },
+    }),
+  );
+  assert.deepEqual(mapped.body.provider, { require_parameters: true });
+  assert.equal(mapped.body.parallel_tool_calls, undefined);
+  assert.equal(mapped.body.tool_choice, "required");
+  const tool = (mapped.body.tools as Array<Record<string, unknown>>)[0]!
+    .function as Record<string, unknown>;
+  assert.equal(tool.strict, true);
+});
+
 test("OpenRouter V2 fails closed for no eligible endpoint intersection", () => {
   assert.throws(
     () =>

@@ -3060,18 +3060,14 @@ export class ExecutionEngine {
           );
         }
         let preparedToolCall;
-        let externalApprovalBinding;
         try {
           preparedToolCall = parseDurablePreparedToolCallV1(
             payload.preparedToolCall,
           );
-          externalApprovalBinding = parseRunnerExternalApprovalBindingV2(
-            preparedToolCall.approval?.externalApprovalBinding,
-          );
         } catch (error) {
           throw createRuntimeFailure(
             "TOOL_EFFECT_PREPARATION_FAILED",
-            "The approved prepared invocation is invalid.",
+            "The durable prepared invocation is invalid.",
             {
               recoverable: false,
               effectType: effect.type,
@@ -3079,21 +3075,64 @@ export class ExecutionEngine {
             },
           );
         }
-        const pendingApproval = readPendingToolApproval(session.state);
         if (
           preparedToolCall.sessionId !== session.sessionId ||
-          preparedToolCall.callId !== idempotencyKey ||
-          externalApprovalBinding.preparedInvocationId !==
-            preparedToolCall.callId ||
-          pendingApproval?.version !== "hosted_tool_approval_v2" ||
-          pendingApproval.preparedInvocationId !== preparedToolCall.callId ||
-          serializeCanonicalApprovalPayload(
-            pendingApproval.externalApprovalBinding,
-          ) !== serializeCanonicalApprovalPayload(externalApprovalBinding)
+          preparedToolCall.callId !== idempotencyKey
         ) {
           throw createRuntimeFailure(
             "TOOL_EFFECT_PREPARATION_FAILED",
-            "The approved prepared invocation does not match the committed approval wait.",
+            "The durable prepared invocation does not match the committed effect identity.",
+            {
+              recoverable: false,
+              effectType: effect.type,
+              preparedInvocationId: preparedToolCall.callId,
+            },
+          );
+        }
+        if (preparedToolCall.policy.decision === "approval_required") {
+          let externalApprovalBinding;
+          try {
+            externalApprovalBinding = parseRunnerExternalApprovalBindingV2(
+              preparedToolCall.approval?.externalApprovalBinding,
+            );
+          } catch (error) {
+            throw createRuntimeFailure(
+              "TOOL_EFFECT_PREPARATION_FAILED",
+              "The approved prepared invocation is invalid.",
+              {
+                recoverable: false,
+                effectType: effect.type,
+                cause: error instanceof Error ? error.message : String(error),
+              },
+            );
+          }
+          const pendingApproval = readPendingToolApproval(session.state);
+          if (
+            externalApprovalBinding.preparedInvocationId !==
+              preparedToolCall.callId ||
+            pendingApproval?.version !== "hosted_tool_approval_v2" ||
+            pendingApproval.preparedInvocationId !== preparedToolCall.callId ||
+            serializeCanonicalApprovalPayload(
+              pendingApproval.externalApprovalBinding,
+            ) !== serializeCanonicalApprovalPayload(externalApprovalBinding)
+          ) {
+            throw createRuntimeFailure(
+              "TOOL_EFFECT_PREPARATION_FAILED",
+              "The approved prepared invocation does not match the committed approval wait.",
+              {
+                recoverable: false,
+                effectType: effect.type,
+                preparedInvocationId: preparedToolCall.callId,
+              },
+            );
+          }
+        } else if (
+          preparedToolCall.policy.decision !== "allow" ||
+          preparedToolCall.approval?.externalApprovalBinding !== undefined
+        ) {
+          throw createRuntimeFailure(
+            "TOOL_EFFECT_PREPARATION_FAILED",
+            "A non-approved prepared invocation must be an unbound allow call.",
             {
               recoverable: false,
               effectType: effect.type,

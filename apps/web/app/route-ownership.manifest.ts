@@ -2115,6 +2115,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/projects/[id]/workflows/[workflowId]/activate/route.ts",
+    "/api/projects/:id/workflows/:workflowId/activate",
+    "workflows",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/projects/[id]/workflows/[workflowId]/run/route.ts",
     "/api/projects/:id/workflows/:workflowId/run",
     "workflows",

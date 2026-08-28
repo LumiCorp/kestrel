@@ -666,6 +666,20 @@
       "when": 1787943600000,
       "tag": "0094_exact_exec_command_approval_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1787947200000,
+      "tag": "0095_autonomous_workflow_activation",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1787950800000,
+      "tag": "0096_resend_managed_domains_public_aliases",
+      "breakpoints": true
     }
   ]
 }

@@ -772,6 +772,15 @@ export async function processDurableThreadTurn(
       scheduleRun !== undefined
         ? { noninteractive: true }
         : {}),
+      ...(turnContract?.data &&
+      typeof turnContract.data === "object" &&
+      "workflowRunAuthority" in turnContract.data &&
+      turnContract.data.workflowRunAuthority &&
+      typeof turnContract.data.workflowRunAuthority === "object"
+        ? {
+            workflowRunAuthority: turnContract.data.workflowRunAuthority as Record<string, unknown>,
+          }
+        : {}),
       messages,
       resolvedAttachments,
       threadFileInventory,

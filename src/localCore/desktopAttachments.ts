@@ -213,6 +213,9 @@ export class DesktopAttachmentStore {
         if (entry === undefined || entry.threadId !== threadId) {
           throw new Error(`Attachment '${attachmentId}' is unavailable for this thread.`);
         }
+        if (entry.lifecycleState !== "ready") {
+          throw new Error(`Attachment '${attachmentId}' is not ready for use.`);
+        }
         return entry;
       });
       const total = entries.reduce((sum, entry) => sum + entry.sizeBytes, 0);

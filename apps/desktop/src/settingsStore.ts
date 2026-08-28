@@ -25,6 +25,7 @@ import {
   DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID,
   DESKTOP_DEFAULT_ENABLED_APP_IDS,
   filterDesktopBuiltInAppIds,
+  filterDesktopPersonalAppIds,
   getDesktopAppDefinition,
   listDesktopAppDefinitions,
   normalizeDesktopAppId,
@@ -1231,6 +1232,13 @@ function normalizeDesktopProjects(
         typeof project.label === "string" && project.label.trim().length > 0
           ? project.label.trim()
           : path.basename(resolvedPath),
+      personalAppIds: filterDesktopPersonalAppIds(
+        Array.isArray(project.personalAppIds)
+          ? project.personalAppIds.filter(
+              (appId: unknown): appId is string => typeof appId === "string",
+            )
+          : [],
+      ),
     });
   }
   return normalized;

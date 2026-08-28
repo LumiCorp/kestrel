@@ -5,6 +5,7 @@ import {
   inspectReceivingDomains,
   saveReceivingConnection,
   getPublicReceivingConnection,
+  normalizeResendManagedReceivingDomain,
 } from "@/lib/email/receiving-config";
 import type { ResendReceivingProvider } from "@/lib/email/receiving-provider";
 import { setReceivingInboundEnabled } from "@/lib/email/receiving-activation";
@@ -23,10 +24,32 @@ type OrganizationAdminAuthority = {
 type DesktopAdminAuthority = { id: string };
 type DesktopContext = { params: Promise<{ organizationId: string }> };
 
-const receivingBodySchema = z.object({
-  apiKey: z.string().trim().min(1).optional(),
-  receivingDomainId: z.string().trim().min(1).max(160),
-});
+const receivingBodySchema = z
+  .object({
+    apiKey: z.string().trim().min(1).optional(),
+    receivingDomainId: z.string().trim().min(1).max(160).optional(),
+    receivingDomain: z
+      .string()
+      .trim()
+      .transform((value, context) => {
+        try {
+          return normalizeResendManagedReceivingDomain(value);
+        } catch {
+          context.addIssue({
+            code: "custom",
+            message: "Enter a valid Resend-managed receiving domain.",
+          });
+          return z.NEVER;
+        }
+      })
+      .optional(),
+    webhookBaseUrl: z.string().trim().min(1).max(2048).optional(),
+  })
+  .refine(
+    (body) =>
+      Boolean(body.receivingDomainId) !== Boolean(body.receivingDomain),
+    { message: "Choose one Resend receiving domain." },
+  );
 
 const domainsBodySchema = z.object({
   apiKey: z.string().trim().min(1).optional(),
@@ -49,6 +72,8 @@ export function createOneReceivingPutHandler(options: {
         actorUserId: session.user.id,
         apiKey: body.apiKey,
         receivingDomainId: body.receivingDomainId,
+        receivingDomain: body.receivingDomain,
+        webhookBaseUrl: body.webhookBaseUrl,
         provider: options.provider,
       });
       await logAdminEvent({
@@ -107,6 +132,13 @@ export function createOneReceivingActivationPostHandler(options: {
       const { enabled } = activationBodySchema.parse(
         await parseReceivingAdminJson(request),
       );
+      if (enabled) {
+        await runReceivingReleaseReadiness({
+          organizationId,
+          actorUserId: session.user.id,
+          provider: options.provider,
+        });
+      }
       await setReceivingInboundEnabled({
         organizationId,
         actorUserId: session.user.id,
@@ -167,6 +199,8 @@ export function createDesktopReceivingPutHandler(options: {
           actorUserId: user.id,
           apiKey: body.apiKey,
           receivingDomainId: body.receivingDomainId,
+          receivingDomain: body.receivingDomain,
+          webhookBaseUrl: body.webhookBaseUrl,
           provider: options.provider,
         }),
       });

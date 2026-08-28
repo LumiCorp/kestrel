@@ -3802,8 +3802,10 @@ function createRuntimeWithStore(
     },
     onDetachedTurnEvent,
   });
-  toolContext.delegationService = threadRuntime.getDelegationService();
-  toolContext.dialogService = threadRuntime.getDialogService();
+  toolRegistry.bindOrchestrationServices({
+    delegationService: threadRuntime.getDelegationService(),
+    dialogService: threadRuntime.getDialogService(),
+  });
 
   return {
     kestrel,
@@ -4432,6 +4434,9 @@ export function applyRequiredManagedWorkspacePolicy(
     ...(isolation !== undefined ? { managedWorktreeIsolation: isolation } : {}),
     ...(workspace?.managedWorktreeScope !== undefined
       ? { managedWorktreeScope: workspace.managedWorktreeScope }
+      : {}),
+    ...(workspace?.managedWorktreeScopeId !== undefined
+      ? { managedWorktreeScopeId: workspace.managedWorktreeScopeId }
       : {}),
     ...(workspace?.managedWorktreeParentThreadId !== undefined
       ? {

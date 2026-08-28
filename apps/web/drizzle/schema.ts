@@ -1315,7 +1315,10 @@ export const projectWorkflows = pgTable(
     description: text("description").notNull().default(""),
     modelId: text("model_id").notNull(),
     currentVersion: integer("current_version").notNull().default(1),
+    activeVersionId: text("active_version_id"),
     enabled: boolean("enabled").notNull().default(false),
+    attentionCode: text("attention_code"),
+    attentionMessage: text("attention_message"),
     cronExpression: text("cron_expression"),
     timeZone: text("time_zone"),
     nextRunAt: timestamp("next_run_at", { withTimezone: true }),
@@ -1348,6 +1351,7 @@ export const projectWorkflowVersions = pgTable(
       .notNull()
       .references(() => projectWorkflows.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
+    modelId: text("model_id").notNull(),
     definition: jsonb("definition").notNull().$type<Record<string, unknown>>(),
     createdByUserId: text("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
@@ -1360,6 +1364,35 @@ export const projectWorkflowVersions = pgTable(
     uniqueIndex("project_workflow_versions_workflow_version_idx").on(
       table.workflowId,
       table.version,
+    ),
+  ],
+);
+
+export const projectWorkflowVersionActivations = pgTable(
+  "project_workflow_version_activations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workflowVersionId: text("workflow_version_id")
+      .notNull()
+      .references(() => projectWorkflowVersions.id, { onDelete: "cascade" }),
+    activatedByUserId: text("activated_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    environmentId: text("environment_id").notNull(),
+    manifest: jsonb("manifest").notNull().$type<Record<string, unknown>>(),
+    manifestDigest: text("manifest_digest").notNull(),
+    activatedAt: timestamp("activated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_workflow_version_activations_version_idx").on(
+      table.workflowVersionId,
+    ),
+    index("project_workflow_version_activations_actor_idx").on(
+      table.activatedByUserId,
     ),
   ],
 );
@@ -1387,6 +1420,8 @@ export const projectWorkflowRuns = pgTable(
       "project_context_revision_id_snapshot",
     ).notNull(),
     modelIdSnapshot: text("model_id_snapshot").notNull(),
+    workflowWorkspaceId: text("workflow_workspace_id").notNull(),
+    activationManifestDigest: text("activation_manifest_digest").notNull(),
     input: jsonb("input").$type<Record<string, unknown>>(),
     output: jsonb("output").$type<Record<string, unknown>>(),
     status: text("status", {
@@ -1403,6 +1438,8 @@ export const projectWorkflowRuns = pgTable(
       .default("queued"),
     failureCode: text("failure_code"),
     failureMessage: text("failure_message"),
+    attentionCode: text("attention_code"),
+    attentionMessage: text("attention_message"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -1509,7 +1546,7 @@ export const projectEmailTriggers = pgTable(
     instruction: text("instruction").notNull(),
     modelId: text("model_id").notNull(),
     claimedFromFilter: text("claimed_from_filter"),
-    accessMode: text("access_mode", { enum: ["private"] })
+    accessMode: text("access_mode", { enum: ["private", "public"] })
       .notNull()
       .default("private"),
     addressLocalPart: text("address_local_part").notNull(),
@@ -1532,10 +1569,9 @@ export const projectEmailTriggers = pgTable(
       foreignColumns: [projects.organizationId, projects.id],
       name: "project_email_triggers_organization_project_fk",
     }).onDelete("cascade"),
-    uniqueIndex("project_email_triggers_address_idx").on(
-      table.addressDomain,
-      table.addressLocalPart,
-    ),
+    uniqueIndex("project_email_triggers_address_idx")
+      .on(table.addressDomain, table.addressLocalPart)
+      .where(sql`${table.deletedAt} IS NULL`),
     uniqueIndex("project_email_triggers_organization_id_idx").on(
       table.organizationId,
       table.id,
@@ -1550,8 +1586,8 @@ export const projectEmailTriggers = pgTable(
       table.deletedAt,
     ),
     check(
-      "project_email_triggers_private_access_check",
-      sql`${table.accessMode} = 'private'`,
+      "project_email_triggers_access_mode_check",
+      sql`${table.accessMode} IN ('private', 'public')`,
     ),
     check(
       "project_email_triggers_revision_check",
@@ -6943,6 +6979,11 @@ export const organizationReceivingConnections = pgTable(
     credentialValidatedAt: timestamp("credential_validated_at", {
       withTimezone: true,
     }),
+    receivingDomainKind: text("receiving_domain_kind", {
+      enum: ["custom", "resend_managed"],
+    })
+      .notNull()
+      .default("custom"),
     receivingDomainId: text("receiving_domain_id"),
     receivingDomain: text("receiving_domain"),
     receivingDomainStatus: text("receiving_domain_status", {

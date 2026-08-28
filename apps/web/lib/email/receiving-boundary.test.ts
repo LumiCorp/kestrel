@@ -117,3 +117,10 @@ test("One and Desktop present the same server-owned receiving health evidence", 
     }
   }
 });
+
+test("One and Desktop can configure the Resend-managed receiving domain", () => {
+  for (const source of [onePresentation, desktopPresentation]) {
+    assert.match(source, /Resend-managed receiving domain/u);
+    assert.match(source, /\.resend\.app/u);
+  }
+});

@@ -147,6 +147,7 @@ export type KestrelOneAgentResponseInput = {
   threadId: string;
   durableTurnId?: string | undefined;
   noninteractive?: boolean | undefined;
+  workflowRunAuthority?: Record<string, unknown> | undefined;
   messages: UIMessage[];
   /** Resolved by the durable worker's web-owned attachment boundary. `null`
    * intentionally skips legacy in-process storage resolution during reattach. */
@@ -169,7 +170,6 @@ export type KestrelOneAgentResponseInput = {
         requestId: string;
         eventType: string;
         message: string;
-        approved?: boolean | undefined;
         decision?: "decline" | "approve_once" | "remember_approval" | undefined;
         decidingActor?: RunnerActorMetadata | undefined;
         preparedApprovalCleanup?: RunnerPreparedApprovalCleanupV1 | undefined;
@@ -236,7 +236,9 @@ export function createKestrelOneAgentResponseFromAgent(
           requestId: input.approvalDecision.approvalId,
           eventType: "user.approval" as const,
           message: input.approvalDecision.approved ? "approve" : "deny",
-          approved: input.approvalDecision.approved,
+          decision: input.approvalDecision.approved
+            ? ("approve_once" as const)
+            : ("decline" as const),
           ...(input.approvalDecision.reason !== undefined
             ? { reason: input.approvalDecision.reason }
             : {}),
@@ -293,6 +295,9 @@ export function createKestrelOneAgentResponseFromAgent(
               message: latestUserMessage,
               eventType: interactionResponse?.eventType ?? "user.message",
               ...(input.noninteractive === true ? { noninteractive: true } : {}),
+              ...(input.workflowRunAuthority
+                ? { workflowRunAuthority: input.workflowRunAuthority as never }
+                : {}),
               interactionMode: input.interactionMode,
               ...(attachments.length > 0 ? { attachments } : {}),
               ...(fileInventory.length > 0

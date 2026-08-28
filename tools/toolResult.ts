@@ -7,6 +7,19 @@ import type {
 import { buildKestrelAgentToolModelContext } from "../src/runtime/KestrelAgentContextBuilder.js";
 import { RunCancelledError, RuntimeFailure } from "../src/runtime/RuntimeFailure.js";
 import { sanitizeJsonValue, stringifySanitizedJson } from "../src/runtime/jsonSanitizer.js";
+import { projectGmailMutationActivityInput } from "../src/apps/gmailMutation.js";
+import {
+  projectMicrosoft365TeamsReadAuditInput,
+  projectMicrosoft365TeamsReadAuditOutput,
+} from "../src/apps/microsoft365TeamsAudit.js";
+import {
+  projectMicrosoft365TeamsSendAuditInput,
+  projectMicrosoft365TeamsSendAuditOutput,
+} from "../src/apps/microsoft365TeamsSendAudit.js";
+import {
+  projectGoogleCalendarAuditInput,
+  projectGoogleCalendarAuditOutput,
+} from "../src/apps/googleCalendarAudit.js";
 import { storeJsonArtifact } from "./runtime/artifactStore.js";
 
 export type AgentToolRawHandler = (input: unknown) => Promise<unknown>;
@@ -83,6 +96,9 @@ export function buildAgentToolSuccessResult(input: AgentToolResultInput): AgentT
   const startedAt = input.startedAt ?? new Date().toISOString();
   const completedAt = input.completedAt ?? new Date().toISOString();
   const output = sanitizeJsonValue(input.output);
+  const auditOutput = sanitizeJsonValue(
+    auditOutputFor(input.toolName, input.input, output),
+  );
   const rawOutputRef = rawOutputRefFor(output);
   storeJsonArtifact(rawOutputRef, output);
   return {
@@ -97,8 +113,8 @@ export function buildAgentToolSuccessResult(input: AgentToolResultInput): AgentT
     }),
     auditRecord: {
       toolName: input.toolName,
-      input: sanitizeJsonValue(input.input),
-      output,
+      input: sanitizeJsonValue(auditInputFor(input.toolName, input.input)),
+      output: auditOutput,
       startedAt,
       completedAt,
       durationMs: durationMs(startedAt, completedAt),
@@ -132,7 +148,9 @@ export function replaceAgentToolResultOutput(
     }),
     auditRecord: {
       ...result.auditRecord,
-      output,
+      output: sanitizeJsonValue(
+        auditOutputFor(result.toolName, result.auditRecord.input, output),
+      ),
     },
   };
 }
@@ -142,6 +160,9 @@ export function buildAgentToolFailureResult(input: AgentToolFailureInput): Agent
   const completedAt = input.completedAt ?? new Date().toISOString();
   const error = normalizeToolError(input.error);
   const output = buildVisibleFailureOutput(input.toolName, input.input, error);
+  const auditOutput = sanitizeJsonValue(
+    auditOutputFor(input.toolName, input.input, output),
+  );
   const rawOutputRef = rawOutputRefFor({ error, output });
   storeJsonArtifact(rawOutputRef, { error, output });
   return {
@@ -157,8 +178,8 @@ export function buildAgentToolFailureResult(input: AgentToolFailureInput): Agent
     }),
     auditRecord: {
       toolName: input.toolName,
-      input: sanitizeJsonValue(input.input),
-      output,
+      input: sanitizeJsonValue(auditInputFor(input.toolName, input.input)),
+      output: auditOutput,
       error,
       startedAt,
       completedAt,
@@ -172,6 +193,9 @@ export function buildAgentToolFailedOutputResult(input: AgentToolFailedOutputInp
   const startedAt = input.startedAt ?? new Date().toISOString();
   const completedAt = input.completedAt ?? new Date().toISOString();
   const output = sanitizeJsonValue(input.output);
+  const auditOutput = sanitizeJsonValue(
+    auditOutputFor(input.toolName, input.input, output),
+  );
   const outputRecord = asRecord(output);
   const error = normalizeToolError(input.error ?? {
     code: asString(outputRecord?.errorCode) ?? "TOOL_EXECUTION_FAILED",
@@ -195,8 +219,8 @@ export function buildAgentToolFailedOutputResult(input: AgentToolFailedOutputInp
     }),
     auditRecord: {
       toolName: input.toolName,
-      input: sanitizeJsonValue(input.input),
-      output,
+      input: sanitizeJsonValue(auditInputFor(input.toolName, input.input)),
+      output: auditOutput,
       error,
       startedAt,
       completedAt,
@@ -208,6 +232,25 @@ export function buildAgentToolFailedOutputResult(input: AgentToolFailedOutputInp
 
 export function rawOutputRefFor(value: unknown): string {
   return `tool-output:${createHash("sha256").update(stableStringify(value)).digest("hex").slice(0, 16)}`;
+}
+
+function auditInputFor(toolName: string, input: unknown): unknown {
+  return projectGmailMutationActivityInput(toolName, input) ??
+    projectMicrosoft365TeamsReadAuditInput(toolName, input) ??
+    projectMicrosoft365TeamsSendAuditInput(toolName, input) ??
+    projectGoogleCalendarAuditInput(toolName, input) ??
+    input;
+}
+
+function auditOutputFor(
+  toolName: string,
+  input: unknown,
+  output: unknown,
+): unknown {
+  return projectMicrosoft365TeamsReadAuditOutput(toolName, input, output) ??
+    projectMicrosoft365TeamsSendAuditOutput(toolName, input, output) ??
+    projectGoogleCalendarAuditOutput(toolName, input, output) ??
+    output;
 }
 
 function buildModelContext(input: {

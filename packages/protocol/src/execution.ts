@@ -520,6 +520,39 @@ export interface RunnerHostedApprovalAuthorityV1 {
   threadId: string;
 }
 
+export const RUNNER_WORKFLOW_AUTHORITY_VERSION =
+  "runner_workflow_run_authority_v2" as const;
+
+export interface RunnerWorkflowCapabilityManifestV1 {
+  version: "workflow_capability_manifest_v2";
+  nativeTools: Array<{ toolId: string; descriptorContractRevision: string; authorityRevision: string }>;
+  actions: Array<{
+    nodeId: string;
+    toolId: string;
+    descriptorContractRevision: string;
+    approvalAuthorityRevision: string;
+    fixedInput: Record<string, unknown>;
+    inputBindings: Record<string, { kind: "kestrel_response_text"; sourceNodeId: string }>;
+    rememberedApprovalScope: RememberedApprovalScope;
+  }>;
+}
+
+export interface RunnerWorkflowRunAuthorityV1 {
+  version: typeof RUNNER_WORKFLOW_AUTHORITY_VERSION;
+  organizationId: string;
+  environmentId: string;
+  projectId: string;
+  workflowId: string;
+  workflowVersionId: string;
+  workflowRunId: string;
+  activationActorId: string;
+  manifestDigest: string;
+  manifest: RunnerWorkflowCapabilityManifestV1;
+  activeStep:
+    | { kind: "kestrel"; nodeId: string }
+    | { kind: "action"; nodeId: string; resolvedInput: Record<string, unknown> };
+}
+
 export const RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION =
   "runner_prepared_approval_cleanup_v1" as const;
 
@@ -607,6 +640,7 @@ export interface RunnerTurnInput {
   workspace?: Record<string, unknown> | undefined;
   workspaceSkills?: RunnerWorkspaceSkillCatalogEntry[] | undefined;
   hostedApprovalAuthority?: RunnerHostedApprovalAuthorityV1 | undefined;
+  workflowRunAuthority?: RunnerWorkflowRunAuthorityV1 | undefined;
 }
 
 export interface RunnerRunError {
@@ -3907,6 +3941,141 @@ function validateRunTurn(value: unknown, label: string): void {
       authority.threadId,
       `${label}.hostedApprovalAuthority.threadId`,
     );
+  }
+  if (turn.workflowRunAuthority !== undefined) {
+    const authority = requireRecord(
+      turn.workflowRunAuthority,
+      `${label}.workflowRunAuthority`,
+    );
+    const allowedKeys = new Set([
+      "version",
+      "organizationId",
+      "environmentId",
+      "projectId",
+      "workflowId",
+      "workflowVersionId",
+      "workflowRunId",
+      "activationActorId",
+      "manifestDigest",
+      "manifest",
+      "activeStep",
+    ]);
+    const unknownKey = Object.keys(authority).find(
+      (key) => !allowedKeys.has(key),
+    );
+    if (unknownKey !== undefined) {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority contains unknown field '${unknownKey}'`,
+      );
+    }
+    if (authority.version !== RUNNER_WORKFLOW_AUTHORITY_VERSION) {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.version is invalid`,
+      );
+    }
+    for (const field of [
+      "organizationId",
+      "environmentId",
+      "projectId",
+      "workflowId",
+      "workflowVersionId",
+      "workflowRunId",
+      "activationActorId",
+      "manifestDigest",
+    ] as const) {
+      requireNonEmptyString(
+        authority[field],
+        `${label}.workflowRunAuthority.${field}`,
+      );
+    }
+    const manifest = requireRecord(
+      authority.manifest,
+      `${label}.workflowRunAuthority.manifest`,
+    );
+    if (manifest.version !== "workflow_capability_manifest_v2") {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.manifest.version is invalid`,
+      );
+    }
+    const manifestAllowedKeys = new Set(["version", "nativeTools", "actions"]);
+    const unknownManifestKey = Object.keys(manifest).find((key) => !manifestAllowedKeys.has(key));
+    if (unknownManifestKey !== undefined) {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.manifest contains unknown field '${unknownManifestKey}'`,
+      );
+    }
+    if (!Array.isArray(manifest.nativeTools)) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.nativeTools must be an array`);
+    if (!Array.isArray(manifest.actions)) {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.manifest.actions must be an array`,
+      );
+    }
+    const nativeToolIds = new Set<string>();
+    for (const [index, candidate] of manifest.nativeTools.entries()) {
+      const nativeTool = requireRecord(candidate, `${label}.workflowRunAuthority.manifest.nativeTools[${index}]`);
+      const keys = new Set(["toolId", "descriptorContractRevision", "authorityRevision"]);
+      const unknown = Object.keys(nativeTool).find((key) => !keys.has(key));
+      if (unknown !== undefined) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.nativeTools[${index}] contains unknown field '${unknown}'`);
+      for (const field of ["toolId", "descriptorContractRevision", "authorityRevision"] as const) requireNonEmptyString(nativeTool[field], `${label}.workflowRunAuthority.manifest.nativeTools[${index}].${field}`);
+      if (nativeToolIds.has(nativeTool.toolId as string)) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.nativeTools contains duplicate tool '${nativeTool.toolId as string}'`);
+      nativeToolIds.add(nativeTool.toolId as string);
+    }
+    const actionNodeIds = new Set<string>();
+    for (const [index, candidate] of manifest.actions.entries()) {
+      const action = requireRecord(candidate, `${label}.workflowRunAuthority.manifest.actions[${index}]`);
+      const keys = new Set(["nodeId", "toolId", "descriptorContractRevision", "approvalAuthorityRevision", "fixedInput", "inputBindings", "rememberedApprovalScope"]);
+      const unknown = Object.keys(action).find((key) => !keys.has(key));
+      if (unknown !== undefined) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.actions[${index}] contains unknown field '${unknown}'`);
+      for (const field of ["nodeId", "toolId", "descriptorContractRevision", "approvalAuthorityRevision"] as const) requireNonEmptyString(action[field], `${label}.workflowRunAuthority.manifest.actions[${index}].${field}`);
+      requireRecord(action.fixedInput, `${label}.workflowRunAuthority.manifest.actions[${index}].fixedInput`);
+      const bindings = requireRecord(action.inputBindings, `${label}.workflowRunAuthority.manifest.actions[${index}].inputBindings`);
+      for (const [pointer, candidateBinding] of Object.entries(bindings)) {
+        if (!/^\/(?:[^~\/]|~[01])+(?:\/(?:[^~\/]|~[01])+)*$/u.test(pointer)) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.actions[${index}].inputBindings contains an invalid JSON Pointer`);
+        const binding = requireRecord(candidateBinding, `${label}.workflowRunAuthority.manifest.actions[${index}].inputBindings.${pointer}`);
+        if (Object.keys(binding).some((key) => key !== "kind" && key !== "sourceNodeId") || binding.kind !== "kestrel_response_text") throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.actions[${index}].inputBindings.${pointer} is invalid`);
+        requireNonEmptyString(binding.sourceNodeId, `${label}.workflowRunAuthority.manifest.actions[${index}].inputBindings.${pointer}.sourceNodeId`);
+      }
+      parseRememberedApprovalScope(action.rememberedApprovalScope);
+      if (actionNodeIds.has(action.nodeId as string)) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.actions contains duplicate node '${action.nodeId as string}'`);
+      actionNodeIds.add(action.nodeId as string);
+    }
+    const activeStep = requireRecord(
+      authority.activeStep,
+      `${label}.workflowRunAuthority.activeStep`,
+    );
+    const activeStepAllowedKeys = new Set(
+      activeStep.kind === "action"
+        ? ["kind", "nodeId", "resolvedInput"]
+        : ["kind", "nodeId"],
+    );
+    const unknownActiveStepKey = Object.keys(activeStep).find(
+      (key) => !activeStepAllowedKeys.has(key),
+    );
+    if (unknownActiveStepKey !== undefined) {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.activeStep contains unknown field '${unknownActiveStepKey}'`,
+      );
+    }
+    if (activeStep.kind !== "kestrel" && activeStep.kind !== "action") {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.activeStep.kind is invalid`,
+      );
+    }
+    requireNonEmptyString(
+      activeStep.nodeId,
+      `${label}.workflowRunAuthority.activeStep.nodeId`,
+    );
+    if (activeStep.kind === "action") {
+      requireRecord(
+        activeStep.resolvedInput,
+        `${label}.workflowRunAuthority.activeStep.resolvedInput`,
+      );
+      if (!actionNodeIds.has(activeStep.nodeId as string)) {
+        throw new RunnerProtocolContractError(
+          `${label}.workflowRunAuthority.activeStep does not match an activated Action`,
+        );
+      }
+    }
   }
 }
 

@@ -102,6 +102,41 @@ test("approval presenters follow the executable email, calendar, Teams, and GitH
   ]);
 });
 
+test("Desktop Gmail approvals display the exact provider and Thread-file preparation", () => {
+  const presentation = buildToolApprovalPresentation({
+    toolName: "google_workspace.reply_gmail",
+    effectiveInput: {
+      messageId: "model-supplied-message-id",
+      text: "The exact reply body.",
+      __kestrelGmailPrepared: {
+        envelope: {
+          to: ["recipient@example.com"],
+          cc: [],
+          subject: "Re: Planning",
+          text: "The exact reply body.",
+          threadId: "provider-thread-1",
+        },
+        attachments: [{
+          fileId: "file-1",
+          filename: "plan.pdf",
+          mediaType: "application/pdf",
+          sizeBytes: 42,
+          sha256: "a".repeat(64),
+        }],
+      },
+    },
+  });
+  assert.equal(presentation.title, "Reply with Gmail");
+  assert.deepEqual(presentation.fields.slice(0, 4), [
+    { label: "Thread", value: "provider-thread-1" },
+    { label: "To", value: "recipient@example.com" },
+    { label: "Subject", value: "Re: Planning" },
+    { label: "Message", value: "The exact reply body." },
+  ]);
+  assert.match(presentation.fields.at(-1)?.value ?? "", /plan\.pdf/u);
+  assert.doesNotMatch(JSON.stringify(presentation), /model-supplied-message-id/u);
+});
+
 test("unknown tools receive a conservative redacted fallback", () => {
   const presentation = buildToolApprovalPresentation({
     toolName: "unknown.tool",

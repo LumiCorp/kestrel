@@ -112,6 +112,7 @@ test(
             descriptorContractRevision: `sha256:${"d".repeat(64)}`,
             approvalAuthorityRevision: "authority-v1",
           },
+        scope: { kind: "tool_identity" as const },
           sourceInteractionId: "interaction_123",
         }],
         effectiveCapabilities: [
@@ -192,6 +193,7 @@ test(
             descriptorContractRevision: `sha256:${"d".repeat(64)}`,
             approvalAuthorityRevision: "authority-v1",
           },
+        scope: { kind: "tool_identity" as const },
           sourceInteractionId: "interaction_123",
         }],
         reasoning: {
@@ -301,10 +303,9 @@ test("ordinary hosted turns remain rolling-compatible without exact shell prefli
   assert.equal(calls[0]?.exactToolNames, undefined);
 });
 
-test("bridge Web accepts baseline preset 2, compatibility V2, then activation V4", async () => {
+test("bridge Web accepts the preset 2 bridge and canonical V4 activation", async () => {
   const transition = [
     { presetVersion: 2, hostedApprovalProducerProtocol: undefined },
-    { presetVersion: 4, hostedApprovalProducerProtocol: "v2" as const },
     { presetVersion: 4, hostedApprovalProducerProtocol: "v4" as const },
   ];
   for (const [index, stage] of transition.entries()) {
@@ -417,6 +418,11 @@ test("bridge Web fails closed for unsupported or ambiguous hosted profiles", asy
     },
     {
       environmentPreset: { id: "workspace_hosted", version: 4 },
+      approvalPolicyPackId: "hosted_workspace",
+    },
+    {
+      environmentPreset: { id: "workspace_hosted", version: 4 },
+      hostedApprovalProducerProtocol: "v2" as const,
       approvalPolicyPackId: "hosted_workspace",
     },
     {

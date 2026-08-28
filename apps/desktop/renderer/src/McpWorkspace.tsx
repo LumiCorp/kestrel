@@ -64,7 +64,9 @@ interface McpWorkspaceProps {
   onError: (message: string | undefined) => void;
   settings: DesktopRendererSettings;
   navigationRequest: DesktopAppsNavigationRequest;
-  onSettings: (update: DesktopRendererSettingsUpdate) => Promise<DesktopRendererSettings>;
+  onSettings: (
+    update: DesktopRendererSettingsUpdate,
+  ) => Promise<DesktopRendererSettings>;
   onDiscoveryChange?: (result: DesktopMcpDiscoveryResult) => void;
 }
 
@@ -77,10 +79,9 @@ export function McpWorkspace({
 }: McpWorkspaceProps) {
   const [result, setResult] = useState<DesktopMcpDiscoveryResult>();
   const [capabilityView, setCapabilityView] = useState<DesktopCapabilityView>();
-  const [toolCapabilityId, setToolCapabilityId] = useState<DesktopCapabilityId>();
-  const [selectedId, setSelectedId] = useState<string>(
-    TOOL_SERVICES_SELECTION,
-  );
+  const [toolCapabilityId, setToolCapabilityId] =
+    useState<DesktopCapabilityId>();
+  const [selectedId, setSelectedId] = useState<string>(TOOL_SERVICES_SELECTION);
   const [loading, setLoading] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft] = useState<McpServerDraft>(() => emptyMcpDraft());
@@ -120,11 +121,12 @@ export function McpWorkspace({
     if (target.kind === "app") {
       setSelectedId(`app:${target.appId}`);
       setToolCapabilityId(undefined);
-    } else if (target.kind === "capability" && (
-      target.capabilityId === "tools.internet.tavily" ||
-      target.capabilityId === "tools.weather" ||
-      target.capabilityId === "tools.network.free"
-    )) {
+    } else if (
+      target.kind === "capability" &&
+      (target.capabilityId === "tools.internet.tavily" ||
+        target.capabilityId === "tools.weather" ||
+        target.capabilityId === "tools.network.free")
+    ) {
       setSelectedId(TOOL_SERVICES_SELECTION);
       setToolCapabilityId(target.capabilityId);
     } else {
@@ -438,34 +440,35 @@ export function McpWorkspace({
               const previous = DESKTOP_STANDARD_APPS[index - 1];
               return (
                 <Fragment key={app.id}>
-                {index === 0 || previous?.preinstalled !== app.preinstalled ? (
-                  <div className="mcp-list-group-heading">
-                    {app.preinstalled ? "Included plugins" : "Apps"}
-                  </div>
-                ) : null}
-                <button
-                  type="button"
-                  className={`mcp-row ${selectedId === `app:${app.id}` ? "active" : ""}`}
-                  onClick={() => {
-                    setSelectedId(`app:${app.id}`);
-                    setToolCapabilityId(undefined);
-                    setConfirmingRemove(false);
-                  }}
-                >
-                  <Plug size={16} aria-hidden="true" />
-                  <span>
-                    <strong>{app.name}</strong>
-                    <small>
-                      {app.capabilityPacks.length}{" "}
-                      {app.capabilityPacks.length === 1
-                        ? "capability pack"
-                        : "capability packs"}
-                    </small>
-                  </span>
-                  <span
-                    className={`mcp-enabled ${connection?.enabled ? "enabled" : ""}`}
+                  {index === 0 ||
+                  previous?.preinstalled !== app.preinstalled ? (
+                    <div className="mcp-list-group-heading">
+                      {app.preinstalled ? "Included plugins" : "Apps"}
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={`mcp-row ${selectedId === `app:${app.id}` ? "active" : ""}`}
+                    onClick={() => {
+                      setSelectedId(`app:${app.id}`);
+                      setToolCapabilityId(undefined);
+                      setConfirmingRemove(false);
+                    }}
                   >
-                    {app.preinstalled
+                    <Plug size={16} aria-hidden="true" />
+                    <span>
+                      <strong>{app.name}</strong>
+                      <small>
+                        {app.capabilityPacks.length}{" "}
+                        {app.capabilityPacks.length === 1
+                          ? "capability pack"
+                          : "capability packs"}
+                      </small>
+                    </span>
+                    <span
+                      className={`mcp-enabled ${connection?.enabled ? "enabled" : ""}`}
+                    >
+                      {app.preinstalled
                         ? getDesktopAppDefinition(app.id) !== undefined
                           ? "Included"
                           : "Kestrel One"
@@ -477,8 +480,8 @@ export function McpWorkspace({
                           : connection.enabled
                             ? "Connected"
                             : "Disabled"}
-                  </span>
-                </button>
+                    </span>
+                  </button>
                 </Fragment>
               );
             })}
@@ -530,13 +533,29 @@ export function McpWorkspace({
               </span>
             ) : null}
           </div>
-          {(selectedId === TOOL_SERVICES_SELECTION || selectedStandardApp?.id === "tavily") && capabilityView !== undefined ? (
+          {(selectedId === TOOL_SERVICES_SELECTION ||
+            selectedStandardApp?.id === "tavily") &&
+          capabilityView !== undefined ? (
             <ToolServicesSettings
-              capabilities={capabilityView.capabilities.filter((capability) => capability.category === "tools_services")}
-              credentialStoreAvailable={capabilityView.credentialStore.available}
-              navigationRequest={(selectedStandardApp?.id === "tavily" ? "tools.internet.tavily" : toolCapabilityId) === undefined
-                ? undefined
-                : { capabilityId: selectedStandardApp?.id === "tavily" ? "tools.internet.tavily" : toolCapabilityId!, requestId: navigationRequest.requestId }}
+              capabilities={capabilityView.capabilities.filter(
+                (capability) => capability.category === "tools_services",
+              )}
+              credentialStoreAvailable={
+                capabilityView.credentialStore.available
+              }
+              navigationRequest={
+                (selectedStandardApp?.id === "tavily"
+                  ? "tools.internet.tavily"
+                  : toolCapabilityId) === undefined
+                  ? undefined
+                  : {
+                      capabilityId:
+                        selectedStandardApp?.id === "tavily"
+                          ? "tools.internet.tavily"
+                          : toolCapabilityId!,
+                      requestId: navigationRequest.requestId,
+                    }
+              }
               onCapabilitiesChange={setCapabilityView}
               onNotice={setNotice}
               onOpenMcp={beginAdd}
@@ -545,7 +564,9 @@ export function McpWorkspace({
           ) : selectedStandardApp !== undefined ? (
             <StandardAppDetail
               app={selectedStandardApp}
-              builtInEnabled={settings.defaultEnabledBuiltInAppIds.includes(selectedStandardApp.id)}
+              builtInEnabled={settings.defaultEnabledBuiltInAppIds.includes(
+                selectedStandardApp.id,
+              )}
               server={selected}
               loading={loading}
               confirmingRemove={confirmingRemove}
@@ -558,13 +579,22 @@ export function McpWorkspace({
               onBuiltInToggle={(enabled) =>
                 void onSettings({
                   defaultEnabledBuiltInAppIds: enabled
-                    ? [...new Set([...settings.defaultEnabledBuiltInAppIds, selectedStandardApp.id])]
-                    : settings.defaultEnabledBuiltInAppIds.filter((id) => id !== selectedStandardApp.id),
+                    ? [
+                        ...new Set([
+                          ...settings.defaultEnabledBuiltInAppIds,
+                          selectedStandardApp.id,
+                        ]),
+                      ]
+                    : settings.defaultEnabledBuiltInAppIds.filter(
+                        (id) => id !== selectedStandardApp.id,
+                      ),
                 })
               }
               onSelectApp={(appId) => {
                 setSelectedId(`app:${appId}`);
-                setToolCapabilityId(appId === "tavily" ? "tools.internet.tavily" : undefined);
+                setToolCapabilityId(
+                  appId === "tavily" ? "tools.internet.tavily" : undefined,
+                );
               }}
               servers={result?.servers ?? []}
               onConfirmRemove={() => setConfirmingRemove(true)}
@@ -976,8 +1006,8 @@ function StandardAppDetail({
     setSecret("");
     setConnecting(false);
     setConnectionError(undefined);
-    setSelectedCapabilityPacks([]);
-  }, [app.id, server?.id]);
+    setSelectedCapabilityPacks(server?.capabilityPacks ?? []);
+  }, [app.id, server?.capabilityPacks, server?.id]);
 
   async function connectAuthorizedApp(): Promise<void> {
     if (connection?.kind !== "authorization") return;
@@ -1045,7 +1075,11 @@ function StandardAppDetail({
         </dl>
         {included ? (
           <label className="settings-check">
-            <input type="checkbox" checked={builtInEnabled} onChange={(event) => onBuiltInToggle(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={builtInEnabled}
+              onChange={(event) => onBuiltInToggle(event.target.checked)}
+            />
             Available by default in every conversation
           </label>
         ) : null}
@@ -1080,18 +1114,71 @@ function StandardAppDetail({
     const policyManagedByConversation =
       connection?.kind === "authorization" && connection.runtime === "native";
     return (
-      <McpServerDetail
-        confirmingRemove={confirmingRemove}
-        loading={loading}
-        manifest={app}
-        onCancelRemove={onCancelRemove}
-        onConfirmRemove={onConfirmRemove}
-        onPolicyChange={onPolicyChange}
-        onRemove={onRemove}
-        onSave={onSave}
-        policyManagedByConversation={policyManagedByConversation}
-        server={server}
-      />
+      <>
+        <McpServerDetail
+          confirmingRemove={confirmingRemove}
+          loading={loading}
+          manifest={app}
+          onCancelRemove={onCancelRemove}
+          onConfirmRemove={onConfirmRemove}
+          onPolicyChange={onPolicyChange}
+          onRemove={onRemove}
+          onSave={onSave}
+          policyManagedByConversation={policyManagedByConversation}
+          server={server}
+        />
+        {connection?.kind === "authorization" &&
+        connection.runtime === "native" &&
+        connection.capabilityPackScopes !== undefined ? (
+          <div className="mcp-detail-body">
+            <fieldset>
+              <legend>Connection capabilities</legend>
+              {app.capabilityPacks
+                .filter(
+                  (pack) =>
+                    connection.capabilityPackScopes?.[pack.key] !== undefined,
+                )
+                .map((pack) => (
+                  <label key={pack.key}>
+                    <input
+                      checked={selectedCapabilityPacks.includes(pack.key)}
+                      disabled={loading || connecting}
+                      onChange={(event) =>
+                        setSelectedCapabilityPacks((current) =>
+                          event.target.checked
+                            ? [...current, pack.key]
+                            : current.filter((key) => key !== pack.key),
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    <span>
+                      {pack.name}
+                      <small>{pack.description}</small>
+                    </span>
+                  </label>
+                ))}
+            </fieldset>
+            <p className="provider-dialog-note">
+              Changing this selection requests consent only for newly needed
+              Google Workspace scopes.
+            </p>
+            {connectionError !== undefined ? (
+              <p className="inline-warning">{connectionError}</p>
+            ) : null}
+            <button
+              className="primary-button"
+              disabled={
+                loading || connecting || selectedCapabilityPacks.length === 0
+              }
+              onClick={() => void connectAuthorizedApp()}
+              type="button"
+            >
+              {connecting ? "Updating…" : "Update connection"}
+            </button>
+          </div>
+        ) : null}
+      </>
     );
   }
   return (
@@ -1384,8 +1471,8 @@ function McpServerDetail({
           {policyManagedByConversation
             ? "Approvals follow the active conversation policy"
             : managed
-            ? "Changes apply immediately"
-            : "Add this App to configure access"}
+              ? "Changes apply immediately"
+              : "Add this App to configure access"}
         </span>
       </div>
       {manifest !== undefined ? (

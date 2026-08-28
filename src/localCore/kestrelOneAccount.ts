@@ -51,6 +51,7 @@ export type KestrelOneAccountStatus =
 export type KestrelOneReceivingConnection = {
   provider: "resend";
   configured: boolean;
+  receivingDomainKind: "custom" | "resend_managed" | null;
   credentialStatus: "not_configured" | "full_access" | "insufficient" | "error";
   credentialValidatedAt: string | null;
   receivingDomain: string | null;
@@ -320,7 +321,7 @@ export class LocalCoreKestrelOneAccountManager {
           method: "DELETE",
           headers: { authorization: `Bearer ${credential.accessToken}` },
         },
-      ).catch(() => undefined);
+      ).catch(() => {});
     }
     await this.#store.delete(ACCOUNT_CREDENTIAL_ID);
     return { status: "signed_out" };
@@ -353,14 +354,17 @@ export class LocalCoreKestrelOneAccountManager {
 
   async saveReceivingConnection(input: {
     organizationId: string;
-    receivingDomainId: string;
+    receivingDomainId?: string | undefined;
+    receivingDomain?: string | undefined;
     apiKey?: string | undefined;
   }): Promise<KestrelOneReceivingConnection> {
     const body = await this.#receivingRequest(input.organizationId, "", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        receivingDomainId: input.receivingDomainId,
+        ...(input.receivingDomain
+          ? { receivingDomain: input.receivingDomain }
+          : { receivingDomainId: input.receivingDomainId }),
         ...(input.apiKey ? { apiKey: input.apiKey } : {}),
       }),
     });
@@ -814,7 +818,7 @@ class DesktopPreviewTunnel {
       throw new Error("Desktop preview expiration is invalid.");
     }
     this.#expiresAt = nextExpiresAt;
-    if (!this.#closed && !this.#socket && Date.now() < this.#expiresAt) {
+    if (!(this.#closed || this.#socket ) && Date.now() < this.#expiresAt) {
       if (this.#reconnectTimer) clearTimeout(this.#reconnectTimer);
       this.#reconnectTimer = undefined;
       this.#connect();
@@ -834,7 +838,7 @@ class DesktopPreviewTunnel {
     socket.once("close", () => {
       if (this.#socket === socket) this.#socket = undefined;
       if (!this.#closed && Date.now() < this.#expiresAt) {
-        this.#reconnectTimer = setTimeout(() => this.#connect(), 1_000);
+        this.#reconnectTimer = setTimeout(() => this.#connect(), 1000);
         this.#reconnectTimer.unref();
       }
     });
@@ -1000,7 +1004,7 @@ function parseLocalPreviewUrl(value: string) {
     throw new Error("Only an HTTP loopback preview URL can be published.");
   }
   const port = Number(url.port);
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+  if (!Number.isInteger(port) || port < 1024 || port > 65_535) {
     throw new Error("The local preview port is invalid.");
   }
   return { origin: url.origin, port };
@@ -1209,6 +1213,14 @@ function parseReceivingConnection(value: unknown): KestrelOneReceivingConnection
   return {
     provider: requireEnum(item.provider, ["resend"], "provider"),
     configured: requireBoolean(item.configured, "configured"),
+    receivingDomainKind:
+      item.receivingDomainKind === null
+        ? null
+        : requireEnum(
+            item.receivingDomainKind,
+            ["custom", "resend_managed"],
+            "receivingDomainKind",
+          ),
     credentialStatus: requireEnum(
       item.credentialStatus,
       ["not_configured", "full_access", "insufficient", "error"],

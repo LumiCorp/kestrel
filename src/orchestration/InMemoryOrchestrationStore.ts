@@ -102,6 +102,16 @@ export class InMemoryOrchestrationStore implements OrchestrationStore {
       return existing?.normalizedName === dialog.normalizedName;
     });
     if (exists) return false;
+    this.threads.set(record.childThreadId, {
+      threadId: record.childThreadId,
+      sessionId: record.childThreadId,
+      title: `Delegated: ${record.title}`,
+      status: "IDLE",
+      parentThreadId: record.parentThreadId,
+      metadata: { delegationPrompt: record.prompt },
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    });
     this.delegations.set(record.delegationId, clone(record));
     return true;
   }

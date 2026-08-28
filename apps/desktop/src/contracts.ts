@@ -509,7 +509,8 @@ export interface DesktopBridge {
   }): Promise<KestrelOneReceivingDomain[]>;
   saveKestrelOneReceivingConnection(input: {
     organizationId: string;
-    receivingDomainId: string;
+    receivingDomainId?: string | undefined;
+    receivingDomain?: string | undefined;
     apiKey?: string | undefined;
   }): Promise<KestrelOneReceivingConnection>;
   getKestrelOneThread(threadId: string): Promise<KestrelOneThreadSnapshot>;

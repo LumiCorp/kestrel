@@ -2,7 +2,6 @@
 
 import {
   Bot,
-  Braces,
   CircleStop,
   Clock3,
   GitMerge,
@@ -34,12 +33,19 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { WorkflowNode } from "@/lib/workflows/contracts";
 import { cn } from "@/lib/utils";
+import {
+  createWorkflowToolInput,
+  WorkflowToolInputForm,
+} from "./workflow-tool-input-form";
+import { WorkflowToolPicker } from "./workflow-tool-picker";
+import { WorkflowActionBindings } from "./workflow-action-bindings";
 
 export type WorkflowToolOption = {
   name: string;
   label: string;
   description: string;
   appName: string;
+  inputSchema: Record<string, unknown>;
 };
 
 const nodePresentation = {
@@ -57,8 +63,8 @@ const nodePresentation = {
   },
   tool: {
     icon: Wrench,
-    label: "Tool call",
-    description: "Call one tool that this project is allowed to use.",
+    label: "Action",
+    description: "Perform one consequential action configured in this workflow.",
     accent: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
   },
   gate: {
@@ -85,6 +91,19 @@ function FieldHelp({ children }: { children: React.ReactNode }) {
   return <p className="text-muted-foreground text-xs leading-relaxed">{children}</p>;
 }
 
+function withoutJsonPointer(input: Record<string, unknown>, pointer: string) {
+  const next = structuredClone(input);
+  const segments = pointer.slice(1).split("/").map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
+  let current: Record<string, unknown> = next;
+  for (const segment of segments.slice(0, -1)) {
+    const child = current[segment];
+    if (!child || typeof child !== "object" || Array.isArray(child)) return next;
+    current = child as Record<string, unknown>;
+  }
+  delete current[segments.at(-1)!];
+  return next;
+}
+
 export function WorkflowNodeDialog({
   enabled,
   node,
@@ -95,6 +114,7 @@ export function WorkflowNodeDialog({
   open,
   tools,
   toolsLoading,
+  bindingSources,
 }: {
   enabled: boolean;
   node: WorkflowNode | null;
@@ -105,6 +125,7 @@ export function WorkflowNodeDialog({
   open: boolean;
   tools: WorkflowToolOption[];
   toolsLoading: boolean;
+  bindingSources: Array<{ id: string; label: string }>;
 }) {
   if (!node) return null;
   const presentation = nodePresentation[node.kind];
@@ -118,7 +139,7 @@ export function WorkflowNodeDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-h-[min(760px,calc(100dvh-2rem))] overflow-hidden p-0 sm:max-w-xl">
+      <DialogContent className="max-h-[min(820px,calc(100dvh-2rem))] overflow-hidden p-0 sm:max-w-2xl">
         <DialogHeader className="border-b bg-muted/30 px-6 py-5 pr-14">
           <div className="flex items-start gap-3">
             <span className={cn("rounded-xl p-2.5", presentation.accent)}>
@@ -170,75 +191,70 @@ export function WorkflowNodeDialog({
           {node.kind === "tool" ? (
             <>
               <div className="space-y-2">
-                <Label>Project tool</Label>
-                <Select
-                  disabled={toolsLoading || tools.length === 0}
-                  onValueChange={(toolName) =>
+                <Label>Project Action</Label>
+                <WorkflowToolPicker
+                  onSelect={(tool) => {
                     onUpdate((current) =>
                       current.kind === "tool"
-                        ? { ...current, config: { ...current.config, toolName } }
+                        ? {
+                            ...current,
+                            config: {
+                              ...current.config,
+                              toolName: tool.name,
+                              input: createWorkflowToolInput(tool.inputSchema),
+                              inputBindings: {},
+                            },
+                          }
                         : current,
-                    )
-                  }
-                  value={selectedTool?.name ?? ""}
-                >
-                  <SelectTrigger
-                    aria-label="Project tool"
-                    className="h-auto min-h-10 py-2"
-                  >
-                    <SelectValue
-                      placeholder={toolsLoading ? "Loading project tools…" : "Choose an allowed tool"}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {tools.map((tool) => (
-                      <SelectItem key={tool.name} value={tool.name}>
-                        <span className="flex min-w-0 flex-col py-0.5">
-                          <span className="font-medium">{tool.label}</span>
-                          <span className="text-muted-foreground text-xs">{tool.appName}</span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                    );
+                  }}
+                  selectedName={node.config.toolName || null}
+                  tools={tools}
+                  toolsLoading={toolsLoading}
+                />
                 {hasUnavailableTool ? (
                   <p className="rounded-md border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-amber-700 text-xs dark:text-amber-300">
-                    “{node.config.toolName}” is not currently allowed for this project. Choose an available tool before saving.
+                    “{node.config.toolName}” is not currently available as an Action for this project. Choose an available Action before saving.
                   </p>
                 ) : selectedTool ? (
                   <FieldHelp>{selectedTool.description}</FieldHelp>
                 ) : toolsLoading ? null : (
-                  <FieldHelp>No enabled tools are available for this project.</FieldHelp>
+                  <FieldHelp>No enabled Actions are available for this project.</FieldHelp>
                 )}
               </div>
-              <div className="space-y-2">
-                <Label className="flex items-center gap-2" htmlFor="workflow-tool-input">
-                  <Braces className="size-3.5 text-muted-foreground" /> JSON input
-                </Label>
-                <Textarea
-                  className="min-h-40 resize-y font-mono text-xs"
-                  defaultValue={JSON.stringify(node.config.input, null, 2)}
-                  id="workflow-tool-input"
-                  key={`${node.id}-${node.config.toolName}`}
-                  onBlur={(event) => {
-                    try {
-                      const value = JSON.parse(event.target.value) as unknown;
-                      if (!(value && typeof value === "object" && !Array.isArray(value))) {
-                        throw new Error("Tool input must be a JSON object.");
-                      }
-                      onUpdate((current) =>
-                        current.kind === "tool"
-                          ? { ...current, config: { ...current.config, input: value as Record<string, unknown> } }
-                          : current,
-                      );
-                    } catch (error) {
-                      toast.error(error instanceof Error ? error.message : "Tool input must be valid JSON.");
-                    }
-                  }}
-                  spellCheck={false}
+              {selectedTool ? (<>
+                <WorkflowToolInputForm
+                  key={`${node.id}-${selectedTool.name}`}
+                  onChange={(input) =>
+                    onUpdate((current) =>
+                      current.kind === "tool"
+                        ? {
+                            ...current,
+                            config: {
+                              ...current.config,
+                              input: Object.keys(current.config.inputBindings).reduce(withoutJsonPointer, input),
+                            },
+                          }
+                        : current,
+                    )
+                  }
+                  schema={selectedTool.inputSchema}
+                  value={node.config.input}
                 />
-                <FieldHelp>The object is passed to the selected tool exactly as written.</FieldHelp>
-              </div>
+                {node.config.toolName !== "exec_command" ? <WorkflowActionBindings
+                  bindings={node.config.inputBindings}
+                  onChange={(inputBindings, newlyBoundPointer) => onUpdate(current => current.kind === "tool" ? {
+                    ...current,
+                    config: {
+                      ...current.config,
+                      inputBindings,
+                      input: newlyBoundPointer ? withoutJsonPointer(current.config.input, newlyBoundPointer) : current.config.input,
+                    },
+                  } : current)}
+                  schema={selectedTool.inputSchema}
+                  sources={bindingSources}
+                /> : null}
+              </>) : null}
             </>
           ) : null}
 

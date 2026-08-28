@@ -103,6 +103,43 @@ test("runtime configuration parser trims strings and canonicalizes HTTP URLs", (
   );
 });
 
+test("runtime configuration accepts distinct Gmail restricted-data evidence per route only", () => {
+  const defaults = createDefaultLocalCoreRuntimeConfiguration();
+  const evidence = {
+    routeFingerprint: "sha256:route-primary",
+    processorId: "kestrel-approved-processor",
+    purpose: "user_authorized_productivity",
+    retention: "documented",
+    trainingUse: "prohibited",
+    deletion: "documented",
+    qualification: "qualified",
+    evidenceRevision: "evidence-1",
+    observedAt: "2026-08-27T00:00:00.000Z",
+  } as const;
+  const configuration = parseLocalCoreRuntimeConfiguration({
+    ...defaults,
+    gmailRestrictedData: [evidence, {
+      ...evidence,
+      routeFingerprint: "sha256:route-maintenance",
+    }],
+  });
+  assert.equal(configuration.gmailRestrictedData?.length, 2);
+  assert.throws(
+    () => parseLocalCoreRuntimeConfiguration({
+      ...defaults,
+      gmailRestrictedData: [evidence, evidence],
+    }),
+    /repeats a route/u,
+  );
+  assert.throws(
+    () => parseLocalCoreRuntimeConfiguration({
+      ...defaults,
+      gmailRestrictedData: [],
+    }),
+    /non-empty list/u,
+  );
+});
+
 test("runtime configuration rejects unknown and credential-shaped fields", () => {
   const defaults = createDefaultLocalCoreRuntimeConfiguration();
   assert.throws(

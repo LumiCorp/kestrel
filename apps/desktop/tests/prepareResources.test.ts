@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   DESKTOP_RESOURCE_DIRECTORIES,
+  DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS,
   shouldCopyDesktopResourceEntry,
 } from "../../../scripts/prepare-desktop-resources.ts";
 
@@ -10,6 +11,7 @@ import {
 test("desktop runtime resources include database migrations", () => {
   assert.ok(DESKTOP_RESOURCE_DIRECTORIES.includes("db/migrations"));
   assert.ok(DESKTOP_RESOURCE_DIRECTORIES.includes("packages/mcp-security"));
+  assert.ok(DESKTOP_RESOURCE_DRIFT_CRITICAL_PATHS.includes("tools"));
   assert.equal(DESKTOP_RESOURCE_DIRECTORIES.includes("apps/web"), false);
   assert.equal(DESKTOP_RESOURCE_DIRECTORIES.includes("packages/protocol"), false);
 });

@@ -1,7 +1,6 @@
 import "server-only";
 
 import { and, eq, ne, sql } from "drizzle-orm";
-import { resolveKestrelAppUrl } from "@/lib/app-url";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   decryptReceivingApiKey,
@@ -10,10 +9,11 @@ import {
   ReceivingConfigError,
   receivingOrganizationUnavailable,
 } from "./receiving-config";
+import type { ResendWebhookCreateRecoveryProvider } from "./receiving-provider";
 import {
-  prepareResendWebhookCreateIntent,
-  type ResendWebhookCreateRecoveryProvider,
-} from "./receiving-provider";
+  prepareReceivingWebhookIntent,
+  ReceivingWebhookTargetError,
+} from "./receiving-webhook-target";
 
 export async function stageReceivingWebhook(input: {
   organizationId: string;
@@ -199,12 +199,10 @@ async function prepareStagingAuthority(input: {
     }
     const intent =
       row.webhookCreateIntent ??
-      prepareResendWebhookCreateIntent(
-        new URL(
-          `/api/webhooks/resend/inbound/${encodeURIComponent(row.routeLocator)}`,
-          resolveKestrelAppUrl(input.env),
-        ).toString(),
-      );
+      receivingWebhookIntentOrThrow({
+        routeLocator: row.routeLocator,
+        env: input.env,
+      });
     if (!row.webhookCreateIntent) {
       await transaction
         .update(schema.organizationReceivingConnections)
@@ -242,6 +240,20 @@ async function prepareStagingAuthority(input: {
       stagingSequence: row.webhookStagingSequence,
     };
   });
+}
+
+function receivingWebhookIntentOrThrow(input: {
+  routeLocator: string;
+  env?: NodeJS.ProcessEnv;
+}) {
+  try {
+    return prepareReceivingWebhookIntent(input);
+  } catch (error) {
+    if (error instanceof ReceivingWebhookTargetError) {
+      throw new ReceivingConfigError(error.code, error.message);
+    }
+    throw error;
+  }
 }
 
 async function createAfterAttemptCheckpoint(

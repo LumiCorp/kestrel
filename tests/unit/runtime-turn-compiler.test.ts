@@ -22,6 +22,23 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
       projectId: "project-atlas",
       threadId: "session-compiler",
     },
+    workflowRunAuthority: {
+      version: "runner_workflow_run_authority_v2",
+      organizationId: "tenant-1",
+      environmentId: "environment-1",
+      projectId: "project-atlas",
+      workflowId: "workflow-1",
+      workflowVersionId: "workflow-version-1",
+      workflowRunId: "workflow-run-1",
+      activationActorId: "alice",
+      manifestDigest: "sha256:manifest",
+      manifest: {
+        version: "workflow_capability_manifest_v2",
+        nativeTools: [{ toolId: "fs.read_text", descriptorContractRevision: `sha256:${"1".repeat(64)}`, authorityRevision: `sha256:${"2".repeat(64)}` }],
+        actions: [],
+      },
+      activeStep: { kind: "kestrel", nodeId: "research" },
+    },
     interactionMode: "build",
     actSubmode: "full_auto",
     metadata: {
@@ -107,6 +124,7 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
   assert.deepEqual(compiled.payload, {
     message: "ship it",
     hostedApprovalAuthority: input.hostedApprovalAuthority,
+    workflowRunAuthority: input.workflowRunAuthority,
     actor: input.actor,
     enableRouteClassifier: true,
     modeSystemV2Enabled: true,

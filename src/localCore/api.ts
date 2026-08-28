@@ -790,6 +790,9 @@ export async function startLocalCoreApiServer(
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
           cancelActiveWork: !quiescedShutdownAccepted,
+          releaseInProcessAuthority: () => {
+            activeLocalCoreAuthorities.delete(authorityKey);
+          },
         });
       })().finally(() => {
         activeLocalCoreAuthorities.delete(authorityKey);
@@ -1362,7 +1365,10 @@ async function handleRequest(input: {
     }
     if (method === "PUT" && kestrelOneReceiving) {
       const body = await readJsonBody(input.request);
-      const record = requireObjectBody(body, "Kestrel One receiving configuration");
+      const record = requireObjectBody(
+        body,
+        "Kestrel One receiving configuration",
+      );
       writeJson(input.response, 200, {
         ok: true,
         connection: await input.kestrelOneAccount.saveReceivingConnection({
@@ -1383,7 +1389,10 @@ async function handleRequest(input: {
     );
     if (method === "POST" && kestrelOneReceivingDomains) {
       const body = await readJsonBody(input.request);
-      const record = requireObjectBody(body, "Kestrel One receiving domain request");
+      const record = requireObjectBody(
+        body,
+        "Kestrel One receiving domain request",
+      );
       writeJson(input.response, 200, {
         ok: true,
         domains: await input.kestrelOneAccount.inspectReceivingDomains({
@@ -1677,8 +1686,9 @@ async function handleRequest(input: {
       const secret = parseCredentialMutationBody(body);
       await credentialStore.set(credentialId, secret);
       if (isModelProviderCredential(credentialId)) {
-        await input.updateRuntimeConfiguration(async () =>
-          await input.runtimeConfigurationStore.update((current) => current),
+        await input.updateRuntimeConfiguration(
+          async () =>
+            await input.runtimeConfigurationStore.update((current) => current),
         );
       }
       writeJson(input.response, 200, {
@@ -1693,8 +1703,9 @@ async function handleRequest(input: {
         new UnavailableLocalCoreCredentialStore();
       const deleted = await credentialStore.delete(credentialId);
       if (deleted && isModelProviderCredential(credentialId)) {
-        await input.updateRuntimeConfiguration(async () =>
-          await input.runtimeConfigurationStore.update((current) => current),
+        await input.updateRuntimeConfiguration(
+          async () =>
+            await input.runtimeConfigurationStore.update((current) => current),
         );
       }
       writeJson(input.response, 200, {
@@ -1799,10 +1810,14 @@ async function handleRequest(input: {
         string,
         unknown
       >;
+      const { isGoogleWorkspacePack } =
+        await import("../apps/googleWorkspace.js");
       if (
         !Array.isArray(body.packs) ||
-        body.packs.length !== 1 ||
-        body.packs[0] !== "calendar"
+        body.packs.length === 0 ||
+        body.packs.some(
+          (pack) => typeof pack !== "string" || !isGoogleWorkspacePack(pack),
+        )
       )
         throw new LocalCoreApiRequestError(
           400,
@@ -1811,7 +1826,9 @@ async function handleRequest(input: {
         );
       const verification = await new LocalCoreGoogleWorkspaceService({
         credentialStore,
-      }).verify(["calendar"]);
+      }).verify([
+        ...new Set(body.packs),
+      ] as import("../apps/googleWorkspace.js").GoogleWorkspacePack[]);
       writeJson(input.response, 200, { ok: true, verification });
       return;
     }
@@ -2813,7 +2830,9 @@ async function handleRequest(input: {
       error instanceof LocalCoreRuntimeConfigurationError ? error : undefined;
     writeJson(
       input.response,
-      requestError?.statusCode ?? receivingAuthorizationError?.statusCode ?? 500,
+      requestError?.statusCode ??
+        receivingAuthorizationError?.statusCode ??
+        500,
       errorBody(
         requestError?.code ??
           (receivingAuthorizationError
@@ -2928,7 +2947,10 @@ function normalizeRequiredStringField(value: unknown, field: string): string {
   return candidate;
 }
 
-function requireObjectBody(value: unknown, label: string): Record<string, unknown> {
+function requireObjectBody(
+  value: unknown,
+  label: string,
+): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`${label} must be an object.`);
   }
@@ -3683,6 +3705,7 @@ async function closeServer(input: {
   projectRunRegistry: DesktopProjectRunRegistry;
   projectRunEventClients: Set<ProjectRunEventClient>;
   cancelActiveWork: boolean;
+  releaseInProcessAuthority: () => void;
 }): Promise<void> {
   const errors: Error[] = [];
   if (input.heartbeat !== undefined) {
@@ -3723,6 +3746,7 @@ async function closeServer(input: {
   await closeLocalCoreStore(input.homePath).catch((error) => {
     errors.push(asError(error));
   });
+  input.releaseInProcessAuthority();
   await rm(input.socketPath, { force: true }).catch((error) => {
     errors.push(asError(error));
   });

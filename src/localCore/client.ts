@@ -275,14 +275,17 @@ export class LocalCoreClient {
 
   async saveKestrelOneReceivingConnection(input: {
     organizationId: string;
-    receivingDomainId: string;
+    receivingDomainId?: string | undefined;
+    receivingDomain?: string | undefined;
     apiKey?: string | undefined;
   }): Promise<KestrelOneReceivingConnection> {
     return readObjectField<KestrelOneReceivingConnection>(
       await this.put(
         `/v1/kestrel-one/organizations/${encodeURIComponent(input.organizationId)}/email/receiving`,
         {
-          receivingDomainId: input.receivingDomainId,
+          ...(input.receivingDomain
+            ? { receivingDomain: input.receivingDomain }
+            : { receivingDomainId: input.receivingDomainId }),
           ...(input.apiKey ? { apiKey: input.apiKey } : {}),
         },
       ),
@@ -1282,16 +1285,16 @@ function parseCorrelatedRunnerErrorLine(
   commandId: string,
 ): string | undefined {
   if (line.length === 0) {
-    return undefined;
+    return ;
   }
   try {
     const event = parseRunnerEventV2(JSON.parse(line));
     if (event.type !== "runner.error" || event.commandId !== commandId) {
-      return undefined;
+      return ;
     }
     return JSON.stringify(event);
   } catch {
-    return undefined;
+    return ;
   }
 }
 

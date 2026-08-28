@@ -40,6 +40,7 @@ import type {
   WorkspaceGitSnapshot,
 } from "../git/contracts.js";
 import {
+  filterDesktopPersonalAppIds,
   parseDesktopExecutionSelection,
   parseDesktopModelConfigurations,
   type DesktopAppDefinition,
@@ -1692,6 +1693,7 @@ export interface DesktopProjectRegistration {
   id?: string | undefined;
   path: string;
   label: string;
+  personalAppIds?: string[] | undefined;
 }
 
 export type DesktopPackageManager = "npm" | "pnpm";
@@ -2134,6 +2136,13 @@ export function parseDesktopRendererSettingsUpdate(
           entry.label,
           `projects[${index}].label`,
         ),
+        personalAppIds: Array.isArray(entry.personalAppIds)
+          ? filterDesktopPersonalAppIds(
+              entry.personalAppIds.filter(
+                (appId): appId is string => typeof appId === "string",
+              ),
+            )
+          : [],
       };
     });
   }

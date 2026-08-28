@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import nextConfig, { kestrelBuildIdentity } from "../../next.config";
-import { resolveKestrelBuildIdentity } from "./build-identity";
+import {
+  loadKestrelBuildIdentity,
+  resolveKestrelBuildIdentity,
+} from "./build-identity";
 
 const vercelRevision = "1".repeat(40);
 const gitRevision = "2".repeat(40);
@@ -32,6 +35,10 @@ test("Kestrel One manifest version is canonical", () => {
   });
   assert.throws(
     () => resolve({ KESTREL_APP_VERSION: "0.5.1" }),
+    /must match apps\/web\/package\.json/u,
+  );
+  assert.throws(
+    () => loadKestrelBuildIdentity({ KESTREL_APP_VERSION: "0.0.0" }),
     /must match apps\/web\/package\.json/u,
   );
 });
@@ -114,13 +121,14 @@ test("Next configuration embeds non-placeholder build identity", () => {
   assert.notEqual(kestrelBuildIdentity.revision, "unknown");
 });
 
-test("build identity does not make a repository-relative module request", () => {
+test("build identity bundles the app manifest without runtime filesystem access", () => {
   const source = readFileSync(
     new URL("./build-identity.ts", import.meta.url),
     "utf8",
   );
 
-  assert.doesNotMatch(source, /fileURLToPath/u);
+  assert.match(source, /import appManifest from "\.\.\/\.\.\/package\.json"/u);
+  assert.doesNotMatch(source, /readFileSync|fileURLToPath|appManifestUrl/u);
   assert.doesNotMatch(source, /new URL\(["']\.\.\/\.\.\/\.\.\/\.\./u);
   assert.doesNotMatch(source, /cwd:\s*repositoryRoot/u);
 });

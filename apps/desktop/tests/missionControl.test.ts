@@ -99,6 +99,7 @@ test(
   async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const calls: unknown[] = [];
+    const profileRequests: string[] = [];
     const project = {
       projectId,
       schemaVersion: 1 as const,
@@ -121,7 +122,6 @@ test(
     };
 
     const response = await executeDesktopMissionControlAction({
-      adapter,
       intent: {
         type: "start",
         projectId,
@@ -130,12 +130,16 @@ test(
         expectedItemVersion: 3,
       },
       registeredProjectIds: [projectId],
-      profileId: "desktop",
+      profileForProject: async (requestedProjectId) => {
+        profileRequests.push(requestedProjectId);
+        return { profileId: "desktop", adapter };
+      },
       actionId: "desktop-action-1",
       actionTs: "2026-07-31T12:00:00.000Z",
       context,
     });
     assert.equal(response.projectId, projectId);
+    assert.deepEqual(profileRequests, [projectId]);
     const sent = calls[0] as {
       command: {
         type: string;
@@ -178,7 +182,6 @@ test(
 
     await assert.rejects(
       executeDesktopMissionControlAction({
-        adapter,
         intent: {
           type: "start",
           projectId,
@@ -187,7 +190,7 @@ test(
           expectedItemVersion: 3,
         },
         registeredProjectIds: [],
-        profileId: "desktop",
+        profileForProject: async () => ({ profileId: "desktop", adapter }),
         actionId: "desktop-action-unregistered",
         actionTs: "2026-07-31T12:01:00.000Z",
         context,
@@ -200,7 +203,6 @@ test(
 
     await assert.rejects(
       executeDesktopMissionControlAction({
-        adapter,
         intent: {
           type: "configure_autopilot",
           projectId,
@@ -210,7 +212,7 @@ test(
           confirmed: false,
         },
         registeredProjectIds: [projectId],
-        profileId: "desktop",
+        profileForProject: async () => ({ profileId: "desktop", adapter }),
         actionId: "desktop-action-unconfirmed",
         actionTs: "2026-07-31T12:02:00.000Z",
         context,
@@ -258,9 +260,8 @@ test("Desktop maps editing, follow-ups, and complete Ready ordering to authority
     requiredEvidence: [],
   };
   const common = {
-    adapter,
     registeredProjectIds: [projectId],
-    profileId: "desktop",
+    profileForProject: async () => ({ profileId: "desktop", adapter }),
     actionTs: "2026-07-31T12:00:00.000Z",
     context,
   };

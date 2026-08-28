@@ -95,12 +95,78 @@ async function removeBootstrapInvitation(fixture: BootstrapInvitation) {
   });
 }
 
+async function seedLocalTavily(input: {
+  organizationIds: string[];
+  userId: string;
+}) {
+  const apiKey = process.env.TAVILY_API_KEY?.trim();
+  if (!apiKey) return;
+
+  const [{ saveEnvironmentAppConnection, setAppInstallation }, { attachProjectAppConnection }] =
+    await Promise.all([
+      import("@/lib/apps/service"),
+      import("@/lib/apps/project-service"),
+    ]);
+
+  for (const organizationId of input.organizationIds) {
+    const [environment] = await client`
+      SELECT id FROM "environments"
+      WHERE "organization_id" = ${organizationId}
+        AND "archived_at" IS NULL
+      ORDER BY "is_default" DESC, "created_at" ASC
+      LIMIT 1
+    `;
+    if (!environment?.id) continue;
+
+    await setAppInstallation({
+      organizationId,
+      appKey: "tavily",
+      actorUserId: input.userId,
+      installed: true,
+    });
+    const connection = await saveEnvironmentAppConnection({
+      organizationId,
+      environmentId: environment.id,
+      appKey: "tavily",
+      actorUserId: input.userId,
+      connection: {
+        kind: "api_key",
+        name: "Local Tavily",
+        apiKey,
+        ...(process.env.TAVILY_PROJECT?.trim()
+          ? { projectId: process.env.TAVILY_PROJECT.trim() }
+          : {}),
+        ...(process.env.TAVILY_BASE_URL?.trim()
+          ? { baseUrl: process.env.TAVILY_BASE_URL.trim() }
+          : {}),
+      },
+    });
+    const projects = await client`
+      SELECT id FROM "projects"
+      WHERE "organization_id" = ${organizationId}
+        AND "environment_id" = ${environment.id}
+    `;
+    for (const project of projects) {
+      await attachProjectAppConnection({
+        organizationId,
+        projectId: project.id,
+        appKey: "tavily",
+        connectionId: connection.id,
+        actorUserId: input.userId,
+        scope: "shared",
+        isDefault: true,
+      });
+    }
+  }
+}
+
 async function run() {
   const now = new Date();
   const { auth } = await import("@/lib/auth");
   const { INVITATION_SIGNUP_HEADER } = await import("@/lib/invitation-shared");
   const { ensurePersonalOrganization } =
     await import("@/lib/personal-workspace");
+  const localOrganizationIds = new Set<string>();
   let bootstrapInvitation: BootstrapInvitation | null = null;
   let [existingUser] = await client`
     SELECT id FROM "user"
@@ -157,12 +223,28 @@ async function run() {
       name,
       email,
     });
+    localOrganizationIds.add(personalOrganization.id);
 
     await client.begin(async (tx) => {
       await tx`
         UPDATE "user"
         SET name = ${name}, role = 'admin', "emailVerified" = true, "updatedAt" = ${now}
         WHERE id = ${userId}
+      `;
+
+      await tx`
+        INSERT INTO "organization_feature_flags" (
+          "organization_id", "key", "enabled", "updated_by_user_id",
+          "created_at", "updated_at"
+        ) VALUES (
+          ${personalOrganization.id}, 'hosted_environments', true, ${userId},
+          ${now}, ${now}
+        )
+        ON CONFLICT ("organization_id", "key") DO UPDATE
+        SET
+          "enabled" = true,
+          "updated_by_user_id" = ${userId},
+          "updated_at" = ${now}
       `;
 
       const [existingOrg] = await tx`
@@ -172,6 +254,7 @@ async function run() {
       `;
 
       const organizationId = existingOrg?.id ?? randomUUID();
+      localOrganizationIds.add(organizationId);
 
       if (!existingOrg) {
         await tx`
@@ -204,6 +287,26 @@ async function run() {
           WHERE id = ${existingMembership.id}
         `;
       }
+
+      await tx`
+        INSERT INTO "organization_feature_flags" (
+          "organization_id", "key", "enabled", "updated_by_user_id",
+          "created_at", "updated_at"
+        ) VALUES (
+          ${organizationId}, 'hosted_environments', true, ${userId},
+          ${now}, ${now}
+        )
+        ON CONFLICT ("organization_id", "key") DO UPDATE
+        SET
+          "enabled" = true,
+          "updated_by_user_id" = ${userId},
+          "updated_at" = ${now}
+      `;
+    });
+
+    await seedLocalTavily({
+      organizationIds: [...localOrganizationIds],
+      userId,
     });
 
     console.log(

@@ -1,12 +1,86 @@
 "use client";
 
-import type { ComponentProps } from "react";
+import { useEffect, type ComponentProps } from "react";
+import { createPortal } from "react-dom";
 import { Streamdown } from "streamdown";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type ResponseProps = ComponentProps<typeof Streamdown>;
 
-export function Response({ className, children, ...props }: ResponseProps) {
+type LinkSafetyModalProps = {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  url: string;
+};
+
+function PortaledLinkSafetyModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  url,
+}: LinkSafetyModalProps) {
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
+  if (!isOpen || typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] grid place-items-center bg-black/35 p-4 backdrop-blur-[2px]"
+      data-streamdown="link-safety-dialog"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        aria-describedby="external-link-description"
+        aria-labelledby="external-link-title"
+        aria-modal="true"
+        className="w-full max-w-md rounded-2xl border bg-background p-5 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="space-y-1">
+          <h2 className="font-semibold text-lg" id="external-link-title">
+            Open external link?
+          </h2>
+          <p
+            className="text-muted-foreground text-sm"
+            id="external-link-description"
+          >
+            Check the destination before continuing.
+          </p>
+        </div>
+        <div className="mt-4 break-all rounded-lg border bg-muted/45 px-3 py-2.5 font-mono text-xs">
+          {url}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button onClick={onClose} type="button" variant="outline">
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} type="button">
+            Continue
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+export function Response({
+  className,
+  children,
+  linkSafety,
+  ...props
+}: ResponseProps) {
   return (
     <Streamdown
       className={cn(
@@ -35,6 +109,15 @@ export function Response({ className, children, ...props }: ResponseProps) {
         "[&_section[data-footnotes]]:text-muted-foreground [&_section[data-footnotes]_li]:text-sm [&_section[data-footnotes]_ol]:my-2 [&_section[data-footnotes]_p]:my-2",
         className
       )}
+      linkSafety={
+        linkSafety === undefined
+          ? { enabled: true, renderModal: PortaledLinkSafetyModal }
+          : {
+              ...linkSafety,
+              renderModal:
+                linkSafety.renderModal ?? PortaledLinkSafetyModal,
+            }
+      }
       {...props}
     >
       {children}
