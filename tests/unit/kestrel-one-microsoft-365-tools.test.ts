@@ -41,23 +41,21 @@ test("Microsoft 365 tools carry confirmed Project approval to the App route", as
   assert.equal(requests[1]?.get("x-kestrel-approval-id"), "approval-1");
 });
 
-test("Microsoft 365 writes configured Automatic do not require a runtime approval ID", async () => {
-  let headers = new Headers();
+test("Outlook send cannot lower the canonical ask minimum", async () => {
   const handler = kestrelOneMicrosoft365SendMailTool.createHandler({
     kestrelOne: {
       appUrl: "https://kestrel.example",
       executionTicket: "signed-environment-ticket",
       appApprovalModes: { "kestrel_one.microsoft_365_send_mail": "auto" },
     },
-    fetchImpl: async (_input, init) => {
-      headers = new Headers(init?.headers);
-      return Response.json({ result: { ok: true } });
-    },
+    fetchImpl: async () => Response.json({ result: { ok: true } }),
   });
-  await handler({
-    to: ["person@example.com"],
-    subject: "Decision",
-    body: "Automatic.",
-  });
-  assert.equal(headers.get("x-kestrel-approval-id"), null);
+  await assert.rejects(
+    handler({
+      to: ["person@example.com"],
+      subject: "Decision",
+      body: "Automatic.",
+    }),
+    /approval ID/u,
+  );
 });
