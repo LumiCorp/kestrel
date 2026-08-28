@@ -20,10 +20,33 @@ type PresentationState = {
   domainId: string;
   domains: ReceivingDomain[];
   error: string | undefined;
+  managedDomain: string;
+  webhookBaseUrl: string;
   infos: string[];
   successes: string[];
   writes: number;
 };
+
+test("requests are invoked without the controller as their receiver", async () => {
+  const { state } = fixture([]);
+  async function request(
+    this: unknown,
+    _input: RequestInfo | URL,
+    _init?: RequestInit,
+  ) {
+    assert.equal(this, undefined);
+    return jsonResponse({ connection: connection("not_configured") });
+  }
+  const controller = new OrganizationReceivingController(
+    presentationForState(state),
+    request,
+  );
+
+  await controller.load();
+
+  assert.equal(state.connection?.readiness, "not_configured");
+  assert.equal(state.error, undefined);
+});
 
 test("a delayed failed check cannot repaint a newer successful recovery", async () => {
   const olderCheck = deferredResponse();
@@ -85,7 +108,7 @@ test("a newer load supersedes a delayed save and owns the final busy transition"
   const newerLoad = deferredResponse();
   const { controller, state } = fixture([olderSave, newerLoad]);
 
-  const save = controller.save("older-key", "older-domain");
+  const save = controller.save("older-key", "older-domain", "", "");
   const load = controller.load();
   newerLoad.resolve(jsonResponse({ connection: connection("staged") }));
   await load;
@@ -104,7 +127,7 @@ test("a winning save commits the cleared form only after reconciliation", async 
   state.apiKey = "replacement-key";
   state.domainId = "ready-domain";
 
-  const save = controller.save(state.apiKey, state.domainId);
+  const save = controller.save(state.apiKey, state.domainId, "", "");
   saveResponse.resolve(
     jsonResponse({ connection: connection("ready_inactive") }),
   );
@@ -124,6 +147,47 @@ test("a winning save commits the cleared form only after reconciliation", async 
   assert.deepEqual(state.domains, []);
   assert.deepEqual(state.successes, ["Inbound receiving configuration saved."]);
   assert.deepEqual(state.busyTransitions, [true, false]);
+});
+
+test("a managed Resend domain is saved without a custom domain id", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const responses = [
+    jsonResponse({ connection: connection("ready_inactive") }),
+    jsonResponse({
+      connection: {
+        ...connection("staged"),
+        receivingDomain: "raixaro.resend.app",
+        receivingDomainKind: "resend_managed",
+      },
+    }),
+  ];
+  const { controller, state } = fixture([]);
+  const request = async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({ url: String(input), init });
+    const response = responses.shift();
+    if (!response) throw new Error("Unexpected request");
+    return response;
+  };
+  const managedController = new OrganizationReceivingController(
+    presentationForState(state),
+    request,
+  );
+
+  await managedController.save(
+    "re_full_access",
+    "",
+    "raixaro.resend.app",
+    "https://kestrel-dev.ngrok.app",
+  );
+
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
+    apiKey: "re_full_access",
+    receivingDomain: "raixaro.resend.app",
+    webhookBaseUrl: "https://kestrel-dev.ngrok.app",
+  });
+  assert.equal(state.connection?.receivingDomainKind, "resend_managed");
+  assert.equal(state.managedDomain, "raixaro.resend.app");
+  assert.equal(state.webhookBaseUrl, "");
 });
 
 test("activation reconciles the redacted hosted connection before reporting success", async () => {
@@ -230,7 +294,7 @@ test("a save with a secret-bearing unknown field cannot clear the form or report
   const { controller, state } = fixture([saveResponse]);
   seedPresentation(state);
 
-  const save = controller.save(state.apiKey, state.domainId);
+  const save = controller.save(state.apiKey, state.domainId, "", "");
   saveResponse.resolve(
     jsonResponse({
       connection: {
@@ -277,7 +341,7 @@ test("a save with malformed reconciliation preserves the write-only form", async
   const { controller, state } = fixture([saveResponse, reconcileResponse]);
   seedPresentation(state);
 
-  const save = controller.save(state.apiKey, state.domainId);
+  const save = controller.save(state.apiKey, state.domainId, "", "");
   saveResponse.resolve(
     jsonResponse({ connection: connection("ready_inactive") }),
   );
@@ -308,6 +372,8 @@ function fixture(requests: DeferredResponse[]) {
     domainId: "",
     domains: [],
     error: undefined,
+    managedDomain: "",
+    webhookBaseUrl: "",
     infos: [],
     successes: [],
     writes: 0,
@@ -321,12 +387,21 @@ function fixture(requests: DeferredResponse[]) {
     }
     return deferred.promise;
   };
+  const controller = new OrganizationReceivingController(
+    presentationForState(state),
+    request,
+  );
+  return { controller, state };
+}
+
+function presentationForState(
+  state: PresentationState,
+): ConstructorParameters<typeof OrganizationReceivingController>[0] {
   const write = (update: () => void) => {
     state.writes += 1;
     update();
   };
-  const controller = new OrganizationReceivingController(
-    {
+  return {
       setApiKey: (value) =>
         write(() => {
           state.apiKey = value;
@@ -352,6 +427,14 @@ function fixture(requests: DeferredResponse[]) {
         write(() => {
           state.error = value;
         }),
+      setManagedDomain: (value) =>
+        write(() => {
+          state.managedDomain = value;
+        }),
+      setWebhookBaseUrl: (value) =>
+        write(() => {
+          state.webhookBaseUrl = value;
+        }),
       showInfo: (message) =>
         write(() => {
           state.infos.push(message);
@@ -360,10 +443,7 @@ function fixture(requests: DeferredResponse[]) {
         write(() => {
           state.successes.push(message);
         }),
-    },
-    request,
-  );
-  return { controller, state };
+  };
 }
 
 function deferredResponse(): DeferredResponse {
@@ -406,6 +486,7 @@ function connection(
     lastTestedAt: null,
     mxStatus: "verified",
     provider: "resend",
+    receivingDomainKind: "custom",
     readiness,
     receivingDomain: "inbound.example.com",
     receivingDomainStatus: "verified",
@@ -418,6 +499,7 @@ function seedPresentation(state: PresentationState): void {
   state.connection = connection("ready_inactive");
   state.domainId = "ready-domain";
   state.domains = [readyDomain("ready-domain")];
+  state.webhookBaseUrl = "https://local-tunnel.example";
 }
 
 function assertPresentationPreserved(state: PresentationState): void {
@@ -425,6 +507,7 @@ function assertPresentationPreserved(state: PresentationState): void {
   assert.deepEqual(state.connection, connection("ready_inactive"));
   assert.equal(state.domainId, "ready-domain");
   assert.deepEqual(state.domains, [readyDomain("ready-domain")]);
+  assert.equal(state.webhookBaseUrl, "https://local-tunnel.example");
 }
 
 async function settled(): Promise<void> {

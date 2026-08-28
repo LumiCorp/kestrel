@@ -91,7 +91,7 @@ function qualifiedOpenRouterModelMetadata(input: {
   };
 }
 
-test("configured Email Trigger route exports enforce private Project authority", async (context) => {
+test("configured Email Trigger routes enforce Project authority and public aliases", async (context) => {
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
   process.env.DATABASE_URL = databaseUrl;
   process.env.POSTGRES_URL = databaseUrl;
@@ -334,6 +334,7 @@ test("configured Email Trigger route exports enforce private Project authority",
 
   const createBody = {
     name: "Invoice intake",
+    alias: "invoices",
     instruction: "Process each invoice using current Project instructions.",
     modelId: "openrouter/email-trigger-route-model",
     claimedFromFilter: "billing@example.test",
@@ -366,7 +367,21 @@ test("configured Email Trigger route exports enforce private Project authority",
   const trigger = createdBody.trigger;
   assert.equal(trigger.revision, 1);
   assert.equal(trigger.enabled, true);
-  assert.match(trigger.address, /^[a-f0-9]{32}@inbound\.example\.test$/u);
+  assert.equal(trigger.address, "invoices@inbound.example.test");
+
+  const duplicateAliasResponse = await collectionRoute.POST(
+    asNextRequest(
+      request(collectionUrl, "POST", sessions.editor, {
+        ...createBody,
+        name: "Duplicate invoice intake",
+      }),
+    ),
+    collectionContext,
+  );
+  assert.equal(duplicateAliasResponse.status, 409);
+  assert.deepEqual(await duplicateAliasResponse.json(), {
+    error: "That email alias is already in use.",
+  });
 
   const memberGet = await collectionRoute.GET(
     asNextRequest(request(collectionUrl, "GET", sessions.member)),
@@ -538,12 +553,29 @@ test("configured Email Trigger route exports enforce private Project authority",
     ),
     triggerContext,
   );
-  assert.equal(rotatedResponse.status, 200);
-  const rotatedBody = (await rotatedResponse.json()) as {
+  assert.equal(rotatedResponse.status, 409);
+  assert.deepEqual(await rotatedResponse.json(), {
+    error: "Public email aliases are changed by editing the Email Trigger.",
+  });
+
+  const aliasedResponse = await itemRoute.PATCH(
+    asNextRequest(
+      request(triggerUrl, "PATCH", sessions.editor, {
+        expectedRevision: 2,
+        alias: "accounts-payable",
+      }),
+    ),
+    triggerContext,
+  );
+  assert.equal(aliasedResponse.status, 200);
+  const aliasedBody = (await aliasedResponse.json()) as {
     trigger: { address: string; revision: number };
   };
-  assert.equal(rotatedBody.trigger.revision, 3);
-  assert.notEqual(rotatedBody.trigger.address, trigger.address);
+  assert.equal(aliasedBody.trigger.revision, 3);
+  assert.equal(
+    aliasedBody.trigger.address,
+    "accounts-payable@inbound.example.test",
+  );
 
   const staleRotate = await rotateRoute.POST(
     asNextRequest(

@@ -153,6 +153,7 @@ export function SettingsWorkspace({
     useState<KestrelOneReceivingDomain[]>([]);
   const [receivingApiKey, setReceivingApiKey] = useState("");
   const [receivingDomainId, setReceivingDomainId] = useState("");
+  const [receivingManagedDomain, setReceivingManagedDomain] = useState("");
   const [receivingBusy, setReceivingBusy] = useState(false);
   const [receivingError, setReceivingError] = useState<string>();
   const [receivingStatusStale, setReceivingStatusStale] = useState(false);
@@ -218,6 +219,7 @@ export function SettingsWorkspace({
     setReceivingDomains([]);
     setReceivingApiKey("");
     setReceivingDomainId("");
+    setReceivingManagedDomain("");
     setReceivingError(undefined);
     setReceivingStatusStale(false);
     setReceivingBusy(false);
@@ -272,7 +274,7 @@ export function SettingsWorkspace({
           );
         }
       })
-      .catch(() => undefined);
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -295,7 +297,7 @@ export function SettingsWorkspace({
     if (!kestrelOne?.enrollments.length) return;
     const timer = window.setInterval(() => {
       void refreshKestrelOne(true);
-    }, 5_000);
+    }, 5000);
     return () => window.clearInterval(timer);
   }, [kestrelOne?.enrollments.length]);
 
@@ -305,8 +307,8 @@ export function SettingsWorkspace({
       void window.kestrelDesktop
         .getKestrelOneEnvironments()
         .then(setKestrelOne)
-        .catch(() => undefined);
-    }, 2_000);
+        .catch(() => {});
+    }, 2000);
     return () => window.clearInterval(timer);
   }, [kestrelOne?.environments.length]);
 
@@ -327,7 +329,7 @@ export function SettingsWorkspace({
         });
     };
     refreshThread();
-    const timer = window.setInterval(refreshThread, 2_000);
+    const timer = window.setInterval(refreshThread, 2000);
     return () => {
       disposed = true;
       window.clearInterval(timer);
@@ -346,7 +348,7 @@ export function SettingsWorkspace({
           }
         })
         .catch((error) => onError(errorMessage(error)));
-    }, 1_000);
+    }, 1000);
     return () => window.clearInterval(timer);
   }, [kestrelOneAuthorization?.sessionId, kestrelOneAuthorization?.state]);
 
@@ -504,6 +506,7 @@ export function SettingsWorkspace({
     setReceivingDomains([]);
     setReceivingApiKey("");
     setReceivingDomainId("");
+    setReceivingManagedDomain("");
     setReceivingStatusStale(false);
     setReceivingError(undefined);
     setReceivingBusy(false);
@@ -567,6 +570,7 @@ export function SettingsWorkspace({
       if (selectionVersion !== receivingSelectionVersionRef.current) return;
       setReceivingDomains(domains);
       setReceivingDomainId("");
+      setReceivingManagedDomain("");
       await refreshReceivingConnection(receivingOrganizationId);
     } catch (error) {
       if (selectionVersion !== receivingSelectionVersionRef.current) return;
@@ -583,7 +587,13 @@ export function SettingsWorkspace({
 
   async function saveReceivingConnection(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if (!(receivingOrganizationId && receivingDomainId)) return;
+    if (
+      !(
+        receivingOrganizationId &&
+        (receivingDomainId || receivingManagedDomain.trim())
+      )
+    )
+      return;
     const selectionVersion = receivingSelectionVersionRef.current;
     setReceivingBusy(true);
     setReceivingError(undefined);
@@ -591,13 +601,16 @@ export function SettingsWorkspace({
       const connection =
         await window.kestrelDesktop.saveKestrelOneReceivingConnection({
           organizationId: receivingOrganizationId,
-          receivingDomainId,
+          ...(receivingManagedDomain.trim()
+            ? { receivingDomain: receivingManagedDomain.trim() }
+            : { receivingDomainId }),
           ...(receivingApiKey ? { apiKey: receivingApiKey } : {}),
         });
       if (selectionVersion !== receivingSelectionVersionRef.current) return;
       setReceivingConnection(connection);
       setReceivingApiKey("");
       setReceivingDomainId("");
+      setReceivingManagedDomain("");
       setReceivingDomains([]);
       setNotice(
         "Inbound receiving is saved in Kestrel One. Desktop does not need to remain open.",
@@ -1318,6 +1331,7 @@ export function SettingsWorkspace({
                         setReceivingDomains([]);
                         setReceivingApiKey("");
                         setReceivingDomainId("");
+                        setReceivingManagedDomain("");
                         setReceivingError(undefined);
                         setReceivingStatusStale(false);
                         setReceivingBusy(false);
@@ -1429,7 +1443,7 @@ export function SettingsWorkspace({
                         type="button"
                         disabled={
                           receivingBusy ||
-                          (!receivingApiKey && !receivingConnection?.configured)
+                          (!(receivingApiKey || receivingConnection?.configured))
                         }
                         onClick={() => void inspectReceivingDomains()}
                       >
@@ -1439,11 +1453,11 @@ export function SettingsWorkspace({
                         <label>
                           Verified receiving subdomain
                           <select
-                            required
                             value={receivingDomainId}
-                            onChange={(event) =>
+                            onChange={(event) => {
                               setReceivingDomainId(event.target.value)
-                            }
+                              setReceivingManagedDomain("");
+                            }}
                           >
                             <option value="">Choose a domain</option>
                             {receivingDomains.map((domain) => {
@@ -1464,10 +1478,28 @@ export function SettingsWorkspace({
                           </select>
                         </label>
                       ) : null}
+                      <label>
+                        Resend-managed receiving domain
+                        <input
+                          autoCapitalize="none"
+                          placeholder="example.resend.app"
+                          value={receivingManagedDomain}
+                          onChange={(event) => {
+                            setReceivingManagedDomain(event.target.value);
+                            setReceivingDomainId("");
+                          }}
+                        />
+                        <small>
+                          Use the receiving domain Resend assigned to the account.
+                        </small>
+                      </label>
                       <button
                         className="primary-button"
                         type="submit"
-                        disabled={receivingBusy || !selectedReady}
+                        disabled={
+                          receivingBusy ||
+                          !(selectedReady || receivingManagedDomain.trim())
+                        }
                       >
                         {receivingBusy ? "Saving…" : "Save inbound receiving"}
                       </button>

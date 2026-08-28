@@ -178,6 +178,36 @@ test("receiving activation verifies the staged webhook, fails closed, and recove
   });
   assert.equal(provider.webhook.status, "disabled");
   assert.equal(provider.createCalls, 1);
+
+  const customDomainChecks = provider.getDomainCalls;
+  const managedConnection = await receiving.saveReceivingConnection({
+    organizationId,
+    actorUserId: userId,
+    receivingDomain: "raixaro.resend.app",
+    provider,
+  });
+  assert.equal(managedConnection.receivingDomainKind, "resend_managed");
+  assert.equal(managedConnection.receivingDomain, "raixaro.resend.app");
+  await release.runReceivingReleaseReadiness({
+    organizationId,
+    actorUserId: userId,
+    provider,
+    buildIdentity,
+  });
+  await activation.setReceivingInboundEnabled({
+    organizationId,
+    actorUserId: userId,
+    enabled: true,
+    provider,
+    buildIdentity,
+  });
+  assert.equal(provider.getDomainCalls, customDomainChecks);
+  assert.ok(provider.listDomainCalls >= 3);
+  assert.deepEqual(await readState(sql, organizationId), {
+    inboundEnabled: true,
+    webhookStatus: "active",
+    lastErrorCode: null,
+  });
 });
 
 class ActivationProvider implements ResendWebhookCreateRecoveryProvider {
@@ -185,6 +215,8 @@ class ActivationProvider implements ResendWebhookCreateRecoveryProvider {
   domainReady = true;
   failDisable = false;
   failEnableAfterAcceptance = false;
+  getDomainCalls = 0;
+  listDomainCalls = 0;
   webhook: ResendWebhookProjection & { signingSecret: string } = {
     id: `activation-webhook-${randomUUID()}`,
     endpoint: "",
@@ -194,10 +226,12 @@ class ActivationProvider implements ResendWebhookCreateRecoveryProvider {
   };
 
   async listDomains(): Promise<ResendReceivingDomain[]> {
+    this.listDomainCalls += 1;
     return [domain()];
   }
 
   async getDomain(_apiKey: string, id: string): Promise<ResendReceivingDomain> {
+    this.getDomainCalls += 1;
     return {
       ...domain(id),
       ...(this.domainReady ? {} : { mxStatus: "failed" as const }),

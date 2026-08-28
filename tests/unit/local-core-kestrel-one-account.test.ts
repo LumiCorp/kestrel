@@ -143,9 +143,10 @@ test("receiving management stays tenant-bound and does not persist the write-onl
         connection: {
           provider: "resend",
           configured: true,
+          receivingDomainKind: "resend_managed",
           credentialStatus: "full_access",
           credentialValidatedAt: "2026-08-26T12:00:00.000Z",
-          receivingDomain: "inbound.example.test",
+          receivingDomain: "raixaro.resend.app",
           receivingDomainStatus: "verified",
           mxStatus: "verified",
           domainCheckedAt: "2026-08-26T12:00:00.000Z",
@@ -162,17 +163,17 @@ test("receiving management stays tenant-bound and does not persist the write-onl
 
   const projection = await manager.saveReceivingConnection({
     organizationId: "organization-1",
-    receivingDomainId: "domain-1",
+    receivingDomain: "raixaro.resend.app",
     apiKey: "re_full_access_secret",
   });
 
-  assert.equal(projection.receivingDomain, "inbound.example.test");
+  assert.equal(projection.receivingDomain, "raixaro.resend.app");
   assert.equal(
     requests[0]?.url.pathname,
     "/api/desktop/v1/organizations/organization-1/email/receiving",
   );
   assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
-    receivingDomainId: "domain-1",
+    receivingDomain: "raixaro.resend.app",
     apiKey: "re_full_access_secret",
   });
   assert.equal(
@@ -181,7 +182,7 @@ test("receiving management stays tenant-bound and does not persist the write-onl
   );
   assert.doesNotMatch(
     storedCredential,
-    /re_full_access_secret|inbound\.example\.test/u,
+    /re_full_access_secret|raixaro\.resend\.app/u,
   );
 });
 

@@ -3,7 +3,10 @@ import fs from "node:fs";
 import test from "node:test";
 import { z } from "zod";
 import { DesktopUserAuthorizationError } from "@/lib/desktop-account";
-import { ReceivingConfigError } from "./receiving-config";
+import {
+  normalizeResendManagedReceivingDomain,
+  ReceivingConfigError,
+} from "./receiving-config";
 import {
   createDesktopReceivingDomainsPostHandler,
   createDesktopReceivingPutHandler,
@@ -32,6 +35,24 @@ test("Desktop authorization failures retain the stable receiving 401 contract", 
       body: { code: "UNAUTHORIZED", error: "Unauthorized" },
     },
   );
+});
+
+test("Resend-managed receiving domains are canonical and account-specific", () => {
+  assert.equal(
+    normalizeResendManagedReceivingDomain(" Raixaro.Resend.App "),
+    "raixaro.resend.app",
+  );
+  for (const invalid of [
+    "resend.app",
+    "support@example.com",
+    "sub.raixaro.resend.app",
+    "raixaro.example.com",
+  ]) {
+    assert.throws(
+      () => normalizeResendManagedReceivingDomain(invalid),
+      ReceivingConfigError,
+    );
+  }
 });
 
 test("receiving authorization and internal errors stay redacted", () => {
@@ -76,6 +97,17 @@ test("receiving provider failures have stable actionable HTTP status classes", (
       code: "RESEND_RECEIVING_REQUEST_INVALID",
       status: 422,
       error: "Resend rejected the receiving request.",
+    },
+    {
+      code: "RESEND_RECEIVING_PUBLIC_WEBHOOK_URL_REQUIRED",
+      status: 422,
+      error:
+        "Paste a public HTTPS tunnel URL before connecting local inbound email.",
+    },
+    {
+      code: "RESEND_RECEIVING_WEBHOOK_URL_INVALID",
+      status: 422,
+      error: "Enter a public HTTPS origin with no path, query, or fragment.",
     },
     {
       code: "RESEND_RECEIVING_DOMAIN_NOT_READY",
@@ -124,8 +156,7 @@ test("receiving provider failures have stable actionable HTTP status classes", (
     {
       code: "RESEND_RECEIVING_RELEASE_NOT_READY",
       status: 409,
-      error:
-        "Run the current inbound receiving release readiness check before enabling.",
+      error: "Inbound email readiness did not pass for this connection.",
     },
     {
       code: "RESEND_RECEIVING_WEBHOOK_ACTIVATION_FAILED",

@@ -6,9 +6,10 @@ import {
   updateEmailTriggerInputSchema,
 } from "./contracts";
 
-test("Email Trigger write contracts reject public mode and configurable owners", () => {
+test("Email Trigger write contracts keep access mode server-owned", () => {
   const requiredCreate = {
     name: "Invoice intake",
+    alias: "invoices",
     modelId: "openrouter/example",
   };
   assert.equal(
@@ -51,10 +52,12 @@ test("Email Trigger write contracts reject public mode and configurable owners",
 test("Email Trigger write contracts preserve exact claimed-From language and revisions", () => {
   const parsed = createEmailTriggerInputSchema.parse({
     name: " Support ",
+    alias: " Support.Team ",
     modelId: "openrouter/example",
     claimedFromFilter: " support@example.test ",
   });
   assert.equal(parsed.name, "Support");
+  assert.equal(parsed.alias, "support.team");
   assert.equal(parsed.claimedFromFilter, "support@example.test");
   assert.equal(
     updateEmailTriggerInputSchema.safeParse({ expectedRevision: 0, enabled: false }).success,
@@ -62,6 +65,14 @@ test("Email Trigger write contracts preserve exact claimed-From language and rev
   );
   assert.equal(
     updateEmailTriggerInputSchema.safeParse({ expectedRevision: 1 }).success,
+    false,
+  );
+  assert.equal(
+    createEmailTriggerInputSchema.safeParse({
+      name: "Invalid alias",
+      alias: "support@example.test",
+      modelId: "openrouter/example",
+    }).success,
     false,
   );
 });

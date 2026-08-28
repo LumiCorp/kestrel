@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import appManifest from "../../package.json";
 
-const appManifestUrl = new URL("../../package.json", import.meta.url);
 const gitCommitPattern = /^[0-9a-f]{40}$/iu;
 
 export type KestrelBuildIdentity = {
@@ -85,13 +84,10 @@ export function resolveKestrelBuildIdentity(
 }
 
 function readAppManifestVersion() {
-  const manifest = JSON.parse(readFileSync(appManifestUrl, "utf8")) as {
-    version?: unknown;
-  };
-  if (typeof manifest.version !== "string") {
+  if (typeof appManifest.version !== "string") {
     throw new Error("apps/web/package.json must declare a string version.");
   }
-  return manifest.version;
+  return appManifest.version;
 }
 
 function readRepositoryRevision() {

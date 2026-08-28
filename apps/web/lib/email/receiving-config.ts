@@ -10,8 +10,13 @@ import {
   ResendReceivingProviderError,
   type ResendReceivingDomain,
   type ResendReceivingProvider,
+  type ResendWebhookDecommissionProvider,
   type ResendWebhookCreateRecoveryProvider,
 } from "./receiving-provider";
+import {
+  prepareReceivingWebhookIntent,
+  ReceivingWebhookTargetError,
+} from "./receiving-webhook-target";
 
 const credentialBinding = (organizationId: string) =>
   `organization-receiving-connection:${organizationId}:api-key`;
@@ -21,6 +26,7 @@ const signingSecretBinding = (organizationId: string) =>
 export type PublicReceivingConnection = {
   provider: "resend";
   configured: boolean;
+  receivingDomainKind: "custom" | "resend_managed" | null;
   credentialStatus: "not_configured" | "full_access" | "insufficient" | "error";
   credentialValidatedAt: string | null;
   receivingDomain: string | null;
@@ -43,6 +49,19 @@ export type PublicReceivingConnection = {
 };
 
 export type ReceivingDomainOption = ResendReceivingDomain;
+
+export function normalizeResendManagedReceivingDomain(value: string): string {
+  const domain = value.trim().toLowerCase();
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.resend\.app$/u.test(domain)
+  ) {
+    throw new ReceivingConfigError(
+      "RESEND_RECEIVING_DOMAIN_INVALID",
+      "Enter the Resend-managed receiving domain assigned to this account.",
+    );
+  }
+  return domain;
+}
 
 export class ReceivingConfigError extends Error {
   constructor(
@@ -142,14 +161,36 @@ export async function inspectReceivingDomains(input: {
 export async function saveReceivingConnection(input: {
   organizationId: string;
   actorUserId: string;
-  receivingDomainId: string;
+  receivingDomainId?: string | undefined;
+  receivingDomain?: string | undefined;
+  webhookBaseUrl?: string | undefined;
   apiKey?: string | undefined;
   env?: NodeJS.ProcessEnv;
   provider?: ResendReceivingProvider;
 }): Promise<PublicReceivingConnection> {
   await assertActiveReceivingOrganization(input.organizationId);
   const provider = input.provider ?? new ResendHttpReceivingProvider();
+  const receivingDomainId = input.receivingDomainId?.trim() || undefined;
+  const managedReceivingDomain = input.receivingDomain
+    ? normalizeResendManagedReceivingDomain(input.receivingDomain)
+    : undefined;
+  if (Boolean(receivingDomainId) === Boolean(managedReceivingDomain)) {
+    throw new ReceivingConfigError(
+      "RESEND_RECEIVING_REQUEST_INVALID",
+      "Choose one Resend receiving domain.",
+    );
+  }
   const existing = await findConnection(input.organizationId);
+  const routeLocator =
+    existing?.routeLocator ?? randomBytes(32).toString("base64url");
+  const webhookIntent = receivingWebhookIntentOrThrow({
+    routeLocator,
+    requestedBaseUrl: input.webhookBaseUrl,
+    env: input.env,
+  });
+  const webhookTargetChanged =
+    JSON.stringify(existing?.webhookCreateIntent ?? null) !==
+    JSON.stringify(webhookIntent);
   const suppliedApiKey = input.apiKey?.trim() || undefined;
   const storedEncryptedApiKey = existing?.encryptedApiKey ?? null;
   const existingApiKey = decryptStoredApiKey({
@@ -167,6 +208,12 @@ export async function saveReceivingConnection(input: {
       "Enter a Resend Full access API key.",
     );
   }
+  const reconciledWebhook = await reconcileChangingWebhookTarget({
+    existing,
+    apiKey: existingApiKey ?? apiKey,
+    provider,
+    targetChanged: webhookTargetChanged,
+  });
   if (replacingApiKey) {
     await verifyReplacementWebhookAuthority({
       apiKey,
@@ -181,15 +228,31 @@ export async function saveReceivingConnection(input: {
           expectedEncryptedApiKey: storedEncryptedApiKey,
         })
       : undefined;
-  let domain: ResendReceivingDomain;
+  let domain: Omit<ResendReceivingDomain, "id"> & {
+    id: string | null;
+    kind: "custom" | "resend_managed";
+  };
   try {
-    domain = await provider.getDomain(apiKey, input.receivingDomainId.trim());
+    if (managedReceivingDomain) {
+      await provider.listDomains(apiKey);
+      domain = {
+        id: null,
+        kind: "resend_managed",
+        name: managedReceivingDomain,
+        status: "verified",
+        receiving: "enabled",
+        mxStatus: "verified",
+      };
+    } else {
+      const customDomain = await provider.getDomain(apiKey, receivingDomainId!);
+      domain = { ...customDomain, kind: "custom" };
+    }
   } catch (error) {
     const normalized = normalizeProviderError(error);
     if (storedHealthCheck) {
       const configuredDomainWasRemoved =
         normalized.code === "RESEND_RECEIVING_DOMAIN_INVALID" &&
-        input.receivingDomainId.trim() === existing?.receivingDomainId;
+        receivingDomainId === existing?.receivingDomainId;
       const persistence = await persistStoredCredentialHealth({
         organizationId: input.organizationId,
         expectedEncryptedApiKey: storedHealthCheck.expectedEncryptedApiKey,
@@ -205,7 +268,7 @@ export async function saveReceivingConnection(input: {
             ? {}
             : { outcome: credentialFailureOutcome(normalized) }),
         ...(configuredDomainWasRemoved
-          ? { failedConfiguredDomainId: input.receivingDomainId.trim() }
+          ? { failedConfiguredDomainId: receivingDomainId }
           : {}),
       });
       rejectSupersededStoredSave(persistence);
@@ -223,8 +286,8 @@ export async function saveReceivingConnection(input: {
         expectedEncryptedApiKey: storedHealthCheck.expectedEncryptedApiKey,
         healthCheckSequence: storedHealthCheck.healthCheckSequence,
         outcome: { credentialStatus: "full_access", errorCode: null },
-        ...(domain.id === existing?.receivingDomainId
-          ? { checkedDomains: [domain] }
+        ...(domain.id !== null && domain.id === existing?.receivingDomainId
+          ? { checkedDomains: [{ ...domain, id: domain.id }] }
           : {}),
       });
       rejectSupersededStoredSave(persistence);
@@ -309,6 +372,28 @@ export async function saveReceivingConnection(input: {
       }
       const webhookStagingSequence =
         (lockedExisting?.webhookStagingSequence ?? -1) + 1;
+      const providerWebhookId =
+        reconciledWebhook?.id ?? lockedExisting?.providerWebhookId ?? null;
+      const encryptedSigningSecret = reconciledWebhook
+        ? encryptReceivingSigningSecret({
+            organizationId: input.organizationId,
+            signingSecret: reconciledWebhook.signingSecret,
+            env: input.env,
+          })
+        : (lockedExisting?.encryptedSigningSecret ?? null);
+      const hasWebhookAuthority = Boolean(
+        providerWebhookId && encryptedSigningSecret,
+      );
+      const webhookTargetUpdate = webhookTargetChanged
+        ? {
+            webhookCreateIntent: webhookIntent,
+            webhookCreateAttemptedAt: hasWebhookAuthority
+              ? lockedExisting?.webhookCreateAttemptedAt
+              : null,
+            providerWebhookId,
+            encryptedSigningSecret,
+          }
+        : {};
       await transaction
         .insert(schema.organizationReceivingConnections)
         .values({
@@ -318,20 +403,18 @@ export async function saveReceivingConnection(input: {
           encryptedApiKey,
           credentialStatus: "full_access",
           credentialValidatedAt: now,
+          receivingDomainKind: domain.kind,
           receivingDomainId: domain.id,
           receivingDomain: domain.name,
           receivingDomainStatus: domain.status,
           mxStatus: domain.mxStatus,
           domainCheckedAt: now,
-          routeLocator:
-            lockedExisting?.routeLocator ??
-            randomBytes(32).toString("base64url"),
+          routeLocator,
+          webhookCreateIntent: webhookIntent,
+          ...webhookTargetUpdate,
           inboundEnabled: false,
           webhookStatus:
-            lockedExisting?.providerWebhookId &&
-            lockedExisting.encryptedSigningSecret
-              ? "disabled"
-              : "not_staged",
+            hasWebhookAuthority ? "disabled" : "not_staged",
           webhookStagingSequence,
           lastHealthCheckedAt: now,
           lastErrorCode: null,
@@ -344,17 +427,15 @@ export async function saveReceivingConnection(input: {
             encryptedApiKey,
             credentialStatus: "full_access",
             credentialValidatedAt: now,
+            receivingDomainKind: domain.kind,
             receivingDomainId: domain.id,
             receivingDomain: domain.name,
             receivingDomainStatus: domain.status,
             mxStatus: domain.mxStatus,
             domainCheckedAt: now,
+            ...webhookTargetUpdate,
             inboundEnabled: false,
-            webhookStatus:
-              lockedExisting?.providerWebhookId &&
-              lockedExisting.encryptedSigningSecret
-                ? "disabled"
-                : "not_staged",
+            webhookStatus: hasWebhookAuthority ? "disabled" : "not_staged",
             webhookStagingSequence,
             lastHealthCheckedAt: now,
             lastErrorCode: null,
@@ -463,10 +544,64 @@ function sameReceivingCheckpoint(
   );
 }
 
+function receivingWebhookIntentOrThrow(input: {
+  routeLocator: string;
+  requestedBaseUrl?: string | undefined;
+  env?: NodeJS.ProcessEnv;
+}) {
+  try {
+    return prepareReceivingWebhookIntent(input);
+  } catch (error) {
+    if (error instanceof ReceivingWebhookTargetError) {
+      throw new ReceivingConfigError(error.code, error.message);
+    }
+    throw error;
+  }
+}
+
+async function reconcileChangingWebhookTarget(input: {
+  existing: Awaited<ReturnType<typeof findConnection>>;
+  apiKey: string;
+  provider: ResendReceivingProvider;
+  targetChanged: boolean;
+}) {
+  if (!input.targetChanged) {
+    return;
+  }
+  const existing = input.existing;
+  if (!existing?.webhookCreateAttemptedAt) {
+    return;
+  }
+  if (existing.providerWebhookId || existing.encryptedSigningSecret) {
+    return;
+  }
+  if (
+    !(existing.webhookCreateIntent &&
+      isWebhookDecommissionProvider(input.provider))
+  ) {
+    throw new ReceivingConfigError(
+      "RESEND_RECEIVING_WEBHOOK_CONFLICT",
+      "Resend webhook staging requires operator review.",
+    );
+  }
+  return (
+    (await input.provider.reconcileWebhookCreateIfPresent({
+      apiKey: input.apiKey,
+      intent: existing.webhookCreateIntent,
+    })) ?? undefined
+  );
+}
+
 function isWebhookRecoveryProvider(
   provider: ResendReceivingProvider,
 ): provider is ResendWebhookCreateRecoveryProvider {
   return "reconcileWebhookCreate" in provider;
+}
+
+function isWebhookDecommissionProvider(
+  provider: ResendReceivingProvider,
+): provider is ResendWebhookDecommissionProvider {
+  return "reconcileWebhookCreateIfPresent" in provider;
 }
 
 export function encryptReceivingSigningSecret(input: {
@@ -737,6 +872,7 @@ function projectConnection(
     return {
       provider: "resend",
       configured: false,
+      receivingDomainKind: null,
       credentialStatus: "not_configured",
       credentialValidatedAt: null,
       receivingDomain: null,
@@ -754,6 +890,7 @@ function projectConnection(
   return {
     provider: "resend",
     configured: Boolean(row.encryptedApiKey && row.receivingDomain),
+    receivingDomainKind: row.receivingDomainKind,
     credentialStatus: row.credentialStatus,
     credentialValidatedAt: row.credentialValidatedAt?.toISOString() ?? null,
     receivingDomain: row.receivingDomain,

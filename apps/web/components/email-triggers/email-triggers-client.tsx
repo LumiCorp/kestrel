@@ -88,7 +88,8 @@ export type EmailTriggerSummary = {
   instruction: string;
   modelId: string;
   claimedFromFilter: string | null;
-  accessMode: "private";
+  accessMode: "private" | "public";
+  alias: string;
   address: string;
   enabled: boolean;
   disabledReason: string | null;
@@ -133,6 +134,7 @@ export type EmailTriggerSummary = {
 type EmailTriggerDraft = {
   projectId: string;
   name: string;
+  alias: string;
   instruction: string;
   modelId: string;
   claimedFromFilter: string;
@@ -142,6 +144,7 @@ function emptyDraft(projectId = ""): EmailTriggerDraft {
   return {
     projectId,
     name: "",
+    alias: "",
     instruction: DEFAULT_EMAIL_TRIGGER_INSTRUCTION,
     modelId: "",
     claimedFromFilter: "",
@@ -256,6 +259,7 @@ export function EmailTriggersClient({
     setDraft({
       projectId: trigger.project.id,
       name: trigger.name,
+      alias: trigger.alias,
       instruction: trigger.instruction,
       modelId: trigger.modelId,
       claimedFromFilter: trigger.claimedFromFilter ?? "",
@@ -272,7 +276,16 @@ export function EmailTriggersClient({
   }
 
   async function saveTrigger() {
-    if (!(draft.projectId && draft.name.trim() && draft.instruction.trim() && draft.modelId)) return;
+    if (
+      !(
+        draft.projectId &&
+        draft.name.trim() &&
+        draft.alias.trim() &&
+        draft.instruction.trim() &&
+        draft.modelId
+      )
+    )
+      return;
     setBusy(true);
     try {
       const url = editing
@@ -286,6 +299,9 @@ export function EmailTriggersClient({
           body: JSON.stringify({
             ...(editing ? { expectedRevision: editing.revision } : {}),
             name: draft.name,
+            ...(!editing || draft.alias !== editing.alias
+              ? { alias: draft.alias }
+              : {}),
             instruction: draft.instruction,
             ...(!editing || draft.modelId !== editing.modelId
               ? { modelId: draft.modelId }
@@ -378,9 +394,9 @@ export function EmailTriggersClient({
   async function copyAddress(address: string) {
     try {
       await navigator.clipboard.writeText(address);
-      toast.success("Private address copied.");
+      toast.success("Email address copied.");
     } catch {
-      toast.error("Private address could not be copied.");
+      toast.error("Email address could not be copied.");
     }
   }
 
@@ -392,7 +408,7 @@ export function EmailTriggersClient({
             <Plus className="size-4" /> New trigger
           </Button>
         }
-        description="Start an agent run when a private Project email address receives mail. Every run uses the Project's current context, Environment, Apps, and ordinary controls."
+        description="Start an agent run when a Project email address receives mail. Every run uses the Project's current context, Environment, Apps, and ordinary controls."
         eyebrow="Work"
         title="Triggers"
       />
@@ -402,7 +418,7 @@ export function EmailTriggersClient({
           <ResourceEmpty
             description={
               editableProjects.length
-                ? "Create a private email address for one of your Projects."
+                ? "Create an email address for one of your Projects."
                 : "A Project editor or owner can create Email Triggers."
             }
             title="No triggers yet"
@@ -428,7 +444,7 @@ export function EmailTriggersClient({
                     actions={
                       <div className="flex items-center gap-1">
                         <Button
-                          aria-label={`Copy private address for ${trigger.name}`}
+                          aria-label={`Copy email address for ${trigger.name}`}
                           disabled={busy}
                           onClick={() => void copyAddress(trigger.address)}
                           size="icon"
@@ -549,7 +565,7 @@ export function EmailTriggersClient({
           <DialogHeader>
             <DialogTitle>{editing ? "Edit Email Trigger" : "New Email Trigger"}</DialogTitle>
             <DialogDescription>
-              Kestrel generates a private address. The creator is the immutable Execution Owner shown as Runs as.
+              Choose the address users will email. The creator is the immutable Execution Owner shown as Runs as.
             </DialogDescription>
           </DialogHeader>
           <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain pr-2">
@@ -577,6 +593,25 @@ export function EmailTriggersClient({
                 placeholder="Invoice intake"
                 value={draft.name}
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="trigger-alias">Email alias</Label>
+              <Input
+                autoCapitalize="none"
+                id="trigger-alias"
+                maxLength={64}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    alias: event.target.value.toLowerCase(),
+                  }))
+                }
+                placeholder="support"
+                value={draft.alias}
+              />
+              <p className="text-muted-foreground text-xs">
+                Users email this alias at the Organization's receiving domain.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="trigger-instruction">What should the agent do with each email?</Label>
@@ -636,7 +671,7 @@ export function EmailTriggersClient({
           <DialogFooter>
             <Button onClick={() => setDialogOpen(false)} variant="outline">Cancel</Button>
             <Button
-              disabled={busy || modelsLoading || Boolean(modelsError) || !draft.projectId || !draft.name.trim() || !draft.instruction.trim() || !draft.modelId}
+              disabled={busy || modelsLoading || Boolean(modelsError) || !draft.projectId || !draft.name.trim() || !draft.alias.trim() || !draft.instruction.trim() || !draft.modelId}
               onClick={() => void saveTrigger()}
             >
               {busy ? "Saving…" : editing ? "Save changes" : "Create trigger"}
@@ -667,7 +702,7 @@ export function EmailTriggersClient({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this Email Trigger?</AlertDialogTitle>
             <AlertDialogDescription>
-              Its private address stops admitting new email. Existing receipts and Threads remain available.
+              Its email address stops admitting new email. Existing receipts and Threads remain available.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
