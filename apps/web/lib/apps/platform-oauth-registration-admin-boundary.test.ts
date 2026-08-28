@@ -11,6 +11,13 @@ const routeSource = fs.readFileSync(
   ),
   "utf8",
 );
+const registrationSource = fs.readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "platform-oauth-registrations.ts",
+  ),
+  "utf8",
+);
 
 test("Platform OAuth registration route is admin-gated and redacted", () => {
   assert.match(routeSource, /await requireAdmin\(\)/u);
@@ -23,15 +30,27 @@ test("Platform OAuth registration route is admin-gated and redacted", () => {
   assert.doesNotMatch(routeSource, /NextResponse\.json\([^)]*clientSecret/u);
 });
 
-test("OAuth registration audit failure cannot turn a committed save into failure", () => {
-  const save = routeSource.indexOf("await savePlatformOAuthRegistration");
-  const audit = routeSource.indexOf("await logAdminEvent", save);
-  const isolatedAuditFailure = routeSource.indexOf(".catch(() =>", audit);
-  const successResponse = routeSource.indexOf(
-    "return NextResponse.json",
-    audit,
+test("OAuth registration mutation and audit evidence share one transaction", () => {
+  const transaction = registrationSource.indexOf(
+    "await knowledgeDb.transaction",
   );
-  assert.ok(save < audit);
-  assert.ok(audit < isolatedAuditFailure);
-  assert.ok(isolatedAuditFailure < successResponse);
+  const mutation = registrationSource.indexOf(
+    ".update(schema.platformOAuthRegistrations)",
+    transaction,
+  );
+  const audit = registrationSource.indexOf(
+    "await insertAdminEvent(transaction",
+    transaction,
+  );
+  assert.ok(transaction >= 0);
+  assert.ok(mutation > transaction);
+  assert.ok(audit > mutation);
+  assert.doesNotMatch(routeSource, /logAdminEvent|\.catch\(\(\) =>/u);
+});
+
+test("Platform OAuth packs derive their capability scopes from operation descriptors", () => {
+  assert.match(registrationSource, /GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS/u);
+  assert.match(registrationSource, /MICROSOFT_365_OPERATION_DESCRIPTORS/u);
+  assert.doesNotMatch(registrationSource, /_PACK_SCOPES/u);
+  assert.doesNotMatch(registrationSource, /outlook|sharepoint/u);
 });

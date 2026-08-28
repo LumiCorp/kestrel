@@ -214,11 +214,19 @@ function RegistrationCard({
             : null,
         enabledPacks,
         enabled: nextEnabled,
+        expectedRevision: registration.revision,
       }),
     });
     const body = await response.json().catch(() => ({}));
     setBusy(false);
     if (!response.ok) {
+      if (body.code === "OAUTH_REGISTRATION_CONFLICT") {
+        toast.error(
+          "This registration changed elsewhere. Reloaded the latest version.",
+        );
+        await onSaved();
+        return;
+      }
       toast.error(body.error || "Failed to save OAuth registration.");
       return;
     }

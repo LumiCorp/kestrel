@@ -1,14 +1,14 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
-  GOOGLE_WORKSPACE_PACK_SCOPES,
-  scopesForGoogleWorkspacePacks,
+  GOOGLE_WORKSPACE_BASE_SCOPES,
+  GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS,
   type GoogleWorkspacePack,
 } from "../../../../src/apps/googleWorkspace.js";
 import {
-  MICROSOFT_365_PACK_SCOPES,
-  scopesForMicrosoft365Packs,
-  type Microsoft365Pack,
+  MICROSOFT_365_BASE_SCOPES,
+  MICROSOFT_365_OPERATION_DESCRIPTORS,
 } from "../../../../src/apps/microsoft365.js";
+import { insertAdminEvent } from "@/lib/admin/logs";
 import {
   decryptGatewayCredential,
   encryptGatewayCredential,
@@ -77,6 +77,14 @@ type SaveResult = {
   auditAction: "create" | "update" | "rotate" | "enable" | "disable" | "narrow";
 };
 
+const RELEASED_PACKS = {
+  google_workspace: ["gmail", "calendar"],
+  microsoft_365: ["teams"],
+} as const satisfies Record<PlatformOAuthProvider, readonly SupportedPack[]>;
+
+const MICROSOFT_TENANT_GUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
 function callbackPath(provider: PlatformOAuthProvider) {
   return `/api/integrations/oauth/${provider === "google_workspace" ? "google-workspace" : "microsoft-365"}/callback`;
 }
@@ -93,26 +101,34 @@ function providerDisplayName(provider: PlatformOAuthProvider) {
 }
 
 function supportedPacks(provider: PlatformOAuthProvider) {
-  if (provider === "google_workspace") {
-    return [
-      {
-        id: "gmail" as const,
-        label: "Gmail",
-        scopes: [...GOOGLE_WORKSPACE_PACK_SCOPES.gmail],
-      },
-      {
-        id: "calendar" as const,
-        label: "Google Calendar",
-        scopes: [...GOOGLE_WORKSPACE_PACK_SCOPES.calendar],
-      },
-    ];
-  }
+  const labels: Record<SupportedPack, string> = {
+    gmail: "Gmail",
+    calendar: "Google Calendar",
+    teams: "Microsoft Teams",
+  };
+  return RELEASED_PACKS[provider].map((id) => ({
+    id,
+    label: labels[id],
+    scopes: operationScopesForPacks(provider, [id]),
+  }));
+}
+
+function operationScopesForPacks(
+  provider: PlatformOAuthProvider,
+  packs: readonly SupportedPack[],
+) {
+  const descriptors =
+    provider === "google_workspace"
+      ? GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS
+      : MICROSOFT_365_OPERATION_DESCRIPTORS;
   return [
-    {
-      id: "teams" as const,
-      label: "Microsoft Teams",
-      scopes: [...MICROSOFT_365_PACK_SCOPES.teams],
-    },
+    ...new Set(
+      packs.flatMap((pack) =>
+        descriptors
+          .filter((descriptor) => descriptor.pack === pack)
+          .flatMap((descriptor) => descriptor.requiredScopes),
+      ),
+    ),
   ];
 }
 
@@ -136,10 +152,11 @@ export function scopesForPlatformOAuthRegistration(input: {
   packs: readonly string[];
 }) {
   const packs = normalizePacks(input.provider, input.packs);
-  if (input.provider === "google_workspace") {
-    return scopesForGoogleWorkspacePacks(packs as GoogleWorkspacePack[]);
-  }
-  return scopesForMicrosoft365Packs(packs as Microsoft365Pack[]);
+  const baseScopes =
+    input.provider === "google_workspace"
+      ? GOOGLE_WORKSPACE_BASE_SCOPES
+      : MICROSOFT_365_BASE_SCOPES;
+  return [...baseScopes, ...operationScopesForPacks(input.provider, packs)];
 }
 
 function secretBindingId(provider: PlatformOAuthProvider) {
@@ -148,6 +165,32 @@ function secretBindingId(provider: PlatformOAuthProvider) {
 
 function clean(value: string | null | undefined) {
   return value?.trim() || null;
+}
+
+export function validatePlatformOAuthRegistrationTenantOrIssuer(
+  provider: PlatformOAuthProvider,
+  tenantOrIssuer: string | null,
+) {
+  if (provider === "google_workspace") {
+    if (tenantOrIssuer) {
+      throw new PlatformOAuthRegistrationError(
+        "OAUTH_TENANT_UNSUPPORTED",
+        "Google Workspace does not accept a tenant or issuer setting.",
+      );
+    }
+    return null;
+  }
+  if (!tenantOrIssuer) return null;
+  if (tenantOrIssuer.toLowerCase() === "organizations") {
+    return "organizations";
+  }
+  if (MICROSOFT_TENANT_GUID.test(tenantOrIssuer)) {
+    return tenantOrIssuer.toLowerCase();
+  }
+  throw new PlatformOAuthRegistrationError(
+    "OAUTH_TENANT_INVALID",
+    "Microsoft 365 tenant must be Organizations or a tenant GUID.",
+  );
 }
 
 export function toPublicPlatformOAuthRegistration(input: {
@@ -236,6 +279,8 @@ export async function savePlatformOAuthRegistration(input: {
   tenantOrIssuer?: string | null;
   enabledPacks: readonly string[];
   enabled: boolean;
+  /** The revision returned to the caller when it loaded this registration. */
+  expectedRevision: number | null;
   env?: NodeJS.ProcessEnv;
 }): Promise<SaveResult> {
   const env = input.env ?? process.env;
@@ -246,7 +291,10 @@ export async function savePlatformOAuthRegistration(input: {
   );
   const clientId = clean(input.clientId);
   const clientSecret = clean(input.clientSecret);
-  const tenantOrIssuer = clean(input.tenantOrIssuer);
+  const tenantOrIssuer = validatePlatformOAuthRegistrationTenantOrIssuer(
+    input.provider,
+    clean(input.tenantOrIssuer),
+  );
   const enabledPacks = normalizePacks(input.provider, input.enabledPacks);
 
   if (!clientId) {
@@ -295,35 +343,93 @@ export async function savePlatformOAuthRegistration(input: {
   const now = new Date();
   const revision = (existing?.revision ?? 0) + 1;
 
-  await knowledgeDb
-    .insert(schema.platformOAuthRegistrations)
-    .values({
+  const saved = await knowledgeDb.transaction(async (transaction) => {
+    let row;
+    if (existing) {
+      if (input.expectedRevision !== existing.revision) {
+        throw new PlatformOAuthRegistrationError(
+          "OAUTH_REGISTRATION_CONFLICT",
+          "This OAuth registration changed. Reload it before saving again.",
+        );
+      }
+      [row] = await transaction
+        .update(schema.platformOAuthRegistrations)
+        .set({
+          enabled: input.enabled,
+          clientId,
+          encryptedClientSecret,
+          tenantOrIssuer,
+          enabledPacks,
+          revision,
+          updatedByUserId: input.actorUserId,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.platformOAuthRegistrations.provider, input.provider),
+            eq(
+              schema.platformOAuthRegistrations.revision,
+              input.expectedRevision,
+            ),
+          ),
+        )
+        .returning();
+    } else {
+      if (input.expectedRevision !== null) {
+        throw new PlatformOAuthRegistrationError(
+          "OAUTH_REGISTRATION_CONFLICT",
+          "This OAuth registration was created. Reload it before saving again.",
+        );
+      }
+      [row] = await transaction
+        .insert(schema.platformOAuthRegistrations)
+        .values({
+          provider: input.provider,
+          enabled: input.enabled,
+          clientId,
+          encryptedClientSecret,
+          tenantOrIssuer,
+          enabledPacks,
+          revision,
+          updatedByUserId: input.actorUserId,
+          updatedAt: now,
+        })
+        .onConflictDoNothing()
+        .returning();
+    }
+    if (!row) {
+      throw new PlatformOAuthRegistrationError(
+        "OAUTH_REGISTRATION_CONFLICT",
+        "This OAuth registration changed. Reload it before saving again.",
+      );
+    }
+    const config = toPublicPlatformOAuthRegistration({
+      ...row,
       provider: input.provider,
-      enabled: input.enabled,
-      clientId,
-      encryptedClientSecret,
-      tenantOrIssuer,
-      enabledPacks,
-      revision,
-      updatedByUserId: input.actorUserId,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: schema.platformOAuthRegistrations.provider,
-      set: {
-        enabled: input.enabled,
-        clientId,
-        encryptedClientSecret,
-        tenantOrIssuer,
-        enabledPacks,
-        revision,
-        updatedByUserId: input.actorUserId,
-        updatedAt: now,
+      persisted: true,
+      env,
+    });
+    await insertAdminEvent(transaction, {
+      actorUserId: input.actorUserId,
+      category: "platform_oauth_registration",
+      action: auditAction,
+      targetType: "platform_oauth_registration",
+      targetId: config.provider,
+      message: `${config.displayName} OAuth registration ${auditAction}d.`,
+      metadata: {
+        provider: config.provider,
+        enabled: config.enabled,
+        enabledPacks: config.enabledPacks,
+        revision: config.revision,
+        status: config.status,
+        clientSecretSupplied: Boolean(clientSecret),
       },
     });
+    return config;
+  });
 
   return {
-    config: await resolvePlatformOAuthRegistration(input.provider, env),
+    config: saved,
     auditAction,
   };
 }

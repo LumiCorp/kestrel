@@ -1,9 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  listRecentPlatformOAuthRegistrationEvents,
-  logAdminEvent,
-} from "@/lib/admin/logs";
+import { listRecentPlatformOAuthRegistrationEvents } from "@/lib/admin/logs";
 import { getSafePlatformOAuthRegistrationAdminError } from "@/lib/apps/platform-oauth-registration-admin-error";
 import {
   isPlatformOAuthProvider,
@@ -19,6 +16,7 @@ const registrationBodySchema = z.object({
   tenantOrIssuer: z.string().trim().min(1).max(512).nullable().optional(),
   enabledPacks: z.array(z.string().trim().min(1).max(100)).max(2),
   enabled: z.boolean(),
+  expectedRevision: z.number().int().positive().nullable(),
 });
 
 function responseFor(error: unknown) {
@@ -54,26 +52,6 @@ export async function PUT(request: NextRequest) {
     const result = await savePlatformOAuthRegistration({
       actorUserId: session.user.id,
       ...body,
-    });
-    await logAdminEvent({
-      actorUserId: session.user.id,
-      category: "platform_oauth_registration",
-      action: result.auditAction,
-      targetType: "platform_oauth_registration",
-      targetId: result.config.provider,
-      message: `${result.config.displayName} OAuth registration ${result.auditAction}d.`,
-      metadata: {
-        provider: result.config.provider,
-        enabled: result.config.enabled,
-        enabledPacks: result.config.enabledPacks,
-        revision: result.config.revision,
-        status: result.config.status,
-        clientSecretSupplied: Boolean(body.clientSecret),
-      },
-    }).catch(() => {
-      console.error(
-        "[admin:platform-oauth-registration] Configuration committed, but its audit event could not be recorded.",
-      );
     });
     return NextResponse.json({ registration: result.config });
   } catch (error) {

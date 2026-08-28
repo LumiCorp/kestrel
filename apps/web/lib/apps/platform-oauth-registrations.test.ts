@@ -5,6 +5,7 @@ import {
   PlatformOAuthRegistrationError,
   scopesForPlatformOAuthRegistration,
   toPublicPlatformOAuthRegistration,
+  validatePlatformOAuthRegistrationTenantOrIssuer,
 } from "./platform-oauth-registrations";
 
 test("Platform registration callbacks are fixed Kestrel One integration callbacks", () => {
@@ -70,6 +71,53 @@ test("Platform registration rejects deferred Outlook and SharePoint packs", () =
       },
     );
   }
+});
+
+test("Platform registration accepts only documented Microsoft tenants", () => {
+  assert.equal(
+    validatePlatformOAuthRegistrationTenantOrIssuer(
+      "microsoft_365",
+      "Organizations",
+    ),
+    "organizations",
+  );
+  assert.equal(
+    validatePlatformOAuthRegistrationTenantOrIssuer(
+      "microsoft_365",
+      "A3A39A57-A605-4DB5-B8C3-A7AF1AD223E7",
+    ),
+    "a3a39a57-a605-4db5-b8c3-a7af1ad223e7",
+  );
+  for (const value of ["common", "consumers", "tenant.example.test"]) {
+    assert.throws(
+      () =>
+        validatePlatformOAuthRegistrationTenantOrIssuer("microsoft_365", value),
+      (error: unknown) => {
+        assert.ok(error instanceof PlatformOAuthRegistrationError);
+        assert.equal(error.code, "OAUTH_TENANT_INVALID");
+        return true;
+      },
+    );
+  }
+});
+
+test("Platform registration never accepts a Google tenant or issuer", () => {
+  assert.equal(
+    validatePlatformOAuthRegistrationTenantOrIssuer("google_workspace", null),
+    null,
+  );
+  assert.throws(
+    () =>
+      validatePlatformOAuthRegistrationTenantOrIssuer(
+        "google_workspace",
+        "issuer.example.test",
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof PlatformOAuthRegistrationError);
+      assert.equal(error.code, "OAUTH_TENANT_UNSUPPORTED");
+      return true;
+    },
+  );
 });
 
 test("public Platform registration state never serializes an encrypted secret", () => {
