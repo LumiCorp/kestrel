@@ -92,9 +92,6 @@ const stripeEnvConfigured = stripeConfigStatus.isReady;
 const githubOAuthConfigured = Boolean(
   process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET,
 );
-const googleOAuthConfigured = Boolean(
-  process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET,
-);
 const microsoftOAuthConfigured = Boolean(
   process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET,
 );
@@ -154,17 +151,6 @@ export const auth = betterAuth({
             clientId: process.env.GITHUB_CLIENT_ID as string,
             clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
             scope: ["repo"],
-            disableImplicitSignUp: true,
-          },
-        }
-      : {}),
-    ...(googleOAuthConfigured
-      ? {
-          google: {
-            clientId: process.env.GOOGLE_CLIENT_ID as string,
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
-            accessType: "offline" as const,
-            prompt: "select_account consent",
             disableImplicitSignUp: true,
           },
         }
