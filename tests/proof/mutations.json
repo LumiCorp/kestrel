@@ -144,6 +144,15 @@
       "testFiles": ["packages/sdk/tests/local-client.test.ts"]
     },
     {
+      "id": "conversation-message-command-settlement",
+      "target": "packages/sdk/src/internal/ProtocolClient.ts",
+      "find": "if (isRunnerExpectedResponseEvent(pending.commandType, event)) {",
+      "replace": "if (isRunnerTerminalResponseEvent(event.type)) {",
+      "command": "pnpm",
+      "args": ["--dir", "packages/sdk", "exec", "node", "--import", "tsx", "--test", "--test-timeout=5000", "--test-name-pattern=settles conversation submissions", "tests/kestrel-client.test.ts"],
+      "testFiles": ["packages/sdk/tests/kestrel-client.test.ts"]
+    },
+    {
       "id": "terminal-message-projection-omission",
       "target": "apps/desktop/renderer/src/state.ts",
       "find": "if (runId !== undefined && thread.transcript.some((item) => terminalRunId(item) === runId)) {",

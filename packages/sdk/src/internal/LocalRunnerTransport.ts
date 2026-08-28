@@ -4,7 +4,6 @@ import {
   isRunnerEventAllowedForCommand,
   isRunnerExpectedResponseEvent,
   isRunnerStreamingCommandType,
-  isRunnerTerminalResponseEvent,
   parseRunnerCommandV2,
 } from "@kestrel-agents/protocol";
 
@@ -201,7 +200,7 @@ export class LocalRunnerTransport implements ProtocolTransport {
               }));
               return false;
             }
-            if (isRunnerTerminalResponseEvent(event.type)) {
+            if (isRunnerExpectedResponseEvent(command.type, event)) {
               streamSettled = true;
               this.emitEvent(event);
               return false;
