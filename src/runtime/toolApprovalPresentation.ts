@@ -30,6 +30,7 @@ type Presenter = {
       | "event_time"
       | "attendees"
       | "string_list"
+      | "json_string_list"
       | undefined;
   }>;
   warnings?: readonly string[] | undefined;
@@ -267,7 +268,7 @@ const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
     "Publish an immutable file or ZIP through a temporary preview link.",
     [
       ["mode", "Mode"],
-      ["paths", "Selected files", "string_list"],
+      ["paths", "Selected files", "json_string_list"],
       ["downloadName", "Download name"],
       ["ttlMinutes", "Lifetime (minutes)"],
     ],
@@ -400,7 +401,8 @@ function displayValue(
     | "default"
     | "event_time"
     | "attendees"
-    | "string_list" = "default",
+    | "string_list"
+    | "json_string_list" = "default",
 ): string {
   if (format === "event_time") {
     const time = readRecord(value);
@@ -424,6 +426,12 @@ function displayValue(
     return Array.isArray(value) &&
       value.every((item): item is string => typeof item === "string")
       ? value.join(", ") || "None"
+      : "Configured selection";
+  }
+  if (format === "json_string_list") {
+    return Array.isArray(value) &&
+      value.every((item): item is string => typeof item === "string")
+      ? JSON.stringify(value)
       : "Configured selection";
   }
   if (typeof value === "string") return value;
