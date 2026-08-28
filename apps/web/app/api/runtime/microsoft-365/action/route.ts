@@ -23,10 +23,15 @@ import {
   capabilityForMicrosoft365Operation,
   MICROSOFT_365_AUTH_PROVIDER_ID,
   microsoft365RuntimeInputSchema,
+  type Microsoft365RuntimeInput,
 } from "@/lib/integrations/microsoft-365-contract";
 import {
   markMicrosoft365ConnectionDegraded,
 } from "@/lib/integrations/microsoft-365-oauth";
+import {
+  HostedPersonalOAuthError,
+  resolveHostedPersonalProviderToken,
+} from "@/lib/integrations/hosted-personal-oauth";
 import {
   authorizeMicrosoft365Capability,
   Microsoft365PolicyError,
@@ -94,6 +99,9 @@ export async function POST(request: Request) {
     const accessToken = await getAccessToken({
       accountId: policy.connection.externalAccountId,
       connectionId: policy.connection.id,
+      organizationId: ticket.organizationId,
+      operation: input.operation,
+      projectId: policy.projectId,
       userId: ticket.actorId,
     });
     const result = await executeOperation(input, accessToken);
@@ -184,8 +192,44 @@ async function executeOperation(
 async function getAccessToken(input: {
   accountId: string | null;
   connectionId: string;
+  organizationId: string;
+  operation: Microsoft365RuntimeInput["operation"];
+  projectId: string;
   userId: string;
 }) {
+  if (isTeamsOperation(input.operation)) {
+    try {
+      const token = await resolveHostedPersonalProviderToken({
+        provider: "microsoft_365",
+        connectionId: input.connectionId,
+        organizationId: input.organizationId,
+        userId: input.userId,
+        projectId: input.projectId,
+        operation: input.operation,
+      });
+      return token.accessToken;
+    } catch (error) {
+      if (error instanceof HostedPersonalOAuthError) {
+        if (
+          input.operation === "chat.send" &&
+          error.code === "OAUTH_SCOPE_DENIED"
+        ) {
+          throw new Microsoft365ProviderError({
+            code: "MICROSOFT_365_TEAMS_SEND_TENANT_CONSENT_REQUIRED",
+            status: 403,
+          });
+        }
+        if (error.code === "OAUTH_RECONNECT_REQUIRED") {
+          throw new Microsoft365ProviderError({
+            code: "MICROSOFT_365_RECONNECT_REQUIRED",
+            status: 401,
+            reconnectRequired: true,
+          });
+        }
+      }
+      throw error;
+    }
+  }
   try {
     if (!input.accountId) throw new Error("Microsoft account identity is unavailable.");
     const token = await auth.api.getAccessToken({
@@ -207,6 +251,16 @@ async function getAccessToken(input: {
       reconnectRequired: true,
     });
   }
+}
+
+function isTeamsOperation(
+  operation: Microsoft365RuntimeInput["operation"],
+): operation is "chats.list" | "chat.messages.list" | "chat.send" {
+  return (
+    operation === "chats.list" ||
+    operation === "chat.messages.list" ||
+    operation === "chat.send"
+  );
 }
 
 function assertCalendarRange(input: { timeMin: string; timeMax: string }) {

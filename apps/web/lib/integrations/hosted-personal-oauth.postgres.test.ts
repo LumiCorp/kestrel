@@ -102,6 +102,87 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
     (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_SESSION_USED",
   );
 
+  await sql`INSERT INTO "app_installations" ("organization_id", "app_key", "status", "settings", "installed_at", "created_at", "updated_at") VALUES (${organizationId}, 'microsoft_365', 'installed', '{}'::jsonb, ${now}, ${now}, ${now})`;
+  await registrations.savePlatformOAuthRegistration({
+    actorUserId: userId,
+    provider: "microsoft_365",
+    clientId: "microsoft-client",
+    clientSecret: "microsoft-secret",
+    tenantOrIssuer: "organizations",
+    enabled: true,
+    enabledPacks: ["teams"],
+    expectedRevision: null,
+  });
+  const missingTeamsReadStart = await broker.startHostedPersonalAuthorization({
+    provider: "microsoft_365",
+    organizationId,
+    userId,
+    packs: ["teams"],
+    env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+  });
+  const missingTeamsReadSessionId = new URL(missingTeamsReadStart.authorizationUrl).searchParams.get("state");
+  assert.ok(missingTeamsReadSessionId);
+  await assert.rejects(
+    broker.completeHostedPersonalAuthorization({
+      provider: "microsoft_365",
+      sessionId: missingTeamsReadSessionId,
+      userId,
+      code: "missing-teams-read-code",
+      env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+      fetchImpl: (async (request) => {
+        assert.equal(String(request), "https://login.microsoftonline.com/organizations/oauth2/v2.0/token");
+        return Response.json({
+          access_token: "microsoft-no-read-access",
+          refresh_token: "microsoft-no-read-refresh",
+          token_type: "Bearer",
+          expires_in: 3600,
+          scope: "openid profile email offline_access User.Read",
+        });
+      }) as typeof fetch,
+    }),
+    (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_CONNECTION_SCOPE_DENIED",
+  );
+  const [missingTeamsReadConnection] = await sql`SELECT count(*)::int AS "count" FROM "app_connections" WHERE "organization_id" = ${organizationId} AND "app_key" = 'microsoft_365'`;
+  assert.equal(missingTeamsReadConnection.count, 0);
+
+  const teamsReadOnlyStart = await broker.startHostedPersonalAuthorization({
+    provider: "microsoft_365",
+    organizationId,
+    userId,
+    packs: ["teams"],
+    env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+  });
+  const teamsReadOnlySessionId = new URL(teamsReadOnlyStart.authorizationUrl).searchParams.get("state");
+  assert.ok(teamsReadOnlySessionId);
+  const teamsReadOnly = await broker.completeHostedPersonalAuthorization({
+    provider: "microsoft_365",
+    sessionId: teamsReadOnlySessionId,
+    userId,
+    code: "teams-read-only-code",
+    env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+    fetchImpl: (async (request) => {
+      const value = String(request);
+      if (value === "https://login.microsoftonline.com/organizations/oauth2/v2.0/token") {
+        return Response.json({
+          access_token: "microsoft-read-access",
+          refresh_token: "microsoft-read-refresh",
+          token_type: "Bearer",
+          expires_in: 3600,
+          scope: "openid profile email offline_access User.Read Chat.Read",
+        });
+      }
+      if (value === "https://graph.microsoft.com/oidc/userinfo") {
+        return Response.json({ sub: "microsoft-provider-user", preferred_username: "person@company.example" });
+      }
+      throw new Error(`Unexpected provider URL: ${value}`);
+    }) as typeof fetch,
+  });
+  const [teamsReadOnlyConnection] = await sql`SELECT "status", "scopes", "delivery_config" AS "deliveryConfig" FROM "app_connections" WHERE "id" = ${teamsReadOnly.connectionId}`;
+  assert.equal(teamsReadOnlyConnection.status, "connected");
+  assert.equal(teamsReadOnlyConnection.scopes.includes("Chat.Read"), true);
+  assert.equal(teamsReadOnlyConnection.scopes.includes("ChatMessage.Send"), false);
+  assert.deepEqual(teamsReadOnlyConnection.deliveryConfig, { capabilityPacks: ["teams"] });
+
   await sql`INSERT INTO "member" ("id", "organizationId", "userId", "role", "createdAt") VALUES (${memberId}, ${organizationId}, ${userId}, 'owner', ${now})`;
   await sql`INSERT INTO "environments" ("id", "organization_id", "created_by_user_id", "name", "slug", "region", "status", "is_default", "created_at", "updated_at") VALUES (${environmentId}, ${organizationId}, ${userId}, 'Broker Environment', ${`broker-env-${suffix}`}, 'iad', 'ready', true, ${now}, ${now})`;
   await sql.begin(async (transaction) => {
@@ -112,6 +193,7 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
   await sql`INSERT INTO "project_app_connections" ("project_id", "app_key", "connection_id", "scope", "user_id", "is_default", "added_by_user_id", "created_at", "updated_at") VALUES (${projectId}, 'google_workspace', ${completed.connectionId}, 'personal', ${userId}, true, ${userId}, ${now}, ${now})`;
   await sql`INSERT INTO "environment_app_capability_grants" ("environment_id", "app_key", "capability_key", "enabled", "approval_mode", "logging_mode", "rate_limit_mode", "created_at", "updated_at") VALUES
     (${environmentId}, 'google_workspace', 'calendar.events.read', true, 'auto', 'metadata_only', 'strict', ${now}, ${now}),
+    (${environmentId}, 'google_workspace', 'calendar.availability.read', true, 'auto', 'metadata_only', 'strict', ${now}, ${now}),
     (${environmentId}, 'google_workspace', 'gmail.messages.search', true, 'auto', 'metadata_only', 'strict', ${now}, ${now})`;
   await sql`UPDATE "platform_personal_oauth_authorizations" SET "expires_at" = ${new Date(now.getTime() - 60_000)} WHERE "connection_id" = ${completed.connectionId}`;
 
@@ -137,6 +219,21 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
   assert.equal(firstRefresh.accessToken, "refreshed-access");
   assert.equal(secondRefresh.accessToken, "refreshed-access");
   assert.equal(refreshCalls, 1, "concurrent callers share the serialized refresh");
+  await sql`UPDATE "environment_app_capability_grants" SET "enabled" = false WHERE "environment_id" = ${environmentId} AND "app_key" = 'google_workspace' AND "capability_key" = 'calendar.events.read'`;
+  const availabilityToken = await broker.resolveHostedPersonalProviderToken({
+    provider: "google_workspace",
+    connectionId: completed.connectionId,
+    organizationId,
+    userId,
+    projectId,
+    operation: "availability.query",
+  });
+  assert.equal(availabilityToken.accessToken, "refreshed-access");
+  await assert.rejects(
+    broker.resolveHostedPersonalProviderToken({ provider: "google_workspace", connectionId: completed.connectionId, organizationId, userId, projectId, operation: "events.list" }),
+    (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_OPERATION_DENIED",
+  );
+  await sql`UPDATE "environment_app_capability_grants" SET "enabled" = true WHERE "environment_id" = ${environmentId} AND "app_key" = 'google_workspace' AND "capability_key" = 'calendar.events.read'`;
   await assert.rejects(
     broker.resolveHostedPersonalProviderToken({ provider: "google_workspace", connectionId: completed.connectionId, organizationId, userId, projectId, operation: "gmail.messages.search" }),
     (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_MODEL_ADMISSION_REQUIRED",

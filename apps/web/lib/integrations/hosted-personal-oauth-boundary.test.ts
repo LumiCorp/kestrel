@@ -46,6 +46,9 @@ test("broker rejects the deferred Microsoft packs and health is redacted", () =>
   const healthSource = source.slice(healthStart, healthEnd);
   assert.doesNotMatch(healthSource, /accessToken|refreshToken|encryptedTokenPayload/u);
   assert.match(source, /OAUTH_ORGANIZATION_PACK_DENIED/u);
+  assert.match(source, /OAUTH_CONNECTION_SCOPE_DENIED/u);
+  assert.match(source, /operation: "chats\.list"/u);
+  assert.doesNotMatch(source, /operation: "chat\.send"[\s\S]{0,160}OAUTH_CONNECTION_SCOPE_DENIED/u);
 });
 
 test("resolver derives operation policy from canonical descriptors before token return", () => {
@@ -60,7 +63,7 @@ test("resolver derives operation policy from canonical descriptors before token 
     "authorizeGmailCapability",
     "admitGmailExecutionRoute",
     "pg_advisory_xact_lock",
-    "markAuthorizationDegraded",
+    "markHostedPersonalAuthorizationDegraded",
   ]) {
     assert.equal(source.includes(check), true, check);
   }

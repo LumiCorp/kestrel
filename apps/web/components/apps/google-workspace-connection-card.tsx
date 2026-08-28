@@ -12,6 +12,11 @@ type GoogleConnectionStatus = {
   connected: boolean;
   status: "connected" | "degraded" | "disconnected" | null;
   label: string | null;
+  selectedPacks: Array<"calendar" | "gmail">;
+  packHealth: Record<
+    "calendar" | "gmail",
+    "not_selected" | "ready" | "missing_scopes"
+  >;
 };
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -25,6 +30,9 @@ export function GoogleWorkspaceConnectionCard({
 }) {
   const [status, setStatus] = useState<GoogleConnectionStatus | null>(null);
   const [working, setWorking] = useState(false);
+  const [selectedPacks, setSelectedPacks] = useState<
+    Array<"calendar" | "gmail">
+  >(["calendar"]);
 
   const refresh = useCallback(async () => {
     const response = await fetch("/api/apps/google", { cache: "no-store" });
@@ -35,40 +43,52 @@ export function GoogleWorkspaceConnectionCard({
       throw new Error(body.error ?? "Google Workspace status is unavailable.");
     }
     setStatus(body);
+    setSelectedPacks(body.selectedPacks);
   }, []);
 
-  const connect = useCallback(async () => {
-    setWorking(true);
-    try {
-      const response = await fetch("/api/apps/google", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ calendar: true }),
-      });
-      const body = await readJson<{
-        connected?: boolean;
-        url?: string | null;
-        error?: string;
-      }>(response);
-      if (!response.ok) {
-        throw new Error(body.error ?? "Google Workspace could not be connected.");
+  const connect = useCallback(
+    async (packs = selectedPacks) => {
+      setWorking(true);
+      try {
+        const response = await fetch("/api/apps/google", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            packs,
+          }),
+        });
+        const body = await readJson<{
+          connected?: boolean;
+          url?: string | null;
+          error?: string;
+        }>(response);
+        if (!response.ok) {
+          throw new Error(
+            body.error ?? "Google Workspace could not be connected.",
+          );
+        }
+        if (body.url) {
+          window.location.assign(body.url);
+          return;
+        }
+        await refresh();
+        toast.success(
+          body.connected
+            ? "Google Workspace connected."
+            : "Google Workspace permissions were updated.",
+        );
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Google Workspace could not be connected.",
+        );
+      } finally {
+        setWorking(false);
       }
-      if (body.url) {
-        window.location.assign(body.url);
-        return;
-      }
-      await refresh();
-      toast.success("Google Workspace connected.");
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Google Workspace could not be connected.",
-      );
-    } finally {
-      setWorking(false);
-    }
-  }, [refresh]);
+    },
+    [refresh, selectedPacks],
+  );
 
   useEffect(() => {
     void refresh().catch((error: unknown) =>
@@ -76,24 +96,31 @@ export function GoogleWorkspaceConnectionCard({
         error instanceof Error ? error.message : "Google status unavailable.",
       ),
     );
-    const result = new URLSearchParams(window.location.search).get("google");
-    if (result) {
+    const query = new URLSearchParams(window.location.search);
+    const integration = query.get("integration");
+    const result = query.get("status");
+    if (integration === "google_workspace" && result) {
       const cleanUrl = new URL(window.location.href);
-      cleanUrl.searchParams.delete("google");
+      cleanUrl.searchParams.delete("integration");
+      cleanUrl.searchParams.delete("status");
       window.history.replaceState({}, "", cleanUrl);
     }
     if (result === "error") {
       toast.error("Google authorization was not completed.");
-    } else if (result === "linked") {
-      if (installed) {
-        void connect();
-      } else {
-        toast.error(
-          "An organization admin must install Google Workspace before it can be connected.",
-        );
-      }
+    } else if (integration === "google_workspace" && result === "connected") {
+      void refresh();
+      toast.success("Google Workspace connected.");
     }
-  }, [connect, installed, refresh]);
+  }, [refresh]);
+
+  function togglePack(pack: "calendar" | "gmail", selected: boolean) {
+    setSelectedPacks((current) => {
+      const next = selected
+        ? [...new Set([...current, pack])]
+        : current.filter((candidate) => candidate !== pack);
+      return next.length ? next : current;
+    });
+  }
 
   async function disconnect() {
     setWorking(true);
@@ -101,11 +128,14 @@ export function GoogleWorkspaceConnectionCard({
       const response = await fetch("/api/apps/google", { method: "DELETE" });
       const body = await readJson<{ error?: string }>(response);
       if (!response.ok) {
-        throw new Error(body.error ?? "Google Workspace could not be disconnected.");
+        throw new Error(
+          body.error ?? "Google Workspace could not be disconnected.",
+        );
       }
       await refresh();
       toast.success("Google Workspace disconnected", {
-        description: "It was also removed from your Projects in this organization.",
+        description:
+          "It was also removed from your Projects in this organization.",
       });
     } catch (error) {
       toast.error(
@@ -120,26 +150,30 @@ export function GoogleWorkspaceConnectionCard({
 
   return (
     <SettingsSection
-      description="Connect Calendar once, then choose which Projects may use it and what availability they may share."
+      description="Choose Calendar, Gmail, or both. Projects remain separately authorized."
       title="Google Workspace"
     >
       <div className="flex flex-wrap items-center gap-3 py-3">
         <div className="mr-auto">
-          <Badge variant={status?.connected ? "default" : "outline"}>
-            {status?.connected
+          <Badge
+            variant={status?.status === "connected" ? "default" : "outline"}
+          >
+            {status?.status === "connected"
               ? "Connected"
               : status?.status === "degraded"
-                ? "Reconnect required"
+                ? "Permission update required"
                 : "Not connected"}
           </Badge>
           {status?.label ? (
-            <p className="mt-2 text-muted-foreground text-sm">
-              {status.label}
-            </p>
+            <p className="mt-2 text-muted-foreground text-sm">{status.label}</p>
           ) : null}
         </div>
-        {status?.connected ? (
-          <Button disabled={working} onClick={() => void disconnect()} variant="outline">
+        {status?.status && status.status !== "disconnected" ? (
+          <Button
+            disabled={working}
+            onClick={() => void disconnect()}
+            variant="outline"
+          >
             Disconnect
           </Button>
         ) : null}
@@ -156,9 +190,54 @@ export function GoogleWorkspaceConnectionCard({
                 : "Connect Google"}
         </Button>
       </div>
+      <fieldset className="space-y-2 border-t py-3">
+        <legend className="font-medium text-sm">Google Workspace access</legend>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            checked={selectedPacks.includes("calendar")}
+            onChange={(event) => togglePack("calendar", event.target.checked)}
+            type="checkbox"
+          />
+          <span>
+            Calendar
+            <span className="block text-muted-foreground text-xs">
+              Manage the connected account&apos;s Calendar within authorized
+              Projects.
+            </span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            checked={selectedPacks.includes("gmail")}
+            onChange={(event) => togglePack("gmail", event.target.checked)}
+            type="checkbox"
+          />
+          <span>
+            Gmail
+            <span className="block text-muted-foreground text-xs">
+              Request read and send consent; mailbox tools remain unavailable
+              until their governed operation contracts are enabled.
+            </span>
+          </span>
+        </label>
+      </fieldset>
+      {selectedPacks.includes("gmail") ? (
+        <p className="rounded-md border border-amber-500/40 bg-amber-50 p-3 text-amber-950 text-sm dark:bg-amber-950/30 dark:text-amber-100">
+          Gmail data is used only for the productivity actions you authorize.
+          Kestrel requires a qualifying Environment model route before any
+          restricted Gmail content can enter a model request; it is not used to
+          train generalized models.
+        </p>
+      ) : null}
+      {status?.packHealth.gmail === "missing_scopes" ? (
+        <p className="text-muted-foreground text-sm">
+          Gmail consent is incomplete. Calendar remains available where its
+          scopes are healthy.
+        </p>
+      ) : null}
       {status?.configured === false ? (
         <p className="text-destructive text-sm">
-          Google OAuth is not configured for this Kestrel deployment.
+          Google Workspace is not configured by a Platform Admin.
         </p>
       ) : null}
       {installed ? null : (

@@ -4,6 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
+  GOOGLE_WORKSPACE_PACK_SCOPES,
   GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS,
   type GoogleWorkspaceCanonicalOperation,
 } from "../../../../src/apps/googleWorkspace.js";
@@ -165,8 +166,24 @@ function normalizeScopes(scopes: readonly string[]) {
   return [...new Set(scopes.map((scope) => scope.trim()).filter(Boolean))];
 }
 
-type HostedPersonalOAuthOperation =
+/**
+ * Kestrel One's availability query is a hosted-only Calendar operation.  It
+ * uses the released Calendar pack scope envelope but retains its own Project
+ * capability instead of borrowing `calendar.events.read`.
+ */
+const HOSTED_GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS = [
+  ...GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS,
+  {
+    id: "calendar.availability.read",
+    pack: "calendar",
+    requiredScopes: GOOGLE_WORKSPACE_PACK_SCOPES.calendar,
+    serviceOperation: "availability.query",
+  },
+] as const;
+
+export type HostedPersonalOAuthOperation =
   | GoogleWorkspaceCanonicalOperation
+  | "availability.query"
   | Microsoft365CanonicalOperation;
 
 /**
@@ -179,7 +196,7 @@ function resolveHostedPersonalOAuthOperation(input: {
   operation: HostedPersonalOAuthOperation;
 }) {
   const descriptor = (input.provider === "google_workspace"
-    ? GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS
+    ? HOSTED_GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS
     : MICROSOFT_365_OPERATION_DESCRIPTORS
   ).find((candidate) => candidate.serviceOperation === input.operation);
   if (!descriptor) {
@@ -198,6 +215,30 @@ function resolveHostedPersonalOAuthOperation(input: {
 function scopeSetContains(granted: readonly string[], required: readonly string[]) {
   const actual = new Set(granted.map((scope) => scope.toLowerCase()));
   return required.every((scope) => actual.has(scope.toLowerCase()));
+}
+
+/**
+ * A Teams connection is useful only when it can read chats. Sending is
+ * deliberately not a completion requirement: Microsoft tenant-admin consent
+ * for ChatMessage.Send can be absent while the same connection remains valid
+ * for chat reads.
+ */
+function requireMinimumConnectionScopes(input: {
+  provider: HostedPersonalOAuthProvider;
+  packs: readonly HostedPersonalOAuthPack[];
+  grantedScopes: readonly string[];
+}) {
+  if (input.provider !== "microsoft_365" || !input.packs.includes("teams")) return;
+  const teamsRead = resolveHostedPersonalOAuthOperation({
+    provider: input.provider,
+    operation: "chats.list",
+  });
+  if (!scopeSetContains(input.grantedScopes, teamsRead.requiredScopes)) {
+    throw new HostedPersonalOAuthError(
+      "OAUTH_CONNECTION_SCOPE_DENIED",
+      "Teams chat read permission was not granted. Reconnect and approve Chat.Read.",
+    );
+  }
 }
 
 /**
@@ -392,10 +433,13 @@ async function providerIdentity(input: {
   };
 }
 
-function resourceForProvider(provider: HostedPersonalOAuthProvider) {
+function resourcesForProvider(provider: HostedPersonalOAuthProvider) {
   return provider === "google_workspace"
-    ? { externalId: "primary", resourceType: "calendar", label: "Primary calendar" }
-    : { externalId: "primary", resourceType: "account", label: "Primary account" };
+    ? [
+        { externalId: "primary", resourceType: "calendar", label: "Primary calendar" },
+        { externalId: "primary", resourceType: "account", label: "Primary account" },
+      ]
+    : [{ externalId: "primary", resourceType: "account", label: "Primary account" }];
 }
 
 export async function completeHostedPersonalAuthorization(input: {
@@ -444,6 +488,11 @@ export async function completeHostedPersonalAuthorization(input: {
   if (!grantedScopes.length) {
     throw new HostedPersonalOAuthError("OAUTH_GRANTED_SCOPES_MISSING", "The OAuth provider did not report the granted scopes.");
   }
+  requireMinimumConnectionScopes({
+    provider: input.provider,
+    packs,
+    grantedScopes,
+  });
   const identity = await providerIdentity({ provider: input.provider, accessToken: exchanged.access_token, fetchImpl: input.fetchImpl });
   const now = new Date();
   const expiresAt = exchanged.expires_in ? new Date(now.getTime() + exchanged.expires_in * 1000) : null;
@@ -555,20 +604,21 @@ export async function completeHostedPersonalAuthorization(input: {
           updatedAt: now,
         },
       });
-    const resource = resourceForProvider(input.provider);
-    await transaction.insert(schema.appConnectionResources).values({
-      id: `${connectionId}:${resource.resourceType}`,
-      connectionId,
-      ...resource,
-      enabled: true,
-      permissions: {},
-      metadata: { logical: true },
-      createdAt: now,
-      updatedAt: now,
-    }).onConflictDoUpdate({
-      target: [schema.appConnectionResources.connectionId, schema.appConnectionResources.resourceType, schema.appConnectionResources.externalId],
-      set: { label: resource.label, enabled: true, updatedAt: now },
-    });
+    for (const resource of resourcesForProvider(input.provider)) {
+      await transaction.insert(schema.appConnectionResources).values({
+        id: `${connectionId}:${resource.resourceType}`,
+        connectionId,
+        ...resource,
+        enabled: true,
+        permissions: {},
+        metadata: { logical: true },
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoUpdate({
+        target: [schema.appConnectionResources.connectionId, schema.appConnectionResources.resourceType, schema.appConnectionResources.externalId],
+        set: { label: resource.label, enabled: true, updatedAt: now },
+      });
+    }
     return saved;
   });
   return {
@@ -582,7 +632,10 @@ export async function completeHostedPersonalAuthorization(input: {
   };
 }
 
-async function markAuthorizationDegraded(input: { connectionId: string; code: string }) {
+export async function markHostedPersonalAuthorizationDegraded(input: {
+  connectionId: string;
+  code: string;
+}) {
   const now = new Date();
   await knowledgeDb.transaction(async (transaction) => {
     await transaction.update(schema.platformPersonalOAuthAuthorizations)
@@ -782,7 +835,7 @@ export async function resolveHostedPersonalProviderToken(input: {
     throw new HostedPersonalOAuthError("OAUTH_PACK_DENIED", "This OAuth capability pack was not selected for the connection.");
   }
   if (authorization.reconnectRequired || authorization.registrationRevision !== registration.revision) {
-    await markAuthorizationDegraded({ connectionId: input.connectionId, code: "OAUTH_RECONNECT_REQUIRED" });
+    await markHostedPersonalAuthorizationDegraded({ connectionId: input.connectionId, code: "OAUTH_RECONNECT_REQUIRED" });
     throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App after the Platform OAuth registration changed.");
   }
   if (!scopeSetContains(authorization.grantedScopes, operation.requiredScopes)) {
@@ -824,14 +877,14 @@ export async function resolveHostedPersonalProviderToken(input: {
       env: input.env,
     })));
   } catch {
-    await markAuthorizationDegraded({ connectionId: input.connectionId, code: "OAUTH_TOKEN_UNREADABLE" });
+    await markHostedPersonalAuthorizationDegraded({ connectionId: input.connectionId, code: "OAUTH_TOKEN_UNREADABLE" });
     throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App to restore access.");
   }
   if (!authorization.expiresAt || authorization.expiresAt.getTime() > Date.now() + TOKEN_REFRESH_SKEW_MS) {
     return { accessToken: payload.accessToken, expiresAt: authorization.expiresAt };
   }
   if (!payload.refreshToken) {
-    await markAuthorizationDegraded({ connectionId: input.connectionId, code: "OAUTH_REFRESH_UNAVAILABLE" });
+    await markHostedPersonalAuthorizationDegraded({ connectionId: input.connectionId, code: "OAUTH_REFRESH_UNAVAILABLE" });
     throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App to restore access.");
   }
   return refreshHostedPersonalProviderToken({
