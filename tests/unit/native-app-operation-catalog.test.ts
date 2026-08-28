@@ -16,7 +16,11 @@ import {
 } from "../../src/apps/googleWorkspace.js";
 
 test("the canonical Teams operations map scopes, tools, and service methods", () => {
-  assert.deepEqual(MICROSOFT_365_OPERATION_DESCRIPTORS, [
+  assert.deepEqual(
+    MICROSOFT_365_OPERATION_DESCRIPTORS.filter(
+      (descriptor) => descriptor.pack === "teams",
+    ),
+    [
     {
       id: "teams.chat.read",
       inputContractId: "microsoft365.teams.chats.list.input.v1",
@@ -59,7 +63,8 @@ test("the canonical Teams operations map scopes, tools, and service methods", ()
       sideEffect: "external_side_effect",
       minimumApprovalMode: "ask",
     },
-  ]);
+    ],
+  );
   assert.equal(
     microsoft365OperationDescriptor("chat.send").minimumApprovalMode,
     "ask",
