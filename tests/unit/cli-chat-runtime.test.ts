@@ -579,7 +579,7 @@ test("resolveManagedWorktreesEnabledForRuntime defaults off and honors explicit 
 test("runtime factory preserves managed-worktree host capability paths", async () => {
   const store = new InMemorySessionStore();
   const emptyEnvironment = {
-    runtimeEnv: {},
+    runtimeEnv: { KESTREL_REASONING_MASTER_KEY: "a".repeat(64) },
     modelEnv: {},
     internetEnv: {},
     mcpEnv: {},
@@ -607,7 +607,10 @@ test("runtime factory preserves managed-worktree host capability paths", async (
   const environmentBootstrap = createBootstrap(BASE_PROFILE, {
     resolveEnvironment: () => ({
       ...emptyEnvironment,
-      runtimeEnv: { KESTREL_ENABLE_MANAGED_WORKTREES: "true" },
+      runtimeEnv: {
+        KESTREL_REASONING_MASTER_KEY: "a".repeat(64),
+        KESTREL_ENABLE_MANAGED_WORKTREES: "true",
+      },
     }),
   });
 

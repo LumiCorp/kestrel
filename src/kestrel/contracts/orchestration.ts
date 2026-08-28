@@ -10,7 +10,7 @@ import type {
 } from "./execution.js";
 import type { HarnessEconomicsPolicyV1 } from "../../economics/contracts.js";
 import type {
-  RunnerExternalApprovalBindingV1,
+  RunnerExternalApprovalBinding,
   RunnerInteractionRequest,
 } from "@kestrel-agents/protocol";
 import type { RuntimeTurnActor } from "../../runtime/RuntimeTurn.js";
@@ -206,7 +206,7 @@ export interface ApprovalGrantRecord {
   allowedToolClasses: string[];
   allowedCapabilities: string[];
   expiresAt?: string | undefined;
-  binding?: RunnerExternalApprovalBindingV1 | undefined;
+  binding?: RunnerExternalApprovalBinding | undefined;
   decisionActor?: RuntimeTurnActor | undefined;
   authorityRevision?: string | undefined;
   consumedAt?: string | undefined;

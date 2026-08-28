@@ -1,5 +1,5 @@
 import type { SqlExecutor } from "../store/PostgresSessionStore.js";
-import { parseRunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
+import { parseRunnerExternalApprovalBinding } from "@kestrel-agents/protocol";
 import { parseHarnessEconomicsPolicyV1 } from "../economics/policy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
@@ -1219,7 +1219,7 @@ function mapInteractionRequestRow(row: Record<string, unknown>): InteractionRequ
 function mapApprovalGrantRow(row: Record<string, unknown>): ApprovalGrantRecord {
   const binding = row.binding_json === null || row.binding_json === undefined
     ? undefined
-    : parseRunnerExternalApprovalBindingV1(row.binding_json);
+    : parseRunnerExternalApprovalBinding(row.binding_json);
   const decisionActor: ApprovalGrantRecord["decisionActor"] = isRecord(row.decision_actor_json) &&
     (row.decision_actor_json.actorType === "end_user" ||
       row.decision_actor_json.actorType === "operator" ||

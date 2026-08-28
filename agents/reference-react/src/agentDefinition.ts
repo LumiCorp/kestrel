@@ -193,6 +193,25 @@ export function createReferenceReactAgentDefinitionFromResolvedOptions(
         createStep: () => createExecWaitApprovalStep(execConfig),
         contract: ({ transition }) => {
           const next = transition.nextStepAgent;
+          if (transition.status === "COMPLETED") {
+            const effects = transition.effects ?? [];
+            const payload = asRecord(effects[0]?.payload);
+            const cleanup = asRecord(payload?.preparedApprovalCleanup);
+            const terminal = asRecord(asRecord(transition.statePatch?.agent)?.terminal);
+            const assistantText = asString(asRecord(transition.statePatch?.agent)?.assistantText);
+            const isPreparedCleanup = cleanup?.version === "runner_prepared_approval_cleanup_v1";
+            const isApprovalDecline = terminal?.status === "COMPLETED" &&
+              terminal?.reasonCode === "TOOL_APPROVAL_DECLINED" &&
+              assistantText !== undefined;
+            if (
+              effects.length !== 1 ||
+              effects[0]?.type !== "release_prepared_tool_call" ||
+              (!isPreparedCleanup && !isApprovalDecline)
+            ) {
+              throw contractError("agent.exec.wait_approval completion is invalid");
+            }
+            return;
+          }
           if (transition.status === "WAITING") {
             if (next !== AGENT_STEP_IDS.execWaitApproval) {
               throw contractError("agent.exec.wait_approval WAITING transitions must resume at agent.exec.wait_approval");

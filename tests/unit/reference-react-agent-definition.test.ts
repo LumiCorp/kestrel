@@ -125,3 +125,49 @@ test("agent.loop FAILED contract rejects unstructured failures", () => {
     /agent\.loop FAILED transitions must commit a structured runtime failure/u,
   );
 });
+
+test("agent.exec.wait_approval contract accepts terminal decline cleanup", () => {
+  const definition = createDefinitionForTest();
+  const contract = definition.steps.find(
+    (step) => step.id === AGENT_STEP_IDS.execWaitApproval,
+  )?.contract;
+
+  assert.doesNotThrow(() =>
+    contract?.({
+      transition: {
+        status: "COMPLETED",
+        outboxDelivery: "after_terminal",
+        effects: [
+          {
+            type: "release_prepared_tool_call",
+            payload: { preparedToolCall: { callId: "prepared-1" } },
+            idempotencyKey: "prepared-1:release",
+            failurePolicy: "STOP",
+          },
+        ],
+        statePatch: {
+          agent: {
+            assistantText: "The action was not run.",
+            terminal: {
+              status: "COMPLETED",
+              reasonCode: "TOOL_APPROVAL_DECLINED",
+              message: "The action was not run.",
+            },
+          },
+        },
+      },
+    } as never),
+  );
+});
+
+test("agent.exec.wait_approval contract rejects unproven completion", () => {
+  const definition = createDefinitionForTest();
+  const contract = definition.steps.find(
+    (step) => step.id === AGENT_STEP_IDS.execWaitApproval,
+  )?.contract;
+
+  assert.throws(
+    () => contract?.({ transition: { status: "COMPLETED" } } as never),
+    /agent\.exec\.wait_approval completion is invalid/u,
+  );
+});

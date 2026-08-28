@@ -1091,7 +1091,7 @@ test("profile events carry an explicit preset-4 producer protocol marker", () =>
         id: "workspace_hosted",
         version: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
       },
-      hostedApprovalProducerProtocol: "v2",
+      hostedApprovalProducerProtocol: "v4",
       resolvedProfile: {
         ...(eventPayloads["execution-profile.resolved"]!
           .resolvedProfile as Record<string, unknown>),
@@ -1104,7 +1104,7 @@ test("profile events carry an explicit preset-4 producer protocol marker", () =>
     event.payload.environmentPreset.version,
     WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
   );
-  assert.equal(event.payload.hostedApprovalProducerProtocol, "v2");
+  assert.equal(event.payload.hostedApprovalProducerProtocol, "v4");
 });
 
 test("hosted producer protocol markers reject unknown release modes", () => {
@@ -1118,7 +1118,7 @@ test("hosted producer protocol markers reject unknown release modes", () => {
         hostedApprovalProducerProtocol: "automatic",
       },
     }),
-    /hostedApprovalProducerProtocol must be one of 'v2', 'v3', 'v4'/u,
+    /hostedApprovalProducerProtocol must be one of 'v4'/u,
   );
 });
 

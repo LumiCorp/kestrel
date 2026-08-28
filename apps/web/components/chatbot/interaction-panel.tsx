@@ -17,8 +17,7 @@ export type RuntimeInteractionResponse = {
   requestId: string;
   eventType: string;
   turnId: string;
-  message: string;
-  approved?: boolean | undefined;
+  message?: string | undefined;
   decision?: "decline" | "approve_once" | "remember_approval" | undefined;
   reason?: string | undefined;
   recoveryOptionId?: string | undefined;
@@ -41,11 +40,30 @@ export function InteractionPanel({
   const [content, setContent] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dismissedRequestIds, setDismissedRequestIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const firstControlRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     firstControlRef.current?.focus();
   }, [interactions[0]?.requestId]);
+
+  function dismissInteraction(requestId: string) {
+    setDismissedRequestIds((current) => {
+      const next = new Set(current);
+      next.add(requestId);
+      return next;
+    });
+  }
+
+  function restoreInteraction(requestId: string) {
+    setDismissedRequestIds((current) => {
+      const next = new Set(current);
+      next.delete(requestId);
+      return next;
+    });
+  }
 
   async function resolveRuntime(
     interaction: ThreadInteractionView,
@@ -77,21 +95,25 @@ export function InteractionPanel({
     }
     setBusy(interaction.requestId);
     setError(null);
+    dismissInteraction(interaction.requestId);
+    let responseSaved = false;
     try {
       await onRuntimeResponse({
         requestId: interaction.requestId,
         eventType: interaction.eventType,
         turnId: interaction.turnId,
-        message,
+        ...(interaction.kind === "approval" ? {} : { message }),
         ...(interaction.kind === "approval"
-          ? isStrictHostedApproval(interaction)
-            ? { decision }
-            : { approved: decision === "approve_once" }
+          ? { decision, presentation: "control" as const }
           : {}),
         ...(recoveryOptionId !== undefined ? { recoveryOptionId } : {}),
       });
+      responseSaved = true;
       await onResolved();
     } catch (caught) {
+      if (!responseSaved) {
+        restoreInteraction(interaction.requestId);
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -109,6 +131,8 @@ export function InteractionPanel({
     }
     setBusy(interaction.requestId);
     setError(null);
+    dismissInteraction(interaction.requestId);
+    let responseSaved = false;
     try {
       const response = await fetch(
         `/api/threads/${threadId}/turns/${interaction.turnId}/interrupt`,
@@ -120,8 +144,12 @@ export function InteractionPanel({
       if (!response.ok) {
         throw new Error(payload.error ?? "The waiting turn could not be ended.");
       }
+      responseSaved = true;
       await onResolved();
     } catch (caught) {
+      if (!responseSaved) {
+        restoreInteraction(interaction.requestId);
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -141,10 +169,8 @@ export function InteractionPanel({
       setError("The App interaction checkpoint is missing.");
       return;
     }
-    setBusy(interaction.requestId);
-    setError(null);
+    let parsedContent: Record<string, unknown> | undefined;
     try {
-      let parsedContent: Record<string, unknown> | undefined;
       if (
         interaction.kind === "mcp_elicitation" &&
         decision === "approve" &&
@@ -154,6 +180,19 @@ export function InteractionPanel({
           content[interaction.requestId] || "{}"
         ) as Record<string, unknown>;
       }
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The App response must be valid JSON."
+      );
+      return;
+    }
+    setBusy(interaction.requestId);
+    setError(null);
+    dismissInteraction(interaction.requestId);
+    let responseSaved = false;
+    try {
       const response = await fetch(
         `/api/threads/${threadId}/mcp/interactions/${checkpointId}`,
         {
@@ -170,8 +209,12 @@ export function InteractionPanel({
           payload.error ?? "The App request could not be resolved."
         );
       }
+      responseSaved = true;
       await onResolved();
     } catch (caught) {
+      if (!responseSaved) {
+        restoreInteraction(interaction.requestId);
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -185,6 +228,8 @@ export function InteractionPanel({
   async function retryRuntime(interaction: ThreadInteractionView) {
     setBusy(interaction.requestId);
     setError(null);
+    dismissInteraction(interaction.requestId);
+    let responseSaved = false;
     try {
       const response = await fetch(
         `/api/threads/${threadId}/interactions/${encodeURIComponent(interaction.requestId)}/retry`,
@@ -196,8 +241,12 @@ export function InteractionPanel({
       if (!response.ok) {
         throw new Error(payload.error ?? "Authorization retry was refused.");
       }
+      responseSaved = true;
       await onResolved();
     } catch (caught) {
+      if (!responseSaved) {
+        restoreInteraction(interaction.requestId);
+      }
       setError(
         caught instanceof Error
           ? caught.message
@@ -210,6 +259,10 @@ export function InteractionPanel({
 
   const visibleInteractions = interactions.filter(
     (interaction) =>
+      !dismissedRequestIds.has(interaction.requestId) &&
+      (interaction.status === "pending" ||
+        (interaction.status === "failed" &&
+          interaction.approvalOutcome?.retryEligible === true)) &&
       !(
         interaction.source === "runtime" &&
         interaction.kind === "user_input" &&
@@ -239,22 +292,57 @@ export function InteractionPanel({
           interaction.kind === "mcp_elicitation"
             ? parseUrlElicitation(interaction.requestEnvelope)
             : null;
+        const interactionTitle =
+          structuredReview.kind === "invalid_review"
+            ? "This request cannot be answered safely"
+            : evaluationReview !== null
+              ? "Result requires review"
+              : interaction.kind === "approval" ||
+                  interaction.kind === "mcp_sampling"
+                ? (approvalDetails?.title ?? "Approval required")
+                : "The agent needs your response";
         return (
-          <Card key={interaction.requestId}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">
-                {structuredReview.kind === "invalid_review"
-                  ? "This request cannot be answered safely"
-                  : evaluationReview !== null
-                    ? "Result requires review"
-                    : interaction.kind === "approval" ||
-                        interaction.kind === "mcp_sampling"
-                      ? (approvalDetails?.title ?? "Approval required")
-                      : "The agent needs your response"}
-              </CardTitle>
+          <Card
+            className={
+              approvalDetails !== null
+                ? "w-fit min-w-0 max-w-full gap-0 justify-self-start overflow-hidden rounded-xl border-border/60 bg-muted/30 py-0 shadow-none sm:min-w-[22rem] sm:max-w-xl"
+                : undefined
+            }
+            key={interaction.requestId}
+          >
+            <CardHeader
+              className={
+                approvalDetails !== null
+                  ? "px-3 py-2"
+                  : "pb-2"
+              }
+            >
+              <div className="flex w-full items-center justify-between gap-3">
+                <CardTitle className={approvalDetails !== null ? "text-[13px] leading-5" : "text-sm"}>
+                  {interactionTitle}
+                </CardTitle>
+                {approvalDetails !== null && interaction.status !== "pending" ? (
+                  <span
+                    className={
+                      interaction.status === "failed"
+                        ? "text-destructive shrink-0 text-xs font-medium"
+                        : "text-muted-foreground shrink-0 text-[11px] font-medium"
+                    }
+                    role="status"
+                  >
+                    {approvalStatusLabel(interaction)}
+                  </span>
+                ) : null}
+              </div>
             </CardHeader>
-            <CardContent className="space-y-3">
-              {interaction.status !== "pending" ? (
+            <CardContent
+              className={
+                approvalDetails !== null
+                  ? "space-y-1.5 px-3 pb-2.5 pt-0"
+                  : "space-y-3"
+              }
+            >
+              {approvalDetails === null && interaction.status !== "pending" ? (
                 <p
                   className={
                     interaction.status === "failed"
@@ -281,12 +369,11 @@ export function InteractionPanel({
               {interaction.approvalOutcome?.publicMessage ? (
                 <p className="text-muted-foreground text-sm">
                   {interaction.approvalOutcome.publicMessage}
-                  {interaction.approvalOutcome.failureCode
-                    ? ` (${interaction.approvalOutcome.failureCode})`
-                    : ""}
                 </p>
               ) : null}
-              <p className="text-sm">{interaction.prompt}</p>
+              {approvalDetails === null ? (
+                <p className="text-sm">{interaction.prompt}</p>
+              ) : null}
               {structuredReview.kind === "invalid_review" ? (
                 <p className="text-muted-foreground text-sm" role="alert">
                   The saved interaction does not satisfy the structured-review
@@ -365,71 +452,58 @@ export function InteractionPanel({
               {approvalDetails !== null ? (
                 <section
                   aria-label="Approval request details"
-                  className="rounded-md border bg-muted/35 p-3 text-sm"
+                  className="space-y-1.5 text-xs"
                 >
-                  <p className="font-medium">{approvalDetails.summary}</p>
-                  <dl className="mt-2 grid gap-2">
-                    <div>
-                      <dt className="text-muted-foreground text-xs">Tool</dt>
-                      <dd className="font-mono text-xs">
-                        {approvalDetails.toolName}
-                      </dd>
-                    </div>
+                  <p className="line-clamp-2 text-muted-foreground text-[11px] leading-4">
+                    {approvalDetails.summary}
+                  </p>
+                  <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
                     {approvalDetails.fields.map((field) => (
-                      <div key={field.label}>
-                        <dt className="text-muted-foreground text-xs">
-                          {field.label}
+                      <div
+                        className={
+                          field.label === "Command"
+                            ? "min-w-0 basis-full border-primary/30 border-l-2 pl-2"
+                            : "flex min-w-0 items-baseline gap-1"
+                        }
+                        key={field.label}
+                      >
+                        <dt className="text-muted-foreground shrink-0 text-[10px] font-medium uppercase tracking-[0.08em]">
+                          {approvalFieldLabel(field.label)}
                         </dt>
-                        <dd className="mt-0.5 whitespace-pre-wrap break-words">
-                          {field.value}
+                        <dd
+                          className={
+                            field.label === "Command"
+                              ? "mt-0.5 line-clamp-2 whitespace-pre-wrap break-all font-mono text-xs leading-4"
+                              : "max-w-48 truncate text-xs"
+                          }
+                          title={field.label === "Command" ? field.value : undefined}
+                        >
+                          {approvalFieldValue(field.label, field.value)}
                         </dd>
                       </div>
                     ))}
-                    <div>
-                      <dt className="text-muted-foreground text-xs">
-                        Why approval is required
-                      </dt>
-                      <dd className="mt-0.5">
-                        {interaction.approvalPolicy
-                          ?.approvalRequirementExplanation ??
-                          approvalDetails.policyExplanation}
-                      </dd>
-                    </div>
-                    {interaction.approvalPolicy ? (
-                      <div>
-                        <dt className="text-muted-foreground text-xs">
-                          Approval policy
-                        </dt>
-                        <dd className="mt-0.5">
-                          Environment:{" "}
-                          {approvalModeLabel(
-                            interaction.approvalPolicy.environmentApprovalMode,
-                          )}
-                          {" · "}
-                          Project:{" "}
-                          {approvalModeLabel(
-                            interaction.approvalPolicy.projectApprovalMode,
-                          )}
-                        </dd>
-                      </div>
-                    ) : null}
                   </dl>
-                  {approvalDetails.warnings.map((warning) => (
-                    <p
-                      className="mt-2 text-amber-700 text-xs dark:text-amber-300"
-                      key={warning}
-                    >
-                      {warning}
-                    </p>
-                  ))}
+                  {interaction.status === "pending" ? (
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] leading-4">
+                      <p className="text-muted-foreground">
+                        {approvalReasonLabel(interaction, approvalDetails.policyReasonCode)}
+                      </p>
+                      {isRememberApprovalEligible(interaction) ? (
+                        <p className="text-amber-700 dark:text-amber-300">
+                          Allow for thread remembers this exact action.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </section>
               ) : null}
               {interaction.status === "pending" ? (
-              <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-1.5">
                 {interaction.source === "runtime" ? (
                   structuredReview.kind === "structured_review" ? (
                     structuredReview.allowedOptionIds.map((optionId) => (
                       <Button
+                        className="h-7 px-2.5 text-xs"
                         disabled={busy !== null}
                         key={optionId}
                         onClick={() =>
@@ -461,21 +535,23 @@ export function InteractionPanel({
                         size="sm"
                         variant="outline"
                       >
-                        {isStrictHostedApproval(interaction) ? "Decline" : "Deny"}
+                        Don&apos;t allow
                       </Button>
                       {isCurrentHostedApprovalActionable(interaction) ? (
                         <Button
+                          className="h-7 px-2.5 text-xs"
                           autoFocus={index === 0}
                           disabled={busy !== null}
                           onClick={() => void resolveRuntime(interaction, "approve_once")}
                           size="sm"
                           variant="outline"
                         >
-                          Approve Once
+                          Allow once
                         </Button>
                       ) : null}
                       {isRememberApprovalEligible(interaction) ? (
                         <Button
+                          className="h-7 px-2.5 text-xs"
                           disabled={busy !== null}
                           onClick={() =>
                             void resolveRuntime(
@@ -485,7 +561,7 @@ export function InteractionPanel({
                           }
                           size="sm"
                         >
-                          Remember Approval
+                          Allow for thread
                         </Button>
                       ) : null}
                     </>
@@ -531,7 +607,7 @@ export function InteractionPanel({
                     onClick={() => void retryRuntime(interaction)}
                     size="sm"
                   >
-                    Retry authorization
+                    Try again
                   </Button>
                 </div>
               ) : null}
@@ -555,6 +631,7 @@ function readRuntimeApprovalDetails(interaction: ThreadInteractionView): {
   fields: Array<{ label: string; value: string }>;
   warnings: string[];
   policyExplanation: string;
+  policyReasonCode: string | null;
 } | null {
   if (interaction.source !== "runtime" || interaction.kind !== "approval") {
     return null;
@@ -595,7 +672,58 @@ function readRuntimeApprovalDetails(interaction: ThreadInteractionView): {
       typeof policy?.explanation === "string"
         ? policy.explanation
         : "This invocation requires approval.",
+    policyReasonCode:
+      typeof policy?.reasonCode === "string" ? policy.reasonCode : null,
   };
+}
+
+function approvalStatusLabel(interaction: ThreadInteractionView): string {
+  if (interaction.status === "processing") return "Saving your choice...";
+  if (interaction.status === "resolved") {
+    return interaction.approvalOutcome?.authorizationState === "denied"
+      ? "Not run"
+      : "Allowed";
+  }
+  if (interaction.approvalOutcome?.authorizationState === "expired") {
+    return "Expired";
+  }
+  if (interaction.approvalOutcome?.effectState === "committed") {
+    return "Completed with an issue";
+  }
+  return "Not run";
+}
+
+function approvalFieldLabel(label: string): string {
+  if (label === "Working directory") return "Folder";
+  if (label === "Environment access") return "Environment";
+  return label;
+}
+
+function approvalFieldValue(label: string, value: string): string {
+  if (label === "Environment access" && (value === "[]" || value.length === 0)) {
+    return "None";
+  }
+  return value;
+}
+
+function approvalReasonLabel(
+  interaction: ThreadInteractionView,
+  presentationReasonCode: string | null,
+): string {
+  const reasonCode = interaction.approvalPolicy?.reasonCode ?? presentationReasonCode;
+  switch (reasonCode) {
+    case "environment_policy":
+      return "Your environment asks before this action runs.";
+    case "project_restriction":
+      return "This project asks before this action runs.";
+    case "subject_restriction":
+      return "Your access settings require approval for this action.";
+    case "runtime_strict":
+    case "tool_minimum":
+      return "This action always needs your approval.";
+    default:
+      return "This action needs your approval before it can run.";
+  }
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -604,25 +732,13 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function isHostedV2Approval(interaction: ThreadInteractionView): boolean {
-  return interaction.requestEnvelope.version ===
-    "runner_hosted_tool_approval_interaction_v2";
-}
-
-function isHostedV3Approval(interaction: ThreadInteractionView): boolean {
-  return interaction.requestEnvelope.version ===
-    "runner_hosted_tool_approval_interaction_v3";
-}
-
 function isHostedV4Approval(interaction: ThreadInteractionView): boolean {
   return interaction.requestEnvelope.version ===
     "runner_hosted_tool_approval_interaction_v4";
 }
 
 function isStrictHostedApproval(interaction: ThreadInteractionView): boolean {
-  return isHostedV2Approval(interaction) ||
-    isHostedV3Approval(interaction) ||
-    isHostedV4Approval(interaction);
+  return isHostedV4Approval(interaction);
 }
 
 function isRememberApprovalEligible(
@@ -647,10 +763,4 @@ function isCurrentHostedApprovalActionable(
     policy.projectApprovalMode !== "deny" &&
     policy.subjectApprovalMode !== "deny" &&
     policy.approvalResourceAvailable !== false;
-}
-
-function approvalModeLabel(mode: "auto" | "ask" | "deny") {
-  if (mode === "auto") return "Automatic";
-  if (mode === "ask") return "Ask first";
-  return "Blocked";
 }

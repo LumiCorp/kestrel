@@ -840,8 +840,7 @@ export function assertHostedWorkspaceProfileCompatibility(
   const preset4ProducerSupported =
     resolution.environmentPreset.version ===
       WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION &&
-    (resolution.hostedApprovalProducerProtocol === "v2" ||
-      resolution.hostedApprovalProducerProtocol === "v4");
+    resolution.hostedApprovalProducerProtocol === "v4";
   const deployedPreset2BridgeSupported =
     resolution.environmentPreset.version ===
       LEGACY_HOSTED_WORKSPACE_PRESET_VERSION &&

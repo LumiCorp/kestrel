@@ -78,7 +78,7 @@ test("sampling approval hides prompts, tools, and provider data", () => {
   assert.doesNotMatch(JSON.stringify(dto), /private|apiKey|secret/iu);
 });
 
-test("hosted V2 approval publishes its exact decision vocabulary", () => {
+test("hosted V4 approval publishes its exact decision vocabulary", () => {
   const dto = mobileInteractionDto(
     {
       id: "runtime-interaction-1",
@@ -88,7 +88,7 @@ test("hosted V2 approval publishes its exact decision vocabulary", () => {
       prompt: "Approve this exact tool?",
       status: "pending",
       requestEnvelope: {
-        version: "runner_hosted_tool_approval_interaction_v2",
+        version: "runner_hosted_tool_approval_interaction_v4",
       },
       approvalPolicy: {
         projectId: "project-1",
@@ -107,7 +107,7 @@ test("hosted V2 approval publishes its exact decision vocabulary", () => {
   );
   assert.equal(dto.kind, "approval");
   if (dto.kind !== "approval") assert.fail("expected approval DTO");
-  assert.equal(dto.version, "runner_hosted_tool_approval_interaction_v2");
+  assert.equal(dto.version, "runner_hosted_tool_approval_interaction_v4");
   assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
 });
 
@@ -120,7 +120,7 @@ test("hosted approval with missing current authority publishes only Decline", ()
     prompt: "Approve this exact tool?",
     status: "pending",
     requestEnvelope: {
-      version: "runner_hosted_tool_approval_interaction_v3",
+      version: "runner_hosted_tool_approval_interaction_v4",
       approval: { toolName: "exec_command" },
     },
     createdAt: new Date("2026-07-13T12:00:00.000Z"),
@@ -130,7 +130,7 @@ test("hosted approval with missing current authority publishes only Decline", ()
   assert.deepEqual(dto.decisions, ["decline"]);
 });
 
-test("legacy hosted V3 approval omits Remember Approval", () => {
+test("hosted V4 approval publishes Remember Approval", () => {
   const dto = mobileInteractionDto(
     {
       id: "runtime-interaction-1",
@@ -140,7 +140,7 @@ test("legacy hosted V3 approval omits Remember Approval", () => {
       prompt: "Approve this exact tool?",
       status: "pending",
       requestEnvelope: {
-        version: "runner_hosted_tool_approval_interaction_v3",
+        version: "runner_hosted_tool_approval_interaction_v4",
         approval: {
           presentation: {
             policy: {
@@ -168,8 +168,12 @@ test("legacy hosted V3 approval omits Remember Approval", () => {
   );
   assert.equal(dto.kind, "approval");
   if (dto.kind !== "approval") assert.fail("expected approval DTO");
-  assert.equal(dto.version, "runner_hosted_tool_approval_interaction_v3");
-  assert.deepEqual(dto.decisions, ["decline", "approve_once"]);
+  assert.equal(dto.version, "runner_hosted_tool_approval_interaction_v4");
+  assert.deepEqual(dto.decisions, [
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ]);
 });
 
 test("hosted V4 Project Ask First publishes Remember Approval", () => {
@@ -215,7 +219,7 @@ test("hosted V4 Project Ask First publishes Remember Approval", () => {
   ]);
 });
 
-test("hosted V3 approval hides remember after current Project policy becomes stricter", () => {
+test("hosted V4 approval hides remember after current Project policy becomes stricter", () => {
   const dto = mobileInteractionDto(
     {
       id: "runtime-interaction-2",
@@ -225,7 +229,7 @@ test("hosted V3 approval hides remember after current Project policy becomes str
       prompt: "Approve this exact tool?",
       status: "pending",
       requestEnvelope: {
-        version: "runner_hosted_tool_approval_interaction_v3",
+        version: "runner_hosted_tool_approval_interaction_v4",
         approval: {
           presentation: {
             policy: {
@@ -265,7 +269,7 @@ test("built-in exec_command hides remember after current Subject policy becomes 
     prompt: "Approve this exact tool?",
     status: "pending",
     requestEnvelope: {
-      version: "runner_hosted_tool_approval_interaction_v3",
+      version: "runner_hosted_tool_approval_interaction_v4",
       approval: {
         toolName: "exec_command",
         presentation: {
@@ -306,7 +310,7 @@ test("built-in exec_command exposes only decline after current Subject policy bl
     prompt: "Approve this exact tool?",
     status: "pending",
     requestEnvelope: {
-      version: "runner_hosted_tool_approval_interaction_v3",
+      version: "runner_hosted_tool_approval_interaction_v4",
       approval: {
         toolName: "exec_command",
         presentation: { policy: { rememberApprovalEligible: true } },
@@ -342,7 +346,7 @@ test("closed hosted approvals advertise no Mobile decisions", () => {
     prompt: "Approve this exact tool?",
     status: "failed",
     requestEnvelope: {
-      version: "runner_hosted_tool_approval_interaction_v3",
+      version: "runner_hosted_tool_approval_interaction_v4",
     },
     createdAt: new Date("2026-07-13T12:00:00.000Z"),
   });
@@ -360,7 +364,7 @@ test("hosted approvals bound to a closed resource expose only Decline", () => {
     prompt: "Approve this exact tool?",
     status: "pending",
     requestEnvelope: {
-      version: "runner_hosted_tool_approval_interaction_v3",
+      version: "runner_hosted_tool_approval_interaction_v4",
       approval: {
         presentation: { policy: { reasonCode: "environment_policy" } },
       },

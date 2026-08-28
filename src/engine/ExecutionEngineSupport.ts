@@ -877,6 +877,7 @@ export function toRuntimeWaitMatcher(waitFor: Transition["waitFor"]): RuntimeWai
     eventType: waitFor.eventType,
     ...(waitFor.timeoutMs !== undefined ? { timeoutMs: waitFor.timeoutMs } : {}),
     ...(waitFor.metadata !== undefined ? { metadata: waitFor.metadata } : {}),
+    ...(waitFor.interaction !== undefined ? { interaction: waitFor.interaction } : {}),
   };
 }
 

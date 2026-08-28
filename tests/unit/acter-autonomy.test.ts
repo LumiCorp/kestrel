@@ -453,15 +453,15 @@ test("exec.dispatch escalates to approval when autonomy evidence is insufficient
   );
 
   assert.equal(transition.status, "WAITING");
-  assert.equal(transition.waitFor?.eventType, "user.approval");
+  assert.equal(transition.waitFor?.eventType, "user.reply");
   const react = transition.statePatch?.agent as Record<string, unknown>;
   const exec = react.exec as Record<string, unknown>;
   const commandProcessor = react.commandProcessor as Record<string, unknown>;
   const lastCheckpoint = commandProcessor.lastCheckpoint as Record<string, unknown>;
   const workingPlan = react.workingPlan as Record<string, unknown>;
-  assert.equal(exec.substate, "wait_approval");
+  assert.equal(exec.substate, "wait_user");
   assert.equal(exec.pendingApproval !== undefined, true);
-  assert.equal(lastCheckpoint.substate, "wait_approval");
+  assert.equal(lastCheckpoint.substate, "wait_user");
   assert.equal(workingPlan.status, "waiting");
   assert.equal(toolCalled, false);
 });
@@ -520,7 +520,7 @@ test("exec.dispatch does not use stale agent goal as autonomy evidence when tran
   );
 
   assert.equal(transition.status, "WAITING");
-  assert.equal(transition.waitFor?.eventType, "user.approval");
+  assert.equal(transition.waitFor?.eventType, "user.reply");
   assert.deepEqual(transition.waitFor?.metadata?.missingEvidence, ["goal"]);
   assert.equal(toolCalled, false);
 });
@@ -1043,72 +1043,6 @@ test("GitHub external confirmation resumes the exact mutation and releases rejec
       approvalReleases += 1;
     };
 
-  const legacyWait = await dispatchStep(
-    buildContext({
-      session: {
-        ...buildContext().session,
-        state: {
-          agent: {
-            nextAction: {
-              kind: "tool",
-              name: definition.name,
-              input: toolInput,
-            },
-          },
-        },
-      },
-      event: {
-        ...buildContext().event,
-        payload: modePayload,
-      },
-    }),
-    {
-      useModel: async () => {
-        throw new Error("not expected");
-      },
-      inspectTool,
-      useTool: async () => {
-        throw new Error("legacy approval must not execute inline");
-      },
-    },
-  );
-  const legacyAgent = legacyWait.statePatch?.agent as Record<string, unknown>;
-  const legacyPending = (
-    legacyAgent.exec as Record<string, unknown>
-  ).pendingApproval as Record<string, unknown>;
-  legacyPending.version = "hosted_tool_approval_v1";
-  const legacyResumed = await waitApprovalStep(
-    buildContext({
-      session: {
-        ...buildContext().session,
-        state: { agent: legacyAgent },
-        currentStepAgent: "agent.exec.wait_approval",
-      },
-      event: {
-        id: "evt-github-legacy-approval",
-        type: "user.approval",
-        sessionId: "session-1",
-        payload: {
-          ...modePayload,
-          message: "approve",
-          approvalId: legacyPending.approvalId,
-        },
-      },
-    }),
-    {
-      useModel: async () => {
-        throw new Error("not expected");
-      },
-      inspectTool,
-      useTool: async () => {
-        throw new Error("legacy durable mutation must not execute inline");
-      },
-    },
-  );
-  assert.equal(legacyResumed.status, "RUNNING");
-  assert.equal(legacyResumed.effects?.length, 1);
-  approvalInspections = 0;
-
   const approvalWait = await dispatchStep(
     buildContext({
       session: {
@@ -1145,7 +1079,7 @@ test("GitHub external confirmation resumes the exact mutation and releases rejec
   assert.equal(approvalWait.waitFor?.eventType, "user.approval");
   assert.match(
     approvalWait.waitFor?.interaction?.prompt as string,
-    /'approve_once' or 'decline'/u,
+    /Review this action before it runs/u,
   );
   assert.deepEqual(
     (
@@ -1153,7 +1087,7 @@ test("GitHub external confirmation resumes the exact mutation and releases rejec
         properties?: { decision?: { enum?: unknown } };
       }
     ).properties?.decision?.enum,
-    ["decline", "approve_once"],
+    ["decline", "approve_once", "remember_approval"],
   );
   assert.equal(approvalWait.waitFor?.metadata?.toolName, definition.name);
   assert.deepEqual(
@@ -1522,7 +1456,7 @@ test("GitHub external confirmation resumes the exact mutation and releases rejec
       },
       event: {
         id: "evt-github-blocked-after-ask",
-        type: "user.approval",
+        type: "user.reply",
         sessionId: "session-1",
         payload: {
           ...modePayload,
@@ -1722,6 +1656,17 @@ test("GitHub external confirmation resumes the exact mutation and releases rejec
   assert.equal(declined.effects?.length, 1);
   assert.equal(declined.effects?.[0]?.type, "release_prepared_tool_call");
   assert.equal(approvalReleases, 0);
+  assert.equal(declined.status, "COMPLETED");
+  assert.equal(declined.nextStepAgent, undefined);
+  assert.equal(
+    ((declined.statePatch?.agent as Record<string, unknown>).terminal as Record<string, unknown>)
+      .reasonCode,
+    "TOOL_APPROVAL_DECLINED",
+  );
+  assert.equal(
+    (declined.statePatch?.agent as Record<string, unknown>).assistantText,
+    "The action was not run.",
+  );
 
   const cleanup = await waitApprovalStep(
     buildContext({
@@ -1738,6 +1683,11 @@ test("GitHub external confirmation resumes the exact mutation and releases rejec
           ...modePayload,
           decision: "decline",
           approvalId: pendingApproval.approvalId,
+          decidingActor: {
+            actorType: "end_user",
+            actorId: "cleanup-user",
+            tenantId: "org-1",
+          },
           preparedApprovalCleanup: {
             version: "runner_prepared_approval_cleanup_v1",
             organizationId: "org-1",
@@ -4253,7 +4203,7 @@ test("exec.wait_approval denial for explicit managed worktree opt-in returns to 
     ],
   };
   const dispatchStep = createExecDispatchStep(execConfig);
-  const waitApprovalStep = createExecWaitApprovalStep(execConfig);
+  const waitApprovalStep = createExecWaitUserStep(execConfig);
   const wait = await dispatchStep(
     buildContext({
       session: {
@@ -4304,7 +4254,7 @@ test("exec.wait_approval denial for explicit managed worktree opt-in returns to 
       },
       event: {
         id: "evt-worktree-deny",
-        type: "user.approval",
+        type: "user.reply",
         sessionId: "session-1",
         payload: {
           message: "deny",
@@ -4324,15 +4274,8 @@ test("exec.wait_approval denial for explicit managed worktree opt-in returns to 
     },
   );
 
-  const react = denial.statePatch?.agent as Record<string, unknown>;
-  const exec = react.exec as Record<string, unknown>;
-  const lastActionResult = react.lastActionResult as Record<string, unknown>;
   assert.equal(denial.status, "RUNNING");
-  assert.equal(denial.nextStepAgent, "agent.loop");
-  assert.equal(lastActionResult.kind, "approval_denial");
-  assert.equal(lastActionResult.status, "denied");
-  assert.equal(lastActionResult.purpose, "managed_worktree");
-  assert.equal(exec.pendingApproval, undefined);
+  assert.equal(denial.nextStepAgent, "agent.exec.dispatch");
 });
 
 test("exec.dispatch routes durable tool batches through processor-owned effect dispatch", async () => {

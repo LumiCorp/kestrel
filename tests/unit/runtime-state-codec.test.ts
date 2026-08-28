@@ -16,8 +16,7 @@ import {
 } from "../../src/kestrel/contracts/tool-contract.js";
 import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
 import {
-  projectHostedToolApprovalInteractionV2,
-  projectHostedToolApprovalInteractionV3,
+  projectHostedToolApprovalInteractionV4,
 } from "../../src/runtime/assistantResponseContract.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
 
@@ -150,8 +149,8 @@ test("readWaitState reflects canonical waitingFor state", () => {
       observations: [],
       exec: {},
       waitingFor: {
-        kind: "approval",
-        eventType: "user.approval",
+        kind: "user_input",
+        eventType: "user.response",
         reason: "Need consent",
         resumeInstruction: "Approve the pending action.",
         resumeStepAgent: "agent.exec.wait_approval",
@@ -162,22 +161,17 @@ test("readWaitState reflects canonical waitingFor state", () => {
         interaction: {
           version: "v1",
           requestId: "approval-1",
-          kind: "approval",
-          eventType: "user.approval",
+          kind: "user_input",
+          eventType: "user.response",
           prompt: "Approve the pending action.",
-          approval: {
-            toolCallId: "legacy-call-1",
-            toolName: "legacy.tool",
-            input: { value: 1 },
-          },
         },
       },
     },
   });
 
   assert.deepEqual(wait, {
-    kind: "approval",
-    eventType: "user.approval",
+    kind: "user_input",
+    eventType: "user.response",
     resumeStepAgent: "agent.exec.wait_approval",
     resumeToken: "resume-1",
     metadata: {
@@ -186,19 +180,14 @@ test("readWaitState reflects canonical waitingFor state", () => {
     interaction: {
       version: "v1",
       requestId: "approval-1",
-      kind: "approval",
-      eventType: "user.approval",
+      kind: "user_input",
+      eventType: "user.response",
       prompt: "Approve the pending action.",
-      approval: {
-        toolCallId: "legacy-call-1",
-        toolName: "legacy.tool",
-        input: { value: 1 },
-      },
     },
   });
 });
 
-test("runtime state restart preserves the exact prepared hosted approval and V2 card", () => {
+test("runtime state restart preserves the exact prepared canonical hosted approval", () => {
   const descriptor = defaultToolCatalog.getDescriptorRef("internet.search");
   assert.ok(descriptor);
   const activation = createToolActivationRefV1({
@@ -301,9 +290,10 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
       },
     },
   });
-  const interaction = projectHostedToolApprovalInteractionV2({
+  const interaction = projectHostedToolApprovalInteractionV4({
     preparedToolCall: prepared,
     requestId: "approval-restart-1",
+    reasonCode: "environment_policy",
   });
   const persisted = normalizeRuntimeStateForPersist({
     runtime: { schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION },
@@ -322,7 +312,7 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
         eventType: "user.approval",
         reason: "Approval required",
         resumeInstruction: "Choose an approval decision.",
-        metadata: { preparedToolCall: prepared },
+        metadata: { preparedToolCall: prepared, reasonCode: "environment_policy" },
         interaction,
       },
     },
@@ -339,9 +329,10 @@ test("runtime state restart preserves the exact prepared hosted approval and V2 
     version: "hosted_tool_approval_v2",
     preparedInvocationId: prepared.callId,
   });
-  const rememberedInteraction = projectHostedToolApprovalInteractionV3({
+  const rememberedInteraction = projectHostedToolApprovalInteractionV4({
     preparedToolCall: prepared,
     requestId: "approval-restart-1",
+    reasonCode: "environment_policy",
   });
   const rememberedRestart = structuredClone(restarted);
   const rememberedAgent = rememberedRestart.agent as Record<string, unknown>;

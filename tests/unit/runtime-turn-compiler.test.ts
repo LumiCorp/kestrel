@@ -15,6 +15,13 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
     message: "ship it",
     eventType: "user.message",
     noninteractive: true,
+    hostedApprovalAuthority: {
+      version: "runner_hosted_approval_authority_v1",
+      organizationId: "tenant-1",
+      environmentId: "environment-1",
+      projectId: "project-atlas",
+      threadId: "session-compiler",
+    },
     interactionMode: "build",
     actSubmode: "full_auto",
     metadata: {
@@ -99,6 +106,8 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
   assert.deepEqual(compiled.metadata.workspaceSkills, input.workspaceSkills);
   assert.deepEqual(compiled.payload, {
     message: "ship it",
+    hostedApprovalAuthority: input.hostedApprovalAuthority,
+    actor: input.actor,
     enableRouteClassifier: true,
     modeSystemV2Enabled: true,
     interactionMode: "build",

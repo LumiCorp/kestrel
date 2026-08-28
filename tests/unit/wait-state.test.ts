@@ -125,7 +125,21 @@ test("buildWaitResumeToken is stable across metadata key order", () => {
   });
 
   assert.equal(left, right);
-  assert.match(left, /agent\.exec\.dispatch/u);
+  assert.match(left, /^sha256:[0-9a-f]{64}$/u);
+});
+
+test("wait resume tokens remain fixed-size for oversized prepared interactions", () => {
+  const token = buildWaitResumeToken({
+    waitFor: {
+      kind: "approval",
+      eventType: "user.approval",
+      metadata: { command: "x".repeat(10_000) },
+    },
+    resumeStepAgent: "agent.exec.dispatch",
+  });
+
+  assert.equal(token.length, 71);
+  assert.match(token, /^sha256:[0-9a-f]{64}$/u);
 });
 
 test("canonical waits preserve every runtime kind and timeout", () => {

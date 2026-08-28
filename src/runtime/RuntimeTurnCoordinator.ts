@@ -68,7 +68,6 @@ export interface RuntimeTurnCoordinatorServiceOptions {
   }) => unknown) | undefined;
   executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
   persistExecutionBoundaryDecision?: ExecutionBoundaryDecisionSink | undefined;
-  hostedApprovalProtocolVersion?: "v2" | "v3" | "v4" | undefined;
 }
 export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
   private readonly defaults: CompileRuntimeTurnDefaults;
@@ -80,7 +79,6 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
   private readonly buildOperatorAffordance: RuntimeTurnCoordinatorServiceOptions["buildOperatorAffordance"];
   private readonly executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
   private readonly persistExecutionBoundaryDecision: ExecutionBoundaryDecisionSink;
-  private readonly hostedApprovalProtocolVersion: "v2" | "v3" | "v4";
 
   constructor(options: RuntimeTurnCoordinatorServiceOptions) {
     this.defaults = options.defaults;
@@ -90,9 +88,6 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
     this.readFinalizedPayload = options.readFinalizedPayload;
     this.readPersistedResumeStepAgent = options.readPersistedResumeStepAgent;
     this.buildOperatorAffordance = options.buildOperatorAffordance;
-    this.hostedApprovalProtocolVersion =
-      options.hostedApprovalProtocolVersion ??
-      resolveHostedApprovalProtocolVersion(process.env);
     this.executionBoundaryRuntime =
       options.executionBoundaryRuntime ?? new ExecutionBoundaryPolicyRuntime();
     this.persistExecutionBoundaryDecision =
@@ -145,7 +140,6 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
           ? result.assistantText
           : readAssistantText(asRecord(session?.state.agent)?.assistantText),
       request: selectCurrentInteractionRequest(result.threadStatus),
-      hostedApprovalProtocolVersion: this.hostedApprovalProtocolVersion,
       ...(persistedAssistantOutputDecision !== undefined
         ? { persistedAssistantOutputDecision }
         : {}),
@@ -286,21 +280,6 @@ export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
       },
     };
   }
-}
-
-export function resolveHostedApprovalProtocolVersion(
-  env: NodeJS.ProcessEnv,
-): "v2" | "v3" | "v4" {
-  const configured = env.KESTREL_HOSTED_APPROVAL_PROTOCOL?.trim();
-  if (configured === undefined || configured === "" || configured === "v2") {
-    return "v2";
-  }
-  if (configured === "v3") return "v3";
-  if (configured === "v4") return "v4";
-  throw createRuntimeFailure(
-    "RUNTIME_CONFIGURATION_INVALID",
-    "KESTREL_HOSTED_APPROVAL_PROTOCOL must be 'v2', 'v3', or 'v4'.",
-  );
 }
 
 function requireResumeRequestId(input: RuntimeTurnInput): string {

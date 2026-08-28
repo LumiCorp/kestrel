@@ -666,11 +666,6 @@ async function maybeRequireToolApproval(input: {
         asString(input.eventPayload.approvalId) ===
           asString(currentPendingApproval.approvalId)
       ) {
-        assertPreparedApprovalMatchesStableHostedAuthority({
-          preparedToolCall: persistedPreparedToolCall,
-          eventPayload: input.eventPayload,
-          requiredCapabilities: input.requiredApprovalCapabilities ?? [],
-        });
         if (input.eventPayload.preparedApprovalCleanup !== undefined) {
           const cleanup = parseRunnerPreparedApprovalCleanupV1(
             input.eventPayload.preparedApprovalCleanup,
@@ -689,6 +684,11 @@ async function maybeRequireToolApproval(input: {
             cleanup,
           });
         }
+        assertPreparedApprovalMatchesStableHostedAuthority({
+          preparedToolCall: persistedPreparedToolCall,
+          eventPayload: input.eventPayload,
+          requiredCapabilities: input.requiredApprovalCapabilities ?? [],
+        });
         return toToolApprovalDeniedTransition({
           ...input,
           approvalId: asString(currentPendingApproval.approvalId)!,
@@ -752,6 +752,9 @@ async function maybeRequireToolApproval(input: {
           input.toolIntent,
         )
       : undefined;
+  if (newlyPreparedToolCall?.policy.decision === "allow") {
+    return { preparedToolCall: parseDurablePreparedToolCallV1(newlyPreparedToolCall) };
+  }
   const preparedToolCall =
     persistedPreparedToolCall ??
     (newlyPreparedToolCall?.stableAuthority !== undefined
@@ -972,10 +975,11 @@ async function maybeRequireToolApproval(input: {
       preparedToolCall: declinedPreparedToolCall,
     });
   }
+  if (durablePreparedToolCall === undefined) {
+    throw new Error("Hosted approval preparation did not produce a durable invocation.");
+  }
 
-  const prompt = durablePreparedToolCall === undefined
-    ? `Approve ${input.toolName}? Reply 'approve' or 'deny'.`
-    : `Approve ${input.toolName}? Reply with decision 'approve_once' or 'decline'.`;
+  const prompt = "Review this action before it runs.";
   const waitFor: WaitForMatcher = {
     kind: "approval",
     eventType: "user.approval",
@@ -1144,6 +1148,7 @@ function toToolApprovalDeniedTransition(input: {
   toolClass: ToolExecutionClass;
   preparedToolCall?: PreparedToolCallV1 | undefined;
 }): Transition {
+  const declineMessage = "The action was not run.";
   const lastActionResult = {
     ok: false,
     kind: "approval_denial",
@@ -1153,7 +1158,7 @@ function toToolApprovalDeniedTransition(input: {
     toolClass: input.toolClass,
     ts: new Date().toISOString(),
   };
-  return createReferenceReactEffectCollectCheckpoint({
+  const checkpoint = createReferenceReactEffectCollectCheckpoint({
     reactState: input.reactState,
     currentStepAgent: input.currentStepAgent,
     nextStepAgent: input.deliberationStepId,
@@ -1172,6 +1177,12 @@ function toToolApprovalDeniedTransition(input: {
         ],
     reactPatch: {
       lastActionResult,
+      assistantText: declineMessage,
+      terminal: {
+        status: "COMPLETED",
+        reasonCode: "TOOL_APPROVAL_DECLINED",
+        message: declineMessage,
+      },
       observations: appendAgentObservation(input.reactState, lastActionResult),
       decisionTrace: [
         {
@@ -1189,6 +1200,12 @@ function toToolApprovalDeniedTransition(input: {
     execPatch: { pendingApproval: undefined },
     regionExecPatch: { pendingApproval: undefined },
   });
+  return {
+    ...checkpoint,
+    status: "COMPLETED",
+    nextStepAgent: undefined,
+    outboxDelivery: "after_terminal",
+  };
 }
 
 function toToolApprovalPolicyChangedTransition(input: {
@@ -1408,7 +1425,7 @@ async function maybeRequireManagedWorktreeApproval(input: {
     model: input.model,
     io: input.io,
     waitFor: {
-      eventType: "user.approval",
+      eventType: "user.reply",
       metadata: {
         approvalId,
         purpose: "managed_worktree",
@@ -1418,7 +1435,7 @@ async function maybeRequireManagedWorktreeApproval(input: {
     },
   });
 
-  if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "approve") {
+  if (input.eventType === "user.reply" && currentPendingApprovalId === approvalId && decision === "approve") {
     if (hasManagedWorktreeContext(input.reactState)) {
       return ;
     }
@@ -1435,7 +1452,7 @@ async function maybeRequireManagedWorktreeApproval(input: {
     );
   }
 
-  if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "deny") {
+  if (input.eventType === "user.reply" && currentPendingApprovalId === approvalId && decision === "deny") {
     const lastActionResult = {
       ok: false,
       kind: "approval_denial",
@@ -1511,8 +1528,8 @@ async function maybeRequireManagedWorktreeApproval(input: {
   ].join("\n");
   const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
   const waitFor: WaitForMatcher = {
-    kind: "approval",
-    eventType: "user.approval",
+    kind: "user",
+    eventType: "user.reply",
     metadata: {
       approvalId,
       purpose: "managed_worktree",
@@ -2023,11 +2040,14 @@ async function resolveApprovalDecision(input: {
   eventType: string;
   eventPayload: Record<string, unknown> | undefined;
   strictV2?: boolean | undefined;
-  waitFor: { eventType: "user.approval"; metadata: Record<string, unknown> };
+  waitFor: {
+    eventType: "user.approval" | "user.reply";
+    metadata: Record<string, unknown>;
+  };
   model?: string | undefined;
   io?: StepIO | undefined;
 }): Promise<"approve" | "deny" | undefined> {
-  if (input.eventType !== "user.approval") {
+  if (input.eventType !== input.waitFor.eventType) {
     return ;
   }
   if (input.strictV2 === true) {
@@ -2330,7 +2350,7 @@ async function maybeRequireAutonomyEscalation(input: {
     model: input.model,
     io: input.io,
     waitFor: {
-      eventType: "user.approval",
+      eventType: "user.reply",
       metadata: {
         approvalId,
         toolName: input.actionLabel,
@@ -2342,14 +2362,14 @@ async function maybeRequireAutonomyEscalation(input: {
   });
 
   if (
-    input.eventType === "user.approval" &&
+    input.eventType === "user.reply" &&
     currentPendingApprovalId === approvalId &&
     decision === "approve"
   ) {
     return ;
   }
   if (
-    input.eventType === "user.approval" &&
+    input.eventType === "user.reply" &&
     currentPendingApprovalId === approvalId &&
     decision === "deny"
   ) {
@@ -2372,8 +2392,8 @@ async function maybeRequireAutonomyEscalation(input: {
       : `Autonomy ${input.policy.level} requires review before ${input.actionLabel}. Risk signals: ${autonomy.escalateReasons.join(", ")}. Reply 'approve' or 'deny'.`;
   const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
   const waitFor: WaitForMatcher = {
-    kind: "approval",
-    eventType: "user.approval",
+    kind: "user",
+    eventType: "user.reply",
     metadata: {
       approvalId,
       toolName: input.actionLabel,

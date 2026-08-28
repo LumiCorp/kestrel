@@ -57,52 +57,16 @@ export interface UserReplyWaitMetadata extends Record<string, unknown> {
 export interface RuntimeInteractionRequestV1 extends Record<string, unknown> {
   version: "v1";
   requestId?: string | undefined;
-  kind: "user_input" | "approval";
+  kind: "user_input";
   eventType: string;
   prompt: string;
   inputSchema?: Record<string, unknown> | undefined;
   metadata?: Record<string, unknown> | undefined;
-  approval?:
-    | {
-        toolCallId: string;
-        toolName: string;
-        input?: unknown;
-        presentation?: unknown;
-      }
-    | undefined;
 }
 
-export interface RuntimeHostedToolApprovalInteractionV2
+export interface RuntimeHostedToolApprovalInteractionV4
   extends Record<string, unknown> {
-  version: "runner_hosted_tool_approval_interaction_v2";
-  requestId: string;
-  kind: "approval";
-  eventType: "user.approval";
-  prompt: string;
-  inputSchema: {
-    type: "object";
-    additionalProperties: false;
-    required: ["decision"];
-    properties: {
-      decision: {
-        type: "string";
-        enum: Array<"decline" | "approve_once">;
-      };
-    };
-  };
-  metadata?: Record<string, unknown> | undefined;
-  approval: {
-    preparedInvocationId: string;
-    toolName: string;
-    stableToolIdentity: StableToolApprovalIdentityV1;
-    requestingActor: RunnerApprovalActorAuthorityV1;
-    presentation?: unknown;
-  };
-}
-
-export interface RuntimeHostedToolApprovalInteractionV3
-  extends Record<string, unknown> {
-  version: "runner_hosted_tool_approval_interaction_v3";
+  version: "runner_hosted_tool_approval_interaction_v4";
   requestId: string;
   kind: "approval";
   eventType: "user.approval";
@@ -119,19 +83,13 @@ export interface RuntimeHostedToolApprovalInteractionV3
     };
   };
   metadata?: Record<string, unknown> | undefined;
-  approval: RuntimeHostedToolApprovalInteractionV2["approval"];
-}
-
-export interface RuntimeHostedToolApprovalInteractionV4
-  extends Record<string, unknown> {
-  version: "runner_hosted_tool_approval_interaction_v4";
-  requestId: string;
-  kind: "approval";
-  eventType: "user.approval";
-  prompt: string;
-  inputSchema: RuntimeHostedToolApprovalInteractionV3["inputSchema"];
-  metadata?: Record<string, unknown> | undefined;
-  approval: RuntimeHostedToolApprovalInteractionV2["approval"] & {
+  approval: {
+    preparedInvocationId: string;
+    toolName: string;
+    stableToolIdentity: StableToolApprovalIdentityV1;
+    requestingActor: RunnerApprovalActorAuthorityV1;
+    presentation?: unknown;
+    rememberedApprovalScope: import("@kestrel-agents/protocol").RememberedApprovalScope;
     requestedAt: string;
     expiresAt: string;
   };
@@ -139,8 +97,6 @@ export interface RuntimeHostedToolApprovalInteractionV4
 
 export type RuntimeInteractionRequest =
   | RuntimeInteractionRequestV1
-  | RuntimeHostedToolApprovalInteractionV2
-  | RuntimeHostedToolApprovalInteractionV3
   | RuntimeHostedToolApprovalInteractionV4;
 
 export interface UserWaitForMatcher {

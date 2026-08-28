@@ -18,7 +18,7 @@ test("safe interaction projection exposes lifecycle state without internal evide
       prompt: "Approve?",
       status: "failed",
       requestEnvelope: { approval: { toolName: "kestrel_one.email_send" } },
-      responseEnvelope: { approved: true },
+      responseEnvelope: { decision: "approve_once" },
       runtimeApprovalId: "runtime-secret",
       sourceRuntimeRunId: "runner-secret",
       responseFailureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",

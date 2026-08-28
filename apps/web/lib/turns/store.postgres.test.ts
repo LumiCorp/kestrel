@@ -696,7 +696,7 @@ test(
     assert.ok(await store.claimDurableThreadTurn(approvalTurn.turn.id));
     const approvalRequestId = `hosted-v2-approval-${suffix}`;
     const approvalInteraction = {
-      version: "runner_hosted_tool_approval_interaction_v2" as const,
+      version: "runner_hosted_tool_approval_interaction_v4" as const,
       requestId: approvalRequestId,
       kind: "approval" as const,
       eventType: "user.approval" as const,
@@ -708,7 +708,11 @@ test(
         properties: {
           decision: {
             type: "string" as const,
-            enum: ["decline", "approve_once"] as ["decline", "approve_once"],
+            enum: ["decline", "approve_once", "remember_approval"] as [
+              "decline",
+              "approve_once",
+              "remember_approval",
+            ],
           },
         },
       },
@@ -726,6 +730,9 @@ test(
           actorId: userId,
           tenantId: organizationId,
         },
+        rememberedApprovalScope: { kind: "tool_identity" as const },
+        requestedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
       },
       source: "runtime" as const,
       status: "pending" as const,
@@ -755,6 +762,20 @@ test(
       SET "project_id" = ${projectId}
       WHERE "id" = ${approvalThreadId}
     `;
+    await assert.rejects(
+      store.resolveDurableRuntimeInteraction({
+        threadId: approvalThreadId,
+        organizationId,
+        userId,
+        requestId: approvalRequestId,
+        eventType: "user.approval",
+        turnId: approvalTurn.turn.id,
+        message: "Legacy approve",
+        messageId: `legacy-approval-${suffix}`,
+        source: "web",
+      }),
+      /does not match its version/u,
+    );
     for (const [decision, source] of [
       ["decline", "web"],
       ["approve_once", "mobile"],
@@ -772,7 +793,7 @@ test(
           messageId: `other-${decision}-${suffix}`,
           source,
         }),
-        /waiting turn author/u,
+        /waiting turn author|requesting actor/u,
       );
     }
     await store.resolveDurableRuntimeInteraction({

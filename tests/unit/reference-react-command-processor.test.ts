@@ -272,6 +272,7 @@ test("createReferenceReactWaitCheckpoint records processor-owned user waits and 
       version: "v1",
       kind: "user_input",
       eventType: "user.reply",
+      requestId: "request-sha256:5a59470a6ca7957e69174636f7e0243bfea380117d59134a404a4841edc83661",
       prompt: "Switch mode to continue.",
     },
   });
@@ -303,19 +304,19 @@ test("createReferenceReactWaitCheckpoint does not create narration memory", () =
     nextStepAgent: "agent.exec.dispatch",
     stepIndex: 15,
     waitFor: {
-      kind: "approval",
-      eventType: "user.approval",
+      kind: "user",
+      eventType: "user.reply",
       metadata: {
-        prompt: "Approve fs.write_text?",
+        prompt: "Continue?",
       },
     },
-    substate: "wait_approval",
+    substate: "wait_user",
   });
 
   assert.equal(Object.hasOwn(transition.statePatch ?? {}, "memory"), false);
 });
 
-test("createReferenceReactWaitCheckpoint records processor-owned approval waits", () => {
+test("createReferenceReactWaitCheckpoint rejects approval without preparation", () => {
   const waitFor = {
     kind: "approval" as const,
     eventType: "user.approval",
@@ -324,61 +325,17 @@ test("createReferenceReactWaitCheckpoint records processor-owned approval waits"
       prompt: "Approve fs.write_text?",
     },
   };
-  const transition = createReferenceReactWaitCheckpoint({
-    reactState: {
-      goal: "edit file",
-      interactionMode: "build",
-      modeSwitch: {
-        mode: "build",
-        sourceEventId: "event-1",
-      },
-    },
-    currentStepAgent: "agent.exec.dispatch",
-    nextStepAgent: "agent.exec.dispatch",
-    stepIndex: 10,
-    waitFor,
-    substate: "wait_approval",
-    phase: "ACT",
-    execPatch: {
-      pendingApproval: {
-        approvalId: "approval-1",
-        toolName: "fs.write_text",
-        toolClass: "sandboxed_only",
-      },
-    },
-    emitEvents: [{ type: "ui.prompt", payload: { text: "Approve fs.write_text?" } }],
-  });
-
-  const react = transition.statePatch?.agent as Record<string, unknown>;
-  const exec = react.exec as Record<string, unknown>;
-  const processorState = react.commandProcessor as Record<string, unknown>;
-  const lastCheckpoint = processorState.lastCheckpoint as Record<string, unknown>;
-  const workingPlan = react.workingPlan as Record<string, unknown>;
-
-  assert.equal(transition.status, "WAITING");
-  assert.deepEqual(transition.waitFor, {
-    ...waitFor,
-    interaction: {
-      version: "v1",
-      kind: "approval",
-      eventType: "user.approval",
-      prompt: "Approve fs.write_text?",
-      metadata: {
-        modeSwitch: { mode: "build" },
-      },
-    },
-  });
-  assert.equal(react.assistantText, "Approve fs.write_text?");
-  assert.deepEqual(exec.pendingApproval, {
-    approvalId: "approval-1",
-    toolName: "fs.write_text",
-    toolClass: "sandboxed_only",
-  });
-  assert.equal(exec.substate, "wait_approval");
-  assert.equal(lastCheckpoint.substate, "wait_approval");
-  assert.equal(lastCheckpoint.updatedAtStepIndex, 10);
-  assert.equal(workingPlan.currentChunk, "waiting for approval");
-  assert.equal(workingPlan.status, "waiting");
+  assert.throws(
+    () => createReferenceReactWaitCheckpoint({
+      reactState: { goal: "edit file" },
+      currentStepAgent: "agent.exec.dispatch",
+      nextStepAgent: "agent.exec.dispatch",
+      stepIndex: 10,
+      waitFor,
+      substate: "wait_approval",
+    }),
+    /exact prepared invocation/u,
+  );
 });
 
 test("createReferenceReactWaitCheckpoint records processor-owned effect waits", () => {

@@ -16,7 +16,6 @@ import type { ThreadRecord } from "../../src/kestrel/contracts/orchestration.js"
 import type { SessionRecord } from "../../src/kestrel/contracts/store.js";
 import { appendUserTurnToTranscript } from "../../src/runtime/modelTranscript.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
-import { resolveHostedApprovalProtocolVersion } from "../../src/runtime/RuntimeTurnCoordinator.js";
 
 import type {
   ResumeBlockedTurnInput,
@@ -35,28 +34,6 @@ class RuntimeTurnCoordinatorService extends BaseRuntimeTurnCoordinatorService {
     });
   }
 }
-test("hosted approval protocol activation is explicit and fail-closed", () => {
-  assert.equal(resolveHostedApprovalProtocolVersion({}), "v2");
-  assert.equal(
-    resolveHostedApprovalProtocolVersion({ KESTREL_HOSTED_APPROVAL_PROTOCOL: "v2" }),
-    "v2",
-  );
-  assert.equal(
-    resolveHostedApprovalProtocolVersion({ KESTREL_HOSTED_APPROVAL_PROTOCOL: "v3" }),
-    "v3",
-  );
-  assert.equal(
-    resolveHostedApprovalProtocolVersion({ KESTREL_HOSTED_APPROVAL_PROTOCOL: "v4" }),
-    "v4",
-  );
-  assert.throws(
-    () => resolveHostedApprovalProtocolVersion({
-      KESTREL_HOSTED_APPROVAL_PROTOCOL: "automatic",
-    }),
-    /must be 'v2', 'v3', or 'v4'/u,
-  );
-});
-
 test("RuntimeTurnCoordinatorService fails closed without boundary decision persistence", async () => {
   const coordinator = new BaseRuntimeTurnCoordinatorService({
     defaults: {
@@ -414,11 +391,18 @@ test("RuntimeTurnCoordinatorService leaves unsupported waits waiting", async () 
       directRuns += 1;
       return output("WAITING", {
         waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
+          kind: "user",
+          eventType: "observer.timeout",
+          interaction: {
+            version: "v1",
+            requestId: "observer-timeout-request",
+            kind: "user_input",
+            eventType: "observer.timeout",
+            prompt: "Resume this run?",
+          },
           metadata: {
             reason: "observer_timeout_resume",
-            prompt: "Approve resuming this run?",
+            prompt: "Resume this run?",
           },
         },
       });
@@ -594,10 +578,17 @@ test("RuntimeTurnCoordinatorService builds source-owned operator affordance by d
         thread: threadRecord(input.threadId),
         output: output("WAITING", {
           waitFor: {
-            kind: "approval",
-            eventType: "operator.approval",
+            kind: "user",
+            eventType: "operator.input",
+            interaction: {
+              version: "v1",
+              requestId: "operator-input-request",
+              kind: "user_input",
+              eventType: "operator.input",
+              prompt: "Provide checkpoint input.",
+            },
             metadata: {
-              prompt: "Approve the checkpoint?",
+              prompt: "Provide checkpoint input.",
             },
           },
         }),
@@ -644,7 +635,7 @@ test("RuntimeTurnCoordinatorService builds source-owned operator affordance by d
   };
   assert.equal(affordance.interactionMode, "build");
   assert.equal(affordance.actSubmode, "safe");
-  assert.equal(affordance.wait?.eventType, "operator.approval");
+  assert.equal(affordance.wait?.eventType, "operator.input");
   assert.equal(affordance.assembly?.threadId, "thread-main");
 });
 

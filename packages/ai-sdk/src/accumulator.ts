@@ -1,9 +1,12 @@
 import type {
-  RunnerInteractionRequestV1,
   RunnerRunStreamEvent,
   RunnerRunTerminalEvent,
   RunnerTelemetry,
 } from "@kestrel-agents/sdk";
+import {
+  parseRunnerInteractionRequest,
+  type RunnerInteractionRequest,
+} from "@kestrel-agents/protocol";
 import type {
   KestrelArtifactPresentation,
   KestrelCitationPresentation,
@@ -504,21 +507,19 @@ function decodeTool(value: unknown, eventType: string): KestrelToolPresentation 
   };
 }
 
-function requireInteraction(value: unknown): RunnerInteractionRequestV1 & { requestId: string } {
-  const interaction = requireRecord(value, "run.completed.payload.result.output.waitFor.interaction");
-  const requestId = requireNonEmptyString(interaction.requestId, "interaction.requestId");
-  const kind = interaction.kind;
-  if (kind !== "user_input" && kind !== "approval") {
-    throw new KestrelPresentationContractError("interaction.kind is invalid.");
+function requireInteraction(value: unknown): RunnerInteractionRequest & { requestId: string } {
+  try {
+    const interaction = parseRunnerInteractionRequest(value);
+    const requestId = requireNonEmptyString(interaction.requestId, "interaction.requestId");
+    return { ...interaction, requestId };
+  } catch (error) {
+    if (error instanceof KestrelPresentationContractError) {
+      throw error;
+    }
+    throw new KestrelPresentationContractError(
+      error instanceof Error ? error.message : "interaction contract is invalid.",
+    );
   }
-  return {
-    ...interaction,
-    version: "v1",
-    requestId,
-    kind,
-    eventType: requireNonEmptyString(interaction.eventType, "interaction.eventType"),
-    prompt: requireNonEmptyString(interaction.prompt, "interaction.prompt"),
-  } as RunnerInteractionRequestV1 & { requestId: string };
 }
 
 function decodeCitations(value: unknown): KestrelCitationPresentation[] {

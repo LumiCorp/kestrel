@@ -16,19 +16,46 @@ test("GitHub approval requests parse only structured mutation waits", () => {
         output: {
           status: "WAITING",
           waitFor: {
+            metadata: {
+              toolInput: {
+                repository: "acme/widgets",
+                title: "Investigate the canary",
+              },
+            },
             interaction: {
-              version: "v1",
+              version: "runner_hosted_tool_approval_interaction_v4",
               requestId: "runtime-run:3:abc123",
               kind: "approval",
               eventType: "user.approval",
               prompt: "Allow this GitHub issue to be created?",
-              approval: {
-                toolCallId: "tool-call-1",
-                toolName: "kestrel_one.github_issue_create",
-                input: {
-                  repository: "acme/widgets",
-                  title: "Investigate the canary",
+              inputSchema: {
+                type: "object",
+                additionalProperties: false,
+                required: ["decision"],
+                properties: {
+                  decision: {
+                    type: "string",
+                    enum: ["decline", "approve_once", "remember_approval"],
+                  },
                 },
+              },
+              approval: {
+                preparedInvocationId: "tool-call-1",
+                toolName: "kestrel_one.github_issue_create",
+                stableToolIdentity: {
+                  version: "stable_tool_approval_identity_v1",
+                  toolId: "kestrel_one.github_issue_create",
+                  descriptorContractRevision: `sha256:${"a".repeat(64)}`,
+                  approvalAuthorityRevision: "authority-1",
+                },
+                requestingActor: {
+                  actorId: "user-1",
+                  actorType: "end_user",
+                  tenantId: "organization-1",
+                },
+                rememberedApprovalScope: { kind: "tool_identity" },
+                requestedAt: "2026-08-27T12:00:00.000Z",
+                expiresAt: "2026-08-27T12:05:00.000Z",
               },
             },
           },

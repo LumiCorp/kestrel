@@ -151,7 +151,6 @@ export async function POST(
         eventType: body.interactionResponse.eventType,
         turnId: body.interactionResponse.turnId,
         message: body.interactionResponse.message,
-        approved: body.interactionResponse.approved,
         decision: body.interactionResponse.decision,
         reason: body.interactionResponse.reason,
         recoveryOptionId: body.interactionResponse.recoveryOptionId,
