@@ -120,7 +120,9 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
     assert.equal(String(request), "https://oauth2.googleapis.com/token");
     refreshCalls += 1;
     await new Promise((resolve) => setTimeout(resolve, 20));
-    return Response.json({ access_token: "refreshed-access", refresh_token: "rotated-refresh", token_type: "Bearer", expires_in: 3600 });
+    // OAuth providers can omit openid/email/profile in a refresh scope
+    // response. Those protocol scopes are not lost App capability authority.
+    return Response.json({ access_token: "refreshed-access", refresh_token: "rotated-refresh", token_type: "Bearer", expires_in: 3600, scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events.owned https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.freebusy" });
   }) as typeof fetch;
   const resolveCalendar = () => broker.resolveHostedPersonalProviderToken({
     provider: "google_workspace",
@@ -182,7 +184,6 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
   });
   const narrowedPolicySessionId = new URL(narrowedPolicyStart.authorizationUrl).searchParams.get("state");
   assert.ok(narrowedPolicySessionId);
-  await sql`UPDATE "app_installations" SET "settings" = ${JSON.stringify({ personalOAuthPacks: ["calendar"] })}::jsonb WHERE "organization_id" = ${organizationId} AND "app_key" = 'google_workspace'`;
   await assert.rejects(
     broker.completeHostedPersonalAuthorization({
       provider: "google_workspace",
@@ -190,9 +191,26 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
       userId,
       code: "narrowed-policy-code",
       env: { ...process.env, NEXT_PUBLIC_APP_URL: "https://one.example.test" },
+      fetchImpl: (async (request) => {
+        const value = String(request);
+        if (value === "https://oauth2.googleapis.com/token") {
+          // This is deliberately after the callback began and before its
+          // provider exchange resolves: callback persistence must observe the
+          // now-current Organization policy, not its earlier authorization.
+          await sql`UPDATE "app_installations" SET "settings" = ${JSON.stringify({ personalOAuthPacks: ["calendar"] })}::jsonb WHERE "organization_id" = ${organizationId} AND "app_key" = 'google_workspace'`;
+          return Response.json({ access_token: "narrowed-policy-access", refresh_token: "narrowed-policy-refresh", token_type: "Bearer", expires_in: 3600, scope: "openid email profile https://www.googleapis.com/auth/gmail.readonly" });
+        }
+        if (value === "https://openidconnect.googleapis.com/v1/userinfo") {
+          return Response.json({ sub: "provider-user", email: "provider@example.test" });
+        }
+        throw new Error(`Unexpected provider URL: ${value}`);
+      }) as typeof fetch,
     }),
     (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_ORGANIZATION_PACK_DENIED",
   );
+  const [policyDeniedAuthorization] = await sql`SELECT "selected_packs" AS "selectedPacks", "encrypted_token_payload" AS "tokenPayload" FROM "platform_personal_oauth_authorizations" WHERE "connection_id" = ${completed.connectionId}`;
+  assert.deepEqual(policyDeniedAuthorization.selectedPacks, ["gmail", "calendar"]);
+  assert.doesNotMatch(policyDeniedAuthorization.tokenPayload, /narrowed-policy-(?:access|refresh)/u);
   await assert.rejects(
     broker.resolveHostedPersonalProviderToken({ provider: "google_workspace", connectionId: completed.connectionId, organizationId, userId, projectId, operation: "gmail.messages.search" }),
     (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_ORGANIZATION_PACK_DENIED",
@@ -239,20 +257,45 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
         refresh_token: "scope-reduced-refresh",
         token_type: "Bearer",
         expires_in: 3600,
-        scope: "https://www.googleapis.com/auth/gmail.readonly",
+        // events.list remains usable, but refresh drops the prior Gmail
+        // authority. The connection envelope—not just this operation—must
+        // then require reconnect.
+        scope: "https://www.googleapis.com/auth/calendar.events.owned https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.freebusy",
       })) as unknown as typeof fetch,
     }),
     (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_RECONNECT_REQUIRED",
   );
   const [scopeReducedAuthorization] = await sql`SELECT "granted_scopes" AS "grantedScopes", "encrypted_token_payload" AS "tokenPayload", "reconnect_required" AS "reconnectRequired", "failure_code" AS "failureCode" FROM "platform_personal_oauth_authorizations" WHERE "connection_id" = ${completed.connectionId}`;
   const [scopeReducedConnection] = await sql`SELECT "scopes", "status", "failure_code" AS "failureCode" FROM "app_connections" WHERE "id" = ${completed.connectionId}`;
-  assert.deepEqual(scopeReducedAuthorization.grantedScopes, ["https://www.googleapis.com/auth/gmail.readonly"]);
+  assert.deepEqual(scopeReducedAuthorization.grantedScopes, [
+    "https://www.googleapis.com/auth/calendar.events.owned",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+    "https://www.googleapis.com/auth/calendar.events.freebusy",
+  ]);
   assert.equal(scopeReducedAuthorization.reconnectRequired, true);
   assert.equal(scopeReducedAuthorization.failureCode, "OAUTH_SCOPE_REDUCED");
   assert.doesNotMatch(scopeReducedAuthorization.tokenPayload, /scope-reduced-(?:access|refresh)/u);
-  assert.deepEqual(scopeReducedConnection.scopes, ["https://www.googleapis.com/auth/gmail.readonly"]);
+  assert.deepEqual(scopeReducedConnection.scopes, [
+    "https://www.googleapis.com/auth/calendar.events.owned",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+    "https://www.googleapis.com/auth/calendar.events.freebusy",
+  ]);
   assert.equal(scopeReducedConnection.status, "degraded");
   assert.equal(scopeReducedConnection.failureCode, "OAUTH_SCOPE_REDUCED");
+  await sql`UPDATE "platform_personal_oauth_authorizations" SET "granted_scopes" = '[]'::jsonb WHERE "connection_id" = ${completed.connectionId}`;
+  await assert.rejects(
+    broker.resolveHostedPersonalProviderToken({
+      provider: "google_workspace",
+      connectionId: completed.connectionId,
+      organizationId,
+      userId,
+      projectId,
+      operation: "events.list",
+    }),
+    // A missing Calendar scope must not mask the already durable reconnect
+    // outcome.
+    (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_RECONNECT_REQUIRED",
+  );
 
   const reconnectStart = await broker.startHostedPersonalAuthorization({
     provider: "google_workspace",

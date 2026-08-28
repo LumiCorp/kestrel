@@ -200,6 +200,24 @@ function scopeSetContains(granted: readonly string[], required: readonly string[
   return required.every((scope) => actual.has(scope.toLowerCase()));
 }
 
+/**
+ * Identity and refresh protocol scopes are not capability authority. Provider
+ * refresh responses commonly omit them, so scope-retention decisions must use
+ * only the descriptor-defined scopes for the connection's selected packs.
+ */
+function selectedPackCapabilityScopes(input: {
+  provider: HostedPersonalOAuthProvider;
+  packs: readonly string[];
+}) {
+  const selected = new Set(input.packs);
+  const descriptors = input.provider === "google_workspace"
+    ? GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS
+    : MICROSOFT_365_OPERATION_DESCRIPTORS;
+  return normalizeScopes(descriptors
+    .filter((descriptor) => selected.has(descriptor.pack))
+    .flatMap((descriptor) => descriptor.requiredScopes));
+}
+
 function safeFailureMessage() {
   return "Reconnect this App to restore access.";
 }
@@ -434,6 +452,15 @@ export async function completeHostedPersonalAuthorization(input: {
     refreshToken: exchanged.refresh_token ?? null,
     tokenType: exchanged.token_type ?? null,
   });
+  // The provider exchange is intentionally outside the database transaction.
+  // Recheck the Organization ceiling immediately before its token can become
+  // durable, so a policy narrowing during consent cannot persist authority
+  // that is no longer approved.
+  await requireOrganizationApprovedPacks({
+    organizationId: session.organizationId,
+    provider: input.provider,
+    requestedPacks: packs,
+  });
   const connection = await knowledgeDb.transaction(async (transaction) => {
     const existing = session.connectionId
       ? await transaction.query.appConnections.findFirst({
@@ -641,6 +668,23 @@ async function refreshHostedPersonalProviderToken(input: {
     const grantedScopes = refreshed.scope === undefined
       ? authorization.grantedScopes
       : normalizeScopes(refreshed.scope.split(/[\s,]+/u));
+    // A connection's authority is its previously granted selected-pack scope
+    // envelope, not only the operation that happened to trigger this refresh.
+    // Exclude incidental identity/refresh scopes because providers may omit
+    // those from refresh responses without reducing App capability authority.
+    const selectedPackScopeSet = new Set(
+      selectedPackCapabilityScopes({
+        provider: input.provider,
+        packs: authorization.selectedPacks,
+      }).map((scope) => scope.toLowerCase()),
+    );
+    const previouslyGrantedCapabilityScopes = authorization.grantedScopes.filter(
+      (scope) => selectedPackScopeSet.has(scope.toLowerCase()),
+    );
+    const retainedGrantedScopeEnvelope = scopeSetContains(
+      grantedScopes,
+      previouslyGrantedCapabilityScopes,
+    );
     const nextPayload = JSON.stringify({
       accessToken: refreshed.access_token,
       refreshToken: refreshed.refresh_token ?? payload.refreshToken,
@@ -651,19 +695,19 @@ async function refreshHostedPersonalProviderToken(input: {
       expiresAt,
       grantedScopes,
       lastRefreshedAt: now,
-      failureCode: scopeSetContains(grantedScopes, input.requiredScopes) ? null : "OAUTH_SCOPE_REDUCED",
-      reconnectRequired: !scopeSetContains(grantedScopes, input.requiredScopes),
+      failureCode: retainedGrantedScopeEnvelope ? null : "OAUTH_SCOPE_REDUCED",
+      reconnectRequired: !retainedGrantedScopeEnvelope,
       updatedAt: now,
     }).where(eq(schema.platformPersonalOAuthAuthorizations.connectionId, input.connectionId));
     await transaction.update(schema.appConnections).set({
       scopes: grantedScopes,
-      status: scopeSetContains(grantedScopes, input.requiredScopes) ? "connected" : "degraded",
-      failureCode: scopeSetContains(grantedScopes, input.requiredScopes) ? null : "OAUTH_SCOPE_REDUCED",
-      failureMessage: scopeSetContains(grantedScopes, input.requiredScopes) ? null : safeFailureMessage(),
+      status: retainedGrantedScopeEnvelope ? "connected" : "degraded",
+      failureCode: retainedGrantedScopeEnvelope ? null : "OAUTH_SCOPE_REDUCED",
+      failureMessage: retainedGrantedScopeEnvelope ? null : safeFailureMessage(),
       lastHealthAt: now,
       updatedAt: now,
     }).where(eq(schema.appConnections.id, input.connectionId));
-    if (!scopeSetContains(grantedScopes, input.requiredScopes)) {
+    if (!retainedGrantedScopeEnvelope) {
       return { kind: "reconnect" as const };
     }
     return { kind: "success" as const, accessToken: refreshed.access_token, expiresAt };
@@ -737,12 +781,12 @@ export async function resolveHostedPersonalProviderToken(input: {
   if (!allowedPacks(input.provider).includes(operation.pack) || !authorization.selectedPacks.includes(operation.pack)) {
     throw new HostedPersonalOAuthError("OAUTH_PACK_DENIED", "This OAuth capability pack was not selected for the connection.");
   }
-  if (!scopeSetContains(authorization.grantedScopes, operation.requiredScopes)) {
-    throw new HostedPersonalOAuthError("OAUTH_SCOPE_DENIED", "The connection does not grant the required OAuth scope.");
-  }
   if (authorization.reconnectRequired || authorization.registrationRevision !== registration.revision) {
     await markAuthorizationDegraded({ connectionId: input.connectionId, code: "OAUTH_RECONNECT_REQUIRED" });
     throw new HostedPersonalOAuthError("OAUTH_RECONNECT_REQUIRED", "Reconnect this App after the Platform OAuth registration changed.");
+  }
+  if (!scopeSetContains(authorization.grantedScopes, operation.requiredScopes)) {
+    throw new HostedPersonalOAuthError("OAUTH_SCOPE_DENIED", "The connection does not grant the required OAuth scope.");
   }
   if (input.provider === "google_workspace" && operation.pack === "gmail") {
     if (!input.gmailExecution) {
