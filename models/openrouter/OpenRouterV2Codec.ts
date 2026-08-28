@@ -70,7 +70,7 @@ export function buildOpenRouterHttpRequestV2(
 
   const eligibleEndpointIds = eligibleEndpointIdsFor(
     route,
-    requiredOpenRouterParameters(request, endpoint),
+    requiredOpenRouterParameters(request, endpoint, route),
   );
 
   const payload =
@@ -143,6 +143,13 @@ function eligibleEndpointIdsFor(
   route: OpenRouterQualifiedRouteEvidence,
   requiredParameters: readonly string[],
 ): string[] {
+  if (
+    route.routing.kind === "provider" &&
+    route.routing.allowedEndpointIds.length === 0 &&
+    route.endpoints.length === 0
+  ) {
+    return [];
+  }
   const capabilitiesById = new Map(
     route.endpoints.map((endpoint) => [endpoint.id, endpoint]),
   );
@@ -172,9 +179,9 @@ function buildChatBody(
   const body: Record<string, unknown> = {
     model,
     messages: toChatMessages(request),
-    provider: providerRouting(eligibleEndpointIds),
+    provider: providerRouting(route, eligibleEndpointIds),
   };
-  applyCommonParameters(body, request, "chat");
+  applyCommonParameters(body, request, "chat", route);
   const output = chatStructuredOutput(request);
   if (output.value !== undefined) body.response_format = output.value;
   return {
@@ -194,9 +201,9 @@ function buildResponsesBody(
   const body: Record<string, unknown> = {
     model,
     input: toResponsesInput(request),
-    provider: providerRouting(eligibleEndpointIds),
+    provider: providerRouting(route, eligibleEndpointIds),
   };
-  applyCommonParameters(body, request, "responses");
+  applyCommonParameters(body, request, "responses", route);
   const output = responsesStructuredOutput(request);
   if (output.value !== undefined) body.text = { format: output.value };
   return {
@@ -208,8 +215,15 @@ function buildResponsesBody(
 }
 
 function providerRouting(
+  route: OpenRouterQualifiedRouteEvidence,
   eligibleEndpointIds: readonly string[],
 ): Record<string, unknown> {
+  if (
+    route.routing.kind === "provider" &&
+    route.routing.allowedEndpointIds.length === 0
+  ) {
+    return { require_parameters: true };
+  }
   return {
     require_parameters: true,
     order: [...eligibleEndpointIds],
@@ -223,6 +237,7 @@ function applyCommonParameters(
   body: Record<string, unknown>,
   request: ModelRequestV2,
   endpoint: OpenRouterEndpoint,
+  route: OpenRouterQualifiedRouteEvidence,
 ): void {
   const options = request.providerOptions?.openrouter;
   if (typeof options?.temperature === "number")
@@ -240,8 +255,13 @@ function applyCommonParameters(
         ? toChatTools(tools, request.requirements.tools.strictArguments)
         : toResponsesTools(tools, request.requirements.tools.strictArguments);
     body.tool_choice = toolChoice(request, endpoint);
-    body.parallel_tool_calls =
-      request.requirements.tools.parallelism !== "forbidden";
+    if (
+      request.requirements.tools.parallelism !== "forbidden" ||
+      route.supportedParameters.includes("parallel_tool_calls")
+    ) {
+      body.parallel_tool_calls =
+        request.requirements.tools.parallelism !== "forbidden";
+    }
   }
 
   if (request.requirements.reasoning.mode !== "off") {
@@ -336,6 +356,7 @@ function responsesStructuredOutput(request: ModelRequestV2) {
 function requiredOpenRouterParameters(
   request: ModelRequestV2,
   endpoint: OpenRouterEndpoint,
+  route: OpenRouterQualifiedRouteEvidence,
 ): string[] {
   const required = new Set<string>();
   if (request.requirements.output.kind !== "text") {
@@ -347,9 +368,11 @@ function requiredOpenRouterParameters(
   if (request.requirements.tools.choice !== "none") {
     required.add("tools");
     required.add("tool_choice");
-    required.add("parallel_tool_calls");
-    if (request.requirements.tools.strictArguments) {
-      required.add("strict_tool_inputs");
+    if (
+      request.requirements.tools.parallelism !== "forbidden" ||
+      route.supportedParameters.includes("parallel_tool_calls")
+    ) {
+      required.add("parallel_tool_calls");
     }
   }
   if (request.requirements.reasoning.mode !== "off") required.add("reasoning");

@@ -26,6 +26,53 @@ import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
 import type { LocalCoreDesktopProfileSnapshot } from "./contracts.js";
 import type { LocalCoreRuntimeConfigurationV1 } from "./runtimeConfiguration.js";
 
+/** Fail closed unless persisted Gmail evidence names this exact route. */
+export function assertLocalCoreGmailRestrictedDataAdmission(input: {
+  readiness: Pick<LocalCoreModelReadiness, "registration">;
+  runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
+}): void {
+  const evidence = input.runtimeConfiguration.gmailRestrictedData;
+  const routeFingerprint = localCoreGmailRestrictedDataRouteFingerprint(
+    input.readiness.registration,
+  );
+  if (evidence?.some((candidate) => candidate.routeFingerprint === routeFingerprint) !== true) {
+    throw new Error("Desktop Gmail requires qualified restricted-data evidence for this exact model route.");
+  }
+}
+
+/** Every configured route that can receive Gmail data must be admitted. */
+export function assertLocalCoreGmailRestrictedDataAdmissions(input: {
+  readinesses: readonly Pick<LocalCoreModelReadiness, "registration">[];
+  runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
+}): void {
+  if (input.readinesses.length === 0) {
+    throw new Error("Desktop Gmail restricted-data admission requires a model route.");
+  }
+  for (const readiness of input.readinesses) {
+    assertLocalCoreGmailRestrictedDataAdmission({
+      readiness,
+      runtimeConfiguration: input.runtimeConfiguration,
+    });
+  }
+}
+
+/**
+ * Stable, non-secret identity for the registration that may receive Gmail
+ * restricted data. Persisted admission evidence must name this exact value.
+ */
+export function localCoreGmailRestrictedDataRouteFingerprint(
+  value: ModelRegistrationV2,
+): string {
+  const registration = parseModelRegistrationV2(value);
+  return hashCanonical({
+    registrationId: registration.registrationId,
+    revision: registration.revision,
+    fingerprint: registration.fingerprint,
+    credentialRevision: registration.credentialRevision,
+    route: registration.route,
+  });
+}
+
 export const LOCAL_CORE_MODEL_READINESS_VERSION = 1;
 
 /**

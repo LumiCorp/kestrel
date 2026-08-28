@@ -47,11 +47,51 @@ load_env_file() {
   fi
 }
 
+seed_openrouter_agent_env() {
+  local model_without_provider
+
+  if [[ -n "${OPENROUTER_API_KEY:-}" && (-z "${AI_AGENT_API_KEY:-}" || "${AI_AGENT_API_KEY}" == "sk_your_provider_key") ]]; then
+    export AI_AGENT_API_KEY="$OPENROUTER_API_KEY"
+  fi
+
+  if [[ -n "${OPENROUTER_MODEL:-}" &&
+    (-z "${AI_AGENT_MODEL:-}" || "${AI_AGENT_MODEL}" == "openai/gpt-5-mini") ]]; then
+    model_without_provider="${OPENROUTER_MODEL%/}"
+    if [[ "$model_without_provider" == */* ]]; then
+      export AI_AGENT_MODEL="$model_without_provider"
+    else
+      export AI_AGENT_MODEL="openai/$model_without_provider"
+    fi
+  fi
+
+  if [[ -n "${OPENROUTER_BASE_URL:-}" &&
+    (-z "${AI_AGENT_BASE_URL:-}" || "${AI_AGENT_BASE_URL}" == "https://openrouter.ai/api/v1") ]]; then
+    local base_url="${OPENROUTER_BASE_URL%/}"
+    if [[ "$base_url" == "https://openrouter.ai" ]]; then
+      base_url="https://openrouter.ai/api/v1"
+    fi
+    export AI_AGENT_BASE_URL="$base_url"
+  fi
+
+  if [[ -n "${OPENROUTER_SITE_URL:-}" && -z "${AI_AGENT_SITE_URL:-}" ]]; then
+    export AI_AGENT_SITE_URL="$OPENROUTER_SITE_URL"
+  fi
+
+  if [[ -n "${OPENROUTER_APP_NAME:-}" && -z "${AI_AGENT_SITE_NAME:-}" ]]; then
+    export AI_AGENT_SITE_NAME="$OPENROUTER_APP_NAME"
+  fi
+}
+
 load_env_file "../../.env.example"
 load_env_file "../../.env"
 load_env_file ".env.example"
 load_env_file ".env"
 load_env_file ".env.local"
+
+if [[ -z "${KESTREL_APP_CREDENTIAL_ACTIVE_KEY_ID:-}" && -z "${KESTREL_APP_CREDENTIAL_KEYS:-}" ]]; then
+  export KESTREL_APP_CREDENTIAL_ACTIVE_KEY_ID="local-app-key-v1"
+  export KESTREL_APP_CREDENTIAL_KEYS='{"local-app-key-v1":"a2VzdHJlbC1sb2NhbC1hcHAtY3JlZGVudGlhbC12MSE="}'
+fi
 
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-kestrel-one}"
 
@@ -93,6 +133,8 @@ if [[ "${AI_AGENT_API_KEY:-}" == "sk_your_provider_key" ]]; then
   log "Ignoring placeholder AI_AGENT_API_KEY from env defaults"
   unset AI_AGENT_API_KEY
 fi
+
+seed_openrouter_agent_env
 
 if [[ -z "${BETTER_AUTH_SECRET:-}" || "${BETTER_AUTH_SECRET}" == "your-secret-key-here" ]]; then
   export BETTER_AUTH_SECRET="local-dev-only-better-auth-secret-please-change"
@@ -202,6 +244,9 @@ if [[ -z "${DOCKER_BIN}" ]]; then
   log "docker is required. Install Docker Desktop or another Docker runtime and try again."
   exit 1
 fi
+
+log "Building the canonical runtime protocol"
+pnpm --filter @kestrel-agents/protocol build
 
 log "Building the physical attachment worker"
 pnpm --filter @kestrel-agents/files build

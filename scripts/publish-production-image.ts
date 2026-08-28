@@ -11,22 +11,12 @@ type Runner = (command: string, args: string[], inherit?: boolean) => RunResult;
 export function parsePublishProductionImageArgs(args: string[]): {
   role: string;
   tag: string;
-  approvalProtocol: "v2" | "v3" | "v4" | undefined;
 } {
   const normalized = operatorArgs(args);
   const role = argument(normalized, "--role");
   const tag = productionImageTagSchema.parse(argument(normalized, "--tag"));
-  const approvalProtocol = optionalArgument(normalized, "--approval-protocol");
-  if (
-    approvalProtocol !== undefined &&
-    approvalProtocol !== "v2" &&
-    approvalProtocol !== "v3" &&
-    approvalProtocol !== "v4"
-  ) {
-    throw new Error("--approval-protocol must be v2, v3, or v4.");
-  }
-  rejectUnknownArgs(normalized, ["--role", "--tag", "--approval-protocol"]);
-  return { role, tag, approvalProtocol };
+  rejectUnknownArgs(normalized, ["--role", "--tag"]);
+  return { role, tag };
 }
 
 function operatorArgs(args: string[]) {
@@ -38,7 +28,6 @@ export function productionImageBuildCommands(input: {
   image: string;
   tag: string;
   smoke: string;
-  approvalProtocol?: "v2" | "v3" | "v4" | undefined;
 }) {
   return [
     {
@@ -55,12 +44,6 @@ export function productionImageBuildCommands(input: {
         input.image,
         "--build-arg",
         `KESTREL_BUILD_ID=${input.tag}`,
-        ...(input.approvalProtocol
-          ? [
-              "--build-arg",
-              `KESTREL_HOSTED_APPROVAL_PROTOCOL=${input.approvalProtocol}`,
-            ]
-          : []),
         ".",
       ],
     },
@@ -69,24 +52,8 @@ export function productionImageBuildCommands(input: {
       args: [
         input.smoke,
         input.image,
-        ...(input.approvalProtocol
-          ? [input.approvalProtocol]
-          : []),
       ],
     },
-    ...(input.approvalProtocol
-      ? [{
-          command: "docker",
-          args: [
-            "image",
-            "inspect",
-            "--format",
-            '{{ index .Config.Labels "com.lumicorp.kestrel.hosted-approval-producer" }}',
-            input.image,
-          ],
-          evidence: "approval-protocol" as const,
-        }]
-      : []),
     { command: "docker", args: ["push", input.image] },
     {
       command: "docker",
@@ -101,19 +68,12 @@ export async function publishProductionImage(
   runner: Runner = run,
   environment: NodeJS.ProcessEnv = process.env,
 ) {
-  const { role, tag, approvalProtocol } = parsePublishProductionImageArgs(args);
+  const { role, tag } = parsePublishProductionImageArgs(args);
   const catalog = flyImageCatalogSchema.parse(
     JSON.parse(await readFile("deploy/fly/image-catalog.json", "utf8")),
   );
   const image = catalog.images.find((candidate) => candidate.role === role);
   if (!image) throw new Error(`Unknown production image role: ${role}.`);
-  const protocolAware = role === "turn-worker" || role === "workspace-runtime";
-  if (approvalProtocol && !protocolAware) {
-    throw new Error(`${role} does not carry a hosted approval producer.`);
-  }
-  if (protocolAware && approvalProtocol === undefined) {
-    throw new Error(`${role} publication requires --approval-protocol.`);
-  }
   assertProductionImageCanaryEnvironment(role, environment);
   const taggedImage = `${image.repository}:${tag}`;
   let digestImage: string | undefined;
@@ -122,7 +82,6 @@ export async function publishProductionImage(
     image: taggedImage,
     tag,
     smoke: image.smoke,
-    approvalProtocol,
   })) {
     const evidence = "evidence" in command ? command.evidence : undefined;
     const commandResult = runner(
@@ -131,13 +90,7 @@ export async function publishProductionImage(
       evidence === undefined,
     );
     requireSuccess(commandResult, command.command);
-    if (evidence === "approval-protocol") {
-      if (commandResult.stdout.trim() !== approvalProtocol) {
-        throw new Error(
-          `Built ${role} image advertises '${commandResult.stdout.trim() || "missing"}' instead of '${approvalProtocol}'.`,
-        );
-      }
-    } else if (evidence === "repo-digest") {
+    if (evidence === "repo-digest") {
       digestImage = commandResult.stdout.trim();
       const [digestRepository, digest] = digestImage.split("@");
       if (
@@ -153,7 +106,6 @@ export async function publishProductionImage(
     tag,
     image: taggedImage,
     digestImage: digestImage!,
-    ...(approvalProtocol ? { approvalProtocol } : {}),
   };
   process.stdout.write(`${JSON.stringify(result)}\n`);
   return result;

@@ -2690,7 +2690,7 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
         /^kestrel:desktop_safe_local:[a-f0-9]{64}$/u,
       );
       assert.equal(resolved.policy.id, "kestrel");
-      assert.equal(resolved.policy.version, 4);
+      assert.equal(resolved.policy.version, 5);
       assert.equal(resolved.environmentPreset.id, "desktop_safe_local");
       assert.equal(resolved.resolvedProfile.agentProfileId, "kestrel");
       assert.equal(

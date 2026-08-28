@@ -23,6 +23,28 @@ import { startFakeOpenRouterServer } from "../../../../tests/ops/helpers/fake-op
 function openRouterRegistrationFixture(
   endpoint = "https://openrouter.example/api/v1",
   modelId = "z-ai/glm-test",
+  details: Record<string, unknown> = {
+    id: modelId,
+    supported_parameters: [
+      "response_format",
+      "structured_outputs",
+      "tools",
+      "tool_choice",
+      "parallel_tool_calls",
+      "strict_tool_inputs",
+    ],
+    endpoints: [{
+      id: "provider-a",
+      supported_parameters: [
+        "response_format",
+        "structured_outputs",
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+        "strict_tool_inputs",
+      ],
+    }],
+  },
 ) {
   return createHostedModelRegistration({
     registrationId: `hosted:gateway-1:${modelId}`,
@@ -45,28 +67,7 @@ function openRouterRegistrationFixture(
     },
     providerEvidence: {
       provider: "openrouter",
-      details: {
-        id: modelId,
-        supported_parameters: [
-          "response_format",
-          "structured_outputs",
-          "tools",
-          "tool_choice",
-          "parallel_tool_calls",
-          "strict_tool_inputs",
-        ],
-        endpoints: [{
-          id: "provider-a",
-          supported_parameters: [
-            "response_format",
-            "structured_outputs",
-            "tools",
-            "tool_choice",
-            "parallel_tool_calls",
-            "strict_tool_inputs",
-          ],
-        }],
-      },
+      details,
     },
   });
 }
@@ -104,6 +105,38 @@ test("product-contract fake OpenRouter proves the exact hosted qualification con
     run.results.map((result) => result.outcome),
     ["qualified", "qualified", "qualified", "qualified"],
     JSON.stringify(run.results),
+  );
+});
+
+test("provider-managed OpenRouter models qualify without an endpoint inventory", async (t) => {
+  const fake = await startFakeOpenRouterServer();
+  t.after(() => fake.close());
+  const modelId = "z-ai/glm-5.2";
+  const created = openRouterRegistrationFixture(fake.url, modelId, {
+    id: modelId,
+    supported_parameters: [
+      "response_format",
+      "structured_outputs",
+      "tools",
+      "tool_choice",
+    ],
+  });
+  const routeEvidence = readHostedOpenRouterRouteEvidence({
+    metadata: { kestrelModelRegistrationEvidenceV1: created.evidence },
+    registration: created.registration,
+  });
+  assert.ok(routeEvidence);
+
+  const qualified = await qualifyHostedAgentLoopModel({
+    registration: created.registration,
+    credential: { revision: "7", apiKey: "product-contract-key" },
+    openRouterRouteEvidence: routeEvidence,
+  });
+
+  assert.deepEqual(
+    qualified.results.map((result) => result.outcome),
+    ["qualified", "qualified", "qualified", "qualified"],
+    JSON.stringify(qualified.results),
   );
 });
 
