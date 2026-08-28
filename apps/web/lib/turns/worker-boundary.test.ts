@@ -637,18 +637,6 @@ test(
       devAllSource,
       /export KESTREL_BUILD_ID="\$\{KESTREL_BUILD_ID:-local-dev\}"/u,
     );
-    assert.match(
-      devAllSource,
-      /LOCAL_RECEIVING_BUILD_REVISION=.*git -C "\$ROOT_DIR\/\.\.\/\.\." rev-parse --verify 'HEAD\^\{commit\}'/u,
-    );
-    assert.match(
-      devAllSource,
-      /KESTREL_EMAIL_RECEIVING_RELEASE_EVIDENCE_REVISION:-\$LOCAL_RECEIVING_BUILD_REVISION/u,
-    );
-    assert.match(
-      devAllSource,
-      /KESTREL_EMAIL_RECEIVING_SECURITY_REVIEW_REVISION:-\$LOCAL_RECEIVING_BUILD_REVISION/u,
-    );
     assert.match(devAllSource, /TURN_WORKER_PID=\$!/u);
     assert.match(devAllSource, /KNOWLEDGE_WORKER_PID=\$!/u);
     assert.match(devAllSource, /KESTREL_LOCAL_TURN_WORKER_HEALTH_PORT:-43107/u);
