@@ -34,6 +34,22 @@ export interface LocalCoreRuntimeConfigurationV1 {
   readonly generation: number;
   readonly environmentOptionsMode: LocalCoreRuntimeEnvironmentOptionsMode;
   readonly modelPolicy: ModelPolicyV1;
+  /**
+   * Durable, route-bound evidence required before Desktop may return Gmail
+   * restricted-scope data to a model. Omission is unqualified. Every model
+   * route that can receive the data needs its own evidence record.
+   */
+  readonly gmailRestrictedData?: readonly {
+    readonly routeFingerprint: string;
+    readonly processorId: string;
+    readonly purpose: "user_authorized_productivity";
+    readonly retention: "documented";
+    readonly trainingUse: "prohibited";
+    readonly deletion: "documented";
+    readonly qualification: "qualified";
+    readonly evidenceRevision: string;
+    readonly observedAt: string;
+  }[] | undefined;
   readonly providers: {
     readonly openrouter: {
       readonly baseUrl?: string | undefined;
@@ -157,6 +173,9 @@ export function parseLocalCoreRuntimeConfiguration(
   } catch (error) {
     throw invalidConfiguration("Runtime configuration modelPolicy is invalid.", error);
   }
+  const gmailRestrictedData = parseGmailRestrictedDataConfiguration(
+    record.gmailRestrictedData,
+  );
 
   const providers = requireRecord(record.providers, "Runtime configuration providers");
   rejectFields(providers, PROVIDER_FIELDS, "Runtime configuration providers");
@@ -185,6 +204,7 @@ export function parseLocalCoreRuntimeConfiguration(
     generation: record.generation,
     environmentOptionsMode: record.environmentOptionsMode,
     modelPolicy,
+    ...(gmailRestrictedData === undefined ? {} : { gmailRestrictedData }),
     providers: {
       openrouter,
       openai,
@@ -427,9 +447,66 @@ const TOP_LEVEL_FIELDS = new Set([
   "generation",
   "environmentOptionsMode",
   "modelPolicy",
+  "gmailRestrictedData",
   "providers",
   "tools",
 ]);
+const GMAIL_RESTRICTED_DATA_FIELDS = new Set([
+  "processorId",
+  "routeFingerprint",
+  "purpose",
+  "retention",
+  "trainingUse",
+  "deletion",
+  "qualification",
+  "evidenceRevision",
+  "observedAt",
+]);
+
+function parseGmailRestrictedDataConfiguration(value: unknown) {
+  if (value === undefined) return;
+  if (Array.isArray(value) === false || value.length === 0) {
+    throw invalidConfiguration("Runtime configuration gmailRestrictedData must be a non-empty list.");
+  }
+  const seenRoutes = new Set<string>();
+  return value.map((entry, index) => {
+    const record = requireRecord(entry, `Runtime configuration gmailRestrictedData[${index}]`);
+    rejectFields(record, GMAIL_RESTRICTED_DATA_FIELDS, `Runtime configuration gmailRestrictedData[${index}]`);
+    const string = (field: "routeFingerprint" | "processorId" | "evidenceRevision" | "observedAt") => {
+      const candidate = record[field];
+      if (typeof candidate !== "string" || candidate.trim().length === 0 || candidate.length > CONFIGURATION_STRING_MAX_LENGTH) {
+        throw invalidConfiguration(`Runtime configuration gmailRestrictedData[${index}].${field} is invalid.`);
+      }
+      return candidate.trim();
+    };
+    const routeFingerprint = string("routeFingerprint");
+    if (
+      record.purpose !== "user_authorized_productivity" ||
+      record.retention !== "documented" ||
+      record.trainingUse !== "prohibited" ||
+      record.deletion !== "documented" ||
+      record.qualification !== "qualified" ||
+      Number.isFinite(Date.parse(string("observedAt"))) === false
+    ) {
+      throw invalidConfiguration("Runtime configuration Gmail restricted-data evidence is invalid.");
+    }
+    if (seenRoutes.has(routeFingerprint)) {
+      throw invalidConfiguration("Runtime configuration Gmail restricted-data evidence repeats a route.");
+    }
+    seenRoutes.add(routeFingerprint);
+    return {
+      routeFingerprint,
+      processorId: string("processorId"),
+      purpose: "user_authorized_productivity" as const,
+      retention: "documented" as const,
+      trainingUse: "prohibited" as const,
+      deletion: "documented" as const,
+      qualification: "qualified" as const,
+      evidenceRevision: string("evidenceRevision"),
+      observedAt: string("observedAt"),
+    };
+  });
+}
 const PROVIDER_FIELDS = new Set([
   "openrouter",
   "openai",
