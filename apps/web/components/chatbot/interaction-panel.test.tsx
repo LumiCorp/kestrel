@@ -449,7 +449,7 @@ test("a refreshed V4 card exposes only Decline after its exact resource closes",
   assert.doesNotMatch(html, />Allow for thread</u);
 });
 
-test("hosted approval lifecycle distinguishes recorded, accepted, and failed authorization", () => {
+test("hosted approval lifecycle hides settled cards and retains retryable failures", () => {
   const approval = {
     ...interaction,
     kind: "approval" as const,
@@ -479,8 +479,7 @@ test("hosted approval lifecycle distinguishes recorded, accepted, and failed aut
       threadId="thread-1"
     />,
   );
-  assert.match(processing, /Saving your choice/u);
-  assert.doesNotMatch(processing, /Allow once/u);
+  assert.equal(processing, "");
 
   const accepted = renderToStaticMarkup(
     <InteractionPanel
@@ -499,7 +498,7 @@ test("hosted approval lifecycle distinguishes recorded, accepted, and failed aut
       threadId="thread-1"
     />,
   );
-  assert.match(accepted, /Allowed/u);
+  assert.equal(accepted, "");
 
   const failed = renderToStaticMarkup(
     <InteractionPanel
@@ -606,4 +605,43 @@ test("approval cards never render arbitrary raw tool input", () => {
   );
   assert.match(html, /Request details are hidden/u);
   assert.doesNotMatch(html, /must-not-render|also-hidden/u);
+});
+
+test("exec command approval cards stay compact and clamp long command previews", () => {
+  const command = `python3 - <<'PY'\n${"print('long command')\n".repeat(20)}PY`;
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v4",
+          approval: {
+            toolName: "exec_command",
+            presentation: {
+              title: "Run command",
+              fields: [
+                { label: "Command", value: command },
+                { label: "Working directory", value: "." },
+                { label: "Environment access", value: "[]" },
+              ],
+              policy: { reasonCode: "environment_policy" },
+            },
+          },
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+
+  assert.match(html, /gap-0/u);
+  assert.match(html, /py-0/u);
+  assert.match(html, /line-clamp-2/u);
+  assert.match(html, /title="python3 - &lt;&lt;&#x27;PY&#x27;/u);
+  assert.match(html, />Folder</u);
+  assert.match(html, />Environment</u);
+  assert.match(html, />None</u);
 });
