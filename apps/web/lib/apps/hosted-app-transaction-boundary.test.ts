@@ -46,6 +46,7 @@ test("every hosted mutation consumes its grant before credentials or provider ex
   const routes = [
     ["../../app/api/runtime/email/action/route.ts", "resolveOrganizationEmailConfig"],
     ["../../app/api/runtime/github/action/route.ts", "auth.api.getAccessToken"],
+    ["../../app/api/runtime/gmail/action/route.ts", "getAccessToken"],
     ["../../app/api/runtime/google-calendar/action/route.ts", "getConnectionAccessToken"],
     ["../../app/api/runtime/microsoft-365/action/route.ts", "getAccessToken"],
   ] as const;
@@ -56,6 +57,51 @@ test("every hosted mutation consumes its grant before credentials or provider ex
     assert.ok(consume >= 0, `${relative} must consume a hosted App grant`);
     assert.ok(authority > consume, `${relative} must consume before ${firstAuthorityUse}`);
   }
+});
+
+test("Gmail mutation audit identity exists before post-approval credential recovery", async () => {
+  const route = await source("../../app/api/runtime/gmail/action/route.ts");
+  const consume = route.indexOf("await consumeAppOperationApproval");
+  const audit = route.indexOf("mutationAudit = {", consume + 1);
+  const accessToken = route.indexOf(
+    "const accessToken = await getRequestAccessToken()",
+    consume + 1,
+  );
+  assert.ok(consume >= 0, "Gmail must consume the approval before mutation execution");
+  assert.ok(audit > consume, "Gmail must derive content-free mutation audit identity after approval");
+  assert.ok(accessToken > audit, "Gmail must retain audit identity before credential recovery");
+});
+
+test("Teams send audit identity exists before post-approval credential recovery", async () => {
+  const route = await source("../../app/api/runtime/microsoft-365/action/route.ts");
+  const consume = route.indexOf("await consumeAppOperationApproval");
+  const audit = route.indexOf("teamsSendAuditContext = {", consume + 1);
+  const accessToken = route.indexOf("const accessToken = await getAccessToken", consume + 1);
+  assert.ok(consume >= 0, "Teams must consume the approval before mutation execution");
+  assert.ok(audit > consume, "Teams must retain content-free mutation audit identity after approval");
+  assert.ok(accessToken > audit, "Teams must retain audit identity before credential recovery");
+});
+
+test("Teams send failures retain a normalized provider diagnostic without message content", async () => {
+  const route = await source("../../app/api/runtime/microsoft-365/action/route.ts");
+  const start = route.indexOf("async function recordTeamsSendFailure");
+  const end = route.indexOf("function teamsSendAuditMetadata", start);
+  const failureAudit = route.slice(start, end);
+  assert.match(
+    failureAudit,
+    /providerErrorCode:\s*input\.error\.providerCode\s*\?\?\s*input\.error\.code/u,
+  );
+  assert.doesNotMatch(failureAudit, /input\.context\.input\.content/u);
+});
+
+test("Calendar mutation audit identity exists before post-approval credential recovery", async () => {
+  const route = await source("../../app/api/runtime/google-calendar/action/route.ts");
+  const consume = route.indexOf("await consumeAppOperationApproval");
+  const audit = route.indexOf("mutationAuditContext = {", consume + 1);
+  const accessToken = route.indexOf("const accessToken = await getConnectionAccessToken", consume + 1);
+  assert.ok(consume >= 0, "Calendar must consume the approval before mutation execution");
+  assert.ok(audit > consume, "Calendar must retain content-free mutation audit identity after approval");
+  assert.ok(accessToken > audit, "Calendar must retain audit identity before credential recovery");
 });
 
 test("V2 approval execution settles from exact tool outcome, not runtime startup", async () => {
