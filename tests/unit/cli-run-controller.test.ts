@@ -604,12 +604,14 @@ for (const code of [
   "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
 ] as const) {
   test(`TuiRunController preserves ${code} in ordinary-turn diagnostics`, async () => {
-    const details = {
+    const expectedDetails = {
       sessionId: "session-1",
       threadId: "thread-main:session-1",
       bundleId: "bundle-environment-failure",
       bundleEnvironmentPresetId: "cli_future_local",
     };
+    const details: Record<string, unknown> = { ...expectedDetails };
+    details.listenerCycle = details;
     const sessionDescribeError = Object.assign(new Error(`runtime ${code}`), {
       code,
       details,
@@ -626,7 +628,7 @@ for (const code of [
         assert.ok(error instanceof Error && "code" in error && error.code === code);
         assert.deepEqual(
           (error as Error & { details?: Record<string, unknown> }).details,
-          details,
+          expectedDetails,
         );
         return true;
       },
@@ -637,7 +639,7 @@ for (const code of [
       failureDetails?: Record<string, unknown>;
     };
     assert.equal(diagnostic.code, code);
-    assert.deepEqual(diagnostic.failureDetails, details);
+    assert.deepEqual(diagnostic.failureDetails, expectedDetails);
   });
 }
 

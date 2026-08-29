@@ -15,6 +15,10 @@ import type {
   RunnerCommandType,
   RunnerEvent,
 } from "../protocol/contracts.js";
+import {
+  isSessionEnvironmentIdentityFailureCode,
+  snapshotEnvironmentIdentityDetails,
+} from "../../src/runtime/environmentIdentity.js";
 
 const protocolClientRequire = createRequire(import.meta.url);
 
@@ -210,6 +214,10 @@ export class ProtocolClient {
     const correlatedPending = event.commandId === undefined
       ? undefined
       : this.pending.get(event.commandId);
+    let claimedSessionDescription: PendingRequest | undefined;
+    let claimedEnvironmentFailure:
+      | { pending: PendingRequest; error: ProtocolClientRunnerError }
+      | undefined;
     if (event.type === "session.described") {
       if (correlatedPending?.requestedSessionId === undefined) {
         return;
@@ -222,6 +230,8 @@ export class ProtocolClient {
         }));
         return;
       }
+      this.pending.delete(event.commandId as string);
+      claimedSessionDescription = correlatedPending;
     }
     if (
       correlatedPending !== undefined
@@ -237,12 +247,39 @@ export class ProtocolClient {
     if (event.type === "runner.error" && event.commandId === undefined) {
       this.lastProcessError = normalizeDiagnosticLine(event.payload.message);
     }
+    if (
+      event.type === "runner.error"
+      && event.commandId !== undefined
+      && isSessionEnvironmentIdentityFailureCode(event.payload.code)
+    ) {
+      if (correlatedPending === undefined) {
+        return;
+      }
+      this.pending.delete(event.commandId);
+      claimedEnvironmentFailure = {
+        pending: correlatedPending,
+        error: createRunnerError(
+          event.payload.code,
+          event.payload.message,
+          snapshotEnvironmentIdentityDetails(event.payload.details),
+        ),
+      };
+    }
     for (const listener of this.listeners) {
       try {
         listener(event);
       } catch {
         // Listener errors should not crash the protocol client.
       }
+    }
+
+    if (claimedSessionDescription !== undefined) {
+      claimedSessionDescription.resolve(event);
+      return;
+    }
+    if (claimedEnvironmentFailure !== undefined) {
+      claimedEnvironmentFailure.pending.reject(claimedEnvironmentFailure.error);
+      return;
     }
 
     const commandId = event.commandId;
@@ -258,10 +295,13 @@ export class ProtocolClient {
     if (isRunnerExpectedResponseEvent(pending.commandType, event)) {
       this.pending.delete(commandId);
       if (event.type === "runner.error") {
-        const error = new Error(event.payload.message) as ProtocolClientRunnerError;
-        error.code = event.payload.code;
-        error.details = event.payload.details;
-        pending.reject(error);
+        pending.reject(
+          createRunnerError(
+            event.payload.code,
+            event.payload.message,
+            event.payload.details,
+          ),
+        );
         return;
       }
 
@@ -308,6 +348,17 @@ export class ProtocolClient {
     this.lastProcessError = undefined;
     this.recentStderr.length = 0;
   }
+}
+
+function createRunnerError(
+  code: string,
+  message: string,
+  details: Record<string, unknown> | undefined,
+): ProtocolClientRunnerError {
+  const error = new Error(message) as ProtocolClientRunnerError;
+  error.code = code;
+  error.details = details;
+  return error;
 }
 
 function createSessionDescribeMismatchError(input: {

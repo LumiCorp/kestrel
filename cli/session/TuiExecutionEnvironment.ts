@@ -2,6 +2,7 @@ import type { TuiSessionMeta } from "../contracts.js";
 import type { LocalCoreExecutionProfileResolution } from "../../src/localCore/contracts.js";
 import {
   isSessionEnvironmentIdentityFailureCode,
+  snapshotEnvironmentIdentityDetails,
   type SessionEnvironmentIdentityFailureCode,
 } from "../../src/runtime/environmentIdentity.js";
 
@@ -41,11 +42,8 @@ export function readTuiEnvironmentIdentityFailure(
     ? error.message
     : `Environment identity verification failed with '${code}'.`;
   const details = "details" in error
-    && typeof error.details === "object"
-    && error.details !== null
-    && Array.isArray(error.details) === false
-      ? error.details as Record<string, unknown>
-      : undefined;
+    ? snapshotEnvironmentIdentityDetails(error.details)
+    : undefined;
   return new TuiEnvironmentIdentityError(code, message, details);
 }
 

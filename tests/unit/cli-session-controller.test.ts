@@ -7,7 +7,10 @@ import {
 } from "../../cli/app/SessionController.js";
 import type { SessionsFile, TuiProfile, TuiSessionMeta } from "../../cli/contracts.js";
 import { buildInitialUiRuntimeState, UiStore } from "../../cli/ink/store/UiStore.js";
-import { TuiEnvironmentIdentityError } from "../../cli/session/TuiExecutionEnvironment.js";
+import {
+  readTuiEnvironmentIdentityFailure,
+  TuiEnvironmentIdentityError,
+} from "../../cli/session/TuiExecutionEnvironment.js";
 
 
 function makeSession(input: Partial<TuiSessionMeta> & { name: string; sessionId: string }): TuiSessionMeta {
@@ -278,6 +281,37 @@ for (const code of [
     assert.equal(changedActiveSession, false);
   });
 }
+
+test("TUI environment failure mapping owns a deep JSON-safe evidence snapshot", () => {
+  const sourceDetails: Record<string, unknown> = {
+    sessionId: "session-evidence",
+    evidence: {
+      threadId: "thread-main:session-evidence",
+      bundleId: "bundle-evidence",
+      rawIdentity: "cli_future_local",
+    },
+  };
+  const sourceError = Object.assign(new Error("Unsupported environment identity."), {
+    code: "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+    details: sourceDetails,
+  });
+  const mapped = readTuiEnvironmentIdentityFailure(sourceError);
+  assert.ok(mapped instanceof TuiEnvironmentIdentityError);
+
+  (sourceDetails.evidence as Record<string, unknown>).bundleId = "bundle-mutated";
+  sourceDetails.listenerCycle = sourceDetails;
+
+  const expected = {
+    sessionId: "session-evidence",
+    evidence: {
+      threadId: "thread-main:session-evidence",
+      bundleId: "bundle-evidence",
+      rawIdentity: "cli_future_local",
+    },
+  };
+  assert.deepEqual(mapped.details, expected);
+  assert.deepEqual(JSON.parse(JSON.stringify(mapped.details)), expected);
+});
 
 for (const scenario of [
   { label: "missing", runtimeEnvironmentPresetId: undefined },

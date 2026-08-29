@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Claim responses and snapshot evidence before publication](10-claim-responses-and-snapshot-evidence-before-publication.md)
+None.
 
 ## In progress
 
@@ -24,6 +24,7 @@ None.
 - [Make durable describe strictly read-only and deterministic](07-make-durable-describe-strictly-read-only-and-deterministic.md)
 - [Preserve environment consistency through protocol correlation](08-preserve-environment-consistency-through-protocol-correlation.md)
 - [Reject uncorrelated descriptions and preserve evidence](09-reject-uncorrelated-descriptions-and-preserve-evidence.md)
+- [Claim responses and snapshot evidence before publication](10-claim-responses-and-snapshot-evidence-before-publication.md)
 
 ## Done
 

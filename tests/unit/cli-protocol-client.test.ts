@@ -1012,6 +1012,52 @@ test("ProtocolClient publishes one valid correlated session.described response a
   await client.close();
 });
 
+test("ProtocolClient claims a correlated session.described before reentrant listener delivery", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  let injected = false;
+  client.onEvent((event) => {
+    if (event.type !== "session.described") return;
+    seen.push(event.id);
+    if (injected) return;
+    injected = true;
+    transport.emitEvent({
+      id: "evt-reentrant-mismatch",
+      type: "session.described",
+      ts: new Date().toISOString(),
+      commandId: "command-reentrant-description",
+      payload: { sessionId: "session-other", version: 1 },
+    });
+    transport.emitEvent({
+      id: "evt-reentrant-duplicate",
+      type: "session.described",
+      ts: new Date().toISOString(),
+      commandId: "command-reentrant-description",
+      payload: { sessionId: "session-requested", version: 1 },
+    });
+  });
+
+  const pending = client.sendCommandWithId(
+    "command-reentrant-description",
+    "session.describe",
+    { sessionId: "session-requested" },
+  );
+  await tick();
+  transport.emitEvent({
+    id: "evt-claimed-description",
+    type: "session.described",
+    ts: new Date().toISOString(),
+    commandId: "command-reentrant-description",
+    payload: { sessionId: "session-requested", version: 1 },
+  });
+
+  const response = await pending;
+  assert.equal(response.id, "evt-claimed-description");
+  assert.deepEqual(seen, ["evt-claimed-description"]);
+  await client.close();
+});
+
 for (const code of [
   "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
   "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
@@ -1045,6 +1091,89 @@ for (const code of [
     await client.close();
   });
 }
+
+test("ProtocolClient snapshots environment failure evidence before listener mutation", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  let injected = false;
+  client.onEvent((event) => {
+    if (event.type !== "runner.error") return;
+    seen.push(event.id);
+    if (injected) return;
+    injected = true;
+    const details = event.payload.details as {
+      evidence: { bundleId: string; rawIdentity: string };
+      listenerCycle?: unknown;
+    };
+    details.evidence.bundleId = "bundle-listener-tampered";
+    details.evidence.rawIdentity = "listener-tampered";
+    details.listenerCycle = details;
+    transport.emitEvent({
+      id: "evt-reentrant-environment-evidence",
+      type: "runner.error",
+      ts: new Date().toISOString(),
+      commandId: "command-environment-evidence",
+      payload: {
+        code: "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+        message: "Reentrant environment failure must not claim the command.",
+        details: {
+          sessionId: "session-reentrant",
+          threadId: "thread-main:session-reentrant",
+          evidence: {
+            bundleId: "bundle-reentrant",
+            rawIdentity: "cli_safe_local",
+          },
+        },
+      },
+    });
+  });
+  const pending = client.sendCommandWithId(
+    "command-environment-evidence",
+    "session.describe",
+    { sessionId: "session-environment-evidence" },
+  );
+  await tick();
+  transport.emitEvent({
+    id: "evt-environment-evidence",
+    type: "runner.error",
+    ts: new Date().toISOString(),
+    commandId: "command-environment-evidence",
+    payload: {
+      code: "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+      message: "Unsupported durable environment identity.",
+      details: {
+        sessionId: "session-environment-evidence",
+        threadId: "thread-main:session-environment-evidence",
+        evidence: {
+          bundleId: "bundle-environment-evidence",
+          rawIdentity: "cli_future_local",
+        },
+      },
+    },
+  });
+
+  await assert.rejects(pending, (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(
+      (error as Error & { code?: string }).code,
+      "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+    );
+    const details = (error as Error & { details?: Record<string, unknown> }).details;
+    assert.deepEqual(details, {
+      sessionId: "session-environment-evidence",
+      threadId: "thread-main:session-environment-evidence",
+      evidence: {
+        bundleId: "bundle-environment-evidence",
+        rawIdentity: "cli_future_local",
+      },
+    });
+    assert.doesNotThrow(() => JSON.stringify(details));
+    return true;
+  });
+  assert.deepEqual(seen, ["evt-environment-evidence"]);
+  await client.close();
+});
 
 test("ProtocolClient resolves operator command terminal events", async () => {
   const transport = new MockTransport();
