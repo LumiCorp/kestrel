@@ -10,7 +10,6 @@ import type { TuiProfile } from "../../cli/contracts.js";
 import {
   asRuntimeError,
   createRuntimeFailure,
-  delegationLimitReachedFailure,
   delegationModelMismatchFailure,
   delegationNotPersistedFailure,
   delegationProfileMismatchFailure,
@@ -165,7 +164,7 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       return { ...toDialogSnapshot(record), created: true };
     } catch (error) {
       const code = asRuntimeError(error).code;
-      if (code !== "DIALOG_NAME_IN_USE" && code !== "DELEGATION_LIMIT_REACHED") throw error;
+      if (code !== "DIALOG_NAME_IN_USE") throw error;
       const reserved = findDialogByNormalizedName(
         await this.store.listDelegations({ parentThreadId: input.parentSessionId }),
         name,
@@ -477,7 +476,6 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       rootDelegationId: input.rootDelegationId,
     });
     assertDelegationDepth(policy);
-    await this.assertCapacity(input.parentThreadId);
 
     const dialogChildThreadId = input.policy?.dialog === undefined ? undefined : `thread-${randomUUID()}`;
     const childThread = dialogChildThreadId === undefined
@@ -905,22 +903,6 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
         ...(failure?.errorCode !== undefined ? { errorCode: failure.errorCode } : {}),
       },
     });
-  }
-
-  private async assertCapacity(parentThreadId: string): Promise<void> {
-    const active = (await this.store.listDelegations({
-      parentThreadId,
-    })).filter((record) =>
-      record.status === "PENDING" || record.status === "RUNNING" || record.status === "WAITING"
-    );
-    const maxConcurrent = this.profile.delegation?.maxConcurrentChildSessions ?? 2;
-    if (active.length >= maxConcurrent) {
-      throw delegationLimitReachedFailure({
-        parentThreadId,
-        maxConcurrent,
-        activeDelegationCount: active.length,
-      });
-    }
   }
 
   private assertProfileCompatibility(input: {

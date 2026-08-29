@@ -422,7 +422,7 @@ test("ProfileStore reconciles persisted Kestrel-One collaborator dialogs idempot
   const kestrelOne = secondLoad.find((profile) => profile.id === "kestrel");
 
   assert.equal(kestrelOne?.delegation?.allowAgentSpawn, true);
-  assert.equal(kestrelOne?.delegation?.maxConcurrentChildSessions, 7);
+  assert.equal(kestrelOne?.delegation?.maxConcurrentChildSessions, undefined);
   assert.equal(kestrelOne?.delegation?.maxDepth, 1);
   assert.deepEqual(
     kestrelOne?.toolAllowlist?.filter(

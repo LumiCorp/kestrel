@@ -76,7 +76,6 @@ const DEFAULT_PROFILE_TOOL_QUEUE: ToolQueueProfileConfig = {
 };
 const DEFAULT_DELEGATION_POLICY = {
   allowAgentSpawn: false,
-  maxConcurrentChildSessions: 2,
   maxDepth: 2,
 };
 

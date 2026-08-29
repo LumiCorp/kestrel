@@ -103,7 +103,6 @@ export const KESTREL_PROFILE_DEFINITION: Readonly<KestrelProfileDefinitionV1> =
       delegation: {
         allowAgentSpawn: true,
         allowNestedCollaborators: false,
-        maxConcurrentChildSessions: 2,
         maxDepth: 2,
       },
     }),
@@ -522,10 +521,6 @@ function composeLegacyKestrelOneProfile(
     devShell: resolvedEnvironment.devShell,
     delegation: {
       allowAgentSpawn: true,
-      maxConcurrentChildSessions: normalizePositiveInteger(
-        delegationLimits?.maxConcurrentChildSessions,
-        2,
-      ),
       // This remains a compatibility/runtime budget. dialog.open separately
       // rejects collaborator contexts, so nested collaborator creation stays
       // prohibited regardless of this value.
@@ -671,8 +666,6 @@ export function composeKestrelProfile(
     devShell: resolvedEnvironment.devShell,
     delegation: {
       allowAgentSpawn: definition.delegation.allowAgentSpawn,
-      maxConcurrentChildSessions:
-        definition.delegation.maxConcurrentChildSessions,
       maxDepth: definition.delegation.maxDepth,
     },
     reasoning: structuredClone(definition.reasoning),
@@ -868,10 +861,6 @@ export function createKestrelProfileDefinitionFromOverlay(
     delegation: {
       allowAgentSpawn: true,
       allowNestedCollaborators: false,
-      maxConcurrentChildSessions: normalizePositiveInteger(
-        overlay?.delegationLimits?.maxConcurrentChildSessions,
-        KESTREL_PROFILE_DEFINITION.delegation.maxConcurrentChildSessions,
-      ),
       maxDepth: normalizePositiveInteger(
         overlay?.delegationLimits?.maxDepth,
         KESTREL_PROFILE_DEFINITION.delegation.maxDepth,

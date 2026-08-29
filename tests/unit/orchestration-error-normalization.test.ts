@@ -773,7 +773,7 @@ test("ThreadRuntime atomically projects failed output over stale thread run meta
   assert.equal(persistedThread?.status, "FAILED");
 });
 
-test("DelegationSupervisor emits normalized limit and compatibility failures", async () => {
+test("DelegationSupervisor ignores the legacy concurrency setting and retains compatibility failures", async () => {
   const store = new InMemorySessionStore();
   const supervisor = new DelegationSupervisor({
     profile: {
@@ -832,15 +832,12 @@ test("DelegationSupervisor emits normalized limit and compatibility failures", a
     updatedAt: "2026-03-16T12:00:00.000Z",
   });
 
-  await assert.rejects(
-    () =>
-      supervisor.spawnDelegation({
-        parentThreadId: "thread-root",
-        title: "Overflow",
-        prompt: "Overflow",
-      }),
-    { code: "DELEGATION_LIMIT_REACHED" },
-  );
+  const additional = await supervisor.spawnDelegation({
+    parentThreadId: "thread-root",
+    title: "Additional",
+    prompt: "Additional",
+  });
+  assert.match(additional.delegationId, /^task-/u);
 
   await assert.rejects(
     () =>
@@ -1309,9 +1306,32 @@ test("dialog open records a failed child-thread start and retries the reservatio
   assert.equal((await supervisor.read({ parentSessionId: "root", dialogId: recovered.dialogId })).messages.at(-1)?.text, "recovered");
 });
 
+test("dialog collaborators are not breadth-limited by legacy profile capacity", async () => {
+  const store = new InMemorySessionStore();
+  const supervisor = createDialogSupervisor({
+    store,
+    legacyMaxConcurrentChildSessions: 1,
+    submitChildTurn: async (input) => ({
+      assistantText: `reply:${input.message}`,
+      thread: (await store.getThread(input.threadId))!,
+      output: buildOutput({ runId: `unlimited-${input.message}`, status: "COMPLETED" }),
+    }),
+  });
+
+  const opened = [];
+  for (const [name, message] of [["One", "first"], ["Two", "second"], ["Three", "third"]] as const) {
+    opened.push(await supervisor.open({ parentSessionId: "root", name, message }));
+    await tick();
+  }
+
+  assert.equal(new Set(opened.map((dialog) => dialog.dialogId)).size, 3);
+  assert.equal((await supervisor.list({ parentSessionId: "root", status: "open" })).dialogs.length, 3);
+});
+
 function createDialogSupervisor(input: {
   store: InMemorySessionStore;
   submitChildTurn: (input: SubmitTurnInput) => Promise<SubmitTurnResult>;
+  legacyMaxConcurrentChildSessions?: number | undefined;
   startChildThread?: (input: { threadId?: string | undefined; title: string; parentThreadId: string; metadata?: Record<string, unknown> | undefined }) => Promise<ThreadRecord>;
   onDialogReply?: ((input: { message: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord }) => void | Promise<void>) | undefined;
 }): DelegationSupervisor {
@@ -1324,7 +1344,10 @@ function createDialogSupervisor(input: {
       sessionPrefix: "session",
       modelProvider: "openrouter",
       model: "model-a",
-      delegation: { allowAgentSpawn: true, maxConcurrentChildSessions: 4 },
+      delegation: {
+        allowAgentSpawn: true,
+        maxConcurrentChildSessions: input.legacyMaxConcurrentChildSessions ?? 4,
+      },
     },
     runtimeStore: input.store,
     orchestrationStore: input.store,
