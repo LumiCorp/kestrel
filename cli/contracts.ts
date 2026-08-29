@@ -412,6 +412,11 @@ export interface TuiSessionMeta {
   actSubmode?: ActSubmode | undefined;
   executionPolicy?: ExecutionPolicyOverride | undefined;
   started: boolean;
+  pendingRunId?: string | undefined;
+  pendingRunMessageId?: string | undefined;
+  pendingRunThreadId?: string | undefined;
+  acceptedRunId?: string | undefined;
+  acceptedRunMessageId?: string | undefined;
   lastRunStatus?: NormalizedOutput["status"] | undefined;
   pendingWaitFor?: Exclude<NormalizedOutput["waitFor"], undefined> | undefined;
   lastMessagePreview?: string | undefined;

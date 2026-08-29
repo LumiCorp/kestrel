@@ -76,6 +76,53 @@ test("SessionStore rehydrates the recoverable background lifecycle state", async
   );
 });
 
+test("SessionStore round-trips exact pending and accepted TUI run identity with legacy compatibility", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-run-identity-"));
+  const store = new SessionStore(tempDir);
+  const now = new Date(0).toISOString();
+  const session: TuiSessionMeta = {
+    name: "exact-run-child",
+    sessionId: "exact-run-child",
+    profileId: "reference",
+    createdAt: now,
+    updatedAt: now,
+    started: true,
+    pendingRunId: "run-pending",
+    pendingRunMessageId: "message-pending",
+    pendingRunThreadId: "thread-main:exact-run-child",
+    acceptedRunId: "run-accepted",
+    acceptedRunMessageId: "message-accepted",
+  };
+
+  await store.save(store.upsert(await store.load(), session));
+  const loaded = store.findByName(await store.load(), session.name);
+  assert.equal(loaded?.pendingRunId, "run-pending");
+  assert.equal(loaded?.pendingRunMessageId, "message-pending");
+  assert.equal(loaded?.pendingRunThreadId, "thread-main:exact-run-child");
+  assert.equal(loaded?.acceptedRunId, "run-accepted");
+  assert.equal(loaded?.acceptedRunMessageId, "message-accepted");
+
+  await writeFile(
+    path.join(tempDir, "sessions.json"),
+    JSON.stringify({
+      version: 5,
+      sessions: [{
+        name: "legacy-no-run-identity",
+        sessionId: "legacy-no-run-identity",
+        profileId: "reference",
+        createdAt: now,
+        updatedAt: now,
+        started: false,
+      }],
+    }),
+    "utf8",
+  );
+  const legacy = store.findByName(await store.load(), "legacy-no-run-identity");
+  assert.equal(legacy?.pendingRunId, undefined);
+  assert.equal(legacy?.pendingRunMessageId, undefined);
+  assert.equal(legacy?.acceptedRunId, undefined);
+});
+
 test("SessionStore readers never observe a partially written sessions file", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-atomic-"));
   const store = new SessionStore(tempDir);

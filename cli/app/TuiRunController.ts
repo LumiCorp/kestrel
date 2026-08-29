@@ -45,6 +45,7 @@ import {
 } from "../ink/views/chatRows.js";
 import {
   readTuiEnvironmentIdentityFailure,
+  readAuthoritativeRunStartRejection,
   resolveTuiSessionEnvironment,
   toResolvedSessionIdentity,
   TuiEnvironmentIdentityError,
@@ -91,14 +92,33 @@ export interface TuiRunControllerContext extends TuiAppContext {
     assistantText: string | null,
     finalizedPayload: unknown | undefined,
   ): Promise<void>;
-  syncBackgroundSessionProgress(sessionId: string): Promise<void>;
+  syncForegroundSessionProgress(input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId: string;
+  }): Promise<boolean>;
+  syncBackgroundSessionProgress(input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId?: string | undefined;
+  }): Promise<void>;
   syncBackgroundSessionResult(
+    expectedSessionId: string,
+    expectedRunId: string,
+    allowUnstartedAcceptance: boolean,
     output: NormalizedOutput,
     assistantText: string | null,
     finalizedPayload: unknown | undefined,
     operatorState?: TuiSessionMeta["operatorState"] | undefined,
   ): Promise<void>;
-  syncBackgroundSessionFailure(sessionId: string, message: string): Promise<void>;
+  syncBackgroundSessionFailure(
+    expectedSessionId: string,
+    expectedRunId: string,
+    outputSessionId: string,
+    message: string,
+  ): Promise<void>;
   syncSessionFromDescribePayload(payload: SessionDescribedEventPayload): Promise<void>;
   applyTerminalResult(
     sessionId: string,
@@ -431,8 +451,18 @@ export class TuiRunController {
           conversationActivity: [],
         });
 
+    if (resumeRequestId === undefined) {
+      await this.context.setActiveSessionState({
+        pendingRunMessageId: submissionMessageId,
+        pendingRunThreadId: threadId,
+        updatedAt: new Date().toISOString(),
+      });
+      await this.context.persistSessionAndUi();
+    }
+
     let terminalResponseMeta: Record<string, unknown> | undefined;
     let requestAccepted = false;
+    let responseIdentityRejected = false;
 
     try {
       let response: RunnerEvent | undefined;
@@ -516,14 +546,22 @@ export class TuiRunController {
         throw new Error("Conversation command completed without a protocol response.");
       }
       if (response.type === "conversation.message.routed") {
-        requestAccepted = response.payload.messageId === submissionMessageId;
-        if (requestAccepted === false) {
-          throw new Error("Local Core returned a route for a different submitted message.");
+        if (
+          response.payload.sessionId !== state.activeSession.sessionId
+          || response.payload.threadId !== threadId
+          || response.payload.messageId !== submissionMessageId
+          || response.payload.view.thread.sessionId !== state.activeSession.sessionId
+          || response.payload.view.thread.threadId !== threadId
+        ) {
+          responseIdentityRejected = true;
+          throw new Error("Local Core returned a route with mismatched session, thread, view, or message identity.");
         }
+        requestAccepted = true;
         if (await this.installConversationView(response.payload.view) === false) {
           throw new Error("Local Core returned an incomplete conversation snapshot.");
         }
         const disposition = response.payload.disposition;
+        const awaitingQueuedRun = disposition === "queued" && response.payload.runId === undefined;
         const authoritativeRunActive = response.payload.view.activeRun?.status === "RUNNING";
         const terminalStatus = response.payload.view.thread?.lastRunStatus
           ?? (response.payload.view.thread?.status === "COMPLETED" || response.payload.view.thread?.status === "FAILED"
@@ -535,6 +573,14 @@ export class TuiRunController {
           focusedThreadId: response.payload.threadId,
           pendingManualCompaction: false,
           suppressAutoCompactionOnce: false,
+          pendingRunMessageId: awaitingQueuedRun ? submissionMessageId : undefined,
+          pendingRunThreadId: awaitingQueuedRun ? threadId : undefined,
+          ...(response.payload.runId !== undefined
+            ? {
+                acceptedRunId: response.payload.runId,
+                acceptedRunMessageId: submissionMessageId,
+              }
+            : {}),
         });
         if (
           authoritativeRunActive === false
@@ -579,6 +625,18 @@ export class TuiRunController {
 
       if (response.type !== "run.completed" && response.type !== "run.failed") {
         throw new Error(`Unexpected run response type '${response.type}'`);
+      }
+      const terminalOutput = response.payload.result?.output;
+      if (
+        terminalOutput !== undefined
+        && (
+          terminalOutput.sessionId !== state.activeSession.sessionId
+          || (response.sessionId !== undefined && response.sessionId !== terminalOutput.sessionId)
+          || (response.runId !== undefined && response.runId !== terminalOutput.runId)
+        )
+      ) {
+        responseIdentityRejected = true;
+        throw new Error("Runner terminal response identity did not match the submitted session and run.");
       }
 
       terminalResponseMeta = {
@@ -644,6 +702,8 @@ export class TuiRunController {
           lastRunStatus: "FAILED",
           pendingManualCompaction: false,
           suppressAutoCompactionOnce: false,
+          pendingRunMessageId: undefined,
+          pendingRunThreadId: undefined,
         });
         this.context.uiStore.patch({
           running: false,
@@ -680,6 +740,10 @@ export class TuiRunController {
         lastRunStatus: output.status,
         pendingManualCompaction: false,
         suppressAutoCompactionOnce: false,
+        pendingRunMessageId: undefined,
+        pendingRunThreadId: undefined,
+        acceptedRunId: output.runId,
+        acceptedRunMessageId: submissionMessageId,
         operatorState: this.context.buildSessionOperatorState({
           session: state.activeSession,
           profile: state.activeProfile,
@@ -780,6 +844,7 @@ export class TuiRunController {
       });
       return true;
     } catch (error) {
+      const authoritativeRejection = readAuthoritativeRunStartRejection(error);
       if (queueSubmission) {
         const recoveredView = await this.refreshConversationView(threadId).catch(() => undefined);
         if (recoveredView !== undefined) {
@@ -836,7 +901,11 @@ export class TuiRunController {
         await this.context.persistSessionAndUi();
         return false;
       }
-      if (resumeRequestId === undefined) {
+      if (
+        resumeRequestId === undefined
+        && responseIdentityRejected === false
+        && authoritativeRejection === undefined
+      ) {
         const recoveredView = await this.refreshConversationView(threadId).catch(() => undefined);
         if (recoveredView !== undefined) {
           await this.context.setActiveSessionState({
@@ -911,11 +980,33 @@ export class TuiRunController {
         });
       }
       const message = error instanceof Error ? error.message : String(error);
-      const errorCode = typeof error === "object" && error !== null
-        && typeof (error as { code?: unknown }).code === "string"
-        ? (error as { code: string }).code
-        : undefined;
-      if (resumeRequestId === undefined && requestAccepted === false && errorCode === undefined) {
+      if (resumeRequestId === undefined && requestAccepted === false && authoritativeRejection !== undefined) {
+        await this.context.appendHistoryLine(
+          "system",
+          `Run rejected before acceptance: ${authoritativeRejection.message}`,
+        );
+        await this.context.setActiveSessionState({
+          started: this.context.uiStore.getState().activeSession.started,
+          pendingRunMessageId: undefined,
+          pendingRunThreadId: undefined,
+          lastRunStatus: "FAILED",
+          updatedAt: new Date().toISOString(),
+          pendingManualCompaction: false,
+        });
+        this.context.uiStore.patch({
+          running: false,
+          statusLine: this.context.withMcpSummary("failed"),
+          errorOverlay: {
+            message: authoritativeRejection.message,
+            code: authoritativeRejection.code,
+            details: authoritativeRejection.details,
+          },
+          errorScrollOffset: 0,
+        });
+        await this.context.persistSessionAndUi();
+        return false;
+      }
+      if (resumeRequestId === undefined && requestAccepted === false) {
         await this.context.appendHistoryLine(
           "system",
           `Run submission status is still being reconciled: ${message}`,
@@ -1090,29 +1181,108 @@ export class TuiRunController {
   }
 
   onRunnerEvent(event: RunnerEvent): void {
-    this.applySharedActivityEvent(event);
+    if (
+      event.type === "run.started"
+      && (
+        (event.sessionId !== undefined && event.sessionId !== event.payload.sessionId)
+        || (
+          event.runId !== undefined
+          && event.payload.runId !== undefined
+          && event.runId !== event.payload.runId
+        )
+      )
+    ) return;
+    if (event.type === "run.completed" || event.type === "run.cancelled") {
+      const output = event.payload.result.output;
+      if (
+        (event.sessionId !== undefined && event.sessionId !== output.sessionId)
+        || (event.runId !== undefined && event.runId !== output.runId)
+      ) return;
+      const session = this.context.uiStore.getState().sessions.find(
+        (candidate) => candidate.sessionId === output.sessionId,
+      );
+      if (session?.delegation !== undefined && session.acceptedRunId !== output.runId) return;
+    }
+    if (event.type === "run.failed" && event.payload.result !== undefined) {
+      const output = event.payload.result.output;
+      if (
+        (event.sessionId !== undefined && event.sessionId !== output.sessionId)
+        || (event.runId !== undefined && event.runId !== output.runId)
+      ) return;
+      const session = this.context.uiStore.getState().sessions.find(
+        (candidate) => candidate.sessionId === output.sessionId,
+      );
+      if (session?.delegation !== undefined && session.acceptedRunId !== output.runId) return;
+    }
+    if (event.type === "run.progress") {
+      const update = event.payload.update;
+      if (
+        (event.sessionId !== undefined && event.sessionId !== update.sessionId)
+        || (event.runId !== undefined && event.runId !== update.runId)
+      ) return;
+      const session = this.context.uiStore.getState().sessions.find(
+        (candidate) => candidate.sessionId === update.sessionId,
+      );
+      if (session?.delegation !== undefined && session.acceptedRunId !== update.runId) return;
+    }
     if (
       event.type === "run.started"
       && event.sessionId !== undefined
       && event.runId !== undefined
     ) {
-      this.observedActiveRunBySession.set(event.sessionId, event.runId);
-      const acceptedRuns = this.acceptedRunSourceMessageBySession.get(event.sessionId) ?? new Map();
-      acceptedRuns.set(event.runId, event.payload.sourceMessageId);
-      this.acceptedRunSourceMessageBySession.set(event.sessionId, acceptedRuns);
+      const session = this.context.uiStore.getState().sessions.find(
+        (candidate) => candidate.sessionId === event.sessionId,
+      );
+      const exactForegroundStart = session?.delegation === undefined
+        && event.threadId !== undefined
+        && event.payload.sourceMessageId !== undefined
+        && session?.pendingRunMessageId === event.payload.sourceMessageId
+        && session.pendingRunThreadId === event.threadId;
+      const backgroundStatus = session?.delegation?.status;
+      const exactPendingBackgroundStart = event.threadId !== undefined
+        && session?.pendingRunThreadId === event.threadId
+        && (
+          session.pendingRunId === event.runId
+          || (
+            event.payload.sourceMessageId !== undefined
+            && session.pendingRunMessageId === event.payload.sourceMessageId
+          )
+        );
+      const exactBackgroundStart = session?.delegation !== undefined
+        && backgroundStatus !== "COMPLETED"
+        && backgroundStatus !== "FAILED"
+        && (
+          exactPendingBackgroundStart
+          || session.acceptedRunId === event.runId
+        );
+      if (exactForegroundStart === false && exactBackgroundStart === false) return;
+      this.applySharedActivityEvent(event);
+      if (exactForegroundStart || exactBackgroundStart) {
+        this.observedActiveRunBySession.set(event.sessionId, event.runId);
+        const acceptedRuns = this.acceptedRunSourceMessageBySession.get(event.sessionId) ?? new Map();
+        acceptedRuns.set(event.runId, event.payload.sourceMessageId);
+        this.acceptedRunSourceMessageBySession.set(event.sessionId, acceptedRuns);
+      }
+      if (exactForegroundStart) {
+        void this.context.syncForegroundSessionProgress({
+          sessionId: event.sessionId,
+          threadId: event.threadId!,
+          runId: event.runId,
+          messageId: event.payload.sourceMessageId!,
+        });
+      }
+      if (exactBackgroundStart) {
+        void this.context.syncBackgroundSessionProgress({
+          sessionId: event.payload.sessionId,
+          threadId: event.threadId!,
+          runId: event.runId,
+          ...(event.payload.sourceMessageId !== undefined
+            ? { messageId: event.payload.sourceMessageId }
+            : {}),
+        });
+      }
     }
-    if (
-      event.type === "run.started"
-      && event.sessionId === this.context.uiStore.getState().activeSession.sessionId
-    ) {
-      this.context.uiStore.patch({
-        running: true,
-        statusLine: this.context.withMcpSummary(`running (${event.payload.eventType})`),
-      });
-    }
-    if (event.type === "run.started") {
-      void this.context.syncBackgroundSessionProgress(event.payload.sessionId);
-    }
+    if (event.type !== "run.started") this.applySharedActivityEvent(event);
     if (event.type === "operator.thread") {
       void this.installConversationView(event.payload.view);
       return;
@@ -1180,6 +1350,10 @@ export class TuiRunController {
 
     if (event.type === "run.completed") {
       const output = event.payload.result.output;
+      if (
+        (event.sessionId !== undefined && event.sessionId !== output.sessionId)
+        || (event.runId !== undefined && event.runId !== output.runId)
+      ) return;
       const terminalOwnsActiveRun = this.recordTerminalEvent(output, event.ts);
       void this.appendTerminalHandoffDiagnostics({
         scope: "terminal_handoff.event_received_completed",
@@ -1193,17 +1367,26 @@ export class TuiRunController {
         },
       });
       void (async () => {
-        await this.context.syncBackgroundSessionResult(
-          output,
-          event.payload.result.assistantText,
-          event.payload.result.finalizedPayload,
-          event.payload.result.operatorAffordance,
-        );
-        await this.applyTerminalResultAndState(event.payload.result, terminalOwnsActiveRun);
+        if (terminalOwnsActiveRun) {
+          await this.context.syncBackgroundSessionResult(
+            output.sessionId,
+            output.runId,
+            false,
+            output,
+            event.payload.result.assistantText,
+            event.payload.result.finalizedPayload,
+            event.payload.result.operatorAffordance,
+          );
+          await this.applyTerminalResultAndState(event.payload.result, true);
+        }
         if (event.threadId !== undefined) {
           await this.refreshConversationView(event.threadId).catch(() => undefined);
         }
-        if (this.context.options.scripted === true && output.status === "COMPLETED") {
+        if (
+          terminalOwnsActiveRun
+          && this.context.options.scripted === true
+          && output.status === "COMPLETED"
+        ) {
           await this.context.appendHistoryLine("system", "Run Completed");
         }
         await this.context.persistSessionAndUi();
@@ -1247,12 +1430,21 @@ export class TuiRunController {
         },
       });
       if (event.payload.result !== undefined) {
+        const output = event.payload.result.output;
+        if (
+          (event.sessionId !== undefined && event.sessionId !== output.sessionId)
+          || (event.runId !== undefined && event.runId !== output.runId)
+        ) return;
         void (async () => {
-          await this.context.syncBackgroundSessionFailure(
-            event.payload.result!.output.sessionId,
-            event.payload.error.message,
-          );
-          await this.applyTerminalResultAndState(event.payload.result!, terminalOwnsActiveRun);
+          if (terminalOwnsActiveRun) {
+            await this.context.syncBackgroundSessionFailure(
+              output.sessionId,
+              output.runId,
+              output.sessionId,
+              event.payload.error.message,
+            );
+            await this.applyTerminalResultAndState(event.payload.result!, true);
+          }
           if (event.threadId !== undefined) {
             await this.refreshConversationView(event.threadId).catch(() => undefined);
           }
@@ -1278,9 +1470,18 @@ export class TuiRunController {
     }
 
     if (event.type === "run.cancelled") {
-      const terminalOwnsActiveRun = this.recordTerminalEvent(event.payload.result.output, event.ts);
+      const output = event.payload.result.output;
+      const terminalOwnsActiveRun = this.recordTerminalEvent(output, event.ts);
       void (async () => {
-        await this.applyTerminalResultAndState(event.payload.result, terminalOwnsActiveRun);
+        if (terminalOwnsActiveRun) {
+          await this.context.syncBackgroundSessionFailure(
+            output.sessionId,
+            output.runId,
+            output.sessionId,
+            output.errors[0]?.message ?? "Run cancelled.",
+          );
+          await this.applyTerminalResultAndState(event.payload.result, true);
+        }
         if (event.threadId !== undefined) {
           await this.refreshConversationView(event.threadId).catch(() => undefined);
         }
@@ -1297,7 +1498,23 @@ export class TuiRunController {
 
     if (event.type === "run.progress") {
       const update = event.payload.update;
-      void this.context.syncBackgroundSessionProgress(update.sessionId);
+      if (
+        (event.sessionId !== undefined && event.sessionId !== update.sessionId)
+        || (event.runId !== undefined && event.runId !== update.runId)
+      ) return;
+      const acceptedSession = this.context.uiStore.getState().sessions.find(
+        (candidate) => candidate.sessionId === update.sessionId,
+      );
+      if (
+        acceptedSession?.delegation !== undefined
+        && acceptedSession.acceptedRunId === update.runId
+      ) {
+        void this.context.syncBackgroundSessionProgress({
+          sessionId: update.sessionId,
+          threadId: event.threadId ?? acceptedSession.focusedThreadId ?? update.sessionId,
+          runId: update.runId,
+        });
+      }
       this.context.pushRunLog({
         timestamp: new Date().toISOString(),
         level: update.code.endsWith("FAILED") ? "ERROR" : "INFO",
@@ -1414,17 +1631,22 @@ export class TuiRunController {
 
   private recordTerminalEvent(output: NormalizedOutput, timestamp: string): boolean {
     const { sessionId, runId } = output;
-    const knownActiveRunIds = new Set([
-      ...(
-        this.observedActiveRunBySession.get(sessionId) === undefined
-          ? []
-          : [this.observedActiveRunBySession.get(sessionId)!]
-      ),
-      ...[...this.conversationViews.values()].flatMap((view) =>
-        view.thread.sessionId === sessionId && view.activeRun?.runId !== undefined
-          ? [view.activeRun.runId]
-          : []),
-    ]);
+    const persistedAcceptedRunId = this.context.uiStore.getState().sessions.find(
+      (session) => session.sessionId === sessionId,
+    )?.acceptedRunId;
+    const knownActiveRunIds = new Set(persistedAcceptedRunId !== undefined
+      ? [persistedAcceptedRunId]
+      : [
+          ...(
+            this.observedActiveRunBySession.get(sessionId) === undefined
+              ? []
+              : [this.observedActiveRunBySession.get(sessionId)!]
+          ),
+          ...[...this.conversationViews.values()].flatMap((view) =>
+            view.thread.sessionId === sessionId && view.activeRun?.runId !== undefined
+              ? [view.activeRun.runId]
+              : []),
+        ]);
     const ownsActiveRun = knownActiveRunIds.has(runId);
     if (this.observedActiveRunBySession.get(sessionId) === runId) {
       this.observedActiveRunBySession.delete(sessionId);

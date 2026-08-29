@@ -90,6 +90,7 @@ import type { LocalCoreConnectionManager } from "../../src/localCore/connectionM
 import type { LocalCoreExecutionProfileResolution } from "../../src/localCore/contracts.js";
 import {
   defaultTuiEnvironmentPresetId,
+  readAuthoritativeRunStartRejection,
   resolveTuiSessionEnvironment,
   toResolvedSessionIdentity,
   TuiEnvironmentIdentityError,
@@ -1704,11 +1705,12 @@ export class App {
         appendDiagnosticsLog: (input) => this.appendDiagnosticsLog(input),
         handleTaskUpdatedEvent: (task, kind, assistantText, finalizedPayload) =>
           this.handleTaskUpdatedEvent(task, kind, assistantText, finalizedPayload),
-        syncBackgroundSessionProgress: (sessionId) => this.syncBackgroundSessionProgress(sessionId),
-        syncBackgroundSessionResult: (output, assistantText, finalizedPayload, operatorState) =>
-          this.syncBackgroundSessionResult(output, assistantText, finalizedPayload, operatorState),
-        syncBackgroundSessionFailure: (sessionId, message) =>
-          this.syncBackgroundSessionFailure(sessionId, message),
+        syncForegroundSessionProgress: (input) => this.syncForegroundSessionProgress(input),
+        syncBackgroundSessionProgress: (input) => this.syncBackgroundSessionProgress(input),
+        syncBackgroundSessionResult: (expectedSessionId, expectedRunId, allowUnstartedAcceptance, output, assistantText, finalizedPayload, operatorState) =>
+          this.syncBackgroundSessionResult(expectedSessionId, expectedRunId, allowUnstartedAcceptance, output, assistantText, finalizedPayload, operatorState),
+        syncBackgroundSessionFailure: (expectedSessionId, expectedRunId, outputSessionId, message) =>
+          this.syncBackgroundSessionFailure(expectedSessionId, expectedRunId, outputSessionId, message),
         syncSessionFromDescribePayload: (payload) => this.syncSessionFromDescribePayload(payload),
         applyTerminalResult: (sessionId, result, finalizedPayload) => this.applyTerminalResult(sessionId, result, finalizedPayload),
         recoverTerminalMessages: (session) => this.recoverTerminalMessages(session),
@@ -3110,10 +3112,21 @@ export class App {
         );
         return;
       }
+      const pendingRunId = `tui-background:${randomUUID()}`;
+      const pendingSession: TuiSessionMeta = {
+        ...delegatedSession,
+        pendingRunId,
+        pendingRunThreadId: delegatedSession.sessionId,
+        updatedAt: new Date().toISOString(),
+      };
+      this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, pendingSession);
+      this.uiStore.patch({ sessions: this.sessionsFile.sessions });
+      await this.saveSessionsFile();
       void this.client.sendCommand("run.start", {
         profileId: executionProfile.profileId,
         turn: {
           sessionId: delegatedSession.sessionId,
+          runId: pendingRunId,
           message: prompt,
           eventType: "user.message",
           modeSystemV2Enabled: effectiveProfile.modeSystemV2Enabled === true,
@@ -3128,7 +3141,7 @@ export class App {
           stepAgent: getEntryStepAgent(effectiveProfile),
         },
       }).then(async (response) => {
-        await this.syncBackgroundLaunchResponse(delegatedSession.sessionId, response);
+        await this.syncBackgroundLaunchResponse(delegatedSession.sessionId, pendingRunId, response);
       }).catch(async (error) => {
         await this.reconcileBackgroundLaunchSubmissionFailure(
           delegatedSession,
@@ -3159,6 +3172,9 @@ export class App {
     const failedSession: TuiSessionMeta = {
       ...session,
       started: false,
+      pendingRunId: undefined,
+      pendingRunMessageId: undefined,
+      pendingRunThreadId: undefined,
       lastRunStatus: "FAILED",
       delegation: failedDelegation,
       updatedAt: failedDelegation.updatedAt,
@@ -3185,11 +3201,22 @@ export class App {
 
   private async syncBackgroundLaunchResponse(
     sessionId: string,
+    expectedRunId: string,
     response: RunnerEvent,
   ): Promise<void> {
     if (response.type === "run.completed") {
+      const output = response.payload.result.output;
+      if (
+        output.sessionId !== sessionId
+        || output.runId !== expectedRunId
+        || (response.sessionId !== undefined && response.sessionId !== sessionId)
+        || (response.runId !== undefined && response.runId !== output.runId)
+      ) return;
       await this.syncBackgroundSessionResult(
-        response.payload.result.output,
+        sessionId,
+        expectedRunId,
+        true,
+        output,
         response.payload.result.assistantText,
         response.payload.result.finalizedPayload,
         response.payload.result.operatorAffordance,
@@ -3197,19 +3224,38 @@ export class App {
       return;
     }
     if (response.type === "run.failed" && response.payload.result !== undefined) {
+      const output = response.payload.result.output;
+      if (
+        output.sessionId !== sessionId
+        || output.runId !== expectedRunId
+        || (response.sessionId !== undefined && response.sessionId !== sessionId)
+        || (response.runId !== undefined && response.runId !== output.runId)
+      ) return;
       const session = this.sessionsFile.sessions.find((item) => item.sessionId === sessionId);
-      if (session?.started === true) {
-        await this.syncBackgroundSessionFailure(sessionId, response.payload.error.message);
+      if (session?.acceptedRunId === output.runId) {
+        await this.syncBackgroundSessionFailure(
+          sessionId,
+          output.runId,
+          output.sessionId,
+          response.payload.error.message,
+        );
       } else if (session?.delegation !== undefined) {
         await this.failBackgroundLaunchSetup(session, session.delegation, response.payload.error.message);
       }
       return;
     }
     if (response.type === "run.cancelled") {
+      const output = response.payload.result.output;
+      if (
+        output.sessionId !== sessionId
+        || output.runId !== expectedRunId
+        || (response.sessionId !== undefined && response.sessionId !== sessionId)
+        || (response.runId !== undefined && response.runId !== output.runId)
+      ) return;
       const session = this.sessionsFile.sessions.find((item) => item.sessionId === sessionId);
-      const message = response.payload.result.output.errors[0]?.message ?? "Run cancelled.";
-      if (session?.started === true) {
-        await this.syncBackgroundSessionFailure(sessionId, message);
+      const message = output.errors[0]?.message ?? "Run cancelled.";
+      if (session?.acceptedRunId === output.runId) {
+        await this.syncBackgroundSessionFailure(sessionId, output.runId, output.sessionId, message);
       } else if (session?.delegation !== undefined) {
         await this.failBackgroundLaunchSetup(session, session.delegation, message);
       }
@@ -3229,6 +3275,17 @@ export class App {
     delegation: DelegationTaskMeta,
     error: unknown,
   ): Promise<void> {
+    const authoritativeRejection = readAuthoritativeRunStartRejection(error);
+    if (authoritativeRejection !== undefined) {
+      const current = this.sessionsFile.sessions.find((item) => item.sessionId === session.sessionId);
+      if (current?.started === true) return;
+      await this.failBackgroundLaunchSetup(
+        current ?? session,
+        current?.delegation ?? delegation,
+        authoritativeRejection.message,
+      );
+      return;
+    }
     try {
       const described = await this.client.sendCommand("session.describe", {
         sessionId: session.sessionId,
@@ -3242,7 +3299,6 @@ export class App {
         )
       ) {
         const before = this.sessionsFile.sessions.find((item) => item.sessionId === session.sessionId);
-        await this.syncSessionFromDescribePayload(described.payload);
         await this.reconcileBackgroundSessionDescription(described.payload, before?.started !== true);
         return;
       }
@@ -3251,15 +3307,6 @@ export class App {
     }
     const current = this.sessionsFile.sessions.find((item) => item.sessionId === session.sessionId);
     if (current?.started === true) return;
-    const code = typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "string"
-      ? (error as { code: string }).code
-      : undefined;
-    if (code === undefined) return;
-    await this.failBackgroundLaunchSetup(
-      current ?? session,
-      current?.delegation ?? delegation,
-      error instanceof Error ? error.message : String(error),
-    );
   }
 
   private async reconcilePendingBackgroundSessions(): Promise<void> {
@@ -3275,7 +3322,6 @@ export class App {
         if (described.type !== "session.described" || described.payload.sessionId !== session.sessionId) {
           continue;
         }
-        await this.syncSessionFromDescribePayload(described.payload);
         await this.reconcileBackgroundSessionDescription(described.payload, session.started !== true);
       } catch {
         // Durable authority may be temporarily unavailable; keep the child recoverable.
@@ -3289,25 +3335,67 @@ export class App {
   ): Promise<void> {
     const current = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
     if (current?.delegation === undefined) return;
-    const threadStatus = payload.operatorThreadView?.thread.status;
-    const runtimeStatus = payload.operatorThreadView?.activeRun?.status
-      ?? (threadStatus === "RUNNING"
-        || threadStatus === "WAITING"
-        || threadStatus === "COMPLETED"
-        || threadStatus === "FAILED"
-          ? threadStatus
-          : undefined);
+    const currentStatus = current.delegation.status;
+    if (currentStatus === "COMPLETED" || currentStatus === "FAILED") return;
+    const activeRunId = payload.operatorThreadView?.activeRun?.runId;
+    const terminalTurn = [...(payload.operatorThreadView?.conversationTurns ?? [])]
+      .reverse()
+      .find((turn) => turn.terminalRunId !== undefined);
+    const evidenceRunId = activeRunId ?? terminalTurn?.terminalRunId;
+    const pendingMessageRoute = current.pendingRunMessageId === undefined
+      ? undefined
+      : payload.operatorThreadView?.conversationMessageRoutes?.find(
+          (route) => route.messageId === current.pendingRunMessageId,
+        );
+    const pendingExpectedRunId = current.pendingRunId ?? pendingMessageRoute?.runId;
+    const expectedRunId = pendingExpectedRunId ?? current.acceptedRunId;
+    if (
+      expectedRunId !== undefined
+      && evidenceRunId !== undefined
+      && expectedRunId !== evidenceRunId
+    ) return;
+    if (
+      evidenceRunId === undefined
+      && (currentStatus === "RUNNING" || currentStatus === "WAITING")
+    ) return;
+    const projected = await this.projectSessionFromDescribePayload(payload);
+    if (projected === undefined) return;
+    const exactRunId = evidenceRunId ?? current.acceptedRunId;
+    const runtimeStatus = activeRunId !== undefined && activeRunId === exactRunId
+      ? payload.operatorThreadView?.activeRun?.status
+      : terminalTurn !== undefined
+        && terminalTurn.terminalRunId === exactRunId
+        && (terminalTurn.status === "COMPLETED" || terminalTurn.status === "FAILED")
+        ? terminalTurn.status
+        : undefined;
     const durableAcceptance = payload.threadId !== undefined
       || payload.focusedThreadId !== undefined
       || payload.activeAssembly !== undefined;
     if (durableAcceptance === false) return;
+    const nextStatus = runtimeStatus
+      ?? (currentStatus === "RUNNING" || currentStatus === "WAITING"
+        ? currentStatus
+        : "RECOVERING");
+    const exactNewAcceptance = exactRunId !== undefined
+      && exactRunId === expectedRunId;
     await this.updateAcceptedBackgroundSession({
       ...current.delegation,
-      status: runtimeStatus ?? "RECOVERING",
+      status: nextStatus,
       errorCode: undefined,
       errorMessage: undefined,
       updatedAt: payload.updatedAt ?? new Date().toISOString(),
-    }, appendStartedHistory);
+    }, appendStartedHistory, {
+      ...projected,
+      acceptedRunId: exactRunId,
+      ...(exactNewAcceptance
+        ? {
+            acceptedRunMessageId: current.pendingRunMessageId,
+            pendingRunId: undefined,
+            pendingRunMessageId: undefined,
+            pendingRunThreadId: undefined,
+          }
+        : {}),
+    });
     if (runtimeStatus === "COMPLETED" || runtimeStatus === "FAILED") {
       const accepted = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
       if (accepted !== undefined) {
@@ -3825,9 +3913,28 @@ export class App {
   private async syncSessionFromDescribePayload(
     payload: SessionDescribedEventPayload,
   ): Promise<void> {
+    const patchedSession = await this.projectSessionFromDescribePayload(payload);
+    if (patchedSession === undefined) return;
+    this.persistProjectedSession(patchedSession);
+    await this.saveSessionsFile();
+  }
+
+  private async projectSessionFromDescribePayload(
+    payload: SessionDescribedEventPayload,
+  ): Promise<TuiSessionMeta | undefined> {
     const target = this.sessionsFile.sessions.find((session) => session.sessionId === payload.sessionId);
     if (target === undefined) {
       return;
+    }
+    const describedView = payload.operatorThreadView;
+    if (
+      describedView !== undefined
+      && (
+        describedView.thread.sessionId !== payload.sessionId
+        || (payload.threadId !== undefined && describedView.thread.threadId !== payload.threadId)
+      )
+    ) {
+      throw new Error("Session description thread identity did not match the described session.");
     }
     const resolvedWaitFor = payload.waitFor ?? target.pendingWaitFor;
     const runtimePayload: SessionDescribedEventPayload =
@@ -3865,7 +3972,12 @@ export class App {
       }
       throw error;
     }
-    const patchedSession: TuiSessionMeta = {
+    const recoveredRoute = target.pendingRunMessageId === undefined
+      ? undefined
+      : describedView?.conversationMessageRoutes?.find(
+          (route) => route.messageId === target.pendingRunMessageId,
+        );
+    return {
       ...target,
       started:
         target.started
@@ -3881,6 +3993,15 @@ export class App {
         : {}),
       ...(payload.updatedAt !== undefined ? { updatedAt: payload.updatedAt } : {}),
       pendingWaitFor: resolvedWaitFor,
+      ...(recoveredRoute?.runId !== undefined
+        ? {
+            pendingRunId: undefined,
+            pendingRunMessageId: undefined,
+            pendingRunThreadId: undefined,
+            acceptedRunMessageId: recoveredRoute.messageId,
+            acceptedRunId: recoveredRoute.runId,
+          }
+        : {}),
       ...(payload.focusedThreadId !== undefined ? { focusedThreadId: payload.focusedThreadId } : {}),
       operatorState: this.buildSessionOperatorState({
         session: {
@@ -3895,6 +4016,10 @@ export class App {
         }),
       }),
     };
+  }
+
+  private persistProjectedSession(patchedSession: TuiSessionMeta): void {
+    const state = this.uiStore.getState();
     this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, patchedSession);
     this.uiStore.patch({
       sessions: this.sessionsFile.sessions,
@@ -3902,7 +4027,6 @@ export class App {
         ? { activeSession: patchedSession }
         : {}),
     });
-    await this.saveSessionsFile();
   }
 
   private async applyOperatorControlResponse(
@@ -4148,7 +4272,10 @@ export class App {
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
-  private async updateTaskSessionFromMeta(task: DelegationTaskMeta): Promise<void> {
+  private async updateTaskSessionFromMeta(
+    task: DelegationTaskMeta,
+    patch: Partial<TuiSessionMeta> = {},
+  ): Promise<void> {
     const childSessionId = task.childSessionId ?? `child-${task.taskId}`;
     const childSessionName = task.childSessionName ?? task.title;
     const existing = this.sessionsFile.sessions.find((session) => session.sessionId === childSessionId);
@@ -4163,6 +4290,7 @@ export class App {
             updatedAt: task.updatedAt,
             interactionMode: "plan",
             autoCompactionEnabled: true,
+            ...patch,
             delegation: task,
           }
         : {
@@ -4170,6 +4298,7 @@ export class App {
             profileId: task.profileId,
             updatedAt: task.updatedAt,
             started: true,
+            ...patch,
             delegation: task,
             lastRunStatus:
               task.status === "FAILED"
@@ -4893,29 +5022,91 @@ export class App {
     );
   }
 
-  private async syncBackgroundSessionProgress(sessionId: string): Promise<void> {
-    const session = this.sessionsFile.sessions.find((item) => item.sessionId === sessionId);
+  private async syncForegroundSessionProgress(input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId: string;
+  }): Promise<boolean> {
+    const session = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
+    if (
+      session === undefined
+      || session.delegation !== undefined
+      || session.pendingRunMessageId !== input.messageId
+      || session.pendingRunThreadId !== input.threadId
+    ) return false;
+    const accepted: TuiSessionMeta = {
+      ...session,
+      started: true,
+      focusedThreadId: input.threadId,
+      acceptedRunId: input.runId,
+      acceptedRunMessageId: input.messageId,
+      pendingRunMessageId: undefined,
+      pendingRunThreadId: undefined,
+      lastRunStatus: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    this.persistProjectedSession(accepted);
+    if (this.uiStore.getState().activeSession.sessionId === input.sessionId) {
+      this.uiStore.patch({
+        running: true,
+        statusLine: this.withMcpSummary("running"),
+        errorOverlay: undefined,
+        errorScrollOffset: 0,
+      });
+    }
+    await this.saveSessionsFile();
+    return true;
+  }
+
+  private async syncBackgroundSessionProgress(input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId?: string | undefined;
+  }): Promise<void> {
+    const session = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
     if (session?.delegation === undefined) {
       return;
     }
+    const status = session.delegation.status;
+    if (status === "COMPLETED" || status === "FAILED") return;
+    const exactPendingAcceptance = session.pendingRunThreadId === input.threadId
+      && (
+        session.pendingRunId === input.runId
+        || (
+          input.messageId !== undefined
+          && session.pendingRunMessageId === input.messageId
+        )
+      );
+    if (session.acceptedRunId !== input.runId && exactPendingAcceptance === false) return;
+    if (session.acceptedRunId === input.runId && status === "RUNNING") return;
     await this.updateAcceptedBackgroundSession({
       ...session.delegation,
       status: "RUNNING",
       errorCode: undefined,
       errorMessage: undefined,
       updatedAt: new Date().toISOString(),
+    }, undefined, {
+      acceptedRunId: input.runId,
+      acceptedRunMessageId: input.messageId ?? session.pendingRunMessageId,
+      pendingRunId: undefined,
+      pendingRunMessageId: undefined,
+      pendingRunThreadId: undefined,
+      lastRunStatus: undefined,
     });
   }
 
   private async updateAcceptedBackgroundSession(
     task: DelegationTaskMeta,
     appendStartedHistory?: boolean,
+    patch: Partial<TuiSessionMeta> = {},
   ): Promise<void> {
     const existing = this.sessionsFile.sessions.find(
       (item) => item.sessionId === task.childSessionId,
     );
     const shouldAppendStartedHistory = appendStartedHistory ?? existing?.started !== true;
-    await this.updateTaskSessionFromMeta(task);
+    await this.updateTaskSessionFromMeta(task, patch);
     if (shouldAppendStartedHistory === false) {
       return;
     }
@@ -4943,18 +5134,53 @@ export class App {
   }
 
   private async syncBackgroundSessionResult(
+    expectedSessionId: string,
+    expectedRunId: string,
+    allowUnstartedAcceptance: boolean,
     output: import("../../src/index.js").NormalizedOutput,
     assistantText: string | null,
     finalizedPayload: unknown | undefined,
     operatorState?: TuiSessionMeta["operatorState"] | undefined,
   ): Promise<void> {
-    const session = this.sessionsFile.sessions.find((item) => item.sessionId === output.sessionId);
+    if (output.sessionId !== expectedSessionId || output.runId !== expectedRunId) return;
+    const session = this.sessionsFile.sessions.find((item) => item.sessionId === expectedSessionId);
     if (session?.delegation === undefined) {
       return;
     }
+    if (session.acceptedRunId === undefined && allowUnstartedAcceptance === false) return;
+    if (session.acceptedRunId !== undefined && session.acceptedRunId !== expectedRunId) return;
+    if (session.delegation.status === "COMPLETED" || session.delegation.status === "FAILED") return;
+    const nextStatus = output.status === "WAITING"
+      ? "WAITING"
+      : output.status === "FAILED"
+        ? "FAILED"
+        : "COMPLETED";
+    const nextSession = {
+      ...session,
+      acceptedRunId: expectedRunId,
+      acceptedRunMessageId: session.pendingRunMessageId ?? session.acceptedRunMessageId,
+      pendingRunId: undefined,
+      pendingRunMessageId: undefined,
+      pendingRunThreadId: undefined,
+      pendingWaitFor: output.status === "WAITING" ? output.waitFor : undefined,
+      lastRunStatus: output.status,
+      ...(operatorState !== undefined
+        ? {
+            operatorState: this.buildSessionOperatorState({
+              session: {
+                ...session,
+                pendingWaitFor: output.status === "WAITING" ? output.waitFor : undefined,
+                lastRunStatus: output.status,
+              },
+              profile: this.uiStore.getState().activeProfile,
+              runtime: operatorState,
+            }),
+          }
+        : {}),
+    } satisfies Partial<TuiSessionMeta>;
     await this.updateAcceptedBackgroundSession({
       ...session.delegation,
-      status: output.status === "WAITING" ? "WAITING" : "COMPLETED",
+      status: nextStatus,
       errorCode: undefined,
       errorMessage: undefined,
       waitEventType: output.waitFor?.eventType,
@@ -4963,51 +5189,32 @@ export class App {
           ? session.delegation.resultSummary
           : assistantText ?? session.delegation.resultSummary,
       updatedAt: new Date().toISOString(),
-    });
-    if (operatorState !== undefined) {
-      const acceptedSession = this.sessionsFile.sessions.find(
-        (item) => item.sessionId === output.sessionId,
-      );
-      if (acceptedSession === undefined) {
-        return;
-      }
-      const updatedSession: TuiSessionMeta = {
-        ...acceptedSession,
-        pendingWaitFor: output.status === "WAITING" ? output.waitFor : undefined,
-        lastRunStatus: output.status,
-        operatorState: this.buildSessionOperatorState({
-          session: {
-            ...acceptedSession,
-            pendingWaitFor: output.status === "WAITING" ? output.waitFor : undefined,
-            lastRunStatus: output.status,
-          },
-          profile: this.uiStore.getState().activeProfile,
-          runtime: operatorState,
-        }),
-        updatedAt: new Date().toISOString(),
-      };
-      this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, updatedSession);
-      this.uiStore.patch({
-        sessions: this.sessionsFile.sessions,
-      });
-    }
+    }, undefined, nextSession);
   }
 
-  private async syncBackgroundSessionFailure(sessionId: string, message: string): Promise<void> {
-    const session = this.sessionsFile.sessions.find((item) => item.sessionId === sessionId);
+  private async syncBackgroundSessionFailure(
+    expectedSessionId: string,
+    expectedRunId: string,
+    outputSessionId: string,
+    message: string,
+  ): Promise<void> {
+    if (outputSessionId !== expectedSessionId) return;
+    const session = this.sessionsFile.sessions.find((item) => item.sessionId === expectedSessionId);
     if (session?.delegation === undefined) {
       return;
     }
-    if (session.started !== true) {
+    if (session.acceptedRunId === undefined) {
       await this.failBackgroundLaunchSetup(session, session.delegation, message);
       return;
     }
+    if (session.acceptedRunId !== expectedRunId) return;
+    if (session.delegation.status === "COMPLETED" || session.delegation.status === "FAILED") return;
     await this.updateAcceptedBackgroundSession({
       ...session.delegation,
       status: "FAILED",
       errorMessage: message,
       updatedAt: new Date().toISOString(),
-    });
+    }, undefined, { acceptedRunId: expectedRunId });
   }
 
   private pushRunLog(line: AgentRunLogLine): void {

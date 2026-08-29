@@ -47,6 +47,12 @@ export function readTuiEnvironmentIdentityFailure(
   return new TuiEnvironmentIdentityError(code, message, details);
 }
 
+export function readAuthoritativeRunStartRejection(
+  error: unknown,
+): TuiEnvironmentIdentityError | undefined {
+  return readTuiEnvironmentIdentityFailure(error);
+}
+
 export function defaultTuiEnvironmentPresetId(
   session: Pick<TuiSessionMeta, "workspaceBinding" | "workspaceId" | "workspaceRoot">,
 ): TuiEnvironmentPresetId {

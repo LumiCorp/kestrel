@@ -306,6 +306,21 @@ function validateSession(value: unknown): TuiSessionMeta {
     typeof entry.suppressAutoCompactionOnce === "boolean"
       ? entry.suppressAutoCompactionOnce
       : undefined;
+  const pendingRunId = typeof entry.pendingRunId === "string"
+    ? entry.pendingRunId
+    : undefined;
+  const pendingRunMessageId = typeof entry.pendingRunMessageId === "string"
+    ? entry.pendingRunMessageId
+    : undefined;
+  const pendingRunThreadId = typeof entry.pendingRunThreadId === "string"
+    ? entry.pendingRunThreadId
+    : undefined;
+  const acceptedRunId = typeof entry.acceptedRunId === "string"
+    ? entry.acceptedRunId
+    : undefined;
+  const acceptedRunMessageId = typeof entry.acceptedRunMessageId === "string"
+    ? entry.acceptedRunMessageId
+    : undefined;
   const delegation =
     typeof entry.delegation === "object" &&
     entry.delegation !== null &&
@@ -363,6 +378,11 @@ function validateSession(value: unknown): TuiSessionMeta {
     ...(pendingManualCompaction !== undefined ? { pendingManualCompaction } : {}),
     ...(autoCompactionEnabled !== undefined ? { autoCompactionEnabled } : {}),
     ...(suppressAutoCompactionOnce !== undefined ? { suppressAutoCompactionOnce } : {}),
+    ...(pendingRunId !== undefined ? { pendingRunId } : {}),
+    ...(pendingRunMessageId !== undefined ? { pendingRunMessageId } : {}),
+    ...(pendingRunThreadId !== undefined ? { pendingRunThreadId } : {}),
+    ...(acceptedRunId !== undefined ? { acceptedRunId } : {}),
+    ...(acceptedRunMessageId !== undefined ? { acceptedRunMessageId } : {}),
     ...(delegation !== undefined ? { delegation } : {}),
     ...(operatorState !== undefined ? { operatorState } : {}),
     interactionMode: modeResolution.interactionMode,
