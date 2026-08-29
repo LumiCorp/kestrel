@@ -17,6 +17,11 @@ import {
   assertLocalCoreGmailRestrictedDataAdmissions,
   createLocalCoreModelReadiness,
 } from "./modelReadiness.js";
+import type { LocalCoreStoreHandle } from "./store.js";
+import {
+  createDevShellStoreBindingRevision,
+  type DevShellStoreBinding,
+} from "../devshell/storeBinding.js";
 
 const sandboxCredentialRevisions = new WeakMap<LocalCoreCredentialStore, { secret: string; revision: string }>();
 
@@ -29,6 +34,7 @@ export interface LocalCoreRunnerRuntimeFactoryOptions {
   homePath?: string | undefined;
   credentialStore?: LocalCoreCredentialStore | undefined;
   sandboxCapabilityFetchImpl?: typeof fetch | undefined;
+  devShellStoreBinding?: DevShellStoreBinding | undefined;
 }
 
 /**
@@ -45,6 +51,9 @@ export function createLocalCoreRunnerRuntimeFactory(
     enableUserTerminals: true,
     enableWorkspaceChanges: true,
     enableManagedWorktrees: true,
+    ...(options.devShellStoreBinding !== undefined
+      ? { devShellStoreBinding: options.devShellStoreBinding }
+      : {}),
     ...(options.homePath !== undefined
       ? {
           managedWorktreeHomeDir: options.homePath,
@@ -88,6 +97,22 @@ export function createLocalCoreRunnerRuntimeFactory(
       onTaskUpdate,
       onRunEvent,
     });
+}
+
+export function createLocalCoreDevShellStoreBinding(
+  storeHandle: LocalCoreStoreHandle,
+  revision = createDevShellStoreBindingRevision(),
+): DevShellStoreBinding {
+  if (storeHandle.mode === "pglite") {
+    return { driver: "sqlite", revision };
+  }
+  const databaseUrl = storeHandle.databaseUrl?.trim();
+  if (databaseUrl === undefined || databaseUrl.length === 0) {
+    throw new Error(
+      "External Local Core store handle is missing its configured database URL.",
+    );
+  }
+  return { driver: "postgres", revision, databaseUrl };
 }
 
 export function resolveLocalCoreSandboxCapabilityEnvironment(

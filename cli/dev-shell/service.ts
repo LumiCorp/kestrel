@@ -28,6 +28,10 @@ import type {
   DevShellRunInput,
 } from "../../src/devshell/contracts.js";
 import { DEV_SHELL_SERVICE_PROTOCOL_VERSION } from "../../src/devshell/contracts.js";
+import {
+  readDevShellStoreBindingFromEnvironment,
+  type DevShellStoreBinding,
+} from "../../src/devshell/storeBinding.js";
 
 async function main(): Promise<void> {
   const socketPath = resolveSocketPath();
@@ -47,10 +51,13 @@ async function main(): Promise<void> {
   const sqlitePath = path.join(path.dirname(socketPath), "store.db");
   let storeHandle: SqlExecutorStoreHandle;
   let supervisor: DevShellSupervisor;
+  let storeBinding: DevShellStoreBinding;
   try {
+    storeBinding = readDevShellStoreBindingFromEnvironment(process.env);
     ({ storeHandle, supervisor } = await createInitializedDevShellRuntime({
       repoRoot,
       sqlitePath,
+      storeBinding,
       onStoreQuarantined: ({ recoveryPath }) => {
         writeBootstrapLog(
           `warning: quarantined failed developer shell store at '${recoveryPath}' and retrying once`,
@@ -66,7 +73,7 @@ async function main(): Promise<void> {
   }
 
   const server = http.createServer((request, response) => {
-    void handleRequest(supervisor, request, response).catch((error) => {
+    void handleRequest(supervisor, storeBinding, request, response).catch((error) => {
       writeJson(response, 500, {
         error: asRuntimeError(error),
       });
@@ -116,6 +123,7 @@ async function main(): Promise<void> {
 
 async function handleRequest(
   supervisor: DevShellSupervisor,
+  storeBinding: DevShellStoreBinding,
   request: http.IncomingMessage,
   response: http.ServerResponse,
 ): Promise<void> {
@@ -123,7 +131,7 @@ async function handleRequest(
   const url = new URL(request.url ?? "/", "http://unix");
 
   if (method === "GET" && url.pathname === "/health") {
-    writeJson(response, 200, createHealthPayload());
+    writeJson(response, 200, createHealthPayload(storeBinding));
     return;
   }
 
@@ -235,10 +243,12 @@ async function handleRequest(
   writeJson(response, 405, { error: "method_not_allowed" });
 }
 
-function createHealthPayload(): DevShellHealth {
+function createHealthPayload(storeBinding: DevShellStoreBinding): DevShellHealth {
   return {
     ok: true,
     serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    storeDriver: storeBinding.driver,
+    storeBindingRevision: storeBinding.revision,
     capabilities: {
       processWriteAndRead: true,
       processRetentionLeases: true,

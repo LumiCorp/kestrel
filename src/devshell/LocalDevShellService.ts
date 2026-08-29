@@ -42,6 +42,11 @@ import {
   DEV_SHELL_LOG_FILE,
   DEV_SHELL_SOCKET_FILE,
 } from "./paths.js";
+import {
+  buildDevShellStoreBindingEnvironment,
+  resolveLegacyDevShellStoreBinding,
+  type DevShellStoreBinding,
+} from "./storeBinding.js";
 
 interface BoundedDevShellOutput {
   text: string;
@@ -54,6 +59,7 @@ export interface LocalDevShellServiceOptions {
   pollIntervalMs?: number | undefined;
   runtimeModuleUrl?: string | undefined;
   env?: NodeJS.ProcessEnv | undefined;
+  storeBinding?: DevShellStoreBinding | undefined;
 }
 
 export interface DevShellServiceLaunchSpec {
@@ -107,6 +113,8 @@ export class LocalDevShellService implements DevShellServicePort {
   private readonly pollIntervalMs: number;
   private readonly runtimeModuleUrl: string;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly storeBinding: DevShellStoreBinding | undefined;
+  private readonly missingStoreDatabaseUrl: boolean;
   private ownedChild: ChildProcess | undefined;
 
   constructor(
@@ -114,6 +122,11 @@ export class LocalDevShellService implements DevShellServicePort {
     options: LocalDevShellServiceOptions = {},
   ) {
     this.env = { ...(options.env ?? process.env) };
+    const bindingResolution = options.storeBinding === undefined
+      ? resolveLegacyDevShellStoreBinding(this.env)
+      : normalizeExplicitStoreBinding(options.storeBinding);
+    this.storeBinding = bindingResolution.binding;
+    this.missingStoreDatabaseUrl = bindingResolution.missingDatabaseUrl;
     const resolvedBaseDir = baseDir ?? resolveDefaultDevShellBaseDir(this.env);
     this.socketPath = baseDir === undefined
       ? readOptionalEnvPath("KESTREL_DEV_SHELL_SOCKET_PATH", this.env) ?? path.join(resolvedBaseDir, DEV_SHELL_SOCKET_FILE)
@@ -368,7 +381,7 @@ export class LocalDevShellService implements DevShellServicePort {
     try {
       health = await this.readHealth();
     } catch {}
-    if (isCompatibleDevShellHealth(health)) {
+    if (isCompatibleDevShellHealth(health, this.storeBinding)) {
       return;
     }
     if (health !== undefined) {
@@ -386,7 +399,7 @@ export class LocalDevShellService implements DevShellServicePort {
     while (Date.now() < deadline) {
       try {
         const health = await this.readHealth();
-        if (isCompatibleDevShellHealth(health)) {
+        if (isCompatibleDevShellHealth(health, this.storeBinding)) {
           return;
         }
         if (child.exitCode !== null || child.signalCode !== null) {
@@ -451,12 +464,8 @@ export class LocalDevShellService implements DevShellServicePort {
   }
 
   private readBootstrapPrerequisiteFailure() {
-    if (this.env.KESTREL_STORE_DRIVER?.trim() !== "postgres") {
-      return ;
-    }
-    const databaseUrl = this.env.DATABASE_URL;
-    if (typeof databaseUrl === "string" && databaseUrl.trim().length > 0) {
-      return ;
+    if (this.missingStoreDatabaseUrl === false) {
+      return undefined;
     }
     return createRuntimeFailure(
       "DEV_SHELL_SERVICE_UNAVAILABLE",
@@ -467,7 +476,11 @@ export class LocalDevShellService implements DevShellServicePort {
         logPath: this.logPath,
         bootstrapStatusPath: this.bootstrapStatusPath,
         bootstrapReason: "missing_database_url",
+        failureReason: "missing_database_url",
+        failurePhase: "service_bootstrap",
         missingEnvNames: ["DATABASE_URL"],
+        nextSuggestedAction:
+          "The command did not run. Configure the developer-shell Postgres store, then retry the original command.",
       },
     );
   }
@@ -510,6 +523,10 @@ export class LocalDevShellService implements DevShellServicePort {
     const logFd = openSync(this.logPath, "a");
     let child: ChildProcess;
     try {
+      const storeBinding = this.storeBinding;
+      if (storeBinding === undefined) {
+        throw new Error("Developer shell store binding is unavailable.");
+      }
       child = spawn(process.execPath, [...launch.nodeArguments, "--socket", this.socketPath], {
         detached: true,
         stdio: ["ignore", logFd, logFd],
@@ -520,6 +537,7 @@ export class LocalDevShellService implements DevShellServicePort {
           KESTREL_DEV_SHELL_STATUS_PATH: this.bootstrapStatusPath,
           KESTREL_DEV_SHELL_OWNER_PID: String(process.pid),
           KESTREL_DEV_SHELL_OWNER_KIND: this.env.KESTREL_DEV_SHELL_OWNER_KIND ?? "ks",
+          ...buildDevShellStoreBindingEnvironment(storeBinding),
         },
       });
     } finally {
@@ -555,6 +573,9 @@ export class LocalDevShellService implements DevShellServicePort {
   }
 
   private async createBootstrapFailure(status: DevShellBootstrapStatus) {
+    const nextSuggestedAction = bootstrapFailureNextSuggestedAction(
+      status.reasonCode,
+    );
     return this.createUnavailableFailure(
       status.reasonCode ?? "service_process_exited",
       status.message ?? "Developer shell service failed during startup.",
@@ -563,6 +584,7 @@ export class LocalDevShellService implements DevShellServicePort {
         ...(status.message !== undefined ? { statusMessage: status.message } : {}),
         ...(status.pid !== undefined ? { pid: status.pid } : {}),
         ...(status.at !== undefined ? { at: status.at } : {}),
+        ...(nextSuggestedAction !== undefined ? { nextSuggestedAction } : {}),
       },
     );
   }
@@ -593,6 +615,8 @@ export class LocalDevShellService implements DevShellServicePort {
         logPath: this.logPath,
         bootstrapStatusPath: this.bootstrapStatusPath,
         bootstrapReason,
+        failureReason: bootstrapReason,
+        failurePhase: "service_bootstrap",
         ...(logTail !== undefined ? { logTail } : {}),
         ...extraDetails,
       },
@@ -693,7 +717,10 @@ export class LocalDevShellService implements DevShellServicePort {
   }
 }
 
-export function isCompatibleDevShellHealth(health: unknown): health is DevShellHealth {
+export function isCompatibleDevShellHealth(
+  health: unknown,
+  expectedBinding: DevShellStoreBinding | undefined,
+): health is DevShellHealth {
   if (typeof health !== "object" || health === null || Array.isArray(health)) {
     return false;
   }
@@ -701,7 +728,10 @@ export function isCompatibleDevShellHealth(health: unknown): health is DevShellH
   const capabilities = record.capabilities;
   return (
     record.ok === true &&
+    expectedBinding !== undefined &&
     record.serviceProtocolVersion === DEV_SHELL_SERVICE_PROTOCOL_VERSION &&
+    record.storeDriver === expectedBinding.driver &&
+    record.storeBindingRevision === expectedBinding.revision &&
     typeof capabilities === "object" &&
     capabilities !== null &&
     Array.isArray(capabilities) === false &&
@@ -709,6 +739,49 @@ export function isCompatibleDevShellHealth(health: unknown): health is DevShellH
     (capabilities as Record<string, unknown>).processRetentionLeases === true &&
     (capabilities as Record<string, unknown>).processRetentionPromotion === true
   );
+}
+
+function normalizeExplicitStoreBinding(
+  binding: DevShellStoreBinding,
+): {
+  binding?: DevShellStoreBinding | undefined;
+  missingDatabaseUrl: boolean;
+} {
+  const revision = binding.revision.trim();
+  if (revision.length === 0) {
+    throw new Error("Developer shell store binding revision is required.");
+  }
+  if (binding.driver === "sqlite") {
+    return {
+      binding: { driver: "sqlite", revision },
+      missingDatabaseUrl: false,
+    };
+  }
+  const databaseUrl = binding.databaseUrl.trim();
+  if (databaseUrl.length === 0) {
+    return { missingDatabaseUrl: true };
+  }
+  return {
+    binding: { driver: "postgres", revision, databaseUrl },
+    missingDatabaseUrl: false,
+  };
+}
+
+function bootstrapFailureNextSuggestedAction(
+  reasonCode: string | undefined,
+): string | undefined {
+  switch (reasonCode) {
+    case "migration_failed":
+      return "The command did not run. Repair developer-shell storage connectivity or configuration, then retry the original command. Changing the command cannot repair service bootstrap.";
+    case "missing_database_url":
+      return "The command did not run. Configure the developer-shell Postgres store, then retry the original command.";
+    case "store_init_failed":
+      return "The command did not run. Repair the developer-shell storage configuration, then retry the original command.";
+    case "socket_bind_failed":
+      return "The command did not run. Repair the developer-shell service socket, then retry the original command.";
+    default:
+      return undefined;
+  }
 }
 
 export { resolveDefaultDevShellBaseDir } from "./paths.js";

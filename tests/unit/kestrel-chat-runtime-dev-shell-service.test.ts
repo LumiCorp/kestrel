@@ -41,13 +41,25 @@ test("resolveDevShellServiceForProfile falls back to the local dev shell service
     KESTREL_STORE_DRIVER: "sqlite",
     DATABASE_URL: undefined,
   };
-  const service = resolveDevShellServiceForProfile(profileWithDevShell, {
-    ...runtimeEnv,
-  });
+  const storeBinding = {
+    driver: "sqlite" as const,
+    revision: "local-core-binding",
+  };
+  const service = resolveDevShellServiceForProfile(
+    profileWithDevShell,
+    {
+      ...runtimeEnv,
+      DATABASE_URL: "postgres://application.example/workspace",
+    },
+    storeBinding,
+  );
 
   assert.ok(service instanceof LocalDevShellService);
-  assert.equal((service as any).env.KESTREL_STORE_DRIVER, "sqlite");
-  assert.equal((service as any).env.DATABASE_URL, undefined);
+  assert.equal(
+    (service as any).env.DATABASE_URL,
+    "postgres://application.example/workspace",
+  );
+  assert.deepEqual((service as any).storeBinding, storeBinding);
 });
 
 test("resolveDevShellServiceForProfile returns undefined when dev shell tools are disabled", () => {

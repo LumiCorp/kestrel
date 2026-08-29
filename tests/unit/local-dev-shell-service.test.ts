@@ -343,7 +343,7 @@ test("LocalDevShellService fails fast with an explicit bootstrap reason when pos
   }
 });
 
-test("LocalDevShellService surfaces persisted bootstrap failure details before health timeout", async () => {
+test("LocalDevShellService surfaces actionable migration bootstrap failure before health timeout", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
   await mkdir(baseDir, { recursive: true });
   const originalDatabaseUrl = process.env.DATABASE_URL;
@@ -362,12 +362,16 @@ test("LocalDevShellService surfaces persisted bootstrap failure details before h
       testService.bootstrapStatusPath,
       JSON.stringify({
         status: "failed",
-        reasonCode: "socket_bind_failed",
-        message: "Socket path could not be bound.",
+        reasonCode: "migration_failed",
+        message: "Developer shell storage migration failed.",
       }),
       "utf8",
     );
-    await writeFile(testService.logPath, "socket bind failed\n", "utf8");
+    await writeFile(
+      testService.logPath,
+      "migration refused postgres://operator:secret@database.invalid/control\n",
+      "utf8",
+    );
   };
 
   await assert.rejects(
@@ -379,9 +383,16 @@ test("LocalDevShellService surfaces persisted bootstrap failure details before h
         details?: Record<string, unknown>;
       };
       assert.equal(runtimeError.code, "DEV_SHELL_SERVICE_UNAVAILABLE");
-      assert.match(runtimeError.message, /Socket path could not be bound/i);
-      assert.equal(runtimeError.details?.bootstrapReason, "socket_bind_failed");
+      assert.match(runtimeError.message, /storage migration failed/i);
+      assert.equal(runtimeError.details?.bootstrapReason, "migration_failed");
+      assert.equal(runtimeError.details?.failureReason, "migration_failed");
+      assert.equal(runtimeError.details?.failurePhase, "service_bootstrap");
+      assert.match(
+        String(runtimeError.details?.nextSuggestedAction),
+        /command did not run.*repair developer-shell storage.*retry the original command.*Changing the command cannot repair/is,
+      );
       assert.equal(runtimeError.details?.logPath, testService.logPath);
+      assert.match(String(runtimeError.details?.logTail), /operator:secret/u);
       return true;
     },
   );
@@ -538,6 +549,8 @@ test("LocalDevShellService restarts a stale supervisor with legacy health", asyn
       return {
         ok: true,
         serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+        storeDriver: service.storeBinding.driver,
+        storeBindingRevision: service.storeBinding.revision,
         capabilities: {
           processWriteAndRead: true,
           processRetentionLeases: true,
@@ -636,6 +649,8 @@ test("LocalDevShellService cleans up an incompatible supervisor socket recorded 
         return {
           ok: true,
           serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+          storeDriver: service.storeBinding.driver,
+          storeBindingRevision: service.storeBinding.revision,
           capabilities: {
             processWriteAndRead: true,
             processRetentionLeases: true,
@@ -674,27 +689,100 @@ test("LocalDevShellService cleans up an incompatible supervisor socket recorded 
 });
 
 test("isCompatibleDevShellHealth requires the current process contract", () => {
-  assert.equal(isCompatibleDevShellHealth({ ok: true }), false);
+  const binding = { driver: "sqlite" as const, revision: "binding-current" };
+  assert.equal(isCompatibleDevShellHealth({ ok: true }, binding), false);
   assert.equal(isCompatibleDevShellHealth({
     ok: true,
     serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    storeDriver: "sqlite",
+    storeBindingRevision: "binding-current",
     capabilities: {
       processWriteAndRead: true,
       processRetentionLeases: true,
     },
-  }), false);
+  }, binding), false);
   assert.equal(isCompatibleDevShellHealth({
     ok: true,
     serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    storeDriver: "sqlite",
+    storeBindingRevision: "binding-current",
     capabilities: {
       processWriteAndRead: true,
       processRetentionLeases: true,
       processRetentionPromotion: true,
     },
-  }), true);
+  }, binding), true);
+  assert.equal(isCompatibleDevShellHealth({
+    ok: true,
+    serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    storeDriver: "sqlite",
+    storeBindingRevision: "binding-stale",
+    capabilities: {
+      processWriteAndRead: true,
+      processRetentionLeases: true,
+      processRetentionPromotion: true,
+    },
+  }, binding), false);
 });
 
-test("LocalDevShellService sends retention promotion over the v4 process endpoint", async () => {
+test("LocalDevShellService rejects a healthy service with a different store binding", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-binding-mismatch-"));
+  const binding = { driver: "sqlite" as const, revision: "binding-current" };
+  const service = new LocalDevShellService(baseDir, {
+    storeBinding: binding,
+    startupTimeoutMs: 20,
+    pollIntervalMs: 1,
+  }) as any;
+  let healthChecks = 0;
+  let stopped = false;
+  let spawned = false;
+
+  service.performRequest = async (method: string, pathname: string) => {
+    if (method === "GET" && pathname === "/health") {
+      healthChecks += 1;
+      return {
+        ok: true,
+        serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+        storeDriver: "sqlite",
+        storeBindingRevision:
+          healthChecks === 1 ? "binding-stale" : "binding-current",
+        capabilities: {
+          processWriteAndRead: true,
+          processRetentionLeases: true,
+          processRetentionPromotion: true,
+        },
+      };
+    }
+    if (method === "POST" && pathname === "/shell/run") {
+      return {
+        status: "COMPLETED",
+        stdout: "ok\n",
+        text: "ok\n",
+        truncated: false,
+        exitCode: 0,
+      };
+    }
+    throw new Error(`unexpected request ${method} ${pathname}`);
+  };
+  service.stopIncompatibleService = async () => {
+    stopped = true;
+  };
+  service.spawnService = async () => {
+    spawned = true;
+    return { exitCode: null, signalCode: null, unref() {} };
+  };
+
+  const result = await service.runCommand({
+    workspaceRoot: ".",
+    command: "echo ok",
+  });
+
+  assert.equal(result.status, "COMPLETED");
+  assert.equal(stopped, true);
+  assert.equal(spawned, true);
+});
+
+test("LocalDevShellService sends retention promotion over the v5 process endpoint", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
   const service = new LocalDevShellService(baseDir, {
     startupTimeoutMs: 20,

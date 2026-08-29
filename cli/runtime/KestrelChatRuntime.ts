@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import type { McpOAuthProviderFactory } from "../../src/mcp/McpClientManager.js";
+import type { DevShellStoreBinding } from "../../src/devshell/storeBinding.js";
 import {
   normalizeInteractionMode,
   type ModeResolutionV1,
@@ -339,6 +340,7 @@ export interface RuntimeFactoryWithStoreOptions {
   enableWorkspaceChanges?: boolean | undefined;
   enableManagedWorktrees?: boolean | undefined;
   managedWorktreeHomeDir?: string | undefined;
+  devShellStoreBinding?: DevShellStoreBinding | undefined;
   resolveAttachments?:
     | ((
         threadId: string,
@@ -3336,6 +3338,7 @@ export function createRuntimeFactoryWithStore(
         store.recoverOrphanedActiveRun === undefined
           ? undefined
           : (sessionId) => store.recoverOrphanedActiveRun!(sessionId),
+        options.devShellStoreBinding,
       );
     },
   };
@@ -3366,6 +3369,7 @@ function createRuntimeWithStore(
   recoverOrphanedActiveRun?:
     | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
     | undefined,
+  devShellStoreBinding?: DevShellStoreBinding | undefined,
 ): RuntimeBootstrap {
   const runtimeEnv = environment?.runtimeEnv ?? process.env;
   const modelEnv = environment?.modelEnv ?? process.env;
@@ -3450,7 +3454,11 @@ function createRuntimeWithStore(
           homeDir: managedWorktreeHomeDir,
         })
       : undefined;
-  const devShellService = resolveDevShellServiceForProfile(profile, runtimeEnv);
+  const devShellService = resolveDevShellServiceForProfile(
+    profile,
+    runtimeEnv,
+    devShellStoreBinding,
+  );
   const sandboxCapabilityEnvironment = resolveSandboxCapabilityRuntimeEnvironment(
     profile,
     environment?.sandboxCapabilityAudience ?? resolveSandboxCapabilityAudienceFromEnvironment(runtimeEnv),
@@ -4190,13 +4198,14 @@ function createLazyModelGateway(factory: () => ModelGateway): ModelGateway {
 export function resolveDevShellServiceForProfile(
   profile: TuiProfile,
   env: NodeJS.ProcessEnv = process.env,
+  storeBinding?: DevShellStoreBinding | undefined,
 ) {
   if (profile.devShell?.enabled !== true) {
     return;
   }
   return (
     createTerminalBenchDevShellServiceFromEnv(env) ??
-      new LocalDevShellService(undefined, { env })
+      new LocalDevShellService(undefined, { env, storeBinding })
   );
 }
 
