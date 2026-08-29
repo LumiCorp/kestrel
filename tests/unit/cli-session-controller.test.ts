@@ -11,7 +11,10 @@ import {
   readTuiEnvironmentIdentityFailure,
   TuiEnvironmentIdentityError,
 } from "../../cli/session/TuiExecutionEnvironment.js";
-import { TuiAuthoringProfileError } from "../../cli/session/TuiAuthoringProfile.js";
+import {
+  hasDurableTuiRuntimeBinding,
+  TuiAuthoringProfileError,
+} from "../../cli/session/TuiAuthoringProfile.js";
 
 
 function makeSession(input: Partial<TuiSessionMeta> & { name: string; sessionId: string }): TuiSessionMeta {
@@ -34,6 +37,36 @@ function makeSession(input: Partial<TuiSessionMeta> & { name: string; sessionId:
       : {}),
   };
 }
+
+test("durable runtime binding excludes pre-acceptance local correlation", () => {
+  const base = makeSession({
+    name: "preaccept",
+    sessionId: "session-preaccept",
+    started: false,
+  });
+
+  assert.equal(hasDurableTuiRuntimeBinding({
+    ...base,
+    pendingRunThreadId: "thread-main:session-preaccept",
+  }), false);
+  assert.equal(hasDurableTuiRuntimeBinding({
+    ...base,
+    pendingQueueSubmissions: [{
+      runId: "run-preaccept",
+      messageId: "message-preaccept",
+      threadId: "thread-main:session-preaccept",
+      indeterminate: true,
+    }],
+  }), false);
+  assert.equal(hasDurableTuiRuntimeBinding({
+    ...base,
+    effectiveAssemblyId: "bundle:accepted",
+  }), true);
+  assert.equal(hasDurableTuiRuntimeBinding({
+    ...base,
+    acceptedRunThreadId: "thread-main:session-preaccept",
+  }), true);
+});
 
 function createControllerForState(state: {
   activeSession: TuiSessionMeta;

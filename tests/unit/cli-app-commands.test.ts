@@ -129,6 +129,64 @@ test("startup preserves a runtime-bound session's authoring profile when started
   assert.equal(resolved.id, authoringProfile.id);
 });
 
+for (const scenario of [
+  {
+    label: "pending ordinary-turn correlation",
+    patch: {
+      pendingRunId: "run-local-pending",
+      pendingRunMessageId: "message-local-pending",
+      pendingRunThreadId: "thread-main:session-preaccept",
+    },
+  },
+  {
+    label: "pending queued-turn correlation",
+    patch: {
+      pendingQueueSubmissions: [{
+        runId: "run-local-queued",
+        messageId: "message-local-queued",
+        threadId: "thread-main:session-preaccept",
+        indeterminate: true,
+      }],
+    },
+  },
+] as const) {
+  test(`startup keeps ${scenario.label} mutable before runtime acceptance`, async () => {
+    const authoringProfile: TuiProfile = {
+      id: "preaccept-authoring-profile",
+      label: "Pre-accept authoring profile",
+      agent: "kestrel",
+      sessionPrefix: "preaccept",
+    };
+    const explicitProfile: TuiProfile = {
+      id: "preaccept-explicit-profile",
+      label: "Pre-accept explicit profile",
+      agent: "kestrel",
+      sessionPrefix: "preaccept-explicit",
+    };
+    const session: TuiSessionMeta = {
+      name: "preaccept-session",
+      sessionId: "session-preaccept",
+      profileId: authoringProfile.id,
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:00.000Z",
+      started: false,
+      ...scenario.patch,
+    };
+    const profileStore = new ProfileStore(path.join(os.tmpdir(), "tui-preaccept-profile-test"));
+
+    const resolved = await resolveProfileForStartup({
+      options: { cwd: process.cwd(), profileId: explicitProfile.id },
+      profiles: [authoringProfile, explicitProfile],
+      runtimeSettings: { version: 1, defaults: {} },
+      profileStore,
+      session,
+      startupNotices: [],
+    });
+
+    assert.equal(resolved.id, explicitProfile.id);
+  });
+}
+
 test("startup fails closed when a started session's authoring profile is unavailable", async () => {
   const availableProfile: TuiProfile = {
     id: "available-profile",

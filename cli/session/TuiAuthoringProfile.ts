@@ -40,9 +40,7 @@ export function hasDurableTuiRuntimeBinding(session: TuiSessionMeta): boolean {
   return session.started === true
     || session.effectiveAssemblyId !== undefined
     || session.focusedThreadId !== undefined
-    || session.pendingRunThreadId !== undefined
     || session.acceptedRunThreadId !== undefined
-    || (session.pendingQueueSubmissions?.length ?? 0) > 0
     || (session.queuedRunReservations?.length ?? 0) > 0
     || (session.terminalQueuedRuns?.length ?? 0) > 0;
 }
