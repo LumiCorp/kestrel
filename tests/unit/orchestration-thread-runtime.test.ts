@@ -1127,6 +1127,7 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
     actor: { actorType: "end_user", actorId: "user-queued" },
     runtimeTurn: {
       sessionId: "thread-message-exact",
+      runId: "run-message-exact-queued-1",
       message: "What happened?",
       history: [{
         role: "user",
@@ -1195,6 +1196,7 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
     (route) => route.messageId === "message-exact-queued-1",
   );
   assert.equal(promotedRoute?.disposition, "started");
+  assert.equal(promotedRoute?.runId, "run-message-exact-queued-1");
   assert.equal(promotedRoute?.turnId, executor.inputs[2]?.metadata?.turnId);
   assert.equal(promotedRoute?.runId, executor.inputs[2]?.runtimeTurn?.runId);
 

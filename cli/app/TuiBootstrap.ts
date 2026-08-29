@@ -19,6 +19,8 @@ import { UiStateStore } from "../ink/persistence/UiStateStore.js";
 import { buildInitialUiRuntimeState, UiStore } from "../ink/store/UiStore.js";
 import { DEFAULT_THEME_MODE, resolveThemeSelection, type ThemeMode } from "../ink/theme/tokens.js";
 import { SessionStore } from "../session/SessionStore.js";
+import { resolveStartedSessionAuthoringProfile } from "../session/TuiAuthoringProfile.js";
+import { defaultTuiEnvironmentPresetId } from "../session/TuiExecutionEnvironment.js";
 import { WorkspaceStore } from "../workspace/WorkspaceStore.js";
 import {
   describeResolvedWorkspace,
@@ -527,7 +529,7 @@ async function resolveInitialSelection(input: {
 
   const resolvedProfile = await resolveProfileForStartup({
     ...input,
-    session: activeSession,
+    session: startupWorkspaceConflict ? undefined : activeSession,
     workspace: selectedWorkspace,
   });
 
@@ -647,7 +649,7 @@ async function resolveInitialSelection(input: {
   };
 }
 
-async function resolveProfileForStartup(input: {
+export async function resolveProfileForStartup(input: {
   options: TuiAppOptions;
   profiles: TuiProfile[];
   runtimeSettings: RuntimeSettingsFile;
@@ -656,6 +658,11 @@ async function resolveProfileForStartup(input: {
   workspace?: ResolvedWorkspace | undefined;
   startupNotices: string[];
 }): Promise<TuiProfile> {
+  const startedSessionProfile = resolveStartedSessionAuthoringProfile(input);
+  if (startedSessionProfile !== undefined) {
+    return startedSessionProfile;
+  }
+
   if (input.options.profileId !== undefined) {
     const explicit = input.profileStore.findById(input.profiles, input.options.profileId);
     if (explicit === undefined) {
@@ -759,6 +766,13 @@ function createSessionMeta(
     sessionId,
     profileId: profile.id,
     profileLabel: profile.label,
+    ...(profile.agentProfileId !== undefined ? { agentProfileId: profile.agentProfileId } : {}),
+    ...(profile.agentProfileLabel !== undefined ? { agentProfileLabel: profile.agentProfileLabel } : {}),
+    environmentPresetId: defaultTuiEnvironmentPresetId({
+      workspaceBinding: launch.workspace.binding,
+      workspaceId: workspace?.manifest.workspaceId,
+      workspaceRoot: workspace?.rootPath,
+    }),
     ...(launch.presetId !== undefined ? { launchPresetId: launch.presetId } : {}),
     ...(launch.templateId !== undefined ? { launchTemplateId: launch.templateId } : {}),
     workspaceBinding: launch.workspace.binding,

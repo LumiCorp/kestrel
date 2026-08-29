@@ -31,6 +31,9 @@ function makeSession(input: {
   sessionId: string;
   updatedAt: string;
   pendingWaitFor?: { kind: "effect" | "approval" | "user" | "region_merge"; eventType: string };
+  workspaceBinding?: "active" | "detached";
+  workspaceId?: string;
+  workspaceRoot?: string;
 }): TuiSessionMeta {
   return {
     name: input.name,
@@ -40,6 +43,9 @@ function makeSession(input: {
     updatedAt: input.updatedAt,
     started: true,
     ...(input.pendingWaitFor !== undefined ? { pendingWaitFor: input.pendingWaitFor } : {}),
+    ...(input.workspaceBinding !== undefined ? { workspaceBinding: input.workspaceBinding } : {}),
+    ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
+    ...(input.workspaceRoot !== undefined ? { workspaceRoot: input.workspaceRoot } : {}),
   };
 }
 
@@ -133,6 +139,9 @@ test("slash palette keeps the full slash command catalog", () => {
   assert.equal(actions.some((action) => action.command === "/workspace"), true);
   assert.equal(actions.some((action) => action.command === "/workspace use detached"), true);
   assert.equal(actions.some((action) => action.command === "/workspace status"), true);
+  assert.equal(actions.some((action) => action.command === "/environment"), true);
+  assert.equal(actions.some((action) => action.command === "/environment developer"), true);
+  assert.equal(actions.some((action) => action.command === "/environment safe"), true);
   assert.equal(actions.some((action) => action.command === "/snapshot"), true);
   assert.equal(actions.some((action) => action.command === "/restore"), true);
   assert.equal(actions.some((action) => action.command === "/approve"), true);
@@ -150,6 +159,52 @@ test("slash palette keeps the full slash command catalog", () => {
   assert.equal(actions.some((action) => action.draft === "/steer "), true);
   assert.equal(actions.some((action) => action.draft === "/stop "), true);
   assert.equal(actions.some((action) => action.draft === "/child spawn "), true);
+});
+
+test("manual palette exposes Developer workspace only for workspace-bound sessions", () => {
+  const baseState = {
+    activeView: "chat" as const,
+    paletteSource: "manual" as const,
+    paletteQuery: "",
+    activeProfile,
+    themeMode: "light" as const,
+    scroll: {
+      chat: { offset: 0, cursor: 0, tailLocked: true },
+      logs: { offset: 0, cursor: 0, tailLocked: true },
+      sessions: { offset: 0, cursor: 0, tailLocked: false },
+    },
+    chatUnreadCount: 0,
+    chatHighlightRunId: undefined,
+  };
+  const detached = makeSession({
+    name: "detached",
+    sessionId: "s-detached",
+    updatedAt: "2026-08-29T00:00:00.000Z",
+    workspaceBinding: "detached",
+  });
+  const detachedActions = buildPaletteActions({
+    ...baseState,
+    activeSession: detached,
+    sessions: [detached],
+  });
+  assert.equal(detachedActions.some((action) => action.command === "/environment safe"), true);
+  assert.equal(detachedActions.some((action) => action.command === "/environment developer"), false);
+
+  const workspace = makeSession({
+    name: "workspace",
+    sessionId: "s-workspace",
+    updatedAt: "2026-08-29T00:00:00.000Z",
+    workspaceBinding: "active",
+    workspaceId: "workspace-1",
+    workspaceRoot: "/tmp/workspace-1",
+  });
+  const workspaceActions = buildPaletteActions({
+    ...baseState,
+    activeSession: workspace,
+    sessions: [workspace],
+  });
+  assert.equal(workspaceActions.some((action) => action.command === "/environment safe"), true);
+  assert.equal(workspaceActions.some((action) => action.command === "/environment developer"), true);
 });
 
 test("buildPaletteActions caps switch actions and adds resume action when waiting", () => {

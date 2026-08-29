@@ -864,6 +864,317 @@ test("ProtocolClient resolves session.describe command", async () => {
   await client.close();
 });
 
+test("ProtocolClient rejects mismatched session.described before publishing it to listeners", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  client.onEvent((event) => seen.push(event.type));
+
+  const pending = client.sendCommandWithId(
+    "command-mismatched-session-description",
+    "session.describe",
+    { sessionId: "session-requested" },
+  );
+  await tick();
+  transport.emitEvent({
+    id: "evt-mismatched-session-description",
+    type: "session.described",
+    ts: new Date().toISOString(),
+    commandId: "command-mismatched-session-description",
+    payload: {
+      sessionId: "session-other",
+      version: 1,
+      operatorThreadView: {
+        thread: {
+          threadId: "thread-main:session-requested",
+          sessionId: "session-requested",
+          title: "Plausible active-session view",
+          status: "WAITING",
+        },
+      },
+    },
+  });
+
+  await assert.rejects(pending, (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(
+      (error as Error & { code?: string }).code,
+      "SESSION_DESCRIBE_SESSION_MISMATCH",
+    );
+    return true;
+  });
+  transport.emitEvent({
+    id: "evt-late-correct-session-description",
+    type: "session.described",
+    ts: new Date().toISOString(),
+    commandId: "command-mismatched-session-description",
+    payload: {
+      sessionId: "session-requested",
+      version: 1,
+      operatorThreadView: {
+        thread: {
+          threadId: "thread-main:session-requested",
+          sessionId: "session-requested",
+          title: "Late active-session view",
+          status: "WAITING",
+        },
+      },
+    },
+  });
+  assert.deepEqual(seen, []);
+  await client.close();
+});
+
+test("ProtocolClient drops unsolicited session.described events with or without command identity", async () => {
+  const transport = new ControlledExitTransport();
+  transport.respondToPing = false;
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  client.onEvent((event) => seen.push(event.type));
+  client.start();
+
+  for (const commandId of ["unsolicited-command", undefined] as const) {
+    transport.emitEvent({
+      id: `evt-unsolicited-${commandId ?? "none"}`,
+      type: "session.described",
+      ts: new Date().toISOString(),
+      ...(commandId !== undefined ? { commandId } : {}),
+      payload: {
+        sessionId: "session-active",
+        version: 1,
+        operatorThreadView: {
+          thread: {
+            threadId: "thread-main:session-active",
+            sessionId: "session-active",
+            title: "Unsolicited active-session view",
+            status: "WAITING",
+          },
+        },
+      },
+    });
+  }
+
+  assert.deepEqual(seen, []);
+  const unrelatedPending = client.sendCommandWithId(
+    "live-unrelated-command",
+    "runner.ping",
+    { nonce: "still-live" },
+  );
+  await tick();
+  transport.emitEvent({
+    id: "evt-description-colliding-with-unrelated-command",
+    type: "session.described",
+    ts: new Date().toISOString(),
+    commandId: "live-unrelated-command",
+    payload: { sessionId: "session-active", version: 1 },
+  });
+  assert.deepEqual(seen, []);
+  transport.emitEvent({
+    id: "evt-unrelated-command-response",
+    type: "runner.pong",
+    ts: new Date().toISOString(),
+    commandId: "live-unrelated-command",
+    payload: { nonce: "still-live" },
+  });
+  assert.equal((await unrelatedPending).type, "runner.pong");
+  await client.close();
+});
+
+test("ProtocolClient publishes one valid correlated session.described response and drops duplicates", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  client.onEvent((event) => seen.push(event.type));
+  const event = {
+    id: "evt-valid-session-description",
+    type: "session.described",
+    ts: new Date().toISOString(),
+    commandId: "command-valid-session-description",
+    payload: {
+      sessionId: "session-requested",
+      version: 1,
+    },
+  } as const;
+
+  const pending = client.sendCommandWithId(
+    event.commandId,
+    "session.describe",
+    { sessionId: event.payload.sessionId },
+  );
+  await tick();
+  transport.emitEvent(event);
+  const response = await pending;
+  assert.equal(response.type, "session.described");
+  assert.deepEqual(seen, ["session.described"]);
+
+  transport.emitEvent({ ...event, id: "evt-duplicate-session-description" });
+  assert.deepEqual(seen, ["session.described"]);
+  await client.close();
+});
+
+test("ProtocolClient claims a correlated session.described before reentrant listener delivery", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  let injected = false;
+  client.onEvent((event) => {
+    if (event.type !== "session.described") return;
+    seen.push(event.id);
+    if (injected) return;
+    injected = true;
+    transport.emitEvent({
+      id: "evt-reentrant-mismatch",
+      type: "session.described",
+      ts: new Date().toISOString(),
+      commandId: "command-reentrant-description",
+      payload: { sessionId: "session-other", version: 1 },
+    });
+    transport.emitEvent({
+      id: "evt-reentrant-duplicate",
+      type: "session.described",
+      ts: new Date().toISOString(),
+      commandId: "command-reentrant-description",
+      payload: { sessionId: "session-requested", version: 1 },
+    });
+  });
+
+  const pending = client.sendCommandWithId(
+    "command-reentrant-description",
+    "session.describe",
+    { sessionId: "session-requested" },
+  );
+  await tick();
+  transport.emitEvent({
+    id: "evt-claimed-description",
+    type: "session.described",
+    ts: new Date().toISOString(),
+    commandId: "command-reentrant-description",
+    payload: { sessionId: "session-requested", version: 1 },
+  });
+
+  const response = await pending;
+  assert.equal(response.id, "evt-claimed-description");
+  assert.deepEqual(seen, ["evt-claimed-description"]);
+  await client.close();
+});
+
+for (const code of [
+  "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+  "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+] as const) {
+  test(`ProtocolClient preserves ${code} from a session.describe failure`, async () => {
+    const transport = new ControlledExitTransport();
+    const client = new ProtocolClient(transport);
+    const pending = client.sendCommandWithId(
+      `command-${code}`,
+      "session.describe",
+      { sessionId: "session-environment-failure" },
+    );
+    await tick();
+    transport.emitEvent({
+      id: `evt-${code}`,
+      type: "runner.error",
+      ts: new Date().toISOString(),
+      commandId: `command-${code}`,
+      payload: {
+        code,
+        message: `Exact environment failure ${code}`,
+        details: { sessionId: "session-environment-failure" },
+      },
+    });
+
+    await assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as Error & { code?: string }).code, code);
+      return true;
+    });
+    await client.close();
+  });
+}
+
+test("ProtocolClient snapshots environment failure evidence before listener mutation", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  let injected = false;
+  client.onEvent((event) => {
+    if (event.type !== "runner.error") return;
+    seen.push(event.id);
+    if (injected) return;
+    injected = true;
+    const details = event.payload.details as {
+      evidence: { bundleId: string; rawIdentity: string };
+      listenerCycle?: unknown;
+    };
+    details.evidence.bundleId = "bundle-listener-tampered";
+    details.evidence.rawIdentity = "listener-tampered";
+    details.listenerCycle = details;
+    transport.emitEvent({
+      id: "evt-reentrant-environment-evidence",
+      type: "runner.error",
+      ts: new Date().toISOString(),
+      commandId: "command-environment-evidence",
+      payload: {
+        code: "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+        message: "Reentrant environment failure must not claim the command.",
+        details: {
+          sessionId: "session-reentrant",
+          threadId: "thread-main:session-reentrant",
+          evidence: {
+            bundleId: "bundle-reentrant",
+            rawIdentity: "cli_safe_local",
+          },
+        },
+      },
+    });
+  });
+  const pending = client.sendCommandWithId(
+    "command-environment-evidence",
+    "session.describe",
+    { sessionId: "session-environment-evidence" },
+  );
+  await tick();
+  transport.emitEvent({
+    id: "evt-environment-evidence",
+    type: "runner.error",
+    ts: new Date().toISOString(),
+    commandId: "command-environment-evidence",
+    payload: {
+      code: "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+      message: "Unsupported durable environment identity.",
+      details: {
+        sessionId: "session-environment-evidence",
+        threadId: "thread-main:session-environment-evidence",
+        evidence: {
+          bundleId: "bundle-environment-evidence",
+          rawIdentity: "cli_future_local",
+        },
+      },
+    },
+  });
+
+  await assert.rejects(pending, (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(
+      (error as Error & { code?: string }).code,
+      "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+    );
+    const details = (error as Error & { details?: Record<string, unknown> }).details;
+    assert.deepEqual(details, {
+      sessionId: "session-environment-evidence",
+      threadId: "thread-main:session-environment-evidence",
+      evidence: {
+        bundleId: "bundle-environment-evidence",
+        rawIdentity: "cli_future_local",
+      },
+    });
+    assert.doesNotThrow(() => JSON.stringify(details));
+    return true;
+  });
+  assert.deepEqual(seen, ["evt-environment-evidence"]);
+  await client.close();
+});
+
 test("ProtocolClient resolves operator command terminal events", async () => {
   const transport = new MockTransport();
   const client = new ProtocolClient(transport);

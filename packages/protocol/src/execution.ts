@@ -4245,6 +4245,23 @@ function validateSessionDescription(
   validateOptionalNonEmptyString(session.updatedAt, `${label}.updatedAt`);
   validateOptionalRecord(session.waitFor, `${label}.waitFor`);
   validateOptionalRecord(session.activeAssembly, `${label}.activeAssembly`);
+  if (session.activeAssembly !== undefined) {
+    const activeAssembly = session.activeAssembly as Record<string, unknown>;
+    if (activeAssembly.environmentPresetId !== undefined) {
+      validateEnum(
+        activeAssembly.environmentPresetId,
+        `${label}.activeAssembly.environmentPresetId`,
+        [
+          "cli_safe_local",
+          "cli_dev_local",
+          "web_balanced",
+          "desktop_safe_local",
+          "desktop_dev_local",
+          "workspace_hosted",
+        ],
+      );
+    }
+  }
   validateOptionalRecord(session.operatorInbox, `${label}.operatorInbox`);
   validateOptionalRecord(session.childBlocker, `${label}.childBlocker`);
   validateOptionalRecordArray(session.childThreads, `${label}.childThreads`);
