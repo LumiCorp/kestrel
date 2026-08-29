@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Serialize session-file authority](27-serialize-session-file-authority.md)
 
 ## In progress
 
