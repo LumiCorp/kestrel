@@ -1317,6 +1317,11 @@ test("run.start forwards only normalized hosted MCP grant context", async () => 
           },
           mcpAuthorization: {
             executionTicket: "must-not-cross-event-boundary",
+            renewal: {
+              version: "execution-authorization-renewal-v1",
+              endpoint: "https://kestrel.example/renew",
+              token: "must-not-cross-event-boundary-either",
+            },
           },
         },
       },
@@ -1336,6 +1341,11 @@ test("run.start forwards only normalized hosted MCP grant context", async () => 
     receivedMcpAuthorization?.executionTicket,
     "must-not-cross-event-boundary"
   );
+  assert.deepEqual(receivedMcpAuthorization?.renewal, {
+    version: "execution-authorization-renewal-v1",
+    endpoint: "https://kestrel.example/renew",
+    token: "must-not-cross-event-boundary-either",
+  });
   assert.equal(
     "oauthToken" in
       ((startedPayload?.mcpContext as Record<string, unknown> | undefined) ??
@@ -1407,6 +1417,11 @@ test("run.start forwards execution authorization without requiring an MCP grant"
           eventType: "user.message",
           mcpAuthorization: {
             executionTicket: "must-not-cross-event-boundary",
+            renewal: {
+              version: "execution-authorization-renewal-v1",
+              endpoint: "https://kestrel.example/renew",
+              token: "must-not-cross-event-boundary-either",
+            },
           },
         },
       },
@@ -1421,6 +1436,11 @@ test("run.start forwards execution authorization without requiring an MCP grant"
     receivedAuthorization?.executionTicket,
     "must-not-cross-event-boundary"
   );
+  assert.deepEqual(receivedAuthorization?.renewal, {
+    version: "execution-authorization-renewal-v1",
+    endpoint: "https://kestrel.example/renew",
+    token: "must-not-cross-event-boundary-either",
+  });
   assert.equal("mcpAuthorization" in (startedPayload ?? {}), false);
   assert.equal(
     events.some((event) => event.type === "runner.error"),

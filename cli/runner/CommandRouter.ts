@@ -1,7 +1,6 @@
 import {
-  parseExecutionTicketAuthorization,
+  parseHostedExecutionAuthorization,
   parseHostedMcpContext,
-  parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
 import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
 import { parseModelCredentialReferenceV1 } from "../../src/kestrel/contracts/model-route.js";
@@ -1670,12 +1669,7 @@ function validateRunStartPayload(value: unknown): RunStartCommandPayload {
   const mcpAuthorization =
     turnRecord.mcpAuthorization === undefined
       ? undefined
-      : mcpContext === undefined
-        ? parseExecutionTicketAuthorization(turnRecord.mcpAuthorization)
-        : parseHostedMcpRuntimeConnection({
-            mcpContext,
-            mcpAuthorization: turnRecord.mcpAuthorization,
-          }).executionTicket;
+      : parseHostedExecutionAuthorization(turnRecord.mcpAuthorization);
   if (
     turnRecord.clientCapabilities !== undefined &&
     (typeof turnRecord.clientCapabilities !== "object" ||
@@ -1719,7 +1713,7 @@ function validateRunStartPayload(value: unknown): RunStartCommandPayload {
     ...(turn as RunStartCommandPayload["turn"]),
     ...(mcpContext !== undefined ? { mcpContext } : {}),
     ...(mcpAuthorization !== undefined
-      ? { mcpAuthorization: { executionTicket: mcpAuthorization } }
+      ? { mcpAuthorization }
       : {}),
   };
   return hasProfileObject

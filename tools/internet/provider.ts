@@ -578,8 +578,12 @@ function isExecutionAuthorizationExpired(error: unknown): boolean {
   const response = readResponseRecord(error);
   const data = asPlainObject(response?.data);
   const nested = asPlainObject(data?.error);
-  if (nested?.code === "EXECUTION_AUTH_EXPIRED") return true;
-  return (extractSdkErrorMessage(error) ?? "").includes("EXECUTION_AUTH_EXPIRED");
+  if (
+    nested?.code === "EXECUTION_AUTH_EXPIRED" ||
+    nested?.code === "TICKET_EXPIRED"
+  ) return true;
+  const message = extractSdkErrorMessage(error) ?? "";
+  return message.includes("EXECUTION_AUTH_EXPIRED") || message.includes("TICKET_EXPIRED");
 }
 
 function readResponseMetadata(response: unknown): {
