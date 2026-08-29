@@ -390,6 +390,9 @@ export function createToolCatalog(
         latencyClass: capability.latencyClass,
         costClass: capability.costClass,
         executionClass: capability.executionClass,
+        ...(capability.inputDependentPreparation === true
+          ? { inputDependentPreparation: true }
+          : {}),
         ...(capability.allowedInteractionModes !== undefined
           ? { allowedInteractionModes: [...capability.allowedInteractionModes] }
           : {}),
@@ -490,6 +493,11 @@ export function createToolCatalog(
     map.get(name)?.resolveExecutionClass?.(input);
   const prepareInputAdapter = (name: string, input: Record<string, unknown>) =>
     map.get(name)?.prepareInputAdapter?.(input);
+  const resolvePolicy = async (
+    name: string,
+    context: SharedToolContext,
+    input: Record<string, unknown>,
+  ) => await map.get(name)?.resolvePolicy?.(context, input);
 
   return {
     list,
@@ -503,6 +511,7 @@ export function createToolCatalog(
     createResultNormalizers,
     resolveExecutionClass,
     prepareInputAdapter,
+    resolvePolicy,
   };
 }
 

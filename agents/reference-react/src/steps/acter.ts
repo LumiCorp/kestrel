@@ -147,6 +147,12 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
     const toolExecutionClassByName = Object.fromEntries(
       capabilityManifest.map((tool) => [tool.name, tool.executionClass ?? "read_only"]),
     );
+    const toolInputDependentPreparationByName = Object.fromEntries(
+      capabilityManifest.map((tool) => [
+        tool.name,
+        tool.inputDependentPreparation === true,
+      ]),
+    );
     const toolAllowedInteractionModesByName = Object.fromEntries(
       capabilityManifest.map((tool) => [tool.name, tool.allowedInteractionModes]),
     );
@@ -337,9 +343,53 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       if (settledDevShellPollingRedirect !== undefined) {
         return settledDevShellPollingRedirect;
       }
-      const actionInputHash = hashToolInput(actionForDispatch.name, actionForDispatch.input);
+      const toolIntent = {
+        ...("toolCallId" in actionForDispatch &&
+        actionForDispatch.toolCallId !== undefined
+          ? { modelToolCallId: actionForDispatch.toolCallId }
+          : {}),
+        ...("toolSurfaceSnapshot" in actionForDispatch &&
+        actionForDispatch.toolSurfaceSnapshot !== undefined
+          ? { toolSurfaceSnapshot: actionForDispatch.toolSurfaceSnapshot }
+          : {}),
+      };
+      const trustedInspection =
+        toolInputDependentPreparationByName[actionForDispatch.name] === true
+          ? await io.inspectTool?.(
+              actionForDispatch.name,
+              actionForDispatch.input,
+              toolIntent,
+            )
+          : undefined;
+      const policyInput = trustedInspection?.effectiveInput ?? actionForDispatch.input;
+      const actionInputHash = hashToolInput(actionForDispatch.name, policyInput);
       const workspaceRootForReducer = readActiveWorkspaceRootFromExecState(execState);
-      const toolClass = toolExecutionClassByName[actionForDispatch.name] ?? "read_only";
+      const toolClass =
+        trustedInspection?.executionClass ??
+        toolExecutionClassByName[actionForDispatch.name] ??
+        "read_only";
+      const configuredApprovalDisposition =
+        toolApprovalDispositionByName[actionForDispatch.name];
+      const trustedPolicy = trustedInspection?.policy;
+      const approvalDisposition =
+        trustedPolicy === undefined
+          ? configuredApprovalDisposition
+          : {
+              mode:
+                trustedPolicy.decision === "approval_required"
+                  ? "ask" as const
+                  : trustedPolicy.decision === "deny"
+                    ? "deny" as const
+                    : "auto" as const,
+              reasonCode:
+                configuredApprovalDisposition?.reasonCode ??
+                "environment_policy" as const,
+              authority:
+                configuredApprovalDisposition?.authority ?? {
+                  kind: "runtime_policy" as const,
+                  revision: trustedPolicy.policyRevision,
+                },
+            };
       const policyGate = await checkToolPolicyGate({
         reactState,
         activeRegion,
@@ -353,30 +403,21 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         eventType: ctx.event.type,
         eventPayload,
         toolName: actionForDispatch.name,
-        toolInput: actionForDispatch.input,
+        toolInput: policyInput,
         toolClass,
         allowedInteractionModes:
           toolAllowedInteractionModesByName[actionForDispatch.name],
         requiredApprovalCapabilities:
           toolApprovalCapabilitiesByName[actionForDispatch.name],
-        approvalDisposition:
-          toolApprovalDispositionByName[actionForDispatch.name],
+        approvalDisposition,
+        trustedPolicyRevision: trustedPolicy?.policyRevision,
         approvalAuthority: bindApprovalAuthorityToActivation(
           toolApprovalAuthorityByName[actionForDispatch.name],
           "activation" in actionForDispatch
             ? actionForDispatch.activation
             : undefined,
         ),
-        toolIntent: {
-          ...("toolCallId" in actionForDispatch &&
-          actionForDispatch.toolCallId !== undefined
-            ? { modelToolCallId: actionForDispatch.toolCallId }
-            : {}),
-          ...("toolSurfaceSnapshot" in actionForDispatch &&
-          actionForDispatch.toolSurfaceSnapshot !== undefined
-            ? { toolSurfaceSnapshot: actionForDispatch.toolSurfaceSnapshot }
-            : {}),
-        },
+        toolIntent,
         interactionMode: toCanonicalInteractionMode(
           modeResolution.interactionMode,
         ),

@@ -4,9 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Resolve Browser policy before approval](01a-resolve-browser-policy-before-approval.md)
-- [Preserve Browser dispatch and exact results](01b-preserve-browser-dispatch-and-exact-results.md)
-- [Enforce secret-safe Browser results](01c-enforce-secret-safe-browser-results.md)
+None.
 
 ## In progress
 
@@ -25,6 +23,9 @@ None.
 ## Implemented
 
 - [Register the Browser App and stable tool contract](01-register-the-browser-app-and-tool-contract.md) — blocked from `Done` by [input-dependent policy repair](01a-resolve-browser-policy-before-approval.md), [dispatch and exact-result repair](01b-preserve-browser-dispatch-and-exact-results.md), and [secret-safe result repair](01c-enforce-secret-safe-browser-results.md)
+- [Resolve Browser policy before approval](01a-resolve-browser-policy-before-approval.md) — awaiting independent repair review
+- [Preserve Browser dispatch and exact results](01b-preserve-browser-dispatch-and-exact-results.md) — awaiting independent repair review
+- [Enforce secret-safe Browser results](01c-enforce-secret-safe-browser-results.md) — awaiting independent repair review
 
 ## Done
 

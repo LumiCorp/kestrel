@@ -89,6 +89,7 @@ export async function checkToolPolicyGate(input: {
   allowedInteractionModes?: readonly CanonicalInteractionMode[] | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
   approvalDisposition?: ToolApprovalDispositionV1 | undefined;
+  trustedPolicyRevision?: string | undefined;
   approvalAuthority?:
     | {
         kind: RunnerExternalApprovalAuthorityKind;
@@ -148,6 +149,7 @@ export async function checkToolPolicyGate(input: {
       requiredApprovalCapabilities: input.requiredApprovalCapabilities,
       approvalDisposition: effectiveDecision.approvalDisposition,
       effectiveDecision,
+      trustedPolicyRevision: input.trustedPolicyRevision,
       approvalAuthority: input.approvalAuthority,
       toolIntent: input.toolIntent,
       io: input.io,
@@ -253,6 +255,7 @@ export async function checkToolPolicyGate(input: {
       requiredApprovalCapabilities: input.requiredApprovalCapabilities,
       approvalDisposition: effectiveDecision.approvalDisposition,
       effectiveDecision,
+      trustedPolicyRevision: input.trustedPolicyRevision,
       approvalAuthority: input.approvalAuthority,
       toolIntent: input.toolIntent,
       io: input.io,
@@ -577,6 +580,7 @@ async function maybeRequireToolApproval(input: {
   requiredApprovalCapabilities?: readonly string[] | undefined;
   approvalDisposition?: ToolApprovalDispositionV1 | undefined;
   effectiveDecision?: EffectiveToolDecisionV1 | undefined;
+  trustedPolicyRevision?: string | undefined;
   approvalAuthority?:
     | {
         kind: RunnerExternalApprovalAuthorityKind;
@@ -631,6 +635,13 @@ async function maybeRequireToolApproval(input: {
     actSubmode: input.actSubmode,
     executionPolicy: input.executionPolicy,
   });
+  const effectiveRuntimePolicyRevision =
+    input.trustedPolicyRevision === undefined
+      ? runtimePolicyRevision
+      : digestApprovalPayload({
+          upstreamPolicyRevision: runtimePolicyRevision,
+          browserPolicyRevision: input.trustedPolicyRevision,
+        });
   const upstreamApprovalAuthorityRevision =
     input.approvalAuthority?.revision ?? runtimePolicyRevision;
   let persistedPreparedToolCall;
@@ -713,7 +724,7 @@ async function maybeRequireToolApproval(input: {
       if (
         !preparedApprovalMatchesCurrentHostedAuthority({
           preparedToolCall: persistedPreparedToolCall,
-          policyRevision: runtimePolicyRevision,
+          policyRevision: effectiveRuntimePolicyRevision,
           approvalAuthorityRevision: upstreamApprovalAuthorityRevision,
         })
       ) {
@@ -756,6 +767,20 @@ async function maybeRequireToolApproval(input: {
       : undefined;
   if (newlyPreparedToolCall?.policy.decision === "allow") {
     return { preparedToolCall: parseDurablePreparedToolCallV1(newlyPreparedToolCall) };
+  }
+  if (newlyPreparedToolCall?.policy.decision === "deny") {
+    await input.io.releasePreparedToolCall?.(newlyPreparedToolCall);
+    return toPolicyBlockedTransition({
+      reactState: input.reactState,
+      activeRegion: input.activeRegion,
+      acterStepId: input.acterStepId,
+      stepIndex: input.stepIndex,
+      toolName: input.toolName,
+      toolClass: input.toolClass,
+      reason: "trusted tool policy denied the prepared invocation",
+      interactionMode: input.interactionMode,
+      actSubmode: input.actSubmode,
+    });
   }
   const preparedToolCall =
     persistedPreparedToolCall ??

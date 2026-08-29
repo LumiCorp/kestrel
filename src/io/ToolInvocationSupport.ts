@@ -65,6 +65,7 @@ export interface PinnedToolExecutionV1 {
     input: unknown,
     lifecycle?: {
       persistCompletedCapabilityResult: (rawOutput: unknown) => Promise<void>;
+      acknowledgeExternalEffect: () => void;
     },
   ) => Promise<unknown>;
   normalizer: (
@@ -330,8 +331,12 @@ export async function executePinnedToolCallV1(input: {
   let rawOutput: unknown;
   let preCleanupResult: AgentToolResultV2 | undefined;
   let preCleanupRawOutputDigest: string | undefined;
+  let externalEffectAcknowledged = false;
   try {
     rawOutput = await input.pinned.handler(prepared.effectiveInput, {
+      acknowledgeExternalEffect: () => {
+        externalEffectAcknowledged = true;
+      },
       persistCompletedCapabilityResult: async (completedRawOutput) => {
         const result = buildCompletedToolResult({
           prepared,
@@ -355,7 +360,9 @@ export async function executePinnedToolCallV1(input: {
     if (error instanceof RunCancelledError || input.signal?.aborted === true) {
       throw error;
     }
-    const effectState = executionClass === "external_side_effect" ? "unknown" : "not_started";
+    const effectState = executionClass === "external_side_effect" && externalEffectAcknowledged
+      ? "unknown"
+      : "not_started";
     return buildFailureResult({
       prepared,
       descriptor: input.pinned.descriptor,

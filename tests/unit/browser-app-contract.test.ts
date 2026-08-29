@@ -11,6 +11,7 @@ import {
   BROWSER_TOOL_NAMES,
   parseBrowserSessionV1,
   projectBrowserAuditInput,
+  projectBrowserAuditOutput,
   type BrowserServicePort,
 } from "../../src/browser/contracts.js";
 import { BROWSER_RUNTIME_RELEASE_MANIFEST } from "../../src/browser/runtimeReleaseManifest.js";
@@ -390,6 +391,13 @@ test("Browser tools remain unavailable until a conforming host port is active", 
 
   const port: BrowserServicePort = {
     version: BROWSER_SERVICE_PORT_VERSION,
+    async resolvePolicy() {
+      return {
+        version: "browser_policy_resolution_v1",
+        decision: "allow",
+        policyRevision: "browser-policy-1",
+      };
+    },
     async execute() {
       throw new Error("not used");
     },
@@ -408,6 +416,18 @@ test("fake Browser port receives the exact prepared call and conditional effect 
   const calls: PreparedToolCallV1[] = [];
   const port: BrowserServicePort = {
     version: BROWSER_SERVICE_PORT_VERSION,
+    async resolvePolicy(input) {
+      const destination = String(input.effectiveInput.destination ?? "");
+      return {
+        version: "browser_policy_resolution_v1",
+        decision: destination.includes("blocked")
+          ? "deny"
+          : destination.includes("new.example.com")
+            ? "approval_required"
+            : "allow",
+        policyRevision: `browser-policy:${destination}`,
+      };
+    },
     async execute(prepared) {
       calls.push(prepared);
       if (prepared.activation.descriptor.toolId === "browser.tabs") {
@@ -536,6 +556,13 @@ test("fake Browser port receives the exact prepared call and conditional effect 
 test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () => {
   const port: BrowserServicePort = {
     version: BROWSER_SERVICE_PORT_VERSION,
+    async resolvePolicy() {
+      return {
+        version: "browser_policy_resolution_v1",
+        decision: "allow",
+        policyRevision: "browser-policy-1",
+      };
+    },
     async execute() {
       return {
         version: "browser_tool_result_v1",
@@ -577,6 +604,232 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
       bytes: 100,
     },
   });
+});
+
+test("Desktop and hosted Browser preparation resolve all grant branches before dispatch", async () => {
+  for (const host of ["desktop", "hosted"] as const) {
+    let dispatches = 0;
+    const port: BrowserServicePort = {
+      version: BROWSER_SERVICE_PORT_VERSION,
+      async resolvePolicy(input) {
+        const destination = String(input.effectiveInput.destination ?? "");
+        return {
+          version: "browser_policy_resolution_v1",
+          decision: destination.includes("already")
+            ? "allow"
+            : destination.includes("blocked")
+              ? "deny"
+              : "approval_required",
+          policyRevision: `${host}:${destination}`,
+        };
+      },
+      async execute() {
+        dispatches += 1;
+        throw new Error("policy inspection must not dispatch");
+      },
+    };
+    const registry = new UnifiedToolRegistry({
+      allowlist: ["browser.request_grant"],
+      context: {
+        browserService: port,
+        ...(host === "hosted"
+          ? {
+              kestrelOne: {
+                appApprovalModes: {
+                  "browser.request_grant": "ask" as const,
+                },
+              },
+            }
+          : {}),
+      },
+    });
+    const runContext = {
+      runId: `${host}-policy-run`,
+      sessionId: `${host}-thread`,
+      payload: {},
+      sessionState: {},
+    };
+    const snapshot = await registry.createToolSurfaceSnapshot({
+      runContext,
+      toolNames: ["browser.request_grant"],
+    });
+    const activation = snapshot.tools[0]!;
+    for (const [destination, expected] of [
+      ["https://already.example", "allow"],
+      ["https://blocked.example", "deny"],
+      ["https://new.example", "approval_required"],
+    ] as const) {
+      const inspection = await registry.inspectToolCall(
+        {
+          activation,
+          origin: {
+            kind: "model",
+            snapshotId: snapshot.snapshotId,
+            modelToolCallId: `${host}:${expected}`,
+          },
+          rawInput: {
+            sessionId: "browser-session-1",
+            destination,
+          },
+        },
+        { runContext },
+      );
+      assert.equal(
+        inspection.policy?.decision,
+        expected,
+        `${host}:${expected}`,
+      );
+      assert.match(
+        inspection.policy?.policyRevision ?? "",
+        new RegExp(`^${host}:`),
+      );
+    }
+    assert.equal(dispatches, 0, host);
+  }
+});
+
+test("tabs preparation keeps input-dependent execution class consistent", async () => {
+  const port = passiveBrowserPort();
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.tabs"],
+    context: {
+      browserService: port,
+      kestrelOne: {
+        appApprovalModes: { "browser.tabs": "ask" },
+      },
+    },
+  });
+  for (const [operation, expectedClass] of [
+    ["list", "read_only"],
+    ["switch", "external_side_effect"],
+    ["close", "external_side_effect"],
+  ] as const) {
+    const input = {
+      sessionId: "browser-session-1",
+      operation,
+      ...(operation === "list" ? {} : { tabId: "tab-1" }),
+    };
+    const prepared = await prepareBrowserCall(registry, "browser.tabs", input, {
+      decision: "approval_required",
+      approval: true,
+    });
+    assert.equal(
+      prepared.prepared.stableAuthority?.version,
+      "prepared_tool_stable_authority_v2",
+    );
+    if (
+      prepared.prepared.stableAuthority?.version !==
+      "prepared_tool_stable_authority_v2"
+    ) {
+      assert.fail("tabs approval must use V2 stable authority");
+    }
+    assert.equal(
+      prepared.prepared.stableAuthority.executionClass,
+      expectedClass,
+      operation,
+    );
+    assert.equal(
+      readBrowserAdapter(prepared.prepared)?.executionClass,
+      expectedClass,
+      operation,
+    );
+  }
+});
+
+test("Browser dispatch acknowledgement distinguishes pre-dispatch failure from unknown outcome", async () => {
+  const secret = "sentinel-page-and-form-secret";
+  for (const [acknowledge, expectedState, expectedCode] of [
+    [false, "not_started", "BROWSER_ENGINE_FAILURE"],
+    [true, "unknown", "BROWSER_ACTION_OUTCOME_UNKNOWN"],
+  ] as const) {
+    const port: BrowserServicePort = {
+      ...passiveBrowserPort(),
+      async execute(_prepared, lifecycle) {
+        if (acknowledge) lifecycle.acknowledgeDispatch();
+        throw Object.assign(new Error(`host failed with ${secret}`), {
+          details: { responseBody: secret, formValue: secret },
+        });
+      },
+    };
+    const registry = new UnifiedToolRegistry({
+      allowlist: ["browser.close"],
+      context: { browserService: port },
+    });
+    const { prepared, runContext } = await prepareBrowserCall(
+      registry,
+      "browser.close",
+      { sessionId: "browser-session-1" },
+    );
+    const result = await registry.executePreparedToolCall(prepared, {
+      runContext,
+    });
+    assert.equal(result.outcome.kind, "failure");
+    if (result.outcome.kind !== "failure") assert.fail("expected failure");
+    assert.equal(result.outcome.effectState, expectedState);
+    assert.equal(result.outcome.normalizedFailureCode, expectedCode);
+    assert.equal(BROWSER_FAILURE_CODES.includes(expectedCode), true);
+    assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+  }
+});
+
+test("Browser destructive operations persist their exact normalized result before cleanup", async () => {
+  const ordering: string[] = [];
+  const output = {
+    version: "browser_tool_result_v1",
+    operation: "browser.close",
+    sessionId: "browser-session-1",
+    state: "closed",
+  };
+  const port: BrowserServicePort = {
+    ...passiveBrowserPort(),
+    async execute(_prepared, lifecycle) {
+      lifecycle.acknowledgeDispatch();
+      await lifecycle.persistCompletedResult(output);
+      ordering.push("cleanup");
+      return output;
+    },
+  };
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.close"],
+    context: { browserService: port },
+  });
+  const { prepared, runContext } = await prepareBrowserCall(
+    registry,
+    "browser.close",
+    { sessionId: "browser-session-1" },
+  );
+  const result = await registry.executePreparedToolCall(prepared, {
+    runContext,
+    async persistCompletedCapabilityResult(exactResult) {
+      ordering.push("persist");
+      assert.equal(exactResult.outcome.kind, "success");
+      assert.deepEqual(exactResult.outcome.rawOutput, output);
+    },
+  });
+  assert.deepEqual(ordering, ["persist", "cleanup"]);
+  assert.equal(result.outcome.kind, "success");
+  if (result.outcome.kind !== "success") assert.fail("expected success");
+  assert.deepEqual(result.outcome.rawOutput, output);
+});
+
+test("Browser origins and session semantics normalize before audit persistence", async () => {
+  const projected = projectBrowserAuditOutput("browser.snapshot", {
+    ...validOutputs["browser.snapshot"],
+    normalizedOrigin: "https://example.com/private/path?token=secret#fragment",
+  });
+  assert.equal(
+    (projected as Record<string, unknown>).normalizedOrigin,
+    "https://example.com",
+  );
+  assert.doesNotMatch(JSON.stringify(projected), /token=secret|private\/path/u);
+  assert.throws(
+    () =>
+      parseBrowserSessionV1({
+        ...session,
+        updatedAt: "2026-08-29T11:59:59.000Z",
+      }),
+    /updatedAt cannot precede createdAt/u,
+  );
 });
 
 test("runtime release manifest pins exact assets without latest aliases", () => {
@@ -644,6 +897,85 @@ async function executeBrowserCall(
 }
 
 let nextBrowserCallSequence = 1;
+
+async function prepareBrowserCall(
+  registry: UnifiedToolRegistry,
+  toolName: (typeof BROWSER_TOOL_NAMES)[number],
+  rawInput: Record<string, unknown>,
+  policy: {
+    decision?: "allow" | "approval_required" | "deny";
+    approval?: boolean;
+  } = {},
+) {
+  const sequence = nextBrowserCallSequence++;
+  const runContext = {
+    runId: `prepared-${toolName}-${sequence}`,
+    sessionId: `prepared-session-${sequence}`,
+    payload: policy.approval
+      ? {
+          hostedApprovalAuthority: {
+            organizationId: "organization-1",
+            environmentId: "environment-1",
+            projectId: "project-1",
+            threadId: `prepared-session-${sequence}`,
+          },
+          actor: { actorType: "end_user", actorId: "user-1" },
+        }
+      : {},
+    sessionState: {},
+  };
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    runContext,
+    toolNames: [toolName],
+  });
+  const activation = snapshot.tools[0]!;
+  const decision = policy.decision ?? "allow";
+  const prepared = await registry.prepareToolCall(
+    {
+      runId: runContext.runId,
+      sessionId: runContext.sessionId,
+      callId: `prepared-call-${sequence}`,
+      activation,
+      origin: {
+        kind: "model",
+        snapshotId: snapshot.snapshotId,
+        modelToolCallId: `prepared-model-call-${sequence}`,
+      },
+      rawInput,
+      policy: {
+        decision,
+        policyRevision: hashCanonical({ upstreamPolicy: sequence }),
+      },
+      ...(policy.approval
+        ? {
+            approval: {
+              approvalId: `approval-${sequence}`,
+              authorityRevision: hashCanonical({ authority: sequence }),
+            },
+            approvalCapabilities: ["external.confirm"],
+          }
+        : {}),
+    },
+    { runContext },
+  );
+  return { prepared, runContext };
+}
+
+function passiveBrowserPort(): BrowserServicePort {
+  return {
+    version: BROWSER_SERVICE_PORT_VERSION,
+    async resolvePolicy() {
+      return {
+        version: "browser_policy_resolution_v1",
+        decision: "allow",
+        policyRevision: "browser-policy-1",
+      };
+    },
+    async execute() {
+      throw new Error("not used");
+    },
+  };
+}
 
 function readBrowserAdapter(prepared: PreparedToolCallV1) {
   return prepared.inputAdapters.find(

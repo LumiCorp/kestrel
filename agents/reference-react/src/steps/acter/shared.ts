@@ -39,6 +39,7 @@ export interface ActerStepConfig {
       | undefined;
     descriptorRef?: ToolDescriptorRefV1 | undefined;
     executionClass?: ToolExecutionClass | undefined;
+    inputDependentPreparation?: boolean | undefined;
     allowedInteractionModes?: CanonicalInteractionMode[] | undefined;
   }>;
 }

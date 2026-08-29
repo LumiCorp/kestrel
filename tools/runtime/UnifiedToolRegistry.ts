@@ -150,6 +150,7 @@ type PinnedExecutionSource = {
   inputAdapterId?: string | undefined;
   resolveExecutionClass?: ((input: Record<string, unknown>) => import("../../src/mode/contracts.js").ToolExecutionClass) | undefined;
   prepareInputAdapter?: ((input: Record<string, unknown>) => import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1) | undefined;
+  resolvePolicy?: ((input: Record<string, unknown>) => Promise<import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined>) | undefined;
 };
 
 interface WorkspaceSkillReadProgress {
@@ -755,6 +756,18 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         this.builtInDescriptors.has(source.pinned.descriptor.toolId),
       );
       const normalizedEffectiveInput = asRecord(effectiveInput);
+      const browserResolvedPolicy = await source.resolvePolicy?.(
+        normalizedEffectiveInput ?? {},
+      );
+      const effectivePolicy = browserResolvedPolicy === undefined
+        ? input.policy
+        : {
+            decision: browserResolvedPolicy.decision,
+            policyRevision: hashCanonical({
+              upstreamPolicyRevision: input.policy.policyRevision,
+              browserPolicyRevision: browserResolvedPolicy.policyRevision,
+            }),
+          };
       const execCommandContinuation =
         input.activation.descriptor.toolId === "exec_command" &&
         typeof normalizedEffectiveInput?.sessionId === "string" &&
@@ -805,7 +818,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         };
       }
       const stableApproval =
-        input.policy.decision === "approval_required" &&
+        effectivePolicy.decision === "approval_required" &&
         !workflowAuthorityAllows &&
         !rememberedExecCommandMatch &&
         !execCommandContinuation &&
@@ -816,7 +829,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               executionClass: source.resolveExecutionClass?.(asRecord(effectiveInput) ?? {}) ??
                 source.pinned.descriptor.capability.executionClass,
               effectiveInput: asRecord(effectiveInput) ?? {},
-              policyRevision: input.policy.policyRevision,
+              policyRevision: effectivePolicy.policyRevision,
               approvalAuthorityRevision: input.approval.authorityRevision,
               capabilities: input.approvalCapabilities ?? [],
               runContext: options.runContext,
@@ -830,9 +843,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         origin: input.origin,
         effectiveInput: asRecord(effectiveInput) ?? {},
         policy: workflowAuthorityAllows || rememberedExecCommandMatch || execCommandContinuation
-          ? { ...input.policy, decision: "allow" }
-          : input.policy,
-        ...(input.approval === undefined ? {} : { approval: input.approval }),
+          ? { ...effectivePolicy, decision: "allow" }
+          : effectivePolicy,
+        ...(effectivePolicy.decision !== "approval_required" || input.approval === undefined
+          ? {}
+          : { approval: input.approval }),
         ...(stableApproval ?? {}),
         inputAdapters: [
           ...(source.inputAdapterId === undefined
@@ -883,7 +898,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   async inspectToolCall(
     input: Parameters<NonNullable<ToolGateway["inspectToolCall"]>>[0],
     options: ToolGatewayCallOptions = {},
-  ): Promise<{ effectiveInput: Record<string, unknown> }> {
+  ): Promise<{
+    effectiveInput: Record<string, unknown>;
+    executionClass?: import("../../src/mode/contracts.js").ToolExecutionClass | undefined;
+    policy?: import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined;
+  }> {
     const authorizationProvider = await this.ensureExecutionAuthorization(
       options.runContext,
     );
@@ -958,13 +977,20 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               input: transformedValidatedInput,
               runtimeBudgetRemainingMs: options.runtimeBudgetRemainingMs,
             });
-      return {
-        effectiveInput: validatePinnedInput(
+      const effectiveInput = validatePinnedInput(
           source.pinned.descriptor.toolId,
           budgeted.input,
           inputValidator,
           this.builtInDescriptors.has(source.pinned.descriptor.toolId),
-        ),
+        );
+      const normalizedEffectiveInput = asRecord(effectiveInput) ?? {};
+      const policy = await source.resolvePolicy?.(normalizedEffectiveInput);
+      return {
+        effectiveInput: normalizedEffectiveInput,
+        ...(source.resolveExecutionClass === undefined
+          ? {}
+          : { executionClass: source.resolveExecutionClass(normalizedEffectiveInput) }),
+        ...(policy === undefined ? {} : { policy }),
       };
     } finally {
       if (source !== snapshotSource) await source.release?.();
@@ -1019,9 +1045,18 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       let persistCompletedCapabilityRawOutput:
         | ((rawOutput: unknown) => Promise<void>)
         | undefined;
+      let acknowledgeExternalEffect: (() => void) | undefined;
       const preparedHandler = source.createHandler(
         {
           ...options,
+          acknowledgeExternalEffect: () => {
+            if (acknowledgeExternalEffect === undefined) {
+              throw new Error(
+                "External-effect dispatch acknowledgement is unavailable for this prepared execution.",
+              );
+            }
+            acknowledgeExternalEffect();
+          },
           persistCompletedCapabilityRawOutput: (rawOutput) => {
             if (persistCompletedCapabilityRawOutput === undefined) {
               throw new Error(
@@ -1040,6 +1075,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           handler: (toolInput, lifecycle) => {
             persistCompletedCapabilityRawOutput =
               lifecycle?.persistCompletedCapabilityResult;
+            acknowledgeExternalEffect = lifecycle?.acknowledgeExternalEffect;
             return preparedHandler(toolInput);
           },
         },
@@ -1066,9 +1102,18 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             let persistRetryCapabilityRawOutput:
               | ((rawOutput: unknown) => Promise<void>)
               | undefined;
+            let acknowledgeRetryExternalEffect: (() => void) | undefined;
             const retryHandler = retrySource.createHandler(
               {
                 ...options,
+                acknowledgeExternalEffect: () => {
+                  if (acknowledgeRetryExternalEffect === undefined) {
+                    throw new Error(
+                      "External-effect dispatch acknowledgement is unavailable for this prepared execution.",
+                    );
+                  }
+                  acknowledgeRetryExternalEffect();
+                },
                 persistCompletedCapabilityRawOutput: (rawOutput) => {
                   if (persistRetryCapabilityRawOutput === undefined) {
                     throw new Error(
@@ -1087,6 +1132,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                 handler: (toolInput, lifecycle) => {
                   persistRetryCapabilityRawOutput =
                     lifecycle?.persistCompletedCapabilityResult;
+                  acknowledgeRetryExternalEffect =
+                    lifecycle?.acknowledgeExternalEffect;
                   return retryHandler(toolInput);
                 },
               },
@@ -1832,6 +1879,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           prepareInputAdapter: (input: Record<string, unknown>) =>
             defaultToolCatalog.prepareInputAdapter(descriptor.toolId, input)!,
         }),
+        resolvePolicy: (input: Record<string, unknown>) =>
+          defaultToolCatalog.resolvePolicy(descriptor.toolId, activeContext, input),
         transformInput: async (input) => {
           const normalized = normalizeToolActionInput(
             descriptor.toolId,
@@ -1896,6 +1945,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                   ...executionContext,
                   persistCompletedCapabilityResult:
                     handlerOptions.persistCompletedCapabilityRawOutput,
+                  acknowledgeExternalEffect:
+                    handlerOptions.acknowledgeExternalEffect,
                 };
           const handlers = defaultToolCatalog.createRawHandlers(
             [descriptor.toolId],

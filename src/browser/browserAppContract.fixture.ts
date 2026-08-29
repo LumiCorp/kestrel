@@ -180,6 +180,11 @@ const tool = (
   inputSchema,
   outputSchema,
   ...contract,
+  failureCodes:
+    contract.executionClass === "external_side_effect" &&
+    !contract.failureCodes.includes("BROWSER_ACTION_OUTCOME_UNKNOWN")
+      ? [...contract.failureCodes, "BROWSER_ACTION_OUTCOME_UNKNOWN"]
+      : contract.failureCodes,
 });
 
 const commonFailures = [

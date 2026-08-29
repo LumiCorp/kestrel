@@ -257,9 +257,7 @@ export class InlineEffectRunner implements EffectRunner {
           return completedEffectResultSave!;
         };
         const persistCompletedCapabilityResult = (output: unknown): Promise<void> =>
-          readSandboxCapabilityReplayEvidence(output) === undefined
-            ? Promise.resolve()
-            : persistCompletedResult(output);
+          persistCompletedResult(output);
         let output: unknown;
         if (isPreparedApprovalCleanupRelease(effect)) {
           const criticalSection =

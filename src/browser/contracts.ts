@@ -1,11 +1,16 @@
 import type { AgentToolPresentation } from "../kestrel/contracts/model-io.js";
 import type { PreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
-import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import {
+  RuntimeFailure,
+  createRuntimeFailure,
+} from "../runtime/RuntimeFailure.js";
 
 export const BROWSER_APP_ID = "built_in.browser" as const;
 export const BROWSER_SERVICE_PORT_VERSION = "browser_service_port_v1" as const;
 export const BROWSER_TOOL_RESULT_VERSION = "browser_tool_result_v1" as const;
 export const BROWSER_CONTRACT_VERSION = "browser_app_contract_v1" as const;
+export const BROWSER_POLICY_RESOLUTION_VERSION =
+  "browser_policy_resolution_v1" as const;
 
 export const BROWSER_TOOL_NAMES = [
   "browser.open",
@@ -80,7 +85,28 @@ export interface BrowserSessionV1 {
 
 export interface BrowserServicePort {
   readonly version: typeof BROWSER_SERVICE_PORT_VERSION;
-  execute(prepared: PreparedToolCallV1): Promise<unknown>;
+  resolvePolicy(input: {
+    version: typeof BROWSER_POLICY_RESOLUTION_VERSION;
+    runId: string;
+    threadId: string;
+    operation: BrowserToolName;
+    effectiveInput: Record<string, unknown>;
+  }): Promise<BrowserPolicyResolutionV1>;
+  execute(
+    prepared: PreparedToolCallV1,
+    lifecycle: BrowserOperationLifecycleV1,
+  ): Promise<unknown>;
+}
+
+export interface BrowserPolicyResolutionV1 {
+  version: typeof BROWSER_POLICY_RESOLUTION_VERSION;
+  decision: "allow" | "deny" | "approval_required";
+  policyRevision: string;
+}
+
+export interface BrowserOperationLifecycleV1 {
+  acknowledgeDispatch(): void;
+  persistCompletedResult(rawOutput: unknown): Promise<void>;
 }
 
 export function isBrowserToolName(value: string): value is BrowserToolName {
@@ -92,8 +118,40 @@ export function isConformingBrowserServicePort(
 ): value is BrowserServicePort {
   return (
     value?.version === BROWSER_SERVICE_PORT_VERSION &&
+    typeof value.resolvePolicy === "function" &&
     typeof value.execute === "function"
   );
+}
+
+export function parseBrowserPolicyResolutionV1(
+  value: unknown,
+): BrowserPolicyResolutionV1 {
+  const record = requireRecord(value, "BrowserPolicyResolutionV1");
+  rejectUnknown(
+    record,
+    new Set(["version", "decision", "policyRevision"]),
+    "BrowserPolicyResolutionV1",
+  );
+  if (record.version !== BROWSER_POLICY_RESOLUTION_VERSION) {
+    throw new Error(
+      `BrowserPolicyResolutionV1.version must be '${BROWSER_POLICY_RESOLUTION_VERSION}'.`,
+    );
+  }
+  if (
+    record.decision !== "allow" &&
+    record.decision !== "deny" &&
+    record.decision !== "approval_required"
+  ) {
+    throw new Error("BrowserPolicyResolutionV1.decision is invalid.");
+  }
+  return {
+    version: BROWSER_POLICY_RESOLUTION_VERSION,
+    decision: record.decision,
+    policyRevision: requireString(
+      record.policyRevision,
+      "BrowserPolicyResolutionV1.policyRevision",
+    ),
+  };
 }
 
 export function requireBrowserServicePort(
@@ -192,6 +250,24 @@ export function parseBrowserSessionV1(value: unknown): BrowserSessionV1 {
   if (Date.parse(session.hardExpiresAt) <= Date.parse(session.createdAt)) {
     throw new Error("BrowserSessionV1.hardExpiresAt must follow createdAt.");
   }
+  if (Date.parse(session.updatedAt) < Date.parse(session.createdAt)) {
+    throw new Error("BrowserSessionV1.updatedAt cannot precede createdAt.");
+  }
+  if (Date.parse(session.lastActivityAt) < Date.parse(session.createdAt)) {
+    throw new Error(
+      "BrowserSessionV1.lastActivityAt cannot precede createdAt.",
+    );
+  }
+  if (Date.parse(session.updatedAt) < Date.parse(session.lastActivityAt)) {
+    throw new Error(
+      "BrowserSessionV1.updatedAt cannot precede lastActivityAt.",
+    );
+  }
+  if (Date.parse(session.idleExpiresAt) <= Date.parse(session.lastActivityAt)) {
+    throw new Error(
+      "BrowserSessionV1.idleExpiresAt must follow lastActivityAt.",
+    );
+  }
   if (Date.parse(session.idleExpiresAt) > Date.parse(session.hardExpiresAt)) {
     throw new Error(
       "BrowserSessionV1.idleExpiresAt cannot follow hardExpiresAt.",
@@ -243,7 +319,10 @@ export function projectBrowserAuditOutput(
   value: unknown,
 ): unknown | undefined {
   if (!isBrowserToolName(toolName)) return;
-  const output = requireRecord(value, `${toolName} output`);
+  const output = requireRecord(
+    normalizeBrowserResultOrigins(value),
+    `${toolName} output`,
+  );
   const projected: Record<string, unknown> = {};
   copyStrings(output, projected, [
     "version",
@@ -340,6 +419,76 @@ export function browserFailure(
   });
 }
 
+export function normalizeBrowserHostFailure(
+  error: unknown,
+  input: {
+    toolName: BrowserToolName;
+    dispatchAcknowledged: boolean;
+    effectful: boolean;
+  },
+) {
+  if (input.dispatchAcknowledged && input.effectful) {
+    return browserFailure(
+      "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      "The Browser operation was dispatched, but its exact outcome could not be confirmed.",
+      {
+        recoverable: false,
+        operation: input.toolName,
+        dispatchAcknowledged: true,
+      },
+    );
+  }
+  const code =
+    error instanceof RuntimeFailure &&
+    (BROWSER_FAILURE_CODES as readonly string[]).includes(error.code)
+      ? (error.code as BrowserFailureCode)
+      : "BROWSER_ENGINE_FAILURE";
+  return browserFailure(code, browserFailureMessage(code), {
+    recoverable:
+      code === "BROWSER_SERVICE_UNAVAILABLE" || code === "BROWSER_TARGET_STALE",
+    operation: input.toolName,
+    dispatchAcknowledged: false,
+  });
+}
+
+export function normalizeBrowserResultOrigins(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeBrowserResultOrigins(item));
+  }
+  const record = asRecord(value);
+  if (record === undefined) return value;
+  return Object.fromEntries(
+    Object.entries(record).map(([key, child]) => [
+      key,
+      (key === "normalizedOrigin" || key === "normalizedSourceOrigin") &&
+      typeof child === "string"
+        ? requireNormalizedOrigin(child, key)
+        : normalizeBrowserResultOrigins(child),
+    ]),
+  );
+}
+
+export function validateBrowserResultSemantics(
+  toolName: BrowserToolName,
+  value: unknown,
+): unknown {
+  const normalized = normalizeBrowserResultOrigins(value);
+  const output = requireRecord(normalized, `${toolName} output`);
+  if (
+    output.version !== BROWSER_TOOL_RESULT_VERSION ||
+    output.operation !== toolName
+  ) {
+    throw new Error(`${toolName} output identity is invalid.`);
+  }
+  if (output.session !== undefined) parseBrowserSessionV1(output.session);
+  validateTimestampOrder(output.pendingDownload, {
+    earlier: "createdAt",
+    later: "expiresAt",
+    label: `${toolName} pendingDownload`,
+  });
+  return normalized;
+}
+
 function projectBrowserAction(action: Record<string, unknown>) {
   const projected: Record<string, unknown> = {};
   copyStrings(action, projected, ["kind", "ref", "key", "direction"]);
@@ -386,6 +535,72 @@ function safeNormalizedOrigin(value: string): string {
     return new URL(value).origin;
   } catch {
     return "invalid";
+  }
+}
+
+function requireNormalizedOrigin(value: string, label: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${label} must be an absolute HTTP(S) origin.`);
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username.length > 0 ||
+    parsed.password.length > 0 ||
+    parsed.hostname.length === 0
+  ) {
+    throw new Error(`${label} must be an absolute HTTP(S) origin.`);
+  }
+  return parsed.origin;
+}
+
+function validateTimestampOrder(
+  value: unknown,
+  input: { earlier: string; later: string; label: string },
+): void {
+  const record = asRecord(value);
+  if (record === undefined) return;
+  const earlier = requireTimestamp(
+    record[input.earlier],
+    `${input.label}.${input.earlier}`,
+  );
+  const later = requireTimestamp(
+    record[input.later],
+    `${input.label}.${input.later}`,
+  );
+  if (Date.parse(later) <= Date.parse(earlier)) {
+    throw new Error(
+      `${input.label}.${input.later} must follow ${input.earlier}.`,
+    );
+  }
+}
+
+function browserFailureMessage(code: BrowserFailureCode): string {
+  switch (code) {
+    case "BROWSER_SESSION_CONFLICT":
+      return "The Thread already has a conflicting Browser Session.";
+    case "BROWSER_SESSION_EXPIRED":
+      return "The Browser Session expired.";
+    case "BROWSER_SESSION_LOST":
+      return "The Browser Session was lost.";
+    case "BROWSER_DESTINATION_BLOCKED":
+      return "Browser policy blocked the destination.";
+    case "BROWSER_GRANT_DENIED":
+      return "The Browser domain grant was denied.";
+    case "BROWSER_HUMAN_CONTROL_ACTIVE":
+      return "Agent Browser actions are disabled while human control is active.";
+    case "BROWSER_TARGET_STALE":
+      return "The Browser target reference is stale.";
+    case "BROWSER_ACTION_OUTCOME_UNKNOWN":
+      return "The Browser operation outcome is unknown.";
+    case "BROWSER_ARTIFACT_TOO_LARGE":
+      return "The Browser artifact exceeds the permitted size.";
+    case "BROWSER_SERVICE_UNAVAILABLE":
+      return "The Browser service is unavailable.";
+    case "BROWSER_ENGINE_FAILURE":
+      return "The Browser engine could not complete the operation.";
   }
 }
 

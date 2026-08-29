@@ -357,7 +357,11 @@ export interface ToolGateway {
       rawInput: Record<string, unknown>;
     },
     options?: ToolGatewayCallOptions,
-  ): Promise<{ effectiveInput: Record<string, unknown> }>;
+  ): Promise<{
+    effectiveInput: Record<string, unknown>;
+    executionClass?: import("../../mode/contracts.js").ToolExecutionClass | undefined;
+    policy?: PreparedToolPolicyDispositionV1 | undefined;
+  }>;
   prepareToolCall(
     input: {
       runId: string;
@@ -401,6 +405,8 @@ export interface ToolGatewayCallOptions {
   persistCompletedCapabilityRawOutput?:
     | ((rawOutput: unknown) => Promise<void>)
     | undefined;
+  /** @internal Gateway bridge for acknowledged external-effect dispatch. */
+  acknowledgeExternalEffect?: (() => void) | undefined;
 }
 
 export type ToolConsoleSink = (event: ToolConsoleEvent) => void | Promise<void>;

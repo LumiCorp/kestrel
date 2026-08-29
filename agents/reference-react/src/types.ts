@@ -671,6 +671,8 @@ export interface ToolCapabilityManifestItem {
   latencyClass?: ToolLatencyClass | undefined;
   costClass?: ToolCostClass | undefined;
   executionClass?: ToolExecutionClass | undefined;
+  /** Internal signal to inspect validated input before policy evaluation. */
+  inputDependentPreparation?: boolean | undefined;
   allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: string[] | undefined;

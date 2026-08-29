@@ -331,6 +331,7 @@
         "tests/unit/anthropic-mapper.test.ts",
         "tests/unit/anthropic-v2-codecs.test.ts",
         "tests/unit/approved-exec-command-context.test.ts",
+        "tests/unit/browser-app-contract.test.ts",
         "tests/unit/code-execute-tool.test.ts",
         "tests/unit/deliberator-tool-surface.test.ts",
         "tests/unit/desktop-host-open-tool.test.ts",

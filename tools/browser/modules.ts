@@ -1,12 +1,19 @@
-import { hashCanonical } from "../../src/kestrel/contracts/tool-contract.js";
+import {
+  compileToolJsonSchemaV1,
+  hashCanonical,
+} from "../../src/kestrel/contracts/tool-contract.js";
 import type { ToolExecutionClass } from "../../src/mode/contracts.js";
 import {
   BROWSER_CONTRACT_VERSION,
+  BROWSER_POLICY_RESOLUTION_VERSION,
   BROWSER_TOOL_NAMES,
   browserArtifactPresentation,
   browserFailure,
   isBrowserToolName,
+  normalizeBrowserHostFailure,
+  parseBrowserPolicyResolutionV1,
   requireBrowserServicePort,
+  validateBrowserResultSemantics,
   type BrowserToolName,
 } from "../../src/browser/contracts.js";
 import {
@@ -43,6 +50,23 @@ function resolveExactEffects(
 
 function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
   const contract = getBrowserToolContract(toolName);
+  const validateOutput = compileToolJsonSchemaV1(contract.outputSchema, {
+    surface: "output",
+  });
+  const normalizeOutput = (output: unknown): unknown => {
+    const normalized = validateBrowserResultSemantics(toolName, output);
+    if (validateOutput(normalized) !== true) {
+      throw browserFailure(
+        "BROWSER_ENGINE_FAILURE",
+        "The Browser engine returned an invalid result.",
+        {
+          recoverable: false,
+          operation: toolName,
+        },
+      );
+    }
+    return normalized;
+  };
   return {
     definition: {
       name: contract.toolId,
@@ -59,6 +83,10 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
             : "high",
         costClass: "metered",
         executionClass: contract.executionClass,
+        ...(contract.toolId === "browser.request_grant" ||
+        contract.toolId === "browser.tabs"
+          ? { inputDependentPreparation: true }
+          : {}),
         allowedInteractionModes: ["chat", "build"],
         capabilityClasses: ["browser.operate"],
         ...(contract.executionClass === "external_side_effect"
@@ -104,6 +132,43 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
         },
       };
     },
+    ...(contract.toolId === "browser.request_grant"
+      ? {
+          async resolvePolicy(context, input) {
+            const runtime = context.runtime;
+            if (runtime === undefined) {
+              throw browserFailure(
+                "BROWSER_SERVICE_UNAVAILABLE",
+                "Browser policy resolution requires a trusted runtime identity.",
+                { recoverable: false, operation: contract.toolId },
+              );
+            }
+            try {
+              const resolution = parseBrowserPolicyResolutionV1(
+                await requireBrowserServicePort(
+                  context.browserService,
+                ).resolvePolicy({
+                  version: BROWSER_POLICY_RESOLUTION_VERSION,
+                  runId: runtime.runId,
+                  threadId: runtime.threadId ?? runtime.sessionId,
+                  operation: contract.toolId,
+                  effectiveInput: input,
+                }),
+              );
+              return {
+                decision: resolution.decision,
+                policyRevision: resolution.policyRevision,
+              };
+            } catch (error) {
+              throw normalizeBrowserHostFailure(error, {
+                toolName: contract.toolId,
+                dispatchAcknowledged: false,
+                effectful: false,
+              });
+            }
+          },
+        }
+      : {}),
     createHandler(context, prepared) {
       return async (input: unknown) => {
         if (prepared === undefined) {
@@ -130,17 +195,42 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
             { recoverable: false, toolName: contract.toolId },
           );
         }
-        return await requireBrowserServicePort(context.browserService).execute(
-          prepared,
-        );
+        const effectful =
+          resolveExactExecutionClass(contract, prepared.effectiveInput) ===
+          "external_side_effect";
+        let dispatchAcknowledged = false;
+        try {
+          const output = await requireBrowserServicePort(
+            context.browserService,
+          ).execute(prepared, {
+            acknowledgeDispatch() {
+              if (!effectful || dispatchAcknowledged) return;
+              dispatchAcknowledged = true;
+              context.acknowledgeExternalEffect?.();
+            },
+            async persistCompletedResult(rawOutput) {
+              await context.persistCompletedCapabilityResult?.(
+                normalizeOutput(rawOutput),
+              );
+            },
+          });
+          return normalizeOutput(output);
+        } catch (error) {
+          throw normalizeBrowserHostFailure(error, {
+            toolName: contract.toolId,
+            dispatchAcknowledged,
+            effectful,
+          });
+        }
       };
     },
     normalizeResult(output) {
+      const normalized = normalizeOutput(output);
       return {
-        output,
-        ...(browserArtifactPresentation(output) === undefined
+        output: normalized,
+        ...(browserArtifactPresentation(normalized) === undefined
           ? {}
-          : { presentation: browserArtifactPresentation(output) }),
+          : { presentation: browserArtifactPresentation(normalized) }),
       };
     },
   };

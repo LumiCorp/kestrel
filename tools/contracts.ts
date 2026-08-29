@@ -65,6 +65,8 @@ export interface ToolCapabilityMetadata {
   latencyClass: ToolLatencyClass;
   costClass: ToolCostClass;
   executionClass: ToolExecutionClass;
+  /** Trusted preparation can refine policy or execution class from validated input. */
+  inputDependentPreparation?: boolean | undefined;
   allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: ApprovalCapabilityClass[] | undefined;
@@ -264,6 +266,8 @@ export interface SharedToolContext {
   codeExecutionService?: CodeExecutionServicePort | undefined;
   /** Gateway-owned raw-output sink; capability tools invoke it before teardown. */
   persistCompletedCapabilityResult?: ((rawOutput: unknown) => Promise<void>) | undefined;
+  /** Gateway-owned dispatch acknowledgement for exact external-effect outcomes. */
+  acknowledgeExternalEffect?: (() => void) | undefined;
   sandboxCapabilityRuntime?: (
     Omit<SandboxCapabilityRuntimeContext, "sessionId" | "runId" | "toolCallId" | "policy" | "approval" | "parentAuthorization"> & {
       /** Set only by the trusted prepared-call path in UnifiedToolRegistry. */
@@ -331,6 +335,10 @@ export interface SharedToolModule {
   ): SharedToolRawHandler;
   resolveExecutionClass?(input: Record<string, unknown>): ToolExecutionClass;
   prepareInputAdapter?(input: Record<string, unknown>): import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1;
+  resolvePolicy?(
+    context: SharedToolContext,
+    input: Record<string, unknown>,
+  ): Promise<import("../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1>;
   normalizeResult?(output: unknown, input: unknown): SharedToolNormalizedResult;
 }
 
@@ -379,6 +387,11 @@ export interface ToolCatalog {
   >;
   resolveExecutionClass(name: string, input: Record<string, unknown>): ToolExecutionClass | undefined;
   prepareInputAdapter(name: string, input: Record<string, unknown>): import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1 | undefined;
+  resolvePolicy(
+    name: string,
+    context: SharedToolContext,
+    input: Record<string, unknown>,
+  ): Promise<import("../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined>;
 }
 
 export interface ToolRegistryListOptions {
