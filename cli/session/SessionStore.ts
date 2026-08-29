@@ -328,6 +328,9 @@ function validateSession(value: unknown): TuiSessionMeta {
   const pendingRunThreadId = typeof entry.pendingRunThreadId === "string"
     ? entry.pendingRunThreadId
     : undefined;
+  const terminalMessageCursor = typeof entry.terminalMessageCursor === "string"
+    ? entry.terminalMessageCursor
+    : undefined;
   const pendingQueueSubmissions = readExactRunIdentityCollection(entry.pendingQueueSubmissions);
   const queuedRunReservations = readExactRunIdentityCollection(entry.queuedRunReservations);
   const terminalQueuedRuns = readTerminalQueuedRuns(entry.terminalQueuedRuns);
@@ -405,6 +408,7 @@ function validateSession(value: unknown): TuiSessionMeta {
     ...(pendingRunRequestId !== undefined ? { pendingRunRequestId } : {}),
     ...(pendingRunMessageId !== undefined ? { pendingRunMessageId } : {}),
     ...(pendingRunThreadId !== undefined ? { pendingRunThreadId } : {}),
+    ...(terminalMessageCursor !== undefined ? { terminalMessageCursor } : {}),
     ...(pendingQueueSubmissions !== undefined && pendingQueueSubmissions.length > 0
       ? { pendingQueueSubmissions }
       : {}),

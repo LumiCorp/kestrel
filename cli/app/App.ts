@@ -91,6 +91,7 @@ import {
   bindTuiQueueSuccessor,
   normalizeTuiQueueGraph,
   removeAndRewireTuiQueueRecord,
+  resolveExactTuiQueuedEvidence,
 } from "../session/TuiQueueGraph.js";
 import type { LocalCoreConnectionManager } from "../../src/localCore/connectionManager.js";
 import type { LocalCoreExecutionProfileResolution } from "../../src/localCore/contracts.js";
@@ -3394,116 +3395,139 @@ export class App {
     payload: SessionDescribedEventPayload,
     appendStartedHistory: boolean,
   ): Promise<void> {
-    let current = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
-    if (current?.delegation === undefined) return;
-    const currentStatus = current.delegation.status;
-    if (currentStatus === "COMPLETED" || currentStatus === "FAILED") return;
+    const initial = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
+    if (initial?.delegation === undefined) return;
+    this.assertDescribeThreadIdentity(payload);
+    const state = this.uiStore.getState();
+    const loadedProfiles = state.activeProfile.id === initial.profileId
+      ? undefined
+      : await this.profileStore.load();
     const activeRunId = payload.operatorThreadView?.activeRun?.runId;
     const terminalTurn = [...(payload.operatorThreadView?.conversationTurns ?? [])]
       .reverse()
       .find((turn) => turn.terminalRunId !== undefined);
     const evidenceRunId = activeRunId ?? terminalTurn?.terminalRunId;
-    const pendingMessageRoute = current.pendingRunMessageId === undefined
-      ? undefined
-      : payload.operatorThreadView?.conversationMessageRoutes?.find(
-          (route) => route.messageId === current.pendingRunMessageId,
-        );
-    const pendingExpectedRunId = current.pendingRunId ?? pendingMessageRoute?.runId;
-    const expectedRunId = pendingExpectedRunId ?? current.acceptedRunId;
-    if (
-      expectedRunId !== undefined
-      && evidenceRunId !== undefined
-      && expectedRunId !== evidenceRunId
-    ) return;
-    if (
-      evidenceRunId === undefined
-      && (currentStatus === "RUNNING" || currentStatus === "WAITING")
-    ) return;
-    const projected = await this.projectSessionFromDescribePayload(payload);
-    if (projected === undefined) return;
-    current = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
-    if (current?.delegation === undefined) return;
-    const latestStatus = current.delegation.status;
-    if (latestStatus === "COMPLETED" || latestStatus === "FAILED") return;
-    const latestPendingMessageRoute = current.pendingRunMessageId === undefined
-      ? undefined
-      : payload.operatorThreadView?.conversationMessageRoutes?.find(
-          (route) => route.messageId === current!.pendingRunMessageId,
-        );
-    const latestExpectedRunId = current.pendingRunId
-      ?? latestPendingMessageRoute?.runId
-      ?? current.acceptedRunId;
-    if (
-      latestExpectedRunId !== undefined
-      && evidenceRunId !== undefined
-      && latestExpectedRunId !== evidenceRunId
-    ) return;
-    if (
-      evidenceRunId === undefined
-      && (latestStatus === "RUNNING" || latestStatus === "WAITING")
-    ) return;
-    const exactRunId = evidenceRunId ?? current.acceptedRunId;
-    const runtimeStatus = activeRunId !== undefined && activeRunId === exactRunId
-      ? payload.operatorThreadView?.activeRun?.status
-      : terminalTurn !== undefined
-        && terminalTurn.terminalRunId === exactRunId
-        && (terminalTurn.status === "COMPLETED" || terminalTurn.status === "FAILED")
-        ? terminalTurn.status
-        : undefined;
-    const durableAcceptance = payload.threadId !== undefined
-      || payload.focusedThreadId !== undefined
-      || payload.activeAssembly !== undefined;
-    if (durableAcceptance === false) return;
-    const nextStatus = runtimeStatus
-      ?? (latestStatus === "RUNNING" || latestStatus === "WAITING"
-        ? latestStatus
-        : "RECOVERING");
-    const exactNewAcceptance = exactRunId !== undefined
-      && exactRunId === latestExpectedRunId;
-    const exactQueuedAcceptance = exactRunId === undefined
-      ? undefined
-      : [
-          ...(current.pendingQueueSubmissions ?? []),
-          ...(current.queuedRunReservations ?? []),
-          ...(current.terminalQueuedRuns ?? []),
-        ].find((record) => record.runId === exactRunId);
-    const committed = await this.updateAcceptedBackgroundSession({
-      ...current.delegation,
-      status: nextStatus,
-      errorCode: undefined,
-      errorMessage: undefined,
-      updatedAt: payload.updatedAt ?? new Date().toISOString(),
-    }, appendStartedHistory, {
-      ...projected,
-      acceptedRunId: exactRunId,
-      acceptedRunPredecessorId: exactQueuedAcceptance === undefined
-        ? exactNewAcceptance
-          ? undefined
-          : current.acceptedRunPredecessorId
-        : durableAcceptedQueuePredecessorId(exactQueuedAcceptance),
-      ...(exactRunId !== undefined
-        ? {
-            acceptedRunThreadId:
-              payload.operatorThreadView?.thread.threadId
-              ?? payload.threadId
-              ?? payload.focusedThreadId
-              ?? current.acceptedRunThreadId,
-          }
-        : {}),
-      ...(exactNewAcceptance
-        ? {
-            acceptedRunMessageId: current.pendingRunMessageId,
-            pendingRunId: undefined,
-            pendingRunMessageId: undefined,
-            pendingRunThreadId: undefined,
-          }
-        : {}),
+    let runtimeStatus: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED" | undefined;
+    let appendHistory = false;
+    const committed = await this.commitQueueSessionMutation(payload.sessionId, (current) => {
+      if (current.delegation === undefined) return undefined;
+      const currentStatus = current.delegation.status;
+      if (currentStatus === "COMPLETED" || currentStatus === "FAILED") return undefined;
+      const pendingMessageRoute = current.pendingRunMessageId === undefined
+        ? undefined
+        : payload.operatorThreadView?.conversationMessageRoutes?.find(
+            (route) => route.messageId === current.pendingRunMessageId,
+          );
+      const expectedRunId = current.pendingRunId
+        ?? pendingMessageRoute?.runId
+        ?? current.acceptedRunId;
+      if (
+        expectedRunId !== undefined
+        && evidenceRunId !== undefined
+        && expectedRunId !== evidenceRunId
+      ) return undefined;
+      if (
+        evidenceRunId === undefined
+        && (currentStatus === "RUNNING" || currentStatus === "WAITING")
+      ) return undefined;
+      const exactRunId = evidenceRunId ?? current.acceptedRunId;
+      runtimeStatus = activeRunId !== undefined && activeRunId === exactRunId
+        ? payload.operatorThreadView?.activeRun?.status
+        : terminalTurn !== undefined
+          && terminalTurn.terminalRunId === exactRunId
+          && (terminalTurn.status === "COMPLETED" || terminalTurn.status === "FAILED")
+          ? terminalTurn.status
+          : undefined;
+      const durableAcceptance = payload.threadId !== undefined
+        || payload.focusedThreadId !== undefined
+        || payload.activeAssembly !== undefined;
+      if (durableAcceptance === false) return undefined;
+      const currentState = this.uiStore.getState();
+      const profile = currentState.activeProfile.id === current.profileId
+        ? currentState.activeProfile
+        : loadedProfiles?.find((candidate) => candidate.id === current.profileId)
+          ?? currentState.activeProfile;
+      const projected = this.projectSessionFromDescribePayloadForSession(payload, current, profile);
+      const nextStatus = runtimeStatus
+        ?? (currentStatus === "RUNNING" || currentStatus === "WAITING"
+          ? currentStatus
+          : "RECOVERING");
+      const exactNewAcceptance = exactRunId !== undefined && exactRunId === expectedRunId;
+      const acceptedThreadId = exactRunId === undefined
+        ? current.acceptedRunThreadId
+        : payload.operatorThreadView?.thread.threadId
+          ?? payload.threadId
+          ?? payload.focusedThreadId
+          ?? current.acceptedRunThreadId;
+      const routeMessageId = exactRunId === undefined
+        ? undefined
+        : payload.operatorThreadView?.conversationMessageRoutes?.find(
+            (route) => route.runId === exactRunId,
+          )?.messageId;
+      const queuedEvidence = exactRunId === undefined || acceptedThreadId === undefined
+        ? undefined
+        : resolveExactTuiQueuedEvidence(current, {
+            runId: exactRunId,
+            threadId: acceptedThreadId,
+            messageId: routeMessageId ?? current.pendingRunMessageId,
+          });
+      const now = payload.updatedAt ?? new Date().toISOString();
+      appendHistory = appendStartedHistory && current.started !== true;
+      return {
+        ...projected,
+        profileId: current.delegation.profileId,
+        started: true,
+        acceptedRunId: exactRunId,
+        acceptedRunPredecessorId: queuedEvidence === undefined
+          ? exactNewAcceptance
+            ? projected.acceptedRunPredecessorId
+            : current.acceptedRunPredecessorId
+          : durableAcceptedQueuePredecessorId(queuedEvidence),
+        ...(exactRunId !== undefined ? { acceptedRunThreadId: acceptedThreadId } : {}),
+        ...(exactNewAcceptance
+          ? {
+              acceptedRunMessageId:
+                routeMessageId
+                ?? current.pendingRunMessageId
+                ?? projected.acceptedRunMessageId,
+              pendingRunId: undefined,
+              pendingRunMessageId: undefined,
+              pendingRunThreadId: undefined,
+            }
+          : {}),
+        delegation: {
+          ...current.delegation,
+          status: nextStatus,
+          errorCode: undefined,
+          errorMessage: undefined,
+          updatedAt: now,
+        },
+        lastRunStatus: nextStatus === "FAILED" || nextStatus === "COMPLETED" || nextStatus === "WAITING"
+          ? nextStatus
+          : undefined,
+        updatedAt: now,
+      };
     });
-    if (committed && (runtimeStatus === "COMPLETED" || runtimeStatus === "FAILED")) {
-      const accepted = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
-      if (accepted !== undefined) {
-        await this.recoverTerminalMessages(accepted).catch(() => undefined);
-      }
+    if (committed === undefined || committed.delegation === undefined) return;
+    if (appendHistory) {
+      await this.appendSessionHistoryLine(
+        committed,
+        "system",
+        `Background task started: ${committed.delegation.title}`,
+        undefined,
+        undefined,
+        `delegation-started:${committed.delegation.taskId}`,
+      );
+      await this.appendHistoryLine(
+        "system",
+        `Launched background task '${committed.name}'.`,
+        undefined,
+        undefined,
+        `delegation-launched:${committed.delegation.taskId}`,
+      );
+    }
+    if (runtimeStatus === "COMPLETED" || runtimeStatus === "FAILED") {
+      await this.recoverTerminalMessages(committed).catch(() => undefined);
     }
   }
 
@@ -4016,28 +4040,70 @@ export class App {
   private async syncSessionFromDescribePayload(
     payload: SessionDescribedEventPayload,
   ): Promise<void> {
-    const beforeProjection = this.sessionsFile.sessions.find(
+    const initialTarget = this.sessionsFile.sessions.find(
       (session) => session.sessionId === payload.sessionId,
     );
-    const patchedSession = await this.projectSessionFromDescribePayload(payload);
+    if (initialTarget === undefined) return;
+    this.assertDescribeThreadIdentity(payload);
+    const state = this.uiStore.getState();
+    const loadedProfiles = state.activeProfile.id === initialTarget.profileId
+      ? undefined
+      : await this.profileStore.load();
+    let discoveredQueuedTerminal = false;
+    let terminalAccepted = false;
+    let environmentError: TuiEnvironmentIdentityError | undefined;
+    let patchedSession: TuiSessionMeta | undefined;
+    try {
+      patchedSession = await this.commitQueueSessionMutation(payload.sessionId, (current) => {
+        if (
+          current.acceptedRunId !== undefined
+          && (current.lastRunStatus === "COMPLETED" || current.lastRunStatus === "FAILED")
+          && payload.operatorThreadView !== undefined
+          && exactRunStatusFromDescribedView(
+            payload.operatorThreadView,
+            current.acceptedRunId,
+          ) === undefined
+        ) return undefined;
+        const currentState = this.uiStore.getState();
+        const profile = currentState.activeProfile.id === current.profileId
+          ? currentState.activeProfile
+          : loadedProfiles?.find((candidate) => candidate.id === current.profileId)
+            ?? currentState.activeProfile;
+        try {
+          const projected = this.projectSessionFromDescribePayloadForSession(payload, current, profile);
+          discoveredQueuedTerminal = (projected.terminalQueuedRuns?.length ?? 0)
+            > (current.terminalQueuedRuns?.length ?? 0);
+        terminalAccepted = projected.acceptedRunId !== undefined
+          && (projected.lastRunStatus === "COMPLETED" || projected.lastRunStatus === "FAILED")
+          && (
+            current.acceptedRunId !== projected.acceptedRunId
+            || current.lastRunStatus !== projected.lastRunStatus
+          );
+          return projected;
+        } catch (error) {
+          if (error instanceof TuiEnvironmentIdentityError) environmentError = error;
+          throw error;
+        }
+      });
+    } catch (error) {
+      if (environmentError !== undefined) {
+        await this.appendDiagnosticsLog({
+          scope: "tui.environment_identity",
+          summary: environmentError.message,
+          details: JSON.stringify({
+            code: environmentError.code,
+            sessionId: initialTarget.sessionId,
+            persistedEnvironmentPresetId: initialTarget.environmentPresetId,
+            runtimeEnvironmentPresetId: payload.activeAssembly?.environmentPresetId,
+          }),
+        });
+      }
+      throw error;
+    }
     if (patchedSession === undefined) return;
-    const current = this.sessionsFile.sessions.find(
-      (session) => session.sessionId === payload.sessionId,
-    );
-    if (
-      beforeProjection === undefined
-      || current === undefined
-      || hasSameTuiLifecycleEvidence(beforeProjection, current) === false
-    ) return;
-    if (await this.commitProjectedSession(patchedSession, current) === false) return;
-    const discoveredQueuedTerminal = (patchedSession.terminalQueuedRuns?.length ?? 0)
-      > (beforeProjection.terminalQueuedRuns?.length ?? 0);
     if (
       discoveredQueuedTerminal
-      || (
-        patchedSession.acceptedRunId !== undefined
-        && (patchedSession.lastRunStatus === "COMPLETED" || patchedSession.lastRunStatus === "FAILED")
-      )
+      || terminalAccepted
     ) {
       await this.recoverTerminalMessages(patchedSession);
     }
@@ -4050,6 +4116,20 @@ export class App {
     if (initialTarget === undefined) {
       return;
     }
+    this.assertDescribeThreadIdentity(payload);
+    const state = this.uiStore.getState();
+    const loadedProfiles = state.activeProfile.id === initialTarget.profileId
+      ? undefined
+      : await this.profileStore.load();
+    const target = this.sessionsFile.sessions.find((session) => session.sessionId === payload.sessionId);
+    if (target === undefined) return;
+    const profile = state.activeProfile.id === target.profileId
+      ? state.activeProfile
+      : loadedProfiles?.find((candidate) => candidate.id === target.profileId) ?? state.activeProfile;
+    return this.projectSessionFromDescribePayloadForSession(payload, target, profile);
+  }
+
+  private assertDescribeThreadIdentity(payload: SessionDescribedEventPayload): void {
     const describedView = payload.operatorThreadView;
     if (
       describedView !== undefined
@@ -4060,15 +4140,14 @@ export class App {
     ) {
       throw new Error("Session description thread identity did not match the described session.");
     }
-    const state = this.uiStore.getState();
-    const loadedProfiles = state.activeProfile.id === initialTarget.profileId
-      ? undefined
-      : await this.profileStore.load();
-    const target = this.sessionsFile.sessions.find((session) => session.sessionId === payload.sessionId);
-    if (target === undefined) return;
-    const profile = state.activeProfile.id === target.profileId
-      ? state.activeProfile
-      : loadedProfiles?.find((candidate) => candidate.id === target.profileId) ?? state.activeProfile;
+  }
+
+  private projectSessionFromDescribePayloadForSession(
+    payload: SessionDescribedEventPayload,
+    target: TuiSessionMeta,
+    profile: TuiProfile,
+  ): TuiSessionMeta {
+    const describedView = payload.operatorThreadView;
     const resolvedWaitFor = payload.waitFor ?? target.pendingWaitFor;
     const runtimePayload: SessionDescribedEventPayload =
       payload.waitFor === resolvedWaitFor
@@ -4078,29 +4157,12 @@ export class App {
             waitFor: resolvedWaitFor,
           };
     const runtimeEnvironmentPresetId = payload.activeAssembly?.environmentPresetId;
-    let environmentPresetId: TuiEnvironmentPresetId;
-    try {
-      environmentPresetId = resolveTuiSessionEnvironment({
-        session: target,
-        runtimeEnvironmentPresetId,
-        requireRuntimeIdentity:
-          target.started && target.environmentPresetId === undefined,
-      });
-    } catch (error) {
-      if (error instanceof TuiEnvironmentIdentityError) {
-        await this.appendDiagnosticsLog({
-          scope: "tui.environment_identity",
-          summary: error.message,
-          details: JSON.stringify({
-            code: error.code,
-            sessionId: target.sessionId,
-            persistedEnvironmentPresetId: target.environmentPresetId,
-            runtimeEnvironmentPresetId,
-          }),
-        });
-      }
-      throw error;
-    }
+    const environmentPresetId = resolveTuiSessionEnvironment({
+      session: target,
+      runtimeEnvironmentPresetId,
+      requireRuntimeIdentity:
+        target.started && target.environmentPresetId === undefined,
+    });
     const recoveredRoute = target.pendingRunMessageId === undefined
       ? undefined
       : describedView?.conversationMessageRoutes?.find(
@@ -4465,14 +4527,10 @@ export class App {
         }),
       });
       if (page.nextCursor !== undefined || resetCursor) {
-        const current = this.sessionsFile.sessions.find((entry) => entry.sessionId === session.sessionId) ?? session;
-        const updated = { ...current, terminalMessageCursor: page.nextCursor };
-        this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, updated);
-        this.uiStore.patch({
-          sessions: this.sessionsFile.sessions,
-          ...(this.uiStore.getState().activeSession.sessionId === updated.sessionId ? { activeSession: updated } : {}),
-        });
-        await this.saveSessionsFile();
+        await this.commitQueueSessionMutation(session.sessionId, (current) => ({
+          ...current,
+          terminalMessageCursor: page.nextCursor,
+        }));
       }
     };
     try {
@@ -4547,24 +4605,53 @@ export class App {
     const childSessionName = task.childSessionName ?? task.title;
     const existing = this.sessionsFile.sessions.find((session) => session.sessionId === childSessionId);
     if (existing !== undefined) {
-      const nextSession = await this.commitQueueSessionMutation(childSessionId, (current) => ({
-        ...current,
-        profileId: task.profileId,
-        updatedAt: task.updatedAt,
-        started: true,
-        ...patch,
-        delegation: task,
-        lastRunStatus:
-          task.status === "FAILED"
-            ? "FAILED"
-            : task.status === "COMPLETED"
-              ? "COMPLETED"
-              : task.status === "WAITING"
-                ? "WAITING"
-                : task.status === "RUNNING" || task.status === "RECOVERING"
-                  ? undefined
-                  : current.lastRunStatus,
-      }));
+      const nextSession = await this.commitQueueSessionMutation(childSessionId, (current) => {
+        const currentTask = current.delegation;
+        if (
+          currentTask !== undefined
+          && (
+            currentTask.taskId !== task.taskId
+            || (
+              currentTask.parentRunId !== undefined
+              && task.parentRunId !== undefined
+              && currentTask.parentRunId !== task.parentRunId
+            )
+            ||
+            task.updatedAt < currentTask.updatedAt
+            || (
+              task.updatedAt === currentTask.updatedAt
+              && (
+                currentTask.status === "WAITING"
+                || currentTask.status === "COMPLETED"
+                || currentTask.status === "FAILED"
+              )
+              && (task.status === "RUNNING" || task.status === "RECOVERING")
+            )
+            || (
+              (current.lastRunStatus === "COMPLETED" || current.lastRunStatus === "FAILED")
+              && (task.status === "RUNNING" || task.status === "RECOVERING")
+            )
+          )
+        ) return undefined;
+        return {
+          ...current,
+          profileId: task.profileId,
+          started: true,
+          ...patch,
+          delegation: task,
+          updatedAt: task.updatedAt,
+          lastRunStatus:
+            task.status === "FAILED"
+              ? "FAILED"
+              : task.status === "COMPLETED"
+                ? "COMPLETED"
+                : task.status === "WAITING"
+                  ? "WAITING"
+                  : task.status === "RUNNING" || task.status === "RECOVERING"
+                    ? undefined
+                    : current.lastRunStatus,
+        };
+      });
       if (nextSession === undefined) return;
       const state = this.uiStore.getState();
       if (state.activeSession.sessionId === task.parentSessionId) {
@@ -5137,26 +5224,31 @@ export class App {
 
       const preview = summarizePreview(text);
       const updatedAt = lines[lines.length - 1]?.timestamp ?? new Date().toISOString();
-      const activeSession = this.mergeSessionHistoryMetadata(state.activeSession, {
-        preview,
-        updatedAt,
-        hasArtifacts: dataHasArtifacts(data),
-        hasSummary: role === "assistant" && preview.length > 0,
-        launchSummary:
-          role === "system" && text.startsWith("Task=") ? text : undefined,
-      });
-      this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, activeSession);
+      const activeSession = await this.commitQueueSessionMutation(
+        state.activeSession.sessionId,
+        (current) => this.mergeSessionHistoryMetadata(current, {
+          preview,
+          updatedAt,
+          hasArtifacts: dataHasArtifacts(data),
+          hasSummary: role === "assistant" && preview.length > 0,
+          launchSummary:
+            role === "system" && text.startsWith("Task=") ? text : undefined,
+        }),
+      );
+      if (activeSession === undefined) return;
 
-      this.uiStore.patch({
-        transcript: nextTranscript,
-        activeSession,
-        sessions: this.sessionsFile.sessions,
-        chatUnreadCount: nextUnread,
-        scroll: {
-          ...state.scroll,
-          chat: nextScroll,
-        },
-      });
+      if (this.uiStore.getState().activeSession.sessionId === activeSession.sessionId) {
+        this.uiStore.patch({
+          transcript: nextTranscript,
+          activeSession,
+          sessions: this.sessionsFile.sessions,
+          chatUnreadCount: nextUnread,
+          scroll: {
+            ...state.scroll,
+            chat: nextScroll,
+          },
+        });
+      }
 
       try {
         for (const line of lines) {
@@ -5304,112 +5396,10 @@ export class App {
     runId: string;
     messageId: string;
   }): Promise<boolean> {
-    const persistedSession = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
-    const session = persistedSession === undefined
-      ? undefined
-      : { ...persistedSession, ...normalizeTuiQueueGraph(persistedSession) };
-    const terminalQueuedRun = session?.terminalQueuedRuns?.find((terminal) =>
-      terminal.runId === input.runId
-      && terminal.messageId === input.messageId
-      && terminal.threadId === input.threadId
+    const committed = await this.commitQueueSessionMutation(input.sessionId, (current) =>
+      projectForegroundSessionProgress(current, input)
     );
-    const queuedReservation = session?.queuedRunReservations?.find((reservation) =>
-      reservation.runId === input.runId
-      && reservation.messageId === input.messageId
-      && reservation.threadId === input.threadId
-    );
-    const pendingQueueSubmission = session?.pendingQueueSubmissions?.find((submission) =>
-      submission.runId === input.runId
-      && submission.messageId === input.messageId
-      && submission.threadId === input.threadId
-    );
-    const exactAcceptedStart = session !== undefined
-      && session.acceptedRunId === input.runId
-      && session.acceptedRunMessageId === input.messageId
-      && session.acceptedRunThreadId === input.threadId;
-    if (
-      session === undefined
-      || session.delegation !== undefined
-      || terminalQueuedRun !== undefined
-      || (
-        (queuedReservation ?? pendingQueueSubmission) !== undefined
-        && queuedEvidenceCanReplaceAcceptedRun(session, (queuedReservation ?? pendingQueueSubmission)!) === false
-      )
-      || (
-        exactAcceptedStart === false
-        && queuedReservation === undefined
-        && pendingQueueSubmission === undefined
-        && (
-          session.pendingRunId !== input.runId
-          || session.pendingRunMessageId !== input.messageId
-          || session.pendingRunThreadId !== input.threadId
-        )
-      )
-    ) return false;
-    const acceptedQueueEvidence = queuedReservation ?? pendingQueueSubmission;
-    let acceptedQueueGraph = acceptedQueueEvidence !== undefined
-      ? advanceTuiQueueAuthority(
-          normalizeTuiQueueGraph(session),
-          acceptedQueueEvidence,
-        )
-      : normalizeTuiQueueGraph(session);
-    let acceptedQueuePredecessorId = acceptedQueueEvidence === undefined
-      ? exactAcceptedStart
-        ? session.acceptedRunPredecessorId
-        : undefined
-      : durableAcceptedQueuePredecessorId(acceptedQueueEvidence);
-    if (exactAcceptedStart) {
-      const unresolvedSuccessors = [
-        ...(acceptedQueueGraph.pendingQueueSubmissions ?? []),
-        ...(acceptedQueueGraph.queuedRunReservations ?? []),
-      ].filter((candidate) =>
-        candidate.threadId === input.threadId
-        && candidate.runId !== input.runId
-        && candidate.predecessorRunId !== input.runId
-        && acceptedQueuePredecessorMatches(session, candidate)
-      );
-      if (unresolvedSuccessors.length > 1) return false;
-      if (unresolvedSuccessors.length === 1) {
-        acceptedQueueGraph = bindTuiQueueSuccessor(
-          acceptedQueueGraph,
-          unresolvedSuccessors[0]!,
-          { runId: input.runId, messageId: input.messageId, threadId: input.threadId },
-        );
-      }
-      const retainedAcceptedRecord = [
-        ...(acceptedQueueGraph.pendingQueueSubmissions ?? []),
-        ...(acceptedQueueGraph.queuedRunReservations ?? []),
-      ].find((candidate) =>
-        candidate.runId === input.runId
-        && candidate.messageId === input.messageId
-        && candidate.threadId === input.threadId
-      );
-      if (retainedAcceptedRecord !== undefined) {
-        acceptedQueuePredecessorId = durableAcceptedQueuePredecessorId(retainedAcceptedRecord);
-        acceptedQueueGraph = advanceTuiQueueAuthority(
-          acceptedQueueGraph,
-          retainedAcceptedRecord,
-        );
-      }
-    }
-    const accepted: TuiSessionMeta = {
-      ...session,
-      started: true,
-      focusedThreadId: input.threadId,
-      acceptedRunId: input.runId,
-      acceptedRunMessageId: input.messageId,
-      acceptedRunThreadId: input.threadId,
-      acceptedRunPredecessorId: acceptedQueuePredecessorId,
-      pendingRunId: undefined,
-      pendingRunMessageId: undefined,
-      pendingRunThreadId: undefined,
-      queuedRunReservations: acceptedQueueGraph.queuedRunReservations,
-      pendingQueueSubmissions: acceptedQueueGraph.pendingQueueSubmissions,
-      terminalQueuedRuns: acceptedQueueGraph.terminalQueuedRuns,
-      lastRunStatus: undefined,
-      updatedAt: new Date().toISOString(),
-    };
-    if (await this.commitProjectedSession(accepted, persistedSession) === false) return false;
+    if (committed === undefined) return false;
     if (this.uiStore.getState().activeSession.sessionId === input.sessionId) {
       this.uiStore.patch({
         running: true,
@@ -5425,6 +5415,7 @@ export class App {
     sessionId: string;
     threadId: string;
     runId: string;
+    messageId?: string | undefined;
     result: Extract<RunnerEvent, { type: "run.completed" }>["payload"]["result"];
     authoritativeView?: SessionDescribedEventPayload["operatorThreadView"] | undefined;
   }): Promise<boolean> {
@@ -5442,195 +5433,148 @@ export class App {
       && initialSession.profileId !== initialActiveProfile.id
       ? await this.profileStore.load()
       : undefined;
-    const persistedSession = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
-    const session = persistedSession === undefined
-      ? undefined
-      : { ...persistedSession, ...normalizeTuiQueueGraph(persistedSession) };
-    if (session === undefined) return false;
-    const currentActiveProfile = this.uiStore.getState().activeProfile;
-    const owningProfile = input.result.operatorAffordance === undefined
-      ? undefined
-      : session.profileId === currentActiveProfile.id
-        ? currentActiveProfile
-        : this.profileStore.findById(loadedProfiles ?? [], session.profileId);
-    const queuedReservation = session.queuedRunReservations?.find((reservation) =>
-      reservation.runId === input.runId
-      && reservation.threadId === input.threadId
-    );
-    const pendingQueueSubmission = session.pendingQueueSubmissions?.find((submission) =>
-      submission.runId === input.runId
-      && submission.threadId === input.threadId
-    );
     const terminalStatus = input.result.output.status === "COMPLETED"
       ? "COMPLETED" as const
       : input.result.output.status === "FAILED"
         ? "FAILED" as const
         : undefined;
-    const terminalQueuedRun = terminalStatus === undefined
-      ? undefined
-      : session.terminalQueuedRuns?.find((terminal) =>
-          terminal.runId === input.runId
-          && terminal.threadId === input.threadId
-          && terminal.status === terminalStatus
+    const committed = await this.commitQueueSessionMutation(input.sessionId, (current) => {
+      const session = { ...current, ...normalizeTuiQueueGraph(current) };
+      const queuedEvidence = resolveExactTuiQueuedEvidence(session, {
+        runId: input.runId,
+        threadId: input.threadId,
+        messageId: input.messageId,
+      });
+      if (queuedEvidence === undefined) return undefined;
+      const hasExactTerminalAuthority = terminalStatus === undefined
+        || (
+          input.authoritativeView !== undefined
+          && input.authoritativeView.thread.sessionId === input.sessionId
+          && input.authoritativeView.thread.threadId === input.threadId
+          && hasExactQueuedTerminalTurn(input.authoritativeView, {
+            ...queuedEvidence,
+            status: terminalStatus,
+          })
         );
-    const acceptedQueuedEvidence = session.acceptedRunId === input.runId
-      && session.acceptedRunMessageId !== undefined
-      && session.acceptedRunThreadId === input.threadId
-      && session.acceptedRunPredecessorId !== undefined
-      ? {
-          runId: session.acceptedRunId,
-          messageId: session.acceptedRunMessageId,
-          threadId: session.acceptedRunThreadId,
-          ...(session.acceptedRunPredecessorId === null
-            ? {}
-            : { predecessorRunId: session.acceptedRunPredecessorId }),
-        }
-      : undefined;
-    const queuedEvidence = queuedReservation
-      ?? pendingQueueSubmission
-      ?? terminalQueuedRun
-      ?? acceptedQueuedEvidence;
-    if (queuedEvidence === undefined) return false;
-    const hasExactTerminalAuthority = terminalStatus === undefined
-      || (
-        input.authoritativeView !== undefined
-        && input.authoritativeView.thread.sessionId === input.sessionId
-        && input.authoritativeView.thread.threadId === input.threadId
-        && hasExactQueuedTerminalTurn(input.authoritativeView, {
-          ...queuedEvidence,
-          status: terminalStatus,
-        })
+      if (terminalStatus !== undefined && hasExactTerminalAuthority === false) return undefined;
+      const pendingQueueSubmission = session.pendingQueueSubmissions?.find((submission) =>
+        submission.runId === queuedEvidence.runId
+        && submission.messageId === queuedEvidence.messageId
+        && submission.threadId === queuedEvidence.threadId
       );
-    if (terminalStatus !== undefined && hasExactTerminalAuthority === false) return false;
-    let currentQueueGraph = normalizeTuiQueueGraph(session);
-    let orderedEvidence = queuedEvidence;
-    if (
-      queuedEvidenceCanReplaceAcceptedRun(session, queuedEvidence) === false
-      && terminalStatus !== undefined
-      && hasExactTerminalAuthority
-    ) {
-      const authoritativeView = input.authoritativeView!;
-      const reconciled = reconcileExactQueuedLifecycle(session, authoritativeView);
-      currentQueueGraph = {
-        pendingQueueSubmissions: reconciled.pendingQueueSubmissions,
-        queuedRunReservations: reconciled.queuedRunReservations,
-        terminalQueuedRuns: reconciled.terminalQueuedRuns,
-      };
-      const reconciledEvidence = [
-        ...(currentQueueGraph.pendingQueueSubmissions ?? []),
-        ...(currentQueueGraph.queuedRunReservations ?? []),
-        ...(currentQueueGraph.terminalQueuedRuns ?? []),
-      ].find((candidate) =>
-        candidate.runId === queuedEvidence.runId
-        && candidate.messageId === queuedEvidence.messageId
-        && candidate.threadId === queuedEvidence.threadId
-      );
-      if (reconciledEvidence !== undefined) orderedEvidence = reconciledEvidence;
-    }
-    const installAsCurrent = hasExactTerminalAuthority
-      && queuedEvidenceCanReplaceAcceptedRun(
+      let currentQueueGraph = normalizeTuiQueueGraph(session);
+      let orderedEvidence = queuedEvidence;
+      if (
+        queuedEvidenceCanReplaceAcceptedRun(session, queuedEvidence) === false
+        && terminalStatus !== undefined
+      ) {
+        const reconciled = reconcileExactQueuedLifecycle(session, input.authoritativeView!);
+        currentQueueGraph = {
+          pendingQueueSubmissions: reconciled.pendingQueueSubmissions,
+          queuedRunReservations: reconciled.queuedRunReservations,
+          terminalQueuedRuns: reconciled.terminalQueuedRuns,
+        };
+        const reconciledEvidence = [
+          ...(currentQueueGraph.pendingQueueSubmissions ?? []),
+          ...(currentQueueGraph.queuedRunReservations ?? []),
+          ...(currentQueueGraph.terminalQueuedRuns ?? []),
+        ].find((candidate) =>
+          candidate.runId === queuedEvidence.runId
+          && candidate.messageId === queuedEvidence.messageId
+          && candidate.threadId === queuedEvidence.threadId
+        );
+        if (reconciledEvidence !== undefined) orderedEvidence = reconciledEvidence;
+      }
+      const installAsCurrent = queuedEvidenceCanReplaceAcceptedRun(
         { ...session, ...currentQueueGraph },
         orderedEvidence,
       );
-    let settledQueueGraph = installAsCurrent
-      ? advanceTuiQueueAuthority(currentQueueGraph, orderedEvidence)
-      : {
-          ...currentQueueGraph,
+      let settledQueueGraph = installAsCurrent
+        ? advanceTuiQueueAuthority(currentQueueGraph, orderedEvidence)
+        : {
+            ...currentQueueGraph,
+            queuedRunReservations: omitQueuedRunReservation(
+              currentQueueGraph.queuedRunReservations,
+              orderedEvidence,
+            ),
+            pendingQueueSubmissions: pendingQueueSubmission === undefined
+              ? currentQueueGraph.pendingQueueSubmissions
+              : omitExactRunIdentity(currentQueueGraph.pendingQueueSubmissions, pendingQueueSubmission),
+          };
+      if (installAsCurrent && terminalStatus !== undefined) {
+        settledQueueGraph = {
+          ...settledQueueGraph,
           queuedRunReservations: omitQueuedRunReservation(
-            currentQueueGraph.queuedRunReservations,
+            settledQueueGraph.queuedRunReservations,
             orderedEvidence,
           ),
-          pendingQueueSubmissions: pendingQueueSubmission === undefined
-            ? currentQueueGraph.pendingQueueSubmissions
-            : omitExactRunIdentity(currentQueueGraph.pendingQueueSubmissions, pendingQueueSubmission),
+          pendingQueueSubmissions: omitExactRunIdentity(
+            settledQueueGraph.pendingQueueSubmissions,
+            orderedEvidence,
+          ),
         };
-    if (installAsCurrent && terminalStatus !== undefined) {
-      settledQueueGraph = {
-        ...settledQueueGraph,
-        queuedRunReservations: omitQueuedRunReservation(
-          settledQueueGraph.queuedRunReservations,
-          orderedEvidence,
-        ),
-        pendingQueueSubmissions: omitExactRunIdentity(
-          settledQueueGraph.pendingQueueSubmissions,
-          orderedEvidence,
-        ),
-      };
-    }
-    const accepted: TuiSessionMeta = {
-      ...session,
-      started: true,
-      ...(installAsCurrent
-        ? {
-            acceptedRunId: orderedEvidence.runId,
-            acceptedRunMessageId: orderedEvidence.messageId,
-            acceptedRunThreadId: orderedEvidence.threadId,
-            acceptedRunPredecessorId: durableAcceptedQueuePredecessorId(orderedEvidence),
-          }
-        : {}),
-      queuedRunReservations: settledQueueGraph.queuedRunReservations,
-      pendingQueueSubmissions: settledQueueGraph.pendingQueueSubmissions,
-      terminalQueuedRuns: terminalStatus === undefined
-        ? settledQueueGraph.terminalQueuedRuns
-        : appendTerminalQueuedRun(settledQueueGraph.terminalQueuedRuns, {
-            ...orderedEvidence,
-            status: terminalStatus,
-          }),
-      ...(installAsCurrent
-        ? {
-            pendingWaitFor: input.result.output.status === "WAITING"
-              ? input.result.output.waitFor
-              : undefined,
-            lastRunStatus: input.result.output.status,
-          }
-        : {}),
-      ...(input.result.operatorAffordance !== undefined && owningProfile !== undefined
-        ? {
-            operatorState: this.buildSessionOperatorState({
-              session,
-              profile: owningProfile,
-              runtime: input.result.operatorAffordance,
-            }),
-          }
-        : {}),
-      ...(session.delegation === undefined
-        ? {}
-        : {
-            delegation: {
-              ...session.delegation,
-              status: input.result.output.status === "COMPLETED"
-                ? "COMPLETED" as const
-                : input.result.output.status === "WAITING"
-                  ? "WAITING" as const
-                  : "FAILED" as const,
-              errorCode: undefined,
-              errorMessage: input.result.output.status === "FAILED"
-                ? input.result.output.errors[0]?.message
-                : undefined,
-              updatedAt: new Date().toISOString(),
-            },
-          }),
-      updatedAt: new Date().toISOString(),
-    };
-    const committed = await this.commitQueueSessionMutation(input.sessionId, (current) => {
-      if (current === persistedSession) return accepted;
-      if (
-        terminalStatus === undefined
-        || current.acceptedRunId !== orderedEvidence.runId
-        || current.acceptedRunMessageId !== orderedEvidence.messageId
-        || current.acceptedRunThreadId !== orderedEvidence.threadId
-      ) return undefined;
+      }
+      const currentActiveProfile = this.uiStore.getState().activeProfile;
+      const owningProfile = input.result.operatorAffordance === undefined
+        ? undefined
+        : session.profileId === currentActiveProfile.id
+          ? currentActiveProfile
+          : this.profileStore.findById(loadedProfiles ?? [], session.profileId);
+      const now = new Date().toISOString();
       return {
-        ...current,
-        pendingWaitFor: accepted.pendingWaitFor,
-        lastRunStatus: accepted.lastRunStatus,
-        terminalQueuedRuns: appendTerminalQueuedRun(current.terminalQueuedRuns, {
-          ...orderedEvidence,
-          status: terminalStatus,
-        }),
-        ...(accepted.operatorState !== undefined ? { operatorState: accepted.operatorState } : {}),
-        ...(accepted.delegation !== undefined ? { delegation: accepted.delegation } : {}),
-        updatedAt: accepted.updatedAt,
+        ...session,
+        started: true,
+        ...(installAsCurrent
+          ? {
+              acceptedRunId: orderedEvidence.runId,
+              acceptedRunMessageId: orderedEvidence.messageId,
+              acceptedRunThreadId: orderedEvidence.threadId,
+              acceptedRunPredecessorId: durableAcceptedQueuePredecessorId(orderedEvidence),
+            }
+          : {}),
+        queuedRunReservations: settledQueueGraph.queuedRunReservations,
+        pendingQueueSubmissions: settledQueueGraph.pendingQueueSubmissions,
+        terminalQueuedRuns: terminalStatus === undefined
+          ? settledQueueGraph.terminalQueuedRuns
+          : appendTerminalQueuedRun(settledQueueGraph.terminalQueuedRuns, {
+              ...orderedEvidence,
+              status: terminalStatus,
+            }),
+        ...(installAsCurrent
+          ? {
+              pendingWaitFor: input.result.output.status === "WAITING"
+                ? input.result.output.waitFor
+                : undefined,
+              lastRunStatus: input.result.output.status,
+            }
+          : {}),
+        ...(input.result.operatorAffordance !== undefined && owningProfile !== undefined
+          ? {
+              operatorState: this.buildSessionOperatorState({
+                session,
+                profile: owningProfile,
+                runtime: input.result.operatorAffordance,
+              }),
+            }
+          : {}),
+        ...(session.delegation === undefined
+          ? {}
+          : {
+              delegation: {
+                ...session.delegation,
+                status: input.result.output.status === "COMPLETED"
+                  ? "COMPLETED" as const
+                  : input.result.output.status === "WAITING"
+                    ? "WAITING" as const
+                    : "FAILED" as const,
+                errorCode: undefined,
+                errorMessage: input.result.output.status === "FAILED"
+                  ? input.result.output.errors[0]?.message
+                  : undefined,
+                updatedAt: now,
+              },
+            }),
+        updatedAt: now,
       };
     });
     if (committed === undefined) return false;
@@ -5646,78 +5590,109 @@ export class App {
     status?: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED" | undefined;
     waitFor?: TuiSessionMeta["pendingWaitFor"] | undefined;
   }): Promise<void> {
-    const session = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
-    if (session?.delegation === undefined) {
-      return;
-    }
-    const status = session.delegation.status;
-    if (status === "COMPLETED" || status === "FAILED") return;
-    const exactPendingAcceptance = session.pendingRunThreadId === input.threadId
-      && session.pendingRunId === input.runId
-      && (
-        session.pendingRunMessageId === undefined
-        || input.messageId === session.pendingRunMessageId
-      );
-    const queuedReservation = [
-      ...(session.pendingQueueSubmissions ?? []),
-      ...(session.queuedRunReservations ?? []),
-    ].find((reservation) =>
-      reservation.runId === input.runId
-      && reservation.threadId === input.threadId
-      && input.messageId !== undefined
-      && reservation.messageId === input.messageId
-    );
-    const exactPendingReplyAcceptance = input.requestId !== undefined
-      && session.pendingRunThreadId === input.threadId
-      && session.pendingRunRequestId === input.requestId
-      && session.acceptedRunId !== input.runId;
-    if (
-      session.acceptedRunId !== input.runId
-      && exactPendingAcceptance === false
-      && exactPendingReplyAcceptance === false
-      && queuedReservation === undefined
-    ) return;
-    if (session.acceptedRunId === input.runId && status === "RUNNING") return;
-    if (session.acceptedRunId === input.runId && status === "WAITING") return;
     const nextStatus = input.status ?? "RUNNING";
-    const committed = await this.updateAcceptedBackgroundSession({
-      ...session.delegation,
-      status: nextStatus,
-      errorCode: undefined,
-      errorMessage: undefined,
-      updatedAt: new Date().toISOString(),
-    }, undefined, {
-      focusedThreadId: input.threadId,
-      acceptedRunId: input.runId,
-      acceptedRunMessageId: input.messageId ?? queuedReservation?.messageId ?? session.pendingRunMessageId,
-      acceptedRunThreadId: input.threadId,
-      acceptedRunPredecessorId: queuedReservation === undefined
-        ? session.acceptedRunId === input.runId
-          ? session.acceptedRunPredecessorId
-          : undefined
-        : durableAcceptedQueuePredecessorId(queuedReservation),
-      pendingRunId: undefined,
-      pendingRunRequestId: undefined,
-      pendingRunMessageId: undefined,
-      pendingRunThreadId: undefined,
-      queuedRunReservations: queuedReservation === undefined
-        ? session.queuedRunReservations
-        : omitQueuedRunReservation(session.queuedRunReservations, queuedReservation),
-      pendingQueueSubmissions: queuedReservation === undefined
-        ? session.pendingQueueSubmissions
-        : omitExactRunIdentity(session.pendingQueueSubmissions, queuedReservation),
-      pendingWaitFor: nextStatus === "WAITING" ? input.waitFor : undefined,
-      lastRunStatus: nextStatus === "COMPLETED" || nextStatus === "FAILED"
-        ? nextStatus
-        : nextStatus === "WAITING"
-          ? "WAITING"
-          : undefined,
+    let appendStartedHistory = false;
+    const committed = await this.commitQueueSessionMutation(input.sessionId, (current) => {
+      if (current.delegation === undefined) return undefined;
+      if (current.delegation.status === "COMPLETED" || current.delegation.status === "FAILED") return undefined;
+      const queuedEvidence = input.messageId === undefined
+        ? undefined
+        : resolveExactTuiQueuedEvidence(current, {
+            runId: input.runId,
+            threadId: input.threadId,
+            messageId: input.messageId,
+          });
+      const exactPendingAcceptance = current.pendingRunThreadId === input.threadId
+        && current.pendingRunId === input.runId
+        && (
+          current.pendingRunMessageId === undefined
+            ? input.messageId === undefined
+            : current.pendingRunMessageId === input.messageId
+        );
+      const exactPendingReplyAcceptance = input.requestId !== undefined
+        && current.pendingRunThreadId === input.threadId
+        && current.pendingRunRequestId === input.requestId
+        && current.acceptedRunId !== input.runId;
+      const exactAccepted = current.acceptedRunId === input.runId
+        && current.acceptedRunThreadId === input.threadId
+        && (
+          input.messageId === undefined
+          || current.acceptedRunMessageId === input.messageId
+        );
+      if (
+        exactAccepted === false
+        && exactPendingAcceptance === false
+        && exactPendingReplyAcceptance === false
+        && queuedEvidence === undefined
+      ) return undefined;
+      if (
+        exactAccepted
+        && nextStatus === "RUNNING"
+        && (current.delegation.status === "RUNNING" || current.delegation.status === "WAITING")
+      ) return undefined;
+      const acceptedMessageId = input.messageId
+        ?? queuedEvidence?.messageId
+        ?? current.acceptedRunMessageId
+        ?? current.pendingRunMessageId;
+      const now = new Date().toISOString();
+      appendStartedHistory = current.started !== true;
+      return {
+        ...current,
+        started: true,
+        focusedThreadId: input.threadId,
+        acceptedRunId: input.runId,
+        acceptedRunMessageId: acceptedMessageId,
+        acceptedRunThreadId: input.threadId,
+        acceptedRunPredecessorId: queuedEvidence === undefined
+          ? exactAccepted
+            ? current.acceptedRunPredecessorId
+            : undefined
+          : durableAcceptedQueuePredecessorId(queuedEvidence),
+        pendingRunId: undefined,
+        pendingRunRequestId: undefined,
+        pendingRunMessageId: undefined,
+        pendingRunThreadId: undefined,
+        queuedRunReservations: queuedEvidence === undefined
+          ? current.queuedRunReservations
+          : omitQueuedRunReservation(current.queuedRunReservations, queuedEvidence),
+        pendingQueueSubmissions: queuedEvidence === undefined
+          ? current.pendingQueueSubmissions
+          : omitExactRunIdentity(current.pendingQueueSubmissions, queuedEvidence),
+        pendingWaitFor: nextStatus === "WAITING" ? input.waitFor : undefined,
+        lastRunStatus: nextStatus === "COMPLETED" || nextStatus === "FAILED"
+          ? nextStatus
+          : nextStatus === "WAITING"
+            ? "WAITING"
+            : undefined,
+        delegation: {
+          ...current.delegation,
+          status: nextStatus,
+          errorCode: undefined,
+          errorMessage: undefined,
+          updatedAt: now,
+        },
+        updatedAt: now,
+      };
     });
-    if (committed && (nextStatus === "COMPLETED" || nextStatus === "FAILED")) {
-      const accepted = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
-      if (accepted !== undefined) {
-        await this.recoverTerminalMessages(accepted).catch(() => undefined);
-      }
+    if (committed !== undefined && appendStartedHistory && committed.delegation !== undefined) {
+      await this.appendSessionHistoryLine(
+        committed,
+        "system",
+        `Background task started: ${committed.delegation.title}`,
+        undefined,
+        undefined,
+        `delegation-started:${committed.delegation.taskId}`,
+      );
+      await this.appendHistoryLine(
+        "system",
+        `Launched background task '${committed.name}'.`,
+        undefined,
+        undefined,
+        `delegation-launched:${committed.delegation.taskId}`,
+      );
+    }
+    if (committed !== undefined && (nextStatus === "COMPLETED" || nextStatus === "FAILED")) {
+      await this.recoverTerminalMessages(committed).catch(() => undefined);
     }
   }
 
@@ -5731,28 +5706,58 @@ export class App {
     );
     if (existing === undefined) return false;
     const shouldAppendStartedHistory = appendStartedHistory ?? existing?.started !== true;
-    const accepted = await this.commitQueueSessionMutation(task.childSessionId, (current) =>
-      current !== existing
+    const accepted = await this.commitQueueSessionMutation(task.childSessionId, (current) => {
+      const exactRunId = patch.acceptedRunId;
+      const queuedIdentity = exactRunId === undefined
         ? undefined
+        : [
+            ...(current.pendingQueueSubmissions ?? []),
+            ...(current.queuedRunReservations ?? []),
+            ...(current.terminalQueuedRuns ?? []),
+          ].find((candidate) => candidate.runId === exactRunId);
+      const exactQueuedEvidence = queuedIdentity === undefined
+        ? undefined
+        : resolveExactTuiQueuedEvidence(current, {
+            runId: queuedIdentity.runId,
+            messageId: queuedIdentity.messageId,
+            threadId: queuedIdentity.threadId,
+          });
+      const currentPatch = exactQueuedEvidence === undefined
+        ? patch
         : {
-            ...current,
-            profileId: task.profileId,
-            updatedAt: task.updatedAt,
-            started: true,
             ...patch,
-            delegation: task,
-            lastRunStatus:
-              task.status === "FAILED"
-                ? "FAILED"
-                : task.status === "COMPLETED"
-                  ? "COMPLETED"
-                  : task.status === "WAITING"
-                    ? "WAITING"
-                    : task.status === "RUNNING" || task.status === "RECOVERING"
-                      ? undefined
-                      : current.lastRunStatus,
-          }
-    );
+            acceptedRunId: exactQueuedEvidence.runId,
+            acceptedRunMessageId: exactQueuedEvidence.messageId,
+            acceptedRunThreadId: exactQueuedEvidence.threadId,
+            acceptedRunPredecessorId: durableAcceptedQueuePredecessorId(exactQueuedEvidence),
+            pendingQueueSubmissions: omitExactRunIdentity(
+              current.pendingQueueSubmissions,
+              exactQueuedEvidence,
+            ),
+            queuedRunReservations: omitQueuedRunReservation(
+              current.queuedRunReservations,
+              exactQueuedEvidence,
+            ),
+          };
+      return {
+        ...current,
+        profileId: task.profileId,
+        started: true,
+        ...currentPatch,
+        updatedAt: task.updatedAt,
+        delegation: task,
+        lastRunStatus:
+          task.status === "FAILED"
+            ? "FAILED"
+            : task.status === "COMPLETED"
+              ? "COMPLETED"
+              : task.status === "WAITING"
+                ? "WAITING"
+                : task.status === "RUNNING" || task.status === "RECOVERING"
+                  ? undefined
+                  : current.lastRunStatus,
+      };
+    });
     if (accepted === undefined) return false;
     if (shouldAppendStartedHistory === false) return true;
     await this.appendSessionHistoryLine(
@@ -5807,7 +5812,6 @@ export class App {
         ? "FAILED"
         : "COMPLETED";
     const nextSession = {
-      ...session,
       acceptedRunId: expectedRunId,
       acceptedRunMessageId:
         queuedReservation?.messageId ?? session.pendingRunMessageId ?? session.acceptedRunMessageId,
@@ -6992,6 +6996,89 @@ function reconcileExactQueuedLifecycle(
     queuedRunReservations,
     terminalQueuedRuns,
     ...(accepted !== undefined ? { accepted } : {}),
+  };
+}
+
+function projectForegroundSessionProgress(
+  source: TuiSessionMeta,
+  input: { sessionId: string; threadId: string; runId: string; messageId: string },
+): TuiSessionMeta | undefined {
+  const session = { ...source, ...normalizeTuiQueueGraph(source) };
+  if (session.delegation !== undefined) return undefined;
+  const queuedEvidence = resolveExactTuiQueuedEvidence(session, input);
+  if (queuedEvidence?.source === "tombstone") return undefined;
+  const exactAcceptedStart = session.acceptedRunId === input.runId
+    && session.acceptedRunMessageId === input.messageId
+    && session.acceptedRunThreadId === input.threadId;
+  if (
+    queuedEvidence !== undefined
+    && queuedEvidenceCanReplaceAcceptedRun(session, queuedEvidence) === false
+  ) return undefined;
+  if (
+    exactAcceptedStart === false
+    && queuedEvidence === undefined
+    && (
+      session.pendingRunId !== input.runId
+      || session.pendingRunMessageId !== input.messageId
+      || session.pendingRunThreadId !== input.threadId
+    )
+  ) return undefined;
+  let acceptedQueueGraph = queuedEvidence !== undefined
+    && (queuedEvidence.source === "pending" || queuedEvidence.source === "reservation")
+    ? advanceTuiQueueAuthority(normalizeTuiQueueGraph(session), queuedEvidence)
+    : normalizeTuiQueueGraph(session);
+  let acceptedQueuePredecessorId = queuedEvidence === undefined
+    ? exactAcceptedStart
+      ? session.acceptedRunPredecessorId
+      : undefined
+    : durableAcceptedQueuePredecessorId(queuedEvidence);
+  if (exactAcceptedStart) {
+    const unresolvedSuccessors = [
+      ...(acceptedQueueGraph.pendingQueueSubmissions ?? []),
+      ...(acceptedQueueGraph.queuedRunReservations ?? []),
+    ].filter((candidate) =>
+      candidate.threadId === input.threadId
+      && candidate.runId !== input.runId
+      && candidate.predecessorRunId !== input.runId
+      && acceptedQueuePredecessorMatches(session, candidate)
+    );
+    if (unresolvedSuccessors.length > 1) return undefined;
+    if (unresolvedSuccessors.length === 1) {
+      acceptedQueueGraph = bindTuiQueueSuccessor(
+        acceptedQueueGraph,
+        unresolvedSuccessors[0]!,
+        { runId: input.runId, messageId: input.messageId, threadId: input.threadId },
+      );
+    }
+    const retainedAcceptedRecord = [
+      ...(acceptedQueueGraph.pendingQueueSubmissions ?? []),
+      ...(acceptedQueueGraph.queuedRunReservations ?? []),
+    ].find((candidate) =>
+      candidate.runId === input.runId
+      && candidate.messageId === input.messageId
+      && candidate.threadId === input.threadId
+    );
+    if (retainedAcceptedRecord !== undefined) {
+      acceptedQueuePredecessorId = durableAcceptedQueuePredecessorId(retainedAcceptedRecord);
+      acceptedQueueGraph = advanceTuiQueueAuthority(acceptedQueueGraph, retainedAcceptedRecord);
+    }
+  }
+  return {
+    ...session,
+    started: true,
+    focusedThreadId: input.threadId,
+    acceptedRunId: input.runId,
+    acceptedRunMessageId: input.messageId,
+    acceptedRunThreadId: input.threadId,
+    acceptedRunPredecessorId: acceptedQueuePredecessorId,
+    pendingRunId: undefined,
+    pendingRunMessageId: undefined,
+    pendingRunThreadId: undefined,
+    queuedRunReservations: acceptedQueueGraph.queuedRunReservations,
+    pendingQueueSubmissions: acceptedQueueGraph.pendingQueueSubmissions,
+    terminalQueuedRuns: acceptedQueueGraph.terminalQueuedRuns,
+    lastRunStatus: undefined,
+    updatedAt: new Date().toISOString(),
   };
 }
 

@@ -28,6 +28,7 @@ import {
   advanceTuiQueueAuthority,
   bindTuiQueueSuccessor,
   normalizeTuiQueueGraph,
+  resolveExactTuiQueuedEvidence,
 } from "../../cli/session/TuiQueueGraph.js";
 
 
@@ -741,14 +742,23 @@ function createRunHarness(input: {
       const state = uiStore.getState();
       const session = state.sessions.find((candidate) => candidate.sessionId === sessionId);
       if (session === undefined) return false;
+      const resolvedEvidence = resolveExactTuiQueuedEvidence(session, {
+        runId,
+        threadId,
+        messageId: terminalInput.messageId,
+      });
+      if (resolvedEvidence === undefined) return false;
       const reservation = session.queuedRunReservations?.find((candidate) =>
-        candidate.runId === runId && candidate.threadId === threadId
+        candidate.runId === resolvedEvidence.runId
+        && candidate.messageId === resolvedEvidence.messageId
+        && candidate.threadId === resolvedEvidence.threadId
       );
       const pendingQueueSubmission = session.pendingQueueSubmissions?.find((candidate) =>
-        candidate.runId === runId && candidate.threadId === threadId
+        candidate.runId === resolvedEvidence.runId
+        && candidate.messageId === resolvedEvidence.messageId
+        && candidate.threadId === resolvedEvidence.threadId
       );
-      const evidence = reservation ?? pendingQueueSubmission;
-      if (evidence === undefined) return false;
+      const evidence = reservation ?? pendingQueueSubmission ?? resolvedEvidence;
       const remaining = reservation === undefined
         ? session.queuedRunReservations
         : session.queuedRunReservations?.filter((candidate) =>
@@ -854,10 +864,20 @@ function createRunHarness(input: {
         pendingQueueSubmissions: settledGraph.pendingQueueSubmissions,
         terminalQueuedRuns: terminalStatus === undefined
           ? settledGraph.terminalQueuedRuns
-          : [
-              ...(settledGraph.terminalQueuedRuns ?? []),
-              { ...orderedEvidence, status: terminalStatus },
-            ],
+          : settledGraph.terminalQueuedRuns?.some((candidate) => candidate.runId === orderedEvidence.runId)
+            ? settledGraph.terminalQueuedRuns
+            : [
+                ...(settledGraph.terminalQueuedRuns ?? []),
+                {
+                  runId: orderedEvidence.runId,
+                  messageId: orderedEvidence.messageId,
+                  threadId: orderedEvidence.threadId,
+                  ...(orderedEvidence.predecessorRunId !== undefined
+                    ? { predecessorRunId: orderedEvidence.predecessorRunId }
+                    : {}),
+                  status: terminalStatus,
+                },
+              ],
         ...(session.delegation === undefined
           ? {}
           : {
@@ -4108,7 +4128,8 @@ test("TuiRunController requires exact routed terminal evidence for direct and re
         let submittedRunId: string | undefined;
         const messageId = `message-${responseKind}-${mismatch}`;
         const threadId = "thread-main:session-1";
-        const harness = createRunHarness({
+        let harness: ReturnType<typeof createRunHarness>;
+        harness = createRunHarness({
           disableSynthesizedTerminalAuthority: true,
           activeSessionPatch: {
             acceptedRunId: "run-r0",
@@ -4118,6 +4139,20 @@ test("TuiRunController requires exact routed terminal evidence for direct and re
           sendCommand: async (type, payload) => {
             if (type === "conversation.message.submit") {
               submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+              harness.controller.onRunnerEvent(makeRunnerEvent({
+                type: "run.started",
+                sessionId: "session-1",
+                threadId,
+                runId: submittedRunId,
+                payload: {
+                  sessionId: "session-1",
+                  runId: submittedRunId,
+                  eventType: "user.message",
+                  sourceMessageId: messageId,
+                },
+              }));
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              await new Promise((resolve) => setTimeout(resolve, 0));
               if (responseKind === "response-loss") throw new Error("response lost");
               return makeRunnerEvent({
                 type: "run.completed",
@@ -4186,9 +4221,139 @@ test("TuiRunController requires exact routed terminal evidence for direct and re
           queueRequested: true,
         }), false);
         const session = harness.uiStore.getState().activeSession;
-        assert.equal(session.acceptedRunId, "run-r0");
+        assert.equal(session.acceptedRunId, submittedRunId);
+        assert.equal(session.acceptedRunMessageId, messageId);
+        assert.equal(session.lastRunStatus, undefined);
         assert.equal(session.terminalQueuedRuns?.some((item) => item.runId === submittedRunId) ?? false, false);
         assert.equal(harness.history.some((line) => line.output?.runId === submittedRunId), false);
+      });
+    }
+  }
+});
+
+test("TuiRunController validates direct and response-loss terminals after pre-route queued acceptance", async (t) => {
+  for (const responseKind of ["direct", "response-loss"] as const) {
+    for (const outcome of ["COMPLETED", "FAILED", "CANCELLED"] as const) {
+      await t.test(`${responseKind} ${outcome}`, async () => {
+        let submittedRunId = "";
+        let recoveryCount = 0;
+        const messageId = `message-pre-route-${responseKind}-${outcome.toLowerCase()}`;
+        const threadId = "thread-main:session-1";
+        let harness: ReturnType<typeof createRunHarness>;
+        harness = createRunHarness({
+          disableSynthesizedTerminalAuthority: true,
+          activeSessionPatch: {
+            acceptedRunId: "run-r0",
+            acceptedRunMessageId: "message-r0",
+            acceptedRunThreadId: threadId,
+          },
+          recoverTerminalMessages: async () => { recoveryCount += 1; },
+          sendCommand: async (type, payload) => {
+            if (type === "conversation.message.submit") {
+              submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+              harness.controller.onRunnerEvent(makeRunnerEvent({
+                type: "run.started",
+                sessionId: "session-1",
+                threadId,
+                runId: submittedRunId,
+                payload: {
+                  sessionId: "session-1",
+                  runId: submittedRunId,
+                  eventType: "user.message",
+                  sourceMessageId: messageId,
+                },
+              }));
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              if (responseKind === "response-loss") throw new Error("response lost");
+              if (outcome === "COMPLETED") {
+                return makeRunnerEvent({
+                  type: "run.completed",
+                  sessionId: "session-1",
+                  threadId,
+                  runId: submittedRunId,
+                  payload: { result: makeCompletedResult(submittedRunId) },
+                });
+              }
+              if (outcome === "FAILED") {
+                return makeRunnerEvent({
+                  type: "run.failed",
+                  sessionId: "session-1",
+                  threadId,
+                  runId: submittedRunId,
+                  payload: {
+                    result: makeFailedResult(submittedRunId),
+                    error: { code: "RUN_FAILED", message: "pre-route direct failure" },
+                  },
+                });
+              }
+              return makeRunnerEvent({
+                type: "run.cancelled",
+                sessionId: "session-1",
+                threadId,
+                runId: submittedRunId,
+                payload: { sessionId: "session-1", result: makeCancelledResult(submittedRunId) },
+              });
+            }
+            if (type === "operator.thread") {
+              const status = outcome === "COMPLETED" ? "COMPLETED" : "FAILED";
+              return makeRunnerEvent({
+                type: "operator.thread",
+                payload: {
+                  view: {
+                    thread: {
+                      threadId,
+                      sessionId: "session-1",
+                      title: "Pre-route terminal authority",
+                      status,
+                      lastRunStatus: status,
+                      createdAt: "2026-08-29T00:00:00.000Z",
+                      updatedAt: "2026-08-29T00:00:01.000Z",
+                    },
+                    childThreads: [],
+                    childBlockerChain: [],
+                    conversationMessageRoutes: [{
+                      messageId,
+                      disposition: "started",
+                      runId: submittedRunId,
+                    }],
+                    conversationTurns: [{
+                      turnId: `turn-pre-route-${responseKind}-${outcome.toLowerCase()}`,
+                      threadId,
+                      sessionId: "session-1",
+                      sequence: 1,
+                      status,
+                      rootRunId: submittedRunId,
+                      sourceMessageId: messageId,
+                      terminalRunId: submittedRunId,
+                      terminalStatus: status,
+                      startedAt: "2026-08-29T00:00:00.000Z",
+                      completedAt: "2026-08-29T00:00:01.000Z",
+                      updatedAt: "2026-08-29T00:00:01.000Z",
+                    }],
+                  },
+                },
+              });
+            }
+            throw new Error(`Unexpected command '${type}'.`);
+          },
+        });
+        installActiveConversationView(harness.controller);
+        harness.uiStore.patch({ running: true });
+
+        assert.equal(await harness.controller.startActiveTurn({
+          messageId,
+          submittedMessage: "settle after pre-route acceptance",
+          queueRequested: true,
+        }), true);
+        const session = harness.uiStore.getState().activeSession;
+        assert.equal(session.acceptedRunId, submittedRunId);
+        assert.equal(session.acceptedRunMessageId, messageId);
+        assert.equal(session.lastRunStatus, outcome === "COMPLETED" ? "COMPLETED" : "FAILED");
+        assert.equal(
+          harness.history.filter((line) => line.output?.runId === submittedRunId).length + recoveryCount,
+          1,
+        );
       });
     }
   }
@@ -5595,6 +5760,46 @@ test("TuiRunController settles pre-route queued start and terminal before a dela
           acceptedRunThreadId: threadId,
         },
         sendCommand: async (type, payload) => {
+          if (type === "operator.thread") {
+            const status = eventType === "run.completed" ? "COMPLETED" : "FAILED";
+            return makeRunnerEvent({
+              type: "operator.thread",
+              payload: {
+                view: {
+                  thread: {
+                    threadId,
+                    sessionId: "session-1",
+                    title: "Pre-route terminal authority",
+                    status,
+                    lastRunStatus: status,
+                    createdAt: "2026-08-29T00:00:00.000Z",
+                    updatedAt: "2026-08-29T00:00:01.000Z",
+                  },
+                  childThreads: [],
+                  childBlockerChain: [],
+                  conversationMessageRoutes: [{
+                    messageId,
+                    disposition: "started",
+                    runId,
+                  }],
+                  conversationTurns: [{
+                    turnId: `turn-pre-route:${eventType}`,
+                    threadId,
+                    sessionId: "session-1",
+                    sequence: 1,
+                    status,
+                    rootRunId: runId,
+                    sourceMessageId: messageId,
+                    terminalRunId: runId,
+                    terminalStatus: status,
+                    startedAt: "2026-08-29T00:00:00.000Z",
+                    completedAt: "2026-08-29T00:00:01.000Z",
+                    updatedAt: "2026-08-29T00:00:01.000Z",
+                  }],
+                },
+              },
+            });
+          }
           assert.equal(type, "conversation.message.submit");
           runId = String((payload.turn as Record<string, unknown>).runId);
           dispatchedResolve?.();

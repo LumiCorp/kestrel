@@ -91,6 +91,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
     pendingRunRequestId: "request-pending",
     pendingRunMessageId: "message-pending",
     pendingRunThreadId: "thread-main:exact-run-child",
+    terminalMessageCursor: "terminal-cursor-exact-run-child",
     queuedRunReservations: [
       {
         runId: "run-queued-a",
@@ -137,6 +138,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
   assert.equal(loaded?.pendingRunRequestId, "request-pending");
   assert.equal(loaded?.pendingRunMessageId, "message-pending");
   assert.equal(loaded?.pendingRunThreadId, "thread-main:exact-run-child");
+  assert.equal(loaded?.terminalMessageCursor, "terminal-cursor-exact-run-child");
   assert.deepEqual(loaded?.queuedRunReservations, session.queuedRunReservations);
   assert.deepEqual(loaded?.pendingQueueSubmissions, session.pendingQueueSubmissions);
   assert.deepEqual(loaded?.terminalQueuedRuns, session.terminalQueuedRuns);

@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Preserve queued evidence after acceptance](29-preserve-queued-evidence-after-acceptance.md)
+None.
 
 ## In progress
 
@@ -16,6 +16,7 @@ None.
 
 ## Implemented
 
+- [Preserve queued evidence after acceptance](29-preserve-queued-evidence-after-acceptance.md)
 - [Serialize session mutations and terminal correlation](28-serialize-session-mutations-and-terminal-correlation.md)
 - [Serialize session-file authority](27-serialize-session-file-authority.md)
 - [Unify durable queue publication](26-unify-durable-queue-publication.md)

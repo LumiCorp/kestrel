@@ -8,8 +8,45 @@ import {
   exactTuiQueueTailRunId,
   normalizeTuiQueueGraph,
   removeAndRewireTuiQueueRecord,
+  resolveExactTuiQueuedEvidence,
   TuiQueueGraphConsistencyError,
 } from "../../cli/session/TuiQueueGraph.js";
+
+test("TuiQueueGraph resolves exact queued evidence across every durable lifecycle source", async (t) => {
+  const identity = {
+    runId: "run-q1",
+    messageId: "message-q1",
+    threadId: "thread-main:session-queue",
+  };
+  for (const source of ["pending", "reservation", "accepted", "tombstone"] as const) {
+    await t.test(source, () => {
+      const value = session(source === "pending"
+        ? { pendingQueueSubmissions: [{ ...identity, predecessorRunId: "run-r0" }] }
+        : source === "reservation"
+          ? { queuedRunReservations: [{ ...identity, predecessorRunId: "run-r0" }] }
+          : source === "accepted"
+            ? {
+                acceptedRunId: identity.runId,
+                acceptedRunMessageId: identity.messageId,
+                acceptedRunThreadId: identity.threadId,
+                acceptedRunPredecessorId: "run-r0",
+              }
+            : {
+                terminalQueuedRuns: [{
+                  ...identity,
+                  predecessorRunId: "run-r0",
+                  status: "COMPLETED",
+                }],
+              });
+      assert.deepEqual(resolveExactTuiQueuedEvidence(value, identity), {
+        ...identity,
+        predecessorRunId: "run-r0",
+        source,
+        ...(source === "tombstone" ? { terminalStatus: "COMPLETED" } : {}),
+      });
+    });
+  }
+});
 
 function session(patch: Partial<TuiSessionMeta>): TuiSessionMeta {
   return {

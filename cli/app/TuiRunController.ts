@@ -57,6 +57,8 @@ import {
   exactTuiQueueTailRunId,
   normalizeTuiQueueGraph,
   removeAndRewireTuiQueueRecord,
+  resolveExactTuiQueuedEvidence,
+  type ResolvedTuiQueuedEvidence,
 } from "../session/TuiQueueGraph.js";
 
 export interface StartActiveTurnInput {
@@ -136,6 +138,7 @@ export interface TuiRunControllerContext extends TuiAppContext {
     sessionId: string;
     threadId: string;
     runId: string;
+    messageId?: string | undefined;
     result: TuiTerminalResult;
     authoritativeView?: OperatorThreadView | undefined;
   }): Promise<boolean>;
@@ -1187,12 +1190,23 @@ export class TuiRunController {
         && pendingSession.pendingRunThreadId === threadId
         && terminalRunId !== undefined
         && pendingSession.pendingRunId === terminalRunId;
-      const exactPendingQueueSubmission = queueSubmission && terminalRunId !== undefined
-        ? findPendingQueueSubmission(
-            pendingQueueGraph.pendingQueueSubmissions,
-            terminalRunId,
+      const exactQueuedEvidence = queueSubmission
+        && terminalRunId !== undefined
+        && terminalOutput !== undefined
+        ? resolveExactTuiQueuedEvidence(pendingSession, {
+            runId: terminalRunId,
             threadId,
-            submissionMessageId,
+            messageId: submissionMessageId,
+          })
+        : undefined;
+      const exactResultlessQueuedRejection = queueSubmission
+        && response.type === "run.failed"
+        && terminalOutput === undefined
+        && terminalRunId !== undefined
+        ? pendingSession.pendingQueueSubmissions?.find((submission) =>
+            submission.runId === terminalRunId
+            && submission.messageId === submissionMessageId
+            && submission.threadId === threadId
           )
         : undefined;
       const exactAlreadyAcceptedSubmission = terminalOutput !== undefined
@@ -1211,8 +1225,9 @@ export class TuiRunController {
         || (
           resumeRequestId === undefined
           && exactPendingSubmission === false
-          && exactPendingQueueSubmission === undefined
+          && exactQueuedEvidence === undefined
           && exactAlreadyAcceptedSubmission === false
+          && exactResultlessQueuedRejection === undefined
         )
         || (resumeRequestId === undefined && retainedRunMessageMismatch)
         || (
@@ -1237,14 +1252,14 @@ export class TuiRunController {
         : terminalOutput?.status === "FAILED"
           ? "FAILED" as const
           : undefined;
-      if (exactPendingQueueSubmission !== undefined && directTerminalStatus !== undefined) {
+      if (exactQueuedEvidence !== undefined && directTerminalStatus !== undefined) {
         const authoritativeView = await this.requestConversationView(threadId).catch(() => undefined);
         if (
           authoritativeView === undefined
           || authoritativeView.thread.sessionId !== submittingSessionId
           || authoritativeView.thread.threadId !== threadId
           || hasExactQueuedRunEvidence(authoritativeView, {
-            ...exactPendingQueueSubmission,
+            ...exactQueuedEvidence,
             status: directTerminalStatus,
           }) === false
         ) {
@@ -1252,19 +1267,29 @@ export class TuiRunController {
           return false;
         }
       }
-      const responseCanInstallCurrentLifecycle = exactPendingQueueSubmission === undefined
-        || queuedEvidenceCanReplaceAcceptedRun(normalizedPendingSession, exactPendingQueueSubmission);
+      const responseCanInstallCurrentLifecycle = exactQueuedEvidence === undefined
+        || queuedEvidenceCanReplaceAcceptedRun(normalizedPendingSession, exactQueuedEvidence);
       const settlePendingQueueGraph = (
         status?: "COMPLETED" | "FAILED" | undefined,
       ) => {
-        if (exactPendingQueueSubmission === undefined) return pendingQueueGraph;
+        if (exactQueuedEvidence === undefined) {
+          return exactResultlessQueuedRejection === undefined
+            ? pendingQueueGraph
+            : {
+                ...pendingQueueGraph,
+                pendingQueueSubmissions: removePendingQueueSubmission(
+                  pendingQueueGraph.pendingQueueSubmissions,
+                  exactResultlessQueuedRejection,
+                ),
+              };
+        }
         let acceptedGraph = responseCanInstallCurrentLifecycle
-          ? advanceTuiQueueAuthority(pendingQueueGraph, exactPendingQueueSubmission)
+          ? advanceTuiQueueAuthority(pendingQueueGraph, exactQueuedEvidence)
           : {
               ...pendingQueueGraph,
               pendingQueueSubmissions: removePendingQueueSubmission(
                 pendingQueueGraph.pendingQueueSubmissions,
-                exactPendingQueueSubmission,
+                exactQueuedEvidence,
               ),
             };
         if (status !== undefined) {
@@ -1272,11 +1297,11 @@ export class TuiRunController {
             ...acceptedGraph,
             pendingQueueSubmissions: removePendingQueueSubmission(
               acceptedGraph.pendingQueueSubmissions,
-              exactPendingQueueSubmission,
+              exactQueuedEvidence,
             ),
             queuedRunReservations: removeQueuedRunReservation(
               acceptedGraph.queuedRunReservations,
-              toQueuedRunReservation(exactPendingQueueSubmission),
+              toQueuedRunReservation(exactQueuedEvidence),
             ),
           };
         }
@@ -1285,7 +1310,7 @@ export class TuiRunController {
           : {
               ...acceptedGraph,
               terminalQueuedRuns: appendTerminalQueuedRun(acceptedGraph.terminalQueuedRuns, {
-                ...toQueuedRunReservation(exactPendingQueueSubmission),
+                ...toQueuedRunReservation(exactQueuedEvidence),
                 status,
               }),
             };
@@ -1326,9 +1351,9 @@ export class TuiRunController {
                 acceptedRunId: output.runId,
                 acceptedRunMessageId: submissionMessageId,
                 acceptedRunThreadId: threadId,
-                acceptedRunPredecessorId: exactPendingQueueSubmission === undefined
+                acceptedRunPredecessorId: exactQueuedEvidence === undefined
                   ? undefined
-                  : durableAcceptedQueuePredecessorId(exactPendingQueueSubmission),
+                  : durableAcceptedQueuePredecessorId(exactQueuedEvidence),
               }
             : {}),
           terminalQueuedRuns: settledQueueGraph.terminalQueuedRuns,
@@ -1357,7 +1382,7 @@ export class TuiRunController {
           && (
             queueSubmission === false
             || exactPendingSubmission
-            || exactPendingQueueSubmission !== undefined
+            || exactQueuedEvidence !== undefined
             || exactAlreadyAcceptedSubmission
             || this.acceptedRunSourceMessageBySession
               .get(submittingSessionId)
@@ -1373,7 +1398,7 @@ export class TuiRunController {
         if (
           failure.code === "CONTEXT_CHECKPOINT_PENDING"
           && result !== undefined
-          && exactPendingQueueSubmission !== undefined
+          && exactQueuedEvidence !== undefined
           && resultRunId !== undefined
           && responseCanInstallCurrentLifecycle
         ) {
@@ -1384,7 +1409,7 @@ export class TuiRunController {
             acceptedRunMessageId: submissionMessageId,
             acceptedRunThreadId: threadId,
             acceptedRunPredecessorId: durableAcceptedQueuePredecessorId(
-              exactPendingQueueSubmission!,
+              exactQueuedEvidence,
             ),
             pendingQueueSubmissions: settledQueueGraph.pendingQueueSubmissions,
             queuedRunReservations: settledQueueGraph.queuedRunReservations,
@@ -1446,9 +1471,9 @@ export class TuiRunController {
                 acceptedRunId: resultRunId,
                 acceptedRunMessageId: submissionMessageId,
                 acceptedRunThreadId: threadId,
-                acceptedRunPredecessorId: exactPendingQueueSubmission === undefined
+                acceptedRunPredecessorId: exactQueuedEvidence === undefined
                   ? undefined
-                  : durableAcceptedQueuePredecessorId(exactPendingQueueSubmission),
+                  : durableAcceptedQueuePredecessorId(exactQueuedEvidence),
               }
             : {}),
           terminalQueuedRuns: settledQueueGraph.terminalQueuedRuns,
@@ -1546,9 +1571,9 @@ export class TuiRunController {
               acceptedRunId: output.runId,
               acceptedRunMessageId: submissionMessageId,
               acceptedRunThreadId: threadId,
-              acceptedRunPredecessorId: exactPendingQueueSubmission === undefined
+              acceptedRunPredecessorId: exactQueuedEvidence === undefined
                 ? undefined
-                : durableAcceptedQueuePredecessorId(exactPendingQueueSubmission),
+                : durableAcceptedQueuePredecessorId(exactQueuedEvidence),
             }
           : {}),
         terminalQueuedRuns: settledQueueGraph.terminalQueuedRuns,
@@ -1734,13 +1759,13 @@ export class TuiRunController {
           (route) => route.messageId === submissionMessageId,
         ) ?? [];
         const recoveredRoute = recoveredRoutes.length === 1 ? recoveredRoutes[0] : undefined;
-        const recoveredPendingQueueSubmission = queueSubmission
-          ? findPendingQueueSubmission(
-              readSubmittingSession()?.pendingQueueSubmissions,
-              reservedRunId!,
+        const recoverySession = readSubmittingSession();
+        const recoveredQueueEvidence = queueSubmission && recoverySession !== undefined
+          ? resolveExactTuiQueuedEvidence(recoverySession, {
+              runId: reservedRunId!,
               threadId,
-              submissionMessageId,
-            )
+              messageId: submissionMessageId,
+            })
           : undefined;
         const recoveredRouteRunId = recoveredRoute?.runId;
         const recoveredRunStatus = recoveredRouteRunId === undefined || recoveredView === undefined
@@ -1750,9 +1775,9 @@ export class TuiRunController {
           ? recoveredRouteRunId === undefined || recoveredRouteRunId === reservedRunId
           : recoveredRouteRunId === reservedRunId
             && recoveredRunStatus !== undefined
-            && recoveredPendingQueueSubmission !== undefined
+            && recoveredQueueEvidence !== undefined
             && hasExactQueuedRunEvidence(recoveredView!, {
-              ...recoveredPendingQueueSubmission,
+              ...recoveredQueueEvidence,
               status: recoveredRunStatus,
             });
         if (
@@ -1803,20 +1828,21 @@ export class TuiRunController {
             ? recoveredRunStatus
             : undefined;
           const sessionBeforeRecovery = readSubmittingSession();
-          const pendingBeforeRecovery = findPendingQueueSubmission(
-            sessionBeforeRecovery?.pendingQueueSubmissions,
-            reservedRunId!,
-            threadId,
-            submissionMessageId,
-          );
+          const queueEvidenceBeforeRecovery = sessionBeforeRecovery === undefined
+            ? undefined
+            : resolveExactTuiQueuedEvidence(sessionBeforeRecovery, {
+                runId: reservedRunId!,
+                threadId,
+                messageId: submissionMessageId,
+              });
           const recoveredLifecycleConflicts = recoveredRoute.disposition !== "queued"
             && recoveredRouteRunId !== undefined
             && (
-              pendingBeforeRecovery === undefined
+              queueEvidenceBeforeRecovery === undefined
               || sessionBeforeRecovery === undefined
               || queuedEvidenceCanReplaceAcceptedRun(
                 sessionBeforeRecovery,
-                pendingBeforeRecovery,
+                queueEvidenceBeforeRecovery,
               ) === false
             );
           if (recoveredRoute.disposition === "queued") {
@@ -1827,6 +1853,7 @@ export class TuiRunController {
               threadId,
               submissionMessageId,
             );
+            if (pendingQueueSubmission === undefined) return false;
             await setResponseSessionState({
               started: true,
               focusedThreadId: recoveredView.thread.threadId,
@@ -1875,9 +1902,7 @@ export class TuiRunController {
                 : threadId,
               acceptedRunPredecessorId: recoveredLifecycleConflicts
                 ? currentSession?.acceptedRunPredecessorId
-                : pendingQueueSubmission === undefined
-                  ? undefined
-                  : durableAcceptedQueuePredecessorId(pendingQueueSubmission),
+                : durableAcceptedQueuePredecessorId(queueEvidenceBeforeRecovery!),
               pendingWaitFor: recoveredLifecycleConflicts
                 ? currentSession?.pendingWaitFor
                 : recoveredRunStatus === "WAITING"
@@ -1888,10 +1913,10 @@ export class TuiRunController {
                 : recoveredRunStatus === "RUNNING"
                   ? undefined
                   : recoveredRunStatus,
-              terminalQueuedRuns: terminalStatus === undefined || pendingQueueSubmission === undefined
+              terminalQueuedRuns: terminalStatus === undefined
                 ? currentSession?.terminalQueuedRuns
                 : appendTerminalQueuedRun(currentSession?.terminalQueuedRuns, {
-                    ...toQueuedRunReservation(pendingQueueSubmission),
+                    ...toQueuedRunReservation(queueEvidenceBeforeRecovery!),
                     status: terminalStatus,
                   }),
               pendingQueueSubmissions: pendingQueueSubmission === undefined
@@ -2092,13 +2117,13 @@ export class TuiRunController {
           (route) => route.messageId === submissionMessageId,
         ) ?? [];
         const recoveredRoute = recoveredRoutes.length === 1 ? recoveredRoutes[0] : undefined;
-        const finalRecoveredPendingQueueSubmission = queueSubmission
-          ? findPendingQueueSubmission(
-              readSubmittingSession()?.pendingQueueSubmissions,
-              reservedRunId!,
+        const finalRecoverySession = readSubmittingSession();
+        const finalRecoveredQueueEvidence = queueSubmission && finalRecoverySession !== undefined
+          ? resolveExactTuiQueuedEvidence(finalRecoverySession, {
+              runId: reservedRunId!,
               threadId,
-              submissionMessageId,
-            )
+              messageId: submissionMessageId,
+            })
           : undefined;
         const exactAcceptedRun = [...(
           this.acceptedRunSourceMessageBySession.get(submittingSessionId)?.entries() ?? []
@@ -2112,11 +2137,12 @@ export class TuiRunController {
         const exactRecoveredRoute = recoveredRouteRunId === reservedRunId
           && recoveredRunStatus !== undefined
           && (
-            finalRecoveredPendingQueueSubmission === undefined
-            || hasExactQueuedRunEvidence(recoveredView!, {
-              ...finalRecoveredPendingQueueSubmission,
-              status: recoveredRunStatus,
-            })
+            queueSubmission === false
+            || finalRecoveredQueueEvidence !== undefined
+              && hasExactQueuedRunEvidence(recoveredView!, {
+                ...finalRecoveredQueueEvidence,
+                status: recoveredRunStatus,
+              })
           );
         if (
           recoveredView !== undefined
@@ -2156,9 +2182,9 @@ export class TuiRunController {
             acceptedRunId: recoveredRouteRunId,
             acceptedRunMessageId: submissionMessageId,
             acceptedRunThreadId: threadId,
-            acceptedRunPredecessorId: finalRecoveredPendingQueueSubmission === undefined
+            acceptedRunPredecessorId: finalRecoveredQueueEvidence === undefined
               ? undefined
-              : durableAcceptedQueuePredecessorId(finalRecoveredPendingQueueSubmission),
+              : durableAcceptedQueuePredecessorId(finalRecoveredQueueEvidence),
             updatedAt: new Date().toISOString(),
           });
           if (submittingSessionIsActive()) this.context.uiStore.patch({
@@ -2185,9 +2211,9 @@ export class TuiRunController {
             acceptedRunId: exactAcceptedRun[0],
             acceptedRunMessageId: submissionMessageId,
             acceptedRunThreadId: threadId,
-            acceptedRunPredecessorId: finalRecoveredPendingQueueSubmission === undefined
+            acceptedRunPredecessorId: finalRecoveredQueueEvidence === undefined
               ? undefined
-              : durableAcceptedQueuePredecessorId(finalRecoveredPendingQueueSubmission),
+              : durableAcceptedQueuePredecessorId(finalRecoveredQueueEvidence),
             updatedAt: new Date().toISOString(),
           });
           await persistResponseSessionAndUi();
@@ -2574,27 +2600,35 @@ export class TuiRunController {
       const backgroundStatus = session?.delegation?.status;
       const exactPendingBackgroundStart = event.threadId !== undefined
         && session?.pendingRunThreadId === event.threadId
+        && session.pendingRunId === event.runId
         && (
-          session.pendingRunId === event.runId
-          || (
-            event.payload.sourceMessageId !== undefined
-            && session.pendingRunMessageId === event.payload.sourceMessageId
-          )
+          session.pendingRunMessageId === undefined
+            ? event.payload.sourceMessageId === undefined
+            : session.pendingRunMessageId === event.payload.sourceMessageId
         );
-      const exactQueuedBackgroundStart = event.threadId !== undefined
-        && findQueuedRunReservation(
-          session?.queuedRunReservations,
-          event.runId,
-          event.threadId,
-          event.payload.sourceMessageId,
-        ) !== undefined;
+      const queuedBackgroundEvidence = event.threadId !== undefined
+        && event.payload.sourceMessageId !== undefined
+        && session !== undefined
+        ? resolveExactTuiQueuedEvidence(session, {
+          runId: event.runId,
+          threadId: event.threadId,
+          messageId: event.payload.sourceMessageId,
+        })
+        : undefined;
+      const exactQueuedBackgroundStart = queuedBackgroundEvidence !== undefined
+        && queuedBackgroundEvidence.source !== "tombstone";
+      const exactAcceptedBackgroundStart = event.threadId !== undefined
+        && event.payload.sourceMessageId !== undefined
+        && session?.acceptedRunId === event.runId
+        && session.acceptedRunMessageId === event.payload.sourceMessageId
+        && session.acceptedRunThreadId === event.threadId;
       const exactBackgroundStart = session?.delegation !== undefined
         && backgroundStatus !== "COMPLETED"
         && backgroundStatus !== "FAILED"
         && (
           exactPendingBackgroundStart
           || exactQueuedBackgroundStart
-          || session.acceptedRunId === event.runId
+          || exactAcceptedBackgroundStart
         );
       if (
         exactForegroundStart === false
@@ -2748,6 +2782,7 @@ export class TuiRunController {
             sessionId: output.sessionId,
             threadId: event.threadId,
             runId: output.runId,
+            messageId: queuedTerminalEvidence.messageId,
             result: event.payload.result,
             authoritativeView,
           });
@@ -2876,6 +2911,7 @@ export class TuiRunController {
               sessionId: output.sessionId,
               threadId: event.threadId,
               runId: output.runId,
+              messageId: queuedTerminalEvidence.messageId,
               result: event.payload.result!,
               authoritativeView,
             });
@@ -2990,6 +3026,7 @@ export class TuiRunController {
             sessionId: output.sessionId,
             threadId: event.threadId,
             runId: output.runId,
+            messageId: queuedTerminalEvidence.messageId,
             result: event.payload.result,
             authoritativeView,
           });
@@ -3419,11 +3456,7 @@ export class TuiRunController {
       && (threadId === undefined || view.thread.threadId === threadId)
     )) return true;
     if (threadId === undefined) return false;
-    const queued = findQueuedRunReservation(session.queuedRunReservations, runId, threadId);
-    const pending = session.pendingQueueSubmissions?.find(
-      (submission) => submission.runId === runId && submission.threadId === threadId,
-    );
-    const evidence = queued ?? pending;
+    const evidence = resolveExactTuiQueuedEvidence(session, { runId, threadId });
     return evidence !== undefined && queuedEvidenceCanReplaceAcceptedRun(session, evidence);
   }
 
@@ -3431,19 +3464,13 @@ export class TuiRunController {
     sessionId: string,
     runId: string,
     threadId: string | undefined,
-  ): boolean {
-    if (threadId === undefined) return false;
+  ): ResolvedTuiQueuedEvidence | undefined {
+    if (threadId === undefined) return undefined;
     const session = this.context.uiStore.getState().sessions.find(
       (candidate) => candidate.sessionId === sessionId,
     );
-    if (session === undefined) return false;
-    return findQueuedRunReservation(session.queuedRunReservations, runId, threadId) !== undefined
-      || session.pendingQueueSubmissions?.some(
-        (candidate) => candidate.runId === runId && candidate.threadId === threadId,
-      ) === true
-      || session.terminalQueuedRuns?.some(
-        (candidate) => candidate.runId === runId && candidate.threadId === threadId,
-      ) === true;
+    if (session === undefined) return undefined;
+    return resolveExactTuiQueuedEvidence(session, { runId, threadId });
   }
 
   private terminalLifecycleAlreadyCommitted(sessionId: string, runId: string): boolean {
