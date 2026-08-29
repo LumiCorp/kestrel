@@ -4241,7 +4241,9 @@ export class App {
 
   private async commitQueueSessionMutation(
     sessionId: string,
-    mutation: (current: TuiSessionMeta) => TuiSessionMeta | undefined,
+    mutation: (
+      current: TuiSessionMeta,
+    ) => TuiSessionMeta | undefined | Promise<TuiSessionMeta | undefined>,
   ): Promise<TuiSessionMeta | undefined> {
     const previous = this.queueSessionCommitTailBySession.get(sessionId) ?? Promise.resolve();
     let committed: TuiSessionMeta | undefined;
@@ -4250,7 +4252,7 @@ export class App {
         const sourceFile = this.sessionsFile;
         const sourceSession = sourceFile.sessions.find((session) => session.sessionId === sessionId);
         if (sourceSession === undefined) return;
-        const projectedSession = mutation(sourceSession);
+        const projectedSession = await mutation(sourceSession);
         if (projectedSession === undefined) return;
         const activeSessionName = sourceFile.activeSessionName;
         let privateSnapshot = this.sessionStore.upsert(sourceFile, projectedSession);
@@ -4544,9 +4546,42 @@ export class App {
     const childSessionId = task.childSessionId ?? `child-${task.taskId}`;
     const childSessionName = task.childSessionName ?? task.title;
     const existing = this.sessionsFile.sessions.find((session) => session.sessionId === childSessionId);
+    if (existing !== undefined) {
+      const nextSession = await this.commitQueueSessionMutation(childSessionId, (current) => ({
+        ...current,
+        profileId: task.profileId,
+        updatedAt: task.updatedAt,
+        started: true,
+        ...patch,
+        delegation: task,
+        lastRunStatus:
+          task.status === "FAILED"
+            ? "FAILED"
+            : task.status === "COMPLETED"
+              ? "COMPLETED"
+              : task.status === "WAITING"
+                ? "WAITING"
+                : task.status === "RUNNING" || task.status === "RECOVERING"
+                  ? undefined
+                  : current.lastRunStatus,
+      }));
+      if (nextSession === undefined) return;
+      const state = this.uiStore.getState();
+      if (state.activeSession.sessionId === task.parentSessionId) {
+        this.uiStore.patch({
+          activeSession: {
+            ...state.activeSession,
+            operatorState: this.buildSessionOperatorState({
+              session: state.activeSession,
+              profile: state.activeProfile,
+            }),
+          },
+        });
+      }
+      return;
+    }
     const nextSession: TuiSessionMeta =
-      existing === undefined
-        ? {
+      {
             name: childSessionName,
             sessionId: childSessionId,
             profileId: task.profileId,
@@ -4557,24 +4592,6 @@ export class App {
             autoCompactionEnabled: true,
             ...patch,
             delegation: task,
-          }
-        : {
-            ...existing,
-            profileId: task.profileId,
-            updatedAt: task.updatedAt,
-            started: true,
-            ...patch,
-            delegation: task,
-            lastRunStatus:
-              task.status === "FAILED"
-                ? "FAILED"
-                : task.status === "COMPLETED"
-                  ? "COMPLETED"
-                  : task.status === "WAITING"
-                    ? "WAITING"
-                    : task.status === "RUNNING" || task.status === "RECOVERING"
-                      ? undefined
-                      : existing.lastRunStatus,
           };
     this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, nextSession);
     const state = this.uiStore.getState();
@@ -5204,24 +5221,16 @@ export class App {
             : {}),
         });
         const preview = summarizePreview(text);
-        const updatedSession = this.mergeSessionHistoryMetadata(session, {
-          preview: preview.length > 0 ? preview : undefined,
-          updatedAt: new Date().toISOString(),
-          hasArtifacts: dataHasArtifacts(data),
-          hasSummary: role === "assistant" && preview.length > 0,
-          launchSummary:
-            role === "system" && text.startsWith("Task=") ? text : undefined,
-        });
-        const activeSessionName = this.sessionsFile.activeSessionName;
-        this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, updatedSession);
-        this.sessionsFile = { ...this.sessionsFile, activeSessionName };
-        const state = this.uiStore.getState();
-        const activeSession =
-          state.activeSession.sessionId === updatedSession.sessionId ? updatedSession : state.activeSession;
-        this.uiStore.patch({
-          activeSession,
-          sessions: this.sessionsFile.sessions,
-        });
+        await this.commitQueueSessionMutation(session.sessionId, (current) =>
+          this.mergeSessionHistoryMetadata(current, {
+            preview: preview.length > 0 ? preview : undefined,
+            updatedAt: new Date().toISOString(),
+            hasArtifacts: dataHasArtifacts(data),
+            hasSummary: role === "assistant" && preview.length > 0,
+            launchSummary:
+              role === "system" && text.startsWith("Task=") ? text : undefined,
+          })
+        );
       } catch (error) {
         this.recordPersistenceFailure("history.append", error);
       }
@@ -5464,7 +5473,23 @@ export class App {
           && terminal.threadId === input.threadId
           && terminal.status === terminalStatus
         );
-    const queuedEvidence = queuedReservation ?? pendingQueueSubmission ?? terminalQueuedRun;
+    const acceptedQueuedEvidence = session.acceptedRunId === input.runId
+      && session.acceptedRunMessageId !== undefined
+      && session.acceptedRunThreadId === input.threadId
+      && session.acceptedRunPredecessorId !== undefined
+      ? {
+          runId: session.acceptedRunId,
+          messageId: session.acceptedRunMessageId,
+          threadId: session.acceptedRunThreadId,
+          ...(session.acceptedRunPredecessorId === null
+            ? {}
+            : { predecessorRunId: session.acceptedRunPredecessorId }),
+        }
+      : undefined;
+    const queuedEvidence = queuedReservation
+      ?? pendingQueueSubmission
+      ?? terminalQueuedRun
+      ?? acceptedQueuedEvidence;
     if (queuedEvidence === undefined) return false;
     const hasExactTerminalAuthority = terminalStatus === undefined
       || (
@@ -5587,7 +5612,28 @@ export class App {
           }),
       updatedAt: new Date().toISOString(),
     };
-    if (await this.commitProjectedSession(accepted, persistedSession) === false) return false;
+    const committed = await this.commitQueueSessionMutation(input.sessionId, (current) => {
+      if (current === persistedSession) return accepted;
+      if (
+        terminalStatus === undefined
+        || current.acceptedRunId !== orderedEvidence.runId
+        || current.acceptedRunMessageId !== orderedEvidence.messageId
+        || current.acceptedRunThreadId !== orderedEvidence.threadId
+      ) return undefined;
+      return {
+        ...current,
+        pendingWaitFor: accepted.pendingWaitFor,
+        lastRunStatus: accepted.lastRunStatus,
+        terminalQueuedRuns: appendTerminalQueuedRun(current.terminalQueuedRuns, {
+          ...orderedEvidence,
+          status: terminalStatus,
+        }),
+        ...(accepted.operatorState !== undefined ? { operatorState: accepted.operatorState } : {}),
+        ...(accepted.delegation !== undefined ? { delegation: accepted.delegation } : {}),
+        updatedAt: accepted.updatedAt,
+      };
+    });
+    if (committed === undefined) return false;
     return true;
   }
 
@@ -5607,17 +5653,19 @@ export class App {
     const status = session.delegation.status;
     if (status === "COMPLETED" || status === "FAILED") return;
     const exactPendingAcceptance = session.pendingRunThreadId === input.threadId
+      && session.pendingRunId === input.runId
       && (
-        session.pendingRunId === input.runId
-        || (
-          input.messageId !== undefined
-          && session.pendingRunMessageId === input.messageId
-        )
+        session.pendingRunMessageId === undefined
+        || input.messageId === session.pendingRunMessageId
       );
-    const queuedReservation = session.queuedRunReservations?.find((reservation) =>
+    const queuedReservation = [
+      ...(session.pendingQueueSubmissions ?? []),
+      ...(session.queuedRunReservations ?? []),
+    ].find((reservation) =>
       reservation.runId === input.runId
       && reservation.threadId === input.threadId
-      && (input.messageId === undefined || reservation.messageId === input.messageId)
+      && input.messageId !== undefined
+      && reservation.messageId === input.messageId
     );
     const exactPendingReplyAcceptance = input.requestId !== undefined
       && session.pendingRunThreadId === input.threadId
@@ -5655,6 +5703,9 @@ export class App {
       queuedRunReservations: queuedReservation === undefined
         ? session.queuedRunReservations
         : omitQueuedRunReservation(session.queuedRunReservations, queuedReservation),
+      pendingQueueSubmissions: queuedReservation === undefined
+        ? session.pendingQueueSubmissions
+        : omitExactRunIdentity(session.pendingQueueSubmissions, queuedReservation),
       pendingWaitFor: nextStatus === "WAITING" ? input.waitFor : undefined,
       lastRunStatus: nextStatus === "COMPLETED" || nextStatus === "FAILED"
         ? nextStatus
@@ -6689,7 +6740,13 @@ function reconcileExactQueuedLifecycle(
       );
       const acceptedPredecessorConflictsWithActive =
         session.acceptedRunPredecessorId !== undefined
-        && session.acceptedRunPredecessorId !== durableAcceptedQueuePredecessorId(activeIdentity);
+          ? session.acceptedRunPredecessorId !== durableAcceptedQueuePredecessorId(activeIdentity)
+          : persistedAcceptedTerminal === undefined
+            && hasExactQueuedSuccessorTurnSequence(view, {
+              runId: session.acceptedRunId,
+              messageId: session.acceptedRunMessageId,
+              threadId: session.acceptedRunThreadId,
+            }, activeIdentity) === false;
       const acceptedTerminal = persistedAcceptedTerminal ?? (
         acceptedPredecessorConflictsWithActive === false
         &&
@@ -7004,6 +7061,33 @@ function hasExactQueuedTerminalTurn(
     && Number.isSafeInteger(turn.sequence)
   ) ?? [];
   return matchingTurns.length === 1;
+}
+
+function hasExactQueuedSuccessorTurnSequence(
+  view: OperatorThreadView,
+  predecessor: { runId: string; messageId: string; threadId: string },
+  successor: { runId: string; messageId: string; threadId: string },
+): boolean {
+  const predecessorTurns = view.conversationTurns?.filter((turn) =>
+    turn.sessionId === view.thread.sessionId
+    && turn.threadId === predecessor.threadId
+    && turn.sourceMessageId === predecessor.messageId
+    && turn.terminalRunId === predecessor.runId
+    && (turn.status === "COMPLETED" || turn.status === "FAILED")
+    && turn.sequence !== null
+    && Number.isSafeInteger(turn.sequence)
+  ) ?? [];
+  const successorTurns = view.conversationTurns?.filter((turn) =>
+    turn.sessionId === view.thread.sessionId
+    && turn.threadId === successor.threadId
+    && turn.sourceMessageId === successor.messageId
+    && (turn.rootRunId === successor.runId || turn.terminalRunId === successor.runId)
+    && turn.sequence !== null
+    && Number.isSafeInteger(turn.sequence)
+  ) ?? [];
+  return predecessorTurns.length === 1
+    && successorTurns.length === 1
+    && predecessorTurns[0]!.sequence! < successorTurns[0]!.sequence!;
 }
 
 function exactQueueEpochRootRunId(

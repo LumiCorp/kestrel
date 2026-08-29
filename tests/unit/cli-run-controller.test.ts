@@ -196,6 +196,7 @@ function createRunHarness(input: {
   commitQueueSessionState?: TuiRunControllerContext["commitQueueSessionState"] | undefined;
   syncForegroundSessionProgress?: TuiRunControllerContext["syncForegroundSessionProgress"] | undefined;
   syncForegroundQueuedTerminal?: TuiRunControllerContext["syncForegroundQueuedTerminal"] | undefined;
+  disableSynthesizedTerminalAuthority?: boolean | undefined;
 } = {}): {
   controller: TuiRunController;
   uiStore: UiStore;
@@ -298,6 +299,14 @@ function createRunHarness(input: {
     messageId?: string | undefined;
     requestId?: string | undefined;
   }> = [];
+  let submittedTerminalAuthority: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId: string;
+    status: "COMPLETED" | "FAILED";
+  } | undefined;
+  const submittedIdentityByRunId = new Map<string, { messageId: string; threadId: string }>();
 
   const context: TuiRunControllerContext = {
     options: { cwd: process.cwd(), ...(input.scripted === true ? { scripted: true } : {}) },
@@ -315,6 +324,12 @@ function createRunHarness(input: {
         payload: Record<string, unknown>,
         metadata?: Record<string, unknown> | undefined,
       ) => {
+        if (type === "conversation.message.submit") {
+          submittedIdentityByRunId.set(String((payload.turn as Record<string, unknown>).runId), {
+            messageId: String(payload.messageId),
+            threadId: String(payload.threadId),
+          });
+        }
         if (type === "session.describe") {
           sessionDescribeCount += 1;
           await input.beforeSessionDescribe?.();
@@ -347,11 +362,78 @@ function createRunHarness(input: {
           });
         }
         if (input.sendCommand !== undefined) {
-          return await input.sendCommand(
-            type as never,
-            payload as never,
-            metadata as never,
-          );
+          try {
+            const response = await input.sendCommand(
+              type as never,
+              payload as never,
+              metadata as never,
+            );
+            if (
+              response.type === "run.completed"
+              || response.type === "run.cancelled"
+              || (response.type === "run.failed" && response.payload.result !== undefined)
+            ) {
+              const output = response.payload.result.output;
+              const submittedIdentity = submittedIdentityByRunId.get(output.runId);
+              submittedTerminalAuthority = submittedIdentity === undefined
+                ? undefined
+                : {
+                    sessionId: output.sessionId,
+                    threadId: submittedIdentity.threadId,
+                    runId: output.runId,
+                    messageId: submittedIdentity.messageId,
+                    status: output.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+                  };
+            }
+            return response;
+          } catch (error) {
+            if (
+              type !== "operator.thread"
+              || input.disableSynthesizedTerminalAuthority === true
+              || submittedTerminalAuthority === undefined
+            ) throw error;
+          }
+        }
+        if (
+          type === "operator.thread"
+          && input.disableSynthesizedTerminalAuthority !== true
+          && submittedTerminalAuthority !== undefined
+        ) {
+          const authority = submittedTerminalAuthority;
+          return makeRunnerEvent({
+            type: "operator.thread",
+            payload: {
+              view: {
+                ...makeConversationView({ lastRunStatus: authority.status }),
+                thread: {
+                  ...makeConversationView().thread,
+                  threadId: authority.threadId,
+                  sessionId: authority.sessionId,
+                  status: authority.status,
+                  lastRunStatus: authority.status,
+                },
+                conversationMessageRoutes: [{
+                  messageId: authority.messageId,
+                  disposition: "started",
+                  runId: authority.runId,
+                }],
+                conversationTurns: [{
+                  turnId: `turn-authority-${authority.runId}`,
+                  threadId: authority.threadId,
+                  sessionId: authority.sessionId,
+                  sequence: 1,
+                  status: authority.status,
+                  rootRunId: authority.runId,
+                  sourceMessageId: authority.messageId,
+                  terminalRunId: authority.runId,
+                  terminalStatus: authority.status,
+                  startedAt: "2026-05-14T00:00:00.000Z",
+                  completedAt: "2026-05-14T00:00:03.000Z",
+                  updatedAt: "2026-05-14T00:00:03.000Z",
+                }],
+              },
+            },
+          });
         }
         commands.push({ type, payload });
         if (type === "run.cancel") {
@@ -4016,6 +4098,102 @@ test("TuiRunController response-loss recovery installs exact active, waiting, an
   }
 });
 
+test("TuiRunController requires exact routed terminal evidence for direct and response-loss queue settlement", async (t) => {
+  for (const responseKind of ["direct", "response-loss"] as const) {
+    const mismatches = responseKind === "direct"
+      ? ["running-only", "wrong-message", "wrong-thread", "wrong-session", "duplicate"] as const
+      : ["wrong-message", "wrong-thread", "wrong-session", "duplicate"] as const;
+    for (const mismatch of mismatches) {
+      await t.test(`${responseKind} ${mismatch}`, async () => {
+        let submittedRunId: string | undefined;
+        const messageId = `message-${responseKind}-${mismatch}`;
+        const threadId = "thread-main:session-1";
+        const harness = createRunHarness({
+          disableSynthesizedTerminalAuthority: true,
+          activeSessionPatch: {
+            acceptedRunId: "run-r0",
+            acceptedRunMessageId: "message-r0",
+            acceptedRunThreadId: threadId,
+          },
+          sendCommand: async (type, payload) => {
+            if (type === "conversation.message.submit") {
+              submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+              if (responseKind === "response-loss") throw new Error("response lost");
+              return makeRunnerEvent({
+                type: "run.completed",
+                sessionId: "session-1",
+                threadId,
+                runId: submittedRunId,
+                payload: { result: makeCompletedResult(submittedRunId) },
+              });
+            }
+            if (type === "operator.thread") {
+              const terminalTurn = {
+                turnId: `turn-${responseKind}-${mismatch}`,
+                threadId: mismatch === "wrong-thread" ? "thread-wrong" : threadId,
+                sessionId: mismatch === "wrong-session" ? "session-wrong" : "session-1",
+                sequence: 1,
+                status: "COMPLETED" as const,
+                rootRunId: submittedRunId,
+                sourceMessageId: mismatch === "wrong-message" ? "message-wrong" : messageId,
+                terminalRunId: submittedRunId,
+                terminalStatus: "COMPLETED" as const,
+                startedAt: "2026-08-29T00:00:00.000Z",
+                completedAt: "2026-08-29T00:00:01.000Z",
+                updatedAt: "2026-08-29T00:00:01.000Z",
+              };
+              return makeRunnerEvent({
+                type: "operator.thread",
+                payload: {
+                  view: {
+                    thread: {
+                      threadId: mismatch === "wrong-thread" ? "thread-wrong" : threadId,
+                      sessionId: mismatch === "wrong-session" ? "session-wrong" : "session-1",
+                      title: "Mismatched terminal authority",
+                      status: mismatch === "running-only" ? "RUNNING" : "COMPLETED",
+                      lastRunStatus: mismatch === "running-only" ? undefined : "COMPLETED",
+                      createdAt: "2026-08-29T00:00:00.000Z",
+                      updatedAt: "2026-08-29T00:00:01.000Z",
+                    },
+                    childThreads: [],
+                    childBlockerChain: [],
+                    activeRun: mismatch === "running-only"
+                      ? { runId: submittedRunId, status: "RUNNING" as const }
+                      : undefined,
+                    conversationMessageRoutes: [{
+                      messageId,
+                      disposition: "started" as const,
+                      runId: submittedRunId,
+                    }],
+                    conversationTurns: mismatch === "running-only"
+                      ? []
+                      : mismatch === "duplicate"
+                        ? [terminalTurn, { ...terminalTurn, turnId: `${terminalTurn.turnId}-duplicate`, sequence: 2 }]
+                        : [terminalTurn],
+                  },
+                },
+              });
+            }
+            throw new Error(`Unexpected command '${type}'.`);
+          },
+        });
+        installActiveConversationView(harness.controller);
+        harness.uiStore.patch({ running: true });
+
+        assert.equal(await harness.controller.startActiveTurn({
+          messageId,
+          submittedMessage: "do not settle without exact terminal evidence",
+          queueRequested: true,
+        }), false);
+        const session = harness.uiStore.getState().activeSession;
+        assert.equal(session.acceptedRunId, "run-r0");
+        assert.equal(session.terminalQueuedRuns?.some((item) => item.runId === submittedRunId) ?? false, false);
+        assert.equal(harness.history.some((line) => line.output?.runId === submittedRunId), false);
+      });
+    }
+  }
+});
+
 test("TuiRunController response-loss terminal recovery preserves a newer accepted run", async () => {
   let submittedRunId: string | undefined;
   const messageId = "message-recovered-prior-terminal";
@@ -4321,7 +4499,31 @@ test("TuiRunController keeps newer visible state when an older completed respons
           payload: {
             view: {
               ...makeConversationView({ active: true }),
-              activeRun: { runId: "run-r0", status: "RUNNING" },
+              thread: {
+                ...makeConversationView({ active: true }).thread,
+                threadId,
+                sessionId: "session-1",
+              },
+              activeRun: { runId: "run-r2", status: "RUNNING" },
+              conversationMessageRoutes: [{
+                messageId: "message-older-failed-output",
+                disposition: "started",
+                runId: submittedRunId,
+              }],
+              conversationTurns: [{
+                turnId: "turn-older-failed-output",
+                threadId,
+                sessionId: "session-1",
+                sequence: 1,
+                status: "FAILED",
+                rootRunId: submittedRunId,
+                sourceMessageId: "message-older-failed-output",
+                terminalRunId: submittedRunId,
+                terminalStatus: "FAILED",
+                startedAt: "2026-08-29T00:00:00.000Z",
+                completedAt: "2026-08-29T00:00:01.000Z",
+                updatedAt: "2026-08-29T00:00:01.000Z",
+              }],
             },
           },
         });
@@ -4602,6 +4804,55 @@ test("TuiRunController treats an exact result-less queued failure as preaccept r
   assert.equal(session.acceptedRunMessageId, "message-r0");
   assert.equal(session.pendingQueueSubmissions?.some((item) => item.runId === reservedRunId) ?? false, false);
   assert.equal(session.queuedRunReservations?.some((item) => item.runId === reservedRunId) ?? false, false);
+  assert.equal(session.terminalQueuedRuns?.some((item) => item.runId === reservedRunId) ?? false, false);
+  assert.equal(harness.history.some((line) => line.output?.runId === reservedRunId), false);
+});
+
+test("TuiRunController does not treat a result-less checkpoint failure as accepted queue authority", async () => {
+  let reservedRunId: string | undefined;
+  const commands: string[] = [];
+  const threadId = "thread-main:session-1";
+  const harness = createRunHarness({
+    activeSessionPatch: {
+      acceptedRunId: "run-r0",
+      acceptedRunMessageId: "message-r0",
+      acceptedRunThreadId: threadId,
+    },
+    sendCommand: async (type, payload) => {
+      commands.push(type);
+      assert.equal(type, "conversation.message.submit");
+      reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+      return makeRunnerEvent({
+        type: "run.failed",
+        sessionId: "session-1",
+        threadId,
+        runId: reservedRunId,
+        payload: {
+          error: {
+            code: "CONTEXT_CHECKPOINT_PENDING",
+            message: "checkpoint was rejected before run acceptance",
+            details: {
+              threadId,
+              checkpointId: "checkpoint-resultless",
+              recommendedAction: "compact",
+            },
+          },
+        },
+      });
+    },
+  });
+  installActiveConversationView(harness.controller);
+  harness.uiStore.patch({ running: true });
+
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId: "message-resultless-checkpoint",
+    submittedMessage: "do not recover an unaccepted checkpoint",
+    queueRequested: true,
+  }), false);
+  const session = harness.uiStore.getState().activeSession;
+  assert.deepEqual(commands, ["conversation.message.submit"]);
+  assert.equal(session.acceptedRunId, "run-r0");
+  assert.equal(session.pendingQueueSubmissions?.some((item) => item.runId === reservedRunId) ?? false, false);
   assert.equal(session.terminalQueuedRuns?.some((item) => item.runId === reservedRunId) ?? false, false);
   assert.equal(harness.history.some((line) => line.output?.runId === reservedRunId), false);
 });
@@ -6355,8 +6606,10 @@ test("TuiRunController gives a queued checkpoint retry fresh identity across lat
   assert.equal(result, true);
   assert.deepEqual(commands, [
     "conversation.message.submit",
+    "operator.thread",
     "operator.control",
     "conversation.message.submit",
+    "operator.thread",
   ]);
   assert.notEqual(submissionIdentities[0]?.messageId, submissionIdentities[1]?.messageId);
   assert.notEqual(submissionIdentities[0]?.runId, submissionIdentities[1]?.runId);
