@@ -10,8 +10,38 @@ import type {
 } from "../../src/orchestration/contracts.js";
 import {
   buildOperatorSessionProjection,
+  toOperatorAssemblySummary,
   type OperatorSessionProjectionRuntime,
 } from "../../src/orchestration/OperatorSessionProjection.js";
+
+test("toOperatorAssemblySummary projects exact environment identity", () => {
+  const thread = buildThread("thread-environment", {
+    environmentPresetId: "cli_safe_local",
+  });
+  const summary = toOperatorAssemblySummary({
+    ...buildThreadStatus(thread),
+    activeAssembly: {
+      recordId: "assembly-record-1",
+      threadId: thread.threadId,
+      bundleId: "bundle:kestrel:safe",
+      cause: "thread_start",
+      authority: "profile",
+      createdAt: "2026-05-24T10:00:00.000Z",
+    },
+    assemblyBundle: {
+      bundleId: "bundle:kestrel:safe",
+      label: "Kestrel on cli:cli_safe_local",
+      source: "profile_default",
+      toolAllowlist: ["code.execute"],
+      specialistIds: [],
+      metadata: { environmentPresetId: "cli_safe_local" },
+      createdAt: "2026-05-24T10:00:00.000Z",
+      updatedAt: "2026-05-24T10:00:00.000Z",
+    },
+  });
+
+  assert.equal(summary?.environmentPresetId, "cli_safe_local");
+});
 
 
 test("buildOperatorSessionProjection reads canonical user waits from session state", async () => {

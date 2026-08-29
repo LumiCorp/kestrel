@@ -19,6 +19,7 @@ import { UiStateStore } from "../ink/persistence/UiStateStore.js";
 import { buildInitialUiRuntimeState, UiStore } from "../ink/store/UiStore.js";
 import { DEFAULT_THEME_MODE, resolveThemeSelection, type ThemeMode } from "../ink/theme/tokens.js";
 import { SessionStore } from "../session/SessionStore.js";
+import { defaultTuiEnvironmentPresetId } from "../session/TuiExecutionEnvironment.js";
 import { WorkspaceStore } from "../workspace/WorkspaceStore.js";
 import {
   describeResolvedWorkspace,
@@ -759,6 +760,13 @@ function createSessionMeta(
     sessionId,
     profileId: profile.id,
     profileLabel: profile.label,
+    ...(profile.agentProfileId !== undefined ? { agentProfileId: profile.agentProfileId } : {}),
+    ...(profile.agentProfileLabel !== undefined ? { agentProfileLabel: profile.agentProfileLabel } : {}),
+    environmentPresetId: defaultTuiEnvironmentPresetId({
+      workspaceBinding: launch.workspace.binding,
+      workspaceId: workspace?.manifest.workspaceId,
+      workspaceRoot: workspace?.rootPath,
+    }),
     ...(launch.presetId !== undefined ? { launchPresetId: launch.presetId } : {}),
     ...(launch.templateId !== undefined ? { launchTemplateId: launch.templateId } : {}),
     workspaceBinding: launch.workspace.binding,

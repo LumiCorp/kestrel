@@ -124,6 +124,14 @@ function createRunHarness(input: {
   recoverTerminalMessages?: TuiRunControllerContext["recoverTerminalMessages"] | undefined;
   withMcpSummary?: TuiRunControllerContext["withMcpSummary"] | undefined;
   scripted?: boolean | undefined;
+  started?: boolean | undefined;
+  environmentPresetId?: TuiSessionMeta["environmentPresetId"] | undefined;
+  runtimeEnvironmentPresetId?: "cli_safe_local" | "cli_dev_local" | undefined;
+  legacyEnvironmentMissing?: boolean | undefined;
+  workspaceBinding?: TuiSessionMeta["workspaceBinding"] | undefined;
+  workspaceRoot?: string | undefined;
+  effectiveAssemblyId?: string | undefined;
+  omitRuntimeEnvironmentIdentity?: boolean | undefined;
 } = {}): {
   controller: TuiRunController;
   uiStore: UiStore;
@@ -152,7 +160,21 @@ function createRunHarness(input: {
     profileId: activeProfile.id,
     createdAt: "2026-05-14T00:00:00.000Z",
     updatedAt: "2026-05-14T00:00:00.000Z",
-    started: true,
+    started: input.started ?? true,
+    ...(input.workspaceBinding !== undefined
+      ? { workspaceBinding: input.workspaceBinding }
+      : {}),
+    ...(input.workspaceRoot !== undefined ? { workspaceRoot: input.workspaceRoot } : {}),
+    ...(input.legacyEnvironmentMissing === true
+      ? {}
+      : input.environmentPresetId !== undefined
+      ? { environmentPresetId: input.environmentPresetId }
+      : { environmentPresetId: "cli_dev_local" }),
+    ...(input.effectiveAssemblyId !== undefined
+      ? { effectiveAssemblyId: input.effectiveAssemblyId }
+      : input.legacyEnvironmentMissing === true || input.runtimeEnvironmentPresetId !== undefined
+        ? {}
+        : { effectiveAssemblyId: "bundle:kestrel:cli" }),
     ...(input.pendingWaitFor !== undefined ? { pendingWaitFor: input.pendingWaitFor } : {}),
     ...(input.pendingManualCompaction !== undefined
       ? { pendingManualCompaction: input.pendingManualCompaction }
@@ -203,7 +225,39 @@ function createRunHarness(input: {
     },
     uiStateStore: undefined,
     client: {
-      sendCommand: input.sendCommand ?? (async (type: string, payload: Record<string, unknown>) => {
+      sendCommand: async (
+        type: string,
+        payload: Record<string, unknown>,
+        metadata?: Record<string, unknown> | undefined,
+      ) => {
+        if (type === "session.describe") {
+          return makeRunnerEvent({
+            type: "session.described",
+            payload: {
+              sessionId: activeSession.sessionId,
+              version: 1,
+              activeAssembly: {
+                mode: "explicit",
+                bundleId: "bundle:kestrel:cli",
+                ...(input.omitRuntimeEnvironmentIdentity === true
+                  ? {}
+                  : {
+                      environmentPresetId:
+                        input.runtimeEnvironmentPresetId ??
+                        input.environmentPresetId ??
+                        "cli_dev_local",
+                    }),
+              },
+            },
+          });
+        }
+        if (input.sendCommand !== undefined) {
+          return await input.sendCommand(
+            type as never,
+            payload as never,
+            metadata as never,
+          );
+        }
         commands.push({ type, payload });
         if (type === "run.cancel") {
           return makeRunnerEvent({
@@ -243,16 +297,24 @@ function createRunHarness(input: {
             view: makeConversationView(),
           },
         });
-      }),
+      },
     },
     getLocalCoreClient: () => ({
       resolveExecutionProfile: async (request: {
         client: "cli";
         profileId: string;
+        environmentPresetId: "cli_safe_local" | "cli_dev_local";
       }) => {
+        const expectedEnvironmentPresetId =
+          input.runtimeEnvironmentPresetId ??
+          input.environmentPresetId ??
+          (input.legacyEnvironmentMissing === true && (input.started ?? true) === false
+            ? "cli_safe_local"
+            : "cli_dev_local");
         assert.deepEqual(request, {
           client: "cli",
           profileId: activeProfile.id,
+          environmentPresetId: expectedEnvironmentPresetId,
         });
         return {
           version: 1,
@@ -260,11 +322,17 @@ function createRunHarness(input: {
           fingerprint:
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           policy: { id: "kestrel", version: 2 },
-          environmentPreset: { id: "cli_dev_local", version: 1 },
+          environmentPreset: { id: expectedEnvironmentPresetId, version: 1 },
           resolvedProfile: {
             ...activeProfile,
             id: registeredProfileId,
             agentProfileId: "kestrel",
+            environmentShellKind: "cli",
+            environmentPresetId: expectedEnvironmentPresetId,
+            environmentCapabilityPackIds:
+              expectedEnvironmentPresetId === "cli_dev_local"
+                ? ["balanced", "filesystem", "dev_shell"]
+                : ["balanced", "filesystem", "sandbox_code"],
           },
         };
       },
@@ -381,6 +449,76 @@ function createRunHarness(input: {
     registeredProfileId,
   };
 }
+
+test("TuiRunController backfills a started legacy session from exact runtime identity", async () => {
+  const harness = createRunHarness({
+    legacyEnvironmentMissing: true,
+    runtimeEnvironmentPresetId: "cli_safe_local",
+  });
+
+  await harness.controller.startActiveTurn({ submittedMessage: "continue safely" });
+
+  const session = harness.uiStore.getState().activeSession;
+  assert.equal(session.environmentPresetId, "cli_safe_local");
+  assert.equal(session.environmentShellKind, "cli");
+  assert.deepEqual(session.environmentCapabilityPackIds, [
+    "balanced",
+    "filesystem",
+    "sandbox_code",
+  ]);
+  assert.equal(session.effectiveAssemblyId, "bundle:kestrel:cli");
+});
+
+test("TuiRunController materializes the safe default for an unstarted detached legacy session", async () => {
+  const harness = createRunHarness({
+    started: false,
+    legacyEnvironmentMissing: true,
+    workspaceBinding: "detached",
+    workspaceRoot: "/stale/workspace-binding",
+  });
+
+  await harness.controller.startActiveTurn({ submittedMessage: "start detached" });
+
+  assert.equal(
+    harness.uiStore.getState().activeSession.environmentPresetId,
+    "cli_safe_local",
+  );
+});
+
+test("TuiRunController fails closed when a started legacy session has no exact environment", async () => {
+  const harness = createRunHarness({
+    legacyEnvironmentMissing: true,
+    omitRuntimeEnvironmentIdentity: true,
+  });
+
+  await assert.rejects(
+    harness.controller.startActiveTurn({ submittedMessage: "continue" }),
+    /Environment unknown/u,
+  );
+  assert.equal(harness.commands.length, 0);
+  assert.equal(harness.diagnostics.at(-1)?.scope, "tui.environment_identity");
+  assert.match(harness.diagnostics.at(-1)?.details ?? "", /TUI_ENVIRONMENT_UNKNOWN/u);
+});
+
+test("TuiRunController fails closed when persisted and runtime environments conflict", async () => {
+  const harness = createRunHarness({
+    environmentPresetId: "cli_dev_local",
+    runtimeEnvironmentPresetId: "cli_safe_local",
+    effectiveAssemblyId: "bundle:kestrel:developer",
+    pendingWaitFor: { kind: "user", eventType: "user.reply" },
+  });
+
+  await assert.rejects(
+    harness.controller.startActiveTurn({
+      submittedMessage: "continue",
+      resumeBlockedRun: true,
+    }),
+    /Environment consistency failure/u,
+  );
+  assert.equal(harness.commands.length, 0);
+  assert.equal(harness.diagnostics.at(-1)?.scope, "tui.environment_identity");
+  assert.match(harness.diagnostics.at(-1)?.details ?? "", /TUI_ENVIRONMENT_CONFLICT/u);
+});
 
 test("TuiRunController routes blocked-run replies through the interaction command adapter", async () => {
   const harness = createRunHarness({

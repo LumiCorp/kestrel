@@ -24,6 +24,7 @@ import type {
   ThreadRecord,
   ThreadStatusSnapshot,
 } from "./contracts.js";
+import type { ShellPresetId } from "../profile/runtimeProfile.js";
 
 export interface OperatorAssemblyProviderSummary {
   id: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
@@ -46,6 +47,7 @@ export interface OperatorAssemblySummary {
   bundleId?: string | undefined;
   label?: string | undefined;
   source?: string | undefined;
+  environmentPresetId?: ShellPresetId | undefined;
   authority?: "profile" | "policy" | "operator" | "model" | undefined;
   cause?:
     | "thread_start"
@@ -349,6 +351,9 @@ export function toOperatorAssemblySummary(
       mode: "implicit_legacy",
       threadId: threadStatus.thread.threadId,
       label: "implicit/legacy",
+      ...(threadStatus.thread.environmentPresetId !== undefined
+        ? { environmentPresetId: threadStatus.thread.environmentPresetId }
+        : {}),
     };
   }
   const bundle = threadStatus.assemblyBundle;
@@ -359,6 +364,11 @@ export function toOperatorAssemblySummary(
     bundleId: bundle?.bundleId ?? record.bundleId,
     ...(bundle?.label !== undefined ? { label: bundle.label } : {}),
     ...(bundle?.source !== undefined ? { source: bundle.source } : {}),
+    ...(threadStatus.thread.environmentPresetId !== undefined
+      ? { environmentPresetId: threadStatus.thread.environmentPresetId }
+      : readAssemblyEnvironmentPresetId(bundle?.metadata) !== undefined
+        ? { environmentPresetId: readAssemblyEnvironmentPresetId(bundle?.metadata) }
+        : {}),
     authority: record.authority,
     cause: record.cause,
     ...(bundle?.toolAllowlist !== undefined ? { toolAllowlist: [...bundle.toolAllowlist] } : {}),
@@ -378,6 +388,20 @@ export function toOperatorAssemblySummary(
       ? { compatibility: toAssemblyCompatibilitySummary(bundle?.metadata) }
       : {}),
   };
+}
+
+function readAssemblyEnvironmentPresetId(
+  metadata: Record<string, unknown> | undefined,
+): ShellPresetId | undefined {
+  const value = metadata?.environmentPresetId;
+  return value === "cli_safe_local" ||
+      value === "cli_dev_local" ||
+      value === "web_balanced" ||
+      value === "desktop_safe_local" ||
+      value === "desktop_dev_local" ||
+      value === "workspace_hosted"
+    ? value
+    : undefined;
 }
 
 async function ensureMainThread(

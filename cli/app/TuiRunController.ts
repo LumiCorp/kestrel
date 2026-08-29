@@ -43,6 +43,12 @@ import {
   resolveChatVisualAnchor,
   resolveChatVisualCursorFromAnchor,
 } from "../ink/views/chatRows.js";
+import {
+  resolveTuiSessionEnvironment,
+  toResolvedSessionIdentity,
+  TuiEnvironmentIdentityError,
+  type TuiEnvironmentPresetId,
+} from "../session/TuiExecutionEnvironment.js";
 
 export interface StartActiveTurnInput {
   messageId?: string | undefined;
@@ -336,10 +342,19 @@ export class TuiRunController {
         "Kestrel Local Core is required to resolve the active execution profile.",
       );
     }
+    const environmentPresetId = await this.resolveActiveSessionEnvironment(
+      state.activeSession,
+      input.resumeBlockedRun === true,
+    );
     const executionProfile = await core.resolveExecutionProfile({
       client: "cli",
       profileId: state.activeProfile.id,
+      environmentPresetId,
     });
+    await this.context.setActiveSessionState(
+      toResolvedSessionIdentity(executionProfile, environmentPresetId),
+    );
+    await this.context.persistSessionAndUi();
     const workspace = await this.context.refreshWorkspaceForActiveSession();
     const submissionMessageId = input.messageId ?? `tui:${randomUUID()}`;
     const priorTranscript = state.transcript.filter((line) =>
@@ -878,6 +893,71 @@ export class TuiRunController {
       });
       await this.context.persistSessionAndUi();
       return requestAccepted;
+    }
+  }
+
+  private async resolveActiveSessionEnvironment(
+    session: TuiSessionMeta,
+    verifyRuntimeIdentity: boolean,
+  ): Promise<TuiEnvironmentPresetId> {
+    try {
+      if (session.started === false) {
+        const environmentPresetId = resolveTuiSessionEnvironment({ session });
+        if (session.environmentPresetId !== environmentPresetId) {
+          await this.context.setActiveSessionState({ environmentPresetId });
+        }
+        return environmentPresetId;
+      }
+      if (
+        verifyRuntimeIdentity === false &&
+        session.environmentPresetId !== undefined &&
+        session.effectiveAssemblyId !== undefined
+      ) {
+        return resolveTuiSessionEnvironment({ session });
+      }
+
+      const response = await this.context.client.sendCommand("session.describe", {
+        sessionId: session.sessionId,
+      });
+      if (response.type !== "session.described") {
+        throw new TuiEnvironmentIdentityError(
+          "TUI_ENVIRONMENT_UNKNOWN",
+          `Environment unknown for session '${session.name}': runtime identity could not be described.`,
+        );
+      }
+      const environmentPresetId = resolveTuiSessionEnvironment({
+        session,
+        runtimeEnvironmentPresetId: response.payload.activeAssembly?.environmentPresetId,
+        requireRuntimeIdentity: true,
+      });
+      await this.context.setActiveSessionState({
+        environmentPresetId,
+        ...(response.payload.activeAssembly?.bundleId !== undefined
+          ? { effectiveAssemblyId: response.payload.activeAssembly.bundleId }
+          : {}),
+        ...(response.payload.activeAssembly?.label !== undefined
+          ? { effectiveAssemblyLabel: response.payload.activeAssembly.label }
+          : {}),
+      });
+      return environmentPresetId;
+    } catch (error) {
+      const identityError = error instanceof TuiEnvironmentIdentityError
+        ? error
+        : new TuiEnvironmentIdentityError(
+            "TUI_ENVIRONMENT_UNKNOWN",
+            `Environment unknown for session '${session.name}': runtime identity could not be verified.`,
+          );
+      await this.context.appendDiagnosticsLog({
+        scope: "tui.environment_identity",
+        summary: identityError.message,
+        details: JSON.stringify({
+          code: identityError.code,
+          sessionId: session.sessionId,
+          persistedEnvironmentPresetId: session.environmentPresetId,
+          cause: error instanceof Error ? error.message : String(error),
+        }),
+      });
+      throw identityError;
     }
   }
 

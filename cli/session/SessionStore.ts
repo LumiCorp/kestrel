@@ -239,6 +239,44 @@ function validateSession(value: unknown): TuiSessionMeta {
   const profileLabel = typeof entry.profileLabel === "string"
     ? entry.profileLabel
     : undefined;
+  const agentProfileId = typeof entry.agentProfileId === "string"
+    ? entry.agentProfileId
+    : undefined;
+  const agentProfileLabel = typeof entry.agentProfileLabel === "string"
+    ? entry.agentProfileLabel
+    : undefined;
+  const environmentShellKind =
+    entry.environmentShellKind === "cli" ||
+    entry.environmentShellKind === "web" ||
+    entry.environmentShellKind === "desktop"
+      ? entry.environmentShellKind
+      : undefined;
+  const environmentPresetId =
+    entry.environmentPresetId === "cli_safe_local" ||
+    entry.environmentPresetId === "cli_dev_local" ||
+    entry.environmentPresetId === "web_balanced" ||
+    entry.environmentPresetId === "desktop_safe_local" ||
+    entry.environmentPresetId === "desktop_dev_local" ||
+    entry.environmentPresetId === "workspace_hosted"
+      ? entry.environmentPresetId
+      : undefined;
+  const environmentCapabilityPackIds =
+    Array.isArray(entry.environmentCapabilityPackIds) &&
+    entry.environmentCapabilityPackIds.every((value) =>
+      value === "balanced" ||
+      value === "filesystem" ||
+      value === "dev_shell" ||
+      value === "desktop_host" ||
+      value === "sandbox_code"
+    )
+      ? entry.environmentCapabilityPackIds as TuiSessionMeta["environmentCapabilityPackIds"]
+      : undefined;
+  const effectiveAssemblyId = typeof entry.effectiveAssemblyId === "string"
+    ? entry.effectiveAssemblyId
+    : undefined;
+  const effectiveAssemblyLabel = typeof entry.effectiveAssemblyLabel === "string"
+    ? entry.effectiveAssemblyLabel
+    : undefined;
   const launchPresetId = typeof entry.launchPresetId === "string"
     ? entry.launchPresetId as TuiSessionMeta["launchPresetId"]
     : undefined;
@@ -298,6 +336,15 @@ function validateSession(value: unknown): TuiSessionMeta {
     sessionId: readRequiredString(entry, "sessionId"),
     profileId: readRequiredString(entry, "profileId"),
     ...(profileLabel !== undefined ? { profileLabel } : {}),
+    ...(agentProfileId !== undefined ? { agentProfileId } : {}),
+    ...(agentProfileLabel !== undefined ? { agentProfileLabel } : {}),
+    ...(environmentShellKind !== undefined ? { environmentShellKind } : {}),
+    ...(environmentPresetId !== undefined ? { environmentPresetId } : {}),
+    ...(environmentCapabilityPackIds !== undefined
+      ? { environmentCapabilityPackIds: [...environmentCapabilityPackIds] }
+      : {}),
+    ...(effectiveAssemblyId !== undefined ? { effectiveAssemblyId } : {}),
+    ...(effectiveAssemblyLabel !== undefined ? { effectiveAssemblyLabel } : {}),
     ...(launchPresetId !== undefined ? { launchPresetId } : {}),
     ...(launchTemplateId !== undefined ? { launchTemplateId } : {}),
     ...(workspaceBinding !== undefined ? { workspaceBinding } : {}),

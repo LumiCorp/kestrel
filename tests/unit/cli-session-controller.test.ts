@@ -7,6 +7,7 @@ import {
 } from "../../cli/app/SessionController.js";
 import type { SessionsFile, TuiProfile, TuiSessionMeta } from "../../cli/contracts.js";
 import { buildInitialUiRuntimeState, UiStore } from "../../cli/ink/store/UiStore.js";
+import { TuiEnvironmentIdentityError } from "../../cli/session/TuiExecutionEnvironment.js";
 
 
 function makeSession(input: Partial<TuiSessionMeta> & { name: string; sessionId: string }): TuiSessionMeta {
@@ -174,4 +175,53 @@ test("SessionController restores cached activity when switching to a background 
   assert.deepEqual(uiStore.getState().conversationActivity, []);
   assert.equal(uiStore.getState().running, false);
   assert.equal(uiStore.getState().statusLine, "resumed 'main' | mcp ready");
+});
+
+test("SessionController aborts a switch when runtime environment identity conflicts", async () => {
+  const main = makeSession({ name: "main", sessionId: "s-main" });
+  const target = makeSession({ name: "target", sessionId: "s-target" });
+  const sessionsFile: SessionsFile = {
+    version: 5,
+    activeSessionName: main.name,
+    sessions: [main, target],
+  };
+  let changedActiveSession = false;
+  const context = {
+    uiStore: {
+      getState: () => ({ activeSession: main }),
+    },
+    sessionStore: {
+      resolveSelector: () => ({ status: "matched", session: target }),
+      setActive: () => {
+        changedActiveSession = true;
+        return sessionsFile;
+      },
+    },
+    getSessionsFile: () => sessionsFile,
+    client: {
+      sendCommand: async () => ({
+        type: "session.described",
+        payload: {
+          sessionId: target.sessionId,
+          version: 1,
+          activeAssembly: {
+            mode: "explicit",
+            environmentPresetId: "cli_safe_local",
+          },
+        },
+      }),
+    },
+    syncSessionFromDescribePayload: async () => {
+      throw new TuiEnvironmentIdentityError(
+        "TUI_ENVIRONMENT_CONFLICT",
+        "Environment consistency failure for session 'target'.",
+      );
+    },
+  } as unknown as SessionControllerContext;
+
+  await assert.rejects(
+    new SessionController(context).switchSession(target.name),
+    /Environment consistency failure/u,
+  );
+  assert.equal(changedActiveSession, false);
 });

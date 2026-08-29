@@ -216,3 +216,40 @@ test("SessionStore persists workspace binding metadata", async () => {
   assert.equal(loadedSession?.workspaceId, "ws-123");
   assert.equal(loadedSession?.workspaceRoot, "/tmp/project-root");
 });
+
+test("SessionStore round-trips exact TUI runtime identity metadata", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-identity-"));
+  const store = new SessionStore(tempDir);
+  const now = new Date().toISOString();
+  const session: TuiSessionMeta = {
+    name: "developer-workspace",
+    sessionId: "workspace-dev-1",
+    profileId: "kestrel",
+    profileLabel: "Kestrel",
+    agentProfileId: "kestrel",
+    agentProfileLabel: "Kestrel",
+    environmentShellKind: "cli",
+    environmentPresetId: "cli_dev_local",
+    environmentCapabilityPackIds: ["balanced", "filesystem", "dev_shell"],
+    effectiveAssemblyId: "bundle:kestrel:developer",
+    effectiveAssemblyLabel: "Kestrel on cli:cli_dev_local",
+    createdAt: now,
+    updatedAt: now,
+    started: true,
+  };
+
+  await store.save(store.upsert(await store.load(), session));
+  const loaded = store.findByName(await store.load(), session.name);
+
+  assert.equal(loaded?.agentProfileId, "kestrel");
+  assert.equal(loaded?.agentProfileLabel, "Kestrel");
+  assert.equal(loaded?.environmentShellKind, "cli");
+  assert.equal(loaded?.environmentPresetId, "cli_dev_local");
+  assert.deepEqual(loaded?.environmentCapabilityPackIds, [
+    "balanced",
+    "filesystem",
+    "dev_shell",
+  ]);
+  assert.equal(loaded?.effectiveAssemblyId, "bundle:kestrel:developer");
+  assert.equal(loaded?.effectiveAssemblyLabel, "Kestrel on cli:cli_dev_local");
+});

@@ -90,6 +90,8 @@ async function createAppHarness(input: {
     name: "default",
     sessionId: "session-1",
     profileId: activeProfile.id,
+    environmentPresetId: "cli_dev_local",
+    effectiveAssemblyId: "bundle:kestrel:cli",
     createdAt: now,
     updatedAt: now,
     started: true,
@@ -123,10 +125,12 @@ async function createAppHarness(input: {
       resolveExecutionProfile: async (request: {
         client: "cli";
         profileId: string;
+        environmentPresetId: "cli_safe_local" | "cli_dev_local";
       }) => {
         assert.deepEqual(request, {
           client: "cli",
           profileId: activeProfile.id,
+          environmentPresetId: "cli_dev_local",
         });
         const fingerprint =
           "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -141,6 +145,13 @@ async function createAppHarness(input: {
             ...activeProfile,
             id: profileId,
             agentProfileId: "kestrel",
+            environmentShellKind: "cli",
+            environmentPresetId: "cli_dev_local",
+            environmentCapabilityPackIds: [
+              "balanced",
+              "filesystem",
+              "dev_shell",
+            ],
           },
         };
       },
@@ -167,6 +178,21 @@ async function waitFor(assertion: () => boolean, timeoutMs = 100): Promise<void>
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error("condition not met before timeout");
+}
+
+function makeExactTuiSessionDescription() {
+  return {
+    type: "session.described" as const,
+    payload: {
+      sessionId: "session-1",
+      version: 1,
+      activeAssembly: {
+        mode: "explicit" as const,
+        bundleId: "bundle:kestrel:cli",
+        environmentPresetId: "cli_dev_local" as const,
+      },
+    },
+  };
 }
 
 function restoreProcessEnv(key: string, value: string | undefined): void {
@@ -315,6 +341,7 @@ test("bootstrapTuiApp expands ~/ KESTREL_HOME for default stores", async () => {
     const stateHome = path.join(expandedHome, "state", "0.6");
     assert.equal(bootstrap.home, stateHome);
     assert.equal(bootstrap.profileStore.getBaseDir(), stateHome);
+    assert.equal(bootstrap.activeSession.environmentPresetId, "cli_dev_local");
     assert.equal(
       bootstrap.diagnosticsStore.getFilePath(),
       path.join(stateHome, "logs", "tui-diagnostics.log"),
@@ -1224,6 +1251,7 @@ test("start task journey creates a session with the canonical profile, mode, and
   assert.equal(state.activeSession.launchPresetId, "investigation");
   assert.equal(state.activeSession.launchTemplateId, "investigation-task");
   assert.equal(state.activeSession.workspaceBinding, "detached");
+  assert.equal(state.activeSession.environmentPresetId, "cli_safe_local");
   assert.equal(state.activeSession.interactionMode, "build");
   assert.equal(state.activeSession.actSubmode, "safe");
   assert.equal(state.activeProfile.id, "kestrel");
@@ -1304,6 +1332,7 @@ test("start task journey treats launch workspace as current when active session 
 
   const state = (appState.uiStore as UiStore).getState();
   assert.equal(state.activeSession.workspaceBinding, "active");
+  assert.equal(state.activeSession.environmentPresetId, "cli_dev_local");
   assert.equal(state.activeSession.workspaceId, workspace.manifest.workspaceId);
   assert.equal(state.activeSession.workspaceRoot, workspace.rootPath);
 });
@@ -1381,6 +1410,36 @@ test("start task journey accepts a discovered workspace id", async () => {
   assert.equal(state.activeSession.workspaceId, workspace.manifest.workspaceId);
   assert.equal(state.activeSession.workspaceRoot, workspace.rootPath);
   assert.equal(state.activeSession.workspaceBinding, "active");
+});
+
+test("operator-launched background sessions inherit the parent environment", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const initialState = (appState.uiStore as UiStore).getState();
+  let runProfileId: string | undefined;
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      assert.equal(type, "run.start");
+      runProfileId = typeof payload.profileId === "string" ? payload.profileId : undefined;
+      return { type: "run.completed", payload: {} };
+    },
+  };
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "tasks",
+    args: ["launch", initialState.activeProfile.id, "inspect", "the", "workspace"],
+  });
+
+  const state = (appState.uiStore as UiStore).getState();
+  const background = state.sessions.find((session) =>
+    session.delegation?.parentSessionId === initialState.activeSession.sessionId
+  );
+  assert.equal(background?.environmentPresetId, "cli_dev_local");
+  assert.equal(
+    runProfileId,
+    "kestrel:cli_dev_local:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  );
 });
 
 test("/mcp opens the MCP workspace and stores the latest MCP snapshot", async () => {
@@ -3826,6 +3885,7 @@ test("natural-language mode switches are forwarded for runtime intent classifica
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
     sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedCommandType = type;
       capturedTurn = payload.turn;
       return {
@@ -3898,6 +3958,7 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
   let capturedPayload: Record<string, unknown> | undefined;
   appState.client = {
     sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedCommandType = type;
       capturedPayload = payload;
       return {
@@ -4183,43 +4244,46 @@ test("continuation grant history line confirms resumption without raw counters",
   });
 
   appState.client = {
-    sendCommand: async () => ({
-      type: "run.completed",
-      payload: {
-        result: {
-          output: {
-            status: "WAITING",
-            sessionId: "session-1",
-            runId: "run-1",
-            waitFor: {
-              kind: "user",
-              eventType: "user.reply",
-              metadata: {
-                reason: "max_steps_continuation",
+    sendCommand: async (type: string) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
+      return {
+        type: "run.completed",
+        payload: {
+          result: {
+            output: {
+              status: "WAITING",
+              sessionId: "session-1",
+              runId: "run-1",
+              waitFor: {
+                kind: "user",
+                eventType: "user.reply",
+                metadata: {
+                  reason: "max_steps_continuation",
+                },
               },
-            },
-            continuation: {
-              outcome: "granted",
-              extraStepsGranted: 10,
-              continuationCount: 1,
-            },
-            quality: {
-              citationCoverage: 1,
-              unresolvedClaims: 0,
-              reworkRate: 0,
-              thrashIndex: 0,
-            },
-            errors: [],
-            telemetry: {
-              stepsExecuted: 1,
-              toolCalls: 0,
-              modelCalls: 0,
-              durationMs: 1,
+              continuation: {
+                outcome: "granted",
+                extraStepsGranted: 10,
+                continuationCount: 1,
+              },
+              quality: {
+                citationCoverage: 1,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              errors: [],
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 0,
+                durationMs: 1,
+              },
             },
           },
         },
-      },
-    }),
+      };
+    },
   };
 
   await (appState.handleLine as (line: string) => Promise<void>)("go on");
@@ -4309,6 +4373,7 @@ test("continuation replies are forwarded for runtime intent classification", asy
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
     sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedCommandType = type;
       capturedTurn = payload.turn;
       return {
@@ -4379,6 +4444,7 @@ test("non-continuation text during an ordinary wait leaves routing to the runtim
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
     sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedCommandType = type;
       capturedTurn = payload.turn;
       return {
@@ -4448,6 +4514,7 @@ test("exact continuation text during ordinary waits is routed by the runtime", a
   let capturedPayload: Record<string, unknown> | undefined;
   appState.client = {
     sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedCommandType = type;
       capturedPayload = payload;
       return {
@@ -4590,7 +4657,8 @@ test("continuation replies apply manual compaction when adaptation already recom
 
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (_type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedTurn = payload.turn;
       return {
         type: "run.completed",
@@ -4660,43 +4728,46 @@ test("continuation-like replies do not synthesize a grant line without runtime c
   });
 
   appState.client = {
-    sendCommand: async () => ({
-      type: "run.completed",
-      payload: {
-        result: {
-          output: {
-            status: "WAITING",
-            sessionId: "session-1",
-            runId: "run-2",
-            waitFor: {
-              kind: "user",
-              eventType: "user.reply",
-              metadata: {
-                reason: "max_steps_continuation",
+    sendCommand: async (type: string) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
+      return {
+        type: "run.completed",
+        payload: {
+          result: {
+            output: {
+              status: "WAITING",
+              sessionId: "session-1",
+              runId: "run-2",
+              waitFor: {
+                kind: "user",
+                eventType: "user.reply",
+                metadata: {
+                  reason: "max_steps_continuation",
+                },
               },
-            },
-            continuation: {
-              outcome: "requested",
-              extraStepsRequested: 50,
-              continuationCount: 0,
-            },
-            quality: {
-              citationCoverage: 1,
-              unresolvedClaims: 0,
-              reworkRate: 0,
-              thrashIndex: 0,
-            },
-            errors: [],
-            telemetry: {
-              stepsExecuted: 1,
-              toolCalls: 0,
-              modelCalls: 0,
-              durationMs: 1,
+              continuation: {
+                outcome: "requested",
+                extraStepsRequested: 50,
+                continuationCount: 0,
+              },
+              quality: {
+                citationCoverage: 1,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              errors: [],
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 0,
+                durationMs: 1,
+              },
             },
           },
         },
-      },
-    }),
+      };
+    },
   };
 
   await (appState.handleLine as (line: string) => Promise<void>)("go on");

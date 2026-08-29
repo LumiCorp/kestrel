@@ -88,6 +88,13 @@ import type { ProtocolClient } from "../client/ProtocolClient.js";
 import { createConfiguredCliProtocolClient } from "../client/configuredClient.js";
 import type { LocalCoreConnectionManager } from "../../src/localCore/connectionManager.js";
 import {
+  defaultTuiEnvironmentPresetId,
+  resolveTuiSessionEnvironment,
+  toResolvedSessionIdentity,
+  TuiEnvironmentIdentityError,
+  type TuiEnvironmentPresetId,
+} from "../session/TuiExecutionEnvironment.js";
+import {
   buildModelCatalogStatusLine,
   buildModelSearchResultBlock,
   buildModelSummaryBlock,
@@ -3054,8 +3061,12 @@ export class App {
         createdAt: now,
         updatedAt: now,
       };
+      const inheritedEnvironmentPresetId = resolveTuiSessionEnvironment({
+        session: state.activeSession,
+      });
       const delegatedSession: TuiSessionMeta = {
         ...childSession,
+        environmentPresetId: inheritedEnvironmentPresetId,
         started: true,
         autoCompactionEnabled: true,
         delegation,
@@ -3084,7 +3095,14 @@ export class App {
       const executionProfile = await core.resolveExecutionProfile({
         client: "cli",
         profileId: profile.id,
+        environmentPresetId: inheritedEnvironmentPresetId,
       });
+      Object.assign(
+        delegatedSession,
+        toResolvedSessionIdentity(executionProfile, inheritedEnvironmentPresetId),
+      );
+      this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, delegatedSession);
+      await this.saveSessionsFile();
       void this.client.sendCommand("run.start", {
         profileId: executionProfile.profileId,
         turn: {
@@ -3526,10 +3544,17 @@ export class App {
         "Kestrel Local Core is required to resolve the active MCP profile.",
       );
     }
+    const environmentPresetId = resolveTuiSessionEnvironment({
+      session: state.activeSession,
+    });
     const executionProfile = await core.resolveExecutionProfile({
       client: "cli",
       profileId: state.activeProfile.id,
+      environmentPresetId,
     });
+    await this.setActiveSessionState(
+      toResolvedSessionIdentity(executionProfile, environmentPresetId),
+    );
     const response = await this.client.sendCommand(refresh ? "mcp.refresh" : "mcp.status", {
       profileId: executionProfile.profileId,
     });
@@ -3545,6 +3570,7 @@ export class App {
       mcpStatus: status,
       statusLine: this.withMcpSummary(stripMcpSummary(current.statusLine)),
     });
+    await this.saveSessionsFile();
     return status;
   }
 
@@ -3636,8 +3662,39 @@ export class App {
     const profile = state.activeProfile.id === target.profileId
       ? state.activeProfile
       : (await this.profileStore.load()).find((candidate) => candidate.id === target.profileId) ?? state.activeProfile;
+    const runtimeEnvironmentPresetId = payload.activeAssembly?.environmentPresetId;
+    let environmentPresetId: TuiEnvironmentPresetId;
+    try {
+      environmentPresetId = resolveTuiSessionEnvironment({
+        session: target,
+        runtimeEnvironmentPresetId,
+        requireRuntimeIdentity:
+          target.started && target.environmentPresetId === undefined,
+      });
+    } catch (error) {
+      if (error instanceof TuiEnvironmentIdentityError) {
+        await this.appendDiagnosticsLog({
+          scope: "tui.environment_identity",
+          summary: error.message,
+          details: JSON.stringify({
+            code: error.code,
+            sessionId: target.sessionId,
+            persistedEnvironmentPresetId: target.environmentPresetId,
+            runtimeEnvironmentPresetId,
+          }),
+        });
+      }
+      throw error;
+    }
     const patchedSession: TuiSessionMeta = {
       ...target,
+      environmentPresetId,
+      ...(payload.activeAssembly?.bundleId !== undefined
+        ? { effectiveAssemblyId: payload.activeAssembly.bundleId }
+        : {}),
+      ...(payload.activeAssembly?.label !== undefined
+        ? { effectiveAssemblyLabel: payload.activeAssembly.label }
+        : {}),
       ...(payload.updatedAt !== undefined ? { updatedAt: payload.updatedAt } : {}),
       pendingWaitFor: resolvedWaitFor,
       ...(payload.focusedThreadId !== undefined ? { focusedThreadId: payload.focusedThreadId } : {}),
@@ -3661,6 +3718,7 @@ export class App {
         ? { activeSession: patchedSession }
         : {}),
     });
+    await this.saveSessionsFile();
   }
 
   private async applyOperatorControlResponse(
@@ -4353,6 +4411,13 @@ export class App {
       sessionId,
       profileId: profile.id,
       profileLabel: profile.label,
+      ...(profile.agentProfileId !== undefined ? { agentProfileId: profile.agentProfileId } : {}),
+      ...(profile.agentProfileLabel !== undefined ? { agentProfileLabel: profile.agentProfileLabel } : {}),
+      environmentPresetId: defaultTuiEnvironmentPresetId({
+        workspaceBinding: launch.workspace.binding,
+        workspaceId: workspace?.manifest.workspaceId,
+        workspaceRoot: workspace?.rootPath,
+      }),
       ...(launch.presetId !== undefined ? { launchPresetId: launch.presetId } : {}),
       ...(launch.templateId !== undefined ? { launchTemplateId: launch.templateId } : {}),
       workspaceBinding: launch.workspace.binding,
