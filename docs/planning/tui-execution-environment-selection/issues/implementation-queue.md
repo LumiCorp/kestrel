@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Make queued lifecycle ownership crash-durable and thread-exact](16-make-queued-lifecycle-crash-durable-and-thread-exact.md)
 
 ## In progress
 
@@ -12,7 +12,7 @@ None.
 
 ## Blocked
 
-- [Let users choose and understand the TUI execution environment](02-expose-environment-controls-and-language.md) — blocked by [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md), [Keep TUI sessions unstarted until execution actually begins](03-repair-tui-session-start-lifecycle.md), [Bind TUI start state to authoritative runtime acceptance](05-bind-start-state-to-authoritative-runtime-acceptance.md), and [Reconcile TUI lifecycle from exact runtime evidence](06-reconcile-tui-lifecycle-from-exact-runtime-evidence.md)
+- [Let users choose and understand the TUI execution environment](02-expose-environment-controls-and-language.md) — blocked by [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md), [Keep TUI sessions unstarted until execution actually begins](03-repair-tui-session-start-lifecycle.md), [Bind TUI start state to authoritative runtime acceptance](05-bind-start-state-to-authoritative-runtime-acceptance.md), [Reconcile TUI lifecycle from exact runtime evidence](06-reconcile-tui-lifecycle-from-exact-runtime-evidence.md), [Separate queued reservations and backfill thread ownership](15-separate-queued-reservations-and-backfill-thread-ownership.md), and [Make queued lifecycle ownership crash-durable and thread-exact](16-make-queued-lifecycle-crash-durable-and-thread-exact.md)
 
 ## Implemented
 
