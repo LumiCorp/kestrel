@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Claim responses and snapshot evidence before publication](10-claim-responses-and-snapshot-evidence-before-publication.md)
 
 ## In progress
 
