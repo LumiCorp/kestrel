@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Finish exact reply and terminal ownership](13-finish-exact-reply-and-terminal-ownership.md)
 
 ## In progress
 
