@@ -476,6 +476,37 @@ function createRunHarness(input: {
       persistCount += 1;
       return true;
     },
+    syncForegroundQueuedTerminal: async ({ sessionId, threadId, runId, result }) => {
+      const state = uiStore.getState();
+      const session = state.sessions.find((candidate) => candidate.sessionId === sessionId);
+      if (session === undefined || session.delegation !== undefined) return false;
+      const reservation = session.queuedRunReservations?.find((candidate) =>
+        candidate.runId === runId && candidate.threadId === threadId
+      );
+      if (reservation === undefined) return false;
+      const remaining = session.queuedRunReservations?.filter((candidate) =>
+        candidate.runId !== reservation.runId
+        || candidate.messageId !== reservation.messageId
+        || candidate.threadId !== reservation.threadId
+      );
+      const accepted = {
+        ...session,
+        started: true,
+        acceptedRunId: reservation.runId,
+        acceptedRunMessageId: reservation.messageId,
+        acceptedRunThreadId: reservation.threadId,
+        queuedRunReservations: remaining?.length === 0 ? undefined : remaining,
+        lastRunStatus: result.output.status,
+      };
+      uiStore.patch({
+        sessions: state.sessions.map((candidate) =>
+          candidate.sessionId === sessionId ? accepted : candidate
+        ),
+        ...(state.activeSession.sessionId === sessionId ? { activeSession: accepted } : {}),
+      });
+      persistCount += 1;
+      return true;
+    },
     syncBackgroundSessionProgress: async (progress) => {
       backgroundProgress.push(progress);
     },
@@ -1997,6 +2028,88 @@ test("TuiRunController preserves an exact queued reservation when the route resp
   assert.equal(harness.uiStore.getState().activeSession.pendingRunId, undefined);
 });
 
+test("TuiRunController keeps two pre-confirmation queue submissions independently recoverable", async () => {
+  const pendingResponses = new Map<
+    string,
+    { runId: string; resolve: (event: RunnerEvent) => void; reject: (error: Error) => void }
+  >();
+  const activeView = makeConversationView({ active: true });
+  const harness = createRunHarness({
+    sendCommand: async (type, payload) => {
+      assert.equal(type, "conversation.message.submit");
+      const messageId = String((payload as Record<string, unknown>).messageId);
+      const runId = String((payload.turn as Record<string, unknown>).runId);
+      return await new Promise<RunnerEvent>((resolve, reject) => {
+        pendingResponses.set(messageId, { runId, resolve, reject });
+      });
+    },
+  });
+  const waitForPendingCount = async (count: number) => {
+    for (let attempt = 0; attempt < 20 && pendingResponses.size < count; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert.equal(pendingResponses.size, count);
+  };
+
+  const first = harness.controller.startActiveTurn({
+    messageId: "message-preconfirm-a",
+    submittedMessage: "queued A",
+    queueRequested: true,
+  });
+  await waitForPendingCount(1);
+  const second = harness.controller.startActiveTurn({
+    messageId: "message-preconfirm-b",
+    submittedMessage: "queued B",
+    queueRequested: true,
+  });
+  await waitForPendingCount(2);
+
+  assert.deepEqual(
+    harness.uiStore.getState().activeSession.pendingQueueSubmissions,
+    ["message-preconfirm-a", "message-preconfirm-b"].map((messageId) => ({
+      runId: pendingResponses.get(messageId)!.runId,
+      messageId,
+      threadId: "thread-main:session-1",
+    })),
+  );
+
+  const accepted = pendingResponses.get("message-preconfirm-a")!;
+  accepted.resolve(makeRunnerEvent({
+    type: "conversation.message.routed",
+    payload: {
+      threadId: "thread-main:session-1",
+      sessionId: "session-1",
+      messageId: "message-preconfirm-a",
+      disposition: "queued",
+      followUpId: "follow-up:preconfirm-a",
+      view: activeView,
+    },
+  }));
+  assert.equal(await first, true);
+  assert.deepEqual(harness.uiStore.getState().activeSession.pendingQueueSubmissions, [{
+    runId: pendingResponses.get("message-preconfirm-b")!.runId,
+    messageId: "message-preconfirm-b",
+    threadId: "thread-main:session-1",
+  }]);
+  assert.deepEqual(harness.uiStore.getState().activeSession.queuedRunReservations, [{
+    runId: accepted.runId,
+    messageId: "message-preconfirm-a",
+    threadId: "thread-main:session-1",
+  }]);
+
+  const rejected = pendingResponses.get("message-preconfirm-b")!;
+  rejected.reject(Object.assign(new Error("queue B rejected"), {
+    code: "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+  }));
+  assert.equal(await second, false);
+  assert.equal(harness.uiStore.getState().activeSession.pendingQueueSubmissions, undefined);
+  assert.deepEqual(harness.uiStore.getState().activeSession.queuedRunReservations, [{
+    runId: accepted.runId,
+    messageId: "message-preconfirm-a",
+    threadId: "thread-main:session-1",
+  }]);
+});
+
 test("TuiRunController applies an exact queued terminal once and rejects its delayed start", async (t) => {
   for (const eventType of ["run.completed", "run.failed", "run.cancelled"] as const) {
     await t.test(eventType, async () => {
@@ -2064,6 +2177,136 @@ test("TuiRunController applies an exact queued terminal once and rejects its del
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert.equal(harness.uiStore.getState().activeSession.lastRunStatus, terminalSession.lastRunStatus);
       assert.equal(harness.history.length, 1);
+    });
+  }
+});
+
+test("TuiRunController rejects wrong-thread queued terminals without consuming their reservation", async (t) => {
+  for (const eventType of ["run.completed", "run.failed", "run.cancelled"] as const) {
+    await t.test(eventType, async () => {
+      const runId = `run-queued-wrong-thread:${eventType}`;
+      const messageId = `message-queued-wrong-thread:${eventType}`;
+      const threadId = "thread-owned:session-1";
+      const harness = createRunHarness({
+        activeSessionPatch: {
+          queuedRunReservations: [{ runId, messageId, threadId }],
+        },
+      });
+      const base = {
+        sessionId: "session-1",
+        threadId: "thread-wrong:session-1",
+        runId,
+      };
+      const terminal = eventType === "run.completed"
+        ? makeRunnerEvent({ ...base, type: eventType, payload: { result: makeCompletedResult(runId) } })
+        : eventType === "run.failed"
+          ? makeRunnerEvent({
+              ...base,
+              type: eventType,
+              payload: {
+                result: makeFailedResult(runId),
+                error: { code: "RUN_FAILED", message: "wrong thread" },
+              },
+            })
+          : makeRunnerEvent({
+              ...base,
+              type: eventType,
+              payload: { sessionId: "session-1", result: makeCancelledResult(runId) },
+            });
+
+      harness.controller.onRunnerEvent(terminal);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const session = harness.uiStore.getState().activeSession;
+      assert.deepEqual(session.queuedRunReservations, [{ runId, messageId, threadId }]);
+      assert.equal(session.acceptedRunId, undefined);
+      assert.equal(session.lastRunStatus, undefined);
+      assert.deepEqual(harness.history, []);
+    });
+  }
+});
+
+test("TuiRunController durably applies an inactive foreground queued terminal without changing visible state", async (t) => {
+  for (const eventType of ["run.completed", "run.failed", "run.cancelled"] as const) {
+    await t.test(eventType, async () => {
+      const runId = `run-inactive-queued:${eventType}`;
+      const messageId = `message-inactive-queued:${eventType}`;
+      const threadId = "thread-owner:session-1";
+      const harness = createRunHarness();
+      const owner = {
+        ...harness.uiStore.getState().activeSession,
+        queuedRunReservations: [{ runId, messageId, threadId }],
+      };
+      const visible = {
+        ...owner,
+        name: "visible",
+        sessionId: "session-visible",
+        queuedRunReservations: undefined,
+      };
+      harness.uiStore.patch({
+        activeSession: visible,
+        sessions: [visible, owner],
+        running: true,
+        statusLine: "visible session running",
+      });
+      const base = { sessionId: "session-1", threadId, runId };
+      const terminal = eventType === "run.completed"
+        ? makeRunnerEvent({ ...base, type: eventType, payload: { result: makeCompletedResult(runId) } })
+        : eventType === "run.failed"
+          ? makeRunnerEvent({
+              ...base,
+              type: eventType,
+              payload: {
+                result: makeFailedResult(runId),
+                error: { code: "RUN_FAILED", message: "inactive failure" },
+              },
+            })
+          : makeRunnerEvent({
+              ...base,
+              type: eventType,
+              payload: { sessionId: "session-1", result: makeCancelledResult(runId) },
+            });
+
+      harness.controller.onRunnerEvent(terminal);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const persisted = harness.uiStore.getState().sessions.find(
+        (session) => session.sessionId === "session-1",
+      );
+      assert.equal(persisted?.queuedRunReservations, undefined);
+      assert.equal(persisted?.acceptedRunId, runId);
+      assert.equal(persisted?.acceptedRunMessageId, messageId);
+      assert.equal(persisted?.acceptedRunThreadId, threadId);
+      assert.equal(persisted?.lastRunStatus, eventType === "run.completed" ? "COMPLETED" : "FAILED");
+      assert.equal(harness.uiStore.getState().activeSession.sessionId, "session-visible");
+      assert.equal(harness.uiStore.getState().running, true);
+      assert.equal(harness.uiStore.getState().statusLine, "visible session running");
+
+      const restarted = createRunHarness({
+        activeSessionPatch: {
+          acceptedRunId: runId,
+          acceptedRunMessageId: messageId,
+          acceptedRunThreadId: threadId,
+          lastRunStatus: persisted?.lastRunStatus,
+        },
+      });
+      restarted.controller.onRunnerEvent(makeRunnerEvent({
+        type: "run.started",
+        sessionId: "session-1",
+        threadId,
+        runId,
+        payload: {
+          sessionId: "session-1",
+          runId,
+          eventType: "user.message",
+          sourceMessageId: messageId,
+        },
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(restarted.uiStore.getState().activeSession.lastRunStatus, persisted?.lastRunStatus);
+      assert.equal(restarted.uiStore.getState().running, false);
     });
   }
 });

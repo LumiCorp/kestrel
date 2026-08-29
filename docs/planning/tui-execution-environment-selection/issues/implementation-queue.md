@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Make queued lifecycle ownership crash-durable and thread-exact](16-make-queued-lifecycle-crash-durable-and-thread-exact.md)
+None.
 
 ## In progress
 
@@ -16,6 +16,7 @@ None.
 
 ## Implemented
 
+- [Make queued lifecycle ownership crash-durable and thread-exact](16-make-queued-lifecycle-crash-durable-and-thread-exact.md)
 - [Separate queued reservations and backfill thread ownership](15-separate-queued-reservations-and-backfill-thread-ownership.md)
 - [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md)
 - [Keep TUI sessions unstarted until execution actually begins](03-repair-tui-session-start-lifecycle.md)

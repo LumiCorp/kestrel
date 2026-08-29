@@ -416,6 +416,7 @@ export interface TuiSessionMeta {
   pendingRunRequestId?: string | undefined;
   pendingRunMessageId?: string | undefined;
   pendingRunThreadId?: string | undefined;
+  pendingQueueSubmissions?: TuiPendingQueueSubmission[] | undefined;
   queuedRunReservations?: TuiQueuedRunReservation[] | undefined;
   acceptedRunId?: string | undefined;
   acceptedRunMessageId?: string | undefined;
@@ -436,6 +437,12 @@ export interface TuiSessionMeta {
 }
 
 export interface TuiQueuedRunReservation {
+  runId: string;
+  messageId: string;
+  threadId: string;
+}
+
+export interface TuiPendingQueueSubmission {
   runId: string;
   messageId: string;
   threadId: string;

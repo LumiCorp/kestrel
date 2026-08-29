@@ -318,28 +318,8 @@ function validateSession(value: unknown): TuiSessionMeta {
   const pendingRunThreadId = typeof entry.pendingRunThreadId === "string"
     ? entry.pendingRunThreadId
     : undefined;
-  const queuedRunReservations = Array.isArray(entry.queuedRunReservations)
-    ? entry.queuedRunReservations.flatMap((reservation) => {
-        if (
-          typeof reservation !== "object"
-          || reservation === null
-          || Array.isArray(reservation)
-        ) return [];
-        const candidate = reservation as Record<string, unknown>;
-        return typeof candidate.runId === "string"
-          && candidate.runId.trim().length > 0
-          && typeof candidate.messageId === "string"
-          && candidate.messageId.trim().length > 0
-          && typeof candidate.threadId === "string"
-          && candidate.threadId.trim().length > 0
-          ? [{
-              runId: candidate.runId,
-              messageId: candidate.messageId,
-              threadId: candidate.threadId,
-            }]
-          : [];
-      })
-    : undefined;
+  const pendingQueueSubmissions = readExactRunIdentityCollection(entry.pendingQueueSubmissions);
+  const queuedRunReservations = readExactRunIdentityCollection(entry.queuedRunReservations);
   const acceptedRunId = typeof entry.acceptedRunId === "string"
     ? entry.acceptedRunId
     : undefined;
@@ -410,6 +390,9 @@ function validateSession(value: unknown): TuiSessionMeta {
     ...(pendingRunRequestId !== undefined ? { pendingRunRequestId } : {}),
     ...(pendingRunMessageId !== undefined ? { pendingRunMessageId } : {}),
     ...(pendingRunThreadId !== undefined ? { pendingRunThreadId } : {}),
+    ...(pendingQueueSubmissions !== undefined && pendingQueueSubmissions.length > 0
+      ? { pendingQueueSubmissions }
+      : {}),
     ...(queuedRunReservations !== undefined && queuedRunReservations.length > 0
       ? { queuedRunReservations }
       : {}),
@@ -422,6 +405,32 @@ function validateSession(value: unknown): TuiSessionMeta {
     ...(modeResolution.actSubmode !== undefined ? { actSubmode: modeResolution.actSubmode } : {}),
     ...(executionPolicy !== undefined ? { executionPolicy } : {}),
   };
+}
+
+function readExactRunIdentityCollection(
+  value: unknown,
+): Array<{ runId: string; messageId: string; threadId: string }> | undefined {
+  if (Array.isArray(value) === false) return undefined;
+  return value.flatMap((reservation) => {
+    if (
+      typeof reservation !== "object"
+      || reservation === null
+      || Array.isArray(reservation)
+    ) return [];
+    const candidate = reservation as Record<string, unknown>;
+    return typeof candidate.runId === "string"
+      && candidate.runId.trim().length > 0
+      && typeof candidate.messageId === "string"
+      && candidate.messageId.trim().length > 0
+      && typeof candidate.threadId === "string"
+      && candidate.threadId.trim().length > 0
+      ? [{
+          runId: candidate.runId,
+          messageId: candidate.messageId,
+          threadId: candidate.threadId,
+        }]
+      : [];
+  });
 }
 
 function readRequiredString(value: Record<string, unknown>, key: string): string {

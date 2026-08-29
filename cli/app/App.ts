@@ -1718,6 +1718,7 @@ export class App {
         handleTaskUpdatedEvent: (task, kind, assistantText, finalizedPayload) =>
           this.handleTaskUpdatedEvent(task, kind, assistantText, finalizedPayload),
         syncForegroundSessionProgress: (input) => this.syncForegroundSessionProgress(input),
+        syncForegroundQueuedTerminal: (input) => this.syncForegroundQueuedTerminal(input),
         syncBackgroundSessionProgress: (input) => this.syncBackgroundSessionProgress(input),
         syncBackgroundSessionResult: (expectedSessionId, expectedRunId, allowUnstartedAcceptance, output, assistantText, finalizedPayload, operatorState) =>
           this.syncBackgroundSessionResult(expectedSessionId, expectedRunId, allowUnstartedAcceptance, output, assistantText, finalizedPayload, operatorState),
@@ -4053,6 +4054,27 @@ export class App {
           (route) => route.requestId === target.pendingRunRequestId,
         );
     const recoveredAcceptedRoute = recoveredRoute ?? recoveredRequestRoute;
+    const recoveredPendingQueueSubmissions = describedView === undefined
+      ? []
+      : (target.pendingQueueSubmissions ?? []).filter((submission) => {
+          if (describedView.thread.threadId !== submission.threadId) return false;
+          const route = describedView.conversationMessageRoutes?.find(
+            (candidate) => candidate.messageId === submission.messageId,
+          );
+          return route?.disposition === "queued"
+            && (route.runId === undefined || route.runId === submission.runId);
+        });
+    const pendingQueueSubmissions = (target.pendingQueueSubmissions ?? []).filter(
+      (submission) => recoveredPendingQueueSubmissions.some((recovered) =>
+        recovered.runId === submission.runId
+        && recovered.messageId === submission.messageId
+        && recovered.threadId === submission.threadId
+      ) === false,
+    );
+    const queuedRunReservations = recoveredPendingQueueSubmissions.reduce(
+      (reservations, submission) => appendExactQueuedRunReservation(reservations, submission),
+      target.queuedRunReservations,
+    );
     const acceptedRunThreadBackfill = target.acceptedRunId !== undefined
       && target.acceptedRunThreadId === undefined
       && describedView !== undefined
@@ -4075,6 +4097,10 @@ export class App {
         : {}),
       ...(payload.updatedAt !== undefined ? { updatedAt: payload.updatedAt } : {}),
       pendingWaitFor: resolvedWaitFor,
+      pendingQueueSubmissions: pendingQueueSubmissions.length === 0
+        ? undefined
+        : pendingQueueSubmissions,
+      queuedRunReservations,
       ...(recoveredAcceptedRoute?.runId !== undefined
         ? {
             pendingRunId: undefined,
@@ -5166,6 +5192,74 @@ export class App {
     return true;
   }
 
+  private async syncForegroundQueuedTerminal(input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    result: Extract<RunnerEvent, { type: "run.completed" }>["payload"]["result"];
+  }): Promise<boolean> {
+    if (
+      input.result.output.sessionId !== input.sessionId
+      || input.result.output.runId !== input.runId
+    ) return false;
+    const initialSession = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
+    if (initialSession === undefined || initialSession.delegation !== undefined) return false;
+    const initialActiveProfile = this.uiStore.getState().activeProfile;
+    const loadedProfiles = input.result.operatorAffordance !== undefined
+      && initialSession.profileId !== initialActiveProfile.id
+      ? await this.profileStore.load()
+      : undefined;
+    const session = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
+    if (session === undefined || session.delegation !== undefined) return false;
+    const currentActiveProfile = this.uiStore.getState().activeProfile;
+    const owningProfile = input.result.operatorAffordance === undefined
+      ? undefined
+      : session.profileId === currentActiveProfile.id
+        ? currentActiveProfile
+        : this.profileStore.findById(loadedProfiles ?? [], session.profileId);
+    const queuedReservation = session.queuedRunReservations?.find((reservation) =>
+      reservation.runId === input.runId
+      && reservation.threadId === input.threadId
+    );
+    if (queuedReservation === undefined) return false;
+    const accepted: TuiSessionMeta = {
+      ...session,
+      started: true,
+      acceptedRunId: queuedReservation.runId,
+      acceptedRunMessageId: queuedReservation.messageId,
+      acceptedRunThreadId: queuedReservation.threadId,
+      queuedRunReservations: omitQueuedRunReservation(
+        session.queuedRunReservations,
+        queuedReservation,
+      ),
+      pendingWaitFor: input.result.output.status === "WAITING"
+        ? input.result.output.waitFor
+        : undefined,
+      lastRunStatus: input.result.output.status,
+      ...(input.result.operatorAffordance !== undefined && owningProfile !== undefined
+        ? {
+            operatorState: this.buildSessionOperatorState({
+              session,
+              profile: owningProfile,
+              runtime: input.result.operatorAffordance,
+            }),
+          }
+        : {}),
+      updatedAt: new Date().toISOString(),
+    };
+    const activeSessionName = this.sessionsFile.activeSessionName;
+    const terminalOwnerIsActive = this.uiStore.getState().activeSession.sessionId === session.sessionId;
+    this.persistProjectedSession(accepted);
+    if (terminalOwnerIsActive === false) {
+      this.sessionsFile = {
+        ...this.sessionsFile,
+        activeSessionName,
+      };
+    }
+    await this.saveSessionsFile();
+    return true;
+  }
+
   private async syncBackgroundSessionProgress(input: {
     sessionId: string;
     threadId: string;
@@ -6046,6 +6140,10 @@ function hasSameTuiLifecycleEvidence(left: TuiSessionMeta, right: TuiSessionMeta
     && left.pendingRunRequestId === right.pendingRunRequestId
     && left.pendingRunMessageId === right.pendingRunMessageId
     && left.pendingRunThreadId === right.pendingRunThreadId
+    && hasSameExactRunIdentityCollection(
+      left.pendingQueueSubmissions,
+      right.pendingQueueSubmissions,
+    )
     && hasSameQueuedRunReservations(left.queuedRunReservations, right.queuedRunReservations)
     && left.acceptedRunId === right.acceptedRunId
     && left.acceptedRunMessageId === right.acceptedRunMessageId
@@ -6083,9 +6181,40 @@ function omitQueuedRunReservation(
   return remaining === undefined || remaining.length === 0 ? undefined : remaining;
 }
 
+function appendExactQueuedRunReservation(
+  reservations: TuiSessionMeta["queuedRunReservations"],
+  reservation: NonNullable<TuiSessionMeta["queuedRunReservations"]>[number],
+): NonNullable<TuiSessionMeta["queuedRunReservations"]> {
+  const existing = reservations ?? [];
+  const sameRun = existing.find((candidate) => candidate.runId === reservation.runId);
+  if (sameRun !== undefined) {
+    if (
+      sameRun.messageId !== reservation.messageId
+      || sameRun.threadId !== reservation.threadId
+    ) {
+      throw new Error("Queued run reservation identity conflicted with durable route evidence.");
+    }
+    return existing;
+  }
+  return [...existing, reservation];
+}
+
 function hasSameQueuedRunReservations(
   left: TuiSessionMeta["queuedRunReservations"],
   right: TuiSessionMeta["queuedRunReservations"],
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.length === right.length && left.every((reservation, index) => {
+    const candidate = right[index];
+    return candidate?.runId === reservation.runId
+      && candidate.messageId === reservation.messageId
+      && candidate.threadId === reservation.threadId;
+  });
+}
+
+function hasSameExactRunIdentityCollection(
+  left: TuiSessionMeta["pendingQueueSubmissions"],
+  right: TuiSessionMeta["pendingQueueSubmissions"],
 ): boolean {
   if (left === undefined || right === undefined) return left === right;
   return left.length === right.length && left.every((reservation, index) => {
