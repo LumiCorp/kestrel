@@ -52,6 +52,7 @@ import {
   type TuiEnvironmentPresetId,
 } from "../session/TuiExecutionEnvironment.js";
 import {
+  advanceTuiQueueAuthority,
   exactTuiQueueTailRunId,
   normalizeTuiQueueGraph,
   removeAndRewireTuiQueueRecord,
@@ -59,6 +60,7 @@ import {
 
 export interface StartActiveTurnInput {
   messageId?: string | undefined;
+  historyMessageId?: string | undefined;
   submittedMessage: string;
   modelHistoryMessage?: string | undefined;
   resumeBlockedRun?: boolean | undefined;
@@ -435,8 +437,9 @@ export class TuiRunController {
       ?? this.context.getActiveRunnerMetadata();
     const ownerTranscript = capturedOwner?.transcript ?? state.transcript;
     const submissionMessageId = input.messageId ?? `tui:${randomUUID()}`;
+    const historyMessageId = input.historyMessageId ?? submissionMessageId;
     const priorTranscript = ownerTranscript.filter((line) =>
-      line.eventId !== submissionMessageId && line.data?.messageId !== submissionMessageId
+      line.eventId !== historyMessageId && line.data?.messageId !== historyMessageId
     );
     const baseHistorySource =
       pendingWait !== undefined
@@ -572,6 +575,10 @@ export class TuiRunController {
           if (await this.reconcileIndeterminateQueueJournal(submittingSessionId) === false) {
             return undefined;
           }
+          const preflightSession = readSubmittingSession();
+          if (preflightSession === undefined) return undefined;
+          const preflightGraph = normalizeTuiQueueGraph(preflightSession);
+          exactTuiQueueTailRunId({ ...preflightSession, ...preflightGraph }, preflightGraph);
           const preparedSubmission = await prepareSubmission();
           const currentSession = readSubmittingSession();
           if (currentSession === undefined) {
@@ -894,9 +901,33 @@ export class TuiRunController {
           : undefined;
         const currentSession = readSubmittingSession();
         if (currentSession === undefined) return false;
+        const currentQueueGraph = normalizeTuiQueueGraph(currentSession);
         const installAsCurrent = queueSubmission === false
           || pendingQueueSubmission === undefined
           || queuedEvidenceCanReplaceAcceptedRun(currentSession, pendingQueueSubmission);
+        const routedQueueGraph = pendingQueueSubmission === undefined
+          ? currentQueueGraph
+          : awaitingQueuedRun
+            ? {
+                pendingQueueSubmissions: removePendingQueueSubmission(
+                  currentQueueGraph.pendingQueueSubmissions,
+                  pendingQueueSubmission,
+                ),
+                queuedRunReservations: appendQueuedRunReservation(
+                  currentQueueGraph.queuedRunReservations,
+                  pendingQueueSubmission,
+                ),
+                terminalQueuedRuns: currentQueueGraph.terminalQueuedRuns,
+              }
+            : installAsCurrent
+              ? advanceTuiQueueAuthority(currentQueueGraph, pendingQueueSubmission)
+              : {
+                  ...currentQueueGraph,
+                  pendingQueueSubmissions: removePendingQueueSubmission(
+                    currentQueueGraph.pendingQueueSubmissions,
+                    pendingQueueSubmission,
+                  ),
+                };
         if (
           (awaitingQueuedRun || installAsCurrent)
           && await this.installConversationView(response.payload.view) === false
@@ -912,18 +943,8 @@ export class TuiRunController {
           pendingRunId: undefined,
           pendingRunMessageId: undefined,
           pendingRunThreadId: undefined,
-          queuedRunReservations: awaitingQueuedRun
-            ? appendQueuedRunReservation(
-                currentSession.queuedRunReservations,
-                pendingQueueSubmission!,
-              )
-            : currentSession.queuedRunReservations,
-          pendingQueueSubmissions: pendingQueueSubmission === undefined
-            ? currentSession.pendingQueueSubmissions
-            : removePendingQueueSubmission(
-                currentSession.pendingQueueSubmissions,
-                pendingQueueSubmission,
-              ),
+          queuedRunReservations: routedQueueGraph.queuedRunReservations,
+          pendingQueueSubmissions: routedQueueGraph.pendingQueueSubmissions,
           ...(awaitingQueuedRun || installAsCurrent === false
             ? {}
             : {
@@ -933,8 +954,8 @@ export class TuiRunController {
                 lastRunStatus: routedStatus === "RUNNING" ? undefined : routedStatus,
               }),
           terminalQueuedRuns: terminalStatus === undefined || pendingQueueSubmission === undefined
-            ? currentSession.terminalQueuedRuns
-            : appendTerminalQueuedRun(currentSession.terminalQueuedRuns, {
+            ? routedQueueGraph.terminalQueuedRuns
+            : appendTerminalQueuedRun(routedQueueGraph.terminalQueuedRuns, {
                 ...toQueuedRunReservation(pendingQueueSubmission),
                 status: terminalStatus,
               }),
@@ -1127,6 +1148,8 @@ export class TuiRunController {
       if (pendingSession === undefined) {
         throw new Error("The submitting session no longer exists.");
       }
+      const pendingQueueGraph = normalizeTuiQueueGraph(pendingSession);
+      const normalizedPendingSession = { ...pendingSession, ...pendingQueueGraph };
       const terminalRunId = terminalOutput?.runId ?? response.runId;
       const exactPendingSubmission = pendingSession.pendingRunMessageId === submissionMessageId
         && pendingSession.pendingRunThreadId === threadId
@@ -1134,7 +1157,7 @@ export class TuiRunController {
         && pendingSession.pendingRunId === terminalRunId;
       const exactPendingQueueSubmission = queueSubmission && terminalRunId !== undefined
         ? findPendingQueueSubmission(
-            pendingSession.pendingQueueSubmissions,
+            pendingQueueGraph.pendingQueueSubmissions,
             terminalRunId,
             threadId,
             submissionMessageId,
@@ -1178,7 +1201,30 @@ export class TuiRunController {
         throw new Error("Runner terminal response identity did not match the submitted session and run.");
       }
       const responseCanInstallCurrentLifecycle = exactPendingQueueSubmission === undefined
-        || queuedEvidenceCanReplaceAcceptedRun(pendingSession, exactPendingQueueSubmission);
+        || queuedEvidenceCanReplaceAcceptedRun(normalizedPendingSession, exactPendingQueueSubmission);
+      const settlePendingQueueGraph = (
+        status?: "COMPLETED" | "FAILED" | undefined,
+      ) => {
+        if (exactPendingQueueSubmission === undefined) return pendingQueueGraph;
+        const acceptedGraph = responseCanInstallCurrentLifecycle
+          ? advanceTuiQueueAuthority(pendingQueueGraph, exactPendingQueueSubmission)
+          : {
+              ...pendingQueueGraph,
+              pendingQueueSubmissions: removePendingQueueSubmission(
+                pendingQueueGraph.pendingQueueSubmissions,
+                exactPendingQueueSubmission,
+              ),
+            };
+        return status === undefined
+          ? acceptedGraph
+          : {
+              ...acceptedGraph,
+              terminalQueuedRuns: appendTerminalQueuedRun(acceptedGraph.terminalQueuedRuns, {
+                ...toQueuedRunReservation(exactPendingQueueSubmission),
+                status,
+              }),
+            };
+      };
 
       terminalResponseMeta = {
         responseType: response.type,
@@ -1198,6 +1244,7 @@ export class TuiRunController {
         const output = result.output;
         requestAccepted = true;
         this.recordAcceptedRunSource(output.sessionId, output.runId, submissionMessageId);
+        const settledQueueGraph = settlePendingQueueGraph("FAILED");
         await setResponseSessionState({
           started: true,
           updatedAt: new Date().toISOString(),
@@ -1208,12 +1255,8 @@ export class TuiRunController {
           pendingRunId: undefined,
           pendingRunMessageId: undefined,
           pendingRunThreadId: undefined,
-          pendingQueueSubmissions: exactPendingQueueSubmission === undefined
-            ? pendingSession.pendingQueueSubmissions
-            : removePendingQueueSubmission(
-                pendingSession.pendingQueueSubmissions,
-                exactPendingQueueSubmission,
-              ),
+          pendingQueueSubmissions: settledQueueGraph.pendingQueueSubmissions,
+          queuedRunReservations: settledQueueGraph.queuedRunReservations,
           ...(responseCanInstallCurrentLifecycle
             ? {
                 acceptedRunId: output.runId,
@@ -1221,12 +1264,7 @@ export class TuiRunController {
                 acceptedRunThreadId: threadId,
               }
             : {}),
-          terminalQueuedRuns: exactPendingQueueSubmission === undefined
-            ? pendingSession.terminalQueuedRuns
-            : appendTerminalQueuedRun(pendingSession.terminalQueuedRuns, {
-                ...toQueuedRunReservation(exactPendingQueueSubmission),
-                status: "FAILED",
-              }),
+          terminalQueuedRuns: settledQueueGraph.terminalQueuedRuns,
         });
         if (responseCanInstallCurrentLifecycle) {
           await this.context.applyTerminalResult(output.sessionId, result);
@@ -1262,19 +1300,15 @@ export class TuiRunController {
           && resultRunId !== undefined
           && responseCanInstallCurrentLifecycle
         ) {
+          const settledQueueGraph = settlePendingQueueGraph("FAILED");
           await setResponseSessionState({
             started: true,
             acceptedRunId: resultRunId,
             acceptedRunMessageId: submissionMessageId,
             acceptedRunThreadId: threadId,
-            pendingQueueSubmissions: removePendingQueueSubmission(
-              pendingSession.pendingQueueSubmissions,
-              exactPendingQueueSubmission,
-            ),
-            terminalQueuedRuns: appendTerminalQueuedRun(pendingSession.terminalQueuedRuns, {
-              ...toQueuedRunReservation(exactPendingQueueSubmission),
-              status: "FAILED",
-            }),
+            pendingQueueSubmissions: settledQueueGraph.pendingQueueSubmissions,
+            queuedRunReservations: settledQueueGraph.queuedRunReservations,
+            terminalQueuedRuns: settledQueueGraph.terminalQueuedRuns,
             lastRunStatus: "FAILED",
             updatedAt: new Date().toISOString(),
           });
@@ -1337,6 +1371,7 @@ export class TuiRunController {
             ...(failure.message !== undefined ? { message: failure.message } : {}),
           },
         );
+        const settledQueueGraph = settlePendingQueueGraph("FAILED");
         await setResponseSessionState({
           started: pendingSession.started || requestAccepted,
           updatedAt: new Date().toISOString(),
@@ -1349,12 +1384,8 @@ export class TuiRunController {
           pendingRunId: undefined,
           pendingRunMessageId: undefined,
           pendingRunThreadId: undefined,
-          pendingQueueSubmissions: exactPendingQueueSubmission === undefined
-            ? pendingSession.pendingQueueSubmissions
-            : removePendingQueueSubmission(
-                pendingSession.pendingQueueSubmissions,
-                exactPendingQueueSubmission,
-              ),
+          pendingQueueSubmissions: settledQueueGraph.pendingQueueSubmissions,
+          queuedRunReservations: settledQueueGraph.queuedRunReservations,
           ...(requestAccepted && resultRunId !== undefined && responseCanInstallCurrentLifecycle
             ? {
                 acceptedRunId: resultRunId,
@@ -1362,12 +1393,7 @@ export class TuiRunController {
                 acceptedRunThreadId: threadId,
               }
             : {}),
-          terminalQueuedRuns: exactPendingQueueSubmission === undefined
-            ? pendingSession.terminalQueuedRuns
-            : appendTerminalQueuedRun(pendingSession.terminalQueuedRuns, {
-                ...toQueuedRunReservation(exactPendingQueueSubmission),
-                status: "FAILED",
-              }),
+          terminalQueuedRuns: settledQueueGraph.terminalQueuedRuns,
         });
         if (submittingSessionIsActive() && responseCanInstallCurrentLifecycle) {
           this.context.uiStore.patch({
@@ -1400,6 +1426,11 @@ export class TuiRunController {
       const output = response.payload.result.output;
       requestAccepted = true;
       this.recordAcceptedRunSource(output.sessionId, output.runId, submissionMessageId);
+      const settledQueueGraph = settlePendingQueueGraph(
+        output.status === "COMPLETED" || output.status === "FAILED"
+          ? output.status
+          : undefined,
+      );
       await setResponseSessionState({
         started: true,
         updatedAt: new Date().toISOString(),
@@ -1415,12 +1446,8 @@ export class TuiRunController {
         pendingRunId: undefined,
         pendingRunMessageId: undefined,
         pendingRunThreadId: undefined,
-        pendingQueueSubmissions: exactPendingQueueSubmission === undefined
-          ? pendingSession.pendingQueueSubmissions
-          : removePendingQueueSubmission(
-              pendingSession.pendingQueueSubmissions,
-              exactPendingQueueSubmission,
-            ),
+        pendingQueueSubmissions: settledQueueGraph.pendingQueueSubmissions,
+        queuedRunReservations: settledQueueGraph.queuedRunReservations,
         ...(responseCanInstallCurrentLifecycle
           ? {
               acceptedRunId: output.runId,
@@ -1428,13 +1455,7 @@ export class TuiRunController {
               acceptedRunThreadId: threadId,
             }
           : {}),
-        terminalQueuedRuns: exactPendingQueueSubmission === undefined
-          || (output.status !== "COMPLETED" && output.status !== "FAILED")
-          ? pendingSession.terminalQueuedRuns
-          : appendTerminalQueuedRun(pendingSession.terminalQueuedRuns, {
-              ...toQueuedRunReservation(exactPendingQueueSubmission),
-              status: output.status,
-            }),
+        terminalQueuedRuns: settledQueueGraph.terminalQueuedRuns,
         ...(responseCanInstallCurrentLifecycle
           ? {
               operatorState: this.context.buildSessionOperatorState({
@@ -2257,6 +2278,8 @@ export class TuiRunController {
       }
       const accepted = await this.startCapturedTurn({
         ...input.input,
+        messageId: undefined,
+        historyMessageId: input.input.historyMessageId ?? input.input.messageId,
         checkpointRecoveryAttempted: true,
       }, input.owner, input.queueSettlement);
       if (accepted === false) throw new Error("The checkpoint retry was not accepted.");
@@ -2940,12 +2963,13 @@ export class TuiRunController {
       if (session === undefined) return false;
       const normalizedQueue = normalizeTuiQueueGraph(session);
       const normalizedSession = { ...session, ...normalizedQueue };
-      if (findPendingQueueSubmission(
+      const currentPending = findPendingQueueSubmission(
         normalizedSession.pendingQueueSubmissions,
         pending.runId,
         pending.threadId,
         pending.messageId,
-      ) === undefined) continue;
+      );
+      if (currentPending === undefined) continue;
       const view = await this.requestConversationView(pending.threadId).catch(() => undefined);
       if (
         view === undefined
@@ -2961,8 +2985,15 @@ export class TuiRunController {
       );
       if (current === undefined) return false;
       const currentGraph = normalizeTuiQueueGraph(current);
+      const currentRecord = findPendingQueueSubmission(
+        currentGraph.pendingQueueSubmissions,
+        pending.runId,
+        pending.threadId,
+        pending.messageId,
+      );
+      if (currentRecord === undefined) continue;
       if (route === undefined) {
-        const rewired = removeAndRewireTuiQueueRecord(currentGraph, pending);
+        const rewired = removeAndRewireTuiQueueRecord(currentGraph, currentRecord);
         await this.context.setSessionState(sessionId, {
           pendingQueueSubmissions: rewired.pendingQueueSubmissions,
           queuedRunReservations: rewired.queuedRunReservations,
@@ -2973,40 +3004,43 @@ export class TuiRunController {
         await this.context.setSessionState(sessionId, {
           pendingQueueSubmissions: removePendingQueueSubmission(
             currentGraph.pendingQueueSubmissions,
-            pending,
+            currentRecord,
           ),
           queuedRunReservations: appendQueuedRunReservation(
             currentGraph.queuedRunReservations,
-            pending,
+            currentRecord,
           ),
           terminalQueuedRuns: currentGraph.terminalQueuedRuns,
           updatedAt: new Date().toISOString(),
         });
-      } else if (route.runId === pending.runId) {
-        const status = exactRunStatusFromView(view, pending.runId);
+      } else if (route.runId === currentRecord.runId) {
+        const status = exactRunStatusFromView(view, currentRecord.runId);
         if (status === undefined) return false;
         const normalizedCurrent = { ...current, ...currentGraph };
-        const installAsCurrent = queuedEvidenceCanReplaceAcceptedRun(normalizedCurrent, pending);
+        const installAsCurrent = queuedEvidenceCanReplaceAcceptedRun(normalizedCurrent, currentRecord);
         const terminalStatus = status === "COMPLETED" || status === "FAILED" ? status : undefined;
+        const acceptedGraph = installAsCurrent
+          ? advanceTuiQueueAuthority(currentGraph, currentRecord)
+          : currentGraph;
         await this.context.setSessionState(sessionId, {
           pendingQueueSubmissions: removePendingQueueSubmission(
-            currentGraph.pendingQueueSubmissions,
-            pending,
+            acceptedGraph.pendingQueueSubmissions,
+            currentRecord,
           ),
-          queuedRunReservations: currentGraph.queuedRunReservations,
+          queuedRunReservations: acceptedGraph.queuedRunReservations,
           ...(installAsCurrent
             ? {
-                acceptedRunId: pending.runId,
-                acceptedRunMessageId: pending.messageId,
-                acceptedRunThreadId: pending.threadId,
+                acceptedRunId: currentRecord.runId,
+                acceptedRunMessageId: currentRecord.messageId,
+                acceptedRunThreadId: currentRecord.threadId,
                 pendingWaitFor: status === "WAITING" ? view.thread.waitFor : undefined,
                 lastRunStatus: status === "RUNNING" ? undefined : status,
               }
             : {}),
           terminalQueuedRuns: terminalStatus === undefined
-            ? currentGraph.terminalQueuedRuns
-            : appendTerminalQueuedRun(currentGraph.terminalQueuedRuns, {
-                ...toQueuedRunReservation(pending),
+            ? acceptedGraph.terminalQueuedRuns
+            : appendTerminalQueuedRun(acceptedGraph.terminalQueuedRuns, {
+                ...toQueuedRunReservation(currentRecord),
                 status: terminalStatus,
               }),
           updatedAt: new Date().toISOString(),

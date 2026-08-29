@@ -2694,7 +2694,7 @@ test("a promoted queued run replaces only its exact accepted predecessor", async
   assert.equal(session.acceptedRunThreadId, threadId);
 });
 
-test("restart reconciliation promotes the exact persisted R0 to Q1 to Q2 chain", async () => {
+test("restart reconciliation resolves a reverse-order legacy fork from exact Q1 then Q2 authority", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2706,13 +2706,13 @@ test("restart reconciliation promotes the exact persisted R0 to Q1 to Q2 chain",
     acceptedRunMessageId: "message-r0",
     acceptedRunThreadId: threadId,
     queuedRunReservations: [{
-      runId: "run-q1",
-      messageId: "message-q1",
+      runId: "run-q2",
+      messageId: "message-q2",
       threadId,
       predecessorRunId: "run-r0",
     }, {
-      runId: "run-q2",
-      messageId: "message-q2",
+      runId: "run-q1",
+      messageId: "message-q1",
       threadId,
       predecessorRunId: "run-r0",
     }],
@@ -2758,6 +2758,72 @@ test("restart reconciliation promotes the exact persisted R0 to Q1 to Q2 chain",
   assert.equal(session.acceptedRunMessageId, "message-q2");
   assert.equal(session.acceptedRunThreadId, threadId);
   assert.equal(session.queuedRunReservations, undefined);
+});
+
+test("restart reconciliation repairs an active sibling from accepted terminal authority", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-q1",
+    acceptedRunMessageId: "message-q1",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-r0",
+    }],
+    terminalQueuedRuns: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId,
+      predecessorRunId: "run-r0",
+      status: "COMPLETED",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Terminal authority repair",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q2", status: "RUNNING" },
+    },
+  });
+
+  const session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q2");
+  assert.equal(session.acceptedRunMessageId, "message-q2");
+  assert.equal(session.queuedRunReservations, undefined);
+  assert.equal(session.terminalQueuedRuns?.[0]?.runId, "run-q1");
 });
 
 test("restart reconciliation rewires an absent queued predecessor before promoting its successor", async () => {

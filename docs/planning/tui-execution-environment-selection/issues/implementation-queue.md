@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Resolve legacy queue forks from exact authority](22-resolve-legacy-queue-forks-from-authority.md)
+None.
 
 ## In progress
 
@@ -16,6 +16,7 @@ None.
 
 ## Implemented
 
+- [Resolve legacy queue forks from exact authority](22-resolve-legacy-queue-forks-from-authority.md)
 - [Reconcile queue graphs and pre-route events](21-reconcile-queue-graphs-and-pre-route-events.md)
 - [Make submission settlement durable and serial](20-make-submission-settlement-durable-and-serial.md)
 - [Unify submission and response ownership](19-unify-submission-response-ownership.md)

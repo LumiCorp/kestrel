@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { TuiSessionMeta } from "../../cli/contracts.js";
 import {
+  advanceTuiQueueAuthority,
   exactTuiQueueTailRunId,
   normalizeTuiQueueGraph,
   removeAndRewireTuiQueueRecord,
@@ -22,9 +23,38 @@ function session(patch: Partial<TuiSessionMeta>): TuiSessionMeta {
   };
 }
 
-test("TuiQueueGraph normalizes an issue19 fork by durable journal order", () => {
+test("TuiQueueGraph preserves a legacy reservation fork until exact authority resolves it", () => {
   const input = session({
     queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-r0",
+    }, {
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-r0",
+    }],
+  });
+
+  const graph = normalizeTuiQueueGraph(input);
+
+  assert.deepEqual(graph.queuedRunReservations, input.queuedRunReservations);
+  assert.throws(() => exactTuiQueueTailRunId(input, graph), TuiQueueGraphConsistencyError);
+
+  const advanced = advanceTuiQueueAuthority(graph, graph.queuedRunReservations![1]!);
+  assert.deepEqual(advanced.queuedRunReservations, [{
+    runId: "run-q2",
+    messageId: "message-q2",
+    threadId: "thread-main:session-queue",
+    predecessorRunId: "run-q1",
+  }]);
+});
+
+test("TuiQueueGraph uses durable order only for pending submission journals", () => {
+  const input = session({
+    pendingQueueSubmissions: [{
       runId: "run-q1",
       messageId: "message-q1",
       threadId: "thread-main:session-queue",
@@ -39,8 +69,49 @@ test("TuiQueueGraph normalizes an issue19 fork by durable journal order", () => 
 
   const graph = normalizeTuiQueueGraph(input);
 
-  assert.equal(graph.queuedRunReservations?.[1]?.predecessorRunId, "run-q1");
+  assert.equal(graph.pendingQueueSubmissions?.[1]?.predecessorRunId, "run-q1");
   assert.equal(exactTuiQueueTailRunId(input, graph), "run-q2");
+});
+
+test("TuiQueueGraph repairs an accepted terminal sibling from exact authority", () => {
+  const input = session({
+    acceptedRunId: "run-q1",
+    acceptedRunMessageId: "message-q1",
+    acceptedRunThreadId: "thread-main:session-queue",
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-r0",
+    }],
+    terminalQueuedRuns: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-r0",
+      status: "COMPLETED",
+    }],
+  });
+
+  assert.equal(
+    normalizeTuiQueueGraph(input).queuedRunReservations?.[0]?.predecessorRunId,
+    "run-q1",
+  );
+});
+
+test("TuiQueueGraph rejects a dangling active predecessor before extension", () => {
+  const value = session({
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-missing-q1",
+    }],
+  });
+  assert.throws(
+    () => exactTuiQueueTailRunId(value, normalizeTuiQueueGraph(value)),
+    TuiQueueGraphConsistencyError,
+  );
 });
 
 test("TuiQueueGraph rewires an exact successor before removing its predecessor", () => {
@@ -70,6 +141,29 @@ test("TuiQueueGraph rewires an exact successor before removing its predecessor",
     threadId: "thread-main:session-queue",
     predecessorRunId: "run-r0",
   }]);
+});
+
+test("TuiQueueGraph blocks ambiguous active tails from extension", () => {
+  const value = session({
+    pendingQueueSubmissions: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-r0",
+    }],
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-r0",
+    }],
+  });
+  const graph = normalizeTuiQueueGraph(value);
+
+  assert.throws(
+    () => exactTuiQueueTailRunId(value, graph),
+    TuiQueueGraphConsistencyError,
+  );
 });
 
 test("TuiQueueGraph fails closed on cycles, duplicate runs, and conflicting messages", async (t) => {
@@ -114,22 +208,6 @@ test("TuiQueueGraph fails closed on cycles, duplicate runs, and conflicting mess
         messageId: "message-shared",
         threadId: "thread-main:session-queue",
         predecessorRunId: "run-q1",
-      }],
-    }),
-  }, {
-    name: "ambiguous active tails",
-    value: session({
-      pendingQueueSubmissions: [{
-        runId: "run-q1",
-        messageId: "message-q1",
-        threadId: "thread-main:session-queue",
-        predecessorRunId: "run-r0",
-      }],
-      queuedRunReservations: [{
-        runId: "run-q2",
-        messageId: "message-q2",
-        threadId: "thread-main:session-queue",
-        predecessorRunId: "run-r0",
       }],
     }),
   }];

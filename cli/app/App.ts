@@ -87,6 +87,7 @@ import { WorkspaceController, type WorkspaceSelection } from "./WorkspaceControl
 import type { ProtocolClient } from "../client/ProtocolClient.js";
 import { createConfiguredCliProtocolClient } from "../client/configuredClient.js";
 import {
+  advanceTuiQueueAuthority,
   normalizeTuiQueueGraph,
   removeAndRewireTuiQueueRecord,
 } from "../session/TuiQueueGraph.js";
@@ -5237,6 +5238,12 @@ export class App {
         )
       )
     ) return false;
+    const acceptedQueueGraph = queuedReservation !== undefined || pendingQueueSubmission !== undefined
+      ? advanceTuiQueueAuthority(
+          normalizeTuiQueueGraph(session),
+          (queuedReservation ?? pendingQueueSubmission)!,
+        )
+      : normalizeTuiQueueGraph(session);
     const accepted: TuiSessionMeta = {
       ...session,
       started: true,
@@ -5247,12 +5254,9 @@ export class App {
       pendingRunId: undefined,
       pendingRunMessageId: undefined,
       pendingRunThreadId: undefined,
-      queuedRunReservations: queuedReservation === undefined
-        ? session.queuedRunReservations
-        : omitQueuedRunReservation(session.queuedRunReservations, queuedReservation),
-      pendingQueueSubmissions: pendingQueueSubmission === undefined
-        ? session.pendingQueueSubmissions
-        : omitExactRunIdentity(session.pendingQueueSubmissions, pendingQueueSubmission),
+      queuedRunReservations: acceptedQueueGraph.queuedRunReservations,
+      pendingQueueSubmissions: acceptedQueueGraph.pendingQueueSubmissions,
+      terminalQueuedRuns: acceptedQueueGraph.terminalQueuedRuns,
       lastRunStatus: undefined,
       updatedAt: new Date().toISOString(),
     };
@@ -5316,6 +5320,19 @@ export class App {
         ? "FAILED" as const
         : undefined;
     const installAsCurrent = queuedEvidenceCanReplaceAcceptedRun(session, queuedEvidence);
+    const currentQueueGraph = normalizeTuiQueueGraph(session);
+    const settledQueueGraph = installAsCurrent
+      ? advanceTuiQueueAuthority(currentQueueGraph, queuedEvidence)
+      : {
+          ...currentQueueGraph,
+          queuedRunReservations: omitQueuedRunReservation(
+            currentQueueGraph.queuedRunReservations,
+            queuedEvidence,
+          ),
+          pendingQueueSubmissions: pendingQueueSubmission === undefined
+            ? currentQueueGraph.pendingQueueSubmissions
+            : omitExactRunIdentity(currentQueueGraph.pendingQueueSubmissions, pendingQueueSubmission),
+        };
     const accepted: TuiSessionMeta = {
       ...session,
       started: true,
@@ -5326,16 +5343,11 @@ export class App {
             acceptedRunThreadId: queuedEvidence.threadId,
           }
         : {}),
-      queuedRunReservations: omitQueuedRunReservation(
-        session.queuedRunReservations,
-        queuedEvidence,
-      ),
-      pendingQueueSubmissions: pendingQueueSubmission === undefined
-        ? session.pendingQueueSubmissions
-        : omitExactRunIdentity(session.pendingQueueSubmissions, pendingQueueSubmission),
+      queuedRunReservations: settledQueueGraph.queuedRunReservations,
+      pendingQueueSubmissions: settledQueueGraph.pendingQueueSubmissions,
       terminalQueuedRuns: terminalStatus === undefined
-        ? session.terminalQueuedRuns
-        : appendTerminalQueuedRun(session.terminalQueuedRuns, {
+        ? settledQueueGraph.terminalQueuedRuns
+        : appendTerminalQueuedRun(settledQueueGraph.terminalQueuedRuns, {
             ...queuedEvidence,
             status: terminalStatus,
           }),
@@ -6422,8 +6434,14 @@ function reconcileExactQueuedLifecycle(
     ? soleCandidate
     : undefined;
   if (accepted !== undefined) {
-    pendingQueueSubmissions = omitExactRunIdentity(pendingQueueSubmissions, accepted);
-    queuedRunReservations = omitExactRunIdentity(queuedRunReservations, accepted);
+    const advanced = advanceTuiQueueAuthority({
+      pendingQueueSubmissions,
+      queuedRunReservations,
+      terminalQueuedRuns,
+    }, accepted);
+    pendingQueueSubmissions = advanced.pendingQueueSubmissions;
+    queuedRunReservations = advanced.queuedRunReservations;
+    terminalQueuedRuns = advanced.terminalQueuedRuns;
   }
   return {
     pendingQueueSubmissions,
