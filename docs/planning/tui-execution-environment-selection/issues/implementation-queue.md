@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Reconcile queue graphs and pre-route events](21-reconcile-queue-graphs-and-pre-route-events.md)
 
 ## In progress
 
