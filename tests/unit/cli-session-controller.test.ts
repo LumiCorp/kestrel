@@ -7,6 +7,14 @@ import {
 } from "../../cli/app/SessionController.js";
 import type { SessionsFile, TuiProfile, TuiSessionMeta } from "../../cli/contracts.js";
 import { buildInitialUiRuntimeState, UiStore } from "../../cli/ink/store/UiStore.js";
+import {
+  readTuiEnvironmentIdentityFailure,
+  TuiEnvironmentIdentityError,
+} from "../../cli/session/TuiExecutionEnvironment.js";
+import {
+  hasDurableTuiRuntimeBinding,
+  TuiAuthoringProfileError,
+} from "../../cli/session/TuiAuthoringProfile.js";
 
 
 function makeSession(input: Partial<TuiSessionMeta> & { name: string; sessionId: string }): TuiSessionMeta {
@@ -21,8 +29,44 @@ function makeSession(input: Partial<TuiSessionMeta> & { name: string; sessionId:
     ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
     ...(input.pendingWaitFor !== undefined ? { pendingWaitFor: input.pendingWaitFor } : {}),
     ...(input.lastRunStatus !== undefined ? { lastRunStatus: input.lastRunStatus } : {}),
+    ...(input.environmentPresetId !== undefined
+      ? { environmentPresetId: input.environmentPresetId }
+      : {}),
+    ...(input.effectiveAssemblyId !== undefined
+      ? { effectiveAssemblyId: input.effectiveAssemblyId }
+      : {}),
   };
 }
+
+test("durable runtime binding excludes pre-acceptance local correlation", () => {
+  const base = makeSession({
+    name: "preaccept",
+    sessionId: "session-preaccept",
+    started: false,
+  });
+
+  assert.equal(hasDurableTuiRuntimeBinding({
+    ...base,
+    pendingRunThreadId: "thread-main:session-preaccept",
+  }), false);
+  assert.equal(hasDurableTuiRuntimeBinding({
+    ...base,
+    pendingQueueSubmissions: [{
+      runId: "run-preaccept",
+      messageId: "message-preaccept",
+      threadId: "thread-main:session-preaccept",
+      indeterminate: true,
+    }],
+  }), false);
+  assert.equal(hasDurableTuiRuntimeBinding({
+    ...base,
+    effectiveAssemblyId: "bundle:accepted",
+  }), true);
+  assert.equal(hasDurableTuiRuntimeBinding({
+    ...base,
+    acceptedRunThreadId: "thread-main:session-preaccept",
+  }), true);
+});
 
 function createControllerForState(state: {
   activeSession: TuiSessionMeta;
@@ -49,6 +93,7 @@ test("SessionController lists sessions with active, mode, wait, and run status m
     sessionId: "s-main",
     interactionMode: "build",
     actSubmode: "safe",
+    environmentPresetId: "cli_dev_local",
   });
   const waitingSession = makeSession({
     name: "blocked",
@@ -56,6 +101,7 @@ test("SessionController lists sessions with active, mode, wait, and run status m
     interactionMode: "plan",
     pendingWaitFor: { kind: "user", eventType: "user.reply" },
     lastRunStatus: "WAITING",
+    environmentPresetId: "cli_safe_local",
   });
   const { controller, history } = createControllerForState({
     activeSession,
@@ -68,8 +114,8 @@ test("SessionController lists sessions with active, mode, wait, and run status m
     history[0],
     [
       "Sessions:",
-      "main (active) -> s-main mode:Build",
-      "blocked -> s-blocked mode:Plan waiting:user.reply status:waiting",
+      "main (active) -> s-main agent:reference environment:Developer workspace mode:Build",
+      "blocked -> s-blocked agent:reference environment:Safe sandbox mode:Plan waiting:user.reply status:waiting",
     ].join("\n"),
   );
 });
@@ -97,8 +143,18 @@ test("SessionController restores cached activity when switching to a background 
     agent: "reference-react",
     sessionPrefix: "ref",
   };
-  const main = makeSession({ name: "main", sessionId: "s-main" });
-  const background = makeSession({ name: "background", sessionId: "s-background" });
+  const main = makeSession({
+    name: "main",
+    sessionId: "s-main",
+    started: false,
+    environmentPresetId: "cli_dev_local",
+  });
+  const background = makeSession({
+    name: "background",
+    sessionId: "s-background",
+    started: false,
+    environmentPresetId: "cli_dev_local",
+  });
   let sessionsFile: SessionsFile = {
     version: 5,
     activeSessionName: main.name,
@@ -138,7 +194,7 @@ test("SessionController restores cached activity when switching to a background 
       }),
     },
     historyStore: { readTranscript: async () => [] },
-    client: { sendCommand: async () => { throw new Error("runner unavailable"); } },
+    client: { sendCommand: async () => { throw new Error("unstarted sessions must not describe runtime state"); } },
     getSessionsFile: () => sessionsFile,
     setSessionsFile: (next: SessionsFile) => { sessionsFile = next; },
     saveSessionsFile: async () => {},
@@ -174,4 +230,299 @@ test("SessionController restores cached activity when switching to a background 
   assert.deepEqual(uiStore.getState().conversationActivity, []);
   assert.equal(uiStore.getState().running, false);
   assert.equal(uiStore.getState().statusLine, "resumed 'main' | mcp ready");
+});
+
+test("SessionController fails closed when a started target cannot be described", async () => {
+  const main = makeSession({ name: "main", sessionId: "s-main" });
+  const target = makeSession({
+    name: "target",
+    sessionId: "s-target",
+    environmentPresetId: "cli_dev_local",
+    effectiveAssemblyId: "assembly-dev",
+  });
+  const sessionsFile: SessionsFile = {
+    version: 5,
+    activeSessionName: main.name,
+    sessions: [main, target],
+  };
+  let changedActiveSession = false;
+  const context = {
+    uiStore: { getState: () => ({ activeSession: main }) },
+    sessionStore: {
+      resolveSelector: () => ({ status: "matched", session: target }),
+      setActive: () => {
+        changedActiveSession = true;
+        return sessionsFile;
+      },
+    },
+    getSessionsFile: () => sessionsFile,
+    client: { sendCommand: async () => { throw new Error("runner unavailable"); } },
+  } as unknown as SessionControllerContext;
+
+  await assert.rejects(
+    new SessionController(context).switchSession(target.name),
+    (error: unknown) =>
+      error instanceof TuiEnvironmentIdentityError
+      && error.code === "TUI_ENVIRONMENT_UNKNOWN",
+  );
+  assert.equal(changedActiveSession, false);
+});
+
+test("SessionController fails closed when a runtime-bound target's authoring profile is unavailable", async () => {
+  const activeProfile: TuiProfile = {
+    id: "active-profile",
+    label: "Active profile",
+    agent: "kestrel",
+    sessionPrefix: "active",
+  };
+  const main = makeSession({
+    name: "main",
+    sessionId: "s-main",
+    profileId: activeProfile.id,
+  });
+  const target = makeSession({
+    name: "target",
+    sessionId: "s-target",
+    profileId: "missing-authoring-profile",
+    started: false,
+    environmentPresetId: "cli_dev_local",
+    effectiveAssemblyId: "assembly-dev",
+  });
+  let sessionsFile: SessionsFile = {
+    version: 5,
+    activeSessionName: main.name,
+    sessions: [main, target],
+  };
+  let changedActiveSession = false;
+  let described = false;
+  const context = {
+    uiStore: { getState: () => ({ activeProfile, activeSession: main }) },
+    profileStore: {
+      load: async () => [activeProfile],
+      findById: (profiles: TuiProfile[], profileId: string) =>
+        profiles.find((profile) => profile.id === profileId),
+    },
+    sessionStore: {
+      resolveSelector: () => ({ status: "matched", session: target }),
+      findByName: () => target,
+      setActive: (file: SessionsFile) => {
+        changedActiveSession = true;
+        return file;
+      },
+    },
+    getSessionsFile: () => sessionsFile,
+    setSessionsFile: (next: SessionsFile) => { sessionsFile = next; },
+    client: {
+      sendCommand: async () => {
+        described = true;
+        return {
+          type: "session.described",
+          payload: {
+            sessionId: target.sessionId,
+            version: 1,
+            activeAssembly: {
+              mode: "explicit",
+              environmentPresetId: "cli_dev_local",
+            },
+          },
+        };
+      },
+    },
+    syncSessionFromDescribePayload: async () => {},
+  } as unknown as SessionControllerContext;
+
+  await assert.rejects(
+    new SessionController(context).switchSession(target.name),
+    (error: unknown) =>
+      error instanceof TuiAuthoringProfileError
+      && error.sessionId === target.sessionId
+      && error.profileId === target.profileId,
+  );
+  assert.equal(described, true);
+  assert.equal(changedActiveSession, false);
+});
+
+for (const code of [
+  "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+  "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+] as const) {
+  test(`SessionController preserves ${code} while aborting a started-session switch`, async () => {
+    const main = makeSession({ name: "main", sessionId: "s-main" });
+    const target = makeSession({
+      name: "target",
+      sessionId: "s-target",
+      environmentPresetId: "cli_dev_local",
+    });
+    const sessionsFile: SessionsFile = {
+      version: 5,
+      activeSessionName: main.name,
+      sessions: [main, target],
+    };
+    let changedActiveSession = false;
+    const details = {
+      sessionId: target.sessionId,
+      threadId: `thread-main:${target.sessionId}`,
+      bundleId: "bundle-environment-failure",
+      bundleEnvironmentPresetId: "cli_future_local",
+    };
+    const runtimeError = Object.assign(new Error(`runtime ${code}`), { code, details });
+    const context = {
+      uiStore: { getState: () => ({ activeSession: main }) },
+      sessionStore: {
+        resolveSelector: () => ({ status: "matched", session: target }),
+        setActive: () => {
+          changedActiveSession = true;
+          return sessionsFile;
+        },
+      },
+      getSessionsFile: () => sessionsFile,
+      client: { sendCommand: async () => { throw runtimeError; } },
+    } as unknown as SessionControllerContext;
+
+    await assert.rejects(
+      new SessionController(context).switchSession(target.name),
+      (error: unknown) => {
+        assert.ok(error instanceof TuiEnvironmentIdentityError);
+        assert.equal(error.code, code);
+        assert.deepEqual(error.details, details);
+        return true;
+      },
+    );
+    assert.equal(changedActiveSession, false);
+  });
+}
+
+test("TUI environment failure mapping owns a deep JSON-safe evidence snapshot", () => {
+  const sourceDetails: Record<string, unknown> = {
+    sessionId: "session-evidence",
+    evidence: {
+      threadId: "thread-main:session-evidence",
+      bundleId: "bundle-evidence",
+      rawIdentity: "cli_future_local",
+    },
+  };
+  const sourceError = Object.assign(new Error("Unsupported environment identity."), {
+    code: "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+    details: sourceDetails,
+  });
+  const mapped = readTuiEnvironmentIdentityFailure(sourceError);
+  assert.ok(mapped instanceof TuiEnvironmentIdentityError);
+
+  (sourceDetails.evidence as Record<string, unknown>).bundleId = "bundle-mutated";
+  sourceDetails.listenerCycle = sourceDetails;
+
+  const expected = {
+    sessionId: "session-evidence",
+    evidence: {
+      threadId: "thread-main:session-evidence",
+      bundleId: "bundle-evidence",
+      rawIdentity: "cli_future_local",
+    },
+  };
+  assert.deepEqual(mapped.details, expected);
+  assert.deepEqual(JSON.parse(JSON.stringify(mapped.details)), expected);
+});
+
+for (const scenario of [
+  { label: "missing", runtimeEnvironmentPresetId: undefined },
+  { label: "unsupported", runtimeEnvironmentPresetId: "workspace_hosted" },
+] as const) {
+  test(`SessionController fails closed when a started target has ${scenario.label} runtime identity`, async () => {
+    const main = makeSession({ name: "main", sessionId: "s-main" });
+    const target = makeSession({
+      name: "target",
+      sessionId: "s-target",
+      environmentPresetId: "cli_dev_local",
+      effectiveAssemblyId: "assembly-dev",
+    });
+    const sessionsFile: SessionsFile = {
+      version: 5,
+      activeSessionName: main.name,
+      sessions: [main, target],
+    };
+    let changedActiveSession = false;
+    const context = {
+      uiStore: { getState: () => ({ activeSession: main }) },
+      sessionStore: {
+        resolveSelector: () => ({ status: "matched", session: target }),
+        setActive: () => {
+          changedActiveSession = true;
+          return sessionsFile;
+        },
+      },
+      getSessionsFile: () => sessionsFile,
+      client: {
+        sendCommand: async () => ({
+          type: "session.described",
+          payload: {
+            sessionId: target.sessionId,
+            version: 1,
+            activeAssembly: {
+              mode: "explicit",
+              ...(scenario.runtimeEnvironmentPresetId === undefined
+                ? {}
+                : { environmentPresetId: scenario.runtimeEnvironmentPresetId }),
+            },
+          },
+        }),
+      },
+    } as unknown as SessionControllerContext;
+
+    await assert.rejects(
+      new SessionController(context).switchSession(target.name),
+      (error: unknown) =>
+        error instanceof TuiEnvironmentIdentityError
+        && error.code === "TUI_ENVIRONMENT_UNKNOWN",
+    );
+    assert.equal(changedActiveSession, false);
+  });
+}
+
+test("SessionController aborts a switch when runtime environment identity conflicts", async () => {
+  const main = makeSession({ name: "main", sessionId: "s-main" });
+  const target = makeSession({ name: "target", sessionId: "s-target" });
+  const sessionsFile: SessionsFile = {
+    version: 5,
+    activeSessionName: main.name,
+    sessions: [main, target],
+  };
+  let changedActiveSession = false;
+  const context = {
+    uiStore: {
+      getState: () => ({ activeSession: main }),
+    },
+    sessionStore: {
+      resolveSelector: () => ({ status: "matched", session: target }),
+      setActive: () => {
+        changedActiveSession = true;
+        return sessionsFile;
+      },
+    },
+    getSessionsFile: () => sessionsFile,
+    client: {
+      sendCommand: async () => ({
+        type: "session.described",
+        payload: {
+          sessionId: target.sessionId,
+          version: 1,
+          activeAssembly: {
+            mode: "explicit",
+            environmentPresetId: "cli_safe_local",
+          },
+        },
+      }),
+    },
+    syncSessionFromDescribePayload: async () => {
+      throw new TuiEnvironmentIdentityError(
+        "TUI_ENVIRONMENT_CONFLICT",
+        "Environment consistency failure for session 'target'.",
+      );
+    },
+  } as unknown as SessionControllerContext;
+
+  await assert.rejects(
+    new SessionController(context).switchSession(target.name),
+    /Environment consistency failure/u,
+  );
+  assert.equal(changedActiveSession, false);
 });

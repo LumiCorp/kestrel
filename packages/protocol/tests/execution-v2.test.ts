@@ -1856,6 +1856,44 @@ test("canonical event parser normalizes a blank optional session updatedAt", () 
   assert.equal("updatedAt" in parsed.payload, false);
 });
 
+test("canonical event parser validates exact session assembly environment identity", () => {
+  const parsed = parseRunnerEventV2({
+    id: "event-session-environment",
+    type: "session.described",
+    ts: "2026-07-13T12:00:00.000Z",
+    payload: {
+      sessionId: "session-1",
+      version: 1,
+      activeAssembly: {
+        mode: "explicit",
+        environmentPresetId: "cli_dev_local",
+      },
+    },
+  });
+  assert.equal(
+    parsed.type === "session.described"
+      ? parsed.payload.activeAssembly?.environmentPresetId
+      : undefined,
+    "cli_dev_local",
+  );
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event-session-invalid-environment",
+      type: "session.described",
+      ts: "2026-07-13T12:00:00.000Z",
+      payload: {
+        sessionId: "session-1",
+        version: 1,
+        activeAssembly: {
+          mode: "explicit",
+          environmentPresetId: "cli_unknown",
+        },
+      },
+    }),
+    /activeAssembly\.environmentPresetId/u,
+  );
+});
+
 test("canonical event parser normalizes terminal assistant text without changing payload data", () => {
   const finalizedPayload = {
     deploymentId: "deployment-1",

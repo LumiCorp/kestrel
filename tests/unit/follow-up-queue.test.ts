@@ -29,6 +29,9 @@ test("follow-up queue persists deterministic FIFO entries and deduplicates stabl
     attachmentIds: [],
     interactionMode: "build",
     actSubmode: "safe",
+    runtimeContext: {
+      runId: "run-reserved-follow-up-1",
+    },
     createdAt: "2026-07-20T12:00:01.000Z",
     state: "queued",
   });
@@ -52,6 +55,10 @@ test("follow-up queue persists deterministic FIFO entries and deduplicates stabl
     "follow-up-2",
   ]);
   assert.equal(readFollowUpQueue(duplicate).items[0]?.message, "first");
+  assert.equal(
+    readFollowUpQueue(duplicate).items[0]?.runtimeContext?.runId,
+    "run-reserved-follow-up-1",
+  );
   const edited = editFollowUp(duplicate, "follow-up-1", "revised first");
   assert.equal(readFollowUpQueue(edited).items[0]?.message, "revised first");
   assert.deepEqual(readFollowUpQueue(edited).items.map((entry) => entry.followUpId), ["follow-up-1", "follow-up-2"]);

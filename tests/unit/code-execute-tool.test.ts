@@ -14,6 +14,15 @@ import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js"
 import { hashCanonical } from "../../src/kestrel/contracts/tool-contract.js";
 
 
+test("code.execute tells the model it cannot inspect the project execution environment", () => {
+  const description = codeExecuteTool.definition.description;
+  assert.match(description, /fresh isolated scratch container/u);
+  assert.match(description, /not inside the project workspace/u);
+  assert.match(description, /cannot establish which tools or dependencies are installed/u);
+  assert.match(description, /host or hosted developer workspace/u);
+});
+
+
 test("code.execute forwards parsed request to execution service", async () => {
   let capturedConfig: CodeModeProfileConfig | undefined;
   let capturedRequest: CodeExecutionRequest | undefined;

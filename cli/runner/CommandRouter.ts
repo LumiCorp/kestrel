@@ -8,6 +8,7 @@ import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/eval
 import { parseKestrelManagedConfiguration } from "../config/ProfileStore.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
+import { isSessionEnvironmentIdentityFailureCode } from "../../src/runtime/environmentIdentity.js";
 import {
   KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE,
 } from "../../src/profile/kestrelOnePolicy.js";
@@ -553,7 +554,8 @@ export class CommandRouter {
     };
     const preserveRuntimeCode =
       runtimeError.code ===
-      KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE;
+      KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE
+      || isSessionEnvironmentIdentityFailureCode(runtimeError.code);
     const code =
       normalizedFailure?.code ??
       (preserveRuntimeCode

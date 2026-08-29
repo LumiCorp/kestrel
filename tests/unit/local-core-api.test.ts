@@ -2197,6 +2197,17 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
             name: "shell",
             sessionId: "session-shell",
             profileId: "kestrel",
+            agentProfileId: "kestrel",
+            agentProfileLabel: "Kestrel",
+            environmentShellKind: "cli",
+            environmentPresetId: "cli_dev_local",
+            environmentCapabilityPackIds: [
+              "balanced",
+              "filesystem",
+              "dev_shell",
+            ],
+            effectiveAssemblyId: "bundle:kestrel:developer",
+            effectiveAssemblyLabel: "Kestrel on cli:cli_dev_local",
             createdAt: "2026-06-17T00:00:00.000Z",
             updatedAt: "2026-06-17T00:00:00.000Z",
             started: true,
@@ -2207,6 +2218,15 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
         (await new SessionStore(home).load()).activeSessionName,
         "shell",
       );
+      const loadedSession = (await new SessionStore(home).load()).sessions[0];
+      assert.equal(loadedSession?.agentProfileId, "kestrel");
+      assert.equal(loadedSession?.environmentPresetId, "cli_dev_local");
+      assert.deepEqual(loadedSession?.environmentCapabilityPackIds, [
+        "balanced",
+        "filesystem",
+        "dev_shell",
+      ]);
+      assert.equal(loadedSession?.effectiveAssemblyId, "bundle:kestrel:developer");
 
       const profiles = await new ProfileStore(home).load();
       assert.equal(

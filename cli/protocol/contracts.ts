@@ -139,7 +139,6 @@ export type RunStartCommandPayload = TuiProfileReference & {
 
 export type OrdinaryConversationTurn = Omit<
   RunTurnInput,
-  | "runId"
   | "eventId"
   | "eventType"
   | "resumeBlockedRun"

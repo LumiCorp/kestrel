@@ -34,6 +34,129 @@ const profile: TuiProfile = {
   sessionPrefix: "reference",
 };
 
+test("session.describe uses the configured durable describer without creating a runtime", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let runtimeCreations = 0;
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+  const host = new RunnerHost(
+    writer,
+    () => {
+      runtimeCreations += 1;
+      return {
+        runTurn: async () => {
+          throw new Error("runtime must not be created by session.describe");
+        },
+        close: async () => {},
+      };
+    },
+    undefined,
+    {
+      sessionDescriber: {
+        describeSession: async (sessionId: string) => ({
+          sessionId,
+          version: 1,
+          threadId: "thread-default-tmp-3",
+          activeAssembly: {
+            mode: "explicit" as const,
+            bundleId: "assembly-safe",
+            label: "Safe sandbox",
+            environmentPresetId: "cli_safe_local" as const,
+          },
+        }),
+      },
+    },
+  );
+
+  await host.describeSession("describe-default-tmp-3", {
+    sessionId: "reference-default-tmp-3",
+  });
+  await tick();
+
+  assert.equal(runtimeCreations, 0);
+  assert.equal(events[0]?.type, "session.described");
+  assert.equal(
+    (events[0]?.payload.activeAssembly as { environmentPresetId?: string } | undefined)
+      ?.environmentPresetId,
+    "cli_safe_local",
+  );
+  rl.close();
+  await host.close();
+});
+
+test("session.describe bypasses a cached runtime when the durable describer is configured", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+  let cachedRuntimeDescribeCalls = 0;
+  const host = new RunnerHost(
+    writer,
+    () => ({
+      runTurn: async (turn) => ({
+        assistantText: "Done.",
+        output: completedOutput(turn.sessionId, "run-cache-seed"),
+      }),
+      describeSession: async (sessionId) => {
+        cachedRuntimeDescribeCalls += 1;
+        return {
+          sessionId,
+          version: 1,
+          activeAssembly: {
+            mode: "explicit" as const,
+            environmentPresetId: "cli_safe_local" as const,
+          },
+        };
+      },
+      close: async () => {},
+    }),
+    undefined,
+    {
+      sessionDescriber: {
+        describeSession: async (sessionId) => ({
+          sessionId,
+          version: 1,
+          threadId: "thread-dev-target",
+          activeAssembly: {
+            mode: "explicit" as const,
+            environmentPresetId: "cli_dev_local" as const,
+          },
+        }),
+      },
+    },
+  );
+  await host.runStart("seed-safe-runtime", {
+    profile,
+    turn: {
+      sessionId: "safe-cache-seed",
+      message: "seed",
+      eventType: "user.message",
+    },
+  });
+
+  await host.describeSession("describe-dev-target", { sessionId: "dev-target" });
+  await tick();
+
+  const described = events.find((event) =>
+    event.type === "session.described" && event.payload.sessionId === "dev-target"
+  );
+  assert.equal(cachedRuntimeDescribeCalls, 0);
+  assert.equal(
+    (described?.payload.activeAssembly as { environmentPresetId?: string } | undefined)
+      ?.environmentPresetId,
+    "cli_dev_local",
+  );
+  rl.close();
+  await host.close();
+});
+
 test(
   "Local Core job.run provisions session-isolated managed worktrees before filesystem mutation",
   runLocalCoreManagedWorktreeJobRegression,

@@ -24,6 +24,12 @@ import type {
   ThreadRecord,
   ThreadStatusSnapshot,
 } from "./contracts.js";
+import type { ShellPresetId } from "../profile/runtimeProfile.js";
+import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import {
+  SESSION_ENVIRONMENT_IDENTITY_CONFLICT_CODE,
+  SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED_CODE,
+} from "../runtime/environmentIdentity.js";
 
 export interface OperatorAssemblyProviderSummary {
   id: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
@@ -46,6 +52,7 @@ export interface OperatorAssemblySummary {
   bundleId?: string | undefined;
   label?: string | undefined;
   source?: string | undefined;
+  environmentPresetId?: ShellPresetId | undefined;
   authority?: "profile" | "policy" | "operator" | "model" | undefined;
   cause?:
     | "thread_start"
@@ -166,6 +173,7 @@ export type {
 } from "./contracts.js";
 
 export interface OperatorSessionProjectionRuntime {
+  findMainThreadForSession?: ((sessionId: string) => Promise<ThreadRecord | undefined>) | undefined;
   ensureMainThreadForSession?: ((input: {
     sessionId: string;
     title?: string | undefined;
@@ -181,7 +189,12 @@ export interface OperatorSessionProjectionRuntime {
     sessionId?: string | undefined;
     threadId?: string | undefined;
   }): Promise<OperatorInboxSnapshot>;
+  listOperatorInboxReadOnly?: ((input: {
+    sessionId?: string | undefined;
+    threadId?: string | undefined;
+  }) => Promise<OperatorInboxSnapshot>) | undefined;
   getOperatorThreadView(threadId: string): Promise<OperatorThreadView | null>;
+  getOperatorThreadViewReadOnly?: ((threadId: string) => Promise<OperatorThreadView | null>) | undefined;
   listDelegations?: ((threadId: string) => Promise<DelegationRecord[]>) | undefined;
 }
 
@@ -194,6 +207,7 @@ export interface OperatorSessionProjectionInput {
     state: Record<string, unknown>;
   };
   threadRuntime?: OperatorSessionProjectionRuntime | undefined;
+  createMainThread?: boolean | undefined;
 }
 
 export interface OperatorSessionProjection {
@@ -233,14 +247,21 @@ export async function buildOperatorSessionProjection(
   input: OperatorSessionProjectionInput,
 ): Promise<OperatorSessionProjection> {
   const updatedAt = normalizeOptionalSessionTimestamp(input.session.updatedAt);
-  const mainThread = await ensureMainThread(input.sessionId, input.threadRuntime);
+  const mainThread = await resolveMainThread(
+    input.sessionId,
+    input.threadRuntime,
+    input.createMainThread !== false,
+  );
   const threadStatus =
     input.threadRuntime !== undefined && mainThread !== undefined
       ? await input.threadRuntime.getThreadStatus(mainThread.threadId)
       : null;
   const operatorInbox =
     input.threadRuntime !== undefined
-      ? await input.threadRuntime.listOperatorInbox({ sessionId: input.sessionId })
+      ? input.createMainThread === false
+        && input.threadRuntime.listOperatorInboxReadOnly !== undefined
+        ? await input.threadRuntime.listOperatorInboxReadOnly({ sessionId: input.sessionId })
+        : await input.threadRuntime.listOperatorInbox({ sessionId: input.sessionId })
       : undefined;
   const operatorFocusThreadId =
     operatorInbox?.focusThreadId ??
@@ -252,7 +273,10 @@ export async function buildOperatorSessionProjection(
       : null;
   const operatorView =
     input.threadRuntime !== undefined && operatorFocusThreadId !== undefined
-      ? await input.threadRuntime.getOperatorThreadView(operatorFocusThreadId)
+      ? input.createMainThread === false
+        && input.threadRuntime.getOperatorThreadViewReadOnly !== undefined
+        ? await input.threadRuntime.getOperatorThreadViewReadOnly(operatorFocusThreadId)
+        : await input.threadRuntime.getOperatorThreadView(operatorFocusThreadId)
       : null;
   const focusedThreadId =
     operatorInbox?.focusThreadId ??
@@ -349,9 +373,38 @@ export function toOperatorAssemblySummary(
       mode: "implicit_legacy",
       threadId: threadStatus.thread.threadId,
       label: "implicit/legacy",
+      ...(threadStatus.thread.environmentPresetId !== undefined
+        ? { environmentPresetId: threadStatus.thread.environmentPresetId }
+        : {}),
     };
   }
   const bundle = threadStatus.assemblyBundle;
+  const threadEnvironmentPresetId = threadStatus.thread.environmentPresetId;
+  const bundleEnvironmentPresetId = readAssemblyEnvironmentPresetId(
+    bundle?.metadata,
+    {
+      sessionId: threadStatus.thread.sessionId,
+      threadId: threadStatus.thread.threadId,
+      bundleId: bundle?.bundleId ?? record.bundleId,
+    },
+  );
+  if (
+    threadEnvironmentPresetId !== undefined
+    && bundleEnvironmentPresetId !== undefined
+    && threadEnvironmentPresetId !== bundleEnvironmentPresetId
+  ) {
+    throw createRuntimeFailure(
+      SESSION_ENVIRONMENT_IDENTITY_CONFLICT_CODE,
+      `Thread '${threadStatus.thread.threadId}' environment '${threadEnvironmentPresetId}' conflicts with active assembly '${bundleEnvironmentPresetId}'.`,
+      {
+        sessionId: threadStatus.thread.sessionId,
+        threadId: threadStatus.thread.threadId,
+        bundleId: bundle?.bundleId ?? record.bundleId,
+        threadEnvironmentPresetId,
+        bundleEnvironmentPresetId,
+      },
+    );
+  }
   const latestDecision = findLatestAssemblyDecision(threadStatus.thread.metadata);
   return {
     mode: record.bundleId === "implicit/legacy" ? "implicit_legacy" : "explicit",
@@ -359,6 +412,11 @@ export function toOperatorAssemblySummary(
     bundleId: bundle?.bundleId ?? record.bundleId,
     ...(bundle?.label !== undefined ? { label: bundle.label } : {}),
     ...(bundle?.source !== undefined ? { source: bundle.source } : {}),
+    ...(threadEnvironmentPresetId !== undefined
+      ? { environmentPresetId: threadEnvironmentPresetId }
+      : bundleEnvironmentPresetId !== undefined
+        ? { environmentPresetId: bundleEnvironmentPresetId }
+        : {}),
     authority: record.authority,
     cause: record.cause,
     ...(bundle?.toolAllowlist !== undefined ? { toolAllowlist: [...bundle.toolAllowlist] } : {}),
@@ -380,12 +438,53 @@ export function toOperatorAssemblySummary(
   };
 }
 
-async function ensureMainThread(
+function readAssemblyEnvironmentPresetId(
+  metadata: Record<string, unknown> | undefined,
+  evidence: {
+    sessionId: string;
+    threadId: string;
+    bundleId: string;
+  },
+): ShellPresetId | undefined {
+  if (metadata === undefined || Object.hasOwn(metadata, "environmentPresetId") === false) {
+    return ;
+  }
+  const value = metadata.environmentPresetId;
+  if (value === "cli_safe_local" ||
+      value === "cli_dev_local" ||
+      value === "web_balanced" ||
+      value === "desktop_safe_local" ||
+      value === "desktop_dev_local" ||
+      value === "workspace_hosted") {
+    return value;
+  }
+  throw createRuntimeFailure(
+    SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED_CODE,
+    `Active assembly '${evidence.bundleId}' records unsupported environment identity '${String(value)}'.`,
+    {
+      ...evidence,
+      bundleEnvironmentPresetId: value,
+    },
+  );
+}
+
+async function resolveMainThread(
   sessionId: string,
   threadRuntime: OperatorSessionProjectionRuntime | undefined,
+  createIfMissing: boolean,
 ): Promise<ThreadRecord | undefined> {
   if (threadRuntime === undefined) {
     return ;
+  }
+  if (typeof threadRuntime.findMainThreadForSession === "function") {
+    const existing = await threadRuntime.findMainThreadForSession(sessionId);
+    if (existing !== undefined || createIfMissing === false) {
+      return existing;
+    }
+  }
+  if (createIfMissing === false) {
+    const legacyThread = await threadRuntime.getThreadStatus(sessionId);
+    return legacyThread?.thread;
   }
   if (typeof threadRuntime.ensureMainThreadForSession === "function") {
     return threadRuntime.ensureMainThreadForSession({

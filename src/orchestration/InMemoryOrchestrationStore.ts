@@ -1,4 +1,5 @@
 import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionRecord, AssemblyChangeProposalRecord, ContextCheckpointRecord, ContextPolicyDefinitionRecord, ContextSummaryArtifactRecord, ConversationTurnTerminalEnvelopeV1, DelegationRecord, InteractionRequestRecord, OperatorAttentionRecord, OperatorFocusRecord, SpecialistDefinitionRecord, ThreadAssemblyRecord, ThreadCompactionEventRecord, ThreadRecord } from "../kestrel/contracts/orchestration.js";
+import { compareThreadAssemblyRecordsNewestFirst } from "./threadAssemblyOrdering.js";
 import { parseHarnessEconomicsPolicyV1 } from "../economics/policy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
@@ -287,7 +288,7 @@ export class InMemoryOrchestrationStore implements OrchestrationStore {
   async listThreadAssemblyRecords(threadId: string): Promise<ThreadAssemblyRecord[]> {
     return (this.threadAssemblies.get(threadId) ?? [])
       .map((record) => clone(record))
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      .sort(compareThreadAssemblyRecordsNewestFirst);
   }
 
   async upsertAssemblyChangeProposal(record: AssemblyChangeProposalRecord): Promise<void> {

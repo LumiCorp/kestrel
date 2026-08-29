@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { SessionsFile, TuiSessionMeta } from "../contracts.js";
+import type {
+  SessionsFile,
+  TuiSessionMeta,
+  TuiTerminalQueuedRun,
+} from "../contracts.js";
 import {
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
@@ -16,6 +20,7 @@ const SESSION_FILE_NAME = "sessions.json";
 export class SessionStore {
   private readonly baseDir: string;
   private readonly filePath: string;
+  private saveTail: Promise<void> = Promise.resolve();
 
   constructor(baseDir = resolveKestrelHomePath()) {
     this.baseDir = baseDir;
@@ -66,6 +71,15 @@ export class SessionStore {
   }
 
   async save(file: SessionsFile): Promise<void> {
+    const snapshot = structuredClone(file);
+    const operation = this.saveTail.then(async () => {
+      await this.writeSnapshot(snapshot);
+    });
+    this.saveTail = operation.catch(() => undefined);
+    await operation;
+  }
+
+  private async writeSnapshot(file: SessionsFile): Promise<void> {
     const core = resolveLocalCoreStoreClient(this.baseDir);
     if (core !== undefined) {
       await core.client.putJson("/v1/sessions", { sessions: file });
@@ -239,6 +253,44 @@ function validateSession(value: unknown): TuiSessionMeta {
   const profileLabel = typeof entry.profileLabel === "string"
     ? entry.profileLabel
     : undefined;
+  const agentProfileId = typeof entry.agentProfileId === "string"
+    ? entry.agentProfileId
+    : undefined;
+  const agentProfileLabel = typeof entry.agentProfileLabel === "string"
+    ? entry.agentProfileLabel
+    : undefined;
+  const environmentShellKind =
+    entry.environmentShellKind === "cli" ||
+    entry.environmentShellKind === "web" ||
+    entry.environmentShellKind === "desktop"
+      ? entry.environmentShellKind
+      : undefined;
+  const environmentPresetId =
+    entry.environmentPresetId === "cli_safe_local" ||
+    entry.environmentPresetId === "cli_dev_local" ||
+    entry.environmentPresetId === "web_balanced" ||
+    entry.environmentPresetId === "desktop_safe_local" ||
+    entry.environmentPresetId === "desktop_dev_local" ||
+    entry.environmentPresetId === "workspace_hosted"
+      ? entry.environmentPresetId
+      : undefined;
+  const environmentCapabilityPackIds =
+    Array.isArray(entry.environmentCapabilityPackIds) &&
+    entry.environmentCapabilityPackIds.every((value) =>
+      value === "balanced" ||
+      value === "filesystem" ||
+      value === "dev_shell" ||
+      value === "desktop_host" ||
+      value === "sandbox_code"
+    )
+      ? entry.environmentCapabilityPackIds as TuiSessionMeta["environmentCapabilityPackIds"]
+      : undefined;
+  const effectiveAssemblyId = typeof entry.effectiveAssemblyId === "string"
+    ? entry.effectiveAssemblyId
+    : undefined;
+  const effectiveAssemblyLabel = typeof entry.effectiveAssemblyLabel === "string"
+    ? entry.effectiveAssemblyLabel
+    : undefined;
   const launchPresetId = typeof entry.launchPresetId === "string"
     ? entry.launchPresetId as TuiSessionMeta["launchPresetId"]
     : undefined;
@@ -268,6 +320,37 @@ function validateSession(value: unknown): TuiSessionMeta {
     typeof entry.suppressAutoCompactionOnce === "boolean"
       ? entry.suppressAutoCompactionOnce
       : undefined;
+  const pendingRunId = typeof entry.pendingRunId === "string"
+    ? entry.pendingRunId
+    : undefined;
+  const pendingRunRequestId = typeof entry.pendingRunRequestId === "string"
+    ? entry.pendingRunRequestId
+    : undefined;
+  const pendingRunMessageId = typeof entry.pendingRunMessageId === "string"
+    ? entry.pendingRunMessageId
+    : undefined;
+  const pendingRunThreadId = typeof entry.pendingRunThreadId === "string"
+    ? entry.pendingRunThreadId
+    : undefined;
+  const terminalMessageCursor = typeof entry.terminalMessageCursor === "string"
+    ? entry.terminalMessageCursor
+    : undefined;
+  const pendingQueueSubmissions = readExactRunIdentityCollection(entry.pendingQueueSubmissions);
+  const queuedRunReservations = readExactRunIdentityCollection(entry.queuedRunReservations);
+  const terminalQueuedRuns = readTerminalQueuedRuns(entry.terminalQueuedRuns);
+  const acceptedRunId = typeof entry.acceptedRunId === "string"
+    ? entry.acceptedRunId
+    : undefined;
+  const acceptedRunMessageId = typeof entry.acceptedRunMessageId === "string"
+    ? entry.acceptedRunMessageId
+    : undefined;
+  const acceptedRunThreadId = typeof entry.acceptedRunThreadId === "string"
+    ? entry.acceptedRunThreadId
+    : undefined;
+  const acceptedRunPredecessorId = typeof entry.acceptedRunPredecessorId === "string"
+    || entry.acceptedRunPredecessorId === null
+    ? entry.acceptedRunPredecessorId
+    : undefined;
   const delegation =
     typeof entry.delegation === "object" &&
     entry.delegation !== null &&
@@ -298,6 +381,15 @@ function validateSession(value: unknown): TuiSessionMeta {
     sessionId: readRequiredString(entry, "sessionId"),
     profileId: readRequiredString(entry, "profileId"),
     ...(profileLabel !== undefined ? { profileLabel } : {}),
+    ...(agentProfileId !== undefined ? { agentProfileId } : {}),
+    ...(agentProfileLabel !== undefined ? { agentProfileLabel } : {}),
+    ...(environmentShellKind !== undefined ? { environmentShellKind } : {}),
+    ...(environmentPresetId !== undefined ? { environmentPresetId } : {}),
+    ...(environmentCapabilityPackIds !== undefined
+      ? { environmentCapabilityPackIds: [...environmentCapabilityPackIds] }
+      : {}),
+    ...(effectiveAssemblyId !== undefined ? { effectiveAssemblyId } : {}),
+    ...(effectiveAssemblyLabel !== undefined ? { effectiveAssemblyLabel } : {}),
     ...(launchPresetId !== undefined ? { launchPresetId } : {}),
     ...(launchTemplateId !== undefined ? { launchTemplateId } : {}),
     ...(workspaceBinding !== undefined ? { workspaceBinding } : {}),
@@ -316,12 +408,91 @@ function validateSession(value: unknown): TuiSessionMeta {
     ...(pendingManualCompaction !== undefined ? { pendingManualCompaction } : {}),
     ...(autoCompactionEnabled !== undefined ? { autoCompactionEnabled } : {}),
     ...(suppressAutoCompactionOnce !== undefined ? { suppressAutoCompactionOnce } : {}),
+    ...(pendingRunId !== undefined ? { pendingRunId } : {}),
+    ...(pendingRunRequestId !== undefined ? { pendingRunRequestId } : {}),
+    ...(pendingRunMessageId !== undefined ? { pendingRunMessageId } : {}),
+    ...(pendingRunThreadId !== undefined ? { pendingRunThreadId } : {}),
+    ...(terminalMessageCursor !== undefined ? { terminalMessageCursor } : {}),
+    ...(pendingQueueSubmissions !== undefined && pendingQueueSubmissions.length > 0
+      ? { pendingQueueSubmissions }
+      : {}),
+    ...(queuedRunReservations !== undefined && queuedRunReservations.length > 0
+      ? { queuedRunReservations }
+      : {}),
+    ...(terminalQueuedRuns !== undefined && terminalQueuedRuns.length > 0
+      ? { terminalQueuedRuns }
+      : {}),
+    ...(acceptedRunId !== undefined ? { acceptedRunId } : {}),
+    ...(acceptedRunMessageId !== undefined ? { acceptedRunMessageId } : {}),
+    ...(acceptedRunThreadId !== undefined ? { acceptedRunThreadId } : {}),
+    ...(acceptedRunPredecessorId !== undefined ? { acceptedRunPredecessorId } : {}),
     ...(delegation !== undefined ? { delegation } : {}),
     ...(operatorState !== undefined ? { operatorState } : {}),
     interactionMode: modeResolution.interactionMode,
     ...(modeResolution.actSubmode !== undefined ? { actSubmode: modeResolution.actSubmode } : {}),
     ...(executionPolicy !== undefined ? { executionPolicy } : {}),
   };
+}
+
+function readExactRunIdentityCollection(
+  value: unknown,
+): Array<{ runId: string; messageId: string; threadId: string }> | undefined {
+  if (Array.isArray(value) === false) return undefined;
+  return value.flatMap((reservation) => {
+    if (
+      typeof reservation !== "object"
+      || reservation === null
+      || Array.isArray(reservation)
+    ) return [];
+    const candidate = reservation as Record<string, unknown>;
+    return typeof candidate.runId === "string"
+      && candidate.runId.trim().length > 0
+      && typeof candidate.messageId === "string"
+      && candidate.messageId.trim().length > 0
+      && typeof candidate.threadId === "string"
+      && candidate.threadId.trim().length > 0
+      ? [{
+          runId: candidate.runId,
+          messageId: candidate.messageId,
+          threadId: candidate.threadId,
+          ...(typeof candidate.predecessorRunId === "string"
+            ? { predecessorRunId: candidate.predecessorRunId }
+            : {}),
+          ...(candidate.indeterminate === true ? { indeterminate: true } : {}),
+        }]
+      : [];
+  });
+}
+
+function readTerminalQueuedRuns(
+  value: unknown,
+): NonNullable<TuiSessionMeta["terminalQueuedRuns"]> | undefined {
+  if (Array.isArray(value) === false) return undefined;
+  const runs = value.flatMap<TuiTerminalQueuedRun>((candidate) => {
+    if (
+      typeof candidate !== "object"
+      || candidate === null
+      || Array.isArray(candidate)
+    ) return [];
+    const record = candidate as Record<string, unknown>;
+    const status = record.status;
+    if (
+      typeof record.runId !== "string"
+      || typeof record.messageId !== "string"
+      || typeof record.threadId !== "string"
+      || (status !== "COMPLETED" && status !== "FAILED")
+    ) return [];
+    return [{
+      runId: record.runId,
+      messageId: record.messageId,
+      threadId: record.threadId,
+      status,
+      ...(typeof record.predecessorRunId === "string"
+        ? { predecessorRunId: record.predecessorRunId }
+        : {}),
+    }];
+  });
+  return runs.length === 0 ? undefined : runs;
 }
 
 function readRequiredString(value: Record<string, unknown>, key: string): string {

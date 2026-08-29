@@ -88,6 +88,7 @@ import type {
   RunnerCommandMetadata,
   RunnerPingCommandPayload,
   SessionDescribeCommandPayload,
+  SessionDescribedEventPayload,
   SessionStateCommandPayload,
   TaskGraphGetCommandPayload,
   TaskGraphUpdateCommandPayload,
@@ -207,6 +208,10 @@ export interface RunnerProfileProvider {
 export type RunnerProfileSourcePolicy =
   | "inline-or-registered"
   | "registered-only";
+
+export interface RunnerSessionDescriber {
+  describeSession(sessionId: string): Promise<SessionDescribedEventPayload | undefined>;
+}
 
 export interface RunnerRuntime {
   runTurn(
@@ -619,6 +624,7 @@ export class RunnerHost {
   private readonly diagnosticsStore: Pick<DiagnosticLogStore, "append">;
   private readonly exactEffectResultStore: ExactEffectResultStore | undefined;
   private readonly exactEffectResultTenantId: string | undefined;
+  private readonly sessionDescriber: RunnerSessionDescriber | undefined;
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly commandBySession = new Map<string, string>();
   private readonly commandTypeBySession = new Map<
@@ -649,6 +655,7 @@ export class RunnerHost {
       diagnosticsStore?: Pick<DiagnosticLogStore, "append"> | undefined;
       exactEffectResultStore?: ExactEffectResultStore | undefined;
       exactEffectResultTenantId?: string | undefined;
+      sessionDescriber?: RunnerSessionDescriber | undefined;
     } = {},
   ) {
     this.writer = writer;
@@ -659,6 +666,7 @@ export class RunnerHost {
     this.diagnosticsStore = options.diagnosticsStore ?? new DiagnosticLogStore();
     this.exactEffectResultStore = options.exactEffectResultStore;
     this.exactEffectResultTenantId = options.exactEffectResultTenantId?.trim() || undefined;
+    this.sessionDescriber = options.sessionDescriber;
   }
 
   async effectResultGet(commandId: string, payload: EffectResultGetCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
@@ -1581,32 +1589,34 @@ export class RunnerHost {
     payload: SessionDescribeCommandPayload,
     metadata?: RunnerCommandMetadata
   ): Promise<void> {
+    if (this.sessionDescriber !== undefined) {
+      const described = await this.sessionDescriber.describeSession(payload.sessionId);
+      this.emitSessionDescription(commandId, payload.sessionId, described);
+      return;
+    }
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.describeSession === "function") {
         const described = await runtime.describeSession(payload.sessionId);
         if (described !== undefined) {
-          this.writer.emit("session.described", described, {
-            commandId,
-            sessionId: described.sessionId,
-            ...(described.threadId !== undefined
-              ? { threadId: described.threadId }
-              : {}),
-          });
+          this.emitSessionDescription(commandId, payload.sessionId, described);
           return;
         }
       }
     }
-    this.writer.emit(
-      "session.described",
-      {
-        sessionId: payload.sessionId,
-        version: 0,
-      },
-      {
-        commandId,
-        sessionId: payload.sessionId,
-      }
-    );
+    this.emitSessionDescription(commandId, payload.sessionId, undefined);
+  }
+
+  private emitSessionDescription(
+    commandId: string,
+    sessionId: string,
+    described: SessionDescribedEventPayload | undefined,
+  ): void {
+    const payload = described ?? { sessionId, version: 0 };
+    this.writer.emit("session.described", payload, {
+      commandId,
+      sessionId: payload.sessionId,
+      ...(payload.threadId !== undefined ? { threadId: payload.threadId } : {}),
+    });
   }
 
   async sessionState(

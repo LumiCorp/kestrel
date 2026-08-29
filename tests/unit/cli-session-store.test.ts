@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { SessionStore } from "../../cli/session/SessionStore.js";
-import type { TuiSessionMeta } from "../../cli/contracts.js";
+import type { SessionsFile, TuiSessionMeta } from "../../cli/contracts.js";
 
 
 test("SessionStore persists pending waitFor metadata", async () => {
@@ -41,6 +41,138 @@ test("SessionStore persists pending waitFor metadata", async () => {
   assert.equal(loadedSession?.lastMessagePreview, "latest session preview");
 });
 
+test("SessionStore rehydrates the recoverable background lifecycle state", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-recovering-"));
+  const store = new SessionStore(tempDir);
+  const now = new Date(0).toISOString();
+  const initial = await store.load();
+  const recovering: TuiSessionMeta = {
+    name: "recovering-child",
+    sessionId: "recovering-child",
+    profileId: "reference",
+    createdAt: now,
+    updatedAt: now,
+    started: true,
+    delegation: {
+      taskId: "task-recovering-child",
+      parentSessionId: "parent",
+      childSessionId: "recovering-child",
+      childSessionName: "recovering-child",
+      title: "Recover child runtime status",
+      status: "RECOVERING",
+      profileId: "reference",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: now,
+      updatedAt: now,
+    },
+  };
+
+  await store.save(store.upsert(initial, recovering));
+
+  assert.equal(
+    store.findByName(await store.load(), "recovering-child")?.delegation?.status,
+    "RECOVERING",
+  );
+});
+
+test("SessionStore round-trips exact pending and accepted TUI run identity with legacy compatibility", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-run-identity-"));
+  const store = new SessionStore(tempDir);
+  const now = new Date(0).toISOString();
+  const session: TuiSessionMeta = {
+    name: "exact-run-child",
+    sessionId: "exact-run-child",
+    profileId: "reference",
+    createdAt: now,
+    updatedAt: now,
+    started: true,
+    pendingRunId: "run-pending",
+    pendingRunRequestId: "request-pending",
+    pendingRunMessageId: "message-pending",
+    pendingRunThreadId: "thread-main:exact-run-child",
+    terminalMessageCursor: "terminal-cursor-exact-run-child",
+    queuedRunReservations: [
+      {
+        runId: "run-queued-a",
+        messageId: "message-queued-a",
+        threadId: "thread-main:exact-run-child",
+        predecessorRunId: "run-predecessor-a",
+      },
+      {
+        runId: "run-queued-b",
+        messageId: "message-queued-b",
+        threadId: "thread-child:exact-run-child",
+      },
+    ],
+    pendingQueueSubmissions: [
+      {
+        runId: "run-pending-queue-a",
+        messageId: "message-pending-queue-a",
+        threadId: "thread-main:exact-run-child",
+        predecessorRunId: "run-predecessor-a",
+      },
+      {
+        runId: "run-pending-queue-b",
+        messageId: "message-pending-queue-b",
+        threadId: "thread-child:exact-run-child",
+      },
+    ],
+    terminalQueuedRuns: [{
+      runId: "run-terminal-queued",
+      messageId: "message-terminal-queued",
+      threadId: "thread-main:exact-run-child",
+      status: "COMPLETED",
+      predecessorRunId: "run-predecessor-a",
+    }],
+    acceptedRunId: "run-accepted",
+    acceptedRunMessageId: "message-accepted",
+    acceptedRunThreadId: "thread-accepted:exact-run-child",
+    acceptedRunPredecessorId: "run-predecessor-accepted",
+  };
+
+  await store.save(store.upsert(await store.load(), session));
+  const loaded = store.findByName(await store.load(), session.name);
+  assert.equal(loaded?.pendingRunId, "run-pending");
+  assert.equal(loaded?.pendingRunRequestId, "request-pending");
+  assert.equal(loaded?.pendingRunMessageId, "message-pending");
+  assert.equal(loaded?.pendingRunThreadId, "thread-main:exact-run-child");
+  assert.equal(loaded?.terminalMessageCursor, "terminal-cursor-exact-run-child");
+  assert.deepEqual(loaded?.queuedRunReservations, session.queuedRunReservations);
+  assert.deepEqual(loaded?.pendingQueueSubmissions, session.pendingQueueSubmissions);
+  assert.deepEqual(loaded?.terminalQueuedRuns, session.terminalQueuedRuns);
+  assert.equal(loaded?.acceptedRunId, "run-accepted");
+  assert.equal(loaded?.acceptedRunMessageId, "message-accepted");
+  assert.equal(loaded?.acceptedRunThreadId, "thread-accepted:exact-run-child");
+  assert.equal(loaded?.acceptedRunPredecessorId, "run-predecessor-accepted");
+
+  await writeFile(
+    path.join(tempDir, "sessions.json"),
+    JSON.stringify({
+      version: 5,
+      sessions: [{
+        name: "legacy-no-run-identity",
+        sessionId: "legacy-no-run-identity",
+        profileId: "reference",
+        createdAt: now,
+        updatedAt: now,
+        started: false,
+      }],
+    }),
+    "utf8",
+  );
+  const legacy = store.findByName(await store.load(), "legacy-no-run-identity");
+  assert.equal(legacy?.pendingRunId, undefined);
+  assert.equal(legacy?.pendingRunRequestId, undefined);
+  assert.equal(legacy?.pendingRunMessageId, undefined);
+  assert.equal(legacy?.queuedRunReservations, undefined);
+  assert.equal(legacy?.pendingQueueSubmissions, undefined);
+  assert.equal(legacy?.acceptedRunId, undefined);
+  assert.equal(legacy?.terminalQueuedRuns, undefined);
+  assert.equal(legacy?.acceptedRunThreadId, undefined);
+  assert.equal(legacy?.acceptedRunPredecessorId, undefined);
+});
+
 test("SessionStore readers never observe a partially written sessions file", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-atomic-"));
   const store = new SessionStore(tempDir);
@@ -65,6 +197,94 @@ test("SessionStore readers never observe a partially written sessions file", asy
   await Promise.all(writes);
 
   assert.equal(loaded.every((file) => file.version === 5 && file.sessions.length === 250), true);
+});
+
+test("SessionStore serializes delayed saves in invocation order", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-ordered-"));
+  const store = new SessionStore(tempDir);
+  await store.load();
+  const now = new Date(0).toISOString();
+  const makeFile = (name: string): SessionsFile => ({
+    version: 5,
+    activeSessionName: name,
+    sessions: [{
+      name,
+      sessionId: name,
+      profileId: "reference",
+      createdAt: now,
+      updatedAt: now,
+      started: true,
+    }],
+  });
+  const controlled = store as unknown as {
+    writeSnapshot(file: SessionsFile): Promise<void>;
+  };
+  const writeSnapshot = controlled.writeSnapshot.bind(store);
+  const observed: string[] = [];
+  let releaseFirst: (() => void) | undefined;
+  let firstStartedResolve: (() => void) | undefined;
+  const firstStarted = new Promise<void>((resolve) => {
+    firstStartedResolve = resolve;
+  });
+  let writeCount = 0;
+  controlled.writeSnapshot = async (file) => {
+    writeCount += 1;
+    observed.push(file.activeSessionName ?? "missing");
+    if (writeCount === 1) {
+      firstStartedResolve?.();
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+    }
+    await writeSnapshot(file);
+  };
+
+  const older = store.save(makeFile("older"));
+  await firstStarted;
+  const newer = store.save(makeFile("newer"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(observed, ["older"]);
+  releaseFirst?.();
+  await Promise.all([older, newer]);
+
+  assert.deepEqual(observed, ["older", "newer"]);
+  assert.equal((await store.load()).activeSessionName, "newer");
+});
+
+test("SessionStore propagates a failed save without blocking the next ordered snapshot", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-failed-"));
+  const store = new SessionStore(tempDir);
+  await store.load();
+  const now = new Date(0).toISOString();
+  const makeFile = (name: string): SessionsFile => ({
+    version: 5,
+    activeSessionName: name,
+    sessions: [{
+      name,
+      sessionId: name,
+      profileId: "reference",
+      createdAt: now,
+      updatedAt: now,
+      started: true,
+    }],
+  });
+  const controlled = store as unknown as {
+    writeSnapshot(file: SessionsFile): Promise<void>;
+  };
+  const writeSnapshot = controlled.writeSnapshot.bind(store);
+  let writeCount = 0;
+  controlled.writeSnapshot = async (file) => {
+    writeCount += 1;
+    if (writeCount === 1) throw new Error("injected ordered save failure");
+    await writeSnapshot(file);
+  };
+
+  const failed = store.save(makeFile("failed"));
+  const recovered = store.save(makeFile("recovered"));
+  await assert.rejects(failed, /injected ordered save failure/u);
+  await recovered;
+
+  assert.equal((await store.load()).activeSessionName, "recovered");
 });
 
 test("SessionStore resolves a unique session id fragment without changing name precedence", async () => {
@@ -215,4 +435,41 @@ test("SessionStore persists workspace binding metadata", async () => {
 
   assert.equal(loadedSession?.workspaceId, "ws-123");
   assert.equal(loadedSession?.workspaceRoot, "/tmp/project-root");
+});
+
+test("SessionStore round-trips exact TUI runtime identity metadata", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-identity-"));
+  const store = new SessionStore(tempDir);
+  const now = new Date().toISOString();
+  const session: TuiSessionMeta = {
+    name: "developer-workspace",
+    sessionId: "workspace-dev-1",
+    profileId: "kestrel",
+    profileLabel: "Kestrel",
+    agentProfileId: "kestrel",
+    agentProfileLabel: "Kestrel",
+    environmentShellKind: "cli",
+    environmentPresetId: "cli_dev_local",
+    environmentCapabilityPackIds: ["balanced", "filesystem", "dev_shell"],
+    effectiveAssemblyId: "bundle:kestrel:developer",
+    effectiveAssemblyLabel: "Kestrel on cli:cli_dev_local",
+    createdAt: now,
+    updatedAt: now,
+    started: true,
+  };
+
+  await store.save(store.upsert(await store.load(), session));
+  const loaded = store.findByName(await store.load(), session.name);
+
+  assert.equal(loaded?.agentProfileId, "kestrel");
+  assert.equal(loaded?.agentProfileLabel, "Kestrel");
+  assert.equal(loaded?.environmentShellKind, "cli");
+  assert.equal(loaded?.environmentPresetId, "cli_dev_local");
+  assert.deepEqual(loaded?.environmentCapabilityPackIds, [
+    "balanced",
+    "filesystem",
+    "dev_shell",
+  ]);
+  assert.equal(loaded?.effectiveAssemblyId, "bundle:kestrel:developer");
+  assert.equal(loaded?.effectiveAssemblyLabel, "Kestrel on cli:cli_dev_local");
 });
