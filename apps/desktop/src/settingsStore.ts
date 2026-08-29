@@ -456,7 +456,9 @@ export function normalizeDesktopSettings(
       settings?.projectTombstones,
     ),
     mcpServers,
-    plugins: persistedPlugins ?? buildDesktopPluginInstallations(mcpServers, defaultEnabledBuiltInAppIds, tavilyApiKey),
+    plugins: persistedPlugins === undefined
+      ? buildDesktopPluginInstallations(mcpServers, defaultEnabledBuiltInAppIds, tavilyApiKey)
+      : mergeIncludedDesktopPlugins(persistedPlugins, defaultEnabledBuiltInAppIds),
     capabilityVerifications: normalizeCapabilityVerifications(
       settings?.capabilityVerifications,
     ),
@@ -1539,6 +1541,17 @@ function buildDesktopPluginInstallations(
     });
   }
   return [...installed.values()];
+}
+
+function mergeIncludedDesktopPlugins(
+  persisted: readonly DesktopPluginInstallation[],
+  enabledBuiltIns: readonly string[],
+): DesktopPluginInstallation[] {
+  const merged = new Map(persisted.map((plugin) => [plugin.pluginId, { ...plugin }]));
+  for (const included of buildDesktopPluginInstallations([], enabledBuiltIns)) {
+    if (!merged.has(included.pluginId)) merged.set(included.pluginId, included);
+  }
+  return [...merged.values()];
 }
 
 function normalizeDesktopPluginInstallations(

@@ -21,6 +21,7 @@ import {
   projectGoogleCalendarAuditOutput,
 } from "../src/apps/googleCalendarAudit.js";
 import { storeJsonArtifact } from "./runtime/artifactStore.js";
+import { projectBrowserAuditInput, projectBrowserAuditOutput } from "../src/browser/contracts.js";
 
 export type AgentToolRawHandler = (input: unknown) => Promise<unknown>;
 
@@ -235,7 +236,8 @@ export function rawOutputRefFor(value: unknown): string {
 }
 
 function auditInputFor(toolName: string, input: unknown): unknown {
-  return projectGmailMutationActivityInput(toolName, input) ??
+  return projectBrowserAuditInput(toolName, input) ??
+    projectGmailMutationActivityInput(toolName, input) ??
     projectMicrosoft365TeamsReadAuditInput(toolName, input) ??
     projectMicrosoft365TeamsSendAuditInput(toolName, input) ??
     projectGoogleCalendarAuditInput(toolName, input) ??
@@ -247,7 +249,8 @@ function auditOutputFor(
   input: unknown,
   output: unknown,
 ): unknown {
-  return projectMicrosoft365TeamsReadAuditOutput(toolName, input, output) ??
+  return projectBrowserAuditOutput(toolName, output) ??
+    projectMicrosoft365TeamsReadAuditOutput(toolName, input, output) ??
     projectMicrosoft365TeamsSendAuditOutput(toolName, input, output) ??
     projectGoogleCalendarAuditOutput(toolName, input, output) ??
     output;

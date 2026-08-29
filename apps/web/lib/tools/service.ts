@@ -4,6 +4,7 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { mapWithConcurrencyLimit } from "./concurrency";
 import { buildToolsOverview } from "./overview";
 import { getToolProviderDefinition, listToolProviders } from "./registry";
+import { BROWSER_SERVICE_PORT_VERSION } from "../../../../src/browser/contracts";
 import type {
   ResolvedToolCapability,
   ResolvedToolProvider,
@@ -269,7 +270,23 @@ const kestrelEdgePreviewAdapter: ToolProviderAdapter = {
   },
 };
 
+const browserAdapter: ToolProviderAdapter = {
+  async getConnectionStatus() {
+    return createSystemConnection({
+      status: "not_configured",
+      isReady: false,
+      label: "Browser runtime unavailable",
+      lastError: "No conforming hosted BrowserServicePort is active.",
+      metadata: {
+        provider: "kestrel_browser",
+        contractVersion: BROWSER_SERVICE_PORT_VERSION,
+      },
+    });
+  },
+};
+
 const providerAdapters = new Map<ToolProviderKey, ToolProviderAdapter>([
+  ["built_in.browser", browserAdapter],
   ["built_in.previews", kestrelEdgePreviewAdapter],
   ["built_in.weather", builtInSystemAdapter],
   ["built_in.time", builtInSystemAdapter],

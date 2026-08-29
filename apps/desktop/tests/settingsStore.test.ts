@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseDesktopRendererSettingsUpdate } from "../../../src/desktopShell/contracts.js";
 import { createDefaultModelPolicy } from "../../../src/profile/modelPolicy.js";
+import { BROWSER_TOOL_NAMES } from "../../../src/browser/contracts.js";
 
 import {
   buildDesktopExecutionProfile,
@@ -20,6 +21,23 @@ import {
   preserveDesktopProjectRegistrationIds,
   writeDesktopSettings,
 } from "../src/settingsStore.js";
+
+test("Desktop includes the Browser App installed but disabled", () => {
+  const defaults = createDefaultDesktopSettings();
+  const browser = defaults.plugins.find((plugin) => plugin.pluginId === "built_in.browser");
+  assert.ok(browser);
+  assert.equal(browser.installed, true);
+  assert.equal(browser.configured, true);
+  assert.equal(browser.enabled, false);
+  assert.deepEqual(browser.capabilityPacks, ["operate"]);
+  assert.equal(defaults.defaultEnabledBuiltInAppIds.includes("built_in.browser"), false);
+  const migrated = normalizeDesktopSettings({
+    ...defaults,
+    plugins: defaults.plugins.filter((plugin) => plugin.pluginId !== "built_in.browser"),
+  });
+  assert.equal(migrated.plugins.find((plugin) => plugin.pluginId === "built_in.browser")?.enabled, false);
+  assert.equal(BROWSER_TOOL_NAMES.length, 12);
+});
 
 test("Desktop settings round-trip versioned non-secret onboarding progress", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "kestrel-onboarding-settings-"));
@@ -1307,6 +1325,20 @@ test(
     assert.equal(incomplete.mcpServers[0]?.appId, undefined);
   },
 );
+
+test("Desktop Browser selection projects the shared tools into the runtime profile", () => {
+  const result = buildDesktopExecutionProfile(
+    createDefaultModelPolicy(),
+    createDefaultDesktopSettings(),
+    {
+      modelConfiguration: { id: "desktop-default", revision: 1 },
+      apps: [{ id: "built_in.browser", contractVersion: 1 }],
+    },
+  );
+  assert.equal("profile" in result, true);
+  if (!("profile" in result)) return;
+  for (const toolName of BROWSER_TOOL_NAMES) assert.ok(result.profile.toolAllowlist?.includes(toolName));
+});
 
 test(
   "Desktop execution selection retains the connected App server that owns selected tools",

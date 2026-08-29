@@ -37,6 +37,7 @@ import type { TavilyInternetProvider } from "./internet/contracts.js";
 import type { ToolProviderConfigurationResolver } from "./providers/runtimeConfiguration.js";
 import type { Microsoft365ServicePort } from "../src/apps/microsoft365.js";
 import type { GoogleWorkspaceServicePort } from "../src/apps/googleWorkspace.js";
+import type { BrowserServicePort } from "../src/browser/contracts.js";
 
 export type ToolFreshnessClass = "live" | "volatile" | "static" | "runtime";
 export type ToolLatencyClass = "low" | "medium" | "high";
@@ -87,6 +88,7 @@ export interface SharedToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  runtimeOutputSchema?: Record<string, unknown> | undefined;
   outputContract?: ModelToolContract | undefined;
   resultNormalizerId?: string | undefined;
   capability: ToolCapabilityMetadata;
@@ -254,6 +256,7 @@ export interface SharedToolContext {
   providerConfigurations?: ToolProviderConfigurationResolver | undefined;
   microsoft365Service?: Microsoft365ServicePort | undefined;
   googleWorkspaceService?: GoogleWorkspaceServicePort | undefined;
+  browserService?: BrowserServicePort | undefined;
   /** @deprecated Transitional compatibility for callers not yet using providerConfigurations. */
   internetEnv?: NodeJS.ProcessEnv | undefined;
   strictFinalizeProvenance?: boolean | undefined;
@@ -322,7 +325,12 @@ export type SharedToolHandler = (input: unknown) => Promise<AgentToolResult>;
 
 export interface SharedToolModule {
   definition: SharedToolDefinition;
-  createHandler(context: SharedToolContext): SharedToolRawHandler;
+  createHandler(
+    context: SharedToolContext,
+    prepared?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1 | undefined,
+  ): SharedToolRawHandler;
+  resolveExecutionClass?(input: Record<string, unknown>): ToolExecutionClass;
+  prepareInputAdapter?(input: Record<string, unknown>): import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1;
   normalizeResult?(output: unknown, input: unknown): SharedToolNormalizedResult;
 }
 
@@ -361,6 +369,7 @@ export interface ToolCatalog {
   createRawHandlers(
     names: string[],
     context: SharedToolContext,
+    prepared?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1 | undefined,
   ): Record<string, SharedToolRawHandler>;
   createResultNormalizers(
     names: string[],
@@ -368,6 +377,8 @@ export interface ToolCatalog {
     string,
     (output: unknown, input: unknown) => SharedToolNormalizedResult
   >;
+  resolveExecutionClass(name: string, input: Record<string, unknown>): ToolExecutionClass | undefined;
+  prepareInputAdapter(name: string, input: Record<string, unknown>): import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1 | undefined;
 }
 
 export interface ToolRegistryListOptions {

@@ -134,6 +134,18 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "kestrel_one.vercel_list_deployments": { mode: "schema-only" },
   "kestrel_one.vercel_deployment_events": { mode: "schema-only" },
   "kestrel_one.word_document_create": { mode: "schema-only" },
+  "browser.open": { mode: "schema-only" },
+  "browser.request_grant": { mode: "schema-only" },
+  "browser.snapshot": { mode: "schema-only" },
+  "browser.inspect": { mode: "schema-only" },
+  "browser.navigate": { mode: "schema-only" },
+  "browser.interact": { mode: "schema-only" },
+  "browser.tabs": { mode: "schema-only" },
+  "browser.capture": { mode: "schema-only" },
+  "browser.upload": { mode: "schema-only" },
+  "browser.download": { mode: "schema-only" },
+  "browser.request_takeover": { mode: "schema-only" },
+  "browser.close": { mode: "schema-only" },
 } satisfies Record<string, BuiltInToolInputContract>;
 
 export function validateBuiltInToolInputContract(

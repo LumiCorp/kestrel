@@ -144,6 +144,7 @@ import {
   googleWorkspaceReplyGmailTool,
   googleWorkspaceUpdateEventTool,
 } from "./googleWorkspace/desktop.js";
+import { browserTools } from "./browser/modules.js";
 
 const DEFAULT_MODULES: SharedToolModule[] = [
   weatherCurrentTool,
@@ -252,6 +253,7 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   kestrelOneVercelListProjectsTool,
   kestrelOneVercelListDeploymentsTool,
   kestrelOneVercelDeploymentEventsTool,
+  ...browserTools,
 ];
 
 const BUILT_IN_RESULT_NORMALIZER_ID =
@@ -448,6 +450,7 @@ export function createToolCatalog(
   const createRawHandlers = (
     names: string[],
     context: SharedToolContext,
+    prepared?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1 | undefined,
   ): Record<string, import("./contracts.js").SharedToolRawHandler> => {
     const handlers: Record<
       string,
@@ -458,7 +461,7 @@ export function createToolCatalog(
       if (module === undefined) {
         throw createUnknownToolError(name, "handlers");
       }
-      handlers[name] = module.createHandler(context);
+      handlers[name] = module.createHandler(context, prepared);
     }
     return handlers;
   };
@@ -483,6 +486,11 @@ export function createToolCatalog(
     return normalizers;
   };
 
+  const resolveExecutionClass = (name: string, input: Record<string, unknown>) =>
+    map.get(name)?.resolveExecutionClass?.(input);
+  const prepareInputAdapter = (name: string, input: Record<string, unknown>) =>
+    map.get(name)?.prepareInputAdapter?.(input);
+
   return {
     list,
     listDescriptors,
@@ -493,6 +501,8 @@ export function createToolCatalog(
     createHandlers,
     createRawHandlers,
     createResultNormalizers,
+    resolveExecutionClass,
+    prepareInputAdapter,
   };
 }
 
@@ -526,7 +536,9 @@ export function createBuiltInToolDescriptor(
     inputSchema: definition.inputSchema,
     runtimeOutput: {
       schema:
-        definition.outputContract === undefined
+        definition.runtimeOutputSchema !== undefined
+          ? definition.runtimeOutputSchema
+          : definition.outputContract === undefined
           ? { ...JSON_VALUE_OUTPUT_SCHEMA_V1 }
           : modelOutputContractToJsonSchema(definition.outputContract),
     },

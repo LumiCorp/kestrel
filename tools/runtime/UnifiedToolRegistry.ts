@@ -86,6 +86,11 @@ import {
 import { isFileTextReadToolName } from "../../src/runtime/fileTextReadTools.js";
 import { withPreparedExecCommandApprovalContext } from "./approvedExecCommandContext.js";
 import type { RunnerWorkflowRunAuthorityV1 } from "@kestrel-agents/protocol";
+import {
+  BROWSER_SERVICE_PORT_VERSION,
+  isBrowserToolName,
+  isConformingBrowserServicePort,
+} from "../../src/browser/contracts.js";
 
 type CapabilityManifestItem = ToolCapabilityMetadata & {
   name: string;
@@ -143,6 +148,8 @@ type PinnedExecutionSource = {
     | ((input: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>)
     | undefined;
   inputAdapterId?: string | undefined;
+  resolveExecutionClass?: ((input: Record<string, unknown>) => import("../../src/mode/contracts.js").ToolExecutionClass) | undefined;
+  prepareInputAdapter?: ((input: Record<string, unknown>) => import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1) | undefined;
 };
 
 interface WorkspaceSkillReadProgress {
@@ -806,7 +813,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         options.runContext !== undefined
           ? createPreparedToolApprovalAuthorityV2({
               activation: input.activation,
-              executionClass: source.pinned.descriptor.capability.executionClass,
+              executionClass: source.resolveExecutionClass?.(asRecord(effectiveInput) ?? {}) ??
+                source.pinned.descriptor.capability.executionClass,
               effectiveInput: asRecord(effectiveInput) ?? {},
               policyRevision: input.policy.policyRevision,
               approvalAuthorityRevision: input.approval.authorityRevision,
@@ -835,6 +843,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                   metadata: {},
                 },
               ]),
+          ...(source.prepareInputAdapter === undefined
+            ? []
+            : [source.prepareInputAdapter(asRecord(effectiveInput) ?? {})]),
           ...(input.activation.descriptor.toolId === "dev.shell.run" ||
           input.activation.descriptor.toolId === "exec_command"
             ? [
@@ -1800,9 +1811,27 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           { recoverable: false, toolName: descriptor.toolId },
         );
       }
+      const hasExecutionClassResolver =
+        defaultToolCatalog.resolveExecutionClass(descriptor.toolId, {}) !== undefined;
+      const hasPreparedInputAdapter =
+        defaultToolCatalog.prepareInputAdapter(descriptor.toolId, {}) !== undefined;
+      const resolveExecutionClass = (input: Record<string, unknown>) =>
+        defaultToolCatalog.resolveExecutionClass(descriptor.toolId, input) ??
+        descriptor.capability.executionClass;
       return {
-        pinned: { descriptor, activation, validator, normalizer },
+        pinned: {
+          descriptor,
+          activation,
+          validator,
+          normalizer,
+          ...(hasExecutionClassResolver ? { resolveExecutionClass } : {}),
+        },
         inputAdapterId: "kestrel.builtin-input-normalizer:v1",
+        ...(hasExecutionClassResolver ? { resolveExecutionClass } : {}),
+        ...(hasPreparedInputAdapter === false ? {} : {
+          prepareInputAdapter: (input: Record<string, unknown>) =>
+            defaultToolCatalog.prepareInputAdapter(descriptor.toolId, input)!,
+        }),
         transformInput: async (input) => {
           const normalized = normalizeToolActionInput(
             descriptor.toolId,
@@ -1880,6 +1909,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                   toolConsole: handlerOptions.console,
                   signal: handlerOptions.signal,
                 },
+            prepared,
           );
           const handler = handlers[descriptor.toolId];
           if (handler === undefined) {
@@ -3168,6 +3198,9 @@ function isBuiltInToolDisabledByContext(
   if (name.startsWith("dev.shell.")) {
     return context.devShell?.enabled !== true;
   }
+  if (isBrowserToolName(name)) {
+    return !isConformingBrowserServicePort(context.browserService);
+  }
 
   return false;
 }
@@ -3182,6 +3215,10 @@ function toToolRuntimeStatus(
     providers: {
       mcp: status,
       tools: context.providerConfigurations?.list() ?? [],
+      browser: {
+        contractVersion: BROWSER_SERVICE_PORT_VERSION,
+        ready: isConformingBrowserServicePort(context.browserService),
+      },
     },
   };
 }

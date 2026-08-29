@@ -80,6 +80,7 @@ export interface PinnedToolExecutionV1 {
         }
       | undefined;
   };
+  resolveExecutionClass?: ((input: Record<string, unknown>) => ToolExecutionClass) | undefined;
 }
 
 export function createToolSurfaceForDescriptorsV1(input: {
@@ -305,12 +306,13 @@ export async function executePinnedToolCallV1(input: {
   persistCompletedCapabilityResult?: ((result: AgentToolResultV2) => Promise<void>) | undefined;
 }): Promise<AgentToolResultV2> {
   const prepared = parsePreparedToolCallV1(input.prepared);
+  const executionClass = input.pinned.resolveExecutionClass?.(prepared.effectiveInput) ??
+    input.pinned.descriptor.capability.executionClass;
   assertPreparedActivationMatches(prepared.activation, input.pinned.activation);
   if (
     prepared.stableAuthority?.version ===
       PREPARED_TOOL_STABLE_AUTHORITY_V2_VERSION &&
-    prepared.stableAuthority.executionClass !==
-      input.pinned.descriptor.capability.executionClass
+    prepared.stableAuthority.executionClass !== executionClass
   ) {
     throw createRuntimeFailure(
       "TOOL_ACTIVATION_STALE",
@@ -353,11 +355,7 @@ export async function executePinnedToolCallV1(input: {
     if (error instanceof RunCancelledError || input.signal?.aborted === true) {
       throw error;
     }
-    const effectState =
-      input.pinned.descriptor.capability.executionClass ===
-      "external_side_effect"
-        ? "unknown"
-        : "not_started";
+    const effectState = executionClass === "external_side_effect" ? "unknown" : "not_started";
     return buildFailureResult({
       prepared,
       descriptor: input.pinned.descriptor,
@@ -378,7 +376,7 @@ export async function executePinnedToolCallV1(input: {
     return preCleanupResult;
   }
 
-  return buildCompletedToolResult({ prepared, pinned: input.pinned, rawOutput, startedAt });
+  return buildCompletedToolResult({ prepared, pinned: input.pinned, rawOutput, startedAt, executionClass });
 }
 
 export function buildUnknownPreparedToolCallResultV1(input: {
@@ -427,11 +425,13 @@ function buildCompletedToolResult(input: {
   pinned: PinnedToolExecutionV1;
   rawOutput: unknown;
   startedAt: string;
+  executionClass?: ToolExecutionClass | undefined;
 }): AgentToolResultV2 {
   const { prepared, pinned, rawOutput, startedAt } = input;
 
   const effectState =
-    pinned.descriptor.capability.executionClass === "external_side_effect"
+    (input.executionClass ?? pinned.resolveExecutionClass?.(prepared.effectiveInput) ??
+      pinned.descriptor.capability.executionClass) === "external_side_effect"
       ? "committed"
       : "not_applicable";
   if (isAgentToolResult(rawOutput)) {

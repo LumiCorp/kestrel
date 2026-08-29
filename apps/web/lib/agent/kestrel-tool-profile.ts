@@ -3,6 +3,7 @@ import { GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS } from "../../../../src/apps/goo
 import { MICROSOFT_365_OPERATION_DESCRIPTORS } from "../../../../src/apps/microsoft365.js";
 import { getCoreAppDefinition } from "@/lib/apps/catalog";
 import { applyMinimumApprovalMode } from "@/lib/apps/policy";
+import { BROWSER_TOOL_NAMES } from "../../../../src/browser/contracts";
 
 const GOOGLE_CALENDAR_TOOL_CAPABILITIES = new Map<string, string>([
   ...GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.map((operation) => [
@@ -63,6 +64,10 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
   string,
   { appKey: string; capabilityKey: string }
 >([
+  ...BROWSER_TOOL_NAMES.map((toolName) => [
+    toolName,
+    { appKey: "built_in.browser", capabilityKey: toolName.slice("browser.".length) },
+  ] as const),
   [
     "exec_command",
     { appKey: "built_in.workspace", capabilityKey: "executeCommand" },
