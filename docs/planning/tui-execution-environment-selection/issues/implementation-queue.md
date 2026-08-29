@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Serialize session mutations and terminal correlation](28-serialize-session-mutations-and-terminal-correlation.md)
 
 ## In progress
 
