@@ -16,11 +16,12 @@ None.
 
 ## Implemented
 
-- [Let users choose and understand the TUI execution environment](02-expose-environment-controls-and-language.md)
+None.
 
 ## Done
 
 - [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md)
+- [Let users choose and understand the TUI execution environment](02-expose-environment-controls-and-language.md)
 
 ## Scope note
 
