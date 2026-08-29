@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Unify durable queue publication](26-unify-durable-queue-publication.md)
 
 ## In progress
 
