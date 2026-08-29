@@ -56,7 +56,9 @@ export interface TuiAppContext {
     output?: NormalizedOutput | undefined,
     eventId?: string | undefined,
   ): Promise<void>;
-  persistSessionAndUi(): Promise<void>;
+  persistSessionAndUi(options?: {
+    requireSessionSave?: boolean | undefined;
+  }): Promise<void>;
   persistUiState(): Promise<void>;
   persistActiveProfile(profile: TuiProfile): Promise<void>;
   getActiveRunnerMetadata(): RunnerCommandMetadata;

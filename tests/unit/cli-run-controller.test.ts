@@ -136,6 +136,7 @@ function createRunHarness(input: {
   sessionDescribeError?: Error | undefined;
   describedSessionId?: string | undefined;
   activeSessionPatch?: Partial<TuiSessionMeta> | undefined;
+  persistenceBarrierError?: Error | undefined;
 } = {}): {
   controller: TuiRunController;
   uiStore: UiStore;
@@ -390,7 +391,12 @@ function createRunHarness(input: {
     ) => {
       history.push({ role, text, ...(data !== undefined ? { data } : {}), output, eventId });
     },
-    persistSessionAndUi: async () => { persistCount += 1; },
+    persistSessionAndUi: async (options?: { requireSessionSave?: boolean | undefined }) => {
+      persistCount += 1;
+      if (options?.requireSessionSave === true && input.persistenceBarrierError !== undefined) {
+        throw input.persistenceBarrierError;
+      }
+    },
     persistUiState: async () => {},
     persistActiveProfile: async () => {},
     getActiveRunnerMetadata: () => ({ profile: uiStore.getState().activeProfile }),
@@ -406,6 +412,17 @@ function createRunHarness(input: {
           session.sessionId === activeSession.sessionId ? activeSession : session
         ),
       });
+    },
+    setSessionState: async (sessionId: string, patch: Partial<TuiSessionMeta>) => {
+      const state = uiStore.getState();
+      const target = state.sessions.find((session) => session.sessionId === sessionId);
+      if (target === undefined) return undefined;
+      const next = { ...target, ...patch };
+      uiStore.patch({
+        sessions: state.sessions.map((session) => session.sessionId === sessionId ? next : session),
+        ...(state.activeSession.sessionId === sessionId ? { activeSession: next } : {}),
+      });
+      return next;
     },
     navigateToView: () => {},
     withMcpSummary: input.withMcpSummary ?? ((statusLine: string) => statusLine),
@@ -2110,6 +2127,185 @@ test("TuiRunController keeps two pre-confirmation queue submissions independentl
   }]);
 });
 
+test("TuiRunController does not dispatch a queued turn when the pending reservation durability barrier fails", async () => {
+  let submissionCount = 0;
+  const harness = createRunHarness({
+    persistenceBarrierError: new Error("sessions save failed"),
+    sendCommand: async (type) => {
+      if (type === "conversation.message.submit") submissionCount += 1;
+      throw new Error(`Unexpected command '${type}'.`);
+    },
+  });
+  installActiveConversationView(harness.controller);
+  harness.uiStore.patch({ running: true });
+
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId: "message-barrier-failure",
+    submittedMessage: "must not dispatch",
+    queueRequested: true,
+  }), false);
+  assert.equal(submissionCount, 0);
+  assert.equal(harness.uiStore.getState().activeSession.pendingQueueSubmissions, undefined);
+  assert.match(harness.uiStore.getState().errorOverlay?.message ?? "", /sessions save failed/u);
+});
+
+test("TuiRunController applies queued response and response-loss recovery to the submitting session after focus changes", async (t) => {
+  for (const recovery of [false, true]) {
+    await t.test(recovery ? "response loss" : "routed response", async () => {
+      let releaseSubmission: ((value: RunnerEvent) => void) | undefined;
+      let rejectSubmission: ((error: Error) => void) | undefined;
+      let submittedRunId: string | undefined;
+      let submissionStartedResolve: (() => void) | undefined;
+      const submissionStarted = new Promise<void>((resolve) => {
+        submissionStartedResolve = resolve;
+      });
+      const harness = createRunHarness({
+        sendCommand: async (type, payload) => {
+          if (type === "conversation.message.submit") {
+            submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+            submissionStartedResolve?.();
+            return await new Promise<RunnerEvent>((resolve, reject) => {
+              releaseSubmission = resolve;
+              rejectSubmission = reject;
+            });
+          }
+          if (type === "operator.thread" && recovery) {
+            return makeRunnerEvent({
+              type: "operator.thread",
+              payload: {
+                view: {
+                  ...makeConversationView({ active: true }),
+                  conversationMessageRoutes: [{
+                    messageId: "message-focus-switch",
+                    disposition: "queued",
+                    followUpId: "follow-up:focus-switch",
+                    createdAt: "2026-08-29T00:00:00.000Z",
+                  }],
+                },
+              },
+            });
+          }
+          throw new Error(`Unexpected command '${type}'.`);
+        },
+      });
+      installActiveConversationView(harness.controller);
+      harness.uiStore.patch({ running: true });
+      const submission = harness.controller.startActiveTurn({
+        messageId: "message-focus-switch",
+        submittedMessage: "queue from A",
+        queueRequested: true,
+      });
+      await submissionStarted;
+
+      const sessionA = harness.uiStore.getState().activeSession;
+      const sessionB: TuiSessionMeta = {
+        ...sessionA,
+        name: "session-b",
+        sessionId: "session-b",
+        pendingQueueSubmissions: undefined,
+        queuedRunReservations: undefined,
+      };
+      harness.uiStore.patch({
+        activeSession: sessionB,
+        sessions: [sessionA, sessionB],
+        running: false,
+        statusLine: "session B ready",
+      });
+
+      if (recovery) {
+        rejectSubmission?.(new Error("response lost"));
+      } else {
+        releaseSubmission?.(makeRunnerEvent({
+          type: "conversation.message.routed",
+          payload: {
+            threadId: "thread-main:session-1",
+            sessionId: "session-1",
+            messageId: "message-focus-switch",
+            disposition: "queued",
+            followUpId: "follow-up:focus-switch",
+            view: makeConversationView({ active: true }),
+          },
+        }));
+      }
+      assert.equal(await submission, true);
+
+      const currentA = harness.uiStore.getState().sessions.find(
+        (session) => session.sessionId === "session-1",
+      );
+      assert.equal(currentA?.pendingQueueSubmissions, undefined);
+      assert.deepEqual(currentA?.queuedRunReservations, [{
+        runId: submittedRunId,
+        messageId: "message-focus-switch",
+        threadId: "thread-main:session-1",
+      }]);
+      assert.equal(harness.uiStore.getState().activeSession.sessionId, "session-b");
+      assert.equal(harness.uiStore.getState().statusLine, "session B ready");
+    });
+  }
+});
+
+test("TuiRunController applies a direct queued terminal to the submitting session after focus changes", async () => {
+  let releaseSubmission: ((value: RunnerEvent) => void) | undefined;
+  let submittedRunId: string | undefined;
+  let submissionStartedResolve: (() => void) | undefined;
+  const submissionStarted = new Promise<void>((resolve) => {
+    submissionStartedResolve = resolve;
+  });
+  const harness = createRunHarness({
+    sendCommand: async (type, payload) => {
+      assert.equal(type, "conversation.message.submit");
+      submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+      submissionStartedResolve?.();
+      return await new Promise<RunnerEvent>((resolve) => {
+        releaseSubmission = resolve;
+      });
+    },
+  });
+  installActiveConversationView(harness.controller);
+  harness.uiStore.patch({ running: true });
+  const submission = harness.controller.startActiveTurn({
+    messageId: "message-focus-terminal",
+    submittedMessage: "queue from A",
+    queueRequested: true,
+  });
+  await submissionStarted;
+
+  const sessionA = harness.uiStore.getState().activeSession;
+  const sessionB: TuiSessionMeta = {
+    ...sessionA,
+    name: "session-b",
+    sessionId: "session-b",
+    pendingQueueSubmissions: undefined,
+    queuedRunReservations: undefined,
+  };
+  harness.uiStore.patch({
+    activeSession: sessionB,
+    sessions: [sessionA, sessionB],
+    running: false,
+    statusLine: "session B ready",
+  });
+
+  releaseSubmission?.(makeRunnerEvent({
+    type: "run.completed",
+    sessionId: "session-1",
+    threadId: "thread-main:session-1",
+    runId: submittedRunId,
+    payload: { result: makeCompletedResult(submittedRunId!) },
+  }));
+  assert.equal(await submission, true);
+
+  const currentA = harness.uiStore.getState().sessions.find(
+    (session) => session.sessionId === "session-1",
+  );
+  assert.equal(currentA?.pendingQueueSubmissions, undefined);
+  assert.equal(currentA?.acceptedRunId, submittedRunId);
+  assert.equal(currentA?.acceptedRunMessageId, "message-focus-terminal");
+  assert.equal(currentA?.acceptedRunThreadId, "thread-main:session-1");
+  assert.equal(currentA?.lastRunStatus, "COMPLETED");
+  assert.equal(harness.uiStore.getState().activeSession.sessionId, "session-b");
+  assert.equal(harness.uiStore.getState().statusLine, "session B ready");
+});
+
 test("TuiRunController applies an exact queued terminal once and rejects its delayed start", async (t) => {
   for (const eventType of ["run.completed", "run.failed", "run.cancelled"] as const) {
     await t.test(eventType, async () => {
@@ -2283,6 +2479,7 @@ test("TuiRunController durably applies an inactive foreground queued terminal wi
       assert.equal(harness.uiStore.getState().activeSession.sessionId, "session-visible");
       assert.equal(harness.uiStore.getState().running, true);
       assert.equal(harness.uiStore.getState().statusLine, "visible session running");
+      assert.deepEqual(harness.runLogs, []);
 
       const restarted = createRunHarness({
         activeSessionPatch: {

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { SessionStore } from "../../cli/session/SessionStore.js";
-import type { TuiSessionMeta } from "../../cli/contracts.js";
+import type { SessionsFile, TuiSessionMeta } from "../../cli/contracts.js";
 
 
 test("SessionStore persists pending waitFor metadata", async () => {
@@ -181,6 +181,94 @@ test("SessionStore readers never observe a partially written sessions file", asy
   await Promise.all(writes);
 
   assert.equal(loaded.every((file) => file.version === 5 && file.sessions.length === 250), true);
+});
+
+test("SessionStore serializes delayed saves in invocation order", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-ordered-"));
+  const store = new SessionStore(tempDir);
+  await store.load();
+  const now = new Date(0).toISOString();
+  const makeFile = (name: string): SessionsFile => ({
+    version: 5,
+    activeSessionName: name,
+    sessions: [{
+      name,
+      sessionId: name,
+      profileId: "reference",
+      createdAt: now,
+      updatedAt: now,
+      started: true,
+    }],
+  });
+  const controlled = store as unknown as {
+    writeSnapshot(file: SessionsFile): Promise<void>;
+  };
+  const writeSnapshot = controlled.writeSnapshot.bind(store);
+  const observed: string[] = [];
+  let releaseFirst: (() => void) | undefined;
+  let firstStartedResolve: (() => void) | undefined;
+  const firstStarted = new Promise<void>((resolve) => {
+    firstStartedResolve = resolve;
+  });
+  let writeCount = 0;
+  controlled.writeSnapshot = async (file) => {
+    writeCount += 1;
+    observed.push(file.activeSessionName ?? "missing");
+    if (writeCount === 1) {
+      firstStartedResolve?.();
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+    }
+    await writeSnapshot(file);
+  };
+
+  const older = store.save(makeFile("older"));
+  await firstStarted;
+  const newer = store.save(makeFile("newer"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(observed, ["older"]);
+  releaseFirst?.();
+  await Promise.all([older, newer]);
+
+  assert.deepEqual(observed, ["older", "newer"]);
+  assert.equal((await store.load()).activeSessionName, "newer");
+});
+
+test("SessionStore propagates a failed save without blocking the next ordered snapshot", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-failed-"));
+  const store = new SessionStore(tempDir);
+  await store.load();
+  const now = new Date(0).toISOString();
+  const makeFile = (name: string): SessionsFile => ({
+    version: 5,
+    activeSessionName: name,
+    sessions: [{
+      name,
+      sessionId: name,
+      profileId: "reference",
+      createdAt: now,
+      updatedAt: now,
+      started: true,
+    }],
+  });
+  const controlled = store as unknown as {
+    writeSnapshot(file: SessionsFile): Promise<void>;
+  };
+  const writeSnapshot = controlled.writeSnapshot.bind(store);
+  let writeCount = 0;
+  controlled.writeSnapshot = async (file) => {
+    writeCount += 1;
+    if (writeCount === 1) throw new Error("injected ordered save failure");
+    await writeSnapshot(file);
+  };
+
+  const failed = store.save(makeFile("failed"));
+  const recovered = store.save(makeFile("recovered"));
+  await assert.rejects(failed, /injected ordered save failure/u);
+  await recovered;
+
+  assert.equal((await store.load()).activeSessionName, "recovered");
 });
 
 test("SessionStore resolves a unique session id fragment without changing name precedence", async () => {

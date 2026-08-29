@@ -16,6 +16,7 @@ const SESSION_FILE_NAME = "sessions.json";
 export class SessionStore {
   private readonly baseDir: string;
   private readonly filePath: string;
+  private saveTail: Promise<void> = Promise.resolve();
 
   constructor(baseDir = resolveKestrelHomePath()) {
     this.baseDir = baseDir;
@@ -66,6 +67,15 @@ export class SessionStore {
   }
 
   async save(file: SessionsFile): Promise<void> {
+    const snapshot = structuredClone(file);
+    const operation = this.saveTail.then(async () => {
+      await this.writeSnapshot(snapshot);
+    });
+    this.saveTail = operation.catch(() => undefined);
+    await operation;
+  }
+
+  private async writeSnapshot(file: SessionsFile): Promise<void> {
     const core = resolveLocalCoreStoreClient(this.baseDir);
     if (core !== undefined) {
       await core.client.putJson("/v1/sessions", { sessions: file });

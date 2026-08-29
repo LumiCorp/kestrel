@@ -310,7 +310,7 @@ export class App {
       },
       appendHistoryLine: (role, text, data, output, eventId) =>
         this.appendHistoryLine(role, text, data, output, eventId),
-      persistSessionAndUi: () => this.persistSessionAndUi(),
+      persistSessionAndUi: (options) => this.persistSessionAndUi(options),
       persistUiState: () => this.persistUiState(),
       persistActiveProfile: (profile) => this.persistActiveProfile(profile),
       getActiveRunnerMetadata: () => this.getActiveRunnerMetadata(),
@@ -450,6 +450,7 @@ export class App {
       await this.reconcilePendingBackgroundSessions(
         activeSessionNeedsBackgroundReconciliation ? state.activeSession.sessionId : undefined,
       );
+      await this.reconcilePendingForegroundQueueSessions(state.activeSession.sessionId);
       this.updateSplashPreflightCheck("handshake", {
         state: "ok",
         detail: "session linked",
@@ -1719,6 +1720,7 @@ export class App {
           this.handleTaskUpdatedEvent(task, kind, assistantText, finalizedPayload),
         syncForegroundSessionProgress: (input) => this.syncForegroundSessionProgress(input),
         syncForegroundQueuedTerminal: (input) => this.syncForegroundQueuedTerminal(input),
+        setSessionState: (sessionId, patch) => this.setSessionState(sessionId, patch),
         syncBackgroundSessionProgress: (input) => this.syncBackgroundSessionProgress(input),
         syncBackgroundSessionResult: (expectedSessionId, expectedRunId, allowUnstartedAcceptance, output, assistantText, finalizedPayload, operatorState) =>
           this.syncBackgroundSessionResult(expectedSessionId, expectedRunId, allowUnstartedAcceptance, output, assistantText, finalizedPayload, operatorState),
@@ -3350,6 +3352,31 @@ export class App {
     }
   }
 
+  private async reconcilePendingForegroundQueueSessions(skipSessionId?: string): Promise<void> {
+    const pending = this.sessionsFile.sessions.filter((session) =>
+      session.sessionId !== skipSessionId
+      && session.delegation === undefined
+      && (
+        (session.pendingQueueSubmissions?.length ?? 0) > 0
+        || (session.queuedRunReservations?.length ?? 0) > 0
+      )
+    );
+    for (const session of pending) {
+      try {
+        const described = await this.client.sendCommand("session.describe", {
+          sessionId: session.sessionId,
+        });
+        if (
+          described.type !== "session.described"
+          || described.payload.sessionId !== session.sessionId
+        ) continue;
+        await this.syncSessionFromDescribePayload(described.payload);
+      } catch {
+        // Durable authority may be temporarily unavailable; keep exact queue evidence recoverable.
+      }
+    }
+  }
+
   private async reconcileBackgroundSessionDescription(
     payload: SessionDescribedEventPayload,
     appendStartedHistory: boolean,
@@ -3979,6 +4006,12 @@ export class App {
     ) return;
     this.persistProjectedSession(patchedSession);
     await this.saveSessionsFile();
+    if (
+      patchedSession.acceptedRunId !== undefined
+      && (patchedSession.lastRunStatus === "COMPLETED" || patchedSession.lastRunStatus === "FAILED")
+    ) {
+      await this.recoverTerminalMessages(patchedSession);
+    }
   }
 
   private async projectSessionFromDescribePayload(
@@ -4054,27 +4087,7 @@ export class App {
           (route) => route.requestId === target.pendingRunRequestId,
         );
     const recoveredAcceptedRoute = recoveredRoute ?? recoveredRequestRoute;
-    const recoveredPendingQueueSubmissions = describedView === undefined
-      ? []
-      : (target.pendingQueueSubmissions ?? []).filter((submission) => {
-          if (describedView.thread.threadId !== submission.threadId) return false;
-          const route = describedView.conversationMessageRoutes?.find(
-            (candidate) => candidate.messageId === submission.messageId,
-          );
-          return route?.disposition === "queued"
-            && (route.runId === undefined || route.runId === submission.runId);
-        });
-    const pendingQueueSubmissions = (target.pendingQueueSubmissions ?? []).filter(
-      (submission) => recoveredPendingQueueSubmissions.some((recovered) =>
-        recovered.runId === submission.runId
-        && recovered.messageId === submission.messageId
-        && recovered.threadId === submission.threadId
-      ) === false,
-    );
-    const queuedRunReservations = recoveredPendingQueueSubmissions.reduce(
-      (reservations, submission) => appendExactQueuedRunReservation(reservations, submission),
-      target.queuedRunReservations,
-    );
+    const queuedLifecycle = reconcileExactQueuedLifecycle(target, describedView);
     const acceptedRunThreadBackfill = target.acceptedRunId !== undefined
       && target.acceptedRunThreadId === undefined
       && describedView !== undefined
@@ -4097,10 +4110,8 @@ export class App {
         : {}),
       ...(payload.updatedAt !== undefined ? { updatedAt: payload.updatedAt } : {}),
       pendingWaitFor: resolvedWaitFor,
-      pendingQueueSubmissions: pendingQueueSubmissions.length === 0
-        ? undefined
-        : pendingQueueSubmissions,
-      queuedRunReservations,
+      pendingQueueSubmissions: queuedLifecycle.pendingQueueSubmissions,
+      queuedRunReservations: queuedLifecycle.queuedRunReservations,
       ...(recoveredAcceptedRoute?.runId !== undefined
         ? {
             pendingRunId: undefined,
@@ -4119,6 +4130,19 @@ export class App {
       ...(acceptedRunThreadBackfill !== undefined
         ? { acceptedRunThreadId: acceptedRunThreadBackfill }
         : {}),
+      ...(queuedLifecycle.accepted === undefined
+        ? {}
+        : {
+            acceptedRunId: queuedLifecycle.accepted.runId,
+            acceptedRunMessageId: queuedLifecycle.accepted.messageId,
+            acceptedRunThreadId: queuedLifecycle.accepted.threadId,
+            lastRunStatus: queuedLifecycle.accepted.status === "RUNNING"
+              ? undefined
+              : queuedLifecycle.accepted.status,
+            pendingWaitFor: queuedLifecycle.accepted.status === "WAITING"
+              ? describedView?.thread.waitFor
+              : undefined,
+          }),
       ...(payload.focusedThreadId !== undefined ? { focusedThreadId: payload.focusedThreadId } : {}),
       operatorState: this.buildSessionOperatorState({
         session: {
@@ -5836,6 +5860,27 @@ export class App {
     });
   }
 
+  private async setSessionState(
+    sessionId: string,
+    patch: Partial<TuiSessionMeta>,
+  ): Promise<TuiSessionMeta | undefined> {
+    const state = this.uiStore.getState();
+    const current = this.sessionsFile.sessions.find((session) => session.sessionId === sessionId);
+    if (current === undefined) return undefined;
+    if (state.activeSession.sessionId === sessionId) {
+      await this.setActiveSessionState(patch);
+      return this.uiStore.getState().activeSession;
+    }
+    const activeSessionName = this.sessionsFile.activeSessionName;
+    const nextSession = { ...current, ...patch };
+    this.sessionsFile = {
+      ...this.sessionStore.upsert(this.sessionsFile, nextSession),
+      activeSessionName,
+    };
+    this.uiStore.patch({ sessions: this.sessionsFile.sessions });
+    return nextSession;
+  }
+
   private shouldApplyCompactionOnContinuationResume(session: TuiSessionMeta): boolean {
     return (
       session.operatorState?.latestAdaptation?.recommendedAction === "compact" ||
@@ -5912,8 +5957,10 @@ export class App {
     });
   }
 
-  private async persistSessionAndUi(): Promise<void> {
-    await this.saveSessionsFile();
+  private async persistSessionAndUi(options: {
+    requireSessionSave?: boolean | undefined;
+  } = {}): Promise<void> {
+    await this.saveSessionsFile(options);
     await this.persistUiState();
   }
 
@@ -5925,11 +5972,14 @@ export class App {
     }
   }
 
-  private async saveSessionsFile(): Promise<void> {
+  private async saveSessionsFile(options: {
+    requireSessionSave?: boolean | undefined;
+  } = {}): Promise<void> {
     try {
       await this.sessionStore.save(this.sessionsFile);
     } catch (error) {
       this.recordPersistenceFailure("sessions.save", error);
+      if (options.requireSessionSave === true) throw error;
     }
   }
 
@@ -6162,11 +6212,93 @@ function exactRunStatusFromDescribedView(
   }
   const terminalTurn = [...(view.conversationTurns ?? [])]
     .reverse()
-    .find((turn) => turn.terminalRunId !== undefined);
-  return terminalTurn?.terminalRunId === runId
-    && (terminalTurn.status === "COMPLETED" || terminalTurn.status === "FAILED")
+    .find((turn) =>
+      turn.terminalRunId === runId
+      && (turn.status === "COMPLETED" || turn.status === "FAILED")
+    );
+  return terminalTurn !== undefined
     ? terminalTurn.status
     : undefined;
+}
+
+function reconcileExactQueuedLifecycle(
+  session: TuiSessionMeta,
+  view: SessionDescribedEventPayload["operatorThreadView"],
+): {
+  pendingQueueSubmissions: TuiSessionMeta["pendingQueueSubmissions"];
+  queuedRunReservations: TuiSessionMeta["queuedRunReservations"];
+  accepted?: {
+    runId: string;
+    messageId: string;
+    threadId: string;
+    status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
+  } | undefined;
+} {
+  let pendingQueueSubmissions = session.pendingQueueSubmissions;
+  let queuedRunReservations = session.queuedRunReservations;
+  if (view === undefined) {
+    return { pendingQueueSubmissions, queuedRunReservations };
+  }
+  const acceptedCandidates: Array<{
+    runId: string;
+    messageId: string;
+    threadId: string;
+    status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
+  }> = [];
+  for (const submission of session.pendingQueueSubmissions ?? []) {
+    if (submission.threadId !== view.thread.threadId) continue;
+    const route = view.conversationMessageRoutes?.find(
+      (candidate) => candidate.messageId === submission.messageId,
+    );
+    if (
+      route?.disposition === "queued"
+      && (route.runId === undefined || route.runId === submission.runId)
+    ) {
+      pendingQueueSubmissions = omitExactRunIdentity(pendingQueueSubmissions, submission);
+      queuedRunReservations = appendExactQueuedRunReservation(
+        queuedRunReservations,
+        submission,
+      );
+      continue;
+    }
+    if (route?.disposition !== "started" || route.runId !== submission.runId) continue;
+    const status = exactRunStatusFromDescribedView(view, submission.runId);
+    if (status !== undefined) acceptedCandidates.push({ ...submission, status });
+  }
+  for (const reservation of session.queuedRunReservations ?? []) {
+    if (reservation.threadId !== view.thread.threadId) continue;
+    const status = exactRunStatusFromDescribedView(view, reservation.runId);
+    if (status !== undefined) acceptedCandidates.push({ ...reservation, status });
+  }
+  const distinctCandidates = acceptedCandidates.filter((candidate, index, candidates) =>
+    candidates.findIndex((other) =>
+      other.runId === candidate.runId
+      && other.messageId === candidate.messageId
+      && other.threadId === candidate.threadId
+    ) === index
+  );
+  const accepted = distinctCandidates.length === 1 ? distinctCandidates[0] : undefined;
+  if (accepted !== undefined) {
+    pendingQueueSubmissions = omitExactRunIdentity(pendingQueueSubmissions, accepted);
+    queuedRunReservations = omitExactRunIdentity(queuedRunReservations, accepted);
+  }
+  return {
+    pendingQueueSubmissions,
+    queuedRunReservations,
+    ...(accepted !== undefined ? { accepted } : {}),
+  };
+}
+
+function omitExactRunIdentity<T extends { runId: string; messageId: string; threadId: string }>(
+  values: T[] | undefined,
+  identity: { runId: string; messageId: string; threadId: string },
+): T[] | undefined {
+  const remaining = values?.filter((candidate) =>
+    candidate.runId !== identity.runId
+    || candidate.messageId !== identity.messageId
+    || candidate.threadId !== identity.threadId
+  );
+  return remaining === undefined || remaining.length === 0 ? undefined : remaining;
 }
 
 function omitQueuedRunReservation(

@@ -2629,6 +2629,251 @@ test("restart recovers a run-less queued route by exact persisted submission and
   assert.equal(session.lastRunStatus, undefined);
 });
 
+test("restart reconciles an exact pending queue submission already active, waiting, or terminal", async (t) => {
+  for (const status of ["RUNNING", "WAITING", "COMPLETED", "FAILED"] as const) {
+    await t.test(status, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const base = uiStore.getState().activeSession;
+      const threadId = `thread-main:${base.sessionId}`;
+      const runId = `run-pending-promoted:${status}`;
+      const messageId = `message-pending-promoted:${status}`;
+      const recovering: TuiSessionMeta = {
+        ...base,
+        pendingQueueSubmissions: [{ runId, messageId, threadId }],
+      };
+      const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === recovering.sessionId ? recovering : session
+        ),
+      };
+      uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+      const recoveredTerminals: string[] = [];
+      appState.recoverTerminalMessages = async (session: TuiSessionMeta) => {
+        recoveredTerminals.push(session.acceptedRunId ?? "missing");
+      };
+
+      await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+        sessionId: recovering.sessionId,
+        version: 1,
+        threadId,
+        operatorThreadView: {
+          thread: {
+            threadId,
+            sessionId: recovering.sessionId,
+            title: "Promoted queued submission",
+            status,
+            ...(status === "WAITING" ? { waitFor: { kind: "user", eventType: "user.reply" } } : {}),
+            createdAt: recovering.createdAt,
+            updatedAt: recovering.updatedAt,
+          },
+          childThreads: [],
+          childBlockerChain: [],
+          ...(status === "RUNNING" || status === "WAITING"
+            ? { activeRun: { runId, status } }
+            : {
+                conversationTurns: [{
+                  turnId: `turn:${status}`,
+                  threadId,
+                  sessionId: recovering.sessionId,
+                  sequence: 1,
+                  status,
+                  sourceMessageId: messageId,
+                  rootRunId: runId,
+                  terminalRunId: runId,
+                  terminalStatus: status,
+                  startedAt: recovering.createdAt,
+                  completedAt: recovering.updatedAt,
+                  updatedAt: recovering.updatedAt,
+                }],
+              }),
+          conversationMessageRoutes: [{
+            messageId,
+            disposition: "started",
+            runId,
+            turnId: `turn:${status}`,
+            createdAt: recovering.createdAt,
+          }],
+        },
+      });
+
+      const session = uiStore.getState().activeSession;
+      assert.equal(session.pendingQueueSubmissions, undefined);
+      assert.equal(session.queuedRunReservations, undefined);
+      assert.equal(session.acceptedRunId, runId);
+      assert.equal(session.acceptedRunMessageId, messageId);
+      assert.equal(session.acceptedRunThreadId, threadId);
+      assert.equal(session.lastRunStatus, status === "RUNNING" ? undefined : status);
+      assert.deepEqual(
+        recoveredTerminals,
+        status === "COMPLETED" || status === "FAILED" ? [runId] : [],
+      );
+    });
+  }
+});
+
+test("restart reconciles an exact terminal for a confirmed queued reservation and rejects delayed start", async (t) => {
+  for (const terminal of ["COMPLETED", "FAILED", "CANCELLED"] as const) {
+    await t.test(terminal, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const base = uiStore.getState().activeSession;
+      const threadId = `thread-main:${base.sessionId}`;
+      const runId = `run-confirmed-terminal:${terminal}`;
+      const messageId = `message-confirmed-terminal:${terminal}`;
+      const queued: TuiSessionMeta = {
+        ...base,
+        queuedRunReservations: [{ runId, messageId, threadId }],
+      };
+      const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === queued.sessionId ? queued : session
+        ),
+      };
+      uiStore.patch({ activeSession: queued, sessions: [queued] });
+      const recoveredTerminals: string[] = [];
+      appState.recoverTerminalMessages = async (session: TuiSessionMeta) => {
+        recoveredTerminals.push(session.acceptedRunId ?? "missing");
+      };
+      const durableStatus = terminal === "COMPLETED" ? "COMPLETED" : "FAILED";
+
+      await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+        sessionId: queued.sessionId,
+        version: 1,
+        threadId,
+        operatorThreadView: {
+          thread: {
+            threadId,
+            sessionId: queued.sessionId,
+            title: "Queued terminal before callback save",
+            status: durableStatus,
+            createdAt: queued.createdAt,
+            updatedAt: queued.updatedAt,
+          },
+          childThreads: [],
+          childBlockerChain: [],
+          conversationTurns: [{
+            turnId: `turn:${terminal}`,
+            threadId,
+            sessionId: queued.sessionId,
+            sequence: 1,
+            status: durableStatus,
+            sourceMessageId: messageId,
+            rootRunId: runId,
+            terminalRunId: runId,
+            terminalStatus: durableStatus,
+            startedAt: queued.createdAt,
+            completedAt: queued.updatedAt,
+            updatedAt: queued.updatedAt,
+          }],
+        },
+      });
+
+      let session = uiStore.getState().activeSession;
+      assert.equal(session.queuedRunReservations, undefined);
+      assert.equal(session.acceptedRunId, runId);
+      assert.equal(session.acceptedRunMessageId, messageId);
+      assert.equal(session.acceptedRunThreadId, threadId);
+      assert.equal(session.lastRunStatus, durableStatus);
+      assert.deepEqual(recoveredTerminals, [runId]);
+
+      (appState.onRunnerEvent as (event: unknown) => void)({
+        id: `delayed-start:${terminal}`,
+        type: "run.started",
+        ts: "2026-08-29T00:00:01.000Z",
+        sessionId: queued.sessionId,
+        threadId,
+        runId,
+        payload: {
+          sessionId: queued.sessionId,
+          runId,
+          eventType: "user.message",
+          sourceMessageId: messageId,
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      session = uiStore.getState().activeSession;
+      assert.equal(session.lastRunStatus, durableStatus);
+      assert.equal(uiStore.getState().running, false);
+    });
+  }
+});
+
+test("startup scans inactive foreground queue evidence by exact session identity", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const visible = uiStore.getState().activeSession;
+  const ownerSessionId = "inactive-queue-restart-owner";
+  const threadId = `thread-main:${ownerSessionId}`;
+  const runId = "run-inactive-restart-owner";
+  const messageId = "message-inactive-restart-owner";
+  const owner: TuiSessionMeta = {
+    ...visible,
+    name: "inactive-queue-owner",
+    sessionId: ownerSessionId,
+    pendingQueueSubmissions: [{ runId, messageId, threadId }],
+  };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: [...sessionsFile.sessions, owner],
+  };
+  uiStore.patch({ sessions: [...uiStore.getState().sessions, owner] });
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      assert.equal(type, "session.describe");
+      assert.equal(payload.sessionId, ownerSessionId);
+      return {
+        type: "session.described",
+        payload: {
+          sessionId: ownerSessionId,
+          version: 1,
+          threadId,
+          operatorThreadView: {
+            thread: {
+              threadId,
+              sessionId: ownerSessionId,
+              title: "Inactive promoted queue",
+              status: "RUNNING",
+              createdAt: owner.createdAt,
+              updatedAt: owner.updatedAt,
+            },
+            childThreads: [],
+            childBlockerChain: [],
+            activeRun: { runId, status: "RUNNING" },
+            conversationMessageRoutes: [{
+              messageId,
+              disposition: "started",
+              runId,
+              createdAt: owner.createdAt,
+            }],
+          },
+        },
+      };
+    },
+  };
+
+  await (appState.reconcilePendingForegroundQueueSessions as (
+    skipSessionId?: string,
+  ) => Promise<void>)(visible.sessionId);
+
+  const reconciled = uiStore.getState().sessions.find(
+    (session) => session.sessionId === ownerSessionId,
+  );
+  assert.equal(reconciled?.pendingQueueSubmissions, undefined);
+  assert.equal(reconciled?.acceptedRunId, runId);
+  assert.equal(reconciled?.acceptedRunMessageId, messageId);
+  assert.equal(reconciled?.acceptedRunThreadId, threadId);
+  assert.equal(uiStore.getState().activeSession.sessionId, visible.sessionId);
+});
+
 test("queued-route restart recovery rejects wrong thread, wrong message, and conflicting run evidence", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
@@ -4326,6 +4571,63 @@ test("queue command during a running turn delegates immediately with explicit qu
   assert.equal(turns.length, 1);
   assert.equal(turns[0]?.submittedMessage, "also check the failing test output");
   assert.equal(turns[0]?.queueRequested, true);
+});
+
+test("queued dispatch stops at the acknowledged App session-save barrier", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const sessionStore = appState.sessionStore as SessionStore;
+  const save = sessionStore.save.bind(sessionStore);
+  sessionStore.save = async (file) => {
+    if (file.sessions.some((session) => (session.pendingQueueSubmissions?.length ?? 0) > 0)) {
+      throw new Error("injected pending queue save failure");
+    }
+    await save(file);
+  };
+  let submissionCount = 0;
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "session.describe") {
+        return {
+          type: "session.described",
+          payload: {
+            sessionId: String(payload.sessionId),
+            version: 1,
+            threadId: `thread-main:${String(payload.sessionId)}`,
+            activeAssembly: {
+              mode: "explicit",
+              bundleId: "bundle:kestrel:cli",
+              environmentPresetId: "cli_dev_local",
+            },
+          },
+        };
+      }
+      if (type === "conversation.message.submit") submissionCount += 1;
+      throw new Error(`Unexpected command '${type}'.`);
+    },
+  };
+  const runController = (appState.getRunController as () => {
+    startActiveTurn(input: {
+      messageId: string;
+      submittedMessage: string;
+      queueRequested: boolean;
+    }): Promise<boolean>;
+  })();
+
+  assert.equal(await runController.startActiveTurn({
+    messageId: "message-app-save-barrier",
+    submittedMessage: "must remain local",
+    queueRequested: true,
+  }), false);
+  assert.equal(submissionCount, 0);
+  assert.equal(
+    (appState.uiStore as UiStore).getState().activeSession.pendingQueueSubmissions,
+    undefined,
+  );
+  assert.match(
+    (appState.uiStore as UiStore).getState().errorOverlay?.message ?? "",
+    /injected pending queue save failure/u,
+  );
 });
 
 test("delegation workspace renders result-only error and reference child outcomes", async () => {

@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Serialize and reconcile queued ownership](17-serialize-and-reconcile-queued-ownership.md)
+None.
 
 ## In progress
 
@@ -16,6 +16,7 @@ None.
 
 ## Implemented
 
+- [Serialize and reconcile queued ownership](17-serialize-and-reconcile-queued-ownership.md)
 - [Make queued lifecycle ownership crash-durable and thread-exact](16-make-queued-lifecycle-crash-durable-and-thread-exact.md)
 - [Separate queued reservations and backfill thread ownership](15-separate-queued-reservations-and-backfill-thread-ownership.md)
 - [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md)
