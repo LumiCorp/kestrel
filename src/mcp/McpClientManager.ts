@@ -684,7 +684,8 @@ async function callToolHandle<T>(
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message.includes("EXECUTION_AUTH_EXPIRED")
+      (error.message.includes("EXECUTION_AUTH_EXPIRED") ||
+        error.message.includes("TICKET_EXPIRED"))
     ) {
       throw createRuntimeFailure(
         "EXECUTION_AUTH_EXPIRED",
