@@ -4,7 +4,8 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Preserve standalone developer-shell store resolution](02-preserve-standalone-store-resolution.md)
+- [Make incompatible developer-shell replacement exclusive](03-make-incompatible-service-replacement-exclusive.md)
 
 ## In progress
 

@@ -67,3 +67,8 @@ Use focused regression tests at the owning seams. Include a real smoke path for 
 - Existing PGlite corruption recovery and external migration tests remain green.
 - Focused developer-shell, Local Core, runtime-environment, migration, and tool-result tests pass.
 - `pnpm validate` and `pnpm validate:postgres` pass.
+
+## Review blockers
+
+- [Preserve standalone developer-shell store resolution](02-preserve-standalone-store-resolution.md)
+- [Make incompatible developer-shell replacement exclusive](03-make-incompatible-service-replacement-exclusive.md)
