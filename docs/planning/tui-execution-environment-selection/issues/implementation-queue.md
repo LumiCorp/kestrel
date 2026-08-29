@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Persist submission and thread ownership](14-persist-submission-and-thread-ownership.md)
 
 ## In progress
 
