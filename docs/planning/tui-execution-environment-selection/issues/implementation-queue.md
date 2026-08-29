@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Commit queue authority before publication](25-commit-queue-authority-before-publication.md)
 
 ## In progress
 
