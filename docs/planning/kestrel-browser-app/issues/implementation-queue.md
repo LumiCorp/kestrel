@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Complete current allow authority adoption](01o-complete-current-allow-authority-adoption.md)
+None.
 
 ## In progress
 
@@ -37,6 +37,7 @@ None.
 - [Prepare every Browser approval exactly](01l-prepare-every-browser-approval-exactly.md) — awaiting independent review
 - [Revalidate current policy before pending Browser allow](01m-revalidate-current-policy-before-pending-browser-allow.md) — blocked from `Done` by [current authority adoption](01n-adopt-current-browser-authority-after-pending-allow.md)
 - [Adopt current Browser authority after pending allow](01n-adopt-current-browser-authority-after-pending-allow.md) — blocked from `Done` by [complete allow-authority adoption](01o-complete-current-allow-authority-adoption.md)
+- [Complete current allow authority adoption](01o-complete-current-allow-authority-adoption.md) — awaiting independent review
 
 ## Done
 

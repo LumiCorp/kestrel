@@ -21,6 +21,7 @@ import {
   hashCanonical,
 } from "../../src/kestrel/contracts/tool-contract.js";
 import type { PreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import { derivePreparedToolApprovalAuthorityRevisionV1 } from "../../src/io/ToolInvocationSupport.js";
 import {
   buildRunToolEvent,
   buildRunToolUpdate,
@@ -1002,6 +1003,72 @@ test("tabs preparation keeps input-dependent execution class consistent", async 
   }
 });
 
+test("Browser approval-path allow preparation preserves Desktop and hosted authority", async () => {
+  for (const hosted of [false, true]) {
+    const registry = new UnifiedToolRegistry({
+      allowlist: ["browser.request_grant"],
+      context: { browserService: passiveBrowserPort() },
+    });
+    const { prepared, approvalAuthorityRevision } = await prepareBrowserCall(
+      registry,
+      "browser.request_grant",
+      {
+        sessionId: "browser-session-1",
+        destination: "https://already.example.com",
+      },
+      {
+        decision: "approval_required",
+        approval: true,
+        hosted,
+      },
+    );
+
+    assert.equal(prepared.policy.decision, "allow", String(hosted));
+    assert.equal(
+      prepared.approval?.authorityRevision,
+      derivePreparedToolApprovalAuthorityRevisionV1({
+        activation: prepared.activation,
+        effectiveInput: prepared.effectiveInput,
+        inputAdapters: prepared.inputAdapters,
+        policyRevision: prepared.policy.policyRevision,
+        upstreamAuthorityRevision: approvalAuthorityRevision,
+      }),
+      String(hosted),
+    );
+    if (!hosted) {
+      assert.equal(prepared.stableAuthority, undefined);
+      assert.equal(prepared.stableToolIdentity, undefined);
+      assert.ok(prepared.approval?.authorityRevision);
+      continue;
+    }
+    assert.equal(
+      prepared.stableAuthority?.version,
+      "prepared_tool_stable_authority_v2",
+    );
+    assert.equal(prepared.stableAuthority?.actor.actorId, "user-1");
+    assert.equal(prepared.stableAuthority?.organizationId, "organization-1");
+    assert.equal(prepared.stableAuthority?.environmentId, "environment-1");
+    assert.equal(prepared.stableAuthority?.projectId, "project-1");
+    assert.equal(prepared.stableAuthority?.threadId, prepared.sessionId);
+    assert.equal(
+      prepared.stableAuthority?.descriptorContractRevision,
+      prepared.activation.descriptor.contractRevision,
+    );
+    assert.equal(
+      prepared.stableAuthority?.executionClass,
+      "external_side_effect",
+    );
+    assert.equal(
+      prepared.stableAuthority?.approvalAuthorityRevision,
+      approvalAuthorityRevision,
+    );
+    assert.equal(
+      prepared.stableToolIdentity?.approvalAuthorityRevision,
+      approvalAuthorityRevision,
+    );
+  }
+});
+
 test("Browser dispatch acknowledgement distinguishes pre-dispatch failure from unknown outcome", async () => {
   const secret = "sentinel-page-and-form-secret";
   for (const [acknowledge, expectedState, expectedCode] of [
@@ -1330,13 +1397,14 @@ async function prepareBrowserCall(
   policy: {
     decision?: "allow" | "approval_required" | "deny";
     approval?: boolean;
+    hosted?: boolean;
   } = {},
 ) {
   const sequence = nextBrowserCallSequence++;
   const runContext = {
     runId: `prepared-${toolName}-${sequence}`,
     sessionId: `prepared-session-${sequence}`,
-    payload: policy.approval
+    payload: policy.approval && policy.hosted !== false
       ? {
           hostedApprovalAuthority: {
             organizationId: "organization-1",
@@ -1355,6 +1423,7 @@ async function prepareBrowserCall(
   });
   const activation = snapshot.tools[0]!;
   const decision = policy.decision ?? "allow";
+  const approvalAuthorityRevision = hashCanonical({ authority: sequence });
   const prepared = await registry.prepareToolCall(
     {
       runId: runContext.runId,
@@ -1375,7 +1444,7 @@ async function prepareBrowserCall(
         ? {
             approval: {
               approvalId: `approval-${sequence}`,
-              authorityRevision: hashCanonical({ authority: sequence }),
+              authorityRevision: approvalAuthorityRevision,
             },
             approvalCapabilities: ["external.confirm"],
           }
@@ -1383,7 +1452,7 @@ async function prepareBrowserCall(
     },
     { runContext },
   );
-  return { prepared, runContext };
+  return { prepared, runContext, approvalAuthorityRevision };
 }
 
 function passiveBrowserPort(): BrowserServicePort {

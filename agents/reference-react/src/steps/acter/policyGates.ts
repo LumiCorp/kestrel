@@ -28,6 +28,7 @@ import {
   type ToolApprovalDispositionV1,
 } from "../../../../../src/mode/contracts.js";
 import { isMutationCapableToolName } from "../../../../../src/runtime/mutationTools.js";
+import { derivePreparedToolApprovalAuthorityRevisionV1 } from "../../../../../src/io/ToolInvocationSupport.js";
 import { createPreparedApprovalCleanupTerminalV1 } from "../../../../../src/runtime/preparedApprovalCleanupTerminal.js";
 import {
   parseDurablePreparedToolCallV1,
@@ -865,11 +866,16 @@ async function maybeRequireToolApproval(input: {
           !preparedBrowserAllowMatchesPendingOperation({
             pendingPreparedToolCall: persistedPreparedToolCall,
             currentPreparedToolCall,
+            hosted: isHostedPreparedApproval,
             toolName: input.toolName,
             toolInput: input.toolInput,
+            toolClass: input.toolClass,
             runId: input.runId,
             sessionId: input.sessionId,
             policyRevision: effectiveRuntimePolicyRevision,
+            approvalAuthorityRevision: upstreamApprovalAuthorityRevision,
+            requiredCapabilities: input.requiredApprovalCapabilities ?? [],
+            eventPayload: input.eventPayload,
           })
         ) {
           return toToolApprovalPolicyChangedTransition({
@@ -895,7 +901,38 @@ async function maybeRequireToolApproval(input: {
               input.effectiveDecision?.approvalDisposition.reasonCode,
           });
         }
-        await input.io.releasePreparedToolCall(persistedPreparedToolCall);
+        try {
+          await input.io.releasePreparedToolCall(persistedPreparedToolCall);
+        } catch (staleReleaseError) {
+          let currentReleaseError: unknown;
+          try {
+            await input.io.releasePreparedToolCall(currentPreparedToolCall);
+          } catch (error) {
+            currentReleaseError = error;
+          }
+          throw createRuntimeFailure(
+            "PREPARED_TOOL_AUTHORITY_RELEASE_FAILED",
+            "The stale prepared Browser authority could not be released before current authority adoption.",
+            {
+              subsystem: "react",
+              classification: "cleanup",
+              recoverable: true,
+              stalePreparedInvocationId: persistedPreparedToolCall.callId,
+              currentPreparedInvocationId: currentPreparedToolCall.callId,
+              cause: staleReleaseError instanceof Error
+                ? staleReleaseError.message
+                : String(staleReleaseError),
+              ...(currentReleaseError === undefined
+                ? { currentPreparationReleased: true }
+                : {
+                    currentPreparationReleased: false,
+                    currentReleaseCause: currentReleaseError instanceof Error
+                      ? currentReleaseError.message
+                      : String(currentReleaseError),
+                  }),
+            },
+          );
+        }
         return { preparedToolCall: currentPreparedToolCall };
       }
       const preparedApprovalStillCurrent = isHostedPreparedApproval
@@ -924,7 +961,8 @@ async function maybeRequireToolApproval(input: {
       if (
         error instanceof RuntimeFailure &&
         (error.code === "LOCAL_PREPARED_APPROVAL_INVALID" ||
-          error.code === "EXTERNAL_APPROVAL_EXPIRED")
+          error.code === "EXTERNAL_APPROVAL_EXPIRED" ||
+          error.code === "PREPARED_TOOL_AUTHORITY_RELEASE_FAILED")
       ) {
         throw error;
       }
@@ -2330,18 +2368,59 @@ function canonicalApprovalValuesEqual(left: unknown, right: unknown): boolean {
 function preparedBrowserAllowMatchesPendingOperation(input: {
   pendingPreparedToolCall: PreparedToolCallV1;
   currentPreparedToolCall: PreparedToolCallV1;
+  hosted: boolean;
   toolName: string;
   toolInput: unknown;
+  toolClass: ToolExecutionClass;
   runId: string;
   sessionId: string;
   policyRevision: string;
+  approvalAuthorityRevision: string;
+  requiredCapabilities: readonly string[];
+  eventPayload: Record<string, unknown> | undefined;
 }): boolean {
   const pending = input.pendingPreparedToolCall;
   const current = input.currentPreparedToolCall;
+  const currentPreparedAuthorityRevision =
+    derivePreparedToolApprovalAuthorityRevisionV1({
+      activation: current.activation,
+      effectiveInput: current.effectiveInput,
+      inputAdapters: current.inputAdapters,
+      policyRevision: current.policy.policyRevision,
+      upstreamAuthorityRevision: input.approvalAuthorityRevision,
+    });
+  const currentAuthorityMatches = input.hosted
+    ? current.stableAuthority !== undefined &&
+      current.stableToolIdentity !== undefined &&
+      current.approval?.authorityRevision ===
+        currentPreparedAuthorityRevision &&
+      preparedApprovalMatchesCurrentHostedAuthority({
+        preparedToolCall: current,
+        policyRevision: input.policyRevision,
+        approvalAuthorityRevision: input.approvalAuthorityRevision,
+      }) &&
+      (() => {
+        try {
+          assertPreparedApprovalMatchesStableHostedAuthority({
+            preparedToolCall: current,
+            eventPayload: input.eventPayload,
+            requiredCapabilities: input.requiredCapabilities,
+            toolClass: input.toolClass,
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      })()
+    : current.stableAuthority === undefined &&
+      current.stableToolIdentity === undefined &&
+      current.approval?.authorityRevision ===
+        currentPreparedAuthorityRevision;
   return (
     pending.policy.decision === "approval_required" &&
     current.policy.decision === "allow" &&
     current.policy.policyRevision === input.policyRevision &&
+    currentAuthorityMatches &&
     pending.activation.descriptor.toolId === input.toolName &&
     current.activation.descriptor.toolId === input.toolName &&
     canonicalApprovalValuesEqual(current.activation, pending.activation) &&

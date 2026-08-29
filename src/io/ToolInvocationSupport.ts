@@ -194,8 +194,7 @@ export function createPreparedToolCallV1(input: {
           ...(input.approval.approvalId === undefined
             ? {}
             : { approvalId: input.approval.approvalId }),
-          authorityRevision: hashCanonical({
-            version: "prepared-tool-approval-authority-v1",
+          authorityRevision: derivePreparedToolApprovalAuthorityRevisionV1({
             activation: input.activation,
             effectiveInput: input.effectiveInput,
             inputAdapters,
@@ -227,6 +226,23 @@ export function createPreparedToolCallV1(input: {
       ? {}
       : { executionRequirements: input.executionRequirements }),
     preparedAt: input.preparedAt ?? new Date().toISOString(),
+  });
+}
+
+export function derivePreparedToolApprovalAuthorityRevisionV1(input: {
+  activation: ToolActivationRefV1;
+  effectiveInput: Record<string, unknown>;
+  inputAdapters: readonly PreparedToolInputAdapterV1[];
+  policyRevision: string;
+  upstreamAuthorityRevision: string;
+}): string {
+  return hashCanonical({
+    version: "prepared-tool-approval-authority-v1",
+    activation: input.activation,
+    effectiveInput: input.effectiveInput,
+    inputAdapters: input.inputAdapters,
+    policyRevision: input.policyRevision,
+    upstreamAuthorityRevision: input.upstreamAuthorityRevision,
   });
 }
 

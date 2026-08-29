@@ -818,8 +818,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               budgeted.shortCircuitResult,
         };
       }
+      const preservesBrowserApprovalAuthority =
+        isBrowserToolName(input.activation.descriptor.toolId) &&
+        effectivePolicy.decision === "allow";
       const stableApproval =
-        effectivePolicy.decision === "approval_required" &&
+        (effectivePolicy.decision === "approval_required" ||
+          preservesBrowserApprovalAuthority) &&
         !workflowAuthorityAllows &&
         !rememberedExecCommandMatch &&
         !execCommandContinuation &&
@@ -846,7 +850,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         policy: workflowAuthorityAllows || rememberedExecCommandMatch || execCommandContinuation
           ? { ...effectivePolicy, decision: "allow" }
           : effectivePolicy,
-        ...(effectivePolicy.decision !== "approval_required" || input.approval === undefined
+        ...((effectivePolicy.decision !== "approval_required" &&
+            !preservesBrowserApprovalAuthority) ||
+          input.approval === undefined
           ? {}
           : { approval: input.approval }),
         ...(stableApproval ?? {}),
