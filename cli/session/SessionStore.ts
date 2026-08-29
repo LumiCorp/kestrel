@@ -445,6 +445,7 @@ function readExactRunIdentityCollection(
           ...(typeof candidate.predecessorRunId === "string"
             ? { predecessorRunId: candidate.predecessorRunId }
             : {}),
+          ...(candidate.indeterminate === true ? { indeterminate: true } : {}),
         }]
       : [];
   });

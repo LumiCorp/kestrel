@@ -453,6 +453,7 @@ export interface TuiPendingQueueSubmission {
   messageId: string;
   threadId: string;
   predecessorRunId?: string | undefined;
+  indeterminate?: boolean | undefined;
 }
 
 export interface SessionsFile {

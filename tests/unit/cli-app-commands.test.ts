@@ -2694,6 +2694,72 @@ test("a promoted queued run replaces only its exact accepted predecessor", async
   assert.equal(session.acceptedRunThreadId, threadId);
 });
 
+test("restart reconciliation promotes the exact persisted R0 to Q1 to Q2 chain", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const chained: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-r0",
+    acceptedRunMessageId: "message-r0",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId,
+      predecessorRunId: "run-r0",
+    }, {
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-q1",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === chained.sessionId ? chained : session
+    ),
+  };
+  uiStore.patch({ activeSession: chained, sessions: [chained] });
+
+  for (const runId of ["run-q1", "run-q2"]) {
+    await (appState.syncSessionFromDescribePayload as (
+      payload: Record<string, unknown>,
+    ) => Promise<void>)({
+      sessionId: chained.sessionId,
+      version: 1,
+      threadId,
+      operatorThreadView: {
+        thread: {
+          threadId,
+          sessionId: chained.sessionId,
+          title: "Queued chain",
+          status: "RUNNING",
+          createdAt: chained.createdAt,
+          updatedAt: chained.updatedAt,
+        },
+        childThreads: [],
+        childBlockerChain: [],
+        activeRun: { runId, status: "RUNNING" },
+      },
+    });
+  }
+
+  const session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q2");
+  assert.equal(session.acceptedRunMessageId, "message-q2");
+  assert.equal(session.acceptedRunThreadId, threadId);
+  assert.equal(session.queuedRunReservations, undefined);
+});
+
 test("restart reconciles an exact pending queue submission already active, waiting, or terminal", async (t) => {
   for (const status of ["RUNNING", "WAITING", "COMPLETED", "FAILED"] as const) {
     await t.test(status, async () => {

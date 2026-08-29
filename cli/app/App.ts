@@ -6439,7 +6439,7 @@ function omitQueuedRunReservation(
 
 function appendExactQueuedRunReservation(
   reservations: TuiSessionMeta["queuedRunReservations"],
-  reservation: NonNullable<TuiSessionMeta["queuedRunReservations"]>[number],
+  reservation: NonNullable<TuiSessionMeta["pendingQueueSubmissions"]>[number],
 ): NonNullable<TuiSessionMeta["queuedRunReservations"]> {
   const existing = reservations ?? [];
   const sameRun = existing.find((candidate) => candidate.runId === reservation.runId);
@@ -6453,7 +6453,14 @@ function appendExactQueuedRunReservation(
     }
     return existing;
   }
-  return [...existing, reservation];
+  return [...existing, {
+    runId: reservation.runId,
+    messageId: reservation.messageId,
+    threadId: reservation.threadId,
+    ...(reservation.predecessorRunId !== undefined
+      ? { predecessorRunId: reservation.predecessorRunId }
+      : {}),
+  }];
 }
 
 function hasSameQueuedRunReservations(
@@ -6495,7 +6502,8 @@ function hasSameExactRunIdentityCollection(
     return candidate?.runId === reservation.runId
       && candidate.messageId === reservation.messageId
       && candidate.threadId === reservation.threadId
-      && candidate.predecessorRunId === reservation.predecessorRunId;
+      && candidate.predecessorRunId === reservation.predecessorRunId
+      && candidate.indeterminate === reservation.indeterminate;
   });
 }
 
@@ -6503,12 +6511,20 @@ function queuedEvidenceCanReplaceAcceptedRun(
   session: TuiSessionMeta,
   evidence: { runId: string; predecessorRunId?: string | undefined },
 ): boolean {
-  return session.acceptedRunId === undefined
-    || session.acceptedRunId === evidence.runId
-    || (
-      evidence.predecessorRunId !== undefined
-      && session.acceptedRunId === evidence.predecessorRunId
-    );
+  if (session.acceptedRunId === undefined || session.acceptedRunId === evidence.runId) return true;
+  let predecessorRunId = evidence.predecessorRunId;
+  const visited = new Set<string>();
+  while (predecessorRunId !== undefined && visited.has(predecessorRunId) === false) {
+    if (predecessorRunId === session.acceptedRunId) return true;
+    visited.add(predecessorRunId);
+    const predecessor = [
+      ...(session.pendingQueueSubmissions ?? []),
+      ...(session.queuedRunReservations ?? []),
+      ...(session.terminalQueuedRuns ?? []),
+    ].find((candidate) => candidate.runId === predecessorRunId);
+    predecessorRunId = predecessor?.predecessorRunId;
+  }
+  return false;
 }
 
 export function isSameWaitFor(

@@ -97,6 +97,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
         messageId: "message-queued-a",
         threadId: "thread-main:exact-run-child",
         predecessorRunId: "run-predecessor-a",
+        indeterminate: true,
       },
       {
         runId: "run-queued-b",
