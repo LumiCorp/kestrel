@@ -712,6 +712,19 @@ test("TuiRunController preserves an authoritative terminal event when the routed
     sendCommand: async (type) => {
       if (type === "conversation.message.submit") {
         controller!.onRunnerEvent(makeRunnerEvent({
+          type: "run.started",
+          commandId: "command-route-lost",
+          sessionId: "session-1",
+          threadId: "thread-main:session-1",
+          runId: "run-route-lost",
+          payload: {
+            sessionId: "session-1",
+            runId: "run-route-lost",
+            eventType: "user.message",
+            sourceMessageId: "message-route-lost",
+          },
+        }));
+        controller!.onRunnerEvent(makeRunnerEvent({
           type: "run.completed",
           commandId: "command-route-lost",
           sessionId: "session-1",
@@ -793,6 +806,64 @@ test("TuiRunController keeps a rejected first turn unstarted without runtime evi
   }), false);
 
   assert.equal(harness.uiStore.getState().activeSession.started, false);
+  assert.equal(harness.uiStore.getState().activeSession.lastRunStatus, undefined);
+  assert.equal(harness.uiStore.getState().errorOverlay?.code, "RUN_ACCEPTANCE_UNCONFIRMED");
+});
+
+test("TuiRunController does not accept a new submission from an unrelated terminal event", async () => {
+  let controller: TuiRunController | undefined;
+  const harness = createRunHarness({
+    started: false,
+    sessionDescribeWithoutRuntimeEvidence: true,
+    sendCommand: async (type) => {
+      if (type === "conversation.message.submit") {
+        controller!.onRunnerEvent(makeRunnerEvent({
+          type: "run.completed",
+          sessionId: "session-1",
+          threadId: "thread-main:session-1",
+          runId: "run-older",
+          payload: { result: makeCompletedResult("run-older") },
+        }));
+        throw new Error("new submission response lost");
+      }
+      if (type === "operator.thread") throw new Error("thread unavailable");
+      throw new Error(`Unexpected command '${type}'.`);
+    },
+  });
+  controller = harness.controller;
+
+  assert.equal(await controller.startActiveTurn({
+    messageId: "message-new",
+    submittedMessage: "new work",
+  }), false);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(harness.uiStore.getState().activeSession.started, false);
+});
+
+test("TuiRunController keeps a pre-run.started protocol failure unstarted", async () => {
+  const harness = createRunHarness({
+    started: false,
+    sendCommand: async () => makeRunnerEvent({
+      type: "run.failed",
+      commandId: "command-preaccept-failure",
+      payload: {
+        result: makeFailedResult("run-never-started"),
+        error: { code: "RUN_START_REJECTED", message: "Run was rejected before reservation." },
+      },
+    }),
+  });
+
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId: "message-preaccept-failure",
+    submittedMessage: "start work",
+  }), false);
+
+  assert.equal(harness.uiStore.getState().activeSession.started, false);
+  assert.equal(
+    harness.history.some((line) => line.data?.kind === "runtime.terminal.v1"),
+    false,
+  );
 });
 
 test("TuiRunController preserves durable thread start evidence when message acceptance is unconfirmed", async () => {
@@ -817,6 +888,7 @@ test("TuiRunController preserves durable thread start evidence when message acce
 
   assert.equal(harness.uiStore.getState().activeSession.started, true);
   assert.equal(harness.uiStore.getState().activeSession.focusedThreadId, "thread-main:session-1");
+  assert.equal(harness.uiStore.getState().activeSession.lastRunStatus, undefined);
 });
 
 test("TuiRunController preserves durable assembly start evidence when routing recovery is unavailable", async () => {
@@ -836,6 +908,7 @@ test("TuiRunController preserves durable assembly start evidence when routing re
 
   assert.equal(harness.uiStore.getState().activeSession.started, true);
   assert.equal(harness.uiStore.getState().activeSession.effectiveAssemblyId, "bundle:kestrel:cli");
+  assert.equal(harness.uiStore.getState().activeSession.lastRunStatus, undefined);
 });
 
 test("TuiRunController sends active-run input to Local Core queue authority immediately", async () => {
@@ -1506,19 +1579,39 @@ test("TuiRunController attempts context checkpoint recovery only once", async ()
 });
 
 test("TuiRunController gives direct run failures a stable terminal identity", async () => {
+  let controller: TuiRunController | undefined;
   const harness = createRunHarness({
-    sendCommand: async () => makeRunnerEvent({
-      type: "run.failed",
-      commandId: "command-stable-failure",
-      runId: "run-stable-failure",
-      payload: {
-        result: makeFailedResult("run-stable-failure"),
-        error: { code: "RUN_FAILED", message: "Provider failed." },
-      },
-    }),
+    sendCommand: async () => {
+      controller!.onRunnerEvent(makeRunnerEvent({
+        type: "run.started",
+        commandId: "command-stable-failure",
+        sessionId: "session-1",
+        threadId: "thread-main:session-1",
+        runId: "run-stable-failure",
+        payload: {
+          sessionId: "session-1",
+          runId: "run-stable-failure",
+          eventType: "user.message",
+          sourceMessageId: "message-stable-failure",
+        },
+      }));
+      return makeRunnerEvent({
+        type: "run.failed",
+        commandId: "command-stable-failure",
+        runId: "run-stable-failure",
+        payload: {
+          result: makeFailedResult("run-stable-failure"),
+          error: { code: "RUN_FAILED", message: "Provider failed." },
+        },
+      });
+    },
   });
+  controller = harness.controller;
 
-  assert.equal(await harness.controller.startActiveTurn({ submittedMessage: "continue" }), true);
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId: "message-stable-failure",
+    submittedMessage: "continue",
+  }), true);
   const failure = harness.history.find((line) => line.text.includes("Provider failed."));
   assert.equal(failure?.eventId, "terminal:run-stable-failure");
   assert.equal(failure?.data?.kind, "runtime.terminal.v1");

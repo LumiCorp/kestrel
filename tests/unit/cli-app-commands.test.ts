@@ -1365,7 +1365,9 @@ test("background submission rejection leaves a truthful failed unstarted child",
   appState.client = {
     sendCommand: async (type: string, payload: Record<string, unknown>) => {
       if (type === "run.start") {
-        throw new Error("run submission rejected");
+        throw Object.assign(new Error("run submission rejected"), {
+          code: "RUN_START_REJECTED",
+        });
       }
       assert.equal(type, "session.describe");
       return {
@@ -1393,6 +1395,275 @@ test("background submission rejection leaves a truthful failed unstarted child",
   assert.equal(child?.delegation?.status, "FAILED");
   assert.equal(child?.delegation?.errorMessage, "run submission rejected");
   assert.equal(child?.started, false);
+});
+
+test("background response loss stays recoverable while durable describe is unavailable", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = {
+    sendCommand: async (type: string) => {
+      if (type === "run.start") throw new Error("run response lost");
+      throw new Error("describe temporarily unavailable");
+    },
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.delegation?.status, "PENDING");
+  assert.equal(child?.delegation?.errorMessage, undefined);
+  assert.equal(child?.lastRunStatus, undefined);
+  assert.equal(child?.started, false);
+});
+
+test("background pre-run.started failure response stays failed and unstarted", async () => {
+  const { app, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      assert.equal(type, "run.start");
+      const sessionId = String((payload.turn as Record<string, unknown>).sessionId);
+      return {
+        type: "run.failed",
+        commandId: "command-preaccept-background",
+        payload: {
+          result: {
+            assistantText: null,
+            output: {
+              status: "FAILED",
+              sessionId,
+              runId: "run-never-started",
+              quality: {
+                citationCoverage: 0,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              errors: [{ code: "RUN_START_REJECTED", message: "Rejected before reservation." }],
+              telemetry: { stepsExecuted: 0, toolCalls: 0, modelCalls: 0, durationMs: 0 },
+            },
+          },
+          error: { code: "RUN_START_REJECTED", message: "Rejected before reservation." },
+        },
+      };
+    },
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+  await waitFor(() => (appState.uiStore as UiStore).getState().sessions.some(
+    (session) => session.delegation?.status === "FAILED",
+  ));
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.started, false);
+  assert.equal(child?.lastRunStatus, "FAILED");
+  assert.doesNotMatch(existsSync(historyPath) ? await readFile(historyPath, "utf8") : "", /Background task started/u);
+});
+
+test("late exact background acceptance clears stale failure evidence idempotently", async () => {
+  const { app, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  appState.client = { sendCommand: async () => await new Promise(() => {}) };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+  let child = uiStore.getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  )!;
+  const failed = {
+    ...child,
+    started: false,
+    lastRunStatus: "FAILED" as const,
+    delegation: {
+      ...child.delegation!,
+      status: "FAILED" as const,
+      errorCode: "PROVISIONAL_TRANSPORT_FAILURE",
+      errorMessage: "response was lost",
+    },
+  };
+  const sessionsFile = appState.sessionsFile as { version: 5; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) => session.sessionId === failed.sessionId ? failed : session),
+  };
+  uiStore.patch({
+    sessions: uiStore.getState().sessions.map((session) => session.sessionId === failed.sessionId ? failed : session),
+  });
+  const startedEvent = {
+    id: "run-started-late-background",
+    type: "run.started",
+    ts: "2026-08-28T00:00:00.000Z",
+    commandId: "command-background",
+    sessionId: failed.sessionId,
+    threadId: `thread-main:${failed.sessionId}`,
+    runId: "run-background",
+    payload: {
+      sessionId: failed.sessionId,
+      runId: "run-background",
+      eventType: "user.message",
+    },
+  };
+
+  (appState.onRunnerEvent as (event: unknown) => void)(startedEvent);
+  (appState.onRunnerEvent as (event: unknown) => void)(startedEvent);
+  await waitFor(() => uiStore.getState().sessions.find(
+    (session) => session.sessionId === failed.sessionId,
+  )?.delegation?.status === "RUNNING");
+  child = uiStore.getState().sessions.find((session) => session.sessionId === failed.sessionId)!;
+
+  assert.equal(child.started, true);
+  assert.equal(child.lastRunStatus, undefined);
+  assert.equal(child.delegation?.errorCode, undefined);
+  assert.equal(child.delegation?.errorMessage, undefined);
+  await waitFor(() => existsSync(historyPath));
+  const history = await readFile(historyPath, "utf8");
+  assert.equal(history.match(/Background task started/g)?.length, 1);
+});
+
+test("startup reconciles every persisted pending child from durable runtime evidence", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const now = "2026-08-28T00:00:00.000Z";
+  const parent = uiStore.getState().activeSession;
+  const pendingChildren = ["child-one", "child-two"].map((sessionId) => ({
+    ...parent,
+    name: sessionId,
+    sessionId,
+    started: false,
+    effectiveAssemblyId: undefined,
+    createdAt: now,
+    updatedAt: now,
+    delegation: {
+      taskId: `task-${sessionId}`,
+      parentSessionId: parent.sessionId,
+      childSessionId: sessionId,
+      childSessionName: sessionId,
+      title: sessionId,
+      status: "PENDING" as const,
+      profileId: parent.profileId,
+      provider: "openrouter" as const,
+      model: "test-model",
+      createdAt: now,
+      updatedAt: now,
+    },
+  }));
+  const sessionsFile = appState.sessionsFile as { version: 5; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = { ...sessionsFile, sessions: [parent, ...pendingChildren] };
+  uiStore.patch({ sessions: [parent, ...pendingChildren] });
+  const described: string[] = [];
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      assert.equal(type, "session.describe");
+      const sessionId = String(payload.sessionId);
+      described.push(sessionId);
+      return {
+        type: "session.described",
+        payload: {
+          sessionId,
+          version: 1,
+          threadId: `thread-main:${sessionId}`,
+          activeAssembly: {
+            mode: "explicit",
+            bundleId: `bundle:${sessionId}`,
+            environmentPresetId: "cli_dev_local",
+          },
+          operatorThreadView: {
+            thread: {
+              threadId: `thread-main:${sessionId}`,
+              sessionId,
+              title: sessionId,
+              status: "RUNNING",
+              createdAt: now,
+              updatedAt: now,
+            },
+            childThreads: [],
+            childBlockerChain: [],
+            activeRun: { runId: `run-${sessionId}`, status: "RUNNING" },
+          },
+        },
+      };
+    },
+  };
+
+  await (appState.reconcilePendingBackgroundSessions as () => Promise<void>)();
+
+  assert.deepEqual(described.sort(), ["child-one", "child-two"]);
+  for (const child of uiStore.getState().sessions.filter((session) => session.delegation !== undefined)) {
+    assert.equal(child.delegation?.status, "RUNNING");
+    assert.equal(child.started, true);
+    assert.equal(child.delegation?.errorMessage, undefined);
+  }
+});
+
+test("assembly-only background recovery uses an explicit recoverable lifecycle state", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const now = "2026-08-28T00:00:00.000Z";
+  const parent = uiStore.getState().activeSession;
+  const child: TuiSessionMeta = {
+    ...parent,
+    name: "child-assembly-only",
+    sessionId: "child-assembly-only",
+    started: false,
+    effectiveAssemblyId: undefined,
+    delegation: {
+      taskId: "task-child-assembly-only",
+      parentSessionId: parent.sessionId,
+      childSessionId: "child-assembly-only",
+      childSessionName: "child-assembly-only",
+      title: "assembly only",
+      status: "PENDING",
+      profileId: parent.profileId,
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: now,
+      updatedAt: now,
+    },
+  };
+  const sessionsFile = appState.sessionsFile as { version: 5; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = { ...sessionsFile, sessions: [parent, child] };
+  uiStore.patch({ sessions: [parent, child] });
+  appState.client = {
+    sendCommand: async () => ({
+      type: "session.described",
+      payload: {
+        sessionId: child.sessionId,
+        version: 1,
+        activeAssembly: {
+          mode: "explicit",
+          bundleId: "bundle:child-assembly-only",
+          environmentPresetId: "cli_dev_local",
+        },
+      },
+    }),
+  };
+
+  await (appState.reconcilePendingBackgroundSessions as () => Promise<void>)();
+
+  const recovered = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(recovered?.started, true);
+  assert.equal(recovered?.delegation?.status, "RECOVERING");
+  assert.equal(recovered?.lastRunStatus, undefined);
+  assert.equal(recovered?.effectiveAssemblyId, "bundle:child-assembly-only");
 });
 
 test("background response loss reconciles authoritative running state", async () => {

@@ -154,6 +154,38 @@ test("buildRuntimeOperatorAffordance ignores malformed persisted execution polic
   );
 });
 
+test("decorateOperatorAffordance counts recovering delegation as active", () => {
+  const now = new Date(0).toISOString();
+  const affordance = decorateOperatorAffordance({
+    profile: baseProfile,
+    session: {
+      ...baseSession,
+      started: true,
+      delegation: {
+        taskId: "task-recovering",
+        parentSessionId: "parent",
+        childSessionId: baseSession.sessionId,
+        childSessionName: baseSession.name,
+        title: "Recover runtime state",
+        status: "RECOVERING",
+        profileId: baseProfile.id,
+        provider: "openrouter",
+        model: "test-model",
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+  });
+
+  assert.deepEqual(affordance.taskInbox, {
+    total: 1,
+    active: 1,
+    waiting: 0,
+    completed: 0,
+    failed: 0,
+  });
+});
+
 test("decorateOperatorAffordance enriches provider and manual compaction state", () => {
   const decorated = decorateOperatorAffordance({
     base: {

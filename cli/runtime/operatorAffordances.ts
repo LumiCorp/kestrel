@@ -91,6 +91,7 @@ export function decorateOperatorAffordance(input: {
             total: 1,
             active:
               input.session.delegation.status === "PENDING" ||
+              input.session.delegation.status === "RECOVERING" ||
               input.session.delegation.status === "RUNNING"
                 ? 1
                 : 0,

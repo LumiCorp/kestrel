@@ -41,6 +41,41 @@ test("SessionStore persists pending waitFor metadata", async () => {
   assert.equal(loadedSession?.lastMessagePreview, "latest session preview");
 });
 
+test("SessionStore rehydrates the recoverable background lifecycle state", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-recovering-"));
+  const store = new SessionStore(tempDir);
+  const now = new Date(0).toISOString();
+  const initial = await store.load();
+  const recovering: TuiSessionMeta = {
+    name: "recovering-child",
+    sessionId: "recovering-child",
+    profileId: "reference",
+    createdAt: now,
+    updatedAt: now,
+    started: true,
+    delegation: {
+      taskId: "task-recovering-child",
+      parentSessionId: "parent",
+      childSessionId: "recovering-child",
+      childSessionName: "recovering-child",
+      title: "Recover child runtime status",
+      status: "RECOVERING",
+      profileId: "reference",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: now,
+      updatedAt: now,
+    },
+  };
+
+  await store.save(store.upsert(initial, recovering));
+
+  assert.equal(
+    store.findByName(await store.load(), "recovering-child")?.delegation?.status,
+    "RECOVERING",
+  );
+});
+
 test("SessionStore readers never observe a partially written sessions file", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-atomic-"));
   const store = new SessionStore(tempDir);

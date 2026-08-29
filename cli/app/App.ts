@@ -436,6 +436,7 @@ export class App {
         throw new Error("Runner session handshake failed");
       }
       await this.syncSessionFromDescribePayload(describe.payload);
+      await this.reconcilePendingBackgroundSessions();
       this.updateSplashPreflightCheck("handshake", {
         state: "ok",
         detail: "session linked",
@@ -3132,7 +3133,7 @@ export class App {
         await this.reconcileBackgroundLaunchSubmissionFailure(
           delegatedSession,
           delegation,
-          error instanceof Error ? error.message : String(error),
+          error,
         );
       });
       return;
@@ -3169,10 +3170,16 @@ export class App {
       failedSession,
       "system",
       `Background task setup failed: ${message}`,
+      undefined,
+      undefined,
+      `delegation-start-failed:${delegation.taskId}`,
     );
     await this.appendHistoryLine(
       "system",
       `Background task '${failedSession.name}' failed to start: ${message}`,
+      undefined,
+      undefined,
+      `delegation-launch-failed:${delegation.taskId}`,
     );
   }
 
@@ -3190,14 +3197,22 @@ export class App {
       return;
     }
     if (response.type === "run.failed" && response.payload.result !== undefined) {
-      await this.syncBackgroundSessionFailure(sessionId, response.payload.error.message);
+      const session = this.sessionsFile.sessions.find((item) => item.sessionId === sessionId);
+      if (session?.started === true) {
+        await this.syncBackgroundSessionFailure(sessionId, response.payload.error.message);
+      } else if (session?.delegation !== undefined) {
+        await this.failBackgroundLaunchSetup(session, session.delegation, response.payload.error.message);
+      }
       return;
     }
     if (response.type === "run.cancelled") {
-      await this.syncBackgroundSessionFailure(
-        sessionId,
-        response.payload.result.output.errors[0]?.message ?? "Run cancelled.",
-      );
+      const session = this.sessionsFile.sessions.find((item) => item.sessionId === sessionId);
+      const message = response.payload.result.output.errors[0]?.message ?? "Run cancelled.";
+      if (session?.started === true) {
+        await this.syncBackgroundSessionFailure(sessionId, message);
+      } else if (session?.delegation !== undefined) {
+        await this.failBackgroundLaunchSetup(session, session.delegation, message);
+      }
       return;
     }
     const message = response.type === "run.failed"
@@ -3205,14 +3220,14 @@ export class App {
       : `Unexpected background launch response '${response.type}'.`;
     const session = this.sessionsFile.sessions.find((item) => item.sessionId === sessionId);
     if (session?.delegation !== undefined) {
-      await this.reconcileBackgroundLaunchSubmissionFailure(session, session.delegation, message);
+      await this.reconcileBackgroundLaunchSubmissionFailure(session, session.delegation, new Error(message));
     }
   }
 
   private async reconcileBackgroundLaunchSubmissionFailure(
     session: TuiSessionMeta,
     delegation: DelegationTaskMeta,
-    message: string,
+    error: unknown,
   ): Promise<void> {
     try {
       const described = await this.client.sendCommand("session.describe", {
@@ -3228,36 +3243,77 @@ export class App {
       ) {
         const before = this.sessionsFile.sessions.find((item) => item.sessionId === session.sessionId);
         await this.syncSessionFromDescribePayload(described.payload);
-        const threadStatus = described.payload.operatorThreadView?.thread.status;
-        const runtimeStatus = described.payload.operatorThreadView?.activeRun?.status
-          ?? (threadStatus === "RUNNING"
-            || threadStatus === "WAITING"
-            || threadStatus === "COMPLETED"
-            || threadStatus === "FAILED"
-              ? threadStatus
-              : undefined);
-        const current = this.sessionsFile.sessions.find((item) => item.sessionId === session.sessionId);
-        if (current?.delegation !== undefined) {
-          await this.updateAcceptedBackgroundSession({
-            ...current.delegation,
-            ...(runtimeStatus !== undefined ? { status: runtimeStatus } : {}),
-            updatedAt: new Date().toISOString(),
-          }, before?.started !== true);
-        }
+        await this.reconcileBackgroundSessionDescription(described.payload, before?.started !== true);
         return;
       }
     } catch {
       // A durable run.started event may already have established acceptance while the response was lost.
     }
     const current = this.sessionsFile.sessions.find((item) => item.sessionId === session.sessionId);
-    if (current?.started === true) {
-      return;
-    }
+    if (current?.started === true) return;
+    const code = typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : undefined;
+    if (code === undefined) return;
     await this.failBackgroundLaunchSetup(
       current ?? session,
       current?.delegation ?? delegation,
-      message,
+      error instanceof Error ? error.message : String(error),
     );
+  }
+
+  private async reconcilePendingBackgroundSessions(): Promise<void> {
+    const pending = this.sessionsFile.sessions.filter((session) =>
+      session.delegation !== undefined
+      && (session.delegation.status === "PENDING" || session.delegation.status === "RECOVERING")
+    );
+    for (const session of pending) {
+      try {
+        const described = await this.client.sendCommand("session.describe", {
+          sessionId: session.sessionId,
+        });
+        if (described.type !== "session.described" || described.payload.sessionId !== session.sessionId) {
+          continue;
+        }
+        await this.syncSessionFromDescribePayload(described.payload);
+        await this.reconcileBackgroundSessionDescription(described.payload, session.started !== true);
+      } catch {
+        // Durable authority may be temporarily unavailable; keep the child recoverable.
+      }
+    }
+  }
+
+  private async reconcileBackgroundSessionDescription(
+    payload: SessionDescribedEventPayload,
+    appendStartedHistory: boolean,
+  ): Promise<void> {
+    const current = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
+    if (current?.delegation === undefined) return;
+    const threadStatus = payload.operatorThreadView?.thread.status;
+    const runtimeStatus = payload.operatorThreadView?.activeRun?.status
+      ?? (threadStatus === "RUNNING"
+        || threadStatus === "WAITING"
+        || threadStatus === "COMPLETED"
+        || threadStatus === "FAILED"
+          ? threadStatus
+          : undefined);
+    const durableAcceptance = payload.threadId !== undefined
+      || payload.focusedThreadId !== undefined
+      || payload.activeAssembly !== undefined;
+    if (durableAcceptance === false) return;
+    await this.updateAcceptedBackgroundSession({
+      ...current.delegation,
+      status: runtimeStatus ?? "RECOVERING",
+      errorCode: undefined,
+      errorMessage: undefined,
+      updatedAt: payload.updatedAt ?? new Date().toISOString(),
+    }, appendStartedHistory);
+    if (runtimeStatus === "COMPLETED" || runtimeStatus === "FAILED") {
+      const accepted = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
+      if (accepted !== undefined) {
+        await this.recoverTerminalMessages(accepted).catch(() => undefined);
+      }
+    }
   }
 
   private async handleCompactCommand(args: string[]): Promise<void> {
@@ -3743,7 +3799,7 @@ export class App {
         total: childTasks.length,
         active: childTasks.filter((session) => {
           const status = session.delegation?.status;
-          return status === "PENDING" || status === "RUNNING";
+          return status === "PENDING" || status === "RECOVERING" || status === "RUNNING";
         }).length,
         waiting: childTasks.filter((session) => session.delegation?.status === "WAITING").length,
         completed: childTasks.filter((session) => session.delegation?.status === "COMPLETED").length,
@@ -4122,7 +4178,9 @@ export class App {
                   ? "COMPLETED"
                   : task.status === "WAITING"
                     ? "WAITING"
-                    : existing.lastRunStatus,
+                    : task.status === "RUNNING" || task.status === "RECOVERING"
+                      ? undefined
+                      : existing.lastRunStatus,
           };
     this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, nextSession);
     const state = this.uiStore.getState();
@@ -4843,6 +4901,8 @@ export class App {
     await this.updateAcceptedBackgroundSession({
       ...session.delegation,
       status: "RUNNING",
+      errorCode: undefined,
+      errorMessage: undefined,
       updatedAt: new Date().toISOString(),
     });
   }
@@ -4869,8 +4929,17 @@ export class App {
       accepted,
       "system",
       `Background task started: ${task.title}`,
+      undefined,
+      undefined,
+      `delegation-started:${task.taskId}`,
     );
-    await this.appendHistoryLine("system", `Launched background task '${accepted.name}'.`);
+    await this.appendHistoryLine(
+      "system",
+      `Launched background task '${accepted.name}'.`,
+      undefined,
+      undefined,
+      `delegation-launched:${task.taskId}`,
+    );
   }
 
   private async syncBackgroundSessionResult(
@@ -4886,6 +4955,8 @@ export class App {
     await this.updateAcceptedBackgroundSession({
       ...session.delegation,
       status: output.status === "WAITING" ? "WAITING" : "COMPLETED",
+      errorCode: undefined,
+      errorMessage: undefined,
       waitEventType: output.waitFor?.eventType,
       resultSummary:
         output.status === "WAITING"
@@ -4925,6 +4996,10 @@ export class App {
   private async syncBackgroundSessionFailure(sessionId: string, message: string): Promise<void> {
     const session = this.sessionsFile.sessions.find((item) => item.sessionId === sessionId);
     if (session?.delegation === undefined) {
+      return;
+    }
+    if (session.started !== true) {
+      await this.failBackgroundLaunchSetup(session, session.delegation, message);
       return;
     }
     await this.updateAcceptedBackgroundSession({

@@ -104,6 +104,7 @@ export interface AgentStageConfig {
 
 export type DelegationTaskStatus =
   | "PENDING"
+  | "RECOVERING"
   | "RUNNING"
   | "WAITING"
   | "COMPLETED"

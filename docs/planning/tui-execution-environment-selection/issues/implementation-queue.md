@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Reconcile TUI lifecycle from exact runtime evidence](06-reconcile-tui-lifecycle-from-exact-runtime-evidence.md)
+None.
 
 ## In progress
 
@@ -19,6 +19,7 @@ None.
 - [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md)
 - [Keep TUI sessions unstarted until execution actually begins](03-repair-tui-session-start-lifecycle.md)
 - [Bind TUI start state to authoritative runtime acceptance](05-bind-start-state-to-authoritative-runtime-acceptance.md)
+- [Reconcile TUI lifecycle from exact runtime evidence](06-reconcile-tui-lifecycle-from-exact-runtime-evidence.md)
 
 ## Done
 
