@@ -21,6 +21,10 @@ import {
   hashCanonical,
 } from "../../src/kestrel/contracts/tool-contract.js";
 import type { PreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import {
+  buildRunToolEvent,
+  buildRunToolUpdate,
+} from "../../src/engine/RuntimeIO.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
 
@@ -384,6 +388,82 @@ test("Browser audit projection redacts fill and type values", () => {
   assert.doesNotMatch(JSON.stringify(projected), /ordinary-text/u);
 });
 
+test("Browser generic run events redact started, completed, failed, and replay evidence", async () => {
+  const fillSentinel = "browser-fill-secret-sentinel";
+  const pageSentinel = "browser-page-secret-sentinel";
+  const failureSentinel = "browser-failure-secret-sentinel";
+  const { prepared } = await prepareBrowserCall(
+    new UnifiedToolRegistry({
+      allowlist: ["browser.snapshot"],
+      context: { browserService: passiveBrowserPort() },
+    }),
+    "browser.snapshot",
+    validInputs["browser.snapshot"],
+  );
+  const started = buildRunToolUpdate({
+    runId: prepared.runId,
+    sessionId: prepared.sessionId,
+    seq: 1,
+    toolCallId: prepared.callId,
+    toolName: "browser.interact",
+    phase: "started",
+    input: {
+      ...validInputs["browser.interact"],
+      action: { kind: "fill", ref: "ref-1", text: fillSentinel },
+    },
+  });
+  const completed = buildRunToolUpdate({
+    runId: prepared.runId,
+    sessionId: prepared.sessionId,
+    seq: 2,
+    toolCallId: prepared.callId,
+    toolName: "browser.snapshot",
+    phase: "completed",
+    activation: prepared.activation,
+    output: {
+      auditRecord: {
+        output: { ...validOutputs["browser.snapshot"], content: pageSentinel },
+      },
+    } as never,
+    outcome: {
+      version: "v1",
+      callId: prepared.callId,
+      activation: prepared.activation,
+      kind: "success",
+      startedAt: "2026-08-29T12:00:00.000Z",
+      completedAt: "2026-08-29T12:00:01.000Z",
+      effectState: "not_applicable",
+      rawOutput: { ...validOutputs["browser.snapshot"], content: pageSentinel },
+    },
+  });
+  const failed = buildRunToolUpdate({
+    runId: prepared.runId,
+    sessionId: prepared.sessionId,
+    seq: 3,
+    toolCallId: prepared.callId,
+    toolName: "browser.snapshot",
+    phase: "failed",
+    error: {
+      code: "BROWSER_TARGET_STALE",
+      message: failureSentinel,
+      details: { pageBody: pageSentinel, credential: fillSentinel },
+    },
+  });
+  const persistedEvidence = JSON.stringify([
+    buildRunToolEvent(started),
+    buildRunToolEvent(completed),
+    buildRunToolEvent(failed),
+  ]);
+
+  assert.doesNotMatch(
+    persistedEvidence,
+    new RegExp(`${fillSentinel}|${pageSentinel}|${failureSentinel}`),
+  );
+  assert.match(persistedEvidence, /browser\.interact|browser\.snapshot/u);
+  assert.match(persistedEvidence, /BROWSER_TARGET_STALE/u);
+  assert.match(persistedEvidence, /characterCount/u);
+});
+
 test("Browser tools remain unavailable until a conforming host port is active", () => {
   const unavailable = new UnifiedToolRegistry({
     allowlist: [...BROWSER_TOOL_NAMES],
@@ -401,6 +481,9 @@ test("Browser tools remain unavailable until a conforming host port is active", 
     },
     async execute() {
       throw new Error("not used");
+    },
+    async authorizeArtifact() {
+      return true;
     },
   };
   const available = new UnifiedToolRegistry({
@@ -460,6 +543,9 @@ test("fake Browser port receives the exact prepared call and conditional effect 
         effectiveAllowlistRevision: "allowlist-1",
       };
     },
+    async authorizeArtifact() {
+      return true;
+    },
   };
   const registry = new UnifiedToolRegistry({
     allowlist: [...BROWSER_TOOL_NAMES],
@@ -479,11 +565,6 @@ test("fake Browser port receives the exact prepared call and conditional effect 
     executionClass: "read_only",
     exactEffects: [],
     approval: "automatic",
-    preparedAuthority: {
-      version: "browser_prepared_authority_v1",
-      runId: listPrepared.runId,
-      threadId: "thread-session-1",
-    },
   });
 
   const switched = await executeBrowserCall(registry, "browser.tabs", {
@@ -499,19 +580,6 @@ test("fake Browser port receives the exact prepared call and conditional effect 
     executionClass: "external_side_effect",
     exactEffects: ["tab.switch"],
     approval: "automatic",
-    preparedAuthority: {
-      version: "browser_prepared_authority_v1",
-      runId: switchPrepared.runId,
-      threadId: "thread-session-1",
-    },
-    externalEffectDispatch: {
-      version: "durable_external_effect_dispatch_v1",
-      notStartedFailureCode: "BROWSER_ENGINE_FAILURE",
-      notStartedMessage: "The Browser operation was not dispatched.",
-      unknownOutcomeFailureCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
-      unknownOutcomeMessage:
-        "The Browser operation was dispatched, but its exact outcome could not be confirmed.",
-    },
   });
 
   const grant = await executeBrowserCall(
@@ -573,6 +641,8 @@ test("fake Browser port receives the exact prepared call and conditional effect 
 });
 
 test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () => {
+  let authorization: Parameters<BrowserServicePort["authorizeArtifact"]>[0] | undefined;
+  let executedPrepared: PreparedToolCallV1 | undefined;
   const port: BrowserServicePort = {
     version: BROWSER_SERVICE_PORT_VERSION,
     async resolvePolicy() {
@@ -582,7 +652,8 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
         policyRevision: "browser-policy-1",
       };
     },
-    async execute() {
+    async execute(prepared) {
+      executedPrepared = prepared;
       return {
         version: "browser_tool_result_v1",
         operation: "browser.capture",
@@ -599,6 +670,10 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
         normalizedOrigin: "https://example.com",
         capturedAt: "2026-08-29T12:00:00.000Z",
       };
+    },
+    async authorizeArtifact(input) {
+      authorization = input;
+      return true;
     },
   };
   const registry = new UnifiedToolRegistry({
@@ -623,6 +698,16 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
       bytes: 100,
     },
   });
+  assert.deepEqual(authorization, {
+    version: "browser_artifact_authorization_v1",
+    runId: executedPrepared?.runId,
+    threadId: "thread-session-1",
+    callId: executedPrepared?.callId,
+    toolName: "browser.capture",
+    sessionId: "browser-session-1",
+    artifactId: "artifact-1",
+    artifactKind: "browser-screenshot",
+  });
 });
 
 test("Desktop and hosted Browser preparation resolve all grant branches before dispatch", async () => {
@@ -645,6 +730,9 @@ test("Desktop and hosted Browser preparation resolve all grant branches before d
       async execute() {
         dispatches += 1;
         throw new Error("policy inspection must not dispatch");
+      },
+      async authorizeArtifact() {
+        return true;
       },
     };
     const registry = new UnifiedToolRegistry({
@@ -883,36 +971,111 @@ test("Browser results cannot cross prepared session or Thread authority", async 
       validateBrowserResultAuthority(openPrepared, {
         ...validOutputs["browser.open"],
         session: { ...session, threadId: "foreign-thread" },
-      }),
-    /Thread does not match prepared authority/u,
+      }, browserExecutionAuthority(openPrepared, "thread-1")),
+    /Thread does not match execution authority/u,
   );
-  const adapter = openPrepared.inputAdapters.find(
-    (candidate) => candidate.adapterId === "kestrel.browser-contract:v1",
-  )!;
   assert.throws(
     () =>
       validateBrowserResultAuthority(
         {
           ...openPrepared,
-          inputAdapters: openPrepared.inputAdapters.map((candidate) =>
-            candidate === adapter
-              ? {
-                  ...candidate,
-                  metadata: {
-                    ...candidate.metadata,
-                    preparedAuthority: {
-                      ...(candidate.metadata.preparedAuthority as Record<string, unknown>),
-                      runId: "foreign-run",
-                    },
-                  },
-                }
-              : candidate,
-          ),
+          runId: "foreign-run",
+          sessionId: "foreign-session",
+          callId: "foreign-call",
         },
         validOutputs["browser.open"],
+        browserExecutionAuthority(openPrepared, "thread-1"),
       ),
-    /prepared.*authority is invalid/iu,
+    /execution authority does not match/u,
   );
+  assert.throws(
+    () =>
+      validateBrowserResultAuthority(
+        openPrepared,
+        {
+          ...validOutputs["browser.open"],
+          session: { ...session, mode: "qa" },
+        },
+        browserExecutionAuthority(openPrepared, "thread-1"),
+      ),
+    /open result mode does not match/u,
+  );
+
+  const { prepared: uploadPrepared } = await prepareBrowserCall(
+    new UnifiedToolRegistry({
+      allowlist: ["browser.upload"],
+      context: { browserService: passiveBrowserPort() },
+    }),
+    "browser.upload",
+    validInputs["browser.upload"],
+    { decision: "approval_required", approval: true },
+  );
+  assert.throws(
+    () =>
+      validateBrowserResultAuthority(
+        uploadPrepared,
+        { ...validOutputs["browser.upload"], attachmentId: "foreign-attachment" },
+        browserExecutionAuthority(uploadPrepared, "thread-1"),
+      ),
+    /upload result attachment does not match/u,
+  );
+});
+
+test("Browser artifacts require exact trusted run, Thread, call, ID, and URL authority", async () => {
+  const foreignSentinel = "foreign-artifact-sentinel";
+  let persisted = false;
+  let authorization: Parameters<BrowserServicePort["authorizeArtifact"]>[0] | undefined;
+  const port: BrowserServicePort = {
+    ...passiveBrowserPort(),
+    async authorizeArtifact(input) {
+      authorization = input;
+      return false;
+    },
+    async execute(_prepared, lifecycle) {
+      const output = {
+        ...validOutputs["browser.capture"],
+        artifact: {
+          ...(validOutputs["browser.capture"].artifact as Record<string, unknown>),
+          id: foreignSentinel,
+          url: `https://foreign.example/artifacts/${foreignSentinel}`,
+        },
+      };
+      await lifecycle.persistCompletedResult(output);
+      return output;
+    },
+  };
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.capture"],
+    context: { browserService: port },
+  });
+  const { prepared, runContext } = await prepareBrowserCall(
+    registry,
+    "browser.capture",
+    validInputs["browser.capture"],
+  );
+  const result = await registry.executePreparedToolCall(prepared, {
+    runContext,
+    async persistCompletedCapabilityResult() {
+      persisted = true;
+    },
+  });
+
+  assert.equal(persisted, false);
+  assert.equal(result.outcome.kind, "failure");
+  assert.equal(result.outcome.normalizedFailureCode, "BROWSER_ENGINE_FAILURE");
+  assert.equal(result.presentation, undefined);
+  assert.deepEqual(authorization, {
+    version: "browser_artifact_authorization_v1",
+    runId: prepared.runId,
+    threadId: prepared.sessionId,
+    callId: prepared.callId,
+    toolName: "browser.capture",
+    sessionId: "browser-session-1",
+    artifactId: foreignSentinel,
+    artifactKind: "browser-screenshot",
+    artifactUrl: `https://foreign.example/artifacts/${foreignSentinel}`,
+  });
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(foreignSentinel));
 });
 
 test("Browser origins and session semantics normalize before audit persistence", async () => {
@@ -1077,6 +1240,9 @@ function passiveBrowserPort(): BrowserServicePort {
     async execute() {
       throw new Error("not used");
     },
+    async authorizeArtifact() {
+      return true;
+    },
   };
 }
 
@@ -1084,4 +1250,17 @@ function readBrowserAdapter(prepared: PreparedToolCallV1) {
   return prepared.inputAdapters.find(
     (adapter) => adapter.adapterId === "kestrel.browser-contract:v1",
   )?.metadata;
+}
+
+function browserExecutionAuthority(
+  prepared: PreparedToolCallV1,
+  threadId: string,
+) {
+  return {
+    runId: prepared.runId,
+    sessionId: prepared.sessionId,
+    threadId,
+    callId: prepared.callId,
+    toolName: prepared.activation.descriptor.toolId as (typeof BROWSER_TOOL_NAMES)[number],
+  };
 }

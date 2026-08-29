@@ -71,6 +71,7 @@ import {
   buildRuntimePolicyRevision,
   checkToolBatchChunkPolicyGate,
   checkToolPolicyGate,
+  prepareExactToolCallForPolicyGate,
 } from "./acter/policyGates.js";
 import {
   annotateVerificationBatchItems,
@@ -393,39 +394,61 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       const trustedPolicy = trustedInspection?.policy;
       const configuredApprovalCapabilities =
         toolApprovalCapabilitiesByName[actionForDispatch.name] ?? [];
-      const effectiveApprovalCapabilities =
-        trustedPolicy !== undefined &&
-        trustedPolicy.decision !== "approval_required"
-          ? configuredApprovalCapabilities.filter(
-              (capability) => capability !== "external.confirm",
-            )
-          : configuredApprovalCapabilities;
       const boundApprovalAuthority = bindApprovalAuthorityToActivation(
         toolApprovalAuthorityByName[actionForDispatch.name],
         "activation" in actionForDispatch
           ? actionForDispatch.activation
           : undefined,
       );
-      const effectiveApprovalAuthority =
-        trustedPolicy === undefined
-          ? boundApprovalAuthority
-          : {
-              kind: boundApprovalAuthority?.kind ?? "runtime_policy" as const,
-              revision: hashCanonical({
-                version: "trusted-tool-approval-authority-v1",
-                upstreamRevision:
-                  boundApprovalAuthority?.revision ?? "runtime-policy:v1",
-                trustedPolicyRevision: trustedPolicy.policyRevision,
-              }),
-            };
+      const runtimePolicyRevision = buildRuntimePolicyRevision({
+        interactionMode: toCanonicalInteractionMode(
+          modeResolution.interactionMode,
+        ),
+        actSubmode: modeResolution.actSubmode,
+        executionPolicy,
+      });
+      const inspectedApprovalCapabilities =
+        trustedPolicy !== undefined &&
+        trustedPolicy.decision !== "approval_required"
+          ? configuredApprovalCapabilities.filter(
+              (capability) => capability !== "external.confirm",
+            )
+          : configuredApprovalCapabilities;
+      const preparation =
+        trustedInspection !== undefined &&
+        trustedPolicy?.decision !== "deny" &&
+        asRecord(execState?.pendingApproval) === undefined
+          ? await prepareExactToolCallForPolicyGate({
+              io,
+              toolName: actionForDispatch.name,
+              toolInput: policyInput,
+              policyRevision: runtimePolicyRevision,
+              authorityRevision:
+                boundApprovalAuthority?.revision ?? runtimePolicyRevision,
+              capabilities: inspectedApprovalCapabilities,
+              toolIntent,
+            })
+          : undefined;
+      const trustedPolicyDecision =
+        preparation?.kind === "denied"
+          ? "deny" as const
+          : preparation?.preparedToolCall.policy.decision ??
+            trustedPolicy?.decision;
+      const effectiveApprovalCapabilities =
+        trustedPolicy !== undefined &&
+        trustedPolicyDecision !== "approval_required"
+          ? configuredApprovalCapabilities.filter(
+              (capability) => capability !== "external.confirm",
+            )
+          : configuredApprovalCapabilities;
       const approvalDisposition =
         trustedPolicy === undefined
           ? configuredApprovalDisposition
           : {
               mode:
-                trustedPolicy.decision === "approval_required"
+                trustedPolicyDecision === "approval_required"
                   ? "ask" as const
-                  : trustedPolicy.decision === "deny"
+                  : trustedPolicyDecision === "deny"
                     ? "deny" as const
                     : "auto" as const,
               reasonCode:
@@ -438,29 +461,8 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
                 },
             };
       const preparedToolCall =
-        trustedInspection !== undefined &&
-        trustedPolicy?.decision !== "deny" &&
-        asRecord(execState?.pendingApproval) === undefined &&
-        (trustedPolicy?.decision === "allow" ||
-          asRecord(eventPayload?.hostedApprovalAuthority) !== undefined) &&
-        io.prepareToolForApproval !== undefined
-          ? await io.prepareToolForApproval(
-              actionForDispatch.name,
-              policyInput,
-              {
-                policyRevision: buildRuntimePolicyRevision({
-                  interactionMode: toCanonicalInteractionMode(
-                    modeResolution.interactionMode,
-                  ),
-                  actSubmode: modeResolution.actSubmode,
-                  executionPolicy,
-                }),
-                authorityRevision:
-                  effectiveApprovalAuthority?.revision ?? "runtime-policy:v1",
-                capabilities: effectiveApprovalCapabilities,
-              },
-              toolIntent,
-            )
+        preparation?.kind === "prepared"
+          ? preparation.preparedToolCall
           : undefined;
       const policyGate = await checkToolPolicyGate({
         reactState,
@@ -482,8 +484,9 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         requiredApprovalCapabilities:
           effectiveApprovalCapabilities,
         approvalDisposition,
+        trustedPolicyDecision,
         trustedPolicyRevision: trustedPolicy?.policyRevision,
-        approvalAuthority: effectiveApprovalAuthority,
+        approvalAuthority: boundApprovalAuthority,
         toolIntent,
         preparedToolCall,
         interactionMode: toCanonicalInteractionMode(
@@ -505,29 +508,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       if (policyGate.kind === "blocked") {
         return policyGate.transition;
       }
-      const approvedPreparedToolCall =
-        policyGate.preparedToolCall ??
-        (trustedInspection !== undefined &&
-        trustedPolicy?.decision !== "deny" &&
-        io.prepareToolForApproval !== undefined
-          ? await io.prepareToolForApproval(
-              actionForDispatch.name,
-              policyInput,
-              {
-                policyRevision: buildRuntimePolicyRevision({
-                  interactionMode: toCanonicalInteractionMode(
-                    modeResolution.interactionMode,
-                  ),
-                  actSubmode: modeResolution.actSubmode,
-                  executionPolicy,
-                }),
-                authorityRevision:
-                  effectiveApprovalAuthority?.revision ?? "runtime-policy:v1",
-                capabilities: effectiveApprovalCapabilities,
-              },
-              toolIntent,
-            )
-          : undefined);
+      const approvedPreparedToolCall = policyGate.preparedToolCall;
 
       const reusableFilesystemInspection = toolClass === "read_only" &&
           isFilesystemInspectionToolName(actionForDispatch.name)

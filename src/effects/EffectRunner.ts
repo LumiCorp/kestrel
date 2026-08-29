@@ -5,6 +5,7 @@ import type {
 import type {
   EffectRunner,
 } from "../kestrel/contracts/execution.js";
+import type { ToolGateway } from "../kestrel/contracts/model-io.js";
 import {
   parseRunnerPreparedApprovalCleanupV1,
 } from "@kestrel-agents/protocol";
@@ -26,7 +27,7 @@ import type { ToolActivationRefV1 } from "../kestrel/contracts/tool-contract.js"
 import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
 import {
   buildRecoveredPreparedToolCallResultV1,
-  readDurableExternalEffectDispatchV1,
+  type DurableExternalEffectDispatchV1,
 } from "../io/ToolInvocationSupport.js";
 import type { EffectRegistry } from "./EffectRegistry.js";
 import { createEffectExecutionError } from "./errors.js";
@@ -34,10 +35,16 @@ import { createEffectExecutionError } from "./errors.js";
 export class InlineEffectRunner implements EffectRunner {
   private readonly store: SessionRepository & EffectStore;
   private readonly registry: EffectRegistry;
+  private readonly toolGateway: ToolGateway | undefined;
 
-  constructor(store: SessionRepository & EffectStore, registry: EffectRegistry) {
+  constructor(
+    store: SessionRepository & EffectStore,
+    registry: EffectRegistry,
+    toolGateway?: ToolGateway | undefined,
+  ) {
     this.store = store;
     this.registry = registry;
+    this.toolGateway = toolGateway;
   }
 
   async runEffects(
@@ -117,14 +124,27 @@ export class InlineEffectRunner implements EffectRunner {
       const toolActivity = readEffectToolActivity(effect);
       const startedAt = Date.now();
       let durableDispatch:
-        | ReturnType<typeof readDurableExternalEffectDispatchV1>
+        | DurableExternalEffectDispatchV1
         | undefined;
       try {
         const handler = this.registry.resolve(effect.type);
         const prepared = validatePreparedEffectForExecution(effect, context);
         durableDispatch = prepared === undefined
           ? undefined
-          : readDurableExternalEffectDispatchV1(prepared);
+          : await this.toolGateway?.resolvePreparedExternalEffectDispatch?.(
+              prepared,
+              {
+                runContext: {
+                  runId: context.runId,
+                  sessionId: context.sessionId,
+                  payload:
+                    parseOptionalRecord(
+                      parseOptionalRecord(effect.payload)?.runtimePayload,
+                    ) ?? {},
+                  sessionState: session?.state ?? {},
+                },
+              },
+            );
         let claim = await this.store.claimEffectExecution(effect.idempotencyKey, effect);
         if (
           claim === "already_claimed" &&

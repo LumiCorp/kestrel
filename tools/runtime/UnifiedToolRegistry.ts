@@ -25,6 +25,7 @@ import {
 } from "../../src/kestrel/contracts/tool-contract.js";
 import {
   parseDurablePreparedInvocationId,
+  parsePreparedToolCallV1,
   type AgentToolResultV2,
   type PreparedToolCallV1,
   type ResolvedModelToolIntentV1,
@@ -1182,6 +1183,47 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     }
   }
 
+  async resolvePreparedExternalEffectDispatch(
+    input: PreparedToolCallV1,
+    options: Pick<ToolGatewayCallOptions, "runContext"> = {},
+  ): Promise<
+    | import("../../src/io/ToolInvocationSupport.js").DurableExternalEffectDispatchV1
+    | undefined
+  > {
+    const prepared = parsePreparedToolCallV1(input);
+    if (
+      defaultToolCatalog.getDurableExternalEffectDispatch(
+        prepared.activation.descriptor.toolId,
+      ) === undefined
+    ) {
+      return;
+    }
+    const key = preparedExecutionKey(prepared);
+    const retainedSource = this.preparedExecutions.get(key);
+    const source =
+      retainedSource ??
+      (options.runContext === undefined
+        ? undefined
+        : this.rehydratePreparedExecution(prepared, options.runContext));
+    if (source === undefined) return;
+    try {
+      if (
+        hashCanonical(source.pinned.activation) !==
+        hashCanonical(prepared.activation)
+      ) {
+        return;
+      }
+      const executionClass =
+        source.resolveExecutionClass?.(prepared.effectiveInput) ??
+        source.pinned.descriptor.capability.executionClass;
+      return executionClass === "external_side_effect"
+        ? source.pinned.durableExternalEffectDispatch
+        : undefined;
+    } finally {
+      if (source !== retainedSource) await source.release?.();
+    }
+  }
+
   async releasePreparedToolCall(prepared: PreparedToolCallV1): Promise<void> {
     const key = preparedExecutionKey(prepared);
     const existingRelease = this.releasingPreparedExecutions.get(key);
@@ -1867,6 +1909,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       const resolveExecutionClass = (input: Record<string, unknown>) =>
         defaultToolCatalog.resolveExecutionClass(descriptor.toolId, input) ??
         descriptor.capability.executionClass;
+      const durableExternalEffectDispatch =
+        defaultToolCatalog.getDurableExternalEffectDispatch(
+          descriptor.toolId,
+        );
       return {
         pinned: {
           descriptor,
@@ -1874,6 +1920,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           validator,
           normalizer,
           ...(hasExecutionClassResolver ? { resolveExecutionClass } : {}),
+          ...(durableExternalEffectDispatch === undefined
+            ? {}
+            : { durableExternalEffectDispatch }),
         },
         inputAdapterId: "kestrel.builtin-input-normalizer:v1",
         ...(hasExecutionClassResolver ? { resolveExecutionClass } : {}),

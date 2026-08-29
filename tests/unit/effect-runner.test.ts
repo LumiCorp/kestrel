@@ -37,6 +37,10 @@ import {
   normalizePreparedApprovalCleanupDoneEvidence,
   PREPARED_APPROVAL_CLEANUP_QUARANTINE_AUDIT_MAX_METADATA_BYTES,
 } from "../../src/runtime/preparedApprovalCleanupAudit.js";
+import {
+  BROWSER_SERVICE_PORT_VERSION,
+  type BrowserServicePort,
+} from "../../src/browser/contracts.js";
 
 async function buildPreparedApprovalCleanupEffect(input: {
   suffix: string;
@@ -391,18 +395,43 @@ test("Effect runner records terminal unknown and never repeats a claimed prepare
   assert.equal(handlerCalls, 0);
 });
 
-test("opted-in durable dispatch recovery distinguishes claimed from dispatched", async () => {
-  const gateway = adaptLegacyTestToolGateway({
-    validateInput: async (_name, input) => input,
-    call: async () => ({ unreachable: true }),
+test("self-asserted dispatch metadata cannot change non-Browser recovery", async () => {
+  const gateway = new UnifiedToolRegistry({
+    allowlist: ["fs.write_text"],
+    context: {
+      fileSystem: {
+        workspaceRoot: "/workspace",
+        tempRoots: ["/tmp"],
+      },
+    },
   });
-  const basePrepared = await prepareTestToolCall({
-    gateway,
-    toolName: "fs.write_text",
-    toolInput: { path: "durable.txt", text: "once" },
+  const runContext = {
     runId: "run-durable-dispatch",
     sessionId: "session-durable-dispatch",
+    payload: {},
+    sessionState: {},
+  };
+  const snapshot = await gateway.createToolSurfaceSnapshot({
+    runContext,
+    toolNames: ["fs.write_text"],
+  });
+  const basePrepared = await gateway.prepareToolCall({
+    runId: runContext.runId,
+    sessionId: runContext.sessionId,
     callId: "call-durable-dispatch",
+    activation: snapshot.tools[0]!,
+    origin: {
+      kind: "model",
+      snapshotId: snapshot.snapshotId,
+      modelToolCallId: "model-call-durable-dispatch",
+    },
+    rawInput: { path: "durable.txt", content: "once" },
+    policy: {
+      decision: "allow",
+      policyRevision: hashCanonical({ policy: "durable-dispatch" }),
+    },
+  }, {
+    runContext,
   });
   const preparedToolCall = {
     ...basePrepared,
@@ -422,6 +451,117 @@ test("opted-in durable dispatch recovery distinguishes claimed from dispatched",
       },
     ],
   };
+
+  for (const status of ["CLAIMED", "DISPATCHED"] as const) {
+    const store = new InMemorySessionStore();
+    const registry = new EffectRegistry();
+    let handlerCalls = 0;
+    registry.register("execute_tool_call", async () => {
+      handlerCalls += 1;
+      return { repeated: true };
+    });
+    const effect = {
+      runId: preparedToolCall.runId,
+      sessionId: preparedToolCall.sessionId,
+      stepIndex: 1,
+      type: "execute_tool_call",
+      payload: { preparedToolCall },
+      idempotencyKey: preparedToolCall.callId,
+      failurePolicy: "STOP" as const,
+      status,
+      createdAt: "2026-08-29T00:00:00.000Z",
+    };
+    (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({
+      ...effect,
+    });
+    const outcome = await new InlineEffectRunner(
+      store,
+      registry,
+      gateway,
+    ).runEffects(
+      [effect],
+      {
+        runId: effect.runId,
+        sessionId: effect.sessionId,
+        stepIndex: effect.stepIndex,
+      },
+    );
+    const recorded = await store.getEffectResult(effect.idempotencyKey);
+    const exact = recorded?.output as {
+      outcome?: {
+        effectState?: string;
+        normalizedFailureCode?: string;
+        retryable?: boolean;
+      };
+    };
+    assert.equal(outcome.stop, true, status);
+    assert.equal(outcome.errors[0]?.code, "EFFECT_EXECUTION_OUTCOME_UNKNOWN", status);
+    assert.equal(exact.outcome?.effectState, "unknown", status);
+    assert.equal(
+      exact.outcome?.normalizedFailureCode,
+      "EFFECT_EXECUTION_OUTCOME_UNKNOWN",
+      status,
+    );
+    assert.equal(exact.outcome?.retryable, false, status);
+    assert.equal(handlerCalls, 0, status);
+  }
+});
+
+test("registered Browser dispatch capability distinguishes claimed from dispatched", async () => {
+  const browserService = {
+    version: BROWSER_SERVICE_PORT_VERSION,
+    async resolvePolicy() {
+      return {
+        version: "browser_policy_resolution_v1" as const,
+        decision: "allow" as const,
+        policyRevision: "browser-policy-1",
+      };
+    },
+    async execute() {
+      throw new Error("recovery must not redispatch the Browser operation");
+    },
+    async authorizeArtifact() {
+      return false;
+    },
+  } as BrowserServicePort;
+  const gateway = new UnifiedToolRegistry({
+    allowlist: ["browser.close"],
+    context: { browserService },
+  });
+  const runContext = {
+    runId: "run-browser-durable-dispatch",
+    sessionId: "session-browser-durable-dispatch",
+    payload: {},
+    sessionState: {},
+  };
+  const snapshot = await gateway.createToolSurfaceSnapshot({
+    runContext,
+    toolNames: ["browser.close"],
+  });
+  const preparedToolCall = await gateway.prepareToolCall({
+    runId: runContext.runId,
+    sessionId: runContext.sessionId,
+    callId: "call-browser-durable-dispatch",
+    activation: snapshot.tools[0]!,
+    origin: {
+      kind: "model",
+      snapshotId: snapshot.snapshotId,
+      modelToolCallId: "model-call-browser-durable-dispatch",
+    },
+    rawInput: { sessionId: "browser-session-1" },
+    policy: {
+      decision: "allow",
+      policyRevision: hashCanonical({ policy: "browser-durable-dispatch" }),
+    },
+  }, {
+    runContext,
+  });
+  assert.equal(
+    preparedToolCall.inputAdapters.some(
+      (adapter) => adapter.metadata.externalEffectDispatch !== undefined,
+    ),
+    false,
+  );
 
   for (const [status, expectedState, expectedCode, retryable] of [
     ["CLAIMED", "not_started", "BROWSER_ENGINE_FAILURE", true],
@@ -448,14 +588,15 @@ test("opted-in durable dispatch recovery distinguishes claimed from dispatched",
     (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({
       ...effect,
     });
-    const outcome = await new InlineEffectRunner(store, registry).runEffects(
-      [effect],
-      {
-        runId: effect.runId,
-        sessionId: effect.sessionId,
-        stepIndex: effect.stepIndex,
-      },
-    );
+    const outcome = await new InlineEffectRunner(
+      store,
+      registry,
+      gateway,
+    ).runEffects([effect], {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+    });
     const recorded = await store.getEffectResult(effect.idempotencyKey);
     const exact = recorded?.output as {
       outcome?: {

@@ -1,5 +1,8 @@
 import type { AgentToolPresentation } from "../kestrel/contracts/model-io.js";
-import type { PreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
+import type {
+  PreparedToolCallV1,
+  ToolExecutionOutcomeV1,
+} from "../kestrel/contracts/tool-invocation.js";
 import {
   RuntimeFailure,
   createRuntimeFailure,
@@ -11,8 +14,8 @@ export const BROWSER_TOOL_RESULT_VERSION = "browser_tool_result_v1" as const;
 export const BROWSER_CONTRACT_VERSION = "browser_app_contract_v1" as const;
 export const BROWSER_POLICY_RESOLUTION_VERSION =
   "browser_policy_resolution_v1" as const;
-export const BROWSER_PREPARED_AUTHORITY_VERSION =
-  "browser_prepared_authority_v1" as const;
+export const BROWSER_ARTIFACT_AUTHORIZATION_VERSION =
+  "browser_artifact_authorization_v1" as const;
 
 export const BROWSER_TOOL_NAMES = [
   "browser.open",
@@ -98,6 +101,29 @@ export interface BrowserServicePort {
     prepared: PreparedToolCallV1,
     lifecycle: BrowserOperationLifecycleV1,
   ): Promise<unknown>;
+  authorizeArtifact(
+    input: BrowserArtifactAuthorizationRequestV1,
+  ): Promise<boolean>;
+}
+
+export interface BrowserResultExecutionAuthorityV1 {
+  runId: string;
+  sessionId: string;
+  threadId: string;
+  callId: string;
+  toolName: BrowserToolName;
+}
+
+export interface BrowserArtifactAuthorizationRequestV1 {
+  version: typeof BROWSER_ARTIFACT_AUTHORIZATION_VERSION;
+  runId: string;
+  threadId: string;
+  callId: string;
+  toolName: "browser.capture" | "browser.download";
+  sessionId: string;
+  artifactId: string;
+  artifactKind: "browser-screenshot" | "browser-download";
+  artifactUrl?: string | undefined;
 }
 
 export interface BrowserPolicyResolutionV1 {
@@ -121,7 +147,8 @@ export function isConformingBrowserServicePort(
   return (
     value?.version === BROWSER_SERVICE_PORT_VERSION &&
     typeof value.resolvePolicy === "function" &&
-    typeof value.execute === "function"
+    typeof value.execute === "function" &&
+    typeof value.authorizeArtifact === "function"
   );
 }
 
@@ -383,6 +410,47 @@ export function projectBrowserAuditOutput(
   return projected;
 }
 
+export function projectBrowserRunOutcome(
+  toolName: string,
+  outcome: ToolExecutionOutcomeV1 | undefined,
+): ToolExecutionOutcomeV1 | undefined {
+  if (!isBrowserToolName(toolName) || outcome === undefined) return outcome;
+  if (outcome.kind === "success" || outcome.kind === "partial") {
+    return {
+      ...outcome,
+      rawOutput: projectBrowserAuditOutput(toolName, outcome.rawOutput) ?? {},
+    };
+  }
+  if (outcome.kind === "failure") {
+    const failure = projectBrowserRunError(toolName, {
+      code: outcome.normalizedFailureCode,
+    });
+    return {
+      ...outcome,
+      normalizedFailureCode: failure.code,
+      error: { message: failure.message },
+    };
+  }
+  return outcome;
+}
+
+export function projectBrowserRunError(
+  toolName: string,
+  error: { code?: string | undefined } | undefined,
+): {
+  code: BrowserFailureCode;
+  message: string;
+  details?: Record<string, unknown>;
+} {
+  const code =
+    isBrowserToolName(toolName) &&
+    typeof error?.code === "string" &&
+    (BROWSER_FAILURE_CODES as readonly string[]).includes(error.code)
+      ? (error.code as BrowserFailureCode)
+      : "BROWSER_ENGINE_FAILURE";
+  return { code, message: browserFailureMessage(code) };
+}
+
 export function browserArtifactPresentation(
   value: unknown,
 ): AgentToolPresentation | undefined {
@@ -494,22 +562,20 @@ export function validateBrowserResultSemantics(
 export function validateBrowserResultAuthority(
   prepared: PreparedToolCallV1,
   value: unknown,
+  execution: BrowserResultExecutionAuthorityV1,
 ): unknown {
   const toolName = prepared.activation.descriptor.toolId;
   if (!isBrowserToolName(toolName)) {
     throw new Error("Prepared Browser result authority has an invalid operation.");
   }
-  const adapter = prepared.inputAdapters.find(
-    (candidate) => candidate.adapterId === "kestrel.browser-contract:v1",
-  );
-  const authority = asRecord(adapter?.metadata.preparedAuthority);
   if (
-    authority?.version !== BROWSER_PREPARED_AUTHORITY_VERSION ||
-    authority.runId !== prepared.runId ||
-    typeof authority.threadId !== "string" ||
-    authority.threadId.length === 0
+    execution.runId !== prepared.runId ||
+    execution.sessionId !== prepared.sessionId ||
+    execution.callId !== prepared.callId ||
+    execution.toolName !== toolName ||
+    execution.threadId.length === 0
   ) {
-    throw new Error("Prepared Browser result authority is invalid.");
+    throw new Error("Browser execution authority does not match the prepared call.");
   }
   const output = requireRecord(value, `${toolName} output`);
   const nestedSession = output.session === undefined
@@ -538,9 +604,9 @@ export function validateBrowserResultAuthority(
   }
   if (
     nestedSession !== undefined &&
-    nestedSession.threadId !== authority.threadId
+    nestedSession.threadId !== execution.threadId
   ) {
-    throw new Error("Browser result Thread does not match prepared authority.");
+    throw new Error("Browser result Thread does not match execution authority.");
   }
   if (toolName === "browser.open" && nestedSession === undefined) {
     const outcome = output.outcome;
@@ -548,7 +614,69 @@ export function validateBrowserResultAuthority(
       throw new Error("Browser open result is missing its prepared session authority.");
     }
   }
+  if (
+    toolName === "browser.open" &&
+    nestedSession !== undefined &&
+    nestedSession.mode !== prepared.effectiveInput.mode
+  ) {
+    throw new Error("Browser open result mode does not match the prepared call.");
+  }
+  if (
+    toolName === "browser.upload" &&
+    output.attachmentId !== prepared.effectiveInput.attachmentId
+  ) {
+    throw new Error("Browser upload result attachment does not match the prepared call.");
+  }
+  if (
+    toolName === "browser.inspect" &&
+    output.kind !== prepared.effectiveInput.kind
+  ) {
+    throw new Error("Browser inspect result target does not match the prepared call.");
+  }
+  if (
+    toolName === "browser.tabs" &&
+    prepared.effectiveInput.operation === "switch" &&
+    output.activeTabId !== prepared.effectiveInput.tabId
+  ) {
+    throw new Error("Browser tab result target does not match the prepared call.");
+  }
   return value;
+}
+
+export function browserArtifactAuthorizationRequest(
+  execution: BrowserResultExecutionAuthorityV1,
+  value: unknown,
+): BrowserArtifactAuthorizationRequestV1 | undefined {
+  if (
+    execution.toolName !== "browser.capture" &&
+    execution.toolName !== "browser.download"
+  ) {
+    return;
+  }
+  const output = requireRecord(value, `${execution.toolName} output`);
+  const artifact = requireRecord(output.artifact, `${execution.toolName} artifact`);
+  const sessionId = requireString(output.sessionId, `${execution.toolName} sessionId`);
+  const artifactKind = requireString(
+    artifact.kind,
+    `${execution.toolName} artifact.kind`,
+  );
+  const expectedKind = execution.toolName === "browser.capture"
+    ? "browser-screenshot"
+    : "browser-download";
+  if (artifactKind !== expectedKind) {
+    throw new Error("Browser artifact kind does not match the prepared operation.");
+  }
+  return {
+    version: BROWSER_ARTIFACT_AUTHORIZATION_VERSION,
+    runId: execution.runId,
+    threadId: execution.threadId,
+    callId: execution.callId,
+    toolName: execution.toolName,
+    sessionId,
+    artifactId: requireString(artifact.id, `${execution.toolName} artifact.id`),
+    artifactKind: expectedKind,
+    ...(typeof artifact.url === "string" ? { artifactUrl: artifact.url } : {}),
+  };
 }
 
 function projectBrowserAction(action: Record<string, unknown>) {

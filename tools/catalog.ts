@@ -23,6 +23,7 @@ import type {
   ToolCatalog,
 } from "./contracts.js";
 import { createRuntimeFailure } from "../src/runtime/RuntimeFailure.js";
+import { parseDurableExternalEffectDispatchV1 } from "../src/io/ToolInvocationSupport.js";
 import { resolveToolPresentationMetadata } from "./toolMetadata.js";
 import { runAgentTool } from "./toolResult.js";
 import { exchangeRateTool } from "./free/exchangeRate.js";
@@ -298,6 +299,11 @@ export function createToolCatalog(
     }
 
     validateToolDefinition(module.definition);
+    if (module.durableExternalEffectDispatch !== undefined) {
+      parseDurableExternalEffectDispatchV1(
+        module.durableExternalEffectDispatch,
+      );
+    }
     const descriptor = createBuiltInToolDescriptor(module.definition);
 
     map.set(module.definition.name, module);
@@ -491,6 +497,12 @@ export function createToolCatalog(
 
   const resolveExecutionClass = (name: string, input: Record<string, unknown>) =>
     map.get(name)?.resolveExecutionClass?.(input);
+  const getDurableExternalEffectDispatch = (name: string) => {
+    const registered = map.get(name)?.durableExternalEffectDispatch;
+    return registered === undefined
+      ? undefined
+      : parseDurableExternalEffectDispatchV1(registered);
+  };
   const prepareInputAdapter = (
     name: string,
     input: Record<string, unknown>,
@@ -513,6 +525,7 @@ export function createToolCatalog(
     createRawHandlers,
     createResultNormalizers,
     resolveExecutionClass,
+    getDurableExternalEffectDispatch,
     prepareInputAdapter,
     resolvePolicy,
   };

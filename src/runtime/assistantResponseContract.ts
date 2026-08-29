@@ -102,13 +102,16 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
       { eventType: waitFor.eventType, reason: authoredStructuredReview.reason },
     );
   }
+  const preparedApproval = metadata?.preparedToolCall === undefined
+    ? undefined
+    : parsePreparedToolCallV1(metadata.preparedToolCall);
   const preparedApprovalInteraction = waitFor.kind === "approval"
-    ? metadata?.preparedToolCall === undefined
+    ? preparedApproval?.stableAuthority === undefined
       ? projectLocalToolApprovalInteractionV1({ metadata, requestId })
       : projectHostedToolApprovalInteractionV4({
-          preparedToolCall: metadata.preparedToolCall,
+          preparedToolCall: preparedApproval,
           requestId,
-          reasonCode: metadata.reasonCode,
+          reasonCode: metadata?.reasonCode,
         })
     : undefined;
   const interaction: RuntimeInteractionRequest =

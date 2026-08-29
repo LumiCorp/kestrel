@@ -5,9 +5,9 @@ import {
 import type { ToolExecutionClass } from "../../src/mode/contracts.js";
 import {
   BROWSER_CONTRACT_VERSION,
-  BROWSER_PREPARED_AUTHORITY_VERSION,
   BROWSER_POLICY_RESOLUTION_VERSION,
   BROWSER_TOOL_NAMES,
+  browserArtifactAuthorizationRequest,
   browserArtifactPresentation,
   browserFailure,
   isBrowserToolName,
@@ -60,12 +60,8 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
   });
   const normalizeOutput = (
     output: unknown,
-    prepared?: import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
   ): unknown => {
     const normalized = validateBrowserResultSemantics(toolName, output);
-    if (prepared !== undefined) {
-      validateBrowserResultAuthority(prepared, normalized);
-    }
     if (validateOutput(normalized) !== true) {
       throw browserFailure(
         "BROWSER_ENGINE_FAILURE",
@@ -79,6 +75,14 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
     return normalized;
   };
   return {
+    durableExternalEffectDispatch: {
+      version: DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION,
+      notStartedFailureCode: "BROWSER_ENGINE_FAILURE",
+      notStartedMessage: "The Browser operation was not dispatched.",
+      unknownOutcomeFailureCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      unknownOutcomeMessage:
+        "The Browser operation was dispatched, but its exact outcome could not be confirmed.",
+    },
     definition: {
       name: contract.toolId,
       description: contract.description,
@@ -131,8 +135,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
     resolveExecutionClass(input) {
       return resolveExactExecutionClass(contract, input);
     },
-    prepareInputAdapter(input, context) {
-      const runtime = context?.runtime;
+    prepareInputAdapter(input) {
       return {
         adapterId: RESULT_NORMALIZER_ID,
         metadata: {
@@ -141,30 +144,6 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           executionClass: resolveExactExecutionClass(contract, input),
           exactEffects: [...resolveExactEffects(contract, input)],
           approval: contract.approval,
-          ...(runtime === undefined
-            ? {}
-            : {
-                preparedAuthority: {
-                  version: BROWSER_PREPARED_AUTHORITY_VERSION,
-                  runId: runtime.runId,
-                  threadId: runtime.threadId ?? runtime.sessionId,
-                },
-              }),
-          ...(resolveExactExecutionClass(contract, input) ===
-          "external_side_effect"
-            ? {
-                externalEffectDispatch: {
-                  version: DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION,
-                  notStartedFailureCode: "BROWSER_ENGINE_FAILURE",
-                  notStartedMessage:
-                    "The Browser operation was not dispatched.",
-                  unknownOutcomeFailureCode:
-                    "BROWSER_ACTION_OUTCOME_UNKNOWN",
-                  unknownOutcomeMessage:
-                    "The Browser operation was dispatched, but its exact outcome could not be confirmed.",
-                },
-              }
-            : {}),
         },
       };
     },
@@ -234,11 +213,64 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
         const effectful =
           resolveExactExecutionClass(contract, prepared.effectiveInput) ===
           "external_side_effect";
+        const runtime = context.runtime;
+        const threadId = runtime?.threadId ?? runtime?.sessionId;
+        if (
+          runtime === undefined ||
+          threadId === undefined ||
+          runtime.toolCallId === undefined
+        ) {
+          throw browserFailure(
+            "BROWSER_SERVICE_UNAVAILABLE",
+            "Browser tools require trusted execution authority.",
+            { recoverable: false, toolName: contract.toolId },
+          );
+        }
+        const executionAuthority = {
+          runId: runtime.runId,
+          sessionId: runtime.sessionId,
+          threadId,
+          callId: runtime.toolCallId,
+          toolName: contract.toolId,
+        } as const;
+        const browserService = requireBrowserServicePort(context.browserService);
+        let acceptedCanonical: string | undefined;
+        let acceptedOutput: unknown;
+        const acceptOutput = async (rawOutput: unknown): Promise<unknown> => {
+          const normalized = normalizeOutput(rawOutput);
+          const canonical = hashCanonical(normalized);
+          if (acceptedCanonical !== undefined) {
+            if (acceptedCanonical !== canonical) {
+              throw new Error(
+                "Browser host returned conflicting completed results.",
+              );
+            }
+            return acceptedOutput;
+          }
+          validateBrowserResultAuthority(
+            prepared,
+            normalized,
+            executionAuthority,
+          );
+          const artifactRequest = browserArtifactAuthorizationRequest(
+            executionAuthority,
+            normalized,
+          );
+          if (
+            artifactRequest !== undefined &&
+            !(await browserService.authorizeArtifact(artifactRequest))
+          ) {
+            throw new Error(
+              "Browser artifact is not authorized for this execution.",
+            );
+          }
+          acceptedCanonical = canonical;
+          acceptedOutput = normalized;
+          return acceptedOutput;
+        };
         let dispatchAcknowledged = false;
         try {
-          const output = await requireBrowserServicePort(
-            context.browserService,
-          ).execute(prepared, {
+          const output = await browserService.execute(prepared, {
             async acknowledgeDispatch() {
               if (!effectful || dispatchAcknowledged) return;
               await context.acknowledgeExternalEffect?.();
@@ -246,11 +278,11 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
             },
             async persistCompletedResult(rawOutput) {
               await context.persistCompletedCapabilityResult?.(
-                normalizeOutput(rawOutput, prepared),
+                await acceptOutput(rawOutput),
               );
             },
           });
-          return normalizeOutput(output, prepared);
+          return await acceptOutput(output);
         } catch (error) {
           throw normalizeBrowserHostFailure(error, {
             toolName: contract.toolId,

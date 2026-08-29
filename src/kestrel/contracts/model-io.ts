@@ -380,6 +380,14 @@ export interface ToolGateway {
     prepared: PreparedToolCallV1,
     options?: ToolGatewayCallOptions,
   ): Promise<AgentToolResultV2>;
+  /** Resolve crash-recovery semantics from the trusted runtime registration for this exact tool identity. */
+  resolvePreparedExternalEffectDispatch?(
+    prepared: PreparedToolCallV1,
+    options?: Pick<ToolGatewayCallOptions, "runContext">,
+  ): Promise<
+    | import("../../io/ToolInvocationSupport.js").DurableExternalEffectDispatchV1
+    | undefined
+  >;
   releasePreparedToolCall?(
     prepared: PreparedToolCallV1,
   ): Promise<void> | void;

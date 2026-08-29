@@ -140,7 +140,11 @@ export class Kestrel {
         ...(options.providerReasoningVault !== undefined
           ? { providerReasoningVault: options.providerReasoningVault }
           : {}),
-        effectRunner: new InlineEffectRunner(this.store, this.effectRegistry),
+        effectRunner: new InlineEffectRunner(
+          this.store,
+          this.effectRegistry,
+          this.toolGateway,
+        ),
         outbox,
         runLogger,
         progressReporter,

@@ -9,6 +9,7 @@ import {
   buildRuntimePolicyRevision,
   checkToolBatchPolicyGate,
   checkToolPolicyGate,
+  prepareExactToolCallForPolicyGate,
 } from "./policyGates.js";
 import type {
   ActerStepConfig,
@@ -320,12 +321,6 @@ async function continuePolicyBoundDurableToolBatch(input: {
   const trustedPolicy = trustedInspection?.policy;
   const configuredApprovalCapabilities =
     input.toolApprovalCapabilitiesByName[nextItem.name] ?? [];
-  const effectiveApprovalCapabilities =
-    trustedPolicy !== undefined && trustedPolicy.decision !== "approval_required"
-      ? configuredApprovalCapabilities.filter(
-          (capability) => capability !== "external.confirm",
-        )
-      : configuredApprovalCapabilities;
   const configuredAuthority = input.toolApprovalAuthorityByName[nextItem.name];
   const boundApprovalAuthority =
     configuredAuthority === undefined ||
@@ -340,18 +335,45 @@ async function continuePolicyBoundDurableToolBatch(input: {
             upstreamAuthority: configuredAuthority,
           }),
         };
-  const effectiveApprovalAuthority =
-    trustedPolicy === undefined
-      ? boundApprovalAuthority
-      : {
-          kind: boundApprovalAuthority?.kind ?? "runtime_policy" as const,
-          revision: hashCanonical({
-            version: "trusted-tool-approval-authority-v1",
-            upstreamRevision:
-              boundApprovalAuthority?.revision ?? "runtime-policy:v1",
-            trustedPolicyRevision: trustedPolicy.policyRevision,
-          }),
-        };
+  const runtimePolicyRevision = buildRuntimePolicyRevision({
+    interactionMode: input.interactionMode,
+    actSubmode: input.actSubmode,
+    executionPolicy: input.executionPolicy,
+  });
+  const inspectedApprovalCapabilities =
+    trustedPolicy !== undefined && trustedPolicy.decision !== "approval_required"
+      ? configuredApprovalCapabilities.filter(
+          (capability) => capability !== "external.confirm",
+        )
+      : configuredApprovalCapabilities;
+  const currentPendingApproval = (
+    input.reactState.exec as Record<string, unknown> | undefined
+  )?.pendingApproval;
+  const preparation =
+    trustedInspection !== undefined &&
+    trustedPolicy?.decision !== "deny" &&
+    currentPendingApproval === undefined
+      ? await prepareExactToolCallForPolicyGate({
+          io: input.io,
+          toolName: nextItem.name,
+          toolInput: policyInput,
+          policyRevision: runtimePolicyRevision,
+          authorityRevision:
+            boundApprovalAuthority?.revision ?? runtimePolicyRevision,
+          capabilities: inspectedApprovalCapabilities,
+          toolIntent,
+        })
+      : undefined;
+  const trustedPolicyDecision =
+    preparation?.kind === "denied"
+      ? "deny" as const
+      : preparation?.preparedToolCall.policy.decision ?? trustedPolicy?.decision;
+  const effectiveApprovalCapabilities =
+    trustedPolicy !== undefined && trustedPolicyDecision !== "approval_required"
+      ? configuredApprovalCapabilities.filter(
+          (capability) => capability !== "external.confirm",
+        )
+      : configuredApprovalCapabilities;
   const configuredDisposition =
     input.toolApprovalDispositionByName[nextItem.name];
   const approvalDisposition =
@@ -359,9 +381,9 @@ async function continuePolicyBoundDurableToolBatch(input: {
       ? configuredDisposition
       : {
           mode:
-            trustedPolicy.decision === "approval_required"
+            trustedPolicyDecision === "approval_required"
               ? "ask" as const
-              : trustedPolicy.decision === "deny"
+              : trustedPolicyDecision === "deny"
                 ? "deny" as const
                 : "auto" as const,
           reasonCode:
@@ -372,31 +394,9 @@ async function continuePolicyBoundDurableToolBatch(input: {
               revision: trustedPolicy.policyRevision,
             },
         };
-  const currentPendingApproval = (
-    input.reactState.exec as Record<string, unknown> | undefined
-  )?.pendingApproval;
   const preparedToolCall =
-    trustedInspection !== undefined &&
-    trustedPolicy?.decision !== "deny" &&
-    currentPendingApproval === undefined &&
-    (trustedPolicy?.decision === "allow" ||
-      input.eventPayload?.hostedApprovalAuthority !== undefined) &&
-    input.io.prepareToolForApproval !== undefined
-      ? await input.io.prepareToolForApproval(
-          nextItem.name,
-          policyInput,
-          {
-            policyRevision: buildRuntimePolicyRevision({
-              interactionMode: input.interactionMode,
-              actSubmode: input.actSubmode,
-              executionPolicy: input.executionPolicy,
-            }),
-            authorityRevision:
-              effectiveApprovalAuthority?.revision ?? "runtime-policy:v1",
-            capabilities: effectiveApprovalCapabilities,
-          },
-          toolIntent,
-        )
+    preparation?.kind === "prepared"
+      ? preparation.preparedToolCall
       : undefined;
   const policyGate = await checkToolPolicyGate({
     reactState: input.reactState,
@@ -417,8 +417,9 @@ async function continuePolicyBoundDurableToolBatch(input: {
       input.toolAllowedInteractionModesByName[nextItem.name],
     requiredApprovalCapabilities: effectiveApprovalCapabilities,
     approvalDisposition,
+    trustedPolicyDecision,
     trustedPolicyRevision: trustedPolicy?.policyRevision,
-    approvalAuthority: effectiveApprovalAuthority,
+    approvalAuthority: boundApprovalAuthority,
     toolIntent,
     preparedToolCall,
     interactionMode: input.interactionMode,
@@ -447,27 +448,7 @@ async function continuePolicyBoundDurableToolBatch(input: {
       },
     };
   }
-  const approvedPreparedToolCall =
-    policyGate.preparedToolCall ??
-    (trustedInspection !== undefined &&
-    trustedPolicy?.decision !== "deny" &&
-    input.io.prepareToolForApproval !== undefined
-      ? await input.io.prepareToolForApproval(
-          nextItem.name,
-          policyInput,
-          {
-            policyRevision: buildRuntimePolicyRevision({
-              interactionMode: input.interactionMode,
-              actSubmode: input.actSubmode,
-              executionPolicy: input.executionPolicy,
-            }),
-            authorityRevision:
-              effectiveApprovalAuthority?.revision ?? "runtime-policy:v1",
-            capabilities: effectiveApprovalCapabilities,
-          },
-          toolIntent,
-        )
-      : undefined);
+  const approvedPreparedToolCall = policyGate.preparedToolCall;
 
   const updatedItems = input.pendingBatch.items.map((item, index) =>
     index === input.pendingBatch.nextIndex

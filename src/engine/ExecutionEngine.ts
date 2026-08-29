@@ -3092,64 +3092,145 @@ export class ExecutionEngine {
         if (preparedToolCall.policy.decision === "approval_required") {
           const pendingApproval = readPendingToolApproval(session.state);
           const authority = preparedToolCall.stableAuthority;
-          if (
-            authority === undefined ||
-            pendingApproval?.version !== "hosted_tool_approval_v2" ||
-            pendingApproval.preparedInvocationId !== preparedToolCall.callId ||
-            pendingApproval.approvalId !== preparedToolCall.approval?.approvalId ||
-            pendingApproval.toolName !==
-              preparedToolCall.activation.descriptor.toolId ||
-            (authority.version === "prepared_tool_stable_authority_v2" &&
-              pendingApproval.toolClass !== authority.executionClass)
-          ) {
-            throw createRuntimeFailure(
-              "TOOL_EFFECT_PREPARATION_FAILED",
-              "The approved prepared invocation does not match the committed approval wait.",
-              {
-                recoverable: false,
-                effectType: effect.type,
-                preparedInvocationId: preparedToolCall.callId,
-              },
-            );
-          }
-          let preparedApprovalBinding;
-          let pendingApprovalBinding;
-          try {
-            preparedApprovalBinding = parseRunnerExternalApprovalBindingV2(
-              preparedToolCall.approval?.externalApprovalBinding,
-            );
-            pendingApprovalBinding = parseRunnerExternalApprovalBindingV2(
-              pendingApproval.externalApprovalBinding,
-            );
-          } catch (error) {
-            throw createRuntimeFailure(
-              "TOOL_EFFECT_PREPARATION_FAILED",
-              "The approved prepared invocation binding is invalid.",
-              {
-                recoverable: false,
-                effectType: effect.type,
-                preparedInvocationId: preparedToolCall.callId,
-                cause: error instanceof Error ? error.message : String(error),
-              },
-            );
-          }
-          if (
-            preparedApprovalBinding.preparedInvocationId !==
-              preparedToolCall.callId ||
-            pendingApproval.toolClass !== preparedApprovalBinding.toolClass ||
-            serializeCanonicalApprovalPayload(pendingApprovalBinding) !==
-              serializeCanonicalApprovalPayload(preparedApprovalBinding) ||
-            Date.parse(preparedApprovalBinding.expiresAt) <= Date.now()
-          ) {
-            throw createRuntimeFailure(
-              "TOOL_EFFECT_PREPARATION_FAILED",
-              "The approved prepared invocation does not match the committed approval wait.",
-              {
-                recoverable: false,
-                effectType: effect.type,
-                preparedInvocationId: preparedToolCall.callId,
-              },
-            );
+          if (authority === undefined) {
+            if (
+              pendingApproval?.version !== "local_tool_approval_v1" ||
+              pendingApproval.preparedInvocationId !== preparedToolCall.callId ||
+              pendingApproval.approvalId !== preparedToolCall.approval?.approvalId ||
+              pendingApproval.toolName !==
+                preparedToolCall.activation.descriptor.toolId
+            ) {
+              throw createRuntimeFailure(
+                "TOOL_EFFECT_PREPARATION_FAILED",
+                "The approved local prepared invocation does not match the committed approval wait.",
+                {
+                  recoverable: false,
+                  effectType: effect.type,
+                  preparedInvocationId: preparedToolCall.callId,
+                },
+              );
+            }
+            if (pendingApproval.toolClass === "external_side_effect") {
+              let preparedApprovalBinding;
+              let pendingApprovalBinding;
+              try {
+                preparedApprovalBinding = parseRunnerExternalApprovalBindingV1(
+                  preparedToolCall.approval?.externalApprovalBinding,
+                );
+                pendingApprovalBinding = parseRunnerExternalApprovalBindingV1(
+                  pendingApproval.externalApprovalBinding,
+                );
+              } catch (error) {
+                throw createRuntimeFailure(
+                  "TOOL_EFFECT_PREPARATION_FAILED",
+                  "The approved local prepared invocation binding is invalid.",
+                  {
+                    recoverable: false,
+                    effectType: effect.type,
+                    preparedInvocationId: preparedToolCall.callId,
+                    cause: error instanceof Error ? error.message : String(error),
+                  },
+                );
+              }
+              if (
+                preparedApprovalBinding.approvalId !==
+                  preparedToolCall.approval?.approvalId ||
+                preparedApprovalBinding.threadId !== preparedToolCall.sessionId ||
+                preparedApprovalBinding.runId !== preparedToolCall.runId ||
+                preparedApprovalBinding.actionKey !==
+                  preparedToolCall.activation.descriptor.toolId ||
+                preparedApprovalBinding.payloadHash !==
+                  hashCanonical(preparedToolCall.effectiveInput) ||
+                pendingApproval.toolClass !== preparedApprovalBinding.toolClass ||
+                serializeCanonicalApprovalPayload(pendingApprovalBinding) !==
+                  serializeCanonicalApprovalPayload(preparedApprovalBinding) ||
+                Date.parse(preparedApprovalBinding.expiresAt) <= Date.now()
+              ) {
+                throw createRuntimeFailure(
+                  "TOOL_EFFECT_PREPARATION_FAILED",
+                  "The approved local prepared invocation does not match the committed approval wait.",
+                  {
+                    recoverable: false,
+                    effectType: effect.type,
+                    preparedInvocationId: preparedToolCall.callId,
+                  },
+                );
+              }
+            } else if (
+              preparedToolCall.approval?.externalApprovalBinding !== undefined ||
+              pendingApproval.externalApprovalBinding !== undefined ||
+              typeof pendingApproval.expiresAt !== "string" ||
+              Date.parse(pendingApproval.expiresAt) <= Date.now()
+            ) {
+              throw createRuntimeFailure(
+                "TOOL_EFFECT_PREPARATION_FAILED",
+                "The approved local prepared invocation has inconsistent approval evidence.",
+                {
+                  recoverable: false,
+                  effectType: effect.type,
+                  preparedInvocationId: preparedToolCall.callId,
+                },
+              );
+            }
+          } else {
+            if (
+              pendingApproval?.version !== "hosted_tool_approval_v2" ||
+              pendingApproval.preparedInvocationId !== preparedToolCall.callId ||
+              pendingApproval.approvalId !== preparedToolCall.approval?.approvalId ||
+              pendingApproval.toolName !==
+                preparedToolCall.activation.descriptor.toolId ||
+              (authority.version === "prepared_tool_stable_authority_v2" &&
+                pendingApproval.toolClass !== authority.executionClass)
+            ) {
+              throw createRuntimeFailure(
+                "TOOL_EFFECT_PREPARATION_FAILED",
+                "The approved prepared invocation does not match the committed approval wait.",
+                {
+                  recoverable: false,
+                  effectType: effect.type,
+                  preparedInvocationId: preparedToolCall.callId,
+                },
+              );
+            }
+            let preparedApprovalBinding;
+            let pendingApprovalBinding;
+            try {
+              preparedApprovalBinding = parseRunnerExternalApprovalBindingV2(
+                preparedToolCall.approval?.externalApprovalBinding,
+              );
+              pendingApprovalBinding = parseRunnerExternalApprovalBindingV2(
+                pendingApproval.externalApprovalBinding,
+              );
+            } catch (error) {
+              throw createRuntimeFailure(
+                "TOOL_EFFECT_PREPARATION_FAILED",
+                "The approved prepared invocation binding is invalid.",
+                {
+                  recoverable: false,
+                  effectType: effect.type,
+                  preparedInvocationId: preparedToolCall.callId,
+                  cause: error instanceof Error ? error.message : String(error),
+                },
+              );
+            }
+            if (
+              preparedApprovalBinding.preparedInvocationId !==
+                preparedToolCall.callId ||
+              pendingApproval.toolClass !== preparedApprovalBinding.toolClass ||
+              serializeCanonicalApprovalPayload(pendingApprovalBinding) !==
+                serializeCanonicalApprovalPayload(preparedApprovalBinding) ||
+              Date.parse(preparedApprovalBinding.expiresAt) <= Date.now()
+            ) {
+              throw createRuntimeFailure(
+                "TOOL_EFFECT_PREPARATION_FAILED",
+                "The approved prepared invocation does not match the committed approval wait.",
+                {
+                  recoverable: false,
+                  effectType: effect.type,
+                  preparedInvocationId: preparedToolCall.callId,
+                },
+              );
+            }
           }
         } else if (
           preparedToolCall.policy.decision !== "allow" ||

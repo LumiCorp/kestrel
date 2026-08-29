@@ -329,6 +329,10 @@ export type SharedToolHandler = (input: unknown) => Promise<AgentToolResult>;
 
 export interface SharedToolModule {
   definition: SharedToolDefinition;
+  /** Trusted runtime capability for crash-safe external-effect dispatch recovery. */
+  durableExternalEffectDispatch?:
+    | import("../src/io/ToolInvocationSupport.js").DurableExternalEffectDispatchV1
+    | undefined;
   createHandler(
     context: SharedToolContext,
     prepared?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1 | undefined,
@@ -389,6 +393,9 @@ export interface ToolCatalog {
     (output: unknown, input: unknown) => SharedToolNormalizedResult
   >;
   resolveExecutionClass(name: string, input: Record<string, unknown>): ToolExecutionClass | undefined;
+  getDurableExternalEffectDispatch(
+    name: string,
+  ): import("../src/io/ToolInvocationSupport.js").DurableExternalEffectDispatchV1 | undefined;
   prepareInputAdapter(
     name: string,
     input: Record<string, unknown>,

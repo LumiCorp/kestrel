@@ -62,6 +62,13 @@ import type { ModelCallProofV1 } from "../kestrel/contracts/orchestration.js";
 import { deleteTextArtifact } from "../../tools/runtime/artifactStore.js";
 import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
 import {
+  isBrowserToolName,
+  projectBrowserAuditInput,
+  projectBrowserAuditOutput,
+  projectBrowserRunError,
+  projectBrowserRunOutcome,
+} from "../browser/contracts.js";
+import {
   type EffectiveModelContractV1,
   type EffectiveModelContractResolverV1,
   type EffectiveModelPreSpendEvidenceV1,
@@ -1009,7 +1016,7 @@ export class RuntimeIO {
     guardrails.onToolCall(name);
     const startedAt = Date.now();
     const toolCallId = `tool:${progress.runId}:${randomUUID()}`;
-    let recoverySourceInput = input;
+    let recoverySourceInput = projectToolActivityInput(name, input);
     let queueDepthRun: number | undefined;
     let queueDepthGlobal: number | undefined;
     let queueWaitMs: number | undefined;
@@ -1104,22 +1111,26 @@ export class RuntimeIO {
       );
       preparedToolCall = prepared;
       const effectiveToolInput = prepared.effectiveInput;
-      recoverySourceInput = effectiveToolInput;
-      const activityToolInput = projectGmailMutationActivityInput(
+      const activityToolInput = projectToolActivityInput(
         name,
         effectiveToolInput,
+      );
+      recoverySourceInput = activityToolInput;
+      const projectedToolInput = projectGmailMutationActivityInput(
+        name,
+        activityToolInput,
       ) ?? projectMicrosoft365TeamsReadAuditInput(
         name,
-        effectiveToolInput,
+        activityToolInput,
       ) ?? projectMicrosoft365TeamsSendAuditInput(
         name,
-        effectiveToolInput,
+        activityToolInput,
       ) ?? projectGoogleCalendarAuditInput(
         name,
-        effectiveToolInput,
-      ) ?? effectiveToolInput;
+        activityToolInput,
+      ) ?? activityToolInput;
       const toolInputMetadata = {
-        ...buildToolInputEventMetadata(activityToolInput),
+        ...buildToolInputEventMetadata(projectedToolInput),
         ...prepared.inputAdapters.reduce(
           (metadata, adapter) => ({ ...metadata, ...adapter.metadata }),
           {} as Record<string, unknown>,
@@ -1132,7 +1143,7 @@ export class RuntimeIO {
         phase: "started",
         toolCallId,
         toolName: name,
-        input: activityToolInput,
+        input: projectedToolInput,
         activation: prepared.activation,
       });
       await this.options.emitProgressFromSequence({
@@ -1172,7 +1183,7 @@ export class RuntimeIO {
         stepIndex: progress.stepIndex,
         toolCallId,
         toolName: name,
-        input: activityToolInput,
+        input: projectedToolInput,
         sequence: progress.sequence,
         transformText: (text) => {
           toolConsoleStream ??= this.options.executionBoundaryRuntime.openLiveStream({
@@ -1432,7 +1443,7 @@ export class RuntimeIO {
           phase: "failed",
           toolCallId,
           toolName: name,
-          input: activityToolInput,
+          input: projectedToolInput,
           output: result,
           error: returnedError,
           durationMs,
@@ -1474,7 +1485,7 @@ export class RuntimeIO {
         phase: "completed",
         toolCallId,
         toolName: name,
-        input: activityToolInput,
+        input: projectedToolInput,
         output: result,
         durationMs: Date.now() - startedAt,
         activation: result.activation,
@@ -1483,6 +1494,7 @@ export class RuntimeIO {
       await consoleBridge.emitStatus("completed", result);
       return result;
     } catch (error) {
+      const runtimeError = this.options.mapError(error);
       const failureBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist({
         boundary: "tool_result",
         identity: {
@@ -1496,7 +1508,9 @@ export class RuntimeIO {
         sourceId: `tool-error:${toolCallId}:${name}`,
         value: {
           input: recoverySourceInput,
-          error: this.options.mapError(error),
+          error: isBrowserToolName(name)
+            ? projectBrowserRunError(name, runtimeError)
+            : runtimeError,
         },
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
@@ -1955,7 +1969,21 @@ export function buildRunToolUpdate(input: {
 }): RunToolUpdateV1 | RunToolUpdateV2 {
   const outputRecord = asPlainRecord(input.output);
   const auditRecord = asPlainRecord(outputRecord?.auditRecord);
-  const activityOutput = auditRecord?.output ?? input.output;
+  const rawActivityOutput = auditRecord?.output ?? input.output;
+  const activityInput = input.input === undefined
+    ? undefined
+    : projectToolActivityInput(input.toolName, input.input);
+  const activityOutput = rawActivityOutput === undefined
+    ? undefined
+    : projectBrowserAuditOutput(input.toolName, rawActivityOutput) ??
+      rawActivityOutput;
+  const activityOutcome = projectBrowserRunOutcome(
+    input.toolName,
+    input.outcome,
+  );
+  const activityError = isBrowserToolName(input.toolName) && input.error !== undefined
+    ? projectBrowserRunError(input.toolName, input.error)
+    : input.error;
   const shared = {
     runId: input.runId,
     sessionId: input.sessionId,
@@ -1969,18 +1997,18 @@ export function buildRunToolUpdate(input: {
     displayName: formatToolDisplayName(input.toolName),
     toolFamily: readToolFamily(input.toolName),
     provider: readToolProvider(input.toolName),
-    ...(input.input !== undefined ? { input: sanitizeToolActivityValue(input.input) } : {}),
+    ...(input.input !== undefined ? { input: sanitizeToolActivityValue(activityInput) } : {}),
     ...(input.output !== undefined ? { output: sanitizeToolActivityValue(activityOutput) } : {}),
     ...(asPlainRecord(outputRecord?.presentation) !== undefined
       ? { presentation: outputRecord?.presentation as RunToolUpdateV1["presentation"] }
       : {}),
-    ...(input.error !== undefined
+    ...(activityError !== undefined
       ? {
           error: {
-            code: input.error.code,
-            message: input.error.message,
-            ...(input.error.details !== undefined
-              ? { details: sanitizeToolActivityValue(input.error.details) as Record<string, unknown> }
+            code: activityError.code,
+            message: activityError.message,
+            ...(activityError.details !== undefined
+              ? { details: sanitizeToolActivityValue(activityError.details) as Record<string, unknown> }
               : {}),
           },
         }
@@ -1993,8 +2021,22 @@ export function buildRunToolUpdate(input: {
         version: "v2",
         ...shared,
         activation: input.activation,
-        ...(input.outcome === undefined ? {} : { outcome: input.outcome }),
+        ...(activityOutcome === undefined ? {} : { outcome: activityOutcome }),
       };
+}
+
+function projectToolActivityInput(toolName: string, value: unknown): unknown {
+  if (!isBrowserToolName(toolName)) return value;
+  try {
+    return projectBrowserAuditInput(toolName, value) ?? {
+      operation: toolName,
+    };
+  } catch {
+    return {
+      operation: toolName,
+      inputStatus: "invalid",
+    };
+  }
 }
 
 export function buildRunToolEvent(update: RunToolUpdateV1 | RunToolUpdateV2): {

@@ -4,10 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Redact Browser run events before persistence](01g-redact-browser-run-events-before-persistence.md)
-- [Authorize durable dispatch by tool contract](01h-authorize-durable-dispatch-by-tool-contract.md)
-- [Ground Browser result authority in execution context](01i-ground-browser-result-authority-in-execution-context.md)
-- [Resume the exact Browser call after approval](01j-resume-the-exact-browser-call-after-approval.md)
+None.
 
 ## In progress
 
@@ -32,6 +29,10 @@ None.
 - [Make Browser dispatch evidence durable without weakening other tools](01d-make-browser-dispatch-evidence-durable-without-weakening-other-tools.md) — blocked from `Done` by [trusted dispatch authorization](01h-authorize-durable-dispatch-by-tool-contract.md)
 - [Bind Browser results to prepared authority](01e-bind-browser-results-to-prepared-authority.md) — blocked from `Done` by [execution-grounded result authority](01i-ground-browser-result-authority-in-execution-context.md)
 - [Bind Browser policy through every approval path](01f-bind-browser-policy-through-every-approval-path.md) — blocked from `Done` by [exact approval resume](01j-resume-the-exact-browser-call-after-approval.md)
+- [Redact Browser run events before persistence](01g-redact-browser-run-events-before-persistence.md) — awaiting independent review
+- [Authorize durable dispatch by tool contract](01h-authorize-durable-dispatch-by-tool-contract.md) — awaiting independent review
+- [Ground Browser result authority in execution context](01i-ground-browser-result-authority-in-execution-context.md) — awaiting independent review
+- [Resume the exact Browser call after approval](01j-resume-the-exact-browser-call-after-approval.md) — awaiting independent review
 
 ## Done
 

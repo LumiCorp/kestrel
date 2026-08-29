@@ -71,6 +71,8 @@ export interface PinnedToolExecutionV1 {
   descriptor: ToolDescriptorV1;
   activation: ToolActivationRefV1;
   validator: ValidateFunction;
+  /** Trusted runtime registration; never derived from prepared-call input or adapter metadata. */
+  durableExternalEffectDispatch?: DurableExternalEffectDispatchV1 | undefined;
   handler: (
     input: unknown,
     lifecycle?: {
@@ -343,7 +345,12 @@ export async function executePinnedToolCallV1(input: {
   let preCleanupResult: AgentToolResultV2 | undefined;
   let preCleanupRawOutputDigest: string | undefined;
   let externalEffectAcknowledged = false;
-  const durableDispatch = readDurableExternalEffectDispatchV1(prepared);
+  const durableDispatch = executionClass === "external_side_effect" &&
+    input.pinned.durableExternalEffectDispatch !== undefined
+      ? parseDurableExternalEffectDispatchV1(
+          input.pinned.durableExternalEffectDispatch,
+        )
+      : undefined;
   try {
     rawOutput = await input.pinned.handler(prepared.effectiveInput, {
       acknowledgeExternalEffect: async () => {
@@ -414,20 +421,11 @@ export async function executePinnedToolCallV1(input: {
   return buildCompletedToolResult({ prepared, pinned: input.pinned, rawOutput, startedAt, executionClass });
 }
 
-export function readDurableExternalEffectDispatchV1(
-  prepared: PreparedToolCallV1,
-): DurableExternalEffectDispatchV1 | undefined {
-  const candidates = prepared.inputAdapters.flatMap((adapter) => {
-    const value = adapter.metadata.externalEffectDispatch;
-    return value === undefined ? [] : [value];
-  });
-  if (candidates.length === 0) return;
-  if (candidates.length !== 1) {
-    throw new Error("Prepared tool call contains conflicting external-effect dispatch protocols");
-  }
-  const value = candidates[0];
+export function parseDurableExternalEffectDispatchV1(
+  value: unknown,
+): DurableExternalEffectDispatchV1 {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("Prepared external-effect dispatch protocol is invalid");
+    throw new Error("Registered external-effect dispatch protocol is invalid");
   }
   const record = value as Record<string, unknown>;
   if (
@@ -441,7 +439,7 @@ export function readDurableExternalEffectDispatchV1(
     typeof record.unknownOutcomeMessage !== "string" ||
     record.unknownOutcomeMessage.length === 0
   ) {
-    throw new Error("Prepared external-effect dispatch protocol is invalid");
+    throw new Error("Registered external-effect dispatch protocol is invalid");
   }
   return {
     version: DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION,
