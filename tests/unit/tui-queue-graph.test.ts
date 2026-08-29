@@ -48,6 +48,43 @@ test("TuiQueueGraph resolves exact queued evidence across every durable lifecycl
   }
 });
 
+test("TuiQueueGraph rejects accepted queue conflicts before applying caller message filtering", async (t) => {
+  const identity = {
+    runId: "run-conflict",
+    messageId: "message-reservation",
+    threadId: "thread-main:session-queue",
+  };
+  for (const conflict of ["message", "predecessor", "status"] as const) {
+    await t.test(conflict, () => {
+      const value = session({
+        acceptedRunId: identity.runId,
+        acceptedRunMessageId: conflict === "message" ? "message-accepted" : identity.messageId,
+        acceptedRunThreadId: identity.threadId,
+        acceptedRunPredecessorId: conflict === "predecessor" ? "run-accepted-predecessor" : "run-r0",
+        ...(conflict === "status" ? { lastRunStatus: "FAILED" as const } : {}),
+        ...(conflict === "status"
+          ? {
+              terminalQueuedRuns: [{
+                ...identity,
+                predecessorRunId: "run-r0",
+                status: "COMPLETED",
+              }],
+            }
+          : {
+              queuedRunReservations: [{
+                ...identity,
+                predecessorRunId: "run-r0",
+              }],
+            }),
+      });
+      assert.throws(
+        () => resolveExactTuiQueuedEvidence(value, identity),
+        TuiQueueGraphConsistencyError,
+      );
+    });
+  }
+});
+
 function session(patch: Partial<TuiSessionMeta>): TuiSessionMeta {
   return {
     name: "queue",

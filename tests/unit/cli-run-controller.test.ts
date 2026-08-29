@@ -4473,6 +4473,112 @@ test("TuiRunController validates direct and response-loss terminals after pre-ro
   }
 });
 
+test("TuiRunController rejects direct and recovered terminals that conflict with a durable tombstone", async (t) => {
+  for (const responseKind of ["direct", "response-loss"] as const) {
+    await t.test(responseKind, async () => {
+      const threadId = "thread-main:session-1";
+      const messageId = `message-terminal-conflict-${responseKind}`;
+      let submittedRunId = "";
+      let operatorLookups = 0;
+      let queuedTerminalSyncs = 0;
+      let harness!: ReturnType<typeof createRunHarness>;
+      harness = createRunHarness({
+        activeSessionPatch: {
+          acceptedRunId: "run-r0",
+          acceptedRunMessageId: "message-r0",
+          acceptedRunThreadId: threadId,
+        },
+        syncForegroundQueuedTerminal: async () => {
+          queuedTerminalSyncs += 1;
+          return true;
+        },
+        sendCommand: async (type, payload) => {
+          if (type === "conversation.message.submit") {
+            submittedRunId = String(
+              (requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId,
+            );
+            const state = harness.uiStore.getState();
+            const queuedEvidence = [
+              ...(state.activeSession.pendingQueueSubmissions ?? []),
+              ...(state.activeSession.queuedRunReservations ?? []),
+            ].find((candidate) => candidate.runId === submittedRunId);
+            assert.ok(queuedEvidence !== undefined);
+            const tombstoned = {
+              ...state.activeSession,
+              acceptedRunId: queuedEvidence.runId,
+              acceptedRunMessageId: queuedEvidence.messageId,
+              acceptedRunThreadId: queuedEvidence.threadId,
+              acceptedRunPredecessorId: queuedEvidence.predecessorRunId ?? null,
+              pendingQueueSubmissions: state.activeSession.pendingQueueSubmissions?.filter(
+                (candidate) => candidate.runId !== submittedRunId,
+              ),
+              queuedRunReservations: state.activeSession.queuedRunReservations?.filter(
+                (candidate) => candidate.runId !== submittedRunId,
+              ),
+              lastRunStatus: "COMPLETED" as const,
+              terminalQueuedRuns: [{ ...queuedEvidence, status: "COMPLETED" as const }],
+            };
+            harness.uiStore.patch({
+              activeSession: tombstoned,
+              sessions: state.sessions.map((session) =>
+                session.sessionId === tombstoned.sessionId ? tombstoned : session
+              ),
+            });
+            if (responseKind === "response-loss") throw new Error("response lost after terminal commit");
+            return makeRunnerEvent({
+              type: "run.failed",
+              sessionId: "session-1",
+              threadId,
+              runId: submittedRunId,
+              payload: {
+                result: makeFailedResult(submittedRunId),
+                error: { code: "RUN_FAILED", message: "conflicting direct failure" },
+              },
+            });
+          }
+          if (type === "operator.thread") {
+            operatorLookups += 1;
+            return makeRunnerEvent({
+              type: "operator.thread",
+              payload: {
+                view: {
+                  ...makeQueuedTerminalAuthorityView([{
+                    runId: submittedRunId,
+                    messageId,
+                    status: "FAILED",
+                  }]),
+                  conversationMessageRoutes: [{
+                    messageId,
+                    disposition: "started" as const,
+                    runId: submittedRunId,
+                    createdAt: "2026-05-14T00:00:00.000Z",
+                  }],
+                },
+              },
+            });
+          }
+          throw new Error(`Unexpected command '${type}'.`);
+        },
+      });
+      installActiveConversationView(harness.controller);
+      harness.uiStore.patch({ running: true });
+
+      assert.equal(await harness.controller.startActiveTurn({
+        messageId,
+        submittedMessage: "reject conflicting terminal authority",
+        queueRequested: true,
+      }), false);
+      const session = harness.uiStore.getState().activeSession;
+      assert.equal(session.acceptedRunId, submittedRunId);
+      assert.equal(session.lastRunStatus, "COMPLETED");
+      assert.equal(session.terminalQueuedRuns?.[0]?.runId, submittedRunId);
+      assert.equal(session.terminalQueuedRuns?.[0]?.status, "COMPLETED");
+      assert.equal(queuedTerminalSyncs, 0);
+      assert.equal(operatorLookups, responseKind === "direct" ? 0 : 1);
+    });
+  }
+});
+
 test("TuiRunController response-loss terminal recovery preserves a newer accepted run", async () => {
   let submittedRunId: string | undefined;
   const messageId = "message-recovered-prior-terminal";

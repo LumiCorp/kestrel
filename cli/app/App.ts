@@ -297,6 +297,7 @@ export class App {
   private transcriptAppendQueue: Promise<void> = Promise.resolve();
   private sessionsFileCommitTail: Promise<void> = Promise.resolve();
   private readonly queueSessionCommitTailBySession = new Map<string, Promise<void>>();
+  private readonly terminalRecoveryApplyTailBySession = new Map<string, Promise<void>>();
   private startTaskJourney: StartTaskJourneyState | undefined;
   private childMissionJourney: ChildMissionJourneyState | undefined;
   private scriptedInputsEnqueued = false;
@@ -4625,6 +4626,23 @@ export class App {
     }
   }
 
+  private async coordinateTerminalRecoveryPageApply<T>(
+    sessionId: string,
+    apply: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.terminalRecoveryApplyTailBySession.get(sessionId) ?? Promise.resolve();
+    const operation = previous.catch(() => undefined).then(apply);
+    const tail = operation.then(() => undefined, () => undefined);
+    this.terminalRecoveryApplyTailBySession.set(sessionId, tail);
+    try {
+      return await operation;
+    } finally {
+      if (this.terminalRecoveryApplyTailBySession.get(sessionId) === tail) {
+        this.terminalRecoveryApplyTailBySession.delete(sessionId);
+      }
+    }
+  }
+
   private async applyOperatorControlResponse(
     action: OperatorControlApplyAction,
     payload: OperatorControlledEventPayload,
@@ -4755,62 +4773,74 @@ export class App {
     };
     const applyPage = async (
       page: Awaited<ReturnType<typeof fetch>>,
+      expectedCursor: string | undefined,
       resetCursor = false,
-    ) => {
-      if (page.terminalOutcomes !== undefined) {
-        for (const outcome of page.terminalOutcomes) {
-          if (outcome.outcomeStatus === "completed" && outcome.result !== undefined) {
-            await this.applyTerminalResult(outcome.sessionId, outcome.result, outcome.result.finalizedPayload);
-            continue;
+    ): Promise<boolean> => this.coordinateTerminalRecoveryPageApply(
+      session.sessionId,
+      async () => {
+        const current = this.sessionsFile.sessions.find((entry) => entry.sessionId === session.sessionId);
+        if (current?.terminalMessageCursor !== expectedCursor) return false;
+        if (page.terminalOutcomes !== undefined) {
+          for (const outcome of page.terminalOutcomes) {
+            if (outcome.outcomeStatus === "completed" && outcome.result !== undefined) {
+              await this.applyTerminalResult(outcome.sessionId, outcome.result, outcome.result.finalizedPayload);
+              continue;
+            }
+            const line = projectTuiTerminalOutcome(outcome);
+            const target = this.sessionsFile.sessions.find((entry) => entry.sessionId === outcome.sessionId);
+            if (target !== undefined) {
+              const currentHistory = this.uiStore.getState().activeSession.sessionId === outcome.sessionId
+                ? this.uiStore.getState().transcript
+                : await this.historyStore.readTranscript(outcome.sessionId, 100_000);
+              if (currentHistory.some((entry) => entry.eventId === line.eventId)) continue;
+              await this.appendSessionHistoryLine(
+                target,
+                line.role,
+                line.text,
+                line.data,
+                outcome.result?.output,
+                line.eventId,
+              );
+            }
           }
-          const line = projectTuiTerminalOutcome(outcome);
-          const target = this.sessionsFile.sessions.find((entry) => entry.sessionId === outcome.sessionId);
-          if (target !== undefined) {
-            const currentHistory = this.uiStore.getState().activeSession.sessionId === outcome.sessionId
-              ? this.uiStore.getState().transcript
-              : await this.historyStore.readTranscript(outcome.sessionId, 100_000);
-            if (currentHistory.some((entry) => entry.eventId === line.eventId)) continue;
-            await this.appendSessionHistoryLine(
-              target,
-              line.role,
-              line.text,
-              line.data,
-              outcome.result?.output,
-              line.eventId,
-            );
+        } else {
+          for (const message of page.messages) {
+            await this.applyTerminalResult(message.sessionId, message.result);
           }
         }
-      } else {
-        for (const message of page.messages) {
-          await this.applyTerminalResult(message.sessionId, message.result);
+        await this.appendDiagnosticsLog({
+          scope: "terminal_message.recovered",
+          summary: "Recovered terminal messages for a session.",
+          details: stringifyDiagnosticDetails({
+            sessionId: session.sessionId,
+            count: page.terminalOutcomes?.length ?? page.messages.length,
+          }),
+        });
+        if (page.nextCursor !== undefined || resetCursor) {
+          const committed = await this.commitQueueSessionMutation(session.sessionId, (latest) =>
+            latest.terminalMessageCursor === expectedCursor
+              ? {
+                  ...latest,
+                  terminalMessageCursor: page.nextCursor,
+                }
+              : undefined
+          );
+          return committed !== undefined;
         }
+        return true;
       }
-      await this.appendDiagnosticsLog({
-        scope: "terminal_message.recovered",
-        summary: "Recovered terminal messages for a session.",
-        details: stringifyDiagnosticDetails({
-          sessionId: session.sessionId,
-          count: page.terminalOutcomes?.length ?? page.messages.length,
-        }),
-      });
-      if (page.nextCursor !== undefined || resetCursor) {
-        await this.commitQueueSessionMutation(session.sessionId, (current) => ({
-          ...current,
-          terminalMessageCursor: page.nextCursor,
-        }));
-      }
-    };
+    );
     try {
       while (true) {
         const page = await fetch(cursor, 100);
-        await applyPage(page);
+        if (await applyPage(page, cursor) === false) return;
         if (!page.hasMore || page.nextCursor === undefined) return;
         cursor = page.nextCursor;
       }
     } catch (error) {
       if (cursor !== undefined) {
         try {
-          await applyPage(await fetch(undefined, 500), true);
+          if (await applyPage(await fetch(undefined, 500), cursor, true) === false) return;
           await this.appendDiagnosticsLog({
             scope: "terminal_message.recovery_failed",
             summary: "Reset an invalid terminal message recovery cursor.",
@@ -4874,32 +4904,33 @@ export class App {
     if (existing !== undefined) {
       const nextSession = await this.commitQueueSessionMutation(childSessionId, (current) => {
         const currentTask = current.delegation;
-        if (
-          currentTask !== undefined
-          && (
-            currentTask.taskId !== task.taskId
-            || (
-              currentTask.parentRunId !== undefined
-              && task.parentRunId !== undefined
-              && currentTask.parentRunId !== task.parentRunId
-            )
-            ||
-            task.updatedAt < currentTask.updatedAt
-            || (
-              task.updatedAt === currentTask.updatedAt
-              && (
-                currentTask.status === "WAITING"
-                || currentTask.status === "COMPLETED"
-                || currentTask.status === "FAILED"
-              )
-              && (task.status === "RUNNING" || task.status === "RECOVERING")
-            )
-            || (
-              (current.lastRunStatus === "COMPLETED" || current.lastRunStatus === "FAILED")
-              && (task.status === "RUNNING" || task.status === "RECOVERING")
-            )
-          )
-        ) return undefined;
+        if (currentTask !== undefined) {
+          const sameTaskRun = currentTask.taskId === task.taskId
+            && currentTask.parentRunId === task.parentRunId;
+          const exactNewTaskRun = sameTaskRun === false
+            && currentTask.taskId === task.taskId
+            && task.updatedAt > currentTask.updatedAt
+            && currentTask.parentRunId !== undefined
+            && task.parentRunId !== undefined
+            && currentTask.parentRunId !== task.parentRunId;
+          if (sameTaskRun === false && exactNewTaskRun === false) return undefined;
+          if (sameTaskRun && task.updatedAt < currentTask.updatedAt) return undefined;
+          if (
+            sameTaskRun
+            && task.updatedAt === currentTask.updatedAt
+            && task.status !== currentTask.status
+          ) return undefined;
+          if (
+            sameTaskRun
+            && (currentTask.status === "COMPLETED" || currentTask.status === "FAILED")
+            && task.status !== currentTask.status
+          ) return undefined;
+          if (
+            sameTaskRun
+            && (current.lastRunStatus === "COMPLETED" || current.lastRunStatus === "FAILED")
+            && task.status !== current.lastRunStatus
+          ) return undefined;
+        }
         return {
           ...current,
           profileId: task.profileId,
@@ -5713,6 +5744,10 @@ export class App {
         messageId: input.messageId,
       });
       if (queuedEvidence === undefined) return undefined;
+      if (
+        queuedEvidence.terminalStatus !== undefined
+        && input.result.output.status !== queuedEvidence.terminalStatus
+      ) return undefined;
       const hasExactTerminalAuthority = terminalStatus === undefined
         || (
           input.authoritativeView !== undefined
@@ -5869,6 +5904,10 @@ export class App {
             threadId: input.threadId,
             messageId: input.messageId,
           });
+      if (
+        queuedEvidence?.terminalStatus !== undefined
+        && nextStatus !== queuedEvidence.terminalStatus
+      ) return undefined;
       const exactPendingAcceptance = current.pendingRunThreadId === input.threadId
         && current.pendingRunId === input.runId
         && (
@@ -5886,6 +5925,11 @@ export class App {
           input.messageId === undefined
           || current.acceptedRunMessageId === input.messageId
         );
+      if (
+        exactAccepted
+        && (current.lastRunStatus === "COMPLETED" || current.lastRunStatus === "FAILED")
+        && nextStatus !== current.lastRunStatus
+      ) return undefined;
       if (
         exactAccepted === false
         && exactPendingAcceptance === false
@@ -5963,90 +6007,6 @@ export class App {
     }
   }
 
-  private async updateAcceptedBackgroundSession(
-    task: DelegationTaskMeta,
-    appendStartedHistory?: boolean,
-    patch: Partial<TuiSessionMeta> = {},
-  ): Promise<boolean> {
-    const childSessionId = task.childSessionId;
-    if (childSessionId === undefined) return false;
-    const existing = this.sessionsFile.sessions.find(
-      (item) => item.sessionId === childSessionId,
-    );
-    if (existing === undefined) return false;
-    const shouldAppendStartedHistory = appendStartedHistory ?? existing?.started !== true;
-    const accepted = await this.commitQueueSessionMutation(childSessionId, (current) => {
-      const exactRunId = patch.acceptedRunId;
-      const queuedIdentity = exactRunId === undefined
-        ? undefined
-        : [
-            ...(current.pendingQueueSubmissions ?? []),
-            ...(current.queuedRunReservations ?? []),
-            ...(current.terminalQueuedRuns ?? []),
-          ].find((candidate) => candidate.runId === exactRunId);
-      const exactQueuedEvidence = queuedIdentity === undefined
-        ? undefined
-        : resolveExactTuiQueuedEvidence(current, {
-            runId: queuedIdentity.runId,
-            messageId: queuedIdentity.messageId,
-            threadId: queuedIdentity.threadId,
-          });
-      const currentPatch = exactQueuedEvidence === undefined
-        ? patch
-        : {
-            ...patch,
-            acceptedRunId: exactQueuedEvidence.runId,
-            acceptedRunMessageId: exactQueuedEvidence.messageId,
-            acceptedRunThreadId: exactQueuedEvidence.threadId,
-            acceptedRunPredecessorId: durableAcceptedQueuePredecessorId(exactQueuedEvidence),
-            pendingQueueSubmissions: omitExactRunIdentity(
-              current.pendingQueueSubmissions,
-              exactQueuedEvidence,
-            ),
-            queuedRunReservations: omitQueuedRunReservation(
-              current.queuedRunReservations,
-              exactQueuedEvidence,
-            ),
-          };
-      return {
-        ...current,
-        profileId: task.profileId,
-        started: true,
-        ...currentPatch,
-        updatedAt: task.updatedAt,
-        delegation: task,
-        lastRunStatus:
-          task.status === "FAILED"
-            ? "FAILED"
-            : task.status === "COMPLETED"
-              ? "COMPLETED"
-              : task.status === "WAITING"
-                ? "WAITING"
-                : task.status === "RUNNING" || task.status === "RECOVERING"
-                  ? undefined
-                  : current.lastRunStatus,
-      };
-    });
-    if (accepted === undefined) return false;
-    if (shouldAppendStartedHistory === false) return true;
-    await this.appendSessionHistoryLine(
-      accepted,
-      "system",
-      `Background task started: ${task.title}`,
-      undefined,
-      undefined,
-      `delegation-started:${task.taskId}`,
-    );
-    await this.appendHistoryLine(
-      "system",
-      `Launched background task '${accepted.name}'.`,
-      undefined,
-      undefined,
-      `delegation-launched:${task.taskId}`,
-    );
-    return true;
-  }
-
   private async syncBackgroundSessionResult(
     expectedSessionId: string,
     expectedRunId: string,
@@ -6057,74 +6017,114 @@ export class App {
     operatorState?: TuiSessionMeta["operatorState"] | undefined,
   ): Promise<void> {
     if (output.sessionId !== expectedSessionId || output.runId !== expectedRunId) return;
-    const session = this.sessionsFile.sessions.find((item) => item.sessionId === expectedSessionId);
-    if (session?.delegation === undefined) {
-      return;
-    }
-    const queuedReservation = session.queuedRunReservations?.find(
-      (reservation) => reservation.runId === expectedRunId,
-    );
-    if (
-      session.acceptedRunId === undefined
-      && allowUnstartedAcceptance === false
-      && queuedReservation === undefined
-    ) return;
-    if (
-      session.acceptedRunId !== undefined
-      && session.acceptedRunId !== expectedRunId
-      && queuedReservation === undefined
-    ) return;
-    if (session.delegation.status === "COMPLETED" || session.delegation.status === "FAILED") return;
     const nextStatus = output.status === "WAITING"
       ? "WAITING"
       : output.status === "FAILED"
         ? "FAILED"
         : "COMPLETED";
-    const nextSession = {
-      acceptedRunId: expectedRunId,
-      acceptedRunMessageId:
-        queuedReservation?.messageId ?? session.pendingRunMessageId ?? session.acceptedRunMessageId,
-      acceptedRunThreadId:
-        queuedReservation?.threadId ?? session.pendingRunThreadId ?? session.acceptedRunThreadId,
-      acceptedRunPredecessorId: queuedReservation === undefined
-        ? session.acceptedRunId === expectedRunId
-          ? session.acceptedRunPredecessorId
-          : undefined
-        : durableAcceptedQueuePredecessorId(queuedReservation),
-      pendingRunId: undefined,
-      pendingRunMessageId: undefined,
-      pendingRunThreadId: undefined,
-      queuedRunReservations: queuedReservation === undefined
-        ? session.queuedRunReservations
-        : omitQueuedRunReservation(session.queuedRunReservations, queuedReservation),
-      pendingWaitFor: output.status === "WAITING" ? output.waitFor : undefined,
-      lastRunStatus: output.status,
-      ...(operatorState !== undefined
-        ? {
+    const now = new Date().toISOString();
+    let appendStartedHistory = false;
+    const committed = await this.commitQueueSessionMutation(expectedSessionId, (current) => {
+      if (current.delegation === undefined) return undefined;
+      if (current.delegation.status === "COMPLETED" || current.delegation.status === "FAILED") {
+        return undefined;
+      }
+      const queuedIdentity = [
+        ...(current.pendingQueueSubmissions ?? []),
+        ...(current.queuedRunReservations ?? []),
+        ...(current.terminalQueuedRuns ?? []),
+      ].find((candidate) => candidate.runId === expectedRunId);
+      const queuedEvidence = queuedIdentity === undefined
+        ? undefined
+        : resolveExactTuiQueuedEvidence(current, queuedIdentity);
+      const exactAccepted = current.acceptedRunId === expectedRunId;
+      const exactPending = current.pendingRunId === expectedRunId;
+      if (exactAccepted === false && exactPending === false && queuedEvidence === undefined) return undefined;
+      if (
+        queuedEvidence !== undefined
+        && exactAccepted === false
+        && queuedEvidenceCanReplaceAcceptedRun(current, queuedEvidence) === false
+      ) return undefined;
+      if (
+        allowUnstartedAcceptance === false
+        && current.acceptedRunId === undefined
+        && queuedEvidence === undefined
+      ) return undefined;
+      if (
+        queuedEvidence?.terminalStatus !== undefined
+        && output.status !== queuedEvidence.terminalStatus
+      ) return undefined;
+      appendStartedHistory = current.started !== true;
+      const acceptedMessageId = queuedEvidence?.messageId
+        ?? (exactPending ? current.pendingRunMessageId : current.acceptedRunMessageId);
+      const acceptedThreadId = queuedEvidence?.threadId
+        ?? (exactPending ? current.pendingRunThreadId : current.acceptedRunThreadId);
+      const lifecycleSession: TuiSessionMeta = {
+        ...current,
+        started: true,
+        acceptedRunId: expectedRunId,
+        acceptedRunMessageId: acceptedMessageId,
+        acceptedRunThreadId: acceptedThreadId,
+        acceptedRunPredecessorId: queuedEvidence === undefined
+          ? exactAccepted
+            ? current.acceptedRunPredecessorId
+            : undefined
+          : durableAcceptedQueuePredecessorId(queuedEvidence),
+        ...(exactPending
+          ? {
+              pendingRunId: undefined,
+              pendingRunMessageId: undefined,
+              pendingRunThreadId: undefined,
+            }
+          : {}),
+        pendingQueueSubmissions: queuedEvidence === undefined
+          ? current.pendingQueueSubmissions
+          : omitExactRunIdentity(current.pendingQueueSubmissions, queuedEvidence),
+        queuedRunReservations: queuedEvidence === undefined
+          ? current.queuedRunReservations
+          : omitQueuedRunReservation(current.queuedRunReservations, queuedEvidence),
+        pendingWaitFor: output.status === "WAITING" ? output.waitFor : undefined,
+        lastRunStatus: output.status,
+        delegation: {
+          ...current.delegation,
+          status: nextStatus,
+          errorCode: undefined,
+          errorMessage: undefined,
+          waitEventType: output.waitFor?.eventType,
+          resultSummary: output.status === "WAITING"
+            ? current.delegation.resultSummary
+            : assistantText ?? current.delegation.resultSummary,
+          updatedAt: now,
+        },
+        updatedAt: now,
+      };
+      return operatorState === undefined
+        ? lifecycleSession
+        : {
+            ...lifecycleSession,
             operatorState: this.buildSessionOperatorState({
-              session: {
-                ...session,
-                pendingWaitFor: output.status === "WAITING" ? output.waitFor : undefined,
-                lastRunStatus: output.status,
-              },
+              session: lifecycleSession,
               profile: this.uiStore.getState().activeProfile,
               runtime: operatorState,
             }),
-          }
-        : {}),
-    } satisfies Partial<TuiSessionMeta>;
-    await this.updateAcceptedBackgroundSession({
-      ...session.delegation,
-      status: nextStatus,
-      errorCode: undefined,
-      errorMessage: undefined,
-      waitEventType: output.waitFor?.eventType,
-      resultSummary:
-        output.status === "WAITING"
-          ? session.delegation.resultSummary
-          : assistantText ?? session.delegation.resultSummary,
-      updatedAt: new Date().toISOString(),
-    }, undefined, nextSession);
+          };
+    });
+    if (committed?.delegation === undefined || appendStartedHistory === false) return;
+    await this.appendSessionHistoryLine(
+      committed,
+      "system",
+      `Background task started: ${committed.delegation.title}`,
+      undefined,
+      undefined,
+      `delegation-started:${committed.delegation.taskId}`,
+    );
+    await this.appendHistoryLine(
+      "system",
+      `Launched background task '${committed.name}'.`,
+      undefined,
+      undefined,
+      `delegation-launched:${committed.delegation.taskId}`,
+    );
   }
 
   private async syncBackgroundSessionFailure(
@@ -6134,37 +6134,120 @@ export class App {
     message: string,
   ): Promise<void> {
     if (outputSessionId !== expectedSessionId) return;
-    const session = this.sessionsFile.sessions.find((item) => item.sessionId === expectedSessionId);
-    if (session?.delegation === undefined) {
-      return;
-    }
-    const queuedReservation = session.queuedRunReservations?.find(
-      (reservation) => reservation.runId === expectedRunId,
-    );
-    if (session.acceptedRunId === undefined && queuedReservation === undefined) {
-      await this.failBackgroundLaunchSetup(session, session.delegation, message);
-      return;
-    }
-    if (session.acceptedRunId !== expectedRunId && queuedReservation === undefined) return;
-    if (session.delegation.status === "COMPLETED" || session.delegation.status === "FAILED") return;
-    await this.updateAcceptedBackgroundSession({
-      ...session.delegation,
-      status: "FAILED",
-      errorMessage: message,
-      updatedAt: new Date().toISOString(),
-    }, undefined, {
-      acceptedRunId: expectedRunId,
-      acceptedRunMessageId: queuedReservation?.messageId ?? session.acceptedRunMessageId,
-      acceptedRunThreadId: queuedReservation?.threadId ?? session.acceptedRunThreadId,
-      acceptedRunPredecessorId: queuedReservation === undefined
-        ? session.acceptedRunId === expectedRunId
-          ? session.acceptedRunPredecessorId
-          : undefined
-        : durableAcceptedQueuePredecessorId(queuedReservation),
-      queuedRunReservations: queuedReservation === undefined
-        ? session.queuedRunReservations
-        : omitQueuedRunReservation(session.queuedRunReservations, queuedReservation),
+    const now = new Date().toISOString();
+    let setupFailure = false;
+    let appendStartedHistory = false;
+    const committed = await this.commitQueueSessionMutation(expectedSessionId, (current) => {
+      if (current.delegation === undefined) return undefined;
+      if (current.delegation.status === "COMPLETED" || current.delegation.status === "FAILED") {
+        return undefined;
+      }
+      const queuedIdentity = [
+        ...(current.pendingQueueSubmissions ?? []),
+        ...(current.queuedRunReservations ?? []),
+        ...(current.terminalQueuedRuns ?? []),
+      ].find((candidate) => candidate.runId === expectedRunId);
+      const queuedEvidence = queuedIdentity === undefined
+        ? undefined
+        : resolveExactTuiQueuedEvidence(current, queuedIdentity);
+      const exactAccepted = current.acceptedRunId === expectedRunId;
+      const exactPending = current.pendingRunId === expectedRunId;
+      if (exactAccepted === false && exactPending === false && queuedEvidence === undefined) return undefined;
+      if (
+        queuedEvidence !== undefined
+        && exactAccepted === false
+        && queuedEvidenceCanReplaceAcceptedRun(current, queuedEvidence) === false
+      ) return undefined;
+      if (
+        queuedEvidence?.terminalStatus !== undefined
+        && queuedEvidence.terminalStatus !== "FAILED"
+      ) return undefined;
+      setupFailure = current.acceptedRunId === undefined && queuedEvidence === undefined;
+      appendStartedHistory = setupFailure === false && current.started !== true;
+      const failedDelegation: DelegationTaskMeta = {
+        ...current.delegation,
+        status: "FAILED",
+        errorMessage: message,
+        updatedAt: now,
+      };
+      if (setupFailure) {
+        return {
+          ...current,
+          started: false,
+          pendingRunId: undefined,
+          pendingRunMessageId: undefined,
+          pendingRunThreadId: undefined,
+          lastRunStatus: "FAILED",
+          delegation: failedDelegation,
+          updatedAt: now,
+        };
+      }
+      return {
+        ...current,
+        started: true,
+        acceptedRunId: expectedRunId,
+        acceptedRunMessageId: queuedEvidence?.messageId
+          ?? (exactPending ? current.pendingRunMessageId : current.acceptedRunMessageId),
+        acceptedRunThreadId: queuedEvidence?.threadId
+          ?? (exactPending ? current.pendingRunThreadId : current.acceptedRunThreadId),
+        acceptedRunPredecessorId: queuedEvidence === undefined
+          ? exactAccepted
+            ? current.acceptedRunPredecessorId
+            : undefined
+          : durableAcceptedQueuePredecessorId(queuedEvidence),
+        ...(exactPending
+          ? {
+              pendingRunId: undefined,
+              pendingRunMessageId: undefined,
+              pendingRunThreadId: undefined,
+            }
+          : {}),
+        pendingQueueSubmissions: queuedEvidence === undefined
+          ? current.pendingQueueSubmissions
+          : omitExactRunIdentity(current.pendingQueueSubmissions, queuedEvidence),
+        queuedRunReservations: queuedEvidence === undefined
+          ? current.queuedRunReservations
+          : omitQueuedRunReservation(current.queuedRunReservations, queuedEvidence),
+        lastRunStatus: "FAILED",
+        delegation: failedDelegation,
+        updatedAt: now,
+      };
     });
+    if (committed?.delegation === undefined) return;
+    if (setupFailure) {
+      await this.appendSessionHistoryLine(
+        committed,
+        "system",
+        `Background task setup failed: ${message}`,
+        undefined,
+        undefined,
+        `delegation-start-failed:${committed.delegation.taskId}`,
+      );
+      await this.appendHistoryLine(
+        "system",
+        `Background task '${committed.name}' failed to start: ${message}`,
+        undefined,
+        undefined,
+        `delegation-launch-failed:${committed.delegation.taskId}`,
+      );
+      return;
+    }
+    if (appendStartedHistory === false) return;
+    await this.appendSessionHistoryLine(
+      committed,
+      "system",
+      `Background task started: ${committed.delegation.title}`,
+      undefined,
+      undefined,
+      `delegation-started:${committed.delegation.taskId}`,
+    );
+    await this.appendHistoryLine(
+      "system",
+      `Launched background task '${committed.name}'.`,
+      undefined,
+      undefined,
+      `delegation-launched:${committed.delegation.taskId}`,
+    );
   }
 
   private pushRunLog(line: AgentRunLogLine): void {

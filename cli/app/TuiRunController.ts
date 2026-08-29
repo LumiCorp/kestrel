@@ -1257,6 +1257,11 @@ export class TuiRunController {
         : terminalOutput?.status === "FAILED"
           ? "FAILED" as const
           : undefined;
+      if (
+        exactQueuedEvidence?.terminalStatus !== undefined
+        && terminalOutput !== undefined
+        && terminalOutput.status !== exactQueuedEvidence.terminalStatus
+      ) return false;
       if (exactQueuedEvidence !== undefined && directTerminalStatus !== undefined) {
         const authoritativeView = await this.requestConversationView(threadId).catch(() => undefined);
         if (
@@ -1781,6 +1786,10 @@ export class TuiRunController {
           : recoveredRouteRunId === reservedRunId
             && recoveredRunStatus !== undefined
             && recoveredQueueEvidence !== undefined
+            && (
+              recoveredQueueEvidence.terminalStatus === undefined
+              || recoveredRunStatus === recoveredQueueEvidence.terminalStatus
+            )
             && hasExactQueuedRunEvidence(recoveredView!, {
               ...recoveredQueueEvidence,
               status: recoveredRunStatus,
@@ -2141,6 +2150,10 @@ export class TuiRunController {
           : exactRunStatusFromView(recoveredView, recoveredRouteRunId);
         const exactRecoveredRoute = recoveredRouteRunId === reservedRunId
           && recoveredRunStatus !== undefined
+          && (
+            finalRecoveredQueueEvidence?.terminalStatus === undefined
+            || recoveredRunStatus === finalRecoveredQueueEvidence.terminalStatus
+          )
           && (
             queueSubmission === false
             || finalRecoveredQueueEvidence !== undefined

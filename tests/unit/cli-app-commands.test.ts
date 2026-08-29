@@ -2404,7 +2404,7 @@ test("same-child task and history updates merge after queued commit settlement",
       ) => Promise<void>)({
         ...child.delegation,
         status: "WAITING",
-        updatedAt: new Date().toISOString(),
+        updatedAt: "2026-08-30T00:00:00.000Z",
       });
       const historyUpdate = (appState.appendSessionHistoryLine as (
         session: TuiSessionMeta,
@@ -2511,7 +2511,7 @@ test("queued background start applies after earlier task and history mutations s
   assert.equal(current?.queuedRunReservations, undefined);
 });
 
-test("older delegated task progress cannot regress an exact terminal child across restart", async () => {
+test("delegated task updates cannot regress or conflict with an exact terminal child across restart", async () => {
   const { app, home } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2541,13 +2541,24 @@ test("older delegated task progress cannot regress an exact terminal child acros
   const sessionStore = appState.sessionStore as SessionStore;
   await sessionStore.save(appState.sessionsFile as never);
 
-  for (const status of ["RUNNING", "RECOVERING"] as const) {
+  for (const update of [{
+    status: "RUNNING" as const,
+    updatedAt: "2026-08-29T00:00:02.000Z",
+  }, {
+    status: "RECOVERING" as const,
+    updatedAt: "2026-08-29T00:00:02.000Z",
+  }, {
+    status: "WAITING" as const,
+    updatedAt: "2026-08-29T00:00:04.000Z",
+  }, {
+    status: "FAILED" as const,
+    updatedAt: "2026-08-29T00:00:03.000Z",
+  }]) {
     await (appState.updateTaskSessionFromMeta as (
       task: NonNullable<TuiSessionMeta["delegation"]>,
     ) => Promise<void>)({
       ...child.delegation!,
-      status,
-      updatedAt: "2026-08-29T00:00:02.000Z",
+      ...update,
     });
   }
 
@@ -2562,6 +2573,396 @@ test("older delegated task progress cannot regress an exact terminal child acros
   assert.equal(restarted?.delegation?.status, "COMPLETED");
   assert.equal(restarted?.lastRunStatus, "COMPLETED");
   assert.equal(restarted?.acceptedRunId, "run-terminal");
+});
+
+test("a newer parent run can reopen only the same delegated task", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-task-rerun-identity",
+    started: true,
+    lastRunStatus: "COMPLETED",
+    delegation: {
+      taskId: "task-rerun-identity",
+      parentSessionId: "session-1",
+      parentRunId: "run-parent-a",
+      childSessionId: "child-task-rerun-identity",
+      childSessionName: "child-task-rerun-identity",
+      title: "task rerun identity",
+      status: "COMPLETED",
+      profileId: "kestrel",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:03.000Z",
+    },
+    updatedAt: "2026-08-29T00:00:03.000Z",
+  });
+  const updateTaskFromMeta = appState.updateTaskSessionFromMeta as (
+    task: NonNullable<TuiSessionMeta["delegation"]>,
+  ) => Promise<void>;
+  const updateTask = (task: NonNullable<TuiSessionMeta["delegation"]>) =>
+    updateTaskFromMeta.call(app, task);
+
+  await updateTask({
+    ...child.delegation!,
+    taskId: "task-unrelated",
+    parentRunId: "run-parent-b",
+    status: "RUNNING",
+    updatedAt: "2026-08-29T00:00:04.000Z",
+  });
+  let current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.taskId, "task-rerun-identity");
+  assert.equal(current?.delegation?.status, "COMPLETED");
+  assert.equal(current?.lastRunStatus, "COMPLETED");
+
+  await updateTask({
+    ...child.delegation!,
+    parentRunId: "run-parent-b",
+    status: "RUNNING",
+    updatedAt: "2026-08-29T00:00:04.000Z",
+  });
+  current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.taskId, "task-rerun-identity");
+  assert.equal(current?.delegation?.parentRunId, "run-parent-b");
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.lastRunStatus, undefined);
+});
+
+test("background result and failure settlement cannot overwrite a newer terminal run", async (t) => {
+  for (const outcome of ["COMPLETED", "WAITING", "FAILED"] as const) {
+    await t.test(outcome, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const sessionId = `child-stale-${outcome.toLowerCase()}`;
+      const child = installBackgroundSession(appState, {
+        sessionId,
+        started: true,
+        acceptedRunId: "run-a",
+        acceptedRunMessageId: "message-a",
+        acceptedRunThreadId: sessionId,
+        delegation: {
+          taskId: `task-${sessionId}`,
+          parentSessionId: "session-1",
+          childSessionId: sessionId,
+          childSessionName: sessionId,
+          title: "stale settlement",
+          status: "RUNNING",
+          profileId: "kestrel",
+          provider: "openrouter",
+          model: "test-model",
+          createdAt: "2026-08-29T00:00:00.000Z",
+          updatedAt: "2026-08-29T00:00:01.000Z",
+        },
+      });
+      let releaseNewerMutation: (() => void) | undefined;
+      let newerMutationEnteredResolve: (() => void) | undefined;
+      const newerMutationEntered = new Promise<void>((resolve) => {
+        newerMutationEnteredResolve = resolve;
+      });
+      const newerMutationRelease = new Promise<void>((resolve) => {
+        releaseNewerMutation = resolve;
+      });
+      const commitMutation = appState.commitQueueSessionMutation as (
+        id: string,
+        mutation: (current: TuiSessionMeta) => Promise<TuiSessionMeta>,
+      ) => Promise<TuiSessionMeta | undefined>;
+      const newerCommit = commitMutation.call(app, sessionId, async (current) => {
+        newerMutationEnteredResolve?.();
+        await newerMutationRelease;
+        return {
+          ...current,
+          acceptedRunId: "run-b",
+          acceptedRunMessageId: "message-b",
+          acceptedRunThreadId: sessionId,
+          lastRunStatus: "COMPLETED",
+          terminalQueuedRuns: [{
+            runId: "run-a",
+            messageId: "message-a",
+            threadId: sessionId,
+            status: outcome === "FAILED" ? "FAILED" as const : "COMPLETED" as const,
+          }],
+          delegation: {
+            ...current.delegation!,
+            status: "COMPLETED",
+            updatedAt: "2026-08-29T00:00:03.000Z",
+          },
+          updatedAt: "2026-08-29T00:00:03.000Z",
+        };
+      });
+      await newerMutationEntered;
+      const output = {
+        status: outcome === "WAITING" ? "WAITING" as const : "COMPLETED" as const,
+        sessionId,
+        runId: "run-a",
+        quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+        errors: [],
+        telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+      };
+      const staleSettlement = outcome === "FAILED"
+        ? (appState.syncBackgroundSessionFailure as (
+            expectedSessionId: string,
+            expectedRunId: string,
+            outputSessionId: string,
+            message: string,
+          ) => Promise<void>)(sessionId, "run-a", sessionId, "stale failure")
+        : (appState.syncBackgroundSessionResult as (
+            expectedSessionId: string,
+            expectedRunId: string,
+            allowUnstartedAcceptance: boolean,
+            result: typeof output,
+            assistantText: string | null,
+            finalizedPayload: unknown,
+          ) => Promise<void>)(sessionId, "run-a", false, output, "stale result", undefined);
+      releaseNewerMutation?.();
+      await newerCommit;
+      await staleSettlement;
+
+      const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+      assert.equal(current?.acceptedRunId, "run-b");
+      assert.equal(current?.acceptedRunMessageId, "message-b");
+      assert.equal(current?.lastRunStatus, "COMPLETED");
+      assert.equal(current?.delegation?.status, "COMPLETED");
+    });
+  }
+});
+
+test("failed pending background settlement installs only the pending run identity", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const sessionId = "child-failed-pending-identity";
+  const child = installBackgroundSession(appState, {
+    sessionId,
+    started: true,
+    acceptedRunId: "run-b",
+    acceptedRunMessageId: "message-b",
+    acceptedRunThreadId: "thread-b",
+    acceptedRunPredecessorId: "run-before-b",
+    pendingRunId: "run-a",
+    pendingRunMessageId: "message-a",
+    pendingRunThreadId: "thread-a",
+    delegation: {
+      taskId: "task-failed-pending-identity",
+      parentSessionId: "session-1",
+      childSessionId: sessionId,
+      childSessionName: sessionId,
+      title: "failed pending identity",
+      status: "RUNNING",
+      profileId: "kestrel",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:01.000Z",
+    },
+  });
+
+  await (appState.syncBackgroundSessionFailure as (
+    expectedSessionId: string,
+    expectedRunId: string,
+    outputSessionId: string,
+    message: string,
+  ) => Promise<void>).call(app, sessionId, "run-a", sessionId, "pending run failed");
+
+  const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.acceptedRunId, "run-a");
+  assert.equal(current?.acceptedRunMessageId, "message-a");
+  assert.equal(current?.acceptedRunThreadId, "thread-a");
+  assert.equal(current?.acceptedRunPredecessorId, undefined);
+  assert.equal(current?.pendingRunId, undefined);
+  assert.equal(current?.pendingRunMessageId, undefined);
+  assert.equal(current?.pendingRunThreadId, undefined);
+  assert.equal(current?.delegation?.status, "FAILED");
+  assert.equal(current?.lastRunStatus, "FAILED");
+});
+
+test("terminal queued evidence rejects a delayed waiting result without reopening the session", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const terminal: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-terminal",
+    acceptedRunMessageId: "message-terminal",
+    acceptedRunThreadId: threadId,
+    acceptedRunPredecessorId: null,
+    lastRunStatus: "COMPLETED",
+    terminalQueuedRuns: [{
+      runId: "run-terminal",
+      messageId: "message-terminal",
+      threadId,
+      status: "COMPLETED",
+    }],
+  };
+  const sessionStore = appState.sessionStore as SessionStore;
+  appState.sessionsFile = sessionStore.upsert(appState.sessionsFile as never, terminal);
+  uiStore.patch({
+    activeSession: terminal,
+    sessions: (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions,
+  });
+
+  assert.equal(await (appState.syncForegroundQueuedTerminal as (
+    input: Record<string, unknown>,
+  ) => Promise<boolean>)({
+    sessionId: terminal.sessionId,
+    threadId,
+    runId: "run-terminal",
+    messageId: "message-terminal",
+    result: {
+      assistantText: null,
+      output: {
+        status: "WAITING",
+        sessionId: terminal.sessionId,
+        runId: "run-terminal",
+        quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+        errors: [],
+        telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+      },
+    },
+  }), false);
+  const current = uiStore.getState().activeSession;
+  assert.equal(current.lastRunStatus, "COMPLETED");
+  assert.equal(current.pendingWaitFor, undefined);
+  assert.deepEqual(current.terminalQueuedRuns, terminal.terminalQueuedRuns);
+});
+
+test("background progress cannot replace terminal queued evidence with waiting state", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const sessionId = "child-terminal-progress";
+  const threadId = `thread-main:${sessionId}`;
+  const child = installBackgroundSession(appState, {
+    sessionId,
+    started: true,
+    acceptedRunId: "run-terminal",
+    acceptedRunMessageId: "message-terminal",
+    acceptedRunThreadId: threadId,
+    acceptedRunPredecessorId: null,
+    lastRunStatus: "COMPLETED",
+    terminalQueuedRuns: [{
+      runId: "run-terminal",
+      messageId: "message-terminal",
+      threadId,
+      status: "COMPLETED",
+    }],
+    delegation: {
+      taskId: "task-terminal-progress",
+      parentSessionId: "session-1",
+      childSessionId: sessionId,
+      childSessionName: sessionId,
+      title: "terminal progress",
+      status: "RUNNING",
+      profileId: "kestrel",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:01.000Z",
+    },
+  });
+
+  await (appState.syncBackgroundSessionProgress as (input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId: string;
+    status: "WAITING";
+  }) => Promise<void>)({
+    sessionId,
+    threadId,
+    runId: "run-terminal",
+    messageId: "message-terminal",
+    status: "WAITING",
+  });
+
+  const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.acceptedRunId, "run-terminal");
+  assert.equal(current?.lastRunStatus, "COMPLETED");
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.pendingWaitFor, undefined);
+});
+
+test("overlapping terminal recovery pages cannot move the durable cursor backward", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const recovering: TuiSessionMeta = { ...base, terminalMessageCursor: "cursor-0" };
+  const sessionStore = appState.sessionStore as SessionStore;
+  appState.sessionsFile = sessionStore.upsert(appState.sessionsFile as never, recovering);
+  uiStore.patch({
+    activeSession: recovering,
+    sessions: (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions,
+  });
+  await sessionStore.save(appState.sessionsFile as never);
+  const pendingResponses: Array<(value: unknown) => void> = [];
+  appState.client = {
+    sendCommand: async (_type: string, payload: { afterCursor?: string | undefined }) => {
+      assert.equal(payload.afterCursor, "cursor-0");
+      return await new Promise((resolve) => pendingResponses.push(resolve));
+    },
+  };
+  const recover = appState.recoverTerminalMessages as (session: TuiSessionMeta) => Promise<void>;
+  const older = recover.call(app, recovering);
+  const newer = recover.call(app, recovering);
+  await waitFor(() => pendingResponses.length === 2);
+  pendingResponses[1]?.({
+    type: "conversation.messages",
+    payload: {
+      threadId: recovering.sessionId,
+      messages: [],
+      terminalOutcomes: [],
+      nextCursor: "cursor-new",
+      hasMore: false,
+    },
+  });
+  await newer;
+  pendingResponses[0]?.({
+    type: "conversation.messages",
+    payload: {
+      threadId: recovering.sessionId,
+      messages: [],
+      terminalOutcomes: [{
+        messageId: "terminal:run-stale-recovery",
+        turnId: "turn-stale-recovery",
+        threadId: terminalMessageRecoveryThreadId(recovering.sessionId),
+        sessionId: recovering.sessionId,
+        runId: "run-stale-recovery",
+        completedAt: "2026-08-29T00:00:01.000Z",
+        terminalStatus: "COMPLETED",
+        outcomeStatus: "completed",
+        handoffState: "delivered",
+        result: {
+          assistantText: "Stale recovery output.",
+          output: {
+            status: "COMPLETED",
+            sessionId: recovering.sessionId,
+            runId: "run-stale-recovery",
+            quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+            errors: [],
+            telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+          },
+        },
+      }],
+      nextCursor: "cursor-old",
+      hasMore: false,
+    },
+  });
+  await older;
+
+  assert.equal(uiStore.getState().activeSession.terminalMessageCursor, "cursor-new");
+  const restarted = new SessionStore(home).findByName(
+    await new SessionStore(home).load(),
+    recovering.name,
+  );
+  assert.equal(restarted?.terminalMessageCursor, "cursor-new");
+  assert.equal(uiStore.getState().transcript.some(
+    (line) => line.eventId === "terminal:run-stale-recovery",
+  ), false);
 });
 
 test("active history and terminal cursor serialize behind queued acceptance", async (t) => {

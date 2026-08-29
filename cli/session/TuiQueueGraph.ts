@@ -53,27 +53,20 @@ export function resolveExactTuiQueuedEvidence(
   identity: { runId: string; messageId?: string | undefined; threadId: string },
 ): ResolvedTuiQueuedEvidence | undefined {
   const graph = normalizeTuiQueueGraph(session);
-  const exactMessages = new Set<string>();
-  for (const candidate of [
+  const matchingGraphRecords = [
     ...(graph.pendingQueueSubmissions ?? []),
     ...(graph.queuedRunReservations ?? []),
     ...(graph.terminalQueuedRuns ?? []),
-  ]) {
-    if (candidate.runId === identity.runId && candidate.threadId === identity.threadId) {
-      exactMessages.add(candidate.messageId);
-    }
-  }
-  if (
+  ].filter((candidate) =>
+    candidate.runId === identity.runId && candidate.threadId === identity.threadId
+  );
+  const acceptedMatches =
     session.acceptedRunPredecessorId !== undefined
     && session.acceptedRunId === identity.runId
     && session.acceptedRunMessageId !== undefined
-    && session.acceptedRunThreadId === identity.threadId
-  ) exactMessages.add(session.acceptedRunMessageId);
-  if (identity.messageId !== undefined) {
-    if (exactMessages.has(identity.messageId) === false) return undefined;
-    exactMessages.clear();
-    exactMessages.add(identity.messageId);
-  }
+    && session.acceptedRunThreadId === identity.threadId;
+  const exactMessages = new Set(matchingGraphRecords.map((candidate) => candidate.messageId));
+  if (acceptedMatches) exactMessages.add(session.acceptedRunMessageId!);
   if (exactMessages.size === 0) return undefined;
   if (exactMessages.size !== 1) {
     throw new TuiQueueGraphConsistencyError(
@@ -81,6 +74,30 @@ export function resolveExactTuiQueuedEvidence(
     );
   }
   const messageId = [...exactMessages][0]!;
+  if (identity.messageId !== undefined && identity.messageId !== messageId) return undefined;
+  const predecessorAuthorities = new Set(
+    matchingGraphRecords.map((candidate) => candidate.predecessorRunId ?? null),
+  );
+  if (acceptedMatches) predecessorAuthorities.add(session.acceptedRunPredecessorId ?? null);
+  if (predecessorAuthorities.size !== 1) {
+    throw new TuiQueueGraphConsistencyError(
+      `Queued evidence for run '${identity.runId}' has conflicting predecessor authority.`,
+    );
+  }
+  const terminalStatuses = new Set(
+    matchingGraphRecords.flatMap((candidate) =>
+      "status" in candidate ? [candidate.status] : []
+    ),
+  );
+  if (
+    acceptedMatches
+    && (session.lastRunStatus === "COMPLETED" || session.lastRunStatus === "FAILED")
+  ) terminalStatuses.add(session.lastRunStatus);
+  if (terminalStatuses.size > 1) {
+    throw new TuiQueueGraphConsistencyError(
+      `Queued evidence for run '${identity.runId}' has conflicting terminal status authority.`,
+    );
+  }
   const matchesIdentity = (candidate: QueueRecord) =>
     candidate.runId === identity.runId
     && candidate.messageId === messageId
@@ -116,12 +133,6 @@ export function resolveExactTuiQueuedEvidence(
     });
   }
   if (candidates.length === 0) return undefined;
-  const predecessorRunId = candidates[0]!.predecessorRunId;
-  if (candidates.some((candidate) => candidate.predecessorRunId !== predecessorRunId)) {
-    throw new TuiQueueGraphConsistencyError(
-      `Queued evidence for run '${identity.runId}' has conflicting predecessor authority.`,
-    );
-  }
   return candidates.find((candidate) => candidate.source === "tombstone")
     ?? candidates.find((candidate) => candidate.source === "accepted")
     ?? candidates.find((candidate) => candidate.source === "reservation")
