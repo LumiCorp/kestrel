@@ -18,6 +18,7 @@ import {
   RunnerHost,
   type RunnerProfileProvider,
   type RunnerProfileSourcePolicy,
+  type RunnerSessionDescriber,
 } from "./RunnerHost.js";
 import type {
   RunnerServiceEventJournal,
@@ -46,6 +47,7 @@ export interface RunnerServiceHostOptions {
   eventJournal?: RunnerServiceEventJournal | undefined;
   exactEffectResultStore?: NonNullable<ConstructorParameters<typeof RunnerHost>[3]>["exactEffectResultStore"];
   exactEffectResultTenantId?: string | undefined;
+  sessionDescriber?: RunnerSessionDescriber | undefined;
 }
 
 export interface RunnerServiceHostCloseOptions {
@@ -544,7 +546,12 @@ export class RunnerServiceHost {
       this.events,
       options.runtimeFactory,
       options.profileProvider,
-      { profileSourcePolicy: options.profileSourcePolicy, exactEffectResultStore: options.exactEffectResultStore, exactEffectResultTenantId: options.exactEffectResultTenantId },
+      {
+        profileSourcePolicy: options.profileSourcePolicy,
+        exactEffectResultStore: options.exactEffectResultStore,
+        exactEffectResultTenantId: options.exactEffectResultTenantId,
+        sessionDescriber: options.sessionDescriber,
+      },
     );
     this.router = new CommandRouter(this.host, this.events);
     this.health = createRunnerHealthV1({

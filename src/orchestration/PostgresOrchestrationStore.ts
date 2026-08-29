@@ -8,6 +8,7 @@ import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionR
 
 import type { OrchestrationStore } from "./contracts.js";
 import { readSubAgentResultEnvelope } from "./subAgentResult.js";
+import { compareThreadAssemblyRecordsNewestFirst } from "./threadAssemblyOrdering.js";
 
 export class PostgresOrchestrationStore implements OrchestrationStore {
   private readonly db: SqlExecutor;
@@ -887,10 +888,12 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
       `SELECT record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at
          FROM orchestration_thread_assembly_records
         WHERE thread_id = $1
-        ORDER BY created_at DESC`,
+        ORDER BY created_at DESC, record_id DESC`,
       [threadId],
     );
-    return result.rows.map((row) => mapThreadAssemblyRow(row));
+    return result.rows
+      .map((row) => mapThreadAssemblyRow(row))
+      .sort(compareThreadAssemblyRecordsNewestFirst);
   }
 
   async upsertAssemblyChangeProposal(record: AssemblyChangeProposalRecord): Promise<void> {

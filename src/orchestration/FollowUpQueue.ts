@@ -144,6 +144,9 @@ function normalizeRuntimeContext(value: unknown): FollowUpRuntimeContext | undef
   const context = asRecord(value);
   if (context === undefined) return undefined;
   const normalized: FollowUpRuntimeContext = {};
+  if (typeof context.runId === "string" && context.runId.trim().length > 0) {
+    normalized.runId = context.runId;
+  }
   if (typeof context.stepAgent === "string") normalized.stepAgent = context.stepAgent;
   if (context.modeSystemV2Enabled === true || context.modeSystemV2Enabled === false) {
     normalized.modeSystemV2Enabled = context.modeSystemV2Enabled;

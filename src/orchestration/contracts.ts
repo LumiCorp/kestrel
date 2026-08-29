@@ -218,7 +218,6 @@ export interface SubmitConversationMessageInput {
   metadata?: Record<string, unknown> | undefined;
   runtimeTurn?: Omit<
     RuntimeTurnInput,
-    | "runId"
     | "eventId"
     | "eventType"
     | "resumeBlockedRun"
@@ -739,7 +738,6 @@ export type FollowUpQueuePauseReason = "waiting" | "failed" | "cancelled" | "ope
 export type FollowUpRuntimeContext = Omit<
   RuntimeTurnInput,
   | "sessionId"
-  | "runId"
   | "eventId"
   | "message"
   | "eventType"

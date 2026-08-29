@@ -744,9 +744,6 @@ export class KestrelChatRuntime {
       }
     | undefined
   > {
-    if (this.threadRuntime !== undefined) {
-      await this.ensureMainThread(sessionId);
-    }
     const session = await this.kestrel.getSession(sessionId);
     if (session === null) {
       return;
@@ -788,6 +785,7 @@ export class KestrelChatRuntime {
       ...(this.threadRuntime !== undefined
         ? { threadRuntime: this.threadRuntime }
         : {}),
+      createMainThread: false,
     });
   }
 

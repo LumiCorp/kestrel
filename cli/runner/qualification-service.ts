@@ -14,6 +14,7 @@ import {
   createHostedRunnerStoreFromEnv,
 } from "./HostedRunnerStore.js";
 import { createRunnerServiceServer } from "./RunnerService.js";
+import { createDurableSessionDescriber } from "./DurableSessionDescriber.js";
 import { createSandboxCapabilityQualificationObserver } from "./SandboxCapabilityQualificationControl.js";
 
 async function main(): Promise<void> {
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
       sandboxCapabilityQualificationObserver: observer,
       modelRetryCount: 0,
     }),
+    sessionDescriber: createDurableSessionDescriber(store.store),
     runtimeStore: { ready: store.ready, probe: store.probe, close: store.close },
     eventJournal: store.eventJournal,
     ...(store.store.readExactEffectResult === undefined || store.store.claimExactEffectCancellation === undefined ? {} : {

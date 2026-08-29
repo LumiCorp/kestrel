@@ -19,6 +19,7 @@ import {
   createRunnerServiceHttpHandler,
   type RunnerServiceHttpHandler,
 } from "../../cli/runner/RunnerService.js";
+import { createDurableSessionDescriber } from "../../cli/runner/DurableSessionDescriber.js";
 import { HistoryStore } from "../../cli/history/HistoryStore.js";
 import { UiStateStore } from "../../cli/ink/persistence/UiStateStore.js";
 import {
@@ -946,6 +947,7 @@ async function createExecutionBundle(input: {
     ),
     profileSourcePolicy: "registered-only",
     eventJournal,
+    sessionDescriber: createDurableSessionDescriber(storeHandle.store),
     ...(storeHandle.store.readExactEffectResult === undefined ||
     storeHandle.store.claimExactEffectCancellation === undefined
       ? {}

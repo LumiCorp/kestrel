@@ -1302,7 +1302,7 @@ test("UnifiedToolRegistry renews and retries exactly once after a pre-dispatch e
     );
     if (authorization === `Bearer ${initialTicket}`) {
       return Response.json(
-        { error: { code: "EXECUTION_AUTH_EXPIRED" } },
+        { error: { code: "TICKET_EXPIRED" } },
         { status: 401 },
       );
     }

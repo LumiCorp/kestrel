@@ -76,6 +76,24 @@ test("parseInput parses workspace use command with workspace id", () => {
   });
 });
 
+test("parseInput parses environment selection commands", () => {
+  assert.deepEqual(parseInput("/environment"), {
+    kind: "command",
+    command: "environment",
+    args: [],
+  });
+  assert.deepEqual(parseInput("/environment developer"), {
+    kind: "command",
+    command: "environment",
+    args: ["developer"],
+  });
+  assert.deepEqual(parseInput("/environment safe"), {
+    kind: "command",
+    command: "environment",
+    args: ["safe"],
+  });
+});
+
 test("parseInput parses compact command", () => {
   const parsed = parseInput("/compact");
   assert.deepEqual(parsed, {
@@ -242,6 +260,7 @@ test("command help presents simplified recovery commands", () => {
   assert.match(help, /\/compact/u);
   assert.match(help, /\/snapshot/u);
   assert.match(help, /\/restore/u);
+  assert.match(help, /\/environment/u);
   assert.match(help, /\/approve/u);
   assert.match(help, /\/deny/u);
   assert.doesNotMatch(help, /\/checkpoint/u);

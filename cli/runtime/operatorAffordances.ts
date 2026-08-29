@@ -14,6 +14,7 @@ import {
   type OperatorAffordancePayload,
 } from "../../src/orchestration/OperatorAffordanceProjection.js";
 import type { TuiProfile, TuiSessionMeta } from "../contracts.js";
+import { formatTuiAssemblyLabel } from "../session/TuiEnvironmentPresentation.js";
 
 export { buildRuntimeOperatorAffordance };
 
@@ -91,6 +92,7 @@ export function decorateOperatorAffordance(input: {
             total: 1,
             active:
               input.session.delegation.status === "PENDING" ||
+              input.session.delegation.status === "RECOVERING" ||
               input.session.delegation.status === "RUNNING"
                 ? 1
                 : 0,
@@ -118,7 +120,7 @@ export function formatOperatorAffordance(payload: OperatorAffordancePayload): st
   }
   if (payload.assembly !== undefined) {
     lines.push(
-      `Assembly: ${payload.assembly.label ?? payload.assembly.bundleId ?? payload.assembly.mode} ` +
+      `Assembly: ${formatTuiAssemblyLabel(payload.assembly.environmentPresetId)} ` +
       `(thread=${payload.assembly.threadId ?? "n/a"} authority=${payload.assembly.authority ?? "n/a"} cause=${payload.assembly.cause ?? "n/a"})`,
     );
     if (payload.assembly.provider !== undefined) {

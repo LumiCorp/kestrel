@@ -20,16 +20,29 @@ import {
 import { describeResolvedWorkspace } from "../workspace/WorkspaceResolver.js";
 import type { TuiAppContext } from "./TuiAppContext.js";
 import type { SessionDescribedEventPayload } from "../protocol/contracts.js";
+import {
+  readTuiEnvironmentIdentityFailure,
+  resolveTuiSessionEnvironment,
+  TuiEnvironmentIdentityError,
+  type TuiEnvironmentPresetId,
+} from "../session/TuiExecutionEnvironment.js";
 import type { ConversationActivityItem } from "@kestrel-agents/conversation";
+import {
+  hasDurableTuiRuntimeBinding,
+  resolveStartedSessionAuthoringProfile,
+} from "../session/TuiAuthoringProfile.js";
+import { formatTuiEnvironmentLabel } from "../session/TuiEnvironmentPresentation.js";
 
 export interface CreateSessionOptions {
   launch: OperatorResolvedStartTask;
   profile: TuiProfile;
   workspace?: ResolvedWorkspace | undefined;
+  environmentPresetId?: TuiEnvironmentPresetId | undefined;
 }
 
 export interface SessionControllerContext extends TuiAppContext {
   saveSessionsFile(): Promise<void>;
+  commitCreatedSession(session: TuiSessionMeta): Promise<void>;
   createSessionMeta(
     launch: OperatorResolvedStartTask,
     profile: TuiProfile,
@@ -72,7 +85,11 @@ export class SessionController {
         session.pendingWaitFor?.eventType !== undefined ? ` waiting:${session.pendingWaitFor.eventType}` : "";
       const runStatus = session.lastRunStatus ? ` status:${session.lastRunStatus.toLowerCase()}` : "";
       const mode = formatTuiSessionMode(session);
-      return `${session.name}${active} -> ${session.sessionId} mode:${mode}${waiting}${runStatus}`;
+      const agent = session.agentProfileLabel
+        ?? session.profileLabel
+        ?? (session.profileId === state.activeProfile?.id ? state.activeProfile.label : session.profileId);
+      const environment = formatTuiEnvironmentLabel(session.environmentPresetId);
+      return `${session.name}${active} -> ${session.sessionId} agent:${agent} environment:${environment} mode:${mode}${waiting}${runStatus}`;
     });
 
     await this.context.appendHistoryLine("system", `Sessions:\n${lines.join("\n") || "(none)"}`);
@@ -124,9 +141,23 @@ export class SessionController {
 
   async createSession(options: CreateSessionOptions): Promise<void> {
     const state = this.context.uiStore.getState();
-    const created = this.context.createSessionMeta(options.launch, options.profile, options.workspace);
-    this.context.setSessionsFile(this.context.sessionStore.upsert(this.context.getSessionsFile(), created));
-    await this.context.saveSessionsFile();
+    const defaultSession = this.context.createSessionMeta(options.launch, options.profile, options.workspace);
+    const createdWithEnvironment: TuiSessionMeta = {
+      ...defaultSession,
+      ...(options.environmentPresetId !== undefined
+        ? { environmentPresetId: options.environmentPresetId }
+        : {}),
+    };
+    const created: TuiSessionMeta = {
+      ...createdWithEnvironment,
+      operatorState: this.context.buildSessionOperatorState({
+        session: createdWithEnvironment,
+        profile: options.profile,
+      }),
+    };
+    await this.context.commitCreatedSession(created);
+    this.context.setActiveWorkspace(options.workspace);
+    this.context.setLaunchWorkspace(options.workspace);
 
     const themeSelection = resolveThemeSelection({
       mode: state.themeMode,
@@ -181,6 +212,10 @@ export class SessionController {
     });
 
     await this.context.appendHistoryLine("system", `Started new session '${options.launch.title}'.`);
+    await this.context.appendHistoryLine(
+      "system",
+      `Agent: ${created.agentProfileLabel ?? options.profile.label}\nEnvironment: ${formatTuiEnvironmentLabel(created.environmentPresetId)}`,
+    );
     await this.context.appendHistoryLine("system", formatOperatorLaunchSummary(options.launch));
     await this.context.persistUiState();
     if (options.launch.initialPrompt !== undefined) {
@@ -221,20 +256,71 @@ export class SessionController {
       return;
     }
 
+    let resolvedTarget = target;
+    if (hasDurableTuiRuntimeBinding(target)) {
+      try {
+        const describe = await this.context.client.sendCommand("session.describe", {
+          sessionId: target.sessionId,
+        });
+        if (describe.type !== "session.described") {
+          throw new TuiEnvironmentIdentityError(
+            "TUI_ENVIRONMENT_UNKNOWN",
+            `Environment unknown for session '${target.name}': runtime identity could not be described.`,
+          );
+        }
+        if (describe.payload.sessionId !== target.sessionId) {
+          throw new TuiEnvironmentIdentityError(
+            "TUI_ENVIRONMENT_UNKNOWN",
+            `Environment unknown for session '${target.name}': runtime described a different session.`,
+          );
+        }
+        resolveTuiSessionEnvironment({
+          session: target,
+          runtimeEnvironmentPresetId: describe.payload.activeAssembly?.environmentPresetId,
+          requireRuntimeIdentity: true,
+        });
+        await this.context.syncSessionFromDescribePayload(describe.payload);
+        resolvedTarget = this.context.sessionStore.findByName(
+          this.context.getSessionsFile(),
+          target.name,
+        ) ?? target;
+      } catch (error) {
+        if (error instanceof TuiEnvironmentIdentityError) {
+          throw error;
+        }
+        const environmentFailure = readTuiEnvironmentIdentityFailure(error);
+        if (environmentFailure !== undefined) {
+          throw environmentFailure;
+        }
+        throw new TuiEnvironmentIdentityError(
+          "TUI_ENVIRONMENT_UNKNOWN",
+          `Environment unknown for session '${target.name}': runtime identity could not be verified.`,
+        );
+      }
+    }
+
     const profiles = await this.context.profileStore.load();
-    const resolvedWorkspace = await this.context.resolveWorkspaceForSession(target);
+    const startedSessionProfile = resolveStartedSessionAuthoringProfile({
+      session: target,
+      profiles,
+      profileStore: this.context.profileStore,
+    });
+    const resolvedWorkspace = await this.context.resolveWorkspaceForSession(resolvedTarget);
     const profile =
-      this.context.profileStore.findById(profiles, target.profileId) ??
+      startedSessionProfile ??
+      this.context.profileStore.findById(profiles, resolvedTarget.profileId) ??
       this.context.uiStore.getState().activeProfile;
     this.context.setActiveWorkspace(resolvedWorkspace);
-    this.context.setSessionsFile(this.context.sessionStore.setActive(this.context.getSessionsFile(), target.name));
+    this.context.setSessionsFile(
+      this.context.sessionStore.setActive(this.context.getSessionsFile(), resolvedTarget.name),
+    );
     await this.context.saveSessionsFile();
-    const transcript = await this.context.historyStore.readTranscript(target.sessionId);
+    const transcript = await this.context.historyStore.readTranscript(resolvedTarget.sessionId);
     const state = this.context.uiStore.getState();
     const decoratedTarget: TuiSessionMeta = {
-      ...target,
+      ...resolvedTarget,
       operatorState: this.context.buildSessionOperatorState({
-        session: target,
+        session: resolvedTarget,
         profile,
       }),
     };
@@ -244,8 +330,8 @@ export class SessionController {
       mode: state.themeMode,
       overrides: profile.theme,
     });
-    const conversationActivity = this.context.getConversationActivity(target.sessionId);
-    const conversationRunState = this.context.getConversationRunState(target.sessionId);
+    const conversationActivity = this.context.getConversationActivity(resolvedTarget.sessionId);
+    const conversationRunState = this.context.getConversationRunState(resolvedTarget.sessionId);
     const latestActivity = conversationActivity.at(-1);
     this.context.uiStore.patch({
       activeProfile: profile,
@@ -256,14 +342,14 @@ export class SessionController {
       statusLine: this.context.withMcpSummary(
         latestActivity === undefined
           ? conversationRunState.status === "ready"
-            ? `resumed '${target.name}'`
+            ? `resumed '${resolvedTarget.name}'`
             : conversationRunState.status
           : `${latestActivity.label}: ${latestActivity.text}`,
       ),
       running: conversationRunState.running,
       chatUnreadCount: 0,
       conversationActivity,
-      lastSelectedSession: target.name,
+      lastSelectedSession: resolvedTarget.name,
       sessionQuery: "",
       activeView: "chat",
       activeRegion: "chat_list",
@@ -304,22 +390,11 @@ export class SessionController {
       theme: themeSelection.tokens,
     });
 
-    try {
-      const describe = await this.context.client.sendCommand("session.describe", {
-        sessionId: decoratedTarget.sessionId,
-      });
-      if (describe.type === "session.described") {
-        await this.context.syncSessionFromDescribePayload(describe.payload);
-      }
-    } catch {
-      // Session switching should remain usable if the runner is not ready yet.
-    }
-
     await this.context.recoverTerminalMessages(decoratedTarget).catch(() => {
       // Recovery diagnostics are durable and the existing transcript remains usable.
     });
 
-    await this.context.appendHistoryLine("system", `Resumed session '${target.name}'.`);
+    await this.context.appendHistoryLine("system", `Resumed session '${resolvedTarget.name}'.`);
     await this.context.persistUiState();
   }
 

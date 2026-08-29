@@ -104,6 +104,7 @@ export interface AgentStageConfig {
 
 export type DelegationTaskStatus =
   | "PENDING"
+  | "RECOVERING"
   | "RUNNING"
   | "WAITING"
   | "COMPLETED"
@@ -412,6 +413,18 @@ export interface TuiSessionMeta {
   actSubmode?: ActSubmode | undefined;
   executionPolicy?: ExecutionPolicyOverride | undefined;
   started: boolean;
+  pendingRunId?: string | undefined;
+  pendingRunRequestId?: string | undefined;
+  pendingRunMessageId?: string | undefined;
+  pendingRunThreadId?: string | undefined;
+  pendingQueueSubmissions?: TuiPendingQueueSubmission[] | undefined;
+  queuedRunReservations?: TuiQueuedRunReservation[] | undefined;
+  terminalQueuedRuns?: TuiTerminalQueuedRun[] | undefined;
+  acceptedRunId?: string | undefined;
+  acceptedRunMessageId?: string | undefined;
+  acceptedRunThreadId?: string | undefined;
+  /** Exact queued predecessor: null is the durable root; undefined is legacy or non-queued. */
+  acceptedRunPredecessorId?: string | null | undefined;
   lastRunStatus?: NormalizedOutput["status"] | undefined;
   pendingWaitFor?: Exclude<NormalizedOutput["waitFor"], undefined> | undefined;
   lastMessagePreview?: string | undefined;
@@ -425,6 +438,25 @@ export interface TuiSessionMeta {
   operatorState?: OperatorAffordancePayload | undefined;
   focusedThreadId?: string | undefined;
   terminalMessageCursor?: string | undefined;
+}
+
+export interface TuiQueuedRunReservation {
+  runId: string;
+  messageId: string;
+  threadId: string;
+  predecessorRunId?: string | undefined;
+}
+
+export interface TuiTerminalQueuedRun extends TuiQueuedRunReservation {
+  status: "COMPLETED" | "FAILED";
+}
+
+export interface TuiPendingQueueSubmission {
+  runId: string;
+  messageId: string;
+  threadId: string;
+  predecessorRunId?: string | undefined;
+  indeterminate?: boolean | undefined;
 }
 
 export interface SessionsFile {
@@ -591,6 +623,7 @@ export type ParsedInput =
         | "new"
         | "sessions"
         | "workspace"
+        | "environment"
         | "tasks"
         | "switch"
         | "resume"
