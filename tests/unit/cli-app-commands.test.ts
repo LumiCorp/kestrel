@@ -1314,6 +1314,53 @@ test("environment command creates a clean Developer workspace session from a sta
   );
 });
 
+test("failed started environment replacement publishes no new session or workspace state", async () => {
+  const { app, cwd, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const workspaceRoot = path.join(cwd, "durable-project");
+  await mkdir(workspaceRoot, { recursive: true });
+  const workspace = await initializeWorkspaceAtRoot(
+    workspaceRoot,
+    appState.workspaceStore as WorkspaceStore,
+    { label: "durable-project" },
+  );
+  appState.activeWorkspace = workspace;
+  appState.launchWorkspace = workspace;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    workspaceBinding: "active",
+    workspaceId: workspace.manifest.workspaceId,
+    workspaceRoot: workspace.rootPath,
+    workspaceLabel: workspace.manifest.label,
+    environmentPresetId: "cli_safe_local",
+    effectiveAssemblyId: "bundle:kestrel:safe",
+    started: true,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+  const source = uiStore.getState().activeSession;
+  (appState.sessionStore as SessionStore).save = async () => {
+    throw new Error("injected replacement save failure");
+  };
+
+  await assert.rejects(
+    (appState.handleEnvironmentCommand as (args: string[]) => Promise<void>)(["developer"]),
+    /injected replacement save failure/u,
+  );
+
+  const state = uiStore.getState();
+  assert.equal(state.activeSession.sessionId, source.sessionId);
+  assert.equal(state.activeSession.environmentPresetId, "cli_safe_local");
+  assert.equal(state.sessions.length, 1);
+  assert.equal((appState.activeWorkspace as { rootPath?: string } | undefined)?.rootPath, workspace.rootPath);
+  assert.equal((appState.launchWorkspace as { rootPath?: string } | undefined)?.rootPath, workspace.rootPath);
+  const persisted = await new SessionStore(home).load();
+  assert.equal(persisted.sessions.length, 1);
+  assert.equal(persisted.sessions[0]?.sessionId, source.sessionId);
+  assert.equal(persisted.sessions[0]?.environmentPresetId, "cli_safe_local");
+});
+
 test("started environment change fails closed when its bound workspace is unavailable", async () => {
   const { app, cwd, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
@@ -1882,6 +1929,65 @@ test("guided workspace creation replaces the active workspace cache with the sel
   assert.equal(state.activeSession.workspaceRoot, secondWorkspace.rootPath);
   assert.equal((appState.activeWorkspace as { rootPath?: string } | undefined)?.rootPath, secondWorkspace.rootPath);
   assert.equal((appState.launchWorkspace as { rootPath?: string } | undefined)?.rootPath, secondWorkspace.rootPath);
+});
+
+test("failed guided creation leaves the prior session and workspace caches authoritative", async () => {
+  const { app, cwd, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const workspaceRoot = path.join(cwd, "authoritative-workspace");
+  await mkdir(workspaceRoot, { recursive: true });
+  const workspace = await initializeWorkspaceAtRoot(
+    workspaceRoot,
+    appState.workspaceStore as WorkspaceStore,
+    { label: "authoritative-workspace" },
+  );
+  appState.activeWorkspace = workspace;
+  appState.launchWorkspace = workspace;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    workspaceBinding: "active",
+    workspaceId: workspace.manifest.workspaceId,
+    workspaceRoot: workspace.rootPath,
+    workspaceLabel: workspace.manifest.label,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+  const source = uiStore.getState().activeSession;
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "start",
+    args: [],
+  });
+  for (const input of [
+    "none",
+    "none",
+    "detached",
+    "default",
+    "Unpersisted task",
+    "current",
+    "default",
+  ]) {
+    await (appState.handleLine as (line: string) => Promise<void>)(input);
+  }
+  (appState.sessionStore as SessionStore).save = async () => {
+    throw new Error("injected guided save failure");
+  };
+
+  await assert.rejects(
+    (appState.handleLine as (line: string) => Promise<void>)("skip"),
+    /injected guided save failure/u,
+  );
+
+  const state = uiStore.getState();
+  assert.equal(state.activeSession.sessionId, source.sessionId);
+  assert.equal(state.sessions.length, 1);
+  assert.equal((appState.activeWorkspace as { rootPath?: string } | undefined)?.rootPath, workspace.rootPath);
+  assert.equal((appState.launchWorkspace as { rootPath?: string } | undefined)?.rootPath, workspace.rootPath);
+  const persisted = await new SessionStore(home).load();
+  assert.equal(persisted.sessions.length, 1);
+  assert.equal(persisted.sessions[0]?.sessionId, source.sessionId);
 });
 
 test("background launch stays pending until run.started proves acceptance", async () => {

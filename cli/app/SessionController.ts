@@ -42,6 +42,7 @@ export interface CreateSessionOptions {
 
 export interface SessionControllerContext extends TuiAppContext {
   saveSessionsFile(): Promise<void>;
+  commitCreatedSession(session: TuiSessionMeta): Promise<void>;
   createSessionMeta(
     launch: OperatorResolvedStartTask,
     profile: TuiProfile,
@@ -154,8 +155,7 @@ export class SessionController {
         profile: options.profile,
       }),
     };
-    this.context.setSessionsFile(this.context.sessionStore.upsert(this.context.getSessionsFile(), created));
-    await this.context.saveSessionsFile();
+    await this.context.commitCreatedSession(created);
     this.context.setActiveWorkspace(options.workspace);
     this.context.setLaunchWorkspace(options.workspace);
 

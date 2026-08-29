@@ -1673,6 +1673,7 @@ export class App {
       this.sessionController = new SessionController({
         ...this.getAppContext(),
         saveSessionsFile: () => this.saveSessionsFile(),
+        commitCreatedSession: (session) => this.commitCreatedSession(session),
         createSessionMeta: (launch, profile, workspace) =>
           this.createSessionMeta(launch, profile, workspace),
         buildSessionOperatorState: (input) => this.buildSessionOperatorState(input),
@@ -6605,6 +6606,19 @@ export class App {
       this.recordPersistenceFailure("sessions.save", error);
       if (options.requireSessionSave === true) throw error;
     }
+  }
+
+  private async commitCreatedSession(created: TuiSessionMeta): Promise<void> {
+    await this.coordinateSessionsFileCommit(async () => {
+      const privateSnapshot = this.sessionStore.upsert(this.sessionsFile, created);
+      try {
+        await this.sessionStore.save(privateSnapshot);
+      } catch (error) {
+        this.recordPersistenceFailure("sessions.create", error);
+        throw error;
+      }
+      this.sessionsFile = privateSnapshot;
+    });
   }
 
   private async coordinateSessionsFileCommit<T>(operation: () => Promise<T>): Promise<T> {
