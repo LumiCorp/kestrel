@@ -156,6 +156,8 @@ export class SessionController {
     };
     this.context.setSessionsFile(this.context.sessionStore.upsert(this.context.getSessionsFile(), created));
     await this.context.saveSessionsFile();
+    this.context.setActiveWorkspace(options.workspace);
+    this.context.setLaunchWorkspace(options.workspace);
 
     const themeSelection = resolveThemeSelection({
       mode: state.themeMode,

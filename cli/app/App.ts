@@ -2862,14 +2862,6 @@ export class App {
     const requested: TuiEnvironmentPresetId = args[0] === "developer"
       ? "cli_dev_local"
       : "cli_safe_local";
-    const workspace = await this.resolveWorkspaceForSession(current);
-    if (requested === "cli_dev_local" && workspace === undefined) {
-      await this.appendHistoryLine(
-        "system",
-        "Developer workspace requires a selected workspace. Bind a workspace first with /workspace, or use Safe sandbox.",
-      );
-      return;
-    }
 
     if (current.environmentPresetId === requested) {
       await this.appendHistoryLine(
@@ -2879,20 +2871,65 @@ export class App {
       return;
     }
 
+    const workspace = await this.resolveWorkspaceForSession(current);
+    if (requested === "cli_dev_local" && workspace === undefined) {
+      await this.appendHistoryLine(
+        "system",
+        "Developer workspace requires a selected workspace. Bind a workspace first with /workspace, or use Safe sandbox.",
+      );
+      return;
+    }
+
+    const hasWorkspaceBinding = current.workspaceBinding === "active"
+      || current.workspaceId !== undefined
+      || current.workspaceRoot !== undefined;
+    if (
+      hasDurableTuiRuntimeBinding(current)
+      && hasWorkspaceBinding
+      && workspace === undefined
+    ) {
+      await this.appendHistoryLine(
+        "system",
+        "The started session's workspace could not be resolved. No replacement session was created because an environment change must preserve the same workspace.",
+      );
+      return;
+    }
+
     if (hasDurableTuiRuntimeBinding(current) === false) {
-      await this.setActiveSessionState({
-        environmentPresetId: requested,
-        environmentShellKind: undefined,
-        environmentCapabilityPackIds: undefined,
-        effectiveAssemblyId: undefined,
-        effectiveAssemblyLabel: undefined,
-        updatedAt: new Date().toISOString(),
-      });
-      await this.persistSessionAndUi({ requireSessionSave: true });
+      const committed = await this.commitQueueSessionMutation(
+        current.sessionId,
+        (latest) => {
+          if (hasDurableTuiRuntimeBinding(latest)) {
+            return undefined;
+          }
+          const projected: TuiSessionMeta = {
+            ...latest,
+            environmentPresetId: requested,
+            environmentShellKind: undefined,
+            environmentCapabilityPackIds: undefined,
+            effectiveAssemblyId: undefined,
+            effectiveAssemblyLabel: undefined,
+            updatedAt: new Date().toISOString(),
+          };
+          return {
+            ...projected,
+            operatorState: this.buildSessionOperatorState({
+              session: projected,
+              profile: state.activeProfile,
+            }),
+          };
+        },
+      );
+      if (committed === undefined) {
+        throw new Error(
+          "Environment change was not persisted; the active session remains unchanged.",
+        );
+      }
+      await this.persistUiState();
       await this.appendHistoryLine(
         "system",
         [
-          `Agent: ${current.agentProfileLabel ?? state.activeProfile.label}`,
+          `Agent: ${committed.agentProfileLabel ?? state.activeProfile.label}`,
           `Environment: ${formatTuiEnvironmentLabel(requested)}`,
           "Updated this unstarted session in place.",
         ].join("\n"),
@@ -2968,6 +3005,13 @@ export class App {
       const nextProfile = this.profileStore.findById(profiles, profileId);
       if (nextProfile === undefined) {
         await this.appendHistoryLine("system", `Profile '${profileId}' not found.`);
+        return;
+      }
+      if (hasDurableTuiRuntimeBinding(state.activeSession)) {
+        await this.appendHistoryLine(
+          "system",
+          `Agent profile '${state.activeSession.agentProfileLabel ?? state.activeSession.profileLabel ?? state.activeSession.profileId}' belongs to this started session and cannot be changed in place. Start a new session to use '${nextProfile.label}'.`,
+        );
         return;
       }
       await this.persistActiveProfile(nextProfile);

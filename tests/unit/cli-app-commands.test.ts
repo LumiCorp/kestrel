@@ -1064,6 +1064,11 @@ test("runSplashDatabasePreflight still requires DATABASE_URL for explicit postgr
 test("profiles use rebinds the active session and subsequent history to the canonical profile", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    started: false,
+    effectiveAssemblyId: undefined,
+    effectiveAssemblyLabel: undefined,
+  });
 
   await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
     kind: "command",
@@ -1196,6 +1201,37 @@ test("environment command changes an unstarted session in place", async () => {
   assert.equal(persisted.sessions[0]?.environmentPresetId, "cli_safe_local");
 });
 
+test("failed environment persistence leaves unstarted memory and disk authority unchanged", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const sessionStore = appState.sessionStore as SessionStore;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    started: false,
+    effectiveAssemblyId: undefined,
+    effectiveAssemblyLabel: undefined,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+  sessionStore.save = async () => {
+    throw new Error("injected environment save failure");
+  };
+
+  await assert.rejects(
+    (appState.handleEnvironmentCommand as (args: string[]) => Promise<void>)(["safe"]),
+    /Environment change was not persisted/u,
+  );
+
+  const state = (appState.uiStore as UiStore).getState();
+  assert.equal(state.activeSession.environmentPresetId, "cli_dev_local");
+  assert.equal(
+    (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions[0]?.environmentPresetId,
+    "cli_dev_local",
+  );
+  const persisted = await new SessionStore(home).load();
+  assert.equal(persisted.sessions[0]?.environmentPresetId, "cli_dev_local");
+});
+
 test("environment command creates a clean Developer workspace session from a started Safe session", async () => {
   const { app, cwd, home } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
@@ -1224,6 +1260,25 @@ test("environment command creates a clean Developer workspace session from a sta
     requireSessionSave: true,
   });
   const source = uiStore.getState().activeSession;
+  const sourceProfile = uiStore.getState().activeProfile;
+  const alternateProfile: TuiProfile = {
+    ...sourceProfile,
+    id: "alternate-agent",
+    label: "Alternate agent",
+    sessionPrefix: "alternate",
+  };
+  appState.profileStore = {
+    load: async () => [sourceProfile, alternateProfile],
+    findById: (profiles: TuiProfile[], profileId: string) =>
+      profiles.find((profile) => profile.id === profileId),
+  } as unknown as ProfileStore;
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "profiles",
+    args: ["use", alternateProfile.id],
+  });
+  assert.equal(uiStore.getState().activeProfile.id, sourceProfile.id);
+  assert.equal(uiStore.getState().activeSession.profileId, source.profileId);
   await (appState.appendHistoryLine as (role: "assistant", text: string) => Promise<void>)(
     "assistant",
     "source-only-history",
@@ -1243,6 +1298,7 @@ test("environment command creates a clean Developer workspace session from a sta
   assert.equal(created.workspaceId, workspace.manifest.workspaceId);
   assert.equal(created.workspaceRoot, workspace.rootPath);
   assert.equal(created.profileId, source.profileId);
+  assert.notEqual(created.profileId, alternateProfile.id);
   assert.equal(created.started, false);
   assert.equal(created.effectiveAssemblyId, undefined);
   assert.equal(created.acceptedRunId, undefined);
@@ -1255,6 +1311,39 @@ test("environment command creates a clean Developer workspace session from a sta
   assert.equal(
     persisted.sessions.find((session) => session.sessionId === source.sessionId)?.environmentPresetId,
     "cli_safe_local",
+  );
+});
+
+test("started environment change fails closed when its bound workspace is unavailable", async () => {
+  const { app, cwd, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const missingRoot = path.join(cwd, "moved-workspace");
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    workspaceBinding: "active",
+    workspaceId: "workspace-moved",
+    workspaceRoot: missingRoot,
+    workspaceLabel: "Moved workspace",
+    environmentPresetId: "cli_dev_local",
+    effectiveAssemblyId: "bundle:kestrel:developer",
+    started: true,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "environment",
+    args: ["safe"],
+  });
+
+  const state = (appState.uiStore as UiStore).getState();
+  assert.equal(state.sessions.length, 1);
+  assert.equal(state.activeSession.environmentPresetId, "cli_dev_local");
+  assert.equal(state.activeSession.effectiveAssemblyId, "bundle:kestrel:developer");
+  assert.match(
+    await readFile(historyPath, "utf8"),
+    /workspace could not be resolved.*No replacement session was created/u,
   );
 });
 
@@ -1714,6 +1803,85 @@ test("start task journey creates a session with the canonical profile, mode, and
   assert.match(rawHistory, /Start task journey/u);
   assert.match(rawHistory, /Started new session 'Investigate queue latency'\./u);
   assert.match(rawHistory, /Task=Investigate queue latency/u);
+});
+
+test("guided detached creation clears a previously active workspace cache", async () => {
+  const { app, cwd } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const workspaceRoot = path.join(cwd, "previous-workspace");
+  await mkdir(workspaceRoot, { recursive: true });
+  const previousWorkspace = await initializeWorkspaceAtRoot(
+    workspaceRoot,
+    appState.workspaceStore as WorkspaceStore,
+    { label: "previous-workspace" },
+  );
+  appState.activeWorkspace = previousWorkspace;
+  appState.launchWorkspace = previousWorkspace;
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "start",
+    args: [],
+  });
+  for (const input of [
+    "none",
+    "none",
+    "detached",
+    "default",
+    "Detached investigation",
+    "current",
+    "default",
+    "skip",
+  ]) {
+    await (appState.handleLine as (line: string) => Promise<void>)(input);
+  }
+
+  const uiStore = appState.uiStore as UiStore;
+  assert.equal(uiStore.getState().activeSession.workspaceBinding, "detached");
+  assert.equal(appState.activeWorkspace, undefined);
+  assert.equal(appState.launchWorkspace, undefined);
+  await (appState.handleEnvironmentCommand as (args: string[]) => Promise<void>)([]);
+  const actions = (appState.getPaletteController as () => {
+    getActions(state?: ReturnType<UiStore["getState"]>): PaletteCommand[];
+  })().getActions(uiStore.getState());
+  assert.equal(actions.some((action) => action.command === "/environment developer"), false);
+});
+
+test("guided workspace creation replaces the active workspace cache with the selected workspace", async () => {
+  const { app, cwd } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const workspaceStore = appState.workspaceStore as WorkspaceStore;
+  const firstRoot = path.join(cwd, "workspace-a");
+  const secondRoot = path.join(cwd, "workspace-b");
+  await mkdir(firstRoot, { recursive: true });
+  await mkdir(secondRoot, { recursive: true });
+  const firstWorkspace = await initializeWorkspaceAtRoot(firstRoot, workspaceStore, { label: "workspace-a" });
+  const secondWorkspace = await initializeWorkspaceAtRoot(secondRoot, workspaceStore, { label: "workspace-b" });
+  appState.activeWorkspace = firstWorkspace;
+  appState.launchWorkspace = firstWorkspace;
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "start",
+    args: [],
+  });
+  for (const input of [
+    "none",
+    "none",
+    secondWorkspace.manifest.workspaceId,
+    "default",
+    "Workspace B task",
+    "current",
+    "default",
+    "skip",
+  ]) {
+    await (appState.handleLine as (line: string) => Promise<void>)(input);
+  }
+
+  const state = (appState.uiStore as UiStore).getState();
+  assert.equal(state.activeSession.workspaceRoot, secondWorkspace.rootPath);
+  assert.equal((appState.activeWorkspace as { rootPath?: string } | undefined)?.rootPath, secondWorkspace.rootPath);
+  assert.equal((appState.launchWorkspace as { rootPath?: string } | undefined)?.rootPath, secondWorkspace.rootPath);
 });
 
 test("background launch stays pending until run.started proves acceptance", async () => {
