@@ -2936,6 +2936,164 @@ test("restart reconciliation repairs accepted-active Q1 without a tombstone from
   assert.equal(session.queuedRunReservations, undefined);
 });
 
+test("restart reconciliation repairs accepted Q2 after a delayed unresolved Q1 terminal", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-q2",
+    acceptedRunMessageId: "message-q2",
+    acceptedRunThreadId: threadId,
+    acceptedRunPredecessorId: "run-r0",
+    queuedRunReservations: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId,
+      predecessorRunId: "run-r0",
+    }, {
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-r0",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+  assert.equal(await (appState.syncForegroundQueuedTerminal as (
+    input: Record<string, unknown>,
+  ) => Promise<boolean>)({
+    sessionId: recovering.sessionId,
+    threadId,
+    runId: "run-q1",
+    result: {
+      assistantText: "Delayed Q1",
+      output: {
+        status: "COMPLETED",
+        sessionId: recovering.sessionId,
+        runId: "run-q1",
+        quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+        errors: [],
+        telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+      },
+    },
+  }), true);
+  let session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q2");
+  assert.equal(session.acceptedRunPredecessorId, "run-r0");
+  assert.equal(session.queuedRunReservations?.[0]?.runId, "run-q2");
+  assert.equal(session.terminalQueuedRuns?.[0]?.runId, "run-q1");
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Q2 accepted after Q1",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q2", status: "RUNNING" },
+      conversationTurns: [{
+        turnId: "turn-q1",
+        threadId,
+        sessionId: recovering.sessionId,
+        sequence: 1,
+        status: "COMPLETED",
+        rootRunId: "run-q1",
+        sourceMessageId: "message-q1",
+        terminalRunId: "run-q1",
+        terminalStatus: "COMPLETED",
+        startedAt: recovering.createdAt,
+        completedAt: recovering.updatedAt,
+        updatedAt: recovering.updatedAt,
+      }],
+    },
+  });
+
+  session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q2");
+  assert.equal(session.acceptedRunPredecessorId, "run-q1");
+  assert.equal(session.queuedRunReservations, undefined);
+  assert.equal(session.terminalQueuedRuns?.[0]?.runId, "run-q1");
+  const persisted = new SessionStore(home).findByName(
+    await new SessionStore(home).load(),
+    recovering.name,
+  );
+  assert.equal(persisted?.acceptedRunPredecessorId, "run-q1");
+  assert.equal(persisted?.queuedRunReservations, undefined);
+});
+
+test("duplicate accepted start preserves an already ordered Q1 to Q2 to Q3 queue", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const ordered: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-q1",
+    acceptedRunMessageId: "message-q1",
+    acceptedRunThreadId: threadId,
+    acceptedRunPredecessorId: "run-r0",
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-q1",
+    }, {
+      runId: "run-q3",
+      messageId: "message-q3",
+      threadId,
+      predecessorRunId: "run-q2",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === ordered.sessionId ? ordered : session
+    ),
+  };
+  uiStore.patch({ activeSession: ordered, sessions: [ordered] });
+
+  assert.equal(await (appState.syncForegroundSessionProgress as (
+    input: { sessionId: string; threadId: string; runId: string; messageId: string },
+  ) => Promise<boolean>)({
+    sessionId: ordered.sessionId,
+    threadId,
+    runId: "run-q1",
+    messageId: "message-q1",
+  }), true);
+  assert.deepEqual(uiStore.getState().activeSession.queuedRunReservations, ordered.queuedRunReservations);
+  assert.equal(uiStore.getState().activeSession.acceptedRunPredecessorId, "run-r0");
+});
+
 test("restart reconciliation orders a terminal fork only from exact conversation-turn sequence", async (t) => {
   for (const exact of [true, false]) {
     await t.test(exact ? "exact" : "ambiguous", async () => {
@@ -3031,6 +3189,7 @@ test("restart reconciliation orders a terminal fork only from exact conversation
       );
       if (exact) {
         assert.equal(session.acceptedRunId, "run-q2");
+        assert.equal(session.acceptedRunPredecessorId, "run-q1");
         assert.equal(session.queuedRunReservations, undefined);
         assert.deepEqual(session.terminalQueuedRuns, [{
           ...reservations[0]!,
@@ -3051,6 +3210,81 @@ test("restart reconciliation orders a terminal fork only from exact conversation
         );
         assert.deepEqual(reloaded?.queuedRunReservations, reservations);
       }
+    });
+  }
+});
+
+test("restart reconciliation rejects a single terminal candidate without its exact source message", async (t) => {
+  for (const sourceMessageId of [undefined, "message-wrong"] as const) {
+    await t.test(sourceMessageId === undefined ? "missing" : "wrong", async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const base = uiStore.getState().activeSession;
+      const threadId = `thread-main:${base.sessionId}`;
+      const recovering: TuiSessionMeta = {
+        ...base,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: threadId,
+        queuedRunReservations: [{
+          runId: "run-q1",
+          messageId: "message-q1",
+          threadId,
+          predecessorRunId: "run-r0",
+        }],
+      };
+      const sessionsFile = appState.sessionsFile as {
+        version: number;
+        activeSessionName?: string;
+        sessions: TuiSessionMeta[];
+      };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === recovering.sessionId ? recovering : session
+        ),
+      };
+      uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+      await (appState.syncSessionFromDescribePayload as (
+        payload: Record<string, unknown>,
+      ) => Promise<void>)({
+        sessionId: recovering.sessionId,
+        version: 1,
+        threadId,
+        operatorThreadView: {
+          thread: {
+            threadId,
+            sessionId: recovering.sessionId,
+            title: "Single terminal correlation",
+            status: "COMPLETED",
+            createdAt: recovering.createdAt,
+            updatedAt: recovering.updatedAt,
+          },
+          childThreads: [],
+          childBlockerChain: [],
+          conversationTurns: [{
+            turnId: "turn-q1",
+            threadId,
+            sessionId: recovering.sessionId,
+            sequence: 1,
+            status: "COMPLETED",
+            rootRunId: "run-q1",
+            ...(sourceMessageId === undefined ? {} : { sourceMessageId }),
+            terminalRunId: "run-q1",
+            terminalStatus: "COMPLETED",
+            startedAt: recovering.createdAt,
+            completedAt: recovering.updatedAt,
+            updatedAt: recovering.updatedAt,
+          }],
+        },
+      });
+
+      const session = uiStore.getState().activeSession;
+      assert.equal(session.acceptedRunId, "run-r0");
+      assert.equal(session.terminalQueuedRuns, undefined);
+      assert.equal(session.queuedRunReservations?.[0]?.runId, "run-q1");
     });
   }
 });
@@ -3500,12 +3734,16 @@ test("restart consumes every exact queued terminal without overriding a differen
   assert.equal(reconciled.acceptedRunId, "run-current");
   assert.equal(reconciled.acceptedRunMessageId, "message-current");
   assert.equal(reconciled.queuedRunReservations, undefined);
-  assert.deepEqual(reconciled.terminalQueuedRuns, reservations);
+  const orderedTerminals = reservations.map((terminal, index) => ({
+    ...terminal,
+    ...(index === 0 ? {} : { predecessorRunId: reservations[index - 1]!.runId }),
+  }));
+  assert.deepEqual(reconciled.terminalQueuedRuns, orderedTerminals);
   const reloaded = new SessionStore(home).findByName(
     await new SessionStore(home).load(),
     recovering.name,
   );
-  assert.deepEqual(reloaded?.terminalQueuedRuns, reservations);
+  assert.deepEqual(reloaded?.terminalQueuedRuns, orderedTerminals);
   for (const terminal of reservations) {
     assert.equal(await (appState.syncForegroundSessionProgress as (
       input: { sessionId: string; threadId: string; runId: string; messageId: string },
@@ -3518,7 +3756,7 @@ test("restart consumes every exact queued terminal without overriding a differen
   }
   assert.deepEqual(
     (uiStore.getState().activeSession as TuiSessionMeta).terminalQueuedRuns,
-    reservations,
+    orderedTerminals,
   );
 });
 

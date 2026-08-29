@@ -3457,6 +3457,13 @@ export class App {
         : "RECOVERING");
     const exactNewAcceptance = exactRunId !== undefined
       && exactRunId === latestExpectedRunId;
+    const exactQueuedAcceptance = exactRunId === undefined
+      ? undefined
+      : [
+          ...(current.pendingQueueSubmissions ?? []),
+          ...(current.queuedRunReservations ?? []),
+          ...(current.terminalQueuedRuns ?? []),
+        ].find((record) => record.runId === exactRunId);
     await this.updateAcceptedBackgroundSession({
       ...current.delegation,
       status: nextStatus,
@@ -3466,6 +3473,11 @@ export class App {
     }, appendStartedHistory, {
       ...projected,
       acceptedRunId: exactRunId,
+      acceptedRunPredecessorId: exactQueuedAcceptance === undefined
+        ? exactNewAcceptance
+          ? undefined
+          : current.acceptedRunPredecessorId
+        : durableAcceptedQueuePredecessorId(exactQueuedAcceptance),
       ...(exactRunId !== undefined
         ? {
             acceptedRunThreadId:
@@ -4138,6 +4150,7 @@ export class App {
               ? { acceptedRunMessageId: recoveredRoute.messageId }
               : {}),
             acceptedRunId: recoveredAcceptedRoute.runId,
+            acceptedRunPredecessorId: undefined,
             ...(describedView !== undefined
               ? { acceptedRunThreadId: describedView.thread.threadId }
               : {}),
@@ -4152,6 +4165,9 @@ export class App {
             acceptedRunId: queuedLifecycle.accepted.runId,
             acceptedRunMessageId: queuedLifecycle.accepted.messageId,
             acceptedRunThreadId: queuedLifecycle.accepted.threadId,
+            acceptedRunPredecessorId: durableAcceptedQueuePredecessorId(
+              queuedLifecycle.accepted,
+            ),
             lastRunStatus: queuedLifecycle.accepted.status === "RUNNING"
               ? undefined
               : queuedLifecycle.accepted.status,
@@ -5244,12 +5260,18 @@ export class App {
         )
       )
     ) return false;
-    let acceptedQueueGraph = queuedReservation !== undefined || pendingQueueSubmission !== undefined
+    const acceptedQueueEvidence = queuedReservation ?? pendingQueueSubmission;
+    let acceptedQueueGraph = acceptedQueueEvidence !== undefined
       ? advanceTuiQueueAuthority(
           normalizeTuiQueueGraph(session),
-          (queuedReservation ?? pendingQueueSubmission)!,
+          acceptedQueueEvidence,
         )
       : normalizeTuiQueueGraph(session);
+    let acceptedQueuePredecessorId = acceptedQueueEvidence === undefined
+      ? exactAcceptedStart
+        ? session.acceptedRunPredecessorId
+        : undefined
+      : durableAcceptedQueuePredecessorId(acceptedQueueEvidence);
     if (exactAcceptedStart) {
       const unresolvedSuccessors = [
         ...(acceptedQueueGraph.pendingQueueSubmissions ?? []),
@@ -5258,6 +5280,7 @@ export class App {
         candidate.threadId === input.threadId
         && candidate.runId !== input.runId
         && candidate.predecessorRunId !== input.runId
+        && acceptedQueuePredecessorMatches(session, candidate)
       );
       if (unresolvedSuccessors.length > 1) return false;
       if (unresolvedSuccessors.length === 1) {
@@ -5276,6 +5299,7 @@ export class App {
         && candidate.threadId === input.threadId
       );
       if (retainedAcceptedRecord !== undefined) {
+        acceptedQueuePredecessorId = durableAcceptedQueuePredecessorId(retainedAcceptedRecord);
         acceptedQueueGraph = advanceTuiQueueAuthority(
           acceptedQueueGraph,
           retainedAcceptedRecord,
@@ -5289,6 +5313,7 @@ export class App {
       acceptedRunId: input.runId,
       acceptedRunMessageId: input.messageId,
       acceptedRunThreadId: input.threadId,
+      acceptedRunPredecessorId: acceptedQueuePredecessorId,
       pendingRunId: undefined,
       pendingRunMessageId: undefined,
       pendingRunThreadId: undefined,
@@ -5316,7 +5341,7 @@ export class App {
     threadId: string;
     runId: string;
     result: Extract<RunnerEvent, { type: "run.completed" }>["payload"]["result"];
-    allowAcceptedPromotion?: boolean | undefined;
+    authoritativeView?: SessionDescribedEventPayload["operatorThreadView"] | undefined;
   }): Promise<boolean> {
     if (
       input.result.output.sessionId !== input.sessionId
@@ -5361,29 +5386,25 @@ export class App {
     let currentQueueGraph = normalizeTuiQueueGraph(session);
     let orderedEvidence = queuedEvidence;
     if (
-      input.allowAcceptedPromotion !== false
-      && queuedEvidenceCanReplaceAcceptedRun(session, queuedEvidence) === false
-      && session.acceptedRunId !== undefined
-      && session.acceptedRunMessageId !== undefined
-      && session.acceptedRunThreadId === queuedEvidence.threadId
+      queuedEvidenceCanReplaceAcceptedRun(session, queuedEvidence) === false
+      && input.authoritativeView !== undefined
     ) {
-      const acceptedTerminal = currentQueueGraph.terminalQueuedRuns?.find((terminal) =>
-        terminal.runId === session.acceptedRunId
-        && terminal.messageId === session.acceptedRunMessageId
-        && terminal.threadId === session.acceptedRunThreadId
-        && terminal.predecessorRunId === queuedEvidence.predecessorRunId
+      const reconciled = reconcileExactQueuedLifecycle(session, input.authoritativeView);
+      currentQueueGraph = {
+        pendingQueueSubmissions: reconciled.pendingQueueSubmissions,
+        queuedRunReservations: reconciled.queuedRunReservations,
+        terminalQueuedRuns: reconciled.terminalQueuedRuns,
+      };
+      const reconciledEvidence = [
+        ...(currentQueueGraph.pendingQueueSubmissions ?? []),
+        ...(currentQueueGraph.queuedRunReservations ?? []),
+        ...(currentQueueGraph.terminalQueuedRuns ?? []),
+      ].find((candidate) =>
+        candidate.runId === queuedEvidence.runId
+        && candidate.messageId === queuedEvidence.messageId
+        && candidate.threadId === queuedEvidence.threadId
       );
-      if (acceptedTerminal !== undefined) {
-        currentQueueGraph = bindTuiQueueSuccessor(
-          currentQueueGraph,
-          queuedEvidence,
-          acceptedTerminal,
-        );
-        orderedEvidence = [
-          ...(currentQueueGraph.pendingQueueSubmissions ?? []),
-          ...(currentQueueGraph.queuedRunReservations ?? []),
-        ].find((candidate) => candidate.runId === queuedEvidence.runId) ?? queuedEvidence;
-      }
+      if (reconciledEvidence !== undefined) orderedEvidence = reconciledEvidence;
     }
     const installAsCurrent = queuedEvidenceCanReplaceAcceptedRun(
       { ...session, ...currentQueueGraph },
@@ -5422,6 +5443,7 @@ export class App {
             acceptedRunId: orderedEvidence.runId,
             acceptedRunMessageId: orderedEvidence.messageId,
             acceptedRunThreadId: orderedEvidence.threadId,
+            acceptedRunPredecessorId: durableAcceptedQueuePredecessorId(orderedEvidence),
           }
         : {}),
       queuedRunReservations: settledQueueGraph.queuedRunReservations,
@@ -5516,6 +5538,11 @@ export class App {
       acceptedRunId: input.runId,
       acceptedRunMessageId: input.messageId ?? queuedReservation?.messageId ?? session.pendingRunMessageId,
       acceptedRunThreadId: input.threadId,
+      acceptedRunPredecessorId: queuedReservation === undefined
+        ? session.acceptedRunId === input.runId
+          ? session.acceptedRunPredecessorId
+          : undefined
+        : durableAcceptedQueuePredecessorId(queuedReservation),
       pendingRunId: undefined,
       pendingRunRequestId: undefined,
       pendingRunMessageId: undefined,
@@ -5614,6 +5641,11 @@ export class App {
         queuedReservation?.messageId ?? session.pendingRunMessageId ?? session.acceptedRunMessageId,
       acceptedRunThreadId:
         queuedReservation?.threadId ?? session.pendingRunThreadId ?? session.acceptedRunThreadId,
+      acceptedRunPredecessorId: queuedReservation === undefined
+        ? session.acceptedRunId === expectedRunId
+          ? session.acceptedRunPredecessorId
+          : undefined
+        : durableAcceptedQueuePredecessorId(queuedReservation),
       pendingRunId: undefined,
       pendingRunMessageId: undefined,
       pendingRunThreadId: undefined,
@@ -5679,6 +5711,11 @@ export class App {
       acceptedRunId: expectedRunId,
       acceptedRunMessageId: queuedReservation?.messageId ?? session.acceptedRunMessageId,
       acceptedRunThreadId: queuedReservation?.threadId ?? session.acceptedRunThreadId,
+      acceptedRunPredecessorId: queuedReservation === undefined
+        ? session.acceptedRunId === expectedRunId
+          ? session.acceptedRunPredecessorId
+          : undefined
+        : durableAcceptedQueuePredecessorId(queuedReservation),
       queuedRunReservations: queuedReservation === undefined
         ? session.queuedRunReservations
         : omitQueuedRunReservation(session.queuedRunReservations, queuedReservation),
@@ -6379,6 +6416,7 @@ function hasSameTuiLifecycleEvidence(left: TuiSessionMeta, right: TuiSessionMeta
     && left.acceptedRunId === right.acceptedRunId
     && left.acceptedRunMessageId === right.acceptedRunMessageId
     && left.acceptedRunThreadId === right.acceptedRunThreadId
+    && left.acceptedRunPredecessorId === right.acceptedRunPredecessorId
     && left.lastRunStatus === right.lastRunStatus
     && left.delegation?.status === right.delegation?.status
     && isSameWaitFor(left.pendingWaitFor, right.pendingWaitFor);
@@ -6471,6 +6509,11 @@ function reconcileExactQueuedLifecycle(
     const status = exactQueuedRunStatusFromDescribedView(view, reservation.runId);
     if (status !== undefined) acceptedCandidates.push({ ...reservation, status });
   }
+  for (const terminal of normalizedSession.terminalQueuedRuns ?? []) {
+    if (terminal.threadId !== view.thread.threadId) continue;
+    const status = exactQueuedRunStatusFromDescribedView(view, terminal.runId);
+    if (status === terminal.status) acceptedCandidates.push({ ...terminal, status });
+  }
   if (view.activeRun !== undefined) {
     let activeIdentity = [
       ...(pendingQueueSubmissions ?? []),
@@ -6484,6 +6527,11 @@ function reconcileExactQueuedLifecycle(
               runId: session.acceptedRunId,
               messageId: session.acceptedRunMessageId,
               threadId: session.acceptedRunThreadId,
+              ...(session.acceptedRunPredecessorId === undefined
+                ? {}
+                : session.acceptedRunPredecessorId === null
+                  ? { predecessorRunId: undefined }
+                  : { predecessorRunId: session.acceptedRunPredecessorId }),
             }
           : undefined
       );
@@ -6499,6 +6547,10 @@ function reconcileExactQueuedLifecycle(
         && terminal.messageId === session.acceptedRunMessageId
         && terminal.threadId === session.acceptedRunThreadId
         && terminal.predecessorRunId === activeIdentity!.predecessorRunId
+        && (
+          session.acceptedRunPredecessorId === undefined
+          || acceptedQueuePredecessorMatches(session, activeIdentity!)
+        )
       );
       if (acceptedTerminal !== undefined) {
         const bound = bindTuiQueueSuccessor({
@@ -6521,6 +6573,10 @@ function reconcileExactQueuedLifecycle(
     ].filter((candidate) =>
       candidate.runId !== view.activeRun!.runId
       && candidate.threadId === view.thread.threadId
+      && (
+        session.acceptedRunPredecessorId === undefined
+        || candidate.predecessorRunId === activeIdentity?.predecessorRunId
+      )
       && view.conversationMessageRoutes?.some((route) =>
         route.messageId === candidate.messageId
         && route.disposition === "queued"
@@ -6541,6 +6597,7 @@ function reconcileExactQueuedLifecycle(
   const reboundQueueRecords = [
     ...(pendingQueueSubmissions ?? []),
     ...(queuedRunReservations ?? []),
+    ...(terminalQueuedRuns ?? []),
   ];
   for (let index = 0; index < acceptedCandidates.length; index += 1) {
     const rebound = reboundQueueRecords.find((candidate) =>
@@ -6564,21 +6621,19 @@ function reconcileExactQueuedLifecycle(
     terminalCandidates,
     view,
   );
-  const hasUnresolvedTerminalFork = terminalCandidates.some((candidate) =>
-    candidate.predecessorRunId !== undefined
-    && terminalCandidates.filter((other) =>
-      other.predecessorRunId === candidate.predecessorRunId
-    ).length > 1
-  );
-  if (hasUnresolvedTerminalFork && exactOrderedTerminalCandidates === undefined) {
+  if (terminalCandidates.length > 0 && exactOrderedTerminalCandidates === undefined) {
     return { pendingQueueSubmissions, queuedRunReservations, terminalQueuedRuns };
   }
   let acceptedFromTerminalSequence: (typeof terminalCandidates)[number] | undefined;
-  for (const terminalCandidate of exactOrderedTerminalCandidates ?? terminalCandidates) {
+  let priorOrderedTerminal: (typeof terminalCandidates)[number] | undefined;
+  let priorOrderedSiblingPredecessorRunId: string | undefined;
+  for (const terminalCandidate of exactOrderedTerminalCandidates ?? []) {
     let terminal = terminalCandidate;
+    const originalPredecessorRunId = terminal.predecessorRunId;
     const durableTerminalIdentity = [
       ...(pendingQueueSubmissions ?? []),
       ...(queuedRunReservations ?? []),
+      ...(terminalQueuedRuns ?? []),
     ].find((candidate) =>
       candidate.runId === terminal.runId
       && candidate.messageId === terminal.messageId
@@ -6586,22 +6641,24 @@ function reconcileExactQueuedLifecycle(
     );
     if (durableTerminalIdentity === undefined) continue;
     if (
-      acceptedFromTerminalSequence !== undefined
-      && terminal.predecessorRunId !== acceptedFromTerminalSequence.runId
+      priorOrderedTerminal !== undefined
+      && originalPredecessorRunId === priorOrderedSiblingPredecessorRunId
     ) {
       const bound = bindTuiQueueSuccessor({
         pendingQueueSubmissions,
         queuedRunReservations,
         terminalQueuedRuns,
-      }, durableTerminalIdentity, acceptedFromTerminalSequence);
+      }, durableTerminalIdentity, priorOrderedTerminal);
       pendingQueueSubmissions = bound.pendingQueueSubmissions;
       queuedRunReservations = bound.queuedRunReservations;
       terminalQueuedRuns = bound.terminalQueuedRuns;
       terminal = {
         ...terminal,
-        predecessorRunId: acceptedFromTerminalSequence.runId,
+        predecessorRunId: priorOrderedTerminal.runId,
       };
     }
+    priorOrderedTerminal = terminal;
+    priorOrderedSiblingPredecessorRunId = originalPredecessorRunId;
     pendingQueueSubmissions = omitExactRunIdentity(pendingQueueSubmissions, terminal);
     queuedRunReservations = omitExactRunIdentity(queuedRunReservations, terminal);
     terminalQueuedRuns = appendTerminalQueuedRun(terminalQueuedRuns, {
@@ -6633,13 +6690,50 @@ function reconcileExactQueuedLifecycle(
   const activeCandidates = distinctCandidates.filter(
     (candidate) => candidate.status === "RUNNING" || candidate.status === "WAITING",
   );
-  const soleCandidate = acceptedFromTerminalSequence ?? (activeCandidates.length === 1
-    ? activeCandidates[0]
-    : activeCandidates.length === 0 && terminalCandidates.length === 1
-      ? terminalCandidates[0]
-      : undefined);
+  let exactActiveCandidate = activeCandidates.length === 1 ? activeCandidates[0] : undefined;
+  if (
+    exactActiveCandidate !== undefined
+    && priorOrderedTerminal !== undefined
+    && session.acceptedRunId === exactActiveCandidate.runId
+    && session.acceptedRunMessageId === exactActiveCandidate.messageId
+    && session.acceptedRunThreadId === exactActiveCandidate.threadId
+    && acceptedQueuePredecessorMatches(session, exactActiveCandidate)
+    && exactActiveCandidate.predecessorRunId === priorOrderedSiblingPredecessorRunId
+    && exactActiveCandidate.predecessorRunId !== priorOrderedTerminal.runId
+  ) {
+    const bound = bindTuiQueueSuccessor({
+      pendingQueueSubmissions,
+      queuedRunReservations,
+      terminalQueuedRuns,
+    }, exactActiveCandidate, priorOrderedTerminal);
+    pendingQueueSubmissions = bound.pendingQueueSubmissions;
+    queuedRunReservations = bound.queuedRunReservations;
+    terminalQueuedRuns = bound.terminalQueuedRuns;
+    exactActiveCandidate = {
+      ...exactActiveCandidate,
+      predecessorRunId: priorOrderedTerminal.runId,
+    };
+  }
+  const activeCanFollowTerminal = exactActiveCandidate !== undefined
+    && queuedEvidenceCanReplaceAcceptedRun({
+      ...normalizedSession,
+      ...(acceptedFromTerminalSequence === undefined
+        ? {}
+        : { acceptedRunId: acceptedFromTerminalSequence.runId }),
+      pendingQueueSubmissions,
+      queuedRunReservations,
+      terminalQueuedRuns,
+    }, exactActiveCandidate);
+  const soleCandidate = activeCanFollowTerminal
+    ? exactActiveCandidate
+    : acceptedFromTerminalSequence;
   const accepted = soleCandidate !== undefined
-    && queuedEvidenceCanReplaceAcceptedRun(normalizedSession, soleCandidate)
+    && queuedEvidenceCanReplaceAcceptedRun({
+      ...normalizedSession,
+      pendingQueueSubmissions,
+      queuedRunReservations,
+      terminalQueuedRuns,
+    }, soleCandidate)
     ? soleCandidate
     : undefined;
   if (accepted !== undefined) {
@@ -6684,7 +6778,7 @@ function orderExactTerminalCandidates<T extends {
   candidates: T[],
   view: NonNullable<SessionDescribedEventPayload["operatorThreadView"]>,
 ): T[] | undefined {
-  if (candidates.length <= 1) return candidates;
+  if (candidates.length === 0) return candidates;
   const ordered: Array<{ candidate: T; sequence: number }> = [];
   for (const candidate of candidates) {
     const matchingTurns = view.conversationTurns?.filter((turn) =>
@@ -6838,6 +6932,20 @@ function queuedEvidenceCanReplaceAcceptedRun(
     predecessorRunId = predecessor?.predecessorRunId;
   }
   return false;
+}
+
+function durableAcceptedQueuePredecessorId(
+  evidence: { predecessorRunId?: string | undefined },
+): string | null {
+  return evidence.predecessorRunId ?? null;
+}
+
+function acceptedQueuePredecessorMatches(
+  session: TuiSessionMeta,
+  evidence: { predecessorRunId?: string | undefined },
+): boolean {
+  return session.acceptedRunPredecessorId !== undefined
+    && session.acceptedRunPredecessorId === durableAcceptedQueuePredecessorId(evidence);
 }
 
 export function isSameWaitFor(

@@ -137,7 +137,7 @@ export interface TuiRunControllerContext extends TuiAppContext {
     threadId: string;
     runId: string;
     result: TuiTerminalResult;
-    allowAcceptedPromotion?: boolean | undefined;
+    authoritativeView?: OperatorThreadView | undefined;
   }): Promise<boolean>;
   setSessionState(
     sessionId: string,
@@ -183,10 +183,6 @@ export class TuiRunController {
   private readonly activityBySession = new Map<string, ConversationActivityItem[]>();
   private readonly observedActiveRunBySession = new Map<string, string>();
   private readonly acceptedRunSourceMessageBySession = new Map<string, Map<string, string | undefined>>();
-  private readonly acceptedTerminalBySession = new Map<
-    string,
-    { runId: string; status: NormalizedOutput["status"] }
-  >();
   private readonly queueJournalTailBySession = new Map<string, Promise<void>>();
   private readonly indeterminateQueueJournalBySession = new Map<
     string,
@@ -979,6 +975,9 @@ export class TuiRunController {
                 acceptedRunId: response.payload.runId,
                 acceptedRunMessageId: submissionMessageId,
                 acceptedRunThreadId: response.payload.threadId,
+                acceptedRunPredecessorId: pendingQueueSubmission === undefined
+                  ? undefined
+                  : durableAcceptedQueuePredecessorId(pendingQueueSubmission),
               }
             : {}),
         });
@@ -1111,6 +1110,7 @@ export class TuiRunController {
                 acceptedRunId,
                 acceptedRunMessageId: submissionMessageId,
                 acceptedRunThreadId: threadId,
+                acceptedRunPredecessorId: undefined,
                 lastRunStatus: acceptedTerminalStatus,
               }
             : {}),
@@ -1290,6 +1290,9 @@ export class TuiRunController {
                 acceptedRunId: output.runId,
                 acceptedRunMessageId: submissionMessageId,
                 acceptedRunThreadId: threadId,
+                acceptedRunPredecessorId: exactPendingQueueSubmission === undefined
+                  ? undefined
+                  : durableAcceptedQueuePredecessorId(exactPendingQueueSubmission),
               }
             : {}),
           terminalQueuedRuns: settledQueueGraph.terminalQueuedRuns,
@@ -1334,6 +1337,9 @@ export class TuiRunController {
             acceptedRunId: resultRunId,
             acceptedRunMessageId: submissionMessageId,
             acceptedRunThreadId: threadId,
+            acceptedRunPredecessorId: durableAcceptedQueuePredecessorId(
+              exactPendingQueueSubmission!,
+            ),
             pendingQueueSubmissions: settledQueueGraph.pendingQueueSubmissions,
             queuedRunReservations: settledQueueGraph.queuedRunReservations,
             terminalQueuedRuns: settledQueueGraph.terminalQueuedRuns,
@@ -1419,6 +1425,9 @@ export class TuiRunController {
                 acceptedRunId: resultRunId,
                 acceptedRunMessageId: submissionMessageId,
                 acceptedRunThreadId: threadId,
+                acceptedRunPredecessorId: exactPendingQueueSubmission === undefined
+                  ? undefined
+                  : durableAcceptedQueuePredecessorId(exactPendingQueueSubmission),
               }
             : {}),
           terminalQueuedRuns: settledQueueGraph.terminalQueuedRuns,
@@ -1481,6 +1490,9 @@ export class TuiRunController {
               acceptedRunId: output.runId,
               acceptedRunMessageId: submissionMessageId,
               acceptedRunThreadId: threadId,
+              acceptedRunPredecessorId: exactPendingQueueSubmission === undefined
+                ? undefined
+                : durableAcceptedQueuePredecessorId(exactPendingQueueSubmission),
             }
           : {}),
         terminalQueuedRuns: settledQueueGraph.terminalQueuedRuns,
@@ -1664,6 +1676,14 @@ export class TuiRunController {
         const recoveredRoute = recoveredView?.conversationMessageRoutes?.find(
           (route) => route.messageId === submissionMessageId,
         );
+        const recoveredPendingQueueSubmission = queueSubmission
+          ? findPendingQueueSubmission(
+              readSubmittingSession()?.pendingQueueSubmissions,
+              reservedRunId!,
+              threadId,
+              submissionMessageId,
+            )
+          : undefined;
         const recoveredRouteRunId = recoveredRoute?.runId;
         const recoveredRunStatus = recoveredRouteRunId === undefined || recoveredView === undefined
           ? undefined
@@ -1801,6 +1821,11 @@ export class TuiRunController {
               acceptedRunThreadId: recoveredLifecycleConflicts
                 ? currentSession?.acceptedRunThreadId
                 : threadId,
+              acceptedRunPredecessorId: recoveredLifecycleConflicts
+                ? currentSession?.acceptedRunPredecessorId
+                : pendingQueueSubmission === undefined
+                  ? undefined
+                  : durableAcceptedQueuePredecessorId(pendingQueueSubmission),
               pendingWaitFor: recoveredLifecycleConflicts
                 ? currentSession?.pendingWaitFor
                 : recoveredRunStatus === "WAITING"
@@ -1925,6 +1950,7 @@ export class TuiRunController {
             acceptedRunId: exactRunId,
             acceptedRunMessageId: submissionMessageId,
             acceptedRunThreadId: threadId,
+            acceptedRunPredecessorId: undefined,
             lastRunStatus: terminalRunMatches ? recoveredRunStatus : undefined,
             updatedAt: new Date().toISOString(),
           });
@@ -1993,6 +2019,14 @@ export class TuiRunController {
         const recoveredRoute = recoveredView?.conversationMessageRoutes?.find(
           (route) => route.messageId === submissionMessageId,
         );
+        const finalRecoveredPendingQueueSubmission = queueSubmission
+          ? findPendingQueueSubmission(
+              readSubmittingSession()?.pendingQueueSubmissions,
+              reservedRunId!,
+              threadId,
+              submissionMessageId,
+            )
+          : undefined;
         const exactAcceptedRun = [...(
           this.acceptedRunSourceMessageBySession.get(submittingSessionId)?.entries() ?? []
         )].find(([runId, sourceMessageId]) =>
@@ -2036,6 +2070,9 @@ export class TuiRunController {
             acceptedRunId: recoveredRouteRunId,
             acceptedRunMessageId: submissionMessageId,
             acceptedRunThreadId: threadId,
+            acceptedRunPredecessorId: finalRecoveredPendingQueueSubmission === undefined
+              ? undefined
+              : durableAcceptedQueuePredecessorId(finalRecoveredPendingQueueSubmission),
             updatedAt: new Date().toISOString(),
           });
           if (submittingSessionIsActive()) this.context.uiStore.patch({
@@ -2062,6 +2099,9 @@ export class TuiRunController {
             acceptedRunId: exactAcceptedRun[0],
             acceptedRunMessageId: submissionMessageId,
             acceptedRunThreadId: threadId,
+            acceptedRunPredecessorId: finalRecoveredPendingQueueSubmission === undefined
+              ? undefined
+              : durableAcceptedQueuePredecessorId(finalRecoveredPendingQueueSubmission),
             updatedAt: new Date().toISOString(),
           });
           await persistResponseSessionAndUi();
@@ -2471,19 +2511,13 @@ export class TuiRunController {
           || session.acceptedRunId === event.runId
         );
       if (
-        this.acceptedTerminalBySession.get(event.sessionId)?.runId === event.runId
-        || (
-          exactForegroundStart === false
+        exactForegroundStart === false
           && exactQueuedForegroundStart === false
           && exactAcceptedForegroundStart === false
           && exactBackgroundStart === false
-        )
       ) return;
       this.applySharedActivityEvent(event);
       if (exactBackgroundStart) {
-        if (this.acceptedTerminalBySession.get(event.sessionId)?.runId !== event.runId) {
-          this.acceptedTerminalBySession.delete(event.sessionId);
-        }
         this.observedActiveRunBySession.set(event.sessionId, event.runId);
         const acceptedRuns = this.acceptedRunSourceMessageBySession.get(event.sessionId) ?? new Map();
         acceptedRuns.set(event.runId, event.payload.sourceMessageId);
@@ -2498,9 +2532,6 @@ export class TuiRunController {
             messageId: event.payload.sourceMessageId!,
           });
           if (accepted === false) return;
-          if (this.acceptedTerminalBySession.get(event.sessionId)?.runId !== event.runId) {
-            this.acceptedTerminalBySession.delete(event.sessionId);
-          }
           this.observedActiveRunBySession.set(event.sessionId, event.runId);
           const acceptedRuns = this.acceptedRunSourceMessageBySession.get(event.sessionId) ?? new Map();
           acceptedRuns.set(event.runId, event.payload.sourceMessageId);
@@ -2602,12 +2633,14 @@ export class TuiRunController {
         },
       });
       void this.runQueueJournalTransaction(output.sessionId, async () => {
-        const priorAcceptedTerminalRunId = this.acceptedTerminalBySession.get(output.sessionId)?.runId;
         let terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
           output.sessionId,
           output.runId,
           event.threadId,
         );
+        const authoritativeView = terminalOwnsCurrentLifecycle === false && event.threadId !== undefined
+          ? await this.requestConversationView(event.threadId).catch(() => undefined)
+          : undefined;
         const terminalOwnsActiveRun = this.recordTerminalEvent(output, event.ts, event.threadId);
         if (terminalOwnsActiveRun) {
           if (event.threadId !== undefined) {
@@ -2616,8 +2649,7 @@ export class TuiRunController {
               threadId: event.threadId,
               runId: output.runId,
               result: event.payload.result,
-              allowAcceptedPromotion: priorAcceptedTerminalRunId === undefined
-                || priorAcceptedTerminalRunId === output.runId,
+              authoritativeView,
             });
             if (synchronizedQueuedTerminal) {
               terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
@@ -2698,12 +2730,14 @@ export class TuiRunController {
           || (event.runId !== undefined && event.runId !== output.runId)
         ) return;
         void this.runQueueJournalTransaction(output.sessionId, async () => {
-          const priorAcceptedTerminalRunId = this.acceptedTerminalBySession.get(output.sessionId)?.runId;
           let terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
             output.sessionId,
             output.runId,
             event.threadId,
           );
+          const authoritativeView = terminalOwnsCurrentLifecycle === false && event.threadId !== undefined
+            ? await this.requestConversationView(event.threadId).catch(() => undefined)
+            : undefined;
           const terminalOwnsActiveRun = this.recordTerminalEvent(
             output,
             event.ts,
@@ -2716,8 +2750,7 @@ export class TuiRunController {
                 threadId: event.threadId,
                 runId: output.runId,
                 result: event.payload.result!,
-                allowAcceptedPromotion: priorAcceptedTerminalRunId === undefined
-                  || priorAcceptedTerminalRunId === output.runId,
+                authoritativeView,
               });
               if (synchronizedQueuedTerminal) {
                 terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
@@ -2784,12 +2817,14 @@ export class TuiRunController {
     if (event.type === "run.cancelled") {
       const output = event.payload.result.output;
       void this.runQueueJournalTransaction(output.sessionId, async () => {
-        const priorAcceptedTerminalRunId = this.acceptedTerminalBySession.get(output.sessionId)?.runId;
         let terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
           output.sessionId,
           output.runId,
           event.threadId,
         );
+        const authoritativeView = terminalOwnsCurrentLifecycle === false && event.threadId !== undefined
+          ? await this.requestConversationView(event.threadId).catch(() => undefined)
+          : undefined;
         const terminalOwnsActiveRun = this.recordTerminalEvent(output, event.ts, event.threadId);
         if (terminalOwnsActiveRun) {
           if (event.threadId !== undefined) {
@@ -2798,8 +2833,7 @@ export class TuiRunController {
               threadId: event.threadId,
               runId: output.runId,
               result: event.payload.result,
-              allowAcceptedPromotion: priorAcceptedTerminalRunId === undefined
-                || priorAcceptedTerminalRunId === output.runId,
+              authoritativeView,
             });
             if (synchronizedQueuedTerminal) {
               terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
@@ -3098,6 +3132,7 @@ export class TuiRunController {
                 acceptedRunId: currentRecord.runId,
                 acceptedRunMessageId: currentRecord.messageId,
                 acceptedRunThreadId: currentRecord.threadId,
+                acceptedRunPredecessorId: durableAcceptedQueuePredecessorId(currentRecord),
                 pendingWaitFor: status === "WAITING" ? view.thread.waitFor : undefined,
                 lastRunStatus: status === "RUNNING" ? undefined : status,
               }
@@ -3221,15 +3256,6 @@ export class TuiRunController {
       (session) => session.sessionId === sessionId,
     );
     const persistedAcceptedRunId = persistedSession?.acceptedRunId;
-    const acceptedTerminal = this.acceptedTerminalBySession.get(sessionId);
-    if (
-      acceptedTerminal?.runId === runId
-      && (
-        acceptedTerminal.status === "COMPLETED"
-        || acceptedTerminal.status === "FAILED"
-        || acceptedTerminal.status === output.status
-      )
-    ) return false;
     if (
       persistedAcceptedRunId === runId
       && (
@@ -3258,9 +3284,6 @@ export class TuiRunController {
               : []),
         ]);
     const ownsActiveRun = knownActiveRunIds.has(runId);
-    if (ownsActiveRun) {
-      this.acceptedTerminalBySession.set(sessionId, { runId, status: output.status });
-    }
     if (this.observedActiveRunBySession.get(sessionId) === runId) {
       this.observedActiveRunBySession.delete(sessionId);
     }
@@ -3441,6 +3464,7 @@ export class TuiRunController {
               acceptedRunId: queuedReservation.runId,
               acceptedRunMessageId: queuedReservation.messageId,
               acceptedRunThreadId: queuedReservation.threadId,
+              acceptedRunPredecessorId: durableAcceptedQueuePredecessorId(queuedReservation),
               queuedRunReservations: removeQueuedRunReservation(
                 state.activeSession.queuedRunReservations,
                 queuedReservation,
@@ -3640,6 +3664,12 @@ function queuedEvidenceCanReplaceAcceptedRun(
     predecessorRunId = predecessor?.predecessorRunId;
   }
   return false;
+}
+
+function durableAcceptedQueuePredecessorId(
+  evidence: { predecessorRunId?: string | undefined },
+): string | null {
+  return evidence.predecessorRunId ?? null;
 }
 
 function runnerErrorCode(error: unknown): string | undefined {

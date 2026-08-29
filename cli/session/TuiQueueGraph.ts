@@ -196,13 +196,12 @@ function assertNoUnorderedQueueForks(graph: NormalizedTuiQueueGraph): void {
     ...(graph.terminalQueuedRuns ?? []),
   ];
   for (const record of records) {
-    if (record.predecessorRunId === undefined) continue;
     const siblings = records.filter(
       (candidate) => candidate.predecessorRunId === record.predecessorRunId,
     );
     if (siblings.length > 1) {
       throw new TuiQueueGraphConsistencyError(
-        `Queue graph contains an unresolved queue fork after '${record.predecessorRunId}'.`,
+        `Queue graph contains an unresolved queue fork after '${record.predecessorRunId ?? "<root>"}'.`,
       );
     }
   }

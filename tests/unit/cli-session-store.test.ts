@@ -128,6 +128,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
     acceptedRunId: "run-accepted",
     acceptedRunMessageId: "message-accepted",
     acceptedRunThreadId: "thread-accepted:exact-run-child",
+    acceptedRunPredecessorId: "run-predecessor-accepted",
   };
 
   await store.save(store.upsert(await store.load(), session));
@@ -142,6 +143,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
   assert.equal(loaded?.acceptedRunId, "run-accepted");
   assert.equal(loaded?.acceptedRunMessageId, "message-accepted");
   assert.equal(loaded?.acceptedRunThreadId, "thread-accepted:exact-run-child");
+  assert.equal(loaded?.acceptedRunPredecessorId, "run-predecessor-accepted");
 
   await writeFile(
     path.join(tempDir, "sessions.json"),
@@ -167,6 +169,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
   assert.equal(legacy?.acceptedRunId, undefined);
   assert.equal(legacy?.terminalQueuedRuns, undefined);
   assert.equal(legacy?.acceptedRunThreadId, undefined);
+  assert.equal(legacy?.acceptedRunPredecessorId, undefined);
 });
 
 test("SessionStore readers never observe a partially written sessions file", async () => {

@@ -422,6 +422,8 @@ export interface TuiSessionMeta {
   acceptedRunId?: string | undefined;
   acceptedRunMessageId?: string | undefined;
   acceptedRunThreadId?: string | undefined;
+  /** Exact queued predecessor: null is the durable root; undefined is legacy or non-queued. */
+  acceptedRunPredecessorId?: string | null | undefined;
   lastRunStatus?: NormalizedOutput["status"] | undefined;
   pendingWaitFor?: Exclude<NormalizedOutput["waitFor"], undefined> | undefined;
   lastMessagePreview?: string | undefined;

@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Persist accepted queue order authority](24-persist-accepted-queue-order-authority.md)
+None.
 
 ## In progress
 
@@ -16,6 +16,7 @@ None.
 
 ## Implemented
 
+- [Persist accepted queue order authority](24-persist-accepted-queue-order-authority.md)
 - [Order legacy forks from complete runtime evidence](23-order-legacy-forks-from-runtime-evidence.md)
 - [Resolve legacy queue forks from exact authority](22-resolve-legacy-queue-forks-from-authority.md)
 - [Reconcile queue graphs and pre-route events](21-reconcile-queue-graphs-and-pre-route-events.md)

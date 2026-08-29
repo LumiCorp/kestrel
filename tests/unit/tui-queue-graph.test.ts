@@ -163,6 +163,28 @@ test("TuiQueueGraph rejects unresolved terminal siblings after active records se
   );
 });
 
+test("TuiQueueGraph rejects an unordered fork at the exact queue root", () => {
+  const value = session({
+    acceptedRunId: undefined,
+    acceptedRunMessageId: undefined,
+    acceptedRunThreadId: undefined,
+    queuedRunReservations: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId: "thread-main:session-queue",
+    }, {
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId: "thread-main:session-queue",
+    }],
+  });
+
+  assert.throws(
+    () => exactTuiQueueTailRunId(value, normalizeTuiQueueGraph(value)),
+    /unresolved queue fork after '<root>'/u,
+  );
+});
+
 test("TuiQueueGraph rewires an exact successor before removing its predecessor", () => {
   const input = session({
     pendingQueueSubmissions: [{
