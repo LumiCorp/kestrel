@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Reconcile queue graphs and pre-route events](21-reconcile-queue-graphs-and-pre-route-events.md)
+None.
 
 ## In progress
 
@@ -16,6 +16,7 @@ None.
 
 ## Implemented
 
+- [Reconcile queue graphs and pre-route events](21-reconcile-queue-graphs-and-pre-route-events.md)
 - [Make submission settlement durable and serial](20-make-submission-settlement-durable-and-serial.md)
 - [Unify submission and response ownership](19-unify-submission-response-ownership.md)
 - [Make queue transactions session-scoped and multi-run](18-make-queue-transactions-session-scoped-and-multi-run.md)

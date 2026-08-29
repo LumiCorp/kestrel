@@ -2714,7 +2714,7 @@ test("restart reconciliation promotes the exact persisted R0 to Q1 to Q2 chain",
       runId: "run-q2",
       messageId: "message-q2",
       threadId,
-      predecessorRunId: "run-q1",
+      predecessorRunId: "run-r0",
     }],
   };
   const sessionsFile = appState.sessionsFile as {
@@ -2758,6 +2758,99 @@ test("restart reconciliation promotes the exact persisted R0 to Q1 to Q2 chain",
   assert.equal(session.acceptedRunMessageId, "message-q2");
   assert.equal(session.acceptedRunThreadId, threadId);
   assert.equal(session.queuedRunReservations, undefined);
+});
+
+test("restart reconciliation rewires an absent queued predecessor before promoting its successor", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-r0",
+    acceptedRunMessageId: "message-r0",
+    acceptedRunThreadId: threadId,
+    pendingQueueSubmissions: [{
+      runId: "run-absent-q1",
+      messageId: "message-absent-q1",
+      threadId,
+      predecessorRunId: "run-r0",
+      indeterminate: true,
+    }, {
+      runId: "run-accepted-q2",
+      messageId: "message-accepted-q2",
+      threadId,
+      predecessorRunId: "run-absent-q1",
+      indeterminate: true,
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Rewired queue",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-r0", status: "RUNNING" },
+      conversationMessageRoutes: [{
+        messageId: "message-accepted-q2",
+        disposition: "queued",
+        runId: "run-accepted-q2",
+        createdAt: recovering.updatedAt,
+      }],
+    },
+  });
+
+  const rewired = uiStore.getState().activeSession;
+  assert.equal(rewired.pendingQueueSubmissions, undefined);
+  assert.deepEqual(rewired.queuedRunReservations, [{
+    runId: "run-accepted-q2",
+    messageId: "message-accepted-q2",
+    threadId,
+    predecessorRunId: "run-r0",
+  }]);
+
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "run-started-rewired-q2",
+    type: "run.started",
+    ts: "2026-08-29T00:00:02.000Z",
+    sessionId: recovering.sessionId,
+    threadId,
+    runId: "run-accepted-q2",
+    payload: {
+      sessionId: recovering.sessionId,
+      runId: "run-accepted-q2",
+      eventType: "user.message",
+      sourceMessageId: "message-accepted-q2",
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(uiStore.getState().activeSession.acceptedRunId, "run-accepted-q2");
 });
 
 test("restart reconciles an exact pending queue submission already active, waiting, or terminal", async (t) => {
@@ -3216,7 +3309,7 @@ test("startup scans delegated running and waiting queue owners without changing 
   }
 });
 
-test("queued-route restart recovery rejects wrong thread, wrong message, and conflicting run evidence", async () => {
+test("queued-route restart recovery rejects conflicts and removes an exactly absent route", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -3276,7 +3369,12 @@ test("queued-route restart recovery rejects wrong thread, wrong message, and con
     },
   });
 
-  assert.deepEqual(uiStore.getState().activeSession.pendingQueueSubmissions, pendingQueueSubmissions);
+  assert.deepEqual(uiStore.getState().activeSession.pendingQueueSubmissions, [{
+    ...pendingQueueSubmissions[0],
+  }, {
+    ...pendingQueueSubmissions[2],
+    predecessorRunId: "run-wrong-thread",
+  }]);
   assert.equal(uiStore.getState().activeSession.queuedRunReservations, undefined);
 });
 
