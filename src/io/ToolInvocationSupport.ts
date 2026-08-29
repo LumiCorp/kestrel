@@ -27,7 +27,7 @@ import {
   AGENT_TOOL_RESULT_VERSION,
   PREPARED_TOOL_CALL_VERSION,
   PREPARED_TOOL_EXECUTION_REQUIREMENTS_VERSION,
-  PREPARED_TOOL_STABLE_AUTHORITY_VERSION,
+  PREPARED_TOOL_STABLE_AUTHORITY_V2_VERSION,
   TOOL_EXECUTION_OUTCOME_VERSION,
   parsePreparedToolCallV1,
   type AgentToolResultV2,
@@ -37,10 +37,12 @@ import {
   type PreparedToolExecutionRequirementsV1,
   type PreparedToolInputAdapterV1,
   type PreparedToolPolicyDispositionV1,
-  type PreparedToolStableAuthorityV1,
+  type PreparedToolStableAuthority,
+  type PreparedToolStableAuthorityV2,
   type ResolvedModelToolIntentV1,
   type ToolExecutionOutcomeV1,
 } from "../kestrel/contracts/tool-invocation.js";
+import type { ToolExecutionClass } from "../mode/contracts.js";
 import {
   RunCancelledError,
   RuntimeFailure,
@@ -139,7 +141,7 @@ export function createPreparedToolCallV1(input: {
   inputAdapters?: PreparedToolInputAdapterV1[] | undefined;
   policy: PreparedToolPolicyDispositionV1;
   approval?: PreparedToolApprovalAuthorityV1 | undefined;
-  stableAuthority?: PreparedToolStableAuthorityV1 | undefined;
+  stableAuthority?: PreparedToolStableAuthority | undefined;
   stableToolIdentity?: StableToolApprovalIdentityV1 | undefined;
   executionRequirements?: PreparedToolExecutionRequirementsV1 | undefined;
   preparedAt?: string | undefined;
@@ -225,15 +227,16 @@ export function createStableToolApprovalIdentityV1(input: {
   });
 }
 
-export function createPreparedToolApprovalAuthorityV1(input: {
+export function createPreparedToolApprovalAuthorityV2(input: {
   activation: ToolActivationRefV1;
+  executionClass: ToolExecutionClass;
   effectiveInput: Record<string, unknown>;
   policyRevision: string;
   approvalAuthorityRevision: string;
   capabilities: readonly string[];
   runContext: ToolRunContext;
 }): {
-  stableAuthority: PreparedToolStableAuthorityV1;
+  stableAuthority: PreparedToolStableAuthorityV2;
   stableToolIdentity: StableToolApprovalIdentityV1;
   executionRequirements: PreparedToolExecutionRequirementsV1;
 } | undefined {
@@ -252,7 +255,7 @@ export function createPreparedToolApprovalAuthorityV1(input: {
     approvalAuthorityRevision: input.approvalAuthorityRevision,
   });
   const authorityPayload = {
-    version: PREPARED_TOOL_STABLE_AUTHORITY_VERSION,
+    version: PREPARED_TOOL_STABLE_AUTHORITY_V2_VERSION,
     actor: context.actor,
     organizationId: context.organizationId,
     environmentId: context.environmentId,
@@ -268,6 +271,7 @@ export function createPreparedToolApprovalAuthorityV1(input: {
     descriptorContractRevision: input.activation.descriptor.contractRevision,
     approvalAuthorityRevision: input.approvalAuthorityRevision,
     normalizedActionHash,
+    executionClass: input.executionClass,
   };
   return {
     stableAuthority: {
@@ -302,6 +306,23 @@ export async function executePinnedToolCallV1(input: {
 }): Promise<AgentToolResultV2> {
   const prepared = parsePreparedToolCallV1(input.prepared);
   assertPreparedActivationMatches(prepared.activation, input.pinned.activation);
+  if (
+    prepared.stableAuthority?.version ===
+      PREPARED_TOOL_STABLE_AUTHORITY_V2_VERSION &&
+    prepared.stableAuthority.executionClass !==
+      input.pinned.descriptor.capability.executionClass
+  ) {
+    throw createRuntimeFailure(
+      "TOOL_ACTIVATION_STALE",
+      "Prepared tool authority no longer matches its pinned execution class.",
+      {
+        subsystem: "tooling",
+        classification: "policy",
+        recoverable: false,
+        toolName: prepared.activation.descriptor.toolId,
+      },
+    );
+  }
   throwIfAborted(input.signal);
   const startedAt = new Date().toISOString();
   let rawOutput: unknown;

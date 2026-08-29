@@ -323,12 +323,38 @@ export class InlineEffectRunner implements EffectRunner {
         }
         if (toolActivity !== undefined) {
           const evidence = readAgentToolResultV2(output);
+          const semanticFailure = evidence?.status === "FAILED";
+          const semanticError = semanticFailure
+            ? evidence.outcome.kind === "failure"
+              ? {
+                  code: evidence.outcome.normalizedFailureCode,
+                  message: evidence.outcome.error.message,
+                  ...(evidence.outcome.error.details === undefined
+                    ? {}
+                    : { details: evidence.outcome.error.details }),
+                }
+              : evidence.outcome.kind === "partial"
+                ? {
+                    code: evidence.outcome.normalizedFailureCode,
+                    message: `Tool '${toolActivity.toolName}' returned a failed partial result.`,
+                  }
+                : evidence.outcome.kind === "cancellation"
+                  ? {
+                      code: evidence.outcome.normalizedFailureCode,
+                      message: `Tool '${toolActivity.toolName}' was cancelled.`,
+                    }
+                  : {
+                      code: "TOOL_RESULT_STATUS_FAILED",
+                      message: `Tool '${toolActivity.toolName}' returned failed result evidence.`,
+                    }
+            : undefined;
           await notifyToolActivity(context.onToolActivity, {
-            phase: "completed",
+            phase: semanticFailure ? "failed" : "completed",
             toolCallId: toolActivity.toolCallId,
             toolName: toolActivity.toolName,
             input: toolActivity.toolInput,
             output,
+            ...(semanticError === undefined ? {} : { error: semanticError }),
             durationMs: Date.now() - startedAt,
             ...(evidence === undefined
               ? toolActivity.activation === undefined

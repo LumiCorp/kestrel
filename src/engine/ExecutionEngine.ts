@@ -3090,31 +3090,56 @@ export class ExecutionEngine {
           );
         }
         if (preparedToolCall.policy.decision === "approval_required") {
-          let externalApprovalBinding;
+          const pendingApproval = readPendingToolApproval(session.state);
+          const authority = preparedToolCall.stableAuthority;
+          if (
+            authority === undefined ||
+            pendingApproval?.version !== "hosted_tool_approval_v2" ||
+            pendingApproval.preparedInvocationId !== preparedToolCall.callId ||
+            pendingApproval.approvalId !== preparedToolCall.approval?.approvalId ||
+            pendingApproval.toolName !==
+              preparedToolCall.activation.descriptor.toolId ||
+            (authority.version === "prepared_tool_stable_authority_v2" &&
+              pendingApproval.toolClass !== authority.executionClass)
+          ) {
+            throw createRuntimeFailure(
+              "TOOL_EFFECT_PREPARATION_FAILED",
+              "The approved prepared invocation does not match the committed approval wait.",
+              {
+                recoverable: false,
+                effectType: effect.type,
+                preparedInvocationId: preparedToolCall.callId,
+              },
+            );
+          }
+          let preparedApprovalBinding;
+          let pendingApprovalBinding;
           try {
-            externalApprovalBinding = parseRunnerExternalApprovalBindingV2(
+            preparedApprovalBinding = parseRunnerExternalApprovalBindingV2(
               preparedToolCall.approval?.externalApprovalBinding,
+            );
+            pendingApprovalBinding = parseRunnerExternalApprovalBindingV2(
+              pendingApproval.externalApprovalBinding,
             );
           } catch (error) {
             throw createRuntimeFailure(
               "TOOL_EFFECT_PREPARATION_FAILED",
-              "The approved prepared invocation is invalid.",
+              "The approved prepared invocation binding is invalid.",
               {
                 recoverable: false,
                 effectType: effect.type,
+                preparedInvocationId: preparedToolCall.callId,
                 cause: error instanceof Error ? error.message : String(error),
               },
             );
           }
-          const pendingApproval = readPendingToolApproval(session.state);
           if (
-            externalApprovalBinding.preparedInvocationId !==
+            preparedApprovalBinding.preparedInvocationId !==
               preparedToolCall.callId ||
-            pendingApproval?.version !== "hosted_tool_approval_v2" ||
-            pendingApproval.preparedInvocationId !== preparedToolCall.callId ||
-            serializeCanonicalApprovalPayload(
-              pendingApproval.externalApprovalBinding,
-            ) !== serializeCanonicalApprovalPayload(externalApprovalBinding)
+            pendingApproval.toolClass !== preparedApprovalBinding.toolClass ||
+            serializeCanonicalApprovalPayload(pendingApprovalBinding) !==
+              serializeCanonicalApprovalPayload(preparedApprovalBinding) ||
+            Date.parse(preparedApprovalBinding.expiresAt) <= Date.now()
           ) {
             throw createRuntimeFailure(
               "TOOL_EFFECT_PREPARATION_FAILED",

@@ -196,6 +196,16 @@ export const RUNNER_EXTERNAL_APPROVAL_AUTHORITY_KINDS = [
 export type RunnerExternalApprovalAuthorityKind =
   (typeof RUNNER_EXTERNAL_APPROVAL_AUTHORITY_KINDS)[number];
 
+export const RUNNER_PREPARED_APPROVAL_TOOL_CLASSES = [
+  "read_only",
+  "planning_write",
+  "sandboxed_only",
+  "external_side_effect",
+] as const;
+
+export type RunnerPreparedApprovalToolClass =
+  (typeof RUNNER_PREPARED_APPROVAL_TOOL_CLASSES)[number];
+
 export interface RunnerExternalApprovalBindingV1 {
   version: typeof RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION;
   approvalId: string;
@@ -221,7 +231,7 @@ export interface RunnerExternalApprovalBindingV2 {
   stableAuthorityFingerprint: string;
   stableToolIdentity: StableToolApprovalIdentityV1;
   requestingActor: RunnerApprovalActorAuthorityV1;
-  toolClass: "external_side_effect";
+  toolClass: RunnerPreparedApprovalToolClass;
   capabilities: string[];
   authorityKind: RunnerExternalApprovalAuthorityKind;
   authorityRevision: string;
@@ -383,17 +393,20 @@ export function parseRunnerExternalApprovalBindingV1(
 export function parseRunnerExternalApprovalBindingV2(
   value: unknown,
 ): RunnerExternalApprovalBindingV2 {
-  const binding = requireRecord(value, "external approval binding v2");
-  rejectUnknown(binding, BINDING_V2_FIELDS, "external approval binding v2");
+  const binding = requireRecord(value, "prepared approval binding v2");
+  rejectUnknown(binding, BINDING_V2_FIELDS, "prepared approval binding v2");
   if (binding.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION) {
     throw new Error(
-      `external approval binding v2.version must be '${RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION}'`,
+      `prepared approval binding v2.version must be '${RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION}'`,
     );
   }
-  if (binding.toolClass !== "external_side_effect") {
-    throw new Error(
-      "external approval binding v2.toolClass must be 'external_side_effect'",
-    );
+  if (
+    typeof binding.toolClass !== "string" ||
+    RUNNER_PREPARED_APPROVAL_TOOL_CLASSES.includes(
+      binding.toolClass as RunnerPreparedApprovalToolClass,
+    ) === false
+  ) {
+    throw new Error("prepared approval binding v2.toolClass is invalid");
   }
   if (
     typeof binding.authorityKind !== "string" ||
@@ -401,27 +414,27 @@ export function parseRunnerExternalApprovalBindingV2(
       binding.authorityKind as RunnerExternalApprovalAuthorityKind,
     ) === false
   ) {
-    throw new Error("external approval binding v2.authorityKind is invalid");
+    throw new Error("prepared approval binding v2.authorityKind is invalid");
   }
   const payloadHash = requireSha256(
     binding.payloadHash,
-    "external approval binding v2.payloadHash",
+    "prepared approval binding v2.payloadHash",
   );
   const stableAuthorityFingerprint = requireSha256(
     binding.stableAuthorityFingerprint,
-    "external approval binding v2.stableAuthorityFingerprint",
+    "prepared approval binding v2.stableAuthorityFingerprint",
   );
   const requestedAt = requireTimestamp(
     binding.requestedAt,
-    "external approval binding v2.requestedAt",
+    "prepared approval binding v2.requestedAt",
   );
   const expiresAt = requireTimestamp(
     binding.expiresAt,
-    "external approval binding v2.expiresAt",
+    "prepared approval binding v2.expiresAt",
   );
   if (Date.parse(expiresAt) <= Date.parse(requestedAt)) {
     throw new Error(
-      "external approval binding v2.expiresAt must be after requestedAt",
+      "prepared approval binding v2.expiresAt must be after requestedAt",
     );
   }
   const stableToolIdentity = parseStableToolApprovalIdentityV1(
@@ -429,34 +442,34 @@ export function parseRunnerExternalApprovalBindingV2(
   );
   const actionKey = requireNonEmptyString(
     binding.actionKey,
-    "external approval binding v2.actionKey",
+    "prepared approval binding v2.actionKey",
   );
   const authorityRevision = requireNonEmptyString(
     binding.authorityRevision,
-    "external approval binding v2.authorityRevision",
+    "prepared approval binding v2.authorityRevision",
   );
   if (actionKey !== stableToolIdentity.toolId) {
     throw new Error(
-      "external approval binding v2.actionKey must match stableToolIdentity.toolId",
+      "prepared approval binding v2.actionKey must match stableToolIdentity.toolId",
     );
   }
   if (authorityRevision !== stableToolIdentity.approvalAuthorityRevision) {
     throw new Error(
-      "external approval binding v2.authorityRevision must match stableToolIdentity.approvalAuthorityRevision",
+      "prepared approval binding v2.authorityRevision must match stableToolIdentity.approvalAuthorityRevision",
     );
   }
   return {
     version: RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
-    approvalId: requireNonEmptyString(binding.approvalId, "external approval binding v2.approvalId"),
-    preparedInvocationId: requireNonEmptyString(binding.preparedInvocationId, "external approval binding v2.preparedInvocationId"),
-    threadId: requireNonEmptyString(binding.threadId, "external approval binding v2.threadId"),
+    approvalId: requireNonEmptyString(binding.approvalId, "prepared approval binding v2.approvalId"),
+    preparedInvocationId: requireNonEmptyString(binding.preparedInvocationId, "prepared approval binding v2.preparedInvocationId"),
+    threadId: requireNonEmptyString(binding.threadId, "prepared approval binding v2.threadId"),
     actionKey,
     payloadHash,
     stableAuthorityFingerprint,
     stableToolIdentity,
     requestingActor: parseRunnerApprovalActorAuthorityV1(binding.requestingActor),
-    toolClass: "external_side_effect",
-    capabilities: requireCanonicalStringArray(binding.capabilities, "external approval binding v2.capabilities"),
+    toolClass: binding.toolClass as RunnerPreparedApprovalToolClass,
+    capabilities: requireCanonicalStringArray(binding.capabilities, "prepared approval binding v2.capabilities"),
     authorityKind: binding.authorityKind as RunnerExternalApprovalAuthorityKind,
     authorityRevision,
     requestedAt,

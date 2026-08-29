@@ -31,7 +31,7 @@ import {
 } from "../../src/kestrel/contracts/tool-invocation.js";
 import {
   createPreparedToolCallV1,
-  createPreparedToolApprovalAuthorityV1,
+  createPreparedToolApprovalAuthorityV2,
   createStableToolApprovalIdentityV1,
   createToolSurfaceForDescriptorsV1,
   executePinnedToolCallV1,
@@ -804,8 +804,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         !execCommandContinuation &&
         input.approval !== undefined &&
         options.runContext !== undefined
-          ? createPreparedToolApprovalAuthorityV1({
+          ? createPreparedToolApprovalAuthorityV2({
               activation: input.activation,
+              executionClass: source.pinned.descriptor.capability.executionClass,
               effectiveInput: asRecord(effectiveInput) ?? {},
               policyRevision: input.policy.policyRevision,
               approvalAuthorityRevision: input.approval.authorityRevision,

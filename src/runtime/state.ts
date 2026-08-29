@@ -526,11 +526,30 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
         const prepared = parseDurablePreparedToolCallV1(
           waitMetadata?.preparedToolCall,
         );
+        const authority = prepared.stableAuthority;
+        const preparedBinding = prepared.approval?.externalApprovalBinding;
+        const pendingBinding = pendingApproval?.externalApprovalBinding;
+        const waitBinding = waitMetadata?.externalApprovalBinding;
         if (
+          authority === undefined ||
           pendingApproval?.version !== "hosted_tool_approval_v2" ||
           pendingApproval.preparedToolCall !== undefined ||
           pendingApproval.preparedInvocationId !== prepared.callId ||
-          parsedInteraction.approval.preparedInvocationId !== prepared.callId
+          parsedInteraction.approval.preparedInvocationId !== prepared.callId ||
+          pendingApproval.approvalId !== waitMetadata?.approvalId ||
+          pendingApproval.approvalId !== preparedBinding?.approvalId ||
+          pendingApproval.toolName !== prepared.activation.descriptor.toolId ||
+          pendingApproval.toolName !== waitMetadata?.toolName ||
+          pendingApproval.toolClass !== preparedBinding?.toolClass ||
+          waitMetadata?.toolClass !== preparedBinding?.toolClass ||
+          pendingApproval.expiresAt !== waitMetadata?.expiresAt ||
+          pendingApproval.expiresAt !== preparedBinding?.expiresAt ||
+          waitMetadata?.requestedAt !== preparedBinding?.requestedAt ||
+          (authority.version === "prepared_tool_stable_authority_v2" &&
+            (pendingApproval.toolClass !== authority.executionClass ||
+              waitMetadata?.toolClass !== authority.executionClass)) ||
+          canonicalJsonValuesEqual(pendingBinding, waitBinding) === false ||
+          canonicalJsonValuesEqual(preparedBinding, pendingBinding) === false
         ) {
           throw new Error(
             "hosted tool approval must use one canonical prepared invocation",

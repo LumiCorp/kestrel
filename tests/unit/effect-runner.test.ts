@@ -8,7 +8,10 @@ import { createReleasePreparedToolCallHandler } from "../../src/effects/handlers
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { InMemorySessionStore as DurableInMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
-import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
+import {
+  buildAgentToolFailureResult,
+  buildAgentToolSuccessResult,
+} from "../../tools/toolResult.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
 import {
   createToolActivationRefV1,
@@ -166,6 +169,80 @@ test("Effect runner reports compiled tool activity", async () => {
     { phase: "completed", toolCallId: "tool-activity-1", toolName: "fs.write_text" },
   ]);
   assert.equal((activities[1]?.output as { status?: string }).status, "OK");
+});
+
+test("Effect runner reports typed failed tool results as failed activity without replaying the durable effect", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  const descriptor = defaultToolCatalog.getDescriptorRef("fs.write_text");
+  assert.ok(descriptor);
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-failed-activity",
+    scopeFingerprint: fingerprintToolScopeV1({ test: "failed-activity" }),
+  });
+  const startedAt = "2026-08-28T12:00:00.000Z";
+  const completedAt = "2026-08-28T12:00:01.000Z";
+  const legacyFailure = buildAgentToolFailureResult({
+    toolName: descriptor.toolId,
+    input: { path: "result.txt", text: "done" },
+    error: { code: "WRITE_REJECTED", message: "Write was rejected." },
+    startedAt,
+    completedAt,
+  });
+  registry.register("execute_tool_call", async () => ({
+    ...legacyFailure,
+    version: "v2",
+    toolCallId: "tool-failed-activity-1",
+    activation,
+    outcome: {
+      version: "v1",
+      callId: "tool-failed-activity-1",
+      activation,
+      kind: "failure",
+      startedAt,
+      completedAt,
+      effectState: "not_started",
+      normalizedFailureCode: "WRITE_REJECTED",
+      retryable: false,
+      error: { message: "Write was rejected." },
+    },
+  }));
+  const activities: Array<Record<string, unknown>> = [];
+  const effect = {
+    runId: "run-tool-failed-activity",
+    sessionId: "session-tool-failed-activity",
+    stepIndex: 2,
+    type: "execute_tool_call",
+    payload: {
+      toolName: descriptor.toolId,
+      toolInput: { path: "result.txt", text: "done" },
+    },
+    idempotencyKey: "tool-failed-activity-1",
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: startedAt,
+  };
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects(
+    [effect],
+    {
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      stepIndex: effect.stepIndex,
+      onToolActivity: async (activity) => {
+        activities.push(activity);
+      },
+    },
+  );
+
+  assert.equal(outcome.stop, false);
+  assert.equal((await store.getEffectResult(effect.idempotencyKey))?.status, "DONE");
+  assert.equal(activities.at(-1)?.phase, "failed");
+  assert.deepEqual(activities.at(-1)?.error, {
+    code: "WRITE_REJECTED",
+    message: "Write was rejected.",
+  });
 });
 
 test("Effect runner durably claims immediately before invoking the validated handler", async () => {

@@ -171,7 +171,7 @@ test("new hosted approval card reloads its action from the persisted prepared ca
     approvalAuthorityRevision: "approval-authority-v1",
   };
   const stableAuthorityPayload = {
-    version: "prepared_tool_stable_authority_v1" as const,
+    version: "prepared_tool_stable_authority_v2" as const,
     actor: requestingActor,
     organizationId: "org-1",
     environmentId: "env-1",
@@ -189,6 +189,7 @@ test("new hosted approval card reloads its action from the persisted prepared ca
       toolId: descriptor.toolId,
       effectiveInput,
     }),
+    executionClass: "read_only" as const,
   };
   const stableAuthority = {
     ...stableAuthorityPayload,
@@ -224,7 +225,7 @@ test("new hosted approval card reloads its action from the persisted prepared ca
         stableAuthorityFingerprint: stableAuthority.fingerprint,
         stableToolIdentity,
         requestingActor,
-        toolClass: "external_side_effect",
+        toolClass: "read_only",
         capabilities: ["network.call"],
         authorityKind: "runtime_policy",
         authorityRevision: stableToolIdentity.approvalAuthorityRevision,

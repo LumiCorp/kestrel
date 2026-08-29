@@ -700,7 +700,7 @@ test(
       requestId: approvalRequestId,
       kind: "approval" as const,
       eventType: "user.approval" as const,
-      prompt: "Approve test.tool? Reply with decision 'approve_once' or 'decline'.",
+      prompt: "Approve internet.research? Reply with decision 'approve_once' or 'decline'.",
       inputSchema: {
         type: "object" as const,
         additionalProperties: false as const,
@@ -718,10 +718,10 @@ test(
       },
       approval: {
         preparedInvocationId: `prepared-${suffix}`,
-        toolName: "test.tool",
+        toolName: "internet.research",
         stableToolIdentity: {
           version: "stable_tool_approval_identity_v1" as const,
-          toolId: "test.tool",
+          toolId: "internet.research",
           descriptorContractRevision: "descriptor-v1",
           approvalAuthorityRevision: "authority-v1",
         },
@@ -808,6 +808,16 @@ test(
       messageId: `v2-approval-${suffix}`,
       source: "web",
     });
+    const [readApprovalMutationRecords] = await sql<Array<{ count: number }>>`
+      SELECT count(*)::int AS "count"
+      FROM "app_operation_approvals"
+      WHERE "runtime_approval_id" = ${approvalRequestId}
+    `;
+    assert.equal(
+      readApprovalMutationRecords?.count,
+      0,
+      "read-only hosted approvals must not enter the mutation approval-record path",
+    );
     assert.deepEqual(
       (await store.claimDurableThreadTurn(approvalTurn.turn.id))
         ?.interactionResponse,
