@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Persist accepted queue order authority](24-persist-accepted-queue-order-authority.md)
 
 ## In progress
 
