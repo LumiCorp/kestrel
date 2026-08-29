@@ -442,6 +442,9 @@ function readExactRunIdentityCollection(
           runId: candidate.runId,
           messageId: candidate.messageId,
           threadId: candidate.threadId,
+          ...(typeof candidate.predecessorRunId === "string"
+            ? { predecessorRunId: candidate.predecessorRunId }
+            : {}),
         }]
       : [];
   });
@@ -469,6 +472,9 @@ function readTerminalQueuedRuns(
       messageId: record.messageId,
       threadId: record.threadId,
       status: record.status,
+      ...(typeof record.predecessorRunId === "string"
+        ? { predecessorRunId: record.predecessorRunId }
+        : {}),
     }];
   });
   return runs.length === 0 ? undefined : runs;

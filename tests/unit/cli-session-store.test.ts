@@ -96,6 +96,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
         runId: "run-queued-a",
         messageId: "message-queued-a",
         threadId: "thread-main:exact-run-child",
+        predecessorRunId: "run-predecessor-a",
       },
       {
         runId: "run-queued-b",
@@ -108,6 +109,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
         runId: "run-pending-queue-a",
         messageId: "message-pending-queue-a",
         threadId: "thread-main:exact-run-child",
+        predecessorRunId: "run-predecessor-a",
       },
       {
         runId: "run-pending-queue-b",
@@ -120,6 +122,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
       messageId: "message-terminal-queued",
       threadId: "thread-main:exact-run-child",
       status: "COMPLETED",
+      predecessorRunId: "run-predecessor-a",
     }],
     acceptedRunId: "run-accepted",
     acceptedRunMessageId: "message-accepted",

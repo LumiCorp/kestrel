@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Unify submission and response ownership](19-unify-submission-response-ownership.md)
+None.
 
 ## In progress
 
@@ -16,6 +16,7 @@ None.
 
 ## Implemented
 
+- [Unify submission and response ownership](19-unify-submission-response-ownership.md)
 - [Make queue transactions session-scoped and multi-run](18-make-queue-transactions-session-scoped-and-multi-run.md)
 - [Serialize and reconcile queued ownership](17-serialize-and-reconcile-queued-ownership.md)
 - [Make queued lifecycle ownership crash-durable and thread-exact](16-make-queued-lifecycle-crash-durable-and-thread-exact.md)

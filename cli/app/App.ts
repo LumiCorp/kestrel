@@ -310,6 +310,11 @@ export class App {
       },
       appendHistoryLine: (role, text, data, output, eventId) =>
         this.appendHistoryLine(role, text, data, output, eventId),
+      appendSessionHistoryLine: async (sessionId, role, text, data, output, eventId) => {
+        const session = this.sessionsFile.sessions.find((candidate) => candidate.sessionId === sessionId);
+        if (session === undefined) return;
+        await this.appendSessionHistoryLine(session, role, text, data, output, eventId);
+      },
       persistSessionAndUi: (options) => this.persistSessionAndUi(options),
       persistUiState: () => this.persistUiState(),
       persistActiveProfile: (profile) => this.persistActiveProfile(profile),
@@ -5207,6 +5212,10 @@ export class App {
       || session.delegation !== undefined
       || terminalQueuedRun !== undefined
       || (
+        queuedReservation !== undefined
+        && queuedEvidenceCanReplaceAcceptedRun(session, queuedReservation) === false
+      )
+      || (
         queuedReservation === undefined
         && (
           session.pendingRunId !== input.runId
@@ -5279,8 +5288,7 @@ export class App {
       : input.result.output.status === "FAILED"
         ? "FAILED" as const
         : undefined;
-    const installAsCurrent = session.acceptedRunId === undefined
-      || session.acceptedRunId === queuedReservation.runId;
+    const installAsCurrent = queuedEvidenceCanReplaceAcceptedRun(session, queuedReservation);
     const accepted: TuiSessionMeta = {
       ...session,
       started: true,
@@ -6282,6 +6290,7 @@ function reconcileExactQueuedLifecycle(
     runId: string;
     messageId: string;
     threadId: string;
+    predecessorRunId?: string | undefined;
     status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
   } | undefined;
 } {
@@ -6295,6 +6304,7 @@ function reconcileExactQueuedLifecycle(
     runId: string;
     messageId: string;
     threadId: string;
+    predecessorRunId?: string | undefined;
     status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
   }> = [];
   for (const submission of session.pendingQueueSubmissions ?? []) {
@@ -6340,6 +6350,9 @@ function reconcileExactQueuedLifecycle(
       messageId: terminal.messageId,
       threadId: terminal.threadId,
       status: terminal.status as "COMPLETED" | "FAILED",
+      ...(terminal.predecessorRunId !== undefined
+        ? { predecessorRunId: terminal.predecessorRunId }
+        : {}),
     });
   }
   const activeCandidates = distinctCandidates.filter(
@@ -6351,7 +6364,7 @@ function reconcileExactQueuedLifecycle(
       ? terminalCandidates[0]
       : undefined;
   const accepted = soleCandidate !== undefined
-    && (session.acceptedRunId === undefined || session.acceptedRunId === soleCandidate.runId)
+    && queuedEvidenceCanReplaceAcceptedRun(session, soleCandidate)
     ? soleCandidate
     : undefined;
   if (accepted !== undefined) {
@@ -6391,6 +6404,7 @@ function appendTerminalQueuedRun(
       sameRun.messageId !== terminal.messageId
       || sameRun.threadId !== terminal.threadId
       || sameRun.status !== terminal.status
+      || sameRun.predecessorRunId !== terminal.predecessorRunId
     ) {
       throw new Error("Terminal queued run identity conflicted with durable lifecycle evidence.");
     }
@@ -6433,6 +6447,7 @@ function appendExactQueuedRunReservation(
     if (
       sameRun.messageId !== reservation.messageId
       || sameRun.threadId !== reservation.threadId
+      || sameRun.predecessorRunId !== reservation.predecessorRunId
     ) {
       throw new Error("Queued run reservation identity conflicted with durable route evidence.");
     }
@@ -6450,7 +6465,8 @@ function hasSameQueuedRunReservations(
     const candidate = right[index];
     return candidate?.runId === reservation.runId
       && candidate.messageId === reservation.messageId
-      && candidate.threadId === reservation.threadId;
+      && candidate.threadId === reservation.threadId
+      && candidate.predecessorRunId === reservation.predecessorRunId;
   });
 }
 
@@ -6464,7 +6480,8 @@ function hasSameTerminalQueuedRuns(
     return candidate?.runId === terminal.runId
       && candidate.messageId === terminal.messageId
       && candidate.threadId === terminal.threadId
-      && candidate.status === terminal.status;
+      && candidate.status === terminal.status
+      && candidate.predecessorRunId === terminal.predecessorRunId;
   });
 }
 
@@ -6477,8 +6494,21 @@ function hasSameExactRunIdentityCollection(
     const candidate = right[index];
     return candidate?.runId === reservation.runId
       && candidate.messageId === reservation.messageId
-      && candidate.threadId === reservation.threadId;
+      && candidate.threadId === reservation.threadId
+      && candidate.predecessorRunId === reservation.predecessorRunId;
   });
+}
+
+function queuedEvidenceCanReplaceAcceptedRun(
+  session: TuiSessionMeta,
+  evidence: { runId: string; predecessorRunId?: string | undefined },
+): boolean {
+  return session.acceptedRunId === undefined
+    || session.acceptedRunId === evidence.runId
+    || (
+      evidence.predecessorRunId !== undefined
+      && session.acceptedRunId === evidence.predecessorRunId
+    );
 }
 
 export function isSameWaitFor(

@@ -441,6 +441,7 @@ export interface TuiQueuedRunReservation {
   runId: string;
   messageId: string;
   threadId: string;
+  predecessorRunId?: string | undefined;
 }
 
 export interface TuiTerminalQueuedRun extends TuiQueuedRunReservation {
@@ -451,6 +452,7 @@ export interface TuiPendingQueueSubmission {
   runId: string;
   messageId: string;
   threadId: string;
+  predecessorRunId?: string | undefined;
 }
 
 export interface SessionsFile {

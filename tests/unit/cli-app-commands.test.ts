@@ -2535,7 +2535,7 @@ test("session description never backfills accepted thread ownership from a misma
   assert.equal(uiStore.getState().activeSession.acceptedRunThreadId, undefined);
 });
 
-test("restart recovers a run-less queued route by exact persisted submission and survives an intervening reply", async () => {
+test("restart recovers a run-less queued route without letting its delayed start replace an intervening reply", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2545,10 +2545,14 @@ test("restart recovers a run-less queued route by exact persisted submission and
   const queuedMessageId = "message-restart-runless-queue";
   const recovering: TuiSessionMeta = {
     ...base,
+    acceptedRunId: "run-current-before-queue",
+    acceptedRunMessageId: "message-current-before-queue",
+    acceptedRunThreadId: threadId,
     pendingQueueSubmissions: [{
       runId: queuedRunId,
       messageId: queuedMessageId,
       threadId,
+      predecessorRunId: "run-current-before-queue",
     }],
     pendingRunRequestId: "request-intervening-reply",
     pendingRunThreadId: threadId,
@@ -2593,6 +2597,7 @@ test("restart recovers a run-less queued route by exact persisted submission and
     runId: queuedRunId,
     messageId: queuedMessageId,
     threadId,
+    predecessorRunId: "run-current-before-queue",
   }]);
   assert.equal(session.pendingRunRequestId, "request-intervening-reply");
 
@@ -2622,11 +2627,71 @@ test("restart recovers a run-less queued route by exact persisted submission and
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   session = uiStore.getState().activeSession;
-  assert.equal(session.queuedRunReservations, undefined);
-  assert.equal(session.acceptedRunId, queuedRunId);
-  assert.equal(session.acceptedRunMessageId, queuedMessageId);
+  assert.deepEqual(session.queuedRunReservations, [{
+    runId: queuedRunId,
+    messageId: queuedMessageId,
+    threadId,
+    predecessorRunId: "run-current-before-queue",
+  }]);
+  assert.equal(session.acceptedRunId, "run-intervening-reply");
+  assert.equal(session.acceptedRunMessageId, "message-intervening-reply");
   assert.equal(session.acceptedRunThreadId, threadId);
-  assert.equal(session.lastRunStatus, undefined);
+  assert.equal(session.lastRunStatus, "WAITING");
+});
+
+test("a promoted queued run replaces only its exact accepted predecessor", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const promoted: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-predecessor",
+    acceptedRunMessageId: "message-predecessor",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: "run-promoted",
+      messageId: "message-promoted",
+      threadId,
+      predecessorRunId: "run-predecessor",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === promoted.sessionId ? promoted : session
+    ),
+  };
+  uiStore.patch({ activeSession: promoted, sessions: [promoted] });
+
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "run-started-exact-predecessor",
+    type: "run.started",
+    ts: "2026-08-29T00:00:01.000Z",
+    sessionId: promoted.sessionId,
+    threadId,
+    runId: "run-promoted",
+    payload: {
+      sessionId: promoted.sessionId,
+      runId: "run-promoted",
+      eventType: "user.message",
+      sourceMessageId: "message-promoted",
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const session = uiStore.getState().activeSession;
+  assert.equal(session.queuedRunReservations, undefined);
+  assert.equal(session.acceptedRunId, "run-promoted");
+  assert.equal(session.acceptedRunMessageId, "message-promoted");
+  assert.equal(session.acceptedRunThreadId, threadId);
 });
 
 test("restart reconciles an exact pending queue submission already active, waiting, or terminal", async (t) => {
