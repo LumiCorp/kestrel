@@ -1138,7 +1138,7 @@ export class App {
           const tasks = this.listChildTaskSessions(state.activeSession.sessionId);
           const selected = tasks[state.taskScroll.cursor];
           if (selected !== undefined) {
-            void this.switchSession(selected.name);
+            this.submitInput(`/switch ${selected.name}`);
           }
           return;
         }
@@ -1150,7 +1150,7 @@ export class App {
               this.goBack();
               return;
             }
-            void this.switchSession(selected.title);
+            this.submitInput(`/switch ${selected.title}`);
           }
           return;
         }
@@ -1196,7 +1196,7 @@ export class App {
           const filtered = this.selectors.filterSessions(state.sessions, state.sessionQuery);
           const selected = filtered[state.scroll.sessions.cursor];
           if (selected !== undefined) {
-            void this.switchSession(selected.name);
+            this.submitInput(`/switch ${selected.name}`);
           }
           return;
         }

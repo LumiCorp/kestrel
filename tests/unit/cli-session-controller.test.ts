@@ -233,7 +233,7 @@ test("SessionController fails closed when a started target cannot be described",
   assert.equal(changedActiveSession, false);
 });
 
-test("SessionController fails closed when a started target's authoring profile is unavailable", async () => {
+test("SessionController fails closed when a runtime-bound target's authoring profile is unavailable", async () => {
   const activeProfile: TuiProfile = {
     id: "active-profile",
     label: "Active profile",
@@ -249,7 +249,9 @@ test("SessionController fails closed when a started target's authoring profile i
     name: "target",
     sessionId: "s-target",
     profileId: "missing-authoring-profile",
+    started: false,
     environmentPresetId: "cli_dev_local",
+    effectiveAssemblyId: "assembly-dev",
   });
   let sessionsFile: SessionsFile = {
     version: 5,
@@ -257,6 +259,7 @@ test("SessionController fails closed when a started target's authoring profile i
     sessions: [main, target],
   };
   let changedActiveSession = false;
+  let described = false;
   const context = {
     uiStore: { getState: () => ({ activeProfile, activeSession: main }) },
     profileStore: {
@@ -275,17 +278,20 @@ test("SessionController fails closed when a started target's authoring profile i
     getSessionsFile: () => sessionsFile,
     setSessionsFile: (next: SessionsFile) => { sessionsFile = next; },
     client: {
-      sendCommand: async () => ({
-        type: "session.described",
-        payload: {
-          sessionId: target.sessionId,
-          version: 1,
-          activeAssembly: {
-            mode: "explicit",
-            environmentPresetId: "cli_dev_local",
+      sendCommand: async () => {
+        described = true;
+        return {
+          type: "session.described",
+          payload: {
+            sessionId: target.sessionId,
+            version: 1,
+            activeAssembly: {
+              mode: "explicit",
+              environmentPresetId: "cli_dev_local",
+            },
           },
-        },
-      }),
+        };
+      },
     },
     syncSessionFromDescribePayload: async () => {},
   } as unknown as SessionControllerContext;
@@ -297,6 +303,7 @@ test("SessionController fails closed when a started target's authoring profile i
       && error.sessionId === target.sessionId
       && error.profileId === target.profileId,
   );
+  assert.equal(described, true);
   assert.equal(changedActiveSession, false);
 });
 

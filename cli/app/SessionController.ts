@@ -26,7 +26,10 @@ import {
   TuiEnvironmentIdentityError,
 } from "../session/TuiExecutionEnvironment.js";
 import type { ConversationActivityItem } from "@kestrel-agents/conversation";
-import { resolveStartedSessionAuthoringProfile } from "../session/TuiAuthoringProfile.js";
+import {
+  hasDurableTuiRuntimeBinding,
+  resolveStartedSessionAuthoringProfile,
+} from "../session/TuiAuthoringProfile.js";
 
 export interface CreateSessionOptions {
   launch: OperatorResolvedStartTask;
@@ -228,7 +231,7 @@ export class SessionController {
     }
 
     let resolvedTarget = target;
-    if (target.started) {
+    if (hasDurableTuiRuntimeBinding(target)) {
       try {
         const describe = await this.context.client.sendCommand("session.describe", {
           sessionId: target.sessionId,

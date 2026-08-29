@@ -93,6 +93,42 @@ test("startup preserves a started session's authoring profile over an explicit p
   assert.equal(resolved.id, authoringProfile.id);
 });
 
+test("startup preserves a runtime-bound session's authoring profile when started is stale", async () => {
+  const authoringProfile: TuiProfile = {
+    id: "runtime-bound-authoring-profile",
+    label: "Runtime-bound authoring profile",
+    agent: "kestrel",
+    sessionPrefix: "runtime-bound",
+  };
+  const explicitProfile: TuiProfile = {
+    id: "replacement-profile",
+    label: "Replacement profile",
+    agent: "kestrel",
+    sessionPrefix: "replacement",
+  };
+  const session: TuiSessionMeta = {
+    name: "runtime-bound-session",
+    sessionId: "session-runtime-bound",
+    profileId: authoringProfile.id,
+    effectiveAssemblyId: "bundle:runtime-bound",
+    createdAt: "2026-08-29T00:00:00.000Z",
+    updatedAt: "2026-08-29T00:00:00.000Z",
+    started: false,
+  };
+  const profileStore = new ProfileStore(path.join(os.tmpdir(), "tui-runtime-bound-profile-test"));
+
+  const resolved = await resolveProfileForStartup({
+    options: { cwd: process.cwd(), profileId: explicitProfile.id },
+    profiles: [authoringProfile, explicitProfile],
+    runtimeSettings: { version: 1, defaults: {} },
+    profileStore,
+    session,
+    startupNotices: [],
+  });
+
+  assert.equal(resolved.id, authoringProfile.id);
+});
+
 test("startup fails closed when a started session's authoring profile is unavailable", async () => {
   const availableProfile: TuiProfile = {
     id: "available-profile",
@@ -7245,6 +7281,65 @@ test("interactive operator command failures surface in the TUI instead of escapi
 
   const rawHistory = await readFile(historyPath, "utf8");
   assert.match(rawHistory, /Input failed: Postgres is not reachable/u);
+});
+
+test("primary session selection surfaces an unavailable authoring profile", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const sessionStore = appState.sessionStore as SessionStore;
+  const activeSession = uiStore.getState().activeSession;
+  const target: TuiSessionMeta = {
+    ...activeSession,
+    name: "missing-profile-session",
+    sessionId: "session-missing-profile",
+    profileId: "missing-authoring-profile",
+    effectiveAssemblyId: "bundle:missing-profile",
+    started: true,
+  };
+  appState.sessionsFile = sessionStore.upsert(
+    appState.sessionsFile as { sessions: TuiSessionMeta[] },
+    target,
+  );
+  uiStore.patch({
+    activeView: "chat",
+    activeRegion: "sessions",
+    focusRegion: "sessions",
+    sessions: [target],
+    scroll: {
+      ...uiStore.getState().scroll,
+      sessions: {
+        ...uiStore.getState().scroll.sessions,
+        cursor: 0,
+      },
+    },
+  });
+  appState.client = {
+    sendCommand: async () => ({
+      type: "session.described",
+      payload: {
+        sessionId: target.sessionId,
+        version: 1,
+        activeAssembly: {
+          mode: "explicit",
+          bundleId: target.effectiveAssemblyId,
+          environmentPresetId: target.environmentPresetId,
+        },
+      },
+    }),
+  };
+
+  const controller = (appState.buildController as () => InkAppController)();
+  controller.activatePrimaryAction();
+
+  await waitFor(() =>
+    uiStore.getState().errorOverlay?.code === "TUI_AUTHORING_PROFILE_UNAVAILABLE"
+  );
+  assert.equal(uiStore.getState().activeSession.sessionId, activeSession.sessionId);
+  assert.match(
+    uiStore.getState().errorOverlay?.message ?? "",
+    /authoring profile 'missing-authoring-profile' is unavailable/u,
+  );
 });
 
 test("plain submissions during a running turn reach authoritative conversation routing immediately", async () => {

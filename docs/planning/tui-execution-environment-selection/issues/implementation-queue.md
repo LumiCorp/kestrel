@@ -8,7 +8,7 @@ None.
 
 ## In progress
 
-- [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md)
+None.
 
 ## Blocked
 
@@ -16,7 +16,7 @@ None.
 
 ## Implemented
 
-None.
+- [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md)
 
 ## Done
 
