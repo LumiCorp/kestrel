@@ -1999,7 +1999,8 @@ export function buildRunToolUpdate(input: {
     provider: readToolProvider(input.toolName),
     ...(input.input !== undefined ? { input: sanitizeToolActivityValue(activityInput) } : {}),
     ...(input.output !== undefined ? { output: sanitizeToolActivityValue(activityOutput) } : {}),
-    ...(asPlainRecord(outputRecord?.presentation) !== undefined
+    ...(!isBrowserToolName(input.toolName) &&
+    asPlainRecord(outputRecord?.presentation) !== undefined
       ? { presentation: outputRecord?.presentation as RunToolUpdateV1["presentation"] }
       : {}),
     ...(activityError !== undefined

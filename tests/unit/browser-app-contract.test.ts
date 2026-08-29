@@ -236,6 +236,16 @@ test("catalog descriptors are derived byte-for-byte from the Browser fixture", (
     );
     assert.equal(descriptor.presentation.toolFamily, "browser");
   }
+  assert.equal(
+    defaultToolCatalog.getDescriptor("browser.upload")?.capability
+      .inputDependentPreparation,
+    true,
+  );
+  assert.equal(
+    defaultToolCatalog.getDescriptor("browser.download")?.capability
+      .inputDependentPreparation,
+    true,
+  );
 });
 
 test("every Browser schema accepts its fixture and rejects unknown fields", () => {
@@ -483,7 +493,7 @@ test("Browser tools remain unavailable until a conforming host port is active", 
       throw new Error("not used");
     },
     async authorizeArtifact() {
-      return true;
+      return undefined;
     },
   };
   const available = new UnifiedToolRegistry({
@@ -544,7 +554,7 @@ test("fake Browser port receives the exact prepared call and conditional effect 
       };
     },
     async authorizeArtifact() {
-      return true;
+      return undefined;
     },
   };
   const registry = new UnifiedToolRegistry({
@@ -673,7 +683,12 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
     },
     async authorizeArtifact(input) {
       authorization = input;
-      return true;
+      return authorizedArtifactFor(input, {
+        title: "Browser screenshot",
+        mediaType: "image/png",
+        bytes: 100,
+        sha256: "a".repeat(64),
+      });
     },
   };
   const registry = new UnifiedToolRegistry({
@@ -710,6 +725,150 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
   });
 });
 
+test("Browser capture and download keep authorized URLs only on presentation", async () => {
+  for (const scenario of [
+    {
+      toolName: "browser.capture" as const,
+      input: validInputs["browser.capture"],
+      output: validOutputs["browser.capture"],
+      artifactId: "artifact-1",
+      artifactKind: "browser-screenshot" as const,
+      title: "Authorized screenshot",
+      mediaType: "image/png",
+      sha256: "a".repeat(64),
+      approval: false,
+    },
+    {
+      toolName: "browser.download" as const,
+      input: validInputs["browser.download"],
+      output: validOutputs["browser.download"],
+      artifactId: "artifact-2",
+      artifactKind: "browser-download" as const,
+      title: "Authorized download",
+      mediaType: "application/octet-stream",
+      sha256: "b".repeat(64),
+      approval: true,
+    },
+  ]) {
+    const titleSentinel = `${scenario.toolName}-untrusted-title-sentinel`;
+    const metadataSentinel = `${scenario.toolName}-untrusted-metadata-sentinel`;
+    const hostTokenSentinel = `${scenario.toolName}-host-token-sentinel`;
+    const signedTokenSentinel = `${scenario.toolName}-signed-token-sentinel`;
+    const fragmentSentinel = `${scenario.toolName}-fragment-sentinel`;
+    const authorizedUrl =
+      `https://artifacts.example/${scenario.artifactId}` +
+      `?signature=${signedTokenSentinel}#${fragmentSentinel}`;
+    const port: BrowserServicePort = {
+      ...passiveBrowserPort(),
+      async execute() {
+        return {
+          ...scenario.output,
+          artifact: {
+            ...(scenario.output.artifact as Record<string, unknown>),
+            title: titleSentinel,
+            mediaType: metadataSentinel,
+            url:
+              `https://untrusted.example/${scenario.artifactId}` +
+              `?token=${hostTokenSentinel}`,
+          },
+        };
+      },
+      async authorizeArtifact(input) {
+        assert.equal(input.artifactId, scenario.artifactId);
+        assert.equal(input.artifactKind, scenario.artifactKind);
+        return authorizedArtifactFor(input, {
+          title: scenario.title,
+          url: authorizedUrl,
+          mediaType: scenario.mediaType,
+          bytes: 10,
+          sha256: scenario.sha256,
+        });
+      },
+    };
+    const registry = new UnifiedToolRegistry({
+      allowlist: [scenario.toolName],
+      context: { browserService: port },
+    });
+    const { prepared, runContext } = await prepareBrowserCall(
+      registry,
+      scenario.toolName,
+      scenario.input,
+      scenario.approval
+        ? { decision: "approval_required", approval: true }
+        : {},
+    );
+    const result = await registry.executePreparedToolCall(prepared, {
+      runContext,
+    });
+    assert.equal(result.outcome.kind, "success");
+    assert.equal(result.presentation?.artifacts?.[0]?.url, authorizedUrl);
+    assert.equal(result.presentation?.artifacts?.[0]?.title, scenario.title);
+    assert.equal(result.presentation?.artifacts?.[0]?.mediaType, scenario.mediaType);
+    assert.doesNotMatch(
+      JSON.stringify(result),
+      new RegExp(`${titleSentinel}|${metadataSentinel}|${hostTokenSentinel}`),
+    );
+
+    const completed = buildRunToolUpdate({
+      runId: prepared.runId,
+      sessionId: prepared.sessionId,
+      seq: 20,
+      toolCallId: prepared.callId,
+      toolName: scenario.toolName,
+      phase: "completed",
+      activation: prepared.activation,
+      output: result,
+      outcome: result.outcome,
+    });
+    const replay = buildRunToolUpdate({
+      runId: prepared.runId,
+      sessionId: prepared.sessionId,
+      seq: 21,
+      toolCallId: prepared.callId,
+      toolName: scenario.toolName,
+      phase: "completed",
+      activation: prepared.activation,
+      output: result,
+      outcome: result.outcome,
+    });
+    const failed = buildRunToolUpdate({
+      runId: prepared.runId,
+      sessionId: prepared.sessionId,
+      seq: 22,
+      toolCallId: prepared.callId,
+      toolName: scenario.toolName,
+      phase: "failed",
+      output: result,
+      error: {
+        code: "BROWSER_ENGINE_FAILURE",
+        message: titleSentinel,
+        details: {
+          metadata: metadataSentinel,
+          signedUrl: authorizedUrl,
+        },
+      },
+    });
+    const durableEvidence = JSON.stringify({
+      audit: result.auditRecord,
+      completed: buildRunToolEvent(completed),
+      replay: buildRunToolEvent(replay),
+      failed: buildRunToolEvent(failed),
+    });
+    assert.doesNotMatch(
+      durableEvidence,
+      new RegExp(
+        `${titleSentinel}|${metadataSentinel}|${hostTokenSentinel}|${signedTokenSentinel}|${fragmentSentinel}`,
+      ),
+    );
+    assert.match(durableEvidence, new RegExp(scenario.artifactId));
+    assert.match(durableEvidence, new RegExp(scenario.artifactKind));
+    assert.match(durableEvidence, new RegExp(scenario.mediaType.replace("/", "\\/")));
+    assert.equal(completed.presentation, undefined);
+    assert.equal(replay.presentation, undefined);
+    assert.equal(failed.presentation, undefined);
+  }
+});
+
 test("Desktop and hosted Browser preparation resolve all grant branches before dispatch", async () => {
   for (const host of ["desktop", "hosted"] as const) {
     let dispatches = 0;
@@ -732,7 +891,7 @@ test("Desktop and hosted Browser preparation resolve all grant branches before d
         throw new Error("policy inspection must not dispatch");
       },
       async authorizeArtifact() {
-        return true;
+        return undefined;
       },
     };
     const registry = new UnifiedToolRegistry({
@@ -1029,7 +1188,7 @@ test("Browser artifacts require exact trusted run, Thread, call, ID, and URL aut
     ...passiveBrowserPort(),
     async authorizeArtifact(input) {
       authorization = input;
-      return false;
+      return undefined;
     },
     async execute(_prepared, lifecycle) {
       const output = {
@@ -1240,9 +1399,39 @@ function passiveBrowserPort(): BrowserServicePort {
     async execute() {
       throw new Error("not used");
     },
-    async authorizeArtifact() {
-      return true;
+    async authorizeArtifact(input) {
+      return authorizedArtifactFor(input);
     },
+  };
+}
+
+function authorizedArtifactFor(
+  input: Parameters<BrowserServicePort["authorizeArtifact"]>[0],
+  overrides: Partial<{
+    title: string;
+    url: string;
+    mediaType: string;
+    bytes: number;
+    sha256: string;
+  }> = {},
+) {
+  return {
+    version: "browser_authorized_artifact_v1" as const,
+    id: input.artifactId,
+    title:
+      overrides.title ??
+      (input.artifactKind === "browser-screenshot" ? "Screenshot" : "Download"),
+    kind: input.artifactKind,
+    ...(overrides.url === undefined ? {} : { url: overrides.url }),
+    mediaType:
+      overrides.mediaType ??
+      (input.artifactKind === "browser-screenshot"
+        ? "image/png"
+        : "application/octet-stream"),
+    bytes: overrides.bytes ?? 10,
+    sha256:
+      overrides.sha256 ??
+      (input.artifactKind === "browser-screenshot" ? "a" : "b").repeat(64),
   };
 }
 

@@ -4,9 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Canonicalize Browser artifact presentation](01k-canonicalize-browser-artifact-presentation.md)
-- [Prepare every Browser approval exactly](01l-prepare-every-browser-approval-exactly.md)
-- [Revalidate current policy before pending Browser allow](01m-revalidate-current-policy-before-pending-browser-allow.md)
+None.
 
 ## In progress
 
@@ -35,6 +33,9 @@ None.
 - [Authorize durable dispatch by tool contract](01h-authorize-durable-dispatch-by-tool-contract.md) — awaiting independent review
 - [Ground Browser result authority in execution context](01i-ground-browser-result-authority-in-execution-context.md) — awaiting independent review
 - [Resume the exact Browser call after approval](01j-resume-the-exact-browser-call-after-approval.md) — blocked from `Done` by [exact preparation for every Browser approval](01l-prepare-every-browser-approval-exactly.md) and [current-policy revalidation](01m-revalidate-current-policy-before-pending-browser-allow.md)
+- [Canonicalize Browser artifact presentation](01k-canonicalize-browser-artifact-presentation.md) — awaiting independent review
+- [Prepare every Browser approval exactly](01l-prepare-every-browser-approval-exactly.md) — awaiting independent review
+- [Revalidate current policy before pending Browser allow](01m-revalidate-current-policy-before-pending-browser-allow.md) — awaiting independent review
 
 ## Done
 

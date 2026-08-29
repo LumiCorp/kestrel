@@ -819,9 +819,6 @@ async function maybeRequireToolApproval(input: {
           toolClass: input.toolClass,
         });
       }
-      if (input.trustedPolicyDecision === "allow") {
-        return { preparedToolCall: persistedPreparedToolCall };
-      }
       if (input.trustedPolicyDecision === "deny") {
         return toToolApprovalPolicyChangedTransition({
           ...input,
@@ -839,6 +836,9 @@ async function maybeRequireToolApproval(input: {
           preparedToolCall: persistedPreparedToolCall,
           availabilityReason: input.effectiveDecision.availabilityReason,
         });
+      }
+      if (input.trustedPolicyDecision === "allow") {
+        return { preparedToolCall: persistedPreparedToolCall };
       }
       const preparedApprovalStillCurrent = isHostedPreparedApproval
         ? preparedApprovalMatchesCurrentHostedAuthority({

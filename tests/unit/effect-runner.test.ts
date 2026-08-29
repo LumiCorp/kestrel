@@ -521,7 +521,7 @@ test("registered Browser dispatch capability distinguishes claimed from dispatch
       throw new Error("recovery must not redispatch the Browser operation");
     },
     async authorizeArtifact() {
-      return false;
+      return undefined;
     },
   } as BrowserServicePort;
   const gateway = new UnifiedToolRegistry({

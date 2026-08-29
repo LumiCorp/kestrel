@@ -10,12 +10,15 @@ import {
   browserArtifactAuthorizationRequest,
   browserArtifactPresentation,
   browserFailure,
+  canonicalizeBrowserArtifact,
   isBrowserToolName,
   normalizeBrowserHostFailure,
+  parseBrowserAuthorizedArtifactV1,
   parseBrowserPolicyResolutionV1,
   requireBrowserServicePort,
   validateBrowserResultSemantics,
   validateBrowserResultAuthority,
+  withoutBrowserArtifactPresentationUrl,
   type BrowserToolName,
 } from "../../src/browser/contracts.js";
 import {
@@ -99,7 +102,8 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
         costClass: "metered",
         executionClass: contract.executionClass,
         ...(contract.toolId === "browser.request_grant" ||
-        contract.toolId === "browser.tabs"
+        contract.toolId === "browser.tabs" ||
+        contract.approval === "always_approval"
           ? { inputDependentPreparation: true }
           : {}),
         allowedInteractionModes: ["chat", "build"],
@@ -234,17 +238,13 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           toolName: contract.toolId,
         } as const;
         const browserService = requireBrowserServicePort(context.browserService);
+        let acceptedRawCanonical: string | undefined;
         let acceptedCanonical: string | undefined;
         let acceptedOutput: unknown;
         const acceptOutput = async (rawOutput: unknown): Promise<unknown> => {
           const normalized = normalizeOutput(rawOutput);
-          const canonical = hashCanonical(normalized);
-          if (acceptedCanonical !== undefined) {
-            if (acceptedCanonical !== canonical) {
-              throw new Error(
-                "Browser host returned conflicting completed results.",
-              );
-            }
+          const rawCanonical = hashCanonical(normalized);
+          if (acceptedRawCanonical === rawCanonical) {
             return acceptedOutput;
           }
           validateBrowserResultAuthority(
@@ -256,16 +256,38 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
             executionAuthority,
             normalized,
           );
-          if (
-            artifactRequest !== undefined &&
-            !(await browserService.authorizeArtifact(artifactRequest))
-          ) {
-            throw new Error(
-              "Browser artifact is not authorized for this execution.",
+          let canonicalOutput = normalized;
+          if (artifactRequest !== undefined) {
+            const authorization = await browserService.authorizeArtifact(
+              artifactRequest,
+            );
+            if (authorization === undefined) {
+              throw new Error(
+                "Browser artifact is not authorized for this execution.",
+              );
+            }
+            canonicalOutput = normalizeOutput(
+              canonicalizeBrowserArtifact(
+                normalized,
+                parseBrowserAuthorizedArtifactV1(
+                  authorization,
+                  artifactRequest,
+                ),
+              ),
             );
           }
+          const canonical = hashCanonical(canonicalOutput);
+          if (acceptedCanonical !== undefined) {
+            if (acceptedCanonical !== canonical) {
+              throw new Error(
+                "Browser host returned conflicting completed results.",
+              );
+            }
+            return acceptedOutput;
+          }
+          acceptedRawCanonical = rawCanonical;
           acceptedCanonical = canonical;
-          acceptedOutput = normalized;
+          acceptedOutput = canonicalOutput;
           return acceptedOutput;
         };
         let dispatchAcknowledged = false;
@@ -294,11 +316,10 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
     },
     normalizeResult(output) {
       const normalized = normalizeOutput(output);
+      const presentation = browserArtifactPresentation(normalized);
       return {
-        output: normalized,
-        ...(browserArtifactPresentation(normalized) === undefined
-          ? {}
-          : { presentation: browserArtifactPresentation(normalized) }),
+        output: withoutBrowserArtifactPresentationUrl(normalized),
+        ...(presentation === undefined ? {} : { presentation }),
       };
     },
   };

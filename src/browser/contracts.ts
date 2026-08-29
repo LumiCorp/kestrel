@@ -16,6 +16,8 @@ export const BROWSER_POLICY_RESOLUTION_VERSION =
   "browser_policy_resolution_v1" as const;
 export const BROWSER_ARTIFACT_AUTHORIZATION_VERSION =
   "browser_artifact_authorization_v1" as const;
+export const BROWSER_AUTHORIZED_ARTIFACT_VERSION =
+  "browser_authorized_artifact_v1" as const;
 
 export const BROWSER_TOOL_NAMES = [
   "browser.open",
@@ -103,7 +105,7 @@ export interface BrowserServicePort {
   ): Promise<unknown>;
   authorizeArtifact(
     input: BrowserArtifactAuthorizationRequestV1,
-  ): Promise<boolean>;
+  ): Promise<BrowserAuthorizedArtifactV1 | undefined>;
 }
 
 export interface BrowserResultExecutionAuthorityV1 {
@@ -124,6 +126,17 @@ export interface BrowserArtifactAuthorizationRequestV1 {
   artifactId: string;
   artifactKind: "browser-screenshot" | "browser-download";
   artifactUrl?: string | undefined;
+}
+
+export interface BrowserAuthorizedArtifactV1 {
+  version: typeof BROWSER_AUTHORIZED_ARTIFACT_VERSION;
+  id: string;
+  title: string;
+  kind: "browser-screenshot" | "browser-download";
+  url?: string | undefined;
+  mediaType: string;
+  bytes: number;
+  sha256: string;
 }
 
 export interface BrowserPolicyResolutionV1 {
@@ -476,6 +489,17 @@ export function browserArtifactPresentation(
   };
 }
 
+export function withoutBrowserArtifactPresentationUrl(value: unknown): unknown {
+  const output = requireRecord(value, "Browser output");
+  const artifact = asRecord(output.artifact);
+  if (artifact === undefined || artifact.url === undefined) return value;
+  const { url: _url, ...artifactWithoutUrl } = artifact;
+  return {
+    ...output,
+    artifact: artifactWithoutUrl,
+  };
+}
+
 export function browserFailure(
   code: BrowserFailureCode,
   message: string,
@@ -679,6 +703,95 @@ export function browserArtifactAuthorizationRequest(
   };
 }
 
+export function parseBrowserAuthorizedArtifactV1(
+  value: unknown,
+  request: BrowserArtifactAuthorizationRequestV1,
+): BrowserAuthorizedArtifactV1 {
+  const record = requireRecord(value, "BrowserAuthorizedArtifactV1");
+  rejectUnknown(
+    record,
+    new Set([
+      "version",
+      "id",
+      "title",
+      "kind",
+      "url",
+      "mediaType",
+      "bytes",
+      "sha256",
+    ]),
+    "BrowserAuthorizedArtifactV1",
+  );
+  if (record.version !== BROWSER_AUTHORIZED_ARTIFACT_VERSION) {
+    throw new Error(
+      `BrowserAuthorizedArtifactV1.version must be '${BROWSER_AUTHORIZED_ARTIFACT_VERSION}'.`,
+    );
+  }
+  const id = requireString(record.id, "BrowserAuthorizedArtifactV1.id");
+  const kind = requireString(
+    record.kind,
+    "BrowserAuthorizedArtifactV1.kind",
+  );
+  if (id !== request.artifactId || kind !== request.artifactKind) {
+    throw new Error(
+      "Authorized Browser artifact does not match the requested artifact authority.",
+    );
+  }
+  if (!Number.isSafeInteger(record.bytes) || (record.bytes as number) < 0) {
+    throw new Error(
+      "BrowserAuthorizedArtifactV1.bytes must be a non-negative safe integer.",
+    );
+  }
+  const sha256 = requireString(
+    record.sha256,
+    "BrowserAuthorizedArtifactV1.sha256",
+  );
+  if (!/^[0-9a-f]{64}$/u.test(sha256)) {
+    throw new Error(
+      "BrowserAuthorizedArtifactV1.sha256 must be a lowercase SHA-256 digest.",
+    );
+  }
+  return {
+    version: BROWSER_AUTHORIZED_ARTIFACT_VERSION,
+    id,
+    title: requireString(record.title, "BrowserAuthorizedArtifactV1.title"),
+    kind: kind as BrowserAuthorizedArtifactV1["kind"],
+    ...(record.url === undefined
+      ? {}
+      : {
+          url: requireAuthorizedArtifactUrl(
+            record.url,
+            "BrowserAuthorizedArtifactV1.url",
+          ),
+        }),
+    mediaType: requireString(
+      record.mediaType,
+      "BrowserAuthorizedArtifactV1.mediaType",
+    ),
+    bytes: record.bytes as number,
+    sha256,
+  };
+}
+
+export function canonicalizeBrowserArtifact(
+  value: unknown,
+  authorization: BrowserAuthorizedArtifactV1,
+): unknown {
+  const output = requireRecord(value, "Browser artifact output");
+  return {
+    ...output,
+    artifact: {
+      id: authorization.id,
+      title: authorization.title,
+      kind: authorization.kind,
+      ...(authorization.url === undefined ? {} : { url: authorization.url }),
+      mediaType: authorization.mediaType,
+      bytes: authorization.bytes,
+      sha256: authorization.sha256,
+    },
+  };
+}
+
 function projectBrowserAction(action: Record<string, unknown>) {
   const projected: Record<string, unknown> = {};
   copyStrings(action, projected, ["kind", "ref", "key", "direction"]);
@@ -744,6 +857,25 @@ function requireNormalizedOrigin(value: string, label: string): string {
     throw new Error(`${label} must be an absolute HTTP(S) origin.`);
   }
   return parsed.origin;
+}
+
+function requireAuthorizedArtifactUrl(value: unknown, label: string): string {
+  const url = requireString(value, label);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`${label} must be an absolute HTTP(S) URL.`);
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username.length > 0 ||
+    parsed.password.length > 0 ||
+    parsed.hostname.length === 0
+  ) {
+    throw new Error(`${label} must be an absolute HTTP(S) URL.`);
+  }
+  return url;
 }
 
 function validateTimestampOrder(
