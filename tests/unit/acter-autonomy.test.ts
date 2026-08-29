@@ -138,6 +138,7 @@ function buildLocalPreparedBrowserCall(input: {
   policyRevision: string;
   authorityRevision: string;
   decision: "allow" | "approval_required";
+  hostedIdentity?: boolean | undefined;
 }) {
   const descriptor = defaultToolCatalog.getDescriptorRef(input.toolName);
   assert.ok(descriptor);
@@ -148,13 +149,21 @@ function buildLocalPreparedBrowserCall(input: {
     callId: input.callId,
     activation: createToolActivationRefV1({
       descriptor,
-      registryGeneration: "browser-policy-test-generation",
-      scopeFingerprint: fingerprintToolScopeV1({ browserPolicy: true }),
+      registryGeneration: input.hostedIdentity === true
+        ? "browser-hosted-policy-test-generation"
+        : "browser-policy-test-generation",
+      scopeFingerprint: input.hostedIdentity === true
+        ? fingerprintToolScopeV1({ browserHostedPolicy: true })
+        : fingerprintToolScopeV1({ browserPolicy: true }),
     }),
     origin: {
       kind: "trusted_runtime",
-      producerId: "test.browser-policy",
-      adapterId: "test.browser-policy",
+      producerId: input.hostedIdentity === true
+        ? "test.browser-hosted-policy"
+        : "test.browser-policy",
+      adapterId: input.hostedIdentity === true
+        ? "test.browser-hosted-policy"
+        : "test.browser-policy",
     },
     effectiveInput: input.effectiveInput,
     policy: {
@@ -1583,6 +1592,7 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
           "approval_required";
         let policyRevision = hashCanonical({ label, revision: 1 });
         let preparations = 0;
+        const releasedPreparedCallIds: string[] = [];
         const io: StepIO = {
           useModel: async () => { throw new Error("not expected"); },
           inspectTool: async () => ({
@@ -1596,6 +1606,17 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
               upstreamPolicyRevision: approval.policyRevision,
               browserPolicyRevision: policyRevision,
             });
+            if (policyDecision === "allow") {
+              return buildLocalPreparedBrowserCall({
+                toolName,
+                effectiveInput: toolInput,
+                callId: `prepared-current-${label}`,
+                policyRevision: combinedRevision,
+                authorityRevision: approval.authorityRevision,
+                decision: "allow",
+                hostedIdentity: hosted,
+              });
+            }
             return hosted
               ? buildHostedPreparedBrowserCall({
                   toolName,
@@ -1614,6 +1635,9 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
                   authorityRevision: approval.authorityRevision,
                   decision: "approval_required",
                 });
+          },
+          releasePreparedToolCall: async (preparedToolCall) => {
+            releasedPreparedCallIds.push(preparedToolCall.callId);
           },
           useTool: async () => { throw new Error("Browser call must be durable"); },
         };
@@ -1664,7 +1688,7 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
           }),
           io,
         );
-        assert.equal(preparations, 1, label);
+        assert.equal(preparations, nextDecision === "allow" ? 2 : 1, label);
         assert.equal(
           resumed.effects?.[0]?.type,
           nextDecision === "allow"
@@ -1674,10 +1698,17 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
         );
         assert.equal(
           (resumed.effects?.[0]?.payload as Record<string, any>).preparedToolCall.callId,
-          `prepared-${label}`,
+          nextDecision === "allow"
+            ? `prepared-current-${label}`
+            : `prepared-${label}`,
           label,
         );
         assert.notEqual(resumed.waitFor?.kind, "approval", label);
+        assert.deepEqual(
+          releasedPreparedCallIds,
+          nextDecision === "allow" ? [`prepared-${label}`] : [],
+          label,
+        );
 
         if (!hosted && !batch && nextDecision === "allow") {
           const kestrel = new Kestrel({
@@ -1715,10 +1746,225 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
             (
               resolved[0]?.payload.preparedToolCall as Record<string, unknown>
             ).callId,
-            `prepared-${label}`,
+            `prepared-current-${label}`,
             label,
           );
         }
+      }
+    }
+  }
+});
+
+test("pending Browser allow blocks missing or drifted current Desktop and hosted single and batch calls", async () => {
+  const toolName = "browser.request_grant" as const;
+  const toolInput = {
+    sessionId: "browser-session-1",
+    destination: "https://new.example.com",
+  };
+  const driftCases = [
+    "missing",
+    "input",
+    "tool",
+    "run",
+    "session",
+    "descriptor",
+    "operation",
+  ] as const;
+
+  for (const hosted of [false, true]) {
+    for (const batch of [false, true]) {
+      for (const drift of driftCases) {
+        const label = `${hosted ? "hosted" : "desktop"}-${batch ? "batch" : "single"}-${drift}`;
+        const authorityRevision = hashCanonical({ browserAuthority: label });
+        const config = {
+          ...buildExecConfig(),
+          capabilityManifestProvider: () => [{
+            name: toolName,
+            freshnessClass: "runtime" as const,
+            capabilityClasses: ["browser.external"],
+            approvalCapabilities: ["external.confirm"],
+            approvalDisposition: {
+              mode: "ask" as const,
+              reasonCode: "environment_policy" as const,
+              authority: {
+                kind: "runtime_policy" as const,
+                revision: authorityRevision,
+              },
+            },
+            approvalAuthority: {
+              kind: "runtime_policy" as const,
+              revision: authorityRevision,
+            },
+            executionClass: "external_side_effect" as const,
+            inputDependentPreparation: true,
+          }],
+        };
+        const hostedPayload = hosted
+          ? {
+              actor: {
+                actorType: "end_user",
+                actorId: "user-1",
+                tenantId: "org-1",
+              },
+              hostedApprovalAuthority: {
+                version: "runner_hosted_approval_authority_v1",
+                organizationId: "org-1",
+                environmentId: "env-1",
+                projectId: "project-1",
+                threadId: "session-1",
+              },
+            }
+          : {};
+        const modePayload = {
+          modeSystemV2Enabled: true,
+          interactionMode: "build",
+          actSubmode: "full_auto",
+          executionPolicy: {
+            toolClassPolicy: { external_side_effect: true },
+            capabilityPolicy: { "external.confirm": true },
+          },
+          ...hostedPayload,
+        };
+        let policyDecision: "approval_required" | "allow" =
+          "approval_required";
+        let policyRevision = hashCanonical({ label, revision: 1 });
+        let preparations = 0;
+        const io: StepIO = {
+          useModel: async () => { throw new Error("not expected"); },
+          inspectTool: async () => ({
+            effectiveInput: toolInput,
+            executionClass: "external_side_effect",
+            policy: { decision: policyDecision, policyRevision },
+          }),
+          prepareToolForApproval: async (_name, _input, approval) => {
+            preparations += 1;
+            const combinedRevision = hashCanonical({
+              upstreamPolicyRevision: approval.policyRevision,
+              browserPolicyRevision: policyRevision,
+            });
+            if (policyDecision === "approval_required") {
+              return hosted
+                ? buildHostedPreparedBrowserCall({
+                    toolName,
+                    effectiveInput: toolInput,
+                    callId: `prepared-pending-${label}`,
+                    policyRevision: combinedRevision,
+                    authorityRevision: approval.authorityRevision,
+                    capabilities: approval.capabilities,
+                    executionClass: "external_side_effect",
+                  })
+                : buildLocalPreparedBrowserCall({
+                    toolName,
+                    effectiveInput: toolInput,
+                    callId: `prepared-pending-${label}`,
+                    policyRevision: combinedRevision,
+                    authorityRevision: approval.authorityRevision,
+                    decision: "approval_required",
+                  });
+            }
+            const current = structuredClone(buildLocalPreparedBrowserCall({
+              toolName,
+              effectiveInput: toolInput,
+              callId: `prepared-current-${label}`,
+              policyRevision: combinedRevision,
+              authorityRevision: approval.authorityRevision,
+              decision: "allow",
+              hostedIdentity: hosted,
+            })) as Record<string, any>;
+            if (drift === "input") {
+              current.effectiveInput = {
+                ...toolInput,
+                destination: "https://other.example.com",
+              };
+            } else if (drift === "tool") {
+              current.activation.descriptor.toolId = "browser.tabs";
+            } else if (drift === "run") {
+              current.runId = "run-2";
+            } else if (drift === "session") {
+              current.sessionId = "session-2";
+            } else if (drift === "descriptor") {
+              current.activation.descriptor.contractRevision = hashCanonical({
+                descriptor: "changed",
+              });
+            } else if (drift === "operation") {
+              current.origin.producerId = "test.other-browser-operation";
+            }
+            return current as ReturnType<typeof buildLocalPreparedBrowserCall>;
+          },
+          releasePreparedToolCall: async () => {},
+          useTool: async () => {
+            throw new Error("drifted Browser call must not execute");
+          },
+        };
+        const initialAction = batch
+          ? {
+              kind: "tool_batch" as const,
+              items: [{ name: toolName, input: toolInput }],
+            }
+          : { kind: "tool" as const, name: toolName, input: toolInput };
+        const wait = await createExecDispatchStep(config)(
+          buildContext({
+            session: {
+              ...buildContext().session,
+              state: { agent: { nextAction: initialAction } },
+            },
+            event: { ...buildContext().event, payload: modePayload },
+          }),
+          io,
+        );
+        assert.equal(wait.status, "WAITING", label);
+        assert.equal(preparations, 1, label);
+        const waitingAgent = wait.statePatch?.agent as Record<string, unknown>;
+        const pendingApproval = (
+          waitingAgent.exec as Record<string, unknown>
+        ).pendingApproval as Record<string, unknown>;
+
+        policyDecision = "allow";
+        policyRevision = hashCanonical({ label, revision: 2 });
+        if (drift === "missing") {
+          delete io.prepareToolForApproval;
+        }
+        const resumed = await createExecWaitApprovalStep(config)(
+          buildContext({
+            session: {
+              ...buildContext().session,
+              state: { agent: waitingAgent },
+              currentStepAgent: "agent.exec.wait_approval",
+            },
+            event: {
+              id: `evt-${label}`,
+              type: "user.approval",
+              sessionId: "session-1",
+              payload: {
+                ...modePayload,
+                decision: "approve_once",
+                approvalId: pendingApproval.approvalId,
+              },
+            },
+          }),
+          io,
+        );
+
+        assert.equal(preparations, drift === "missing" ? 1 : 2, label);
+        assert.ok((resumed.effects?.length ?? 0) >= 1, label);
+        assert.ok(
+          resumed.effects?.every(
+            (effect) => effect.type === "release_prepared_tool_call",
+          ),
+          label,
+        );
+        assert.equal(
+          (resumed.effects?.[0]?.payload as Record<string, any>)
+            .preparedToolCall.callId,
+          `prepared-pending-${label}`,
+          label,
+        );
+        assert.equal(
+          resumed.effects?.length,
+          drift === "missing" ? 1 : 2,
+          label,
+        );
+        assert.notEqual(resumed.waitFor?.kind, "approval", label);
       }
     }
   }

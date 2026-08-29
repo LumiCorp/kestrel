@@ -838,7 +838,65 @@ async function maybeRequireToolApproval(input: {
         });
       }
       if (input.trustedPolicyDecision === "allow") {
-        return { preparedToolCall: persistedPreparedToolCall };
+        const currentPreparation = input.preparedToolCall === undefined
+          ? input.io.prepareToolForApproval === undefined
+            ? undefined
+            : await prepareExactToolCallForPolicyGate({
+                io: input.io,
+                toolName: input.toolName,
+                toolInput: input.toolInput,
+                policyRevision: runtimePolicyRevision,
+                authorityRevision: upstreamApprovalAuthorityRevision,
+                capabilities: input.requiredApprovalCapabilities ?? [],
+                toolIntent: input.toolIntent,
+              })
+          : {
+              kind: "prepared" as const,
+              preparedToolCall: input.preparedToolCall,
+            };
+        const currentPreparedToolCall =
+          currentPreparation?.kind === "prepared"
+            ? parseDurablePreparedToolCallV1(
+                currentPreparation.preparedToolCall,
+              )
+            : undefined;
+        if (
+          currentPreparedToolCall === undefined ||
+          !preparedBrowserAllowMatchesPendingOperation({
+            pendingPreparedToolCall: persistedPreparedToolCall,
+            currentPreparedToolCall,
+            toolName: input.toolName,
+            toolInput: input.toolInput,
+            runId: input.runId,
+            sessionId: input.sessionId,
+            policyRevision: effectiveRuntimePolicyRevision,
+          })
+        ) {
+          return toToolApprovalPolicyChangedTransition({
+            ...input,
+            approvalId: asString(currentPendingApproval.approvalId)!,
+            preparedToolCall: persistedPreparedToolCall,
+            ...(currentPreparedToolCall === undefined
+              ? {}
+              : { additionalPreparedToolCalls: [currentPreparedToolCall] }),
+            availabilityReason: "approval_policy",
+            approvalReasonCode:
+              input.effectiveDecision?.approvalDisposition.reasonCode,
+          });
+        }
+        if (input.io.releasePreparedToolCall === undefined) {
+          return toToolApprovalPolicyChangedTransition({
+            ...input,
+            approvalId: asString(currentPendingApproval.approvalId)!,
+            preparedToolCall: persistedPreparedToolCall,
+            additionalPreparedToolCalls: [currentPreparedToolCall],
+            availabilityReason: "approval_policy",
+            approvalReasonCode:
+              input.effectiveDecision?.approvalDisposition.reasonCode,
+          });
+        }
+        await input.io.releasePreparedToolCall(persistedPreparedToolCall);
+        return { preparedToolCall: currentPreparedToolCall };
       }
       const preparedApprovalStillCurrent = isHostedPreparedApproval
         ? preparedApprovalMatchesCurrentHostedAuthority({
@@ -1485,6 +1543,7 @@ function toToolApprovalPolicyChangedTransition(input: {
   toolName: string;
   toolClass: ToolExecutionClass;
   preparedToolCall: PreparedToolCallV1;
+  additionalPreparedToolCalls?: readonly PreparedToolCallV1[] | undefined;
   availabilityReason: EffectiveToolDecisionV1["availabilityReason"];
   approvalReasonCode?: ToolApprovalDispositionV1["reasonCode"] | undefined;
 }): Transition {
@@ -1510,13 +1569,14 @@ function toToolApprovalPolicyChangedTransition(input: {
     activeRegion: input.activeRegion,
     phase: "THINK",
     effects: [
-      {
+      input.preparedToolCall,
+      ...(input.additionalPreparedToolCalls ?? []),
+    ].map((preparedToolCall) => ({
         type: "release_prepared_tool_call",
-        payload: { preparedToolCall: input.preparedToolCall },
-        idempotencyKey: `${input.preparedToolCall.callId}:release`,
-        failurePolicy: "STOP",
-      },
-    ],
+        payload: { preparedToolCall },
+        idempotencyKey: `${preparedToolCall.callId}:release`,
+        failurePolicy: "STOP" as const,
+      })),
     reactPatch: {
       lastActionResult,
       observations: appendAgentObservation(input.reactState, lastActionResult),
@@ -2265,6 +2325,37 @@ function canonicalApprovalValuesEqual(left: unknown, right: unknown): boolean {
   if (left === undefined || right === undefined) return left === right;
   return serializeCanonicalApprovalPayload(left) ===
     serializeCanonicalApprovalPayload(right);
+}
+
+function preparedBrowserAllowMatchesPendingOperation(input: {
+  pendingPreparedToolCall: PreparedToolCallV1;
+  currentPreparedToolCall: PreparedToolCallV1;
+  toolName: string;
+  toolInput: unknown;
+  runId: string;
+  sessionId: string;
+  policyRevision: string;
+}): boolean {
+  const pending = input.pendingPreparedToolCall;
+  const current = input.currentPreparedToolCall;
+  return (
+    pending.policy.decision === "approval_required" &&
+    current.policy.decision === "allow" &&
+    current.policy.policyRevision === input.policyRevision &&
+    pending.activation.descriptor.toolId === input.toolName &&
+    current.activation.descriptor.toolId === input.toolName &&
+    canonicalApprovalValuesEqual(current.activation, pending.activation) &&
+    canonicalApprovalValuesEqual(current.effectiveInput, input.toolInput) &&
+    canonicalApprovalValuesEqual(
+      current.effectiveInput,
+      pending.effectiveInput,
+    ) &&
+    pending.runId === input.runId &&
+    current.runId === input.runId &&
+    pending.sessionId === input.sessionId &&
+    current.sessionId === input.sessionId &&
+    canonicalApprovalValuesEqual(current.origin, pending.origin)
+  );
 }
 
 function validatePendingPreparedApprovalV2(input: {
