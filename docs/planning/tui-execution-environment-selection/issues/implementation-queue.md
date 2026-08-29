@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Close remaining TUI lifecycle ordering gaps](12-close-remaining-tui-lifecycle-ordering-gaps.md)
 
 ## In progress
 
