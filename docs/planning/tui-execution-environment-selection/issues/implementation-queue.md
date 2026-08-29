@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Resolve legacy queue forks from exact authority](22-resolve-legacy-queue-forks-from-authority.md)
 
 ## In progress
 
