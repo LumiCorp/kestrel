@@ -4053,6 +4053,12 @@ export class App {
           (route) => route.requestId === target.pendingRunRequestId,
         );
     const recoveredAcceptedRoute = recoveredRoute ?? recoveredRequestRoute;
+    const acceptedRunThreadBackfill = target.acceptedRunId !== undefined
+      && target.acceptedRunThreadId === undefined
+      && describedView !== undefined
+      && exactRunStatusFromDescribedView(describedView, target.acceptedRunId) !== undefined
+      ? describedView.thread.threadId
+      : undefined;
     return {
       ...target,
       started:
@@ -4083,6 +4089,9 @@ export class App {
               ? { acceptedRunThreadId: describedView.thread.threadId }
               : {}),
           }
+        : {}),
+      ...(acceptedRunThreadBackfill !== undefined
+        ? { acceptedRunThreadId: acceptedRunThreadBackfill }
         : {}),
       ...(payload.focusedThreadId !== undefined ? { focusedThreadId: payload.focusedThreadId } : {}),
       operatorState: this.buildSessionOperatorState({
@@ -5111,12 +5120,22 @@ export class App {
     messageId: string;
   }): Promise<boolean> {
     const session = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
+    const queuedReservation = session?.queuedRunReservations?.find((reservation) =>
+      reservation.runId === input.runId
+      && reservation.messageId === input.messageId
+      && reservation.threadId === input.threadId
+    );
     if (
       session === undefined
       || session.delegation !== undefined
-      || session.pendingRunId !== input.runId
-      || session.pendingRunMessageId !== input.messageId
-      || session.pendingRunThreadId !== input.threadId
+      || (
+        queuedReservation === undefined
+        && (
+          session.pendingRunId !== input.runId
+          || session.pendingRunMessageId !== input.messageId
+          || session.pendingRunThreadId !== input.threadId
+        )
+      )
     ) return false;
     const accepted: TuiSessionMeta = {
       ...session,
@@ -5128,6 +5147,9 @@ export class App {
       pendingRunId: undefined,
       pendingRunMessageId: undefined,
       pendingRunThreadId: undefined,
+      queuedRunReservations: queuedReservation === undefined
+        ? session.queuedRunReservations
+        : omitQueuedRunReservation(session.queuedRunReservations, queuedReservation),
       lastRunStatus: undefined,
       updatedAt: new Date().toISOString(),
     };
@@ -5167,6 +5189,11 @@ export class App {
           && session.pendingRunMessageId === input.messageId
         )
       );
+    const queuedReservation = session.queuedRunReservations?.find((reservation) =>
+      reservation.runId === input.runId
+      && reservation.threadId === input.threadId
+      && (input.messageId === undefined || reservation.messageId === input.messageId)
+    );
     const exactPendingReplyAcceptance = input.requestId !== undefined
       && session.pendingRunThreadId === input.threadId
       && session.pendingRunRequestId === input.requestId
@@ -5175,6 +5202,7 @@ export class App {
       session.acceptedRunId !== input.runId
       && exactPendingAcceptance === false
       && exactPendingReplyAcceptance === false
+      && queuedReservation === undefined
     ) return;
     if (session.acceptedRunId === input.runId && status === "RUNNING") return;
     if (session.acceptedRunId === input.runId && status === "WAITING") return;
@@ -5188,12 +5216,15 @@ export class App {
     }, undefined, {
       focusedThreadId: input.threadId,
       acceptedRunId: input.runId,
-      acceptedRunMessageId: input.messageId ?? session.pendingRunMessageId,
+      acceptedRunMessageId: input.messageId ?? queuedReservation?.messageId ?? session.pendingRunMessageId,
       acceptedRunThreadId: input.threadId,
       pendingRunId: undefined,
       pendingRunRequestId: undefined,
       pendingRunMessageId: undefined,
       pendingRunThreadId: undefined,
+      queuedRunReservations: queuedReservation === undefined
+        ? session.queuedRunReservations
+        : omitQueuedRunReservation(session.queuedRunReservations, queuedReservation),
       pendingWaitFor: nextStatus === "WAITING" ? input.waitFor : undefined,
       lastRunStatus: nextStatus === "COMPLETED" || nextStatus === "FAILED"
         ? nextStatus
@@ -5259,8 +5290,19 @@ export class App {
     if (session?.delegation === undefined) {
       return;
     }
-    if (session.acceptedRunId === undefined && allowUnstartedAcceptance === false) return;
-    if (session.acceptedRunId !== undefined && session.acceptedRunId !== expectedRunId) return;
+    const queuedReservation = session.queuedRunReservations?.find(
+      (reservation) => reservation.runId === expectedRunId,
+    );
+    if (
+      session.acceptedRunId === undefined
+      && allowUnstartedAcceptance === false
+      && queuedReservation === undefined
+    ) return;
+    if (
+      session.acceptedRunId !== undefined
+      && session.acceptedRunId !== expectedRunId
+      && queuedReservation === undefined
+    ) return;
     if (session.delegation.status === "COMPLETED" || session.delegation.status === "FAILED") return;
     const nextStatus = output.status === "WAITING"
       ? "WAITING"
@@ -5270,11 +5312,16 @@ export class App {
     const nextSession = {
       ...session,
       acceptedRunId: expectedRunId,
-      acceptedRunMessageId: session.pendingRunMessageId ?? session.acceptedRunMessageId,
-      acceptedRunThreadId: session.pendingRunThreadId ?? session.acceptedRunThreadId,
+      acceptedRunMessageId:
+        queuedReservation?.messageId ?? session.pendingRunMessageId ?? session.acceptedRunMessageId,
+      acceptedRunThreadId:
+        queuedReservation?.threadId ?? session.pendingRunThreadId ?? session.acceptedRunThreadId,
       pendingRunId: undefined,
       pendingRunMessageId: undefined,
       pendingRunThreadId: undefined,
+      queuedRunReservations: queuedReservation === undefined
+        ? session.queuedRunReservations
+        : omitQueuedRunReservation(session.queuedRunReservations, queuedReservation),
       pendingWaitFor: output.status === "WAITING" ? output.waitFor : undefined,
       lastRunStatus: output.status,
       ...(operatorState !== undefined
@@ -5316,18 +5363,28 @@ export class App {
     if (session?.delegation === undefined) {
       return;
     }
-    if (session.acceptedRunId === undefined) {
+    const queuedReservation = session.queuedRunReservations?.find(
+      (reservation) => reservation.runId === expectedRunId,
+    );
+    if (session.acceptedRunId === undefined && queuedReservation === undefined) {
       await this.failBackgroundLaunchSetup(session, session.delegation, message);
       return;
     }
-    if (session.acceptedRunId !== expectedRunId) return;
+    if (session.acceptedRunId !== expectedRunId && queuedReservation === undefined) return;
     if (session.delegation.status === "COMPLETED" || session.delegation.status === "FAILED") return;
     await this.updateAcceptedBackgroundSession({
       ...session.delegation,
       status: "FAILED",
       errorMessage: message,
       updatedAt: new Date().toISOString(),
-    }, undefined, { acceptedRunId: expectedRunId });
+    }, undefined, {
+      acceptedRunId: expectedRunId,
+      acceptedRunMessageId: queuedReservation?.messageId ?? session.acceptedRunMessageId,
+      acceptedRunThreadId: queuedReservation?.threadId ?? session.acceptedRunThreadId,
+      queuedRunReservations: queuedReservation === undefined
+        ? session.queuedRunReservations
+        : omitQueuedRunReservation(session.queuedRunReservations, queuedReservation),
+    });
   }
 
   private pushRunLog(line: AgentRunLogLine): void {
@@ -5989,12 +6046,54 @@ function hasSameTuiLifecycleEvidence(left: TuiSessionMeta, right: TuiSessionMeta
     && left.pendingRunRequestId === right.pendingRunRequestId
     && left.pendingRunMessageId === right.pendingRunMessageId
     && left.pendingRunThreadId === right.pendingRunThreadId
+    && hasSameQueuedRunReservations(left.queuedRunReservations, right.queuedRunReservations)
     && left.acceptedRunId === right.acceptedRunId
     && left.acceptedRunMessageId === right.acceptedRunMessageId
     && left.acceptedRunThreadId === right.acceptedRunThreadId
     && left.lastRunStatus === right.lastRunStatus
     && left.delegation?.status === right.delegation?.status
     && isSameWaitFor(left.pendingWaitFor, right.pendingWaitFor);
+}
+
+function exactRunStatusFromDescribedView(
+  view: NonNullable<SessionDescribedEventPayload["operatorThreadView"]>,
+  runId: string,
+): "RUNNING" | "WAITING" | "COMPLETED" | "FAILED" | undefined {
+  if (view.activeRun !== undefined) {
+    return view.activeRun.runId === runId ? view.activeRun.status : undefined;
+  }
+  const terminalTurn = [...(view.conversationTurns ?? [])]
+    .reverse()
+    .find((turn) => turn.terminalRunId !== undefined);
+  return terminalTurn?.terminalRunId === runId
+    && (terminalTurn.status === "COMPLETED" || terminalTurn.status === "FAILED")
+    ? terminalTurn.status
+    : undefined;
+}
+
+function omitQueuedRunReservation(
+  reservations: TuiSessionMeta["queuedRunReservations"],
+  reservation: NonNullable<TuiSessionMeta["queuedRunReservations"]>[number],
+): TuiSessionMeta["queuedRunReservations"] {
+  const remaining = reservations?.filter((candidate) =>
+    candidate.runId !== reservation.runId
+    || candidate.messageId !== reservation.messageId
+    || candidate.threadId !== reservation.threadId
+  );
+  return remaining === undefined || remaining.length === 0 ? undefined : remaining;
+}
+
+function hasSameQueuedRunReservations(
+  left: TuiSessionMeta["queuedRunReservations"],
+  right: TuiSessionMeta["queuedRunReservations"],
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.length === right.length && left.every((reservation, index) => {
+    const candidate = right[index];
+    return candidate?.runId === reservation.runId
+      && candidate.messageId === reservation.messageId
+      && candidate.threadId === reservation.threadId;
+  });
 }
 
 export function isSameWaitFor(

@@ -91,6 +91,18 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
     pendingRunRequestId: "request-pending",
     pendingRunMessageId: "message-pending",
     pendingRunThreadId: "thread-main:exact-run-child",
+    queuedRunReservations: [
+      {
+        runId: "run-queued-a",
+        messageId: "message-queued-a",
+        threadId: "thread-main:exact-run-child",
+      },
+      {
+        runId: "run-queued-b",
+        messageId: "message-queued-b",
+        threadId: "thread-child:exact-run-child",
+      },
+    ],
     acceptedRunId: "run-accepted",
     acceptedRunMessageId: "message-accepted",
     acceptedRunThreadId: "thread-accepted:exact-run-child",
@@ -102,6 +114,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
   assert.equal(loaded?.pendingRunRequestId, "request-pending");
   assert.equal(loaded?.pendingRunMessageId, "message-pending");
   assert.equal(loaded?.pendingRunThreadId, "thread-main:exact-run-child");
+  assert.deepEqual(loaded?.queuedRunReservations, session.queuedRunReservations);
   assert.equal(loaded?.acceptedRunId, "run-accepted");
   assert.equal(loaded?.acceptedRunMessageId, "message-accepted");
   assert.equal(loaded?.acceptedRunThreadId, "thread-accepted:exact-run-child");
@@ -125,6 +138,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
   assert.equal(legacy?.pendingRunId, undefined);
   assert.equal(legacy?.pendingRunRequestId, undefined);
   assert.equal(legacy?.pendingRunMessageId, undefined);
+  assert.equal(legacy?.queuedRunReservations, undefined);
   assert.equal(legacy?.acceptedRunId, undefined);
   assert.equal(legacy?.acceptedRunThreadId, undefined);
 });

@@ -318,6 +318,28 @@ function validateSession(value: unknown): TuiSessionMeta {
   const pendingRunThreadId = typeof entry.pendingRunThreadId === "string"
     ? entry.pendingRunThreadId
     : undefined;
+  const queuedRunReservations = Array.isArray(entry.queuedRunReservations)
+    ? entry.queuedRunReservations.flatMap((reservation) => {
+        if (
+          typeof reservation !== "object"
+          || reservation === null
+          || Array.isArray(reservation)
+        ) return [];
+        const candidate = reservation as Record<string, unknown>;
+        return typeof candidate.runId === "string"
+          && candidate.runId.trim().length > 0
+          && typeof candidate.messageId === "string"
+          && candidate.messageId.trim().length > 0
+          && typeof candidate.threadId === "string"
+          && candidate.threadId.trim().length > 0
+          ? [{
+              runId: candidate.runId,
+              messageId: candidate.messageId,
+              threadId: candidate.threadId,
+            }]
+          : [];
+      })
+    : undefined;
   const acceptedRunId = typeof entry.acceptedRunId === "string"
     ? entry.acceptedRunId
     : undefined;
@@ -388,6 +410,9 @@ function validateSession(value: unknown): TuiSessionMeta {
     ...(pendingRunRequestId !== undefined ? { pendingRunRequestId } : {}),
     ...(pendingRunMessageId !== undefined ? { pendingRunMessageId } : {}),
     ...(pendingRunThreadId !== undefined ? { pendingRunThreadId } : {}),
+    ...(queuedRunReservations !== undefined && queuedRunReservations.length > 0
+      ? { queuedRunReservations }
+      : {}),
     ...(acceptedRunId !== undefined ? { acceptedRunId } : {}),
     ...(acceptedRunMessageId !== undefined ? { acceptedRunMessageId } : {}),
     ...(acceptedRunThreadId !== undefined ? { acceptedRunThreadId } : {}),

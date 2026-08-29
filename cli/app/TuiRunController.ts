@@ -619,15 +619,23 @@ export class TuiRunController {
           ?? (response.payload.view.thread?.status === "COMPLETED" || response.payload.view.thread?.status === "FAILED"
             ? response.payload.view.thread.status
             : undefined);
+        const currentSession = this.context.uiStore.getState().activeSession;
         await this.context.setActiveSessionState({
           started: true,
           updatedAt: new Date().toISOString(),
           focusedThreadId: response.payload.threadId,
           pendingManualCompaction: false,
           suppressAutoCompactionOnce: false,
-          pendingRunId: awaitingQueuedRun ? reservedRunId : undefined,
-          pendingRunMessageId: awaitingQueuedRun ? submissionMessageId : undefined,
-          pendingRunThreadId: awaitingQueuedRun ? threadId : undefined,
+          pendingRunId: undefined,
+          pendingRunMessageId: undefined,
+          pendingRunThreadId: undefined,
+          queuedRunReservations: awaitingQueuedRun
+            ? appendQueuedRunReservation(currentSession.queuedRunReservations, {
+                runId: reservedRunId!,
+                messageId: submissionMessageId,
+                threadId,
+              })
+            : currentSession.queuedRunReservations,
           ...(response.payload.runId !== undefined && awaitingQueuedRun === false
             ? {
                 acceptedRunId: response.payload.runId,
@@ -1109,7 +1117,23 @@ export class TuiRunController {
           ) {
             await this.context.recoverTerminalMessages(this.context.uiStore.getState().activeSession);
           }
-          if (recoveredRoute.disposition !== "queued" && recoveredRouteRunId !== undefined) {
+          if (recoveredRoute.disposition === "queued") {
+            const currentSession = this.context.uiStore.getState().activeSession;
+            await this.context.setActiveSessionState({
+              pendingRunId: undefined,
+              pendingRunMessageId: undefined,
+              pendingRunThreadId: undefined,
+              queuedRunReservations: appendQueuedRunReservation(
+                currentSession.queuedRunReservations,
+                {
+                  runId: reservedRunId!,
+                  messageId: submissionMessageId,
+                  threadId,
+                },
+              ),
+              updatedAt: new Date().toISOString(),
+            });
+          } else if (recoveredRouteRunId !== undefined) {
             requestAccepted = true;
             this.recordAcceptedRunSource(
               state.activeSession.sessionId,
@@ -1615,7 +1639,15 @@ export class TuiRunController {
       const session = this.context.uiStore.getState().sessions.find(
         (candidate) => candidate.sessionId === output.sessionId,
       );
-      if (session?.delegation !== undefined && session.acceptedRunId !== output.runId) return;
+      if (
+        session?.delegation !== undefined
+        && session.acceptedRunId !== output.runId
+        && findQueuedRunReservation(
+          session.queuedRunReservations,
+          output.runId,
+          event.threadId,
+        ) === undefined
+      ) return;
     }
     if (event.type === "run.failed" && event.payload.result !== undefined) {
       const output = event.payload.result.output;
@@ -1626,7 +1658,15 @@ export class TuiRunController {
       const session = this.context.uiStore.getState().sessions.find(
         (candidate) => candidate.sessionId === output.sessionId,
       );
-      if (session?.delegation !== undefined && session.acceptedRunId !== output.runId) return;
+      if (
+        session?.delegation !== undefined
+        && session.acceptedRunId !== output.runId
+        && findQueuedRunReservation(
+          session.queuedRunReservations,
+          output.runId,
+          event.threadId,
+        ) === undefined
+      ) return;
     }
     if (event.type === "run.progress") {
       const update = event.payload.update;
@@ -1653,6 +1693,15 @@ export class TuiRunController {
         && session?.pendingRunId === event.runId
         && session?.pendingRunMessageId === event.payload.sourceMessageId
         && session.pendingRunThreadId === event.threadId;
+      const exactQueuedForegroundStart = session?.delegation === undefined
+        && event.threadId !== undefined
+        && event.payload.sourceMessageId !== undefined
+        && findQueuedRunReservation(
+          session?.queuedRunReservations,
+          event.runId,
+          event.threadId,
+          event.payload.sourceMessageId,
+        ) !== undefined;
       const backgroundStatus = session?.delegation?.status;
       const exactPendingBackgroundStart = event.threadId !== undefined
         && session?.pendingRunThreadId === event.threadId
@@ -1663,16 +1712,31 @@ export class TuiRunController {
             && session.pendingRunMessageId === event.payload.sourceMessageId
           )
         );
+      const exactQueuedBackgroundStart = event.threadId !== undefined
+        && findQueuedRunReservation(
+          session?.queuedRunReservations,
+          event.runId,
+          event.threadId,
+          event.payload.sourceMessageId,
+        ) !== undefined;
       const exactBackgroundStart = session?.delegation !== undefined
         && backgroundStatus !== "COMPLETED"
         && backgroundStatus !== "FAILED"
         && (
           exactPendingBackgroundStart
+          || exactQueuedBackgroundStart
           || session.acceptedRunId === event.runId
         );
-      if (exactForegroundStart === false && exactBackgroundStart === false) return;
+      if (
+        this.acceptedTerminalBySession.get(event.sessionId)?.runId === event.runId
+        || (
+          exactForegroundStart === false
+          && exactQueuedForegroundStart === false
+          && exactBackgroundStart === false
+        )
+      ) return;
       this.applySharedActivityEvent(event);
-      if (exactForegroundStart || exactBackgroundStart) {
+      if (exactForegroundStart || exactQueuedForegroundStart || exactBackgroundStart) {
         if (this.acceptedTerminalBySession.get(event.sessionId)?.runId !== event.runId) {
           this.acceptedTerminalBySession.delete(event.sessionId);
         }
@@ -1681,7 +1745,7 @@ export class TuiRunController {
         acceptedRuns.set(event.runId, event.payload.sourceMessageId);
         this.acceptedRunSourceMessageBySession.set(event.sessionId, acceptedRuns);
       }
-      if (exactForegroundStart) {
+      if (exactForegroundStart || exactQueuedForegroundStart) {
         void this.context.syncForegroundSessionProgress({
           sessionId: event.sessionId,
           threadId: event.threadId!,
@@ -2067,10 +2131,15 @@ export class TuiRunController {
     );
     const acceptedOwnsRun = session?.acceptedRunId === runId;
     const observedOwnsRun = this.observedActiveRunBySession.get(sessionId) === runId;
-    if (acceptedOwnsRun === false && observedOwnsRun === false) return true;
+    const queuedReservation = findQueuedRunReservation(
+      session?.queuedRunReservations,
+      runId,
+      threadId,
+    );
+    if (acceptedOwnsRun === false && observedOwnsRun === false && queuedReservation === undefined) return true;
     const expectedThreadId = acceptedOwnsRun
       ? session?.acceptedRunThreadId
-      : session?.pendingRunThreadId ?? session?.focusedThreadId;
+      : queuedReservation?.threadId ?? session?.pendingRunThreadId ?? session?.focusedThreadId;
     return expectedThreadId !== undefined && threadId === expectedThreadId;
   }
 
@@ -2096,9 +2165,9 @@ export class TuiRunController {
         || persistedSession?.lastRunStatus === "FAILED"
       )
     ) return false;
-    const knownActiveRunIds = new Set(persistedAcceptedRunId !== undefined
-      ? [persistedAcceptedRunId]
-      : [
+    const knownActiveRunIds = new Set([
+      ...(persistedAcceptedRunId !== undefined ? [persistedAcceptedRunId] : []),
+      ...(persistedSession?.queuedRunReservations?.map((reservation) => reservation.runId) ?? []),
           ...(
             this.observedActiveRunBySession.get(sessionId) === undefined
               ? []
@@ -2258,6 +2327,10 @@ export class TuiRunController {
     const ownsActiveSessionState = state.activeSession.sessionId === output.sessionId
       && (terminalOwnsActiveRun ?? (activeRunId === undefined || activeRunId === output.runId));
     if (ownsActiveSessionState) {
+      const queuedReservation = findQueuedRunReservation(
+        state.activeSession.queuedRunReservations,
+        output.runId,
+      );
       await this.context.setActiveSessionState({
         started: true,
         updatedAt: new Date().toISOString(),
@@ -2265,6 +2338,17 @@ export class TuiRunController {
         lastRunStatus: output.status,
         pendingManualCompaction: false,
         suppressAutoCompactionOnce: false,
+        ...(queuedReservation !== undefined
+          ? {
+              acceptedRunId: queuedReservation.runId,
+              acceptedRunMessageId: queuedReservation.messageId,
+              acceptedRunThreadId: queuedReservation.threadId,
+              queuedRunReservations: removeQueuedRunReservation(
+                state.activeSession.queuedRunReservations,
+                queuedReservation,
+              ),
+            }
+          : {}),
         operatorState: this.context.buildSessionOperatorState({
           session: state.activeSession,
           profile: state.activeProfile,
@@ -2303,6 +2387,49 @@ export class TuiRunController {
       details: JSON.stringify(input.details, null, 2),
     });
   }
+}
+
+function appendQueuedRunReservation(
+  reservations: TuiSessionMeta["queuedRunReservations"],
+  reservation: NonNullable<TuiSessionMeta["queuedRunReservations"]>[number],
+): NonNullable<TuiSessionMeta["queuedRunReservations"]> {
+  const existing = reservations ?? [];
+  const exact = existing.find((candidate) => candidate.runId === reservation.runId);
+  if (exact !== undefined) {
+    if (
+      exact.messageId !== reservation.messageId
+      || exact.threadId !== reservation.threadId
+    ) {
+      throw new Error("Queued run reservation identity conflicted with persisted evidence.");
+    }
+    return existing;
+  }
+  return [...existing, reservation];
+}
+
+function findQueuedRunReservation(
+  reservations: TuiSessionMeta["queuedRunReservations"],
+  runId: string,
+  threadId?: string | undefined,
+  messageId?: string | undefined,
+): NonNullable<TuiSessionMeta["queuedRunReservations"]>[number] | undefined {
+  return reservations?.find((reservation) =>
+    reservation.runId === runId
+    && (threadId === undefined || reservation.threadId === threadId)
+    && (messageId === undefined || reservation.messageId === messageId)
+  );
+}
+
+function removeQueuedRunReservation(
+  reservations: TuiSessionMeta["queuedRunReservations"],
+  reservation: NonNullable<TuiSessionMeta["queuedRunReservations"]>[number],
+): TuiSessionMeta["queuedRunReservations"] {
+  const remaining = reservations?.filter((candidate) =>
+    candidate.runId !== reservation.runId
+    || candidate.messageId !== reservation.messageId
+    || candidate.threadId !== reservation.threadId
+  );
+  return remaining === undefined || remaining.length === 0 ? undefined : remaining;
 }
 
 function runnerErrorCode(error: unknown): string | undefined {

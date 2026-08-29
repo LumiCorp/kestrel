@@ -2394,6 +2394,147 @@ test("session description marks an unstarted session started from durable thread
   }
 });
 
+test("session description backfills legacy accepted thread ownership only from an exact active or terminal run", async (t) => {
+  for (const evidence of ["foreground-active", "delegated-terminal"] as const) {
+    await t.test(evidence, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const acceptedRunId = `run-legacy:${evidence}`;
+      const threadId = `thread-exact:${evidence}`;
+      const base = uiStore.getState().activeSession;
+      const legacy: TuiSessionMeta = {
+        ...base,
+        started: true,
+        acceptedRunId,
+        acceptedRunMessageId: `message-legacy:${evidence}`,
+        acceptedRunThreadId: undefined,
+        ...(evidence === "delegated-terminal"
+          ? {
+              delegation: {
+                taskId: "task-legacy-thread",
+                parentSessionId: "parent-legacy-thread",
+                childSessionId: base.sessionId,
+                childSessionName: base.name,
+                title: "legacy accepted thread",
+                status: "RUNNING" as const,
+                profileId: base.profileId,
+                provider: "openrouter",
+                model: "test-model",
+                createdAt: base.createdAt,
+                updatedAt: base.updatedAt,
+              },
+            }
+          : {}),
+      };
+      const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === legacy.sessionId ? legacy : session
+        ),
+      };
+      uiStore.patch({ activeSession: legacy, sessions: [legacy] });
+
+      await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+        sessionId: legacy.sessionId,
+        version: 1,
+        threadId,
+        operatorThreadView: {
+          thread: {
+            threadId,
+            sessionId: legacy.sessionId,
+            title: "Legacy accepted thread",
+            status: evidence === "foreground-active" ? "RUNNING" : "COMPLETED",
+            lastRunStatus: evidence === "foreground-active" ? undefined : "COMPLETED",
+            createdAt: legacy.createdAt,
+            updatedAt: legacy.updatedAt,
+          },
+          childThreads: [],
+          childBlockerChain: [],
+          ...(evidence === "foreground-active"
+            ? { activeRun: { runId: acceptedRunId, status: "RUNNING" } }
+            : {
+                conversationTurns: [{
+                  turnId: "turn-legacy-thread",
+                  threadId,
+                  sessionId: legacy.sessionId,
+                  sequence: 1,
+                  status: "COMPLETED",
+                  rootRunId: acceptedRunId,
+                  terminalRunId: acceptedRunId,
+                  terminalStatus: "COMPLETED",
+                  startedAt: legacy.createdAt,
+                  completedAt: legacy.updatedAt,
+                  updatedAt: legacy.updatedAt,
+                }],
+              }),
+        },
+      });
+
+      assert.equal(uiStore.getState().activeSession.acceptedRunThreadId, threadId);
+    });
+  }
+});
+
+test("session description never backfills accepted thread ownership from a mismatched run or mutable focus", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const legacy: TuiSessionMeta = {
+    ...base,
+    started: true,
+    focusedThreadId: "thread-focus:legacy",
+    acceptedRunId: "run-accepted:legacy",
+    acceptedRunMessageId: "message-accepted:legacy",
+    acceptedRunThreadId: undefined,
+  };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === legacy.sessionId ? legacy : session
+    ),
+  };
+  uiStore.patch({ activeSession: legacy, sessions: [legacy] });
+
+  await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+    sessionId: legacy.sessionId,
+    version: 1,
+    threadId: "thread-described:legacy",
+    focusedThreadId: "thread-focus:legacy",
+    operatorThreadView: {
+      thread: {
+        threadId: "thread-described:legacy",
+        sessionId: legacy.sessionId,
+        title: "Mismatched run",
+        status: "RUNNING",
+        createdAt: legacy.createdAt,
+        updatedAt: legacy.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-other:legacy", status: "RUNNING" },
+      conversationTurns: [{
+        turnId: "turn-historical-accepted",
+        threadId: "thread-described:legacy",
+        sessionId: legacy.sessionId,
+        sequence: 1,
+        status: "COMPLETED",
+        rootRunId: "run-accepted:legacy",
+        terminalRunId: "run-accepted:legacy",
+        terminalStatus: "COMPLETED",
+        startedAt: legacy.createdAt,
+        completedAt: legacy.updatedAt,
+        updatedAt: legacy.updatedAt,
+      }],
+    },
+  });
+
+  assert.equal(uiStore.getState().activeSession.acceptedRunThreadId, undefined);
+});
+
 test("start task journey clears inherited preset metadata when preset none is selected", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
@@ -3270,6 +3411,11 @@ test("TasksView renders additive assembly provider, variant, and downgrade marke
     pendingRunRequestId: "internal-pending-request-id",
     pendingRunMessageId: "internal-pending-message-id",
     pendingRunThreadId: "internal-pending-thread-id",
+    queuedRunReservations: [{
+      runId: "internal-queued-run-id",
+      messageId: "internal-queued-message-id",
+      threadId: "internal-queued-thread-id",
+    }],
     acceptedRunId: "internal-accepted-run-id",
     acceptedRunMessageId: "internal-accepted-message-id",
     acceptedRunThreadId: "internal-accepted-thread-id",
@@ -3386,7 +3532,7 @@ test("TasksView renders additive assembly provider, variant, and downgrade marke
   assert.match(rendered, /superseded:1/u);
   assert.match(rendered, /ev:3/u);
   assert.match(rendered, /childThreads=total:2 running:0 waiting:1 completed:1 failed:0 cancelled:1/u);
-  assert.doesNotMatch(rendered, /internal-(?:pending|accepted)/u);
+  assert.doesNotMatch(rendered, /internal-(?:pending|queued|accepted)/u);
   assert.match(
     rendered,
     /childResults=task-thread-child status=COMPLETED resultStatus=completed[\s\S]*result=Child result ready\./u,
