@@ -150,6 +150,13 @@ function createRunHarness(input: {
   diagnostics: Array<{ scope: string; summary: string; details?: string | undefined }>;
   runLogs: AgentRunLogLine[];
   reasoning: AgentProgressUpdateV1[];
+  backgroundProgress: Array<{
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId?: string | undefined;
+    requestId?: string | undefined;
+  }>;
   registeredProfileId: string;
   sessionDescribeCount: number;
   persistCount: number;
@@ -222,6 +229,13 @@ function createRunHarness(input: {
   const diagnostics: Array<{ scope: string; summary: string; details?: string | undefined }> = [];
   const runLogs: AgentRunLogLine[] = [];
   const reasoning: AgentProgressUpdateV1[] = [];
+  const backgroundProgress: Array<{
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId?: string | undefined;
+    requestId?: string | undefined;
+  }> = [];
 
   const context: TuiRunControllerContext = {
     options: { cwd: process.cwd(), ...(input.scripted === true ? { scripted: true } : {}) },
@@ -438,7 +452,9 @@ function createRunHarness(input: {
       persistCount += 1;
       return true;
     },
-    syncBackgroundSessionProgress: async () => {},
+    syncBackgroundSessionProgress: async (progress) => {
+      backgroundProgress.push(progress);
+    },
     syncBackgroundSessionResult: async () => {},
     syncBackgroundSessionFailure: async () => {},
     syncSessionFromDescribePayload: async (
@@ -525,6 +541,7 @@ function createRunHarness(input: {
     diagnostics,
     runLogs,
     reasoning,
+    backgroundProgress,
     registeredProfileId,
     get sessionDescribeCount() {
       return sessionDescribeCount;
@@ -785,6 +802,84 @@ test("TuiRunController persists exact accepted operator-control run evidence", a
   assert.equal(harness.uiStore.getState().running, true);
 });
 
+test("TuiRunController forwards exact accepted reply ownership for a delegated waiting child", async () => {
+  const requestId = "request-child-reply";
+  const runId = "run-child-reply";
+  const threadId = "thread-main:session-1";
+  const harness = createRunHarness({
+    pendingWaitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      interaction: {
+        version: "v1",
+        requestId,
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Continue?",
+      },
+    },
+    activeSessionPatch: {
+      focusedThreadId: threadId,
+      acceptedRunId: "run-child-waiting",
+      acceptedRunMessageId: "message-child-waiting",
+      lastRunStatus: "WAITING",
+      delegation: {
+        taskId: "task-child-reply",
+        parentSessionId: "session-parent",
+        childSessionId: "session-1",
+        childSessionName: "child-reply",
+        title: "reply child",
+        status: "WAITING",
+        profileId: "kestrel",
+        provider: "openrouter",
+        model: "test-model",
+        createdAt: "2026-05-14T00:00:00.000Z",
+        updatedAt: "2026-05-14T00:00:02.000Z",
+      },
+    },
+    sendCommand: async (type) => {
+      assert.equal(type, "operator.control");
+      const view = makeConversationView({ active: true });
+      return makeRunnerEvent({
+        type: "operator.controlled",
+        sessionId: "session-1",
+        threadId,
+        runId,
+        payload: {
+          sessionId: "session-1",
+          threadId,
+          disposition: "accepted",
+          runId,
+          view: {
+            ...view,
+            activeRun: { runId, status: "RUNNING" },
+            conversationTurns: [{
+              ...view.conversationTurns![0]!,
+              rootRunId: runId,
+              activeRunId: runId,
+            }],
+          },
+        },
+      });
+    },
+  });
+
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId: "message-child-reply",
+    submittedMessage: "continue",
+    resumeBlockedRun: true,
+  }), true);
+  assert.deepEqual(harness.backgroundProgress, [{
+    sessionId: "session-1",
+    threadId,
+    runId,
+    messageId: "message-child-reply",
+    requestId,
+    status: "RUNNING",
+    waitFor: undefined,
+  }]);
+});
+
 test("TuiRunController recovers an accepted blocked-run reply from exact durable request evidence", async () => {
   let controller: TuiRunController | undefined;
   const threadId = "thread-main:session-1";
@@ -867,6 +962,166 @@ test("TuiRunController recovers an accepted blocked-run reply from exact durable
   assert.equal(session.lastRunStatus, undefined);
   assert.equal(harness.uiStore.getState().running, true);
   assert.equal(harness.history.some((line) => line.text.includes("communication failed")), false);
+});
+
+test("TuiRunController recovers exact blocked-run reply routes that are already terminal", async (t) => {
+  for (const terminalStatus of ["COMPLETED", "FAILED"] as const) {
+    await t.test(terminalStatus, async () => {
+      const requestId = `request-resume-terminal-${terminalStatus.toLowerCase()}`;
+      const runId = `run-resume-terminal-${terminalStatus.toLowerCase()}`;
+      const threadId = "thread-main:session-1";
+      const recoveries: string[] = [];
+      const harness = createRunHarness({
+        pendingWaitFor: {
+          kind: "user",
+          eventType: "user.reply",
+          interaction: {
+            version: "v1",
+            requestId,
+            kind: "user_input",
+            eventType: "user.reply",
+            prompt: "Continue?",
+          },
+        },
+        recoverTerminalMessages: async (session) => {
+          recoveries.push(`${session.acceptedRunId}:${session.lastRunStatus}`);
+        },
+        sendCommand: async (type) => {
+          if (type === "operator.control") {
+            throw Object.assign(new Error("operator response lost"), { code: "EPIPE" });
+          }
+          if (type === "operator.thread") {
+            return makeRunnerEvent({
+              type: "operator.thread",
+              payload: {
+                view: {
+                  thread: {
+                    threadId,
+                    sessionId: "session-1",
+                    title: "Main",
+                    status: terminalStatus,
+                    lastRunStatus: terminalStatus,
+                    createdAt: "2026-05-14T00:00:00.000Z",
+                    updatedAt: "2026-05-14T00:00:03.000Z",
+                  },
+                  childThreads: [],
+                  childBlockerChain: [],
+                  conversationTurns: [{
+                    turnId: "turn-terminal-reply",
+                    threadId,
+                    sessionId: "session-1",
+                    sequence: 2,
+                    status: terminalStatus,
+                    rootRunId: runId,
+                    terminalRunId: runId,
+                    terminalStatus,
+                    startedAt: "2026-05-14T00:00:02.000Z",
+                    updatedAt: "2026-05-14T00:00:03.000Z",
+                    completedAt: "2026-05-14T00:00:03.000Z",
+                  }],
+                  conversationMessageRoutes: [{
+                    messageId: `route-${requestId}`,
+                    disposition: "replied",
+                    requestId,
+                    runId,
+                    turnId: "turn-terminal-reply",
+                    createdAt: "2026-05-14T00:00:02.000Z",
+                  }],
+                  followUpQueue: { state: "ready", items: [] },
+                },
+              },
+            });
+          }
+          throw new Error(`Unexpected command '${type}'.`);
+        },
+      });
+
+      assert.equal(await harness.controller.startActiveTurn({
+        messageId: `message-${requestId}`,
+        submittedMessage: "continue",
+        resumeBlockedRun: true,
+      }), true);
+      const session = harness.uiStore.getState().activeSession;
+      assert.equal(session.acceptedRunId, runId);
+      assert.equal(session.lastRunStatus, terminalStatus);
+      assert.equal(session.pendingRunRequestId, undefined);
+      assert.equal(harness.uiStore.getState().running, false);
+      assert.equal(harness.uiStore.getState().statusLine, terminalStatus.toLowerCase());
+      assert.deepEqual(recoveries, [`${runId}:${terminalStatus}`]);
+    });
+  }
+});
+
+test("TuiRunController preserves an already-terminal accepted operator-control view", async () => {
+  const requestId = "request-terminal-controlled";
+  const runId = "run-terminal-controlled";
+  const threadId = "thread-main:session-1";
+  const recoveries: string[] = [];
+  const harness = createRunHarness({
+    pendingWaitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      interaction: {
+        version: "v1",
+        requestId,
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Continue?",
+      },
+    },
+    recoverTerminalMessages: async (session) => {
+      recoveries.push(`${session.acceptedRunId}:${session.lastRunStatus}`);
+    },
+    sendCommand: async () => makeRunnerEvent({
+      type: "operator.controlled",
+      sessionId: "session-1",
+      threadId,
+      runId,
+      payload: {
+        sessionId: "session-1",
+        threadId,
+        disposition: "accepted",
+        runId,
+        view: {
+          thread: {
+            threadId,
+            sessionId: "session-1",
+            title: "Main",
+            status: "COMPLETED",
+            lastRunStatus: "COMPLETED",
+            createdAt: "2026-05-14T00:00:00.000Z",
+            updatedAt: "2026-05-14T00:00:03.000Z",
+          },
+          childThreads: [],
+          childBlockerChain: [],
+          conversationTurns: [{
+            turnId: "turn-terminal-controlled",
+            threadId,
+            sessionId: "session-1",
+            sequence: 2,
+            status: "COMPLETED",
+            rootRunId: runId,
+            terminalRunId: runId,
+            terminalStatus: "COMPLETED",
+            startedAt: "2026-05-14T00:00:02.000Z",
+            updatedAt: "2026-05-14T00:00:03.000Z",
+            completedAt: "2026-05-14T00:00:03.000Z",
+          }],
+          followUpQueue: { state: "ready", items: [] },
+        },
+      },
+    }),
+  });
+
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId: "message-terminal-controlled",
+    submittedMessage: "continue",
+    resumeBlockedRun: true,
+  }), true);
+  assert.equal(harness.uiStore.getState().activeSession.lastRunStatus, "COMPLETED");
+  assert.equal(harness.uiStore.getState().running, false);
+  assert.equal(harness.uiStore.getState().statusLine, "completed");
+  assert.deepEqual(recoveries, [`${runId}:COMPLETED`]);
 });
 
 test("TuiRunController keeps an unobserved blocked-run reply recoverable without restoring its consumed wait", async () => {
@@ -1629,6 +1884,9 @@ test("TuiRunController emits an explicit terminal marker for scripted completion
   harness.controller.onRunnerEvent(makeRunnerEvent({
     type: "run.completed",
     commandId: "command-scripted",
+    sessionId: "session-1",
+    threadId: "thread-main:session-1",
+    runId: "run-start-1",
     payload: {
       result: {
         assistantText: "done",
@@ -2121,6 +2379,83 @@ test("TuiRunController gives direct run failures a stable terminal identity", as
   assert.equal(failure?.data?.kind, "runtime.terminal.v1");
 });
 
+test("TuiRunController rejects a retained run A terminal for new message B after accepted run C", async () => {
+  let controller: TuiRunController | undefined;
+  const threadId = "thread-main:session-1";
+  const harness = createRunHarness({
+    activeSessionPatch: {
+      pendingRunMessageId: "message-A",
+      pendingRunThreadId: threadId,
+    },
+    sendCommand: async (type) => {
+      if (type === "conversation.message.submit") {
+        return makeRunnerEvent({
+          type: "run.completed",
+          sessionId: "session-1",
+          threadId,
+          runId: "run-A",
+          payload: { result: makeCompletedResult("run-A") },
+        });
+      }
+      if (type === "operator.thread") throw new Error("authority unavailable");
+      throw new Error(`Unexpected command '${type}'.`);
+    },
+  });
+  controller = harness.controller;
+
+  const patchActiveSession = (patch: Partial<TuiSessionMeta>) => {
+    const state = harness.uiStore.getState();
+    const activeSession = { ...state.activeSession, ...patch };
+    harness.uiStore.patch({
+      activeSession,
+      sessions: state.sessions.map((session) => session.sessionId === activeSession.sessionId
+        ? activeSession
+        : session),
+    });
+  };
+  const accept = async (runId: string, messageId: string) => {
+    controller!.onRunnerEvent(makeRunnerEvent({
+      type: "run.started",
+      sessionId: "session-1",
+      threadId,
+      runId,
+      payload: {
+        sessionId: "session-1",
+        runId,
+        eventType: "user.message",
+        sourceMessageId: messageId,
+      },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  await accept("run-A", "message-A");
+  patchActiveSession({
+    pendingRunMessageId: "message-C",
+    pendingRunThreadId: threadId,
+    lastRunStatus: undefined,
+  });
+  await accept("run-C", "message-C");
+  controller.onRunnerEvent(makeRunnerEvent({
+    type: "run.completed",
+    sessionId: "session-1",
+    threadId,
+    runId: "run-C",
+    payload: { result: makeCompletedResult("run-C") },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(await controller.startActiveTurn({
+    messageId: "message-B",
+    submittedMessage: "new submission B",
+  }), false);
+  const session = harness.uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-C");
+  assert.equal(session.acceptedRunMessageId, "message-C");
+  assert.equal(harness.history.some((line) => line.output?.runId === "run-A"), false);
+});
+
 test("TuiRunController cancelActiveRun uses the authoritative turn run identity", async () => {
   const harness = createRunHarness();
   installActiveConversationView(harness.controller);
@@ -2311,6 +2646,7 @@ test("TuiRunController terminal events retire only their matching cached run", a
 test("TuiRunController keeps the first same-run terminal outcome immutable", async () => {
   const harness = createRunHarness({
     activeSessionPatch: {
+      focusedThreadId: "thread-main:session-1",
       acceptedRunId: "run-terminal-once",
       acceptedRunMessageId: "message-terminal-once",
     },
@@ -2348,6 +2684,87 @@ test("TuiRunController keeps the first same-run terminal outcome immutable", asy
   assert.equal(harness.uiStore.getState().activeSession.lastRunStatus, "COMPLETED");
   assert.equal(harness.uiStore.getState().statusLine, "completed");
   assert.deepEqual(harness.history.map((line) => line.text), ["First outcome"]);
+});
+
+test("TuiRunController rejects wrong-thread live terminal events for foreground and background runs", async (t) => {
+  for (const delegated of [false, true] as const) {
+    for (const eventType of ["run.completed", "run.failed", "run.cancelled"] as const) {
+      await t.test(`${delegated ? "background" : "foreground"} ${eventType}`, async () => {
+        const runId = `run-${delegated ? "background" : "foreground"}-${eventType}`;
+        let refreshes = 0;
+        const harness = createRunHarness({
+          activeSessionPatch: {
+            focusedThreadId: "thread-main:session-1",
+            acceptedRunId: runId,
+            acceptedRunMessageId: `message-${runId}`,
+            lastRunStatus: undefined,
+            ...(delegated
+              ? {
+                  delegation: {
+                    taskId: `task-${runId}`,
+                    parentSessionId: "session-parent",
+                    childSessionId: "session-1",
+                    childSessionName: "child-terminal-thread",
+                    title: "terminal thread child",
+                    status: "RUNNING" as const,
+                    profileId: "kestrel",
+                    provider: "openrouter",
+                    model: "test-model",
+                    createdAt: "2026-05-14T00:00:00.000Z",
+                    updatedAt: "2026-05-14T00:00:02.000Z",
+                  },
+                }
+              : {}),
+          },
+          sendCommand: async (type) => {
+            if (type === "operator.thread") {
+              refreshes += 1;
+              throw new Error("wrong-thread refresh must not run");
+            }
+            throw new Error(`Unexpected command '${type}'.`);
+          },
+        });
+        const base = {
+          type: eventType,
+          sessionId: "session-1",
+          threadId: "thread-wrong:session-1",
+          runId,
+        };
+        const event = eventType === "run.completed"
+          ? makeRunnerEvent({
+              ...base,
+              type: eventType,
+              payload: { result: makeCompletedResult(runId) },
+            })
+          : eventType === "run.failed"
+            ? makeRunnerEvent({
+                ...base,
+                type: eventType,
+                payload: {
+                  result: makeFailedResult(runId),
+                  error: { code: "RUN_FAILED", message: "wrong-thread failure" },
+                },
+              })
+            : makeRunnerEvent({
+                ...base,
+                type: eventType,
+                payload: {
+                  sessionId: "session-1",
+                  result: makeCancelledResult(runId),
+                },
+              });
+
+        harness.controller.onRunnerEvent(event);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        assert.equal(harness.uiStore.getState().activeSession.lastRunStatus, undefined);
+        assert.equal(harness.uiStore.getState().running, false);
+        assert.deepEqual(harness.history, []);
+        assert.equal(refreshes, 0);
+      });
+    }
+  }
 });
 
 function installActiveConversationView(controller: TuiRunController): void {

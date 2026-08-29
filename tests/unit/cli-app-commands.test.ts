@@ -1728,6 +1728,7 @@ test("background lifecycle ignores delayed starts after terminal and stale run A
   const child = installBackgroundSession(appState, {
     ...base,
     started: true,
+    focusedThreadId: "child-monotonic",
     acceptedRunId: "run-b",
     acceptedRunMessageId: "message-b",
     delegation: {
@@ -2001,6 +2002,67 @@ test("same-run background progress cannot regress WAITING to RUNNING", async () 
   const current = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
   assert.equal(current?.delegation?.status, "WAITING");
   assert.equal(current?.lastRunStatus, "WAITING");
+});
+
+test("exact accepted reply advances a delegated WAITING child to its new run", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const threadId = "thread-main:child-waiting-reply";
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-waiting-reply",
+    started: true,
+    focusedThreadId: threadId,
+    acceptedRunId: "run-waiting-old",
+    acceptedRunMessageId: "message-waiting-old",
+    pendingRunRequestId: "request-waiting-reply",
+    pendingRunThreadId: threadId,
+    pendingWaitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      interaction: {
+        version: "v1",
+        requestId: "request-waiting-reply",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Continue?",
+      },
+    },
+    lastRunStatus: "WAITING",
+    delegation: {
+      taskId: "task-child-waiting-reply",
+      parentSessionId: "session-1",
+      childSessionId: "child-waiting-reply",
+      childSessionName: "child-waiting-reply",
+      title: "waiting reply child",
+      status: "WAITING",
+      profileId: "kestrel",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: "2026-08-28T00:00:00.000Z",
+      updatedAt: "2026-08-28T00:00:00.000Z",
+    },
+  });
+
+  await (appState.syncBackgroundSessionProgress as (input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    requestId?: string | undefined;
+  }) => Promise<void>)({
+    sessionId: child.sessionId,
+    threadId,
+    runId: "run-waiting-new",
+    requestId: "request-waiting-reply",
+  });
+
+  const current = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.acceptedRunId, "run-waiting-new");
+  assert.equal(current?.pendingRunRequestId, undefined);
+  assert.equal(current?.pendingRunThreadId, undefined);
+  assert.equal(current?.pendingWaitFor, undefined);
+  assert.equal(current?.lastRunStatus, undefined);
 });
 
 test("exact describe acceptance persists identity and lifecycle in one session write", async () => {

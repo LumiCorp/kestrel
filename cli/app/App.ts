@@ -5130,6 +5130,9 @@ export class App {
     threadId: string;
     runId: string;
     messageId?: string | undefined;
+    requestId?: string | undefined;
+    status?: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED" | undefined;
+    waitFor?: TuiSessionMeta["pendingWaitFor"] | undefined;
   }): Promise<void> {
     const session = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
     if (session?.delegation === undefined) {
@@ -5145,23 +5148,45 @@ export class App {
           && session.pendingRunMessageId === input.messageId
         )
       );
-    if (session.acceptedRunId !== input.runId && exactPendingAcceptance === false) return;
+    const exactPendingReplyAcceptance = input.requestId !== undefined
+      && session.pendingRunThreadId === input.threadId
+      && session.pendingRunRequestId === input.requestId
+      && session.acceptedRunId !== input.runId;
+    if (
+      session.acceptedRunId !== input.runId
+      && exactPendingAcceptance === false
+      && exactPendingReplyAcceptance === false
+    ) return;
     if (session.acceptedRunId === input.runId && status === "RUNNING") return;
     if (session.acceptedRunId === input.runId && status === "WAITING") return;
+    const nextStatus = input.status ?? "RUNNING";
     await this.updateAcceptedBackgroundSession({
       ...session.delegation,
-      status: "RUNNING",
+      status: nextStatus,
       errorCode: undefined,
       errorMessage: undefined,
       updatedAt: new Date().toISOString(),
     }, undefined, {
+      focusedThreadId: input.threadId,
       acceptedRunId: input.runId,
       acceptedRunMessageId: input.messageId ?? session.pendingRunMessageId,
       pendingRunId: undefined,
+      pendingRunRequestId: undefined,
       pendingRunMessageId: undefined,
       pendingRunThreadId: undefined,
-      lastRunStatus: undefined,
+      pendingWaitFor: nextStatus === "WAITING" ? input.waitFor : undefined,
+      lastRunStatus: nextStatus === "COMPLETED" || nextStatus === "FAILED"
+        ? nextStatus
+        : nextStatus === "WAITING"
+          ? "WAITING"
+          : undefined,
     });
+    if (nextStatus === "COMPLETED" || nextStatus === "FAILED") {
+      const accepted = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
+      if (accepted !== undefined) {
+        await this.recoverTerminalMessages(accepted).catch(() => undefined);
+      }
+    }
   }
 
   private async updateAcceptedBackgroundSession(

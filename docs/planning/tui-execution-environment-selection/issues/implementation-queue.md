@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Finish exact reply and terminal ownership](13-finish-exact-reply-and-terminal-ownership.md)
+None.
 
 ## In progress
 
@@ -22,6 +22,7 @@ None.
 - [Reconcile TUI lifecycle from exact runtime evidence](06-reconcile-tui-lifecycle-from-exact-runtime-evidence.md)
 - [Make TUI lifecycle reconciliation monotonic and exact](11-make-tui-lifecycle-reconciliation-monotonic-and-exact.md)
 - [Close remaining TUI lifecycle ordering gaps](12-close-remaining-tui-lifecycle-ordering-gaps.md)
+- [Finish exact reply and terminal ownership](13-finish-exact-reply-and-terminal-ownership.md)
 
 ## Done
 
