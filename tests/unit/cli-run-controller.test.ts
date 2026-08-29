@@ -599,6 +599,30 @@ test("TuiRunController re-verifies a started session with cached exact identity 
   assert.equal(harness.diagnostics.at(-1)?.scope, "tui.environment_identity");
 });
 
+for (const code of [
+  "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+  "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+] as const) {
+  test(`TuiRunController preserves ${code} in ordinary-turn diagnostics`, async () => {
+    const sessionDescribeError = Object.assign(new Error(`runtime ${code}`), { code });
+    const harness = createRunHarness({
+      environmentPresetId: "cli_dev_local",
+      effectiveAssemblyId: "bundle:kestrel:developer",
+      sessionDescribeError,
+    });
+
+    await assert.rejects(
+      harness.controller.startActiveTurn({ submittedMessage: "continue" }),
+      (error: unknown) =>
+        error instanceof Error
+        && "code" in error
+        && error.code === code,
+    );
+    assert.equal(harness.commands.length, 0);
+    assert.match(harness.diagnostics.at(-1)?.details ?? "", new RegExp(code, "u"));
+  });
+}
+
 test("TuiRunController rejects a session.describe response for a different session", async () => {
   const harness = createRunHarness({
     environmentPresetId: "cli_dev_local",

@@ -1,19 +1,45 @@
 import type { TuiSessionMeta } from "../contracts.js";
 import type { LocalCoreExecutionProfileResolution } from "../../src/localCore/contracts.js";
+import {
+  isSessionEnvironmentIdentityFailureCode,
+  type SessionEnvironmentIdentityFailureCode,
+} from "../../src/runtime/environmentIdentity.js";
 
 export type TuiEnvironmentPresetId = "cli_safe_local" | "cli_dev_local";
 
 export class TuiEnvironmentIdentityError extends Error {
-  readonly code: "TUI_ENVIRONMENT_UNKNOWN" | "TUI_ENVIRONMENT_CONFLICT";
+  readonly code:
+    | "TUI_ENVIRONMENT_UNKNOWN"
+    | "TUI_ENVIRONMENT_CONFLICT"
+    | SessionEnvironmentIdentityFailureCode;
 
   constructor(
-    code: "TUI_ENVIRONMENT_UNKNOWN" | "TUI_ENVIRONMENT_CONFLICT",
+    code:
+      | "TUI_ENVIRONMENT_UNKNOWN"
+      | "TUI_ENVIRONMENT_CONFLICT"
+      | SessionEnvironmentIdentityFailureCode,
     message: string,
   ) {
     super(message);
     this.name = "TuiEnvironmentIdentityError";
     this.code = code;
   }
+}
+
+export function readTuiEnvironmentIdentityFailure(
+  error: unknown,
+): TuiEnvironmentIdentityError | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return ;
+  }
+  const code = error.code;
+  if (isSessionEnvironmentIdentityFailureCode(code) === false) {
+    return ;
+  }
+  const message = error instanceof Error
+    ? error.message
+    : `Environment identity verification failed with '${code}'.`;
+  return new TuiEnvironmentIdentityError(code, message);
 }
 
 export function defaultTuiEnvironmentPresetId(

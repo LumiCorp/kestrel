@@ -1,0 +1,15 @@
+export const SESSION_ENVIRONMENT_IDENTITY_CONFLICT_CODE =
+  "SESSION_ENVIRONMENT_IDENTITY_CONFLICT";
+export const SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED_CODE =
+  "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED";
+
+export type SessionEnvironmentIdentityFailureCode =
+  | typeof SESSION_ENVIRONMENT_IDENTITY_CONFLICT_CODE
+  | typeof SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED_CODE;
+
+export function isSessionEnvironmentIdentityFailureCode(
+  value: unknown,
+): value is SessionEnvironmentIdentityFailureCode {
+  return value === SESSION_ENVIRONMENT_IDENTITY_CONFLICT_CODE
+    || value === SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED_CODE;
+}

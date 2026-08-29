@@ -44,6 +44,7 @@ import {
   resolveChatVisualCursorFromAnchor,
 } from "../ink/views/chatRows.js";
 import {
+  readTuiEnvironmentIdentityFailure,
   resolveTuiSessionEnvironment,
   toResolvedSessionIdentity,
   TuiEnvironmentIdentityError,
@@ -972,7 +973,7 @@ export class TuiRunController {
     } catch (error) {
       const identityError = error instanceof TuiEnvironmentIdentityError
         ? error
-        : new TuiEnvironmentIdentityError(
+        : readTuiEnvironmentIdentityFailure(error) ?? new TuiEnvironmentIdentityError(
             "TUI_ENVIRONMENT_UNKNOWN",
             `Environment unknown for session '${session.name}': runtime identity could not be verified.`,
           );

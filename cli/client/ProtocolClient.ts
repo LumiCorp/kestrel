@@ -20,6 +20,7 @@ const protocolClientRequire = createRequire(import.meta.url);
 
 interface PendingRequest {
   commandType: RunnerCommandType;
+  requestedSessionId?: string | undefined;
   resolve: (event: RunnerEvent) => void;
   reject: (error: Error) => void;
 }
@@ -149,7 +150,18 @@ export class ProtocolClient {
     const serializedCommand = JSON.stringify(parseRunnerCommandV2(command));
 
     const response = await new Promise<RunnerEvent>((resolve, reject) => {
-      this.pending.set(commandId, { commandType: type, resolve, reject });
+      this.pending.set(commandId, {
+        commandType: type,
+        ...(type === "session.describe"
+          ? {
+              requestedSessionId: (
+                payload as RunnerCommandPayloadByType["session.describe"]
+              ).sessionId,
+            }
+          : {}),
+        resolve,
+        reject,
+      });
       try {
         this.transport.send(serializedCommand);
       } catch (error) {
@@ -211,6 +223,18 @@ export class ProtocolClient {
     }
     if (event.type === "runner.error" && event.commandId === undefined) {
       this.lastProcessError = normalizeDiagnosticLine(event.payload.message);
+    }
+    if (
+      correlatedPending?.requestedSessionId !== undefined
+      && event.type === "session.described"
+      && event.payload.sessionId !== correlatedPending.requestedSessionId
+    ) {
+      this.pending.delete(event.commandId as string);
+      correlatedPending.reject(createSessionDescribeMismatchError({
+        requestedSessionId: correlatedPending.requestedSessionId,
+        describedSessionId: event.payload.sessionId,
+      }));
+      return;
     }
     for (const listener of this.listeners) {
       try {
@@ -283,6 +307,21 @@ export class ProtocolClient {
     this.lastProcessError = undefined;
     this.recentStderr.length = 0;
   }
+}
+
+function createSessionDescribeMismatchError(input: {
+  requestedSessionId: string;
+  describedSessionId: string;
+}): ProtocolClientRunnerError {
+  const error = new Error(
+    `session.describe requested '${input.requestedSessionId}' but received '${input.describedSessionId}'.`,
+  ) as ProtocolClientRunnerError;
+  error.code = "SESSION_DESCRIBE_SESSION_MISMATCH";
+  error.details = {
+    requestedSessionId: input.requestedSessionId,
+    describedSessionId: input.describedSessionId,
+  };
+  return error;
 }
 
 function isExecutionCommand(type: RunnerCommandType): boolean {

@@ -21,6 +21,7 @@ import { describeResolvedWorkspace } from "../workspace/WorkspaceResolver.js";
 import type { TuiAppContext } from "./TuiAppContext.js";
 import type { SessionDescribedEventPayload } from "../protocol/contracts.js";
 import {
+  readTuiEnvironmentIdentityFailure,
   resolveTuiSessionEnvironment,
   TuiEnvironmentIdentityError,
 } from "../session/TuiExecutionEnvironment.js";
@@ -256,6 +257,10 @@ export class SessionController {
       } catch (error) {
         if (error instanceof TuiEnvironmentIdentityError) {
           throw error;
+        }
+        const environmentFailure = readTuiEnvironmentIdentityFailure(error);
+        if (environmentFailure !== undefined) {
+          throw environmentFailure;
         }
         throw new TuiEnvironmentIdentityError(
           "TUI_ENVIRONMENT_UNKNOWN",

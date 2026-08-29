@@ -26,6 +26,10 @@ import type {
 } from "./contracts.js";
 import type { ShellPresetId } from "../profile/runtimeProfile.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import {
+  SESSION_ENVIRONMENT_IDENTITY_CONFLICT_CODE,
+  SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED_CODE,
+} from "../runtime/environmentIdentity.js";
 
 export interface OperatorAssemblyProviderSummary {
   id: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
@@ -376,14 +380,21 @@ export function toOperatorAssemblySummary(
   }
   const bundle = threadStatus.assemblyBundle;
   const threadEnvironmentPresetId = threadStatus.thread.environmentPresetId;
-  const bundleEnvironmentPresetId = readAssemblyEnvironmentPresetId(bundle?.metadata);
+  const bundleEnvironmentPresetId = readAssemblyEnvironmentPresetId(
+    bundle?.metadata,
+    {
+      sessionId: threadStatus.thread.sessionId,
+      threadId: threadStatus.thread.threadId,
+      bundleId: bundle?.bundleId ?? record.bundleId,
+    },
+  );
   if (
     threadEnvironmentPresetId !== undefined
     && bundleEnvironmentPresetId !== undefined
     && threadEnvironmentPresetId !== bundleEnvironmentPresetId
   ) {
     throw createRuntimeFailure(
-      "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+      SESSION_ENVIRONMENT_IDENTITY_CONFLICT_CODE,
       `Thread '${threadStatus.thread.threadId}' environment '${threadEnvironmentPresetId}' conflicts with active assembly '${bundleEnvironmentPresetId}'.`,
       {
         sessionId: threadStatus.thread.sessionId,
@@ -429,16 +440,32 @@ export function toOperatorAssemblySummary(
 
 function readAssemblyEnvironmentPresetId(
   metadata: Record<string, unknown> | undefined,
+  evidence: {
+    sessionId: string;
+    threadId: string;
+    bundleId: string;
+  },
 ): ShellPresetId | undefined {
-  const value = metadata?.environmentPresetId;
-  return value === "cli_safe_local" ||
+  if (metadata === undefined || Object.hasOwn(metadata, "environmentPresetId") === false) {
+    return ;
+  }
+  const value = metadata.environmentPresetId;
+  if (value === "cli_safe_local" ||
       value === "cli_dev_local" ||
       value === "web_balanced" ||
       value === "desktop_safe_local" ||
       value === "desktop_dev_local" ||
-      value === "workspace_hosted"
-    ? value
-    : undefined;
+      value === "workspace_hosted") {
+    return value;
+  }
+  throw createRuntimeFailure(
+    SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED_CODE,
+    `Active assembly '${evidence.bundleId}' records unsupported environment identity '${String(value)}'.`,
+    {
+      ...evidence,
+      bundleEnvironmentPresetId: value,
+    },
+  );
 }
 
 async function resolveMainThread(

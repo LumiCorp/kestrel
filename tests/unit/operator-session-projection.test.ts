@@ -43,6 +43,69 @@ test("toOperatorAssemblySummary projects exact environment identity", () => {
   assert.equal(summary?.environmentPresetId, "cli_safe_local");
 });
 
+test("toOperatorAssemblySummary rejects present unsupported assembly environment identity", () => {
+  const thread = buildThread("thread-unsupported-environment", {
+    environmentPresetId: "cli_dev_local",
+  });
+
+  assert.throws(
+    () => toOperatorAssemblySummary({
+      ...buildThreadStatus(thread),
+      activeAssembly: {
+        recordId: "assembly-record-unsupported",
+        threadId: thread.threadId,
+        bundleId: "bundle:kestrel:future",
+        cause: "thread_start",
+        authority: "profile",
+        createdAt: "2026-05-24T10:00:00.000Z",
+      },
+      assemblyBundle: {
+        bundleId: "bundle:kestrel:future",
+        label: "Future environment",
+        source: "profile_default",
+        toolAllowlist: [],
+        specialistIds: [],
+        metadata: { environmentPresetId: "cli_future_local" },
+        createdAt: "2026-05-24T10:00:00.000Z",
+        updatedAt: "2026-05-24T10:00:00.000Z",
+      },
+    }),
+    (error: unknown) =>
+      error instanceof Error
+      && "code" in error
+      && error.code === "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+  );
+});
+
+test("toOperatorAssemblySummary falls back to exact thread identity when bundle metadata is absent", () => {
+  const thread = buildThread("thread-legacy-bundle", {
+    environmentPresetId: "cli_dev_local",
+  });
+  const summary = toOperatorAssemblySummary({
+    ...buildThreadStatus(thread),
+    activeAssembly: {
+      recordId: "assembly-record-legacy",
+      threadId: thread.threadId,
+      bundleId: "bundle:kestrel:legacy",
+      cause: "thread_start",
+      authority: "profile",
+      createdAt: "2026-05-24T10:00:00.000Z",
+    },
+    assemblyBundle: {
+      bundleId: "bundle:kestrel:legacy",
+      label: "Legacy bundle",
+      source: "profile_default",
+      toolAllowlist: [],
+      specialistIds: [],
+      metadata: {},
+      createdAt: "2026-05-24T10:00:00.000Z",
+      updatedAt: "2026-05-24T10:00:00.000Z",
+    },
+  });
+
+  assert.equal(summary?.environmentPresetId, "cli_dev_local");
+});
+
 
 test("buildOperatorSessionProjection reads canonical user waits from session state", async () => {
   const interaction = {

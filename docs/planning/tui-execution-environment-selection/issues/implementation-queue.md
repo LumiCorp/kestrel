@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Preserve environment consistency through protocol correlation](08-preserve-environment-consistency-through-protocol-correlation.md)
+None.
 
 ## In progress
 
@@ -22,6 +22,7 @@ None.
 - [Bind TUI start state to authoritative runtime acceptance](05-bind-start-state-to-authoritative-runtime-acceptance.md)
 - [Make session describe durable and environment-authoritative](04-make-session-describe-durable-and-environment-authoritative.md)
 - [Make durable describe strictly read-only and deterministic](07-make-durable-describe-strictly-read-only-and-deterministic.md)
+- [Preserve environment consistency through protocol correlation](08-preserve-environment-consistency-through-protocol-correlation.md)
 
 ## Done
 

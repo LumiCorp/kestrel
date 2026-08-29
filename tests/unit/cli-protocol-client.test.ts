@@ -864,6 +864,83 @@ test("ProtocolClient resolves session.describe command", async () => {
   await client.close();
 });
 
+test("ProtocolClient rejects mismatched session.described before publishing it to listeners", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  client.onEvent((event) => seen.push(event.type));
+
+  const pending = client.sendCommandWithId(
+    "command-mismatched-session-description",
+    "session.describe",
+    { sessionId: "session-requested" },
+  );
+  await tick();
+  transport.emitEvent({
+    id: "evt-mismatched-session-description",
+    type: "session.described",
+    ts: new Date().toISOString(),
+    commandId: "command-mismatched-session-description",
+    payload: {
+      sessionId: "session-other",
+      version: 1,
+      operatorThreadView: {
+        thread: {
+          threadId: "thread-main:session-requested",
+          sessionId: "session-requested",
+          title: "Plausible active-session view",
+          status: "WAITING",
+        },
+      },
+    },
+  });
+
+  await assert.rejects(pending, (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(
+      (error as Error & { code?: string }).code,
+      "SESSION_DESCRIBE_SESSION_MISMATCH",
+    );
+    return true;
+  });
+  assert.deepEqual(seen, []);
+  await client.close();
+});
+
+for (const code of [
+  "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+  "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+] as const) {
+  test(`ProtocolClient preserves ${code} from a session.describe failure`, async () => {
+    const transport = new ControlledExitTransport();
+    const client = new ProtocolClient(transport);
+    const pending = client.sendCommandWithId(
+      `command-${code}`,
+      "session.describe",
+      { sessionId: "session-environment-failure" },
+    );
+    await tick();
+    transport.emitEvent({
+      id: `evt-${code}`,
+      type: "runner.error",
+      ts: new Date().toISOString(),
+      commandId: `command-${code}`,
+      payload: {
+        code,
+        message: `Exact environment failure ${code}`,
+        details: { sessionId: "session-environment-failure" },
+      },
+    });
+
+    await assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as Error & { code?: string }).code, code);
+      return true;
+    });
+    await client.close();
+  });
+}
+
 test("ProtocolClient resolves operator command terminal events", async () => {
   const transport = new MockTransport();
   const client = new ProtocolClient(transport);

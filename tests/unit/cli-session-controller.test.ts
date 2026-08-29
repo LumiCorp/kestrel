@@ -229,6 +229,47 @@ test("SessionController fails closed when a started target cannot be described",
   assert.equal(changedActiveSession, false);
 });
 
+for (const code of [
+  "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+  "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
+] as const) {
+  test(`SessionController preserves ${code} while aborting a started-session switch`, async () => {
+    const main = makeSession({ name: "main", sessionId: "s-main" });
+    const target = makeSession({
+      name: "target",
+      sessionId: "s-target",
+      environmentPresetId: "cli_dev_local",
+    });
+    const sessionsFile: SessionsFile = {
+      version: 5,
+      activeSessionName: main.name,
+      sessions: [main, target],
+    };
+    let changedActiveSession = false;
+    const runtimeError = Object.assign(new Error(`runtime ${code}`), { code });
+    const context = {
+      uiStore: { getState: () => ({ activeSession: main }) },
+      sessionStore: {
+        resolveSelector: () => ({ status: "matched", session: target }),
+        setActive: () => {
+          changedActiveSession = true;
+          return sessionsFile;
+        },
+      },
+      getSessionsFile: () => sessionsFile,
+      client: { sendCommand: async () => { throw runtimeError; } },
+    } as unknown as SessionControllerContext;
+
+    await assert.rejects(
+      new SessionController(context).switchSession(target.name),
+      (error: unknown) =>
+        error instanceof TuiEnvironmentIdentityError
+        && error.code === code,
+    );
+    assert.equal(changedActiveSession, false);
+  });
+}
+
 for (const scenario of [
   { label: "missing", runtimeEnvironmentPresetId: undefined },
   { label: "unsupported", runtimeEnvironmentPresetId: "workspace_hosted" },
