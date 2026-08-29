@@ -183,6 +183,9 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       ...record,
       prompt: input.message,
       status: "RUNNING" as const,
+      waitEventType: undefined,
+      resultSummary: undefined,
+      errorMessage: undefined,
       ...(input.parentRunId !== undefined ? { parentRunId: input.parentRunId } : {}),
       updatedAt: new Date().toISOString(),
     };
@@ -726,7 +729,7 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
     }
 
     const started = writeDialogState(
-      { ...record, status: "RUNNING", errorMessage: undefined, updatedAt: new Date().toISOString() },
+      { ...record, status: "RUNNING", waitEventType: undefined, resultSummary: undefined, errorMessage: undefined, updatedAt: new Date().toISOString() },
       { ...dialog, activity: "working", childThreadStarted: true, revision: dialog.revision + 1 },
     );
     if (await this.store.compareAndSetDialog(started, dialog.revision)) {
@@ -742,7 +745,7 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
     if (dialog === undefined || dialog.status === "closed" || dialog.childThreadStarted !== false) return;
     const runtimeError = asRuntimeError(error);
     const failedRecord = writeDialogState(
-      { ...current, status: "WAITING", errorMessage: runtimeError.message, updatedAt: new Date().toISOString() },
+      { ...current, status: "WAITING", waitEventType: undefined, resultSummary: undefined, errorMessage: runtimeError.message, updatedAt: new Date().toISOString() },
       { ...dialog, activity: "interrupted", revision: dialog.revision + 1 },
     );
     const failure = {
@@ -784,7 +787,7 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       const text = result.assistantText?.trim();
       if (result.output.status === "COMPLETED" && text !== undefined && text.length > 0) {
         const idleRecord = writeDialogState(
-            { ...record, status: "WAITING", childRunId: result.output.runId, waitEventType: undefined, resultSummary: text, updatedAt: new Date().toISOString() },
+            { ...record, status: "WAITING", childRunId: result.output.runId, waitEventType: undefined, resultSummary: text, errorMessage: undefined, updatedAt: new Date().toISOString() },
             { ...startingDialog, activity: "idle", revision: expectedRevision + 1 },
         );
         const reply = createDialogMessage(idleRecord, "collaborator", text);
@@ -808,7 +811,7 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
         ? `Waiting for ${result.output.waitFor?.eventType ?? "a response"}.`
         : result.output.errors[0]?.message ?? "The collaborator did not return a message.";
       const failedRecord = writeDialogState(
-          { ...record, status: "WAITING", childRunId: result.output.runId, waitEventType: result.output.waitFor?.eventType, errorMessage: failureText, updatedAt: new Date().toISOString() },
+          { ...record, status: "WAITING", childRunId: result.output.runId, waitEventType: result.output.waitFor?.eventType, resultSummary: undefined, errorMessage: failureText, updatedAt: new Date().toISOString() },
           { ...startingDialog, activity: result.output.status === "WAITING" ? "waiting" : "idle", revision: expectedRevision + 1 },
       );
       const failure = { ...createDialogMessage(failedRecord, "system", failureText), status: "failed" as const };
@@ -825,7 +828,7 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
       const runtimeError = asRuntimeError(error);
       const cancelled = controller.signal.aborted;
       const failedRecord = writeDialogState(
-          { ...record, status: "WAITING", errorMessage: runtimeError.message, updatedAt: new Date().toISOString() },
+          { ...record, status: "WAITING", waitEventType: undefined, resultSummary: undefined, errorMessage: runtimeError.message, updatedAt: new Date().toISOString() },
           { ...startingDialog, activity: cancelled ? "interrupted" : "idle", revision: expectedRevision + 1 },
       );
       const failure = { ...createDialogMessage(failedRecord, "system", cancelled ? "Collaborator work stopped; the dialog remains open." : runtimeError.message), status: cancelled ? "cancelled" as const : "failed" as const };
@@ -1154,7 +1157,10 @@ function toDialogSnapshot(record: DelegationRecord): DialogSnapshot {
     activity: dialog.activity,
     active: dialog.status === "open" && dialog.activity === "working",
     ...(lastDialogMessage(record) === undefined ? {} : { cursor: createDialogMessageCursor(record, lastDialogMessage(record)!) }),
-    ...(record.errorMessage === undefined ? {} : { errorMessage: record.errorMessage }),
+    ...(record.errorMessage === undefined ||
+      (dialog.activity === "idle" && record.resultSummary !== undefined)
+      ? {}
+      : { errorMessage: record.errorMessage }),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };

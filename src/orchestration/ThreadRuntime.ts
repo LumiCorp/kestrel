@@ -111,7 +111,7 @@ If you call dialog.open with a name that already exists, it returns that saved c
 
 After you open or message a collaborator, keep working. Kestrel will bring their reply back to you. Do not repeatedly check for a reply.
 
-Use dialog.send when an existing collaborator needs another instruction, an answer, a correction, or more work. Use dialog.read when you want to see their status, messages, or results without asking them to do more. Use afterCursor to check newer messages and beforeCursor to read older history. Use dialog.list when you need to see who is available or recover a dialog ID.
+Use dialog.send when an existing collaborator needs another instruction, an answer, a correction, or more work. Use dialog.read when you want to see their status, messages, or results without asking them to do more. On the first dialog.read, send only dialogId and optionally limit. For pagination, copy exactly one non-empty cursor returned by dialog.read for that same collaborator: afterCursor for newer messages or beforeCursor for older history. Never send both, an empty string, "none", or a cursor from another dialog. Use dialog.list without cursor on the first page; only reuse its returned nextCursor with the same status filter.
 
 Close a collaborator only when you are sure you will not need them again. Closing stops their work and cannot be undone. You can still read the conversation after closing it.
 

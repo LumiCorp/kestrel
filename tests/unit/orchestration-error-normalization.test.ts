@@ -1303,7 +1303,9 @@ test("dialog open records a failed child-thread start and retries the reservatio
   assert.equal(recovered.created, false);
   assert.equal(attempts, 2);
   for (let attempt = 0; attempt < 20 && (await supervisor.read({ parentSessionId: "root", dialogId: recovered.dialogId })).messages.at(-1)?.text !== "recovered"; attempt += 1) await tick();
-  assert.equal((await supervisor.read({ parentSessionId: "root", dialogId: recovered.dialogId })).messages.at(-1)?.text, "recovered");
+  const recoveredRead = await supervisor.read({ parentSessionId: "root", dialogId: recovered.dialogId });
+  assert.equal(recoveredRead.messages.at(-1)?.text, "recovered");
+  assert.equal(recoveredRead.errorMessage, undefined);
 });
 
 test("dialog collaborators are not breadth-limited by legacy profile capacity", async () => {
