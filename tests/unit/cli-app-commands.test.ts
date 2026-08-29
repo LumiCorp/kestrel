@@ -30,6 +30,10 @@ import { DelegationReviewView } from "../../cli/ink/views/DelegationReviewView.j
 import { SessionsView } from "../../cli/ink/views/SessionsView.js";
 import { TasksView } from "../../cli/ink/views/TasksView.js";
 import { SessionStore } from "../../cli/session/SessionStore.js";
+import {
+  exactTuiQueueTailRunId,
+  normalizeTuiQueueGraph,
+} from "../../cli/session/TuiQueueGraph.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { initializeWorkspaceAtRoot } from "../../cli/workspace/WorkspaceResolver.js";
 import type { PaletteCommand } from "../../cli/app/PaletteController.js";
@@ -2749,6 +2753,14 @@ test("restart reconciliation resolves a reverse-order legacy fork from exact Q1 
         childThreads: [],
         childBlockerChain: [],
         activeRun: { runId, status: "RUNNING" },
+        conversationMessageRoutes: runId === "run-q1"
+          ? [{
+              messageId: "message-q2",
+              disposition: "queued",
+              runId: "run-q2",
+              createdAt: chained.createdAt,
+            }]
+          : [],
       },
     });
   }
@@ -2824,6 +2836,223 @@ test("restart reconciliation repairs an active sibling from accepted terminal au
   assert.equal(session.acceptedRunMessageId, "message-q2");
   assert.equal(session.queuedRunReservations, undefined);
   assert.equal(session.terminalQueuedRuns?.[0]?.runId, "run-q1");
+});
+
+test("restart reconciliation repairs accepted-active Q1 without a tombstone from exact route evidence", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-q1",
+    acceptedRunMessageId: "message-q1",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-r0",
+    }],
+    terminalQueuedRuns: undefined,
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Accepted active fork repair",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q1", status: "RUNNING" },
+      conversationMessageRoutes: [{
+        messageId: "message-q2",
+        disposition: "queued",
+        runId: "run-q2",
+        createdAt: recovering.createdAt,
+      }],
+    },
+  });
+
+  let session = uiStore.getState().activeSession;
+  assert.deepEqual(session.queuedRunReservations, [{
+    runId: "run-q2",
+    messageId: "message-q2",
+    threadId,
+    predecessorRunId: "run-q1",
+  }]);
+  assert.deepEqual(
+    new SessionStore(home).findByName(await new SessionStore(home).load(), recovering.name)
+      ?.queuedRunReservations,
+    session.queuedRunReservations,
+  );
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Accepted active fork repair",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q2", status: "RUNNING" },
+      conversationMessageRoutes: [],
+    },
+  });
+  session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q2");
+  assert.equal(session.queuedRunReservations, undefined);
+});
+
+test("restart reconciliation orders a terminal fork only from exact conversation-turn sequence", async (t) => {
+  for (const exact of [true, false]) {
+    await t.test(exact ? "exact" : "ambiguous", async () => {
+      const { app, home } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const base = uiStore.getState().activeSession;
+      const threadId = `thread-main:${base.sessionId}`;
+      const reservations = [{
+        runId: "run-q1",
+        messageId: "message-q1",
+        threadId,
+        predecessorRunId: "run-r0",
+      }, {
+        runId: "run-q2",
+        messageId: "message-q2",
+        threadId,
+        predecessorRunId: "run-r0",
+      }];
+      const recovering: TuiSessionMeta = {
+        ...base,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: threadId,
+        queuedRunReservations: reservations,
+        terminalQueuedRuns: undefined,
+      };
+      const sessionsFile = appState.sessionsFile as {
+        version: number;
+        activeSessionName?: string;
+        sessions: TuiSessionMeta[];
+      };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === recovering.sessionId ? recovering : session
+        ),
+      };
+      uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+      appState.recoverTerminalMessages = async () => {};
+
+      await (appState.syncSessionFromDescribePayload as (
+        payload: Record<string, unknown>,
+      ) => Promise<void>)({
+        sessionId: recovering.sessionId,
+        version: 1,
+        threadId,
+        operatorThreadView: {
+          thread: {
+            threadId,
+            sessionId: recovering.sessionId,
+            title: "Terminal fork",
+            status: "COMPLETED",
+            createdAt: recovering.createdAt,
+            updatedAt: recovering.updatedAt,
+          },
+          childThreads: [],
+          childBlockerChain: [],
+          conversationTurns: [{
+            turnId: "turn-q2",
+            threadId,
+            sessionId: recovering.sessionId,
+            sequence: 2,
+            status: "COMPLETED",
+            rootRunId: "run-q2",
+            sourceMessageId: "message-q2",
+            terminalRunId: "run-q2",
+            terminalStatus: "COMPLETED",
+            startedAt: recovering.createdAt,
+            completedAt: recovering.updatedAt,
+            updatedAt: recovering.updatedAt,
+          }, {
+            turnId: "turn-q1",
+            threadId,
+            sessionId: recovering.sessionId,
+            sequence: exact ? 1 : 2,
+            status: "COMPLETED",
+            rootRunId: "run-q1",
+            ...(exact ? { sourceMessageId: "message-q1" } : {}),
+            terminalRunId: "run-q1",
+            terminalStatus: "COMPLETED",
+            startedAt: recovering.createdAt,
+            completedAt: recovering.updatedAt,
+            updatedAt: recovering.updatedAt,
+          }],
+        },
+      });
+
+      const session = uiStore.getState().activeSession;
+      const reloaded = new SessionStore(home).findByName(
+        await new SessionStore(home).load(),
+        recovering.name,
+      );
+      if (exact) {
+        assert.equal(session.acceptedRunId, "run-q2");
+        assert.equal(session.queuedRunReservations, undefined);
+        assert.deepEqual(session.terminalQueuedRuns, [{
+          ...reservations[0]!,
+          status: "COMPLETED",
+        }, {
+          ...reservations[1]!,
+          predecessorRunId: "run-q1",
+          status: "COMPLETED",
+        }]);
+        assert.deepEqual(reloaded?.terminalQueuedRuns, session.terminalQueuedRuns);
+      } else {
+        assert.equal(session.acceptedRunId, "run-r0");
+        assert.deepEqual(session.queuedRunReservations, reservations);
+        assert.equal(session.terminalQueuedRuns, undefined);
+        assert.throws(
+          () => exactTuiQueueTailRunId(session, normalizeTuiQueueGraph(session)),
+          /unresolved queue fork/u,
+        );
+        assert.deepEqual(reloaded?.queuedRunReservations, reservations);
+      }
+    });
+  }
 });
 
 test("restart reconciliation rewires an absent queued predecessor before promoting its successor", async () => {

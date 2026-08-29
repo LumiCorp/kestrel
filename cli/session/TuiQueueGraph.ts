@@ -30,11 +30,11 @@ export function normalizeTuiQueueGraph(session: TuiSessionMeta): NormalizedTuiQu
   // submission authority. Terminal records are independent tombstones too.
   const queuedRunReservations = session.queuedRunReservations?.map((record) => ({ ...record }));
   const terminalQueuedRuns = session.terminalQueuedRuns?.map((record) => ({ ...record }));
-  const graph = resolveAcceptedTerminalAuthority(session, {
+  const graph = {
     pendingQueueSubmissions,
     queuedRunReservations,
     terminalQueuedRuns,
-  });
+  };
   assertExactQueueGraph(graph);
   return graph;
 }
@@ -43,12 +43,18 @@ export function advanceTuiQueueAuthority(
   graph: NormalizedTuiQueueGraph,
   accepted: QueueRecord,
 ): NormalizedTuiQueueGraph {
+  const activeRecords: QueueRecord[] = [
+    ...(graph.pendingQueueSubmissions ?? []),
+    ...(graph.queuedRunReservations ?? []),
+  ];
+  const preservesUnresolvedFork = activeRecords.some((candidate) =>
+    candidate.runId !== accepted.runId
+    && candidate.predecessorRunId === accepted.predecessorRunId
+  );
   const advance = <T extends QueueRecord>(records: T[] | undefined): T[] | undefined => {
-    const next = records
-      ?.filter((candidate) => candidate.runId !== accepted.runId)
-      .map((candidate) => candidate.predecessorRunId === accepted.predecessorRunId
-        ? { ...candidate, predecessorRunId: accepted.runId }
-        : candidate);
+    const next = records?.filter((candidate) =>
+      preservesUnresolvedFork || candidate.runId !== accepted.runId
+    );
     return next === undefined || next.length === 0 ? undefined : next;
   };
   const next = {
@@ -56,6 +62,40 @@ export function advanceTuiQueueAuthority(
     queuedRunReservations: advance(graph.queuedRunReservations),
     terminalQueuedRuns: graph.terminalQueuedRuns?.map((record) => ({ ...record })),
   };
+  assertExactQueueGraph(next);
+  return next;
+}
+
+export function bindTuiQueueSuccessor(
+  graph: NormalizedTuiQueueGraph,
+  successor: QueueRecord,
+  predecessor: Pick<QueueRecord, "runId" | "messageId" | "threadId">,
+): NormalizedTuiQueueGraph {
+  if (successor.runId === predecessor.runId || successor.threadId !== predecessor.threadId) {
+    throw new TuiQueueGraphConsistencyError("Queue ordering evidence has conflicting identities.");
+  }
+  let matched = false;
+  const bind = <T extends QueueRecord>(records: T[] | undefined): T[] | undefined => records?.map(
+    (candidate) => {
+      if (candidate.runId !== successor.runId) return candidate;
+      if (
+        candidate.messageId !== successor.messageId
+        || candidate.threadId !== successor.threadId
+      ) {
+        throw new TuiQueueGraphConsistencyError("Queue successor identity conflicted with durable evidence.");
+      }
+      matched = true;
+      return { ...candidate, predecessorRunId: predecessor.runId };
+    },
+  );
+  const next = {
+    pendingQueueSubmissions: bind(graph.pendingQueueSubmissions),
+    queuedRunReservations: bind(graph.queuedRunReservations),
+    terminalQueuedRuns: bind(graph.terminalQueuedRuns),
+  };
+  if (matched === false) {
+    throw new TuiQueueGraphConsistencyError("Queue successor was absent from durable state.");
+  }
   assertExactQueueGraph(next);
   return next;
 }
@@ -92,6 +132,7 @@ export function exactTuiQueueTailRunId(
     ...(graph.pendingQueueSubmissions ?? []),
     ...(graph.queuedRunReservations ?? []),
   ];
+  assertNoUnorderedQueueForks(graph);
   if (active.length === 0) return session.acceptedRunId;
   assertActiveRecordsReachAccepted(graph, session.acceptedRunId);
   const tails = active.filter((candidate) => active.some(
@@ -113,37 +154,6 @@ function normalizeDurableJournalOrder<T extends QueueRecord>(records: T[] | unde
     if (priorSibling === undefined) return { ...record };
     return { ...record, predecessorRunId: priorSibling };
   });
-}
-
-function resolveAcceptedTerminalAuthority(
-  session: TuiSessionMeta,
-  graph: NormalizedTuiQueueGraph,
-): NormalizedTuiQueueGraph {
-  if (session.acceptedRunId === undefined) return graph;
-  const acceptedTerminal = graph.terminalQueuedRuns?.find((terminal) =>
-    terminal.runId === session.acceptedRunId
-    && (
-      session.acceptedRunMessageId === undefined
-      || terminal.messageId === session.acceptedRunMessageId
-    )
-    && (
-      session.acceptedRunThreadId === undefined
-      || terminal.threadId === session.acceptedRunThreadId
-    )
-  );
-  if (acceptedTerminal === undefined) return graph;
-  const repair = <T extends QueueRecord>(records: T[] | undefined): T[] | undefined => records?.map(
-    (candidate) =>
-      candidate.runId !== acceptedTerminal.runId
-      && candidate.predecessorRunId === acceptedTerminal.predecessorRunId
-        ? { ...candidate, predecessorRunId: acceptedTerminal.runId }
-        : candidate,
-  );
-  return {
-    pendingQueueSubmissions: repair(graph.pendingQueueSubmissions),
-    queuedRunReservations: repair(graph.queuedRunReservations),
-    terminalQueuedRuns: graph.terminalQueuedRuns,
-  };
 }
 
 function assertExactQueueGraph(graph: NormalizedTuiQueueGraph): void {
@@ -179,11 +189,29 @@ function assertExactQueueGraph(graph: NormalizedTuiQueueGraph): void {
   }
 }
 
+function assertNoUnorderedQueueForks(graph: NormalizedTuiQueueGraph): void {
+  const records: QueueRecord[] = [
+    ...(graph.pendingQueueSubmissions ?? []),
+    ...(graph.queuedRunReservations ?? []),
+    ...(graph.terminalQueuedRuns ?? []),
+  ];
+  for (const record of records) {
+    if (record.predecessorRunId === undefined) continue;
+    const siblings = records.filter(
+      (candidate) => candidate.predecessorRunId === record.predecessorRunId,
+    );
+    if (siblings.length > 1) {
+      throw new TuiQueueGraphConsistencyError(
+        `Queue graph contains an unresolved queue fork after '${record.predecessorRunId}'.`,
+      );
+    }
+  }
+}
+
 function assertActiveRecordsReachAccepted(
   graph: NormalizedTuiQueueGraph,
   acceptedRunId: string | undefined,
 ): void {
-  if (acceptedRunId === undefined) return;
   const records: QueueRecord[] = [
     ...(graph.pendingQueueSubmissions ?? []),
     ...(graph.queuedRunReservations ?? []),
@@ -199,14 +227,20 @@ function assertActiveRecordsReachAccepted(
     const visited = new Set<string>([record.runId]);
     let reachesAcceptedAuthority = false;
     while (predecessorRunId !== undefined && visited.has(predecessorRunId) === false) {
-      if (predecessorRunId === acceptedRunId) {
+      if (acceptedRunId !== undefined && predecessorRunId === acceptedRunId) {
         reachesAcceptedAuthority = true;
         break;
       }
       visited.add(predecessorRunId);
-      predecessorRunId = byRunId.get(predecessorRunId)?.predecessorRunId;
+      const predecessor = byRunId.get(predecessorRunId);
+      if (predecessor === undefined) {
+        throw new TuiQueueGraphConsistencyError(
+          `Queue graph record '${record.runId}' has dangling predecessor '${predecessorRunId}'.`,
+        );
+      }
+      predecessorRunId = predecessor.predecessorRunId;
     }
-    if (reachesAcceptedAuthority === false) {
+    if (acceptedRunId !== undefined && reachesAcceptedAuthority === false) {
       throw new TuiQueueGraphConsistencyError(
         `Queue graph record '${record.runId}' does not reach accepted run '${acceptedRunId}'.`,
       );

@@ -88,6 +88,7 @@ import type { ProtocolClient } from "../client/ProtocolClient.js";
 import { createConfiguredCliProtocolClient } from "../client/configuredClient.js";
 import {
   advanceTuiQueueAuthority,
+  bindTuiQueueSuccessor,
   normalizeTuiQueueGraph,
   removeAndRewireTuiQueueRecord,
 } from "../session/TuiQueueGraph.js";
@@ -5220,6 +5221,10 @@ export class App {
       && submission.messageId === input.messageId
       && submission.threadId === input.threadId
     );
+    const exactAcceptedStart = session !== undefined
+      && session.acceptedRunId === input.runId
+      && session.acceptedRunMessageId === input.messageId
+      && session.acceptedRunThreadId === input.threadId;
     if (
       session === undefined
       || session.delegation !== undefined
@@ -5229,7 +5234,8 @@ export class App {
         && queuedEvidenceCanReplaceAcceptedRun(session, (queuedReservation ?? pendingQueueSubmission)!) === false
       )
       || (
-        queuedReservation === undefined
+        exactAcceptedStart === false
+        && queuedReservation === undefined
         && pendingQueueSubmission === undefined
         && (
           session.pendingRunId !== input.runId
@@ -5238,12 +5244,44 @@ export class App {
         )
       )
     ) return false;
-    const acceptedQueueGraph = queuedReservation !== undefined || pendingQueueSubmission !== undefined
+    let acceptedQueueGraph = queuedReservation !== undefined || pendingQueueSubmission !== undefined
       ? advanceTuiQueueAuthority(
           normalizeTuiQueueGraph(session),
           (queuedReservation ?? pendingQueueSubmission)!,
         )
       : normalizeTuiQueueGraph(session);
+    if (exactAcceptedStart) {
+      const unresolvedSuccessors = [
+        ...(acceptedQueueGraph.pendingQueueSubmissions ?? []),
+        ...(acceptedQueueGraph.queuedRunReservations ?? []),
+      ].filter((candidate) =>
+        candidate.threadId === input.threadId
+        && candidate.runId !== input.runId
+        && candidate.predecessorRunId !== input.runId
+      );
+      if (unresolvedSuccessors.length > 1) return false;
+      if (unresolvedSuccessors.length === 1) {
+        acceptedQueueGraph = bindTuiQueueSuccessor(
+          acceptedQueueGraph,
+          unresolvedSuccessors[0]!,
+          { runId: input.runId, messageId: input.messageId, threadId: input.threadId },
+        );
+      }
+      const retainedAcceptedRecord = [
+        ...(acceptedQueueGraph.pendingQueueSubmissions ?? []),
+        ...(acceptedQueueGraph.queuedRunReservations ?? []),
+      ].find((candidate) =>
+        candidate.runId === input.runId
+        && candidate.messageId === input.messageId
+        && candidate.threadId === input.threadId
+      );
+      if (retainedAcceptedRecord !== undefined) {
+        acceptedQueueGraph = advanceTuiQueueAuthority(
+          acceptedQueueGraph,
+          retainedAcceptedRecord,
+        );
+      }
+    }
     const accepted: TuiSessionMeta = {
       ...session,
       started: true,
@@ -5278,6 +5316,7 @@ export class App {
     threadId: string;
     runId: string;
     result: Extract<RunnerEvent, { type: "run.completed" }>["payload"]["result"];
+    allowAcceptedPromotion?: boolean | undefined;
   }): Promise<boolean> {
     if (
       input.result.output.sessionId !== input.sessionId
@@ -5319,28 +5358,70 @@ export class App {
       : input.result.output.status === "FAILED"
         ? "FAILED" as const
         : undefined;
-    const installAsCurrent = queuedEvidenceCanReplaceAcceptedRun(session, queuedEvidence);
-    const currentQueueGraph = normalizeTuiQueueGraph(session);
-    const settledQueueGraph = installAsCurrent
-      ? advanceTuiQueueAuthority(currentQueueGraph, queuedEvidence)
+    let currentQueueGraph = normalizeTuiQueueGraph(session);
+    let orderedEvidence = queuedEvidence;
+    if (
+      input.allowAcceptedPromotion !== false
+      && queuedEvidenceCanReplaceAcceptedRun(session, queuedEvidence) === false
+      && session.acceptedRunId !== undefined
+      && session.acceptedRunMessageId !== undefined
+      && session.acceptedRunThreadId === queuedEvidence.threadId
+    ) {
+      const acceptedTerminal = currentQueueGraph.terminalQueuedRuns?.find((terminal) =>
+        terminal.runId === session.acceptedRunId
+        && terminal.messageId === session.acceptedRunMessageId
+        && terminal.threadId === session.acceptedRunThreadId
+        && terminal.predecessorRunId === queuedEvidence.predecessorRunId
+      );
+      if (acceptedTerminal !== undefined) {
+        currentQueueGraph = bindTuiQueueSuccessor(
+          currentQueueGraph,
+          queuedEvidence,
+          acceptedTerminal,
+        );
+        orderedEvidence = [
+          ...(currentQueueGraph.pendingQueueSubmissions ?? []),
+          ...(currentQueueGraph.queuedRunReservations ?? []),
+        ].find((candidate) => candidate.runId === queuedEvidence.runId) ?? queuedEvidence;
+      }
+    }
+    const installAsCurrent = queuedEvidenceCanReplaceAcceptedRun(
+      { ...session, ...currentQueueGraph },
+      orderedEvidence,
+    );
+    let settledQueueGraph = installAsCurrent
+      ? advanceTuiQueueAuthority(currentQueueGraph, orderedEvidence)
       : {
           ...currentQueueGraph,
           queuedRunReservations: omitQueuedRunReservation(
             currentQueueGraph.queuedRunReservations,
-            queuedEvidence,
+            orderedEvidence,
           ),
           pendingQueueSubmissions: pendingQueueSubmission === undefined
             ? currentQueueGraph.pendingQueueSubmissions
             : omitExactRunIdentity(currentQueueGraph.pendingQueueSubmissions, pendingQueueSubmission),
         };
+    if (installAsCurrent && terminalStatus !== undefined) {
+      settledQueueGraph = {
+        ...settledQueueGraph,
+        queuedRunReservations: omitQueuedRunReservation(
+          settledQueueGraph.queuedRunReservations,
+          orderedEvidence,
+        ),
+        pendingQueueSubmissions: omitExactRunIdentity(
+          settledQueueGraph.pendingQueueSubmissions,
+          orderedEvidence,
+        ),
+      };
+    }
     const accepted: TuiSessionMeta = {
       ...session,
       started: true,
       ...(installAsCurrent
         ? {
-            acceptedRunId: queuedEvidence.runId,
-            acceptedRunMessageId: queuedEvidence.messageId,
-            acceptedRunThreadId: queuedEvidence.threadId,
+            acceptedRunId: orderedEvidence.runId,
+            acceptedRunMessageId: orderedEvidence.messageId,
+            acceptedRunThreadId: orderedEvidence.threadId,
           }
         : {}),
       queuedRunReservations: settledQueueGraph.queuedRunReservations,
@@ -5348,7 +5429,7 @@ export class App {
       terminalQueuedRuns: terminalStatus === undefined
         ? settledQueueGraph.terminalQueuedRuns
         : appendTerminalQueuedRun(settledQueueGraph.terminalQueuedRuns, {
-            ...queuedEvidence,
+            ...orderedEvidence,
             status: terminalStatus,
           }),
       ...(installAsCurrent
@@ -6390,6 +6471,85 @@ function reconcileExactQueuedLifecycle(
     const status = exactQueuedRunStatusFromDescribedView(view, reservation.runId);
     if (status !== undefined) acceptedCandidates.push({ ...reservation, status });
   }
+  if (view.activeRun !== undefined) {
+    let activeIdentity = [
+      ...(pendingQueueSubmissions ?? []),
+      ...(queuedRunReservations ?? []),
+    ].find((candidate) => candidate.runId === view.activeRun!.runId)
+      ?? (
+        session.acceptedRunId === view.activeRun.runId
+        && session.acceptedRunMessageId !== undefined
+        && session.acceptedRunThreadId === view.thread.threadId
+          ? {
+              runId: session.acceptedRunId,
+              messageId: session.acceptedRunMessageId,
+              threadId: session.acceptedRunThreadId,
+            }
+          : undefined
+      );
+    if (
+      activeIdentity !== undefined
+      && session.acceptedRunId !== undefined
+      && session.acceptedRunMessageId !== undefined
+      && session.acceptedRunThreadId === view.thread.threadId
+      && activeIdentity.runId !== session.acceptedRunId
+    ) {
+      const acceptedTerminal = terminalQueuedRuns?.find((terminal) =>
+        terminal.runId === session.acceptedRunId
+        && terminal.messageId === session.acceptedRunMessageId
+        && terminal.threadId === session.acceptedRunThreadId
+        && terminal.predecessorRunId === activeIdentity!.predecessorRunId
+      );
+      if (acceptedTerminal !== undefined) {
+        const bound = bindTuiQueueSuccessor({
+          pendingQueueSubmissions,
+          queuedRunReservations,
+          terminalQueuedRuns,
+        }, activeIdentity, acceptedTerminal);
+        pendingQueueSubmissions = bound.pendingQueueSubmissions;
+        queuedRunReservations = bound.queuedRunReservations;
+        terminalQueuedRuns = bound.terminalQueuedRuns;
+        activeIdentity = [
+          ...(pendingQueueSubmissions ?? []),
+          ...(queuedRunReservations ?? []),
+        ].find((candidate) => candidate.runId === view.activeRun!.runId) ?? activeIdentity;
+      }
+    }
+    const exactQueuedSuccessors = [
+      ...(pendingQueueSubmissions ?? []),
+      ...(queuedRunReservations ?? []),
+    ].filter((candidate) =>
+      candidate.runId !== view.activeRun!.runId
+      && candidate.threadId === view.thread.threadId
+      && view.conversationMessageRoutes?.some((route) =>
+        route.messageId === candidate.messageId
+        && route.disposition === "queued"
+        && route.runId === candidate.runId
+      ) === true
+    );
+    if (activeIdentity !== undefined && exactQueuedSuccessors.length === 1) {
+      const bound = bindTuiQueueSuccessor({
+        pendingQueueSubmissions,
+        queuedRunReservations,
+        terminalQueuedRuns,
+      }, exactQueuedSuccessors[0]!, activeIdentity);
+      pendingQueueSubmissions = bound.pendingQueueSubmissions;
+      queuedRunReservations = bound.queuedRunReservations;
+      terminalQueuedRuns = bound.terminalQueuedRuns;
+    }
+  }
+  const reboundQueueRecords = [
+    ...(pendingQueueSubmissions ?? []),
+    ...(queuedRunReservations ?? []),
+  ];
+  for (let index = 0; index < acceptedCandidates.length; index += 1) {
+    const rebound = reboundQueueRecords.find((candidate) =>
+      candidate.runId === acceptedCandidates[index]!.runId
+    );
+    if (rebound !== undefined) {
+      acceptedCandidates[index] = { ...acceptedCandidates[index]!, ...rebound };
+    }
+  }
   const distinctCandidates = acceptedCandidates.filter((candidate, index, candidates) =>
     candidates.findIndex((other) =>
       other.runId === candidate.runId
@@ -6399,16 +6559,49 @@ function reconcileExactQueuedLifecycle(
   );
   const terminalCandidates = distinctCandidates.filter(
     (candidate) => candidate.status === "COMPLETED" || candidate.status === "FAILED",
+  ) as Array<(typeof distinctCandidates)[number] & { status: "COMPLETED" | "FAILED" }>;
+  const exactOrderedTerminalCandidates = orderExactTerminalCandidates(
+    terminalCandidates,
+    view,
   );
-  for (const terminal of terminalCandidates) {
+  const hasUnresolvedTerminalFork = terminalCandidates.some((candidate) =>
+    candidate.predecessorRunId !== undefined
+    && terminalCandidates.filter((other) =>
+      other.predecessorRunId === candidate.predecessorRunId
+    ).length > 1
+  );
+  if (hasUnresolvedTerminalFork && exactOrderedTerminalCandidates === undefined) {
+    return { pendingQueueSubmissions, queuedRunReservations, terminalQueuedRuns };
+  }
+  let acceptedFromTerminalSequence: (typeof terminalCandidates)[number] | undefined;
+  for (const terminalCandidate of exactOrderedTerminalCandidates ?? terminalCandidates) {
+    let terminal = terminalCandidate;
     const durableTerminalIdentity = [
-      ...(session.pendingQueueSubmissions ?? []),
-      ...(session.queuedRunReservations ?? []),
+      ...(pendingQueueSubmissions ?? []),
+      ...(queuedRunReservations ?? []),
     ].find((candidate) =>
       candidate.runId === terminal.runId
       && candidate.messageId === terminal.messageId
       && candidate.threadId === terminal.threadId
     );
+    if (durableTerminalIdentity === undefined) continue;
+    if (
+      acceptedFromTerminalSequence !== undefined
+      && terminal.predecessorRunId !== acceptedFromTerminalSequence.runId
+    ) {
+      const bound = bindTuiQueueSuccessor({
+        pendingQueueSubmissions,
+        queuedRunReservations,
+        terminalQueuedRuns,
+      }, durableTerminalIdentity, acceptedFromTerminalSequence);
+      pendingQueueSubmissions = bound.pendingQueueSubmissions;
+      queuedRunReservations = bound.queuedRunReservations;
+      terminalQueuedRuns = bound.terminalQueuedRuns;
+      terminal = {
+        ...terminal,
+        predecessorRunId: acceptedFromTerminalSequence.runId,
+      };
+    }
     pendingQueueSubmissions = omitExactRunIdentity(pendingQueueSubmissions, terminal);
     queuedRunReservations = omitExactRunIdentity(queuedRunReservations, terminal);
     terminalQueuedRuns = appendTerminalQueuedRun(terminalQueuedRuns, {
@@ -6416,19 +6609,35 @@ function reconcileExactQueuedLifecycle(
       messageId: terminal.messageId,
       threadId: terminal.threadId,
       status: terminal.status as "COMPLETED" | "FAILED",
-      ...(durableTerminalIdentity?.predecessorRunId !== undefined
-        ? { predecessorRunId: durableTerminalIdentity.predecessorRunId }
+      ...(terminal.predecessorRunId !== undefined
+        ? { predecessorRunId: terminal.predecessorRunId }
         : {}),
     });
+    if (
+      queuedEvidenceCanReplaceAcceptedRun(
+        {
+          ...session,
+          ...(acceptedFromTerminalSequence === undefined
+            ? {}
+            : { acceptedRunId: acceptedFromTerminalSequence.runId }),
+          pendingQueueSubmissions,
+          queuedRunReservations,
+          terminalQueuedRuns,
+        },
+        terminal,
+      )
+    ) {
+      acceptedFromTerminalSequence = terminal;
+    }
   }
   const activeCandidates = distinctCandidates.filter(
     (candidate) => candidate.status === "RUNNING" || candidate.status === "WAITING",
   );
-  const soleCandidate = activeCandidates.length === 1
+  const soleCandidate = acceptedFromTerminalSequence ?? (activeCandidates.length === 1
     ? activeCandidates[0]
     : activeCandidates.length === 0 && terminalCandidates.length === 1
       ? terminalCandidates[0]
-      : undefined;
+      : undefined);
   const accepted = soleCandidate !== undefined
     && queuedEvidenceCanReplaceAcceptedRun(normalizedSession, soleCandidate)
     ? soleCandidate
@@ -6463,6 +6672,38 @@ function exactQueuedRunStatusFromDescribedView(
       && (turn.status === "COMPLETED" || turn.status === "FAILED")
     );
   return terminalTurn?.status;
+}
+
+function orderExactTerminalCandidates<T extends {
+  runId: string;
+  messageId: string;
+  threadId: string;
+  predecessorRunId?: string | undefined;
+  status: "COMPLETED" | "FAILED";
+}>(
+  candidates: T[],
+  view: NonNullable<SessionDescribedEventPayload["operatorThreadView"]>,
+): T[] | undefined {
+  if (candidates.length <= 1) return candidates;
+  const ordered: Array<{ candidate: T; sequence: number }> = [];
+  for (const candidate of candidates) {
+    const matchingTurns = view.conversationTurns?.filter((turn) =>
+      turn.sessionId === view.thread.sessionId
+      && turn.threadId === candidate.threadId
+      && turn.sourceMessageId === candidate.messageId
+      && turn.terminalRunId === candidate.runId
+      && turn.status === candidate.status
+      && (turn.terminalStatus === undefined || turn.terminalStatus === candidate.status)
+      && turn.sequence !== null
+      && Number.isSafeInteger(turn.sequence)
+    ) ?? [];
+    if (matchingTurns.length !== 1) return undefined;
+    ordered.push({ candidate, sequence: matchingTurns[0]!.sequence! });
+  }
+  if (new Set(ordered.map((entry) => entry.sequence)).size !== ordered.length) return undefined;
+  return ordered
+    .sort((left, right) => left.sequence - right.sequence)
+    .map((entry) => entry.candidate);
 }
 
 function appendTerminalQueuedRun(

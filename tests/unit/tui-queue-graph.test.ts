@@ -4,6 +4,7 @@ import test from "node:test";
 import type { TuiSessionMeta } from "../../cli/contracts.js";
 import {
   advanceTuiQueueAuthority,
+  bindTuiQueueSuccessor,
   exactTuiQueueTailRunId,
   normalizeTuiQueueGraph,
   removeAndRewireTuiQueueRecord,
@@ -43,7 +44,15 @@ test("TuiQueueGraph preserves a legacy reservation fork until exact authority re
   assert.deepEqual(graph.queuedRunReservations, input.queuedRunReservations);
   assert.throws(() => exactTuiQueueTailRunId(input, graph), TuiQueueGraphConsistencyError);
 
-  const advanced = advanceTuiQueueAuthority(graph, graph.queuedRunReservations![1]!);
+  const unresolved = advanceTuiQueueAuthority(graph, graph.queuedRunReservations![1]!);
+  assert.deepEqual(unresolved.queuedRunReservations, input.queuedRunReservations);
+
+  const ordered = bindTuiQueueSuccessor(
+    graph,
+    graph.queuedRunReservations![0]!,
+    graph.queuedRunReservations![1]!,
+  );
+  const advanced = advanceTuiQueueAuthority(ordered, graph.queuedRunReservations![1]!);
   assert.deepEqual(advanced.queuedRunReservations, [{
     runId: "run-q2",
     messageId: "message-q2",
@@ -73,7 +82,7 @@ test("TuiQueueGraph uses durable order only for pending submission journals", ()
   assert.equal(exactTuiQueueTailRunId(input, graph), "run-q2");
 });
 
-test("TuiQueueGraph repairs an accepted terminal sibling from exact authority", () => {
+test("TuiQueueGraph preserves an accepted terminal fork until ordering evidence binds its successor", () => {
   const input = session({
     acceptedRunId: "run-q1",
     acceptedRunMessageId: "message-q1",
@@ -93,10 +102,9 @@ test("TuiQueueGraph repairs an accepted terminal sibling from exact authority", 
     }],
   });
 
-  assert.equal(
-    normalizeTuiQueueGraph(input).queuedRunReservations?.[0]?.predecessorRunId,
-    "run-q1",
-  );
+  const graph = normalizeTuiQueueGraph(input);
+  assert.equal(graph.queuedRunReservations?.[0]?.predecessorRunId, "run-r0");
+  assert.throws(() => exactTuiQueueTailRunId(input, graph), TuiQueueGraphConsistencyError);
 });
 
 test("TuiQueueGraph rejects a dangling active predecessor before extension", () => {
@@ -111,6 +119,47 @@ test("TuiQueueGraph rejects a dangling active predecessor before extension", () 
   assert.throws(
     () => exactTuiQueueTailRunId(value, normalizeTuiQueueGraph(value)),
     TuiQueueGraphConsistencyError,
+  );
+});
+
+test("TuiQueueGraph rejects a dangling active predecessor without accepted authority", () => {
+  const value = session({
+    acceptedRunId: undefined,
+    acceptedRunMessageId: undefined,
+    acceptedRunThreadId: undefined,
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-missing-q1",
+    }],
+  });
+  assert.throws(
+    () => exactTuiQueueTailRunId(value, normalizeTuiQueueGraph(value)),
+    /dangling predecessor 'run-missing-q1'/u,
+  );
+});
+
+test("TuiQueueGraph rejects unresolved terminal siblings after active records settle", () => {
+  const value = session({
+    acceptedRunId: "run-q2",
+    terminalQueuedRuns: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-r0",
+      status: "COMPLETED",
+    }, {
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-r0",
+      status: "COMPLETED",
+    }],
+  });
+  assert.throws(
+    () => exactTuiQueueTailRunId(value, normalizeTuiQueueGraph(value)),
+    /unresolved queue fork/u,
   );
 });
 

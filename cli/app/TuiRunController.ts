@@ -53,6 +53,7 @@ import {
 } from "../session/TuiExecutionEnvironment.js";
 import {
   advanceTuiQueueAuthority,
+  bindTuiQueueSuccessor,
   exactTuiQueueTailRunId,
   normalizeTuiQueueGraph,
   removeAndRewireTuiQueueRecord,
@@ -136,6 +137,7 @@ export interface TuiRunControllerContext extends TuiAppContext {
     threadId: string;
     runId: string;
     result: TuiTerminalResult;
+    allowAcceptedPromotion?: boolean | undefined;
   }): Promise<boolean>;
   setSessionState(
     sessionId: string,
@@ -905,7 +907,7 @@ export class TuiRunController {
         const installAsCurrent = queueSubmission === false
           || pendingQueueSubmission === undefined
           || queuedEvidenceCanReplaceAcceptedRun(currentSession, pendingQueueSubmission);
-        const routedQueueGraph = pendingQueueSubmission === undefined
+        let routedQueueGraph = pendingQueueSubmission === undefined
           ? currentQueueGraph
           : awaitingQueuedRun
             ? {
@@ -928,6 +930,19 @@ export class TuiRunController {
                     pendingQueueSubmission,
                   ),
                 };
+        if (terminalStatus !== undefined && pendingQueueSubmission !== undefined) {
+          routedQueueGraph = {
+            ...routedQueueGraph,
+            pendingQueueSubmissions: removePendingQueueSubmission(
+              routedQueueGraph.pendingQueueSubmissions,
+              pendingQueueSubmission,
+            ),
+            queuedRunReservations: removeQueuedRunReservation(
+              routedQueueGraph.queuedRunReservations,
+              toQueuedRunReservation(pendingQueueSubmission),
+            ),
+          };
+        }
         if (
           (awaitingQueuedRun || installAsCurrent)
           && await this.installConversationView(response.payload.view) === false
@@ -1206,7 +1221,7 @@ export class TuiRunController {
         status?: "COMPLETED" | "FAILED" | undefined,
       ) => {
         if (exactPendingQueueSubmission === undefined) return pendingQueueGraph;
-        const acceptedGraph = responseCanInstallCurrentLifecycle
+        let acceptedGraph = responseCanInstallCurrentLifecycle
           ? advanceTuiQueueAuthority(pendingQueueGraph, exactPendingQueueSubmission)
           : {
               ...pendingQueueGraph,
@@ -1215,6 +1230,19 @@ export class TuiRunController {
                 exactPendingQueueSubmission,
               ),
             };
+        if (status !== undefined) {
+          acceptedGraph = {
+            ...acceptedGraph,
+            pendingQueueSubmissions: removePendingQueueSubmission(
+              acceptedGraph.pendingQueueSubmissions,
+              exactPendingQueueSubmission,
+            ),
+            queuedRunReservations: removeQueuedRunReservation(
+              acceptedGraph.queuedRunReservations,
+              toQueuedRunReservation(exactPendingQueueSubmission),
+            ),
+          };
+        }
         return status === undefined
           ? acceptedGraph
           : {
@@ -2411,6 +2439,12 @@ export class TuiRunController {
             event.payload.sourceMessageId,
           ) !== undefined
         );
+      const exactAcceptedForegroundStart = session?.delegation === undefined
+        && event.threadId !== undefined
+        && event.payload.sourceMessageId !== undefined
+        && session?.acceptedRunId === event.runId
+        && session.acceptedRunMessageId === event.payload.sourceMessageId
+        && session.acceptedRunThreadId === event.threadId;
       const backgroundStatus = session?.delegation?.status;
       const exactPendingBackgroundStart = event.threadId !== undefined
         && session?.pendingRunThreadId === event.threadId
@@ -2441,6 +2475,7 @@ export class TuiRunController {
         || (
           exactForegroundStart === false
           && exactQueuedForegroundStart === false
+          && exactAcceptedForegroundStart === false
           && exactBackgroundStart === false
         )
       ) return;
@@ -2454,7 +2489,7 @@ export class TuiRunController {
         acceptedRuns.set(event.runId, event.payload.sourceMessageId);
         this.acceptedRunSourceMessageBySession.set(event.sessionId, acceptedRuns);
       }
-      if (exactForegroundStart || exactQueuedForegroundStart) {
+      if (exactForegroundStart || exactQueuedForegroundStart || exactAcceptedForegroundStart) {
         void this.runQueueJournalTransaction(event.sessionId, async () => {
           const accepted = await this.context.syncForegroundSessionProgress({
             sessionId: event.sessionId,
@@ -2567,7 +2602,8 @@ export class TuiRunController {
         },
       });
       void this.runQueueJournalTransaction(output.sessionId, async () => {
-        const terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
+        const priorAcceptedTerminalRunId = this.acceptedTerminalBySession.get(output.sessionId)?.runId;
+        let terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
           output.sessionId,
           output.runId,
           event.threadId,
@@ -2575,12 +2611,21 @@ export class TuiRunController {
         const terminalOwnsActiveRun = this.recordTerminalEvent(output, event.ts, event.threadId);
         if (terminalOwnsActiveRun) {
           if (event.threadId !== undefined) {
-            await this.context.syncForegroundQueuedTerminal({
+            const synchronizedQueuedTerminal = await this.context.syncForegroundQueuedTerminal({
               sessionId: output.sessionId,
               threadId: event.threadId,
               runId: output.runId,
               result: event.payload.result,
+              allowAcceptedPromotion: priorAcceptedTerminalRunId === undefined
+                || priorAcceptedTerminalRunId === output.runId,
             });
+            if (synchronizedQueuedTerminal) {
+              terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
+                output.sessionId,
+                output.runId,
+                event.threadId,
+              );
+            }
           }
           await this.context.syncBackgroundSessionResult(
             output.sessionId,
@@ -2653,7 +2698,8 @@ export class TuiRunController {
           || (event.runId !== undefined && event.runId !== output.runId)
         ) return;
         void this.runQueueJournalTransaction(output.sessionId, async () => {
-          const terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
+          const priorAcceptedTerminalRunId = this.acceptedTerminalBySession.get(output.sessionId)?.runId;
+          let terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
             output.sessionId,
             output.runId,
             event.threadId,
@@ -2665,12 +2711,21 @@ export class TuiRunController {
           );
           if (terminalOwnsActiveRun) {
             if (event.threadId !== undefined) {
-              await this.context.syncForegroundQueuedTerminal({
+              const synchronizedQueuedTerminal = await this.context.syncForegroundQueuedTerminal({
                 sessionId: output.sessionId,
                 threadId: event.threadId,
                 runId: output.runId,
                 result: event.payload.result!,
+                allowAcceptedPromotion: priorAcceptedTerminalRunId === undefined
+                  || priorAcceptedTerminalRunId === output.runId,
               });
+              if (synchronizedQueuedTerminal) {
+                terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
+                  output.sessionId,
+                  output.runId,
+                  event.threadId,
+                );
+              }
             }
             await this.context.syncBackgroundSessionFailure(
               output.sessionId,
@@ -2729,7 +2784,8 @@ export class TuiRunController {
     if (event.type === "run.cancelled") {
       const output = event.payload.result.output;
       void this.runQueueJournalTransaction(output.sessionId, async () => {
-        const terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
+        const priorAcceptedTerminalRunId = this.acceptedTerminalBySession.get(output.sessionId)?.runId;
+        let terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
           output.sessionId,
           output.runId,
           event.threadId,
@@ -2737,12 +2793,21 @@ export class TuiRunController {
         const terminalOwnsActiveRun = this.recordTerminalEvent(output, event.ts, event.threadId);
         if (terminalOwnsActiveRun) {
           if (event.threadId !== undefined) {
-            await this.context.syncForegroundQueuedTerminal({
+            const synchronizedQueuedTerminal = await this.context.syncForegroundQueuedTerminal({
               sessionId: output.sessionId,
               threadId: event.threadId,
               runId: output.runId,
               result: event.payload.result,
+              allowAcceptedPromotion: priorAcceptedTerminalRunId === undefined
+                || priorAcceptedTerminalRunId === output.runId,
             });
+            if (synchronizedQueuedTerminal) {
+              terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
+                output.sessionId,
+                output.runId,
+                event.threadId,
+              );
+            }
           }
           await this.context.syncBackgroundSessionFailure(
             output.sessionId,

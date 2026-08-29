@@ -26,6 +26,7 @@ import type {
 import { evaluationReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
 import {
   advanceTuiQueueAuthority,
+  bindTuiQueueSuccessor,
   normalizeTuiQueueGraph,
 } from "../../cli/session/TuiQueueGraph.js";
 
@@ -520,10 +521,14 @@ function createRunHarness(input: {
         && submission.messageId === messageId
         && submission.threadId === threadId
       );
+      const exactAcceptedStart = state.activeSession.acceptedRunId === runId
+        && state.activeSession.acceptedRunMessageId === messageId
+        && state.activeSession.acceptedRunThreadId === threadId;
       if (
         state.activeSession.sessionId !== sessionId
         || (
-          queuedReservation === undefined
+          exactAcceptedStart === false
+          && queuedReservation === undefined
           && pendingQueueSubmission === undefined
           && (
             state.activeSession.pendingRunId !== runId
@@ -533,12 +538,35 @@ function createRunHarness(input: {
         )
       ) return false;
       const queueEvidence = queuedReservation ?? pendingQueueSubmission;
-      const acceptedGraph = queueEvidence === undefined
+      let acceptedGraph = queueEvidence === undefined
         ? normalizeTuiQueueGraph(state.activeSession)
         : advanceTuiQueueAuthority(
             normalizeTuiQueueGraph(state.activeSession),
             queueEvidence,
           );
+      if (exactAcceptedStart) {
+        const unresolved = [
+          ...(acceptedGraph.pendingQueueSubmissions ?? []),
+          ...(acceptedGraph.queuedRunReservations ?? []),
+        ].filter((candidate) =>
+          candidate.runId !== runId
+          && candidate.threadId === threadId
+          && candidate.predecessorRunId !== runId
+        );
+        if (unresolved.length !== 1) return false;
+        acceptedGraph = bindTuiQueueSuccessor(
+          acceptedGraph,
+          unresolved[0]!,
+          { runId, messageId, threadId },
+        );
+        const retainedAcceptedRecord = [
+          ...(acceptedGraph.pendingQueueSubmissions ?? []),
+          ...(acceptedGraph.queuedRunReservations ?? []),
+        ].find((candidate) => candidate.runId === runId);
+        if (retainedAcceptedRecord !== undefined) {
+          acceptedGraph = advanceTuiQueueAuthority(acceptedGraph, retainedAcceptedRecord);
+        }
+      }
       const accepted = {
           ...state.activeSession,
           started: true,
@@ -564,7 +592,13 @@ function createRunHarness(input: {
       persistCount += 1;
       return true;
     }),
-    syncForegroundQueuedTerminal: async ({ sessionId, threadId, runId, result }) => {
+    syncForegroundQueuedTerminal: async ({
+      sessionId,
+      threadId,
+      runId,
+      result,
+      allowAcceptedPromotion,
+    }) => {
       const state = uiStore.getState();
       const session = state.sessions.find((candidate) => candidate.sessionId === sessionId);
       if (session === undefined || session.delegation !== undefined) return false;
@@ -583,15 +617,37 @@ function createRunHarness(input: {
             || candidate.messageId !== reservation.messageId
             || candidate.threadId !== reservation.threadId
           );
+      let currentGraph = normalizeTuiQueueGraph(session);
+      let orderedEvidence = evidence;
+      if (
+        allowAcceptedPromotion !== false
+        && session.acceptedRunId !== undefined
+        && session.acceptedRunMessageId !== undefined
+        && session.acceptedRunThreadId === evidence.threadId
+        && evidence.predecessorRunId !== session.acceptedRunId
+      ) {
+        const acceptedTerminal = currentGraph.terminalQueuedRuns?.find((terminal) =>
+          terminal.runId === session.acceptedRunId
+          && terminal.messageId === session.acceptedRunMessageId
+          && terminal.threadId === session.acceptedRunThreadId
+          && terminal.predecessorRunId === evidence.predecessorRunId
+        );
+        if (acceptedTerminal !== undefined) {
+          currentGraph = bindTuiQueueSuccessor(currentGraph, evidence, acceptedTerminal);
+          orderedEvidence = [
+            ...(currentGraph.pendingQueueSubmissions ?? []),
+            ...(currentGraph.queuedRunReservations ?? []),
+          ].find((candidate) => candidate.runId === evidence.runId) ?? evidence;
+        }
+      }
       const installAsCurrent = session.acceptedRunId === undefined
         || session.acceptedRunId === evidence.runId
         || (
-          evidence.predecessorRunId !== undefined
-          && session.acceptedRunId === evidence.predecessorRunId
+          orderedEvidence.predecessorRunId !== undefined
+          && session.acceptedRunId === orderedEvidence.predecessorRunId
         );
-      const currentGraph = normalizeTuiQueueGraph(session);
-      const settledGraph = installAsCurrent
-        ? advanceTuiQueueAuthority(currentGraph, evidence)
+      let settledGraph = installAsCurrent
+        ? advanceTuiQueueAuthority(currentGraph, orderedEvidence)
         : {
             ...currentGraph,
             queuedRunReservations: remaining?.length === 0 ? undefined : remaining,
@@ -608,14 +664,27 @@ function createRunHarness(input: {
         : result.output.status === "FAILED"
           ? "FAILED" as const
           : undefined;
+      if (installAsCurrent && terminalStatus !== undefined) {
+        settledGraph = {
+          ...settledGraph,
+          queuedRunReservations: settledGraph.queuedRunReservations?.filter(
+            (candidate) => candidate.runId !== orderedEvidence.runId,
+          ),
+          pendingQueueSubmissions: settledGraph.pendingQueueSubmissions?.filter(
+            (candidate) => candidate.runId !== orderedEvidence.runId,
+          ),
+        };
+        if (settledGraph.queuedRunReservations?.length === 0) settledGraph.queuedRunReservations = undefined;
+        if (settledGraph.pendingQueueSubmissions?.length === 0) settledGraph.pendingQueueSubmissions = undefined;
+      }
       const accepted = {
         ...session,
         started: true,
         ...(installAsCurrent
           ? {
-              acceptedRunId: evidence.runId,
-              acceptedRunMessageId: evidence.messageId,
-              acceptedRunThreadId: evidence.threadId,
+              acceptedRunId: orderedEvidence.runId,
+              acceptedRunMessageId: orderedEvidence.messageId,
+              acceptedRunThreadId: orderedEvidence.threadId,
               lastRunStatus: result.output.status,
             }
           : {}),
@@ -625,7 +694,7 @@ function createRunHarness(input: {
           ? settledGraph.terminalQueuedRuns
           : [
               ...(settledGraph.terminalQueuedRuns ?? []),
-              { ...evidence, status: terminalStatus },
+              { ...orderedEvidence, status: terminalStatus },
             ],
       };
       uiStore.patch({
@@ -2671,10 +2740,11 @@ test("TuiRunController blocks Q3 until exact authority resolves an issue19 fork"
     messageId: "message-q3-blocked",
     submittedMessage: "Q3 blocked",
     queueRequested: true,
-  }), /unique exact active tail/u);
+  }), /unresolved queue fork/u);
   assert.equal(q3RunId, "");
 
   for (const [runId, messageId] of [
+    ["run-q1", "message-q1"],
     ["run-q1", "message-q1"],
     ["run-q2", "message-q2"],
   ] as const) {
@@ -2707,26 +2777,48 @@ test("TuiRunController blocks Q3 until exact authority resolves an issue19 fork"
   }]);
 });
 
-test("TuiRunController uses exact Q1 terminal authority to advance its active Q2 sibling", async () => {
+test("TuiRunController preserves Q2 authority when delayed Q1 cannot order the legacy fork", async () => {
   const threadId = "thread-main:session-1";
+  let dispatches = 0;
   const harness = createRunHarness({
     activeSessionPatch: {
       acceptedRunId: "run-r0",
       acceptedRunMessageId: "message-r0",
       acceptedRunThreadId: threadId,
       queuedRunReservations: [{
-        runId: "run-q2",
-        messageId: "message-q2",
-        threadId,
-        predecessorRunId: "run-r0",
-      }, {
         runId: "run-q1",
         messageId: "message-q1",
         threadId,
         predecessorRunId: "run-r0",
+      }, {
+        runId: "run-q2",
+        messageId: "message-q2",
+        threadId,
+        predecessorRunId: "run-r0",
       }],
     },
+    sendCommand: async () => {
+      dispatches += 1;
+      throw new Error("must not dispatch Q3");
+    },
   });
+  installActiveConversationView(harness.controller);
+  harness.uiStore.patch({ running: true });
+
+  harness.controller.onRunnerEvent(makeRunnerEvent({
+    type: "run.started",
+    sessionId: "session-1",
+    threadId,
+    runId: "run-q2",
+    payload: {
+      sessionId: "session-1",
+      runId: "run-q2",
+      eventType: "user.message",
+      sourceMessageId: "message-q2",
+    },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.uiStore.getState().activeSession.acceptedRunId, "run-q2");
 
   harness.controller.onRunnerEvent(makeRunnerEvent({
     type: "run.completed",
@@ -2736,11 +2828,60 @@ test("TuiRunController uses exact Q1 terminal authority to advance its active Q2
     payload: { result: makeCompletedResult("run-q1") },
   }));
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(harness.uiStore.getState().activeSession.acceptedRunId, "run-q1");
-  assert.equal(
-    harness.uiStore.getState().activeSession.queuedRunReservations?.[0]?.predecessorRunId,
-    "run-q1",
-  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const session = harness.uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q2");
+  assert.equal(session.queuedRunReservations?.[0]?.runId, "run-q2");
+  assert.equal(session.terminalQueuedRuns?.[0]?.runId, "run-q1");
+  assert.equal(harness.history.some((line) => line.output?.runId === "run-q1"), false);
+  await assert.rejects(() => harness.controller.startActiveTurn({
+    messageId: "message-q3",
+    submittedMessage: "Q3 stays blocked",
+    queueRequested: true,
+  }), /unresolved queue fork/u);
+  assert.equal(dispatches, 0);
+});
+
+test("TuiRunController repairs an accepted-active Q1 fork from a duplicate exact start", async () => {
+  const threadId = "thread-main:session-1";
+  const harness = createRunHarness({
+    activeSessionPatch: {
+      acceptedRunId: "run-q1",
+      acceptedRunMessageId: "message-q1",
+      acceptedRunThreadId: threadId,
+      queuedRunReservations: [{
+        runId: "run-q1",
+        messageId: "message-q1",
+        threadId,
+        predecessorRunId: "run-r0",
+      }, {
+        runId: "run-q2",
+        messageId: "message-q2",
+        threadId,
+        predecessorRunId: "run-r0",
+      }],
+    },
+  });
+  harness.controller.onRunnerEvent(makeRunnerEvent({
+    type: "run.started",
+    sessionId: "session-1",
+    threadId,
+    runId: "run-q1",
+    payload: {
+      sessionId: "session-1",
+      runId: "run-q1",
+      eventType: "user.message",
+      sourceMessageId: "message-q1",
+    },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(harness.uiStore.getState().activeSession.queuedRunReservations, [{
+    runId: "run-q2",
+    messageId: "message-q2",
+    threadId,
+    predecessorRunId: "run-q1",
+  }]);
 
   harness.controller.onRunnerEvent(makeRunnerEvent({
     type: "run.started",
@@ -2757,6 +2898,97 @@ test("TuiRunController uses exact Q1 terminal authority to advance its active Q2
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(harness.uiStore.getState().activeSession.acceptedRunId, "run-q2");
   assert.equal(harness.uiStore.getState().activeSession.queuedRunReservations, undefined);
+});
+
+test("TuiRunController promotes a direct Q2 terminal after durable Q1 terminal authority", async () => {
+  const threadId = "thread-main:session-1";
+  const harness = createRunHarness({
+    activeSessionPatch: {
+      acceptedRunId: "run-q1",
+      acceptedRunMessageId: "message-q1",
+      acceptedRunThreadId: threadId,
+      queuedRunReservations: [{
+        runId: "run-q2",
+        messageId: "message-q2",
+        threadId,
+        predecessorRunId: "run-r0",
+      }],
+      terminalQueuedRuns: [{
+        runId: "run-q1",
+        messageId: "message-q1",
+        threadId,
+        predecessorRunId: "run-r0",
+        status: "COMPLETED",
+      }],
+    },
+  });
+
+  harness.controller.onRunnerEvent(makeRunnerEvent({
+    type: "run.completed",
+    sessionId: "session-1",
+    threadId,
+    runId: "run-q2",
+    payload: { result: makeCompletedResult("run-q2") },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.uiStore.getState().activeSession.acceptedRunId, "run-q2");
+  assert.equal(harness.uiStore.getState().activeSession.queuedRunReservations, undefined);
+  assert.equal(harness.history.filter((line) => line.output?.runId === "run-q2").length, 1);
+});
+
+test("TuiRunController promotes direct failed and cancelled Q2 after durable Q1 authority", async (t) => {
+  for (const eventType of ["run.failed", "run.cancelled"] as const) {
+    await t.test(eventType, async () => {
+      const threadId = "thread-main:session-1";
+      const runId = `run-q2:${eventType}`;
+      const messageId = `message-q2:${eventType}`;
+      const harness = createRunHarness({
+        activeSessionPatch: {
+          acceptedRunId: "run-q1",
+          acceptedRunMessageId: "message-q1",
+          acceptedRunThreadId: threadId,
+          queuedRunReservations: [{
+            runId,
+            messageId,
+            threadId,
+            predecessorRunId: "run-r0",
+          }],
+          terminalQueuedRuns: [{
+            runId: "run-q1",
+            messageId: "message-q1",
+            threadId,
+            predecessorRunId: "run-r0",
+            status: "COMPLETED",
+          }],
+        },
+      });
+      harness.controller.onRunnerEvent(eventType === "run.failed"
+        ? makeRunnerEvent({
+            type: eventType,
+            sessionId: "session-1",
+            threadId,
+            runId,
+            payload: {
+              result: makeFailedResult(runId),
+              error: { code: "RUN_FAILED", message: "Q2 failed" },
+            },
+          })
+        : makeRunnerEvent({
+            type: eventType,
+            sessionId: "session-1",
+            threadId,
+            runId,
+            payload: { sessionId: "session-1", result: makeCancelledResult(runId) },
+          }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const session = harness.uiStore.getState().activeSession;
+      assert.equal(session.acceptedRunId, runId);
+      assert.equal(session.queuedRunReservations, undefined);
+      assert.equal(session.lastRunStatus, "FAILED");
+      assert.equal(harness.history.filter((line) => line.output?.runId === runId).length, 1);
+    });
+  }
 });
 
 test("TuiRunController rejects a dangling queue root before dispatch", async () => {
@@ -2786,7 +3018,7 @@ test("TuiRunController rejects a dangling queue root before dispatch", async () 
     messageId: "message-q3",
     submittedMessage: "Q3",
     queueRequested: true,
-  }), /does not reach accepted run/u);
+  }), /dangling predecessor/u);
   assert.equal(dispatches, 0);
 });
 
