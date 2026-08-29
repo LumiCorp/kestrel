@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Preserve environment consistency through protocol correlation](08-preserve-environment-consistency-through-protocol-correlation.md)
 
 ## In progress
 
