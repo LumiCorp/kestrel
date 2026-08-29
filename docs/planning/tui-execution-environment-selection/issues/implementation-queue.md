@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Enforce session lifecycle monotonicity](30-enforce-session-lifecycle-monotonicity.md)
 
 ## In progress
 
