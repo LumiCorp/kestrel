@@ -874,7 +874,7 @@ export class TuiRunController {
       const message = error instanceof Error ? error.message : String(error);
       await this.context.appendHistoryLine("system", `Runner communication failed: ${message}`);
       await this.context.setActiveSessionState({
-        started: true,
+        started: state.activeSession.started || requestAccepted,
         updatedAt: new Date().toISOString(),
         ...(input.forceFreshTurn !== true && submittedPendingWait !== undefined && requestAccepted === false
           ? { pendingWaitFor: submittedPendingWait }

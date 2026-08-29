@@ -309,7 +309,9 @@ function createRunHarness(input: {
           input.runtimeEnvironmentPresetId ??
           input.environmentPresetId ??
           (input.legacyEnvironmentMissing === true && (input.started ?? true) === false
-            ? "cli_safe_local"
+            ? input.workspaceBinding === "active"
+              ? "cli_dev_local"
+              : "cli_safe_local"
             : "cli_dev_local");
         assert.deepEqual(request, {
           client: "cli",
@@ -483,6 +485,22 @@ test("TuiRunController materializes the safe default for an unstarted detached l
     harness.uiStore.getState().activeSession.environmentPresetId,
     "cli_safe_local",
   );
+  assert.equal(harness.uiStore.getState().activeSession.started, true);
+});
+
+test("TuiRunController starts a new workspace session under its developer environment", async () => {
+  const harness = createRunHarness({
+    started: false,
+    legacyEnvironmentMissing: true,
+    workspaceBinding: "active",
+    workspaceRoot: "/workspace/project",
+  });
+
+  await harness.controller.startActiveTurn({ submittedMessage: "build the project" });
+
+  const session = harness.uiStore.getState().activeSession;
+  assert.equal(session.environmentPresetId, "cli_dev_local");
+  assert.equal(session.started, true);
 });
 
 test("TuiRunController fails closed when a started legacy session has no exact environment", async () => {

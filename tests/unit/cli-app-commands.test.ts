@@ -1255,11 +1255,59 @@ test("start task journey creates a session with the canonical profile, mode, and
   assert.equal(state.activeSession.interactionMode, "build");
   assert.equal(state.activeSession.actSubmode, "safe");
   assert.equal(state.activeProfile.id, "kestrel");
+  assert.equal(state.activeSession.started, false);
 
   const rawHistory = await readFile(historyPath, "utf8");
   assert.match(rawHistory, /Start task journey/u);
   assert.match(rawHistory, /Started new session 'Investigate queue latency'\./u);
   assert.match(rawHistory, /Task=Investigate queue latency/u);
+});
+
+test("background launch persists successful setup as started with inherited environment", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = {
+    sendCommand: async () => ({ type: "run.completed", payload: {} }),
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.delegation?.status, "RUNNING");
+  assert.equal(child?.started, true);
+  assert.equal(child?.environmentPresetId, "cli_dev_local");
+});
+
+test("background profile resolution failure leaves a truthful failed unstarted child", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.localCoreStatus = {
+    client: {
+      resolveExecutionProfile: async () => {
+        throw new Error("profile resolution unavailable");
+      },
+    },
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.delegation?.status, "FAILED");
+  assert.equal(child?.delegation?.errorMessage, "profile resolution unavailable");
+  assert.equal(child?.started, false);
+  assert.equal(child?.environmentPresetId, "cli_dev_local");
 });
 
 test("start task journey clears inherited preset metadata when preset none is selected", async () => {

@@ -4,7 +4,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Keep TUI sessions unstarted until execution actually begins](03-repair-tui-session-start-lifecycle.md)
 - [Make session describe durable and environment-authoritative](04-make-session-describe-durable-and-environment-authoritative.md)
 
 ## In progress
@@ -18,6 +17,7 @@ None.
 ## Implemented
 
 - [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md)
+- [Keep TUI sessions unstarted until execution actually begins](03-repair-tui-session-start-lifecycle.md)
 
 ## Done
 

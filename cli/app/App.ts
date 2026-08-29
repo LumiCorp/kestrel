@@ -3051,7 +3051,7 @@ export class App {
         taskId: `task-${childSession.sessionId}`,
         parentSessionId: state.activeSession.sessionId,
         title: prompt.slice(0, 96),
-        status: "RUNNING",
+        status: "PENDING",
         childSessionId: childSession.sessionId,
         childSessionName: childSession.name,
         profileId: profile.id,
@@ -3067,7 +3067,6 @@ export class App {
       const delegatedSession: TuiSessionMeta = {
         ...childSession,
         environmentPresetId: inheritedEnvironmentPresetId,
-        started: true,
         autoCompactionEnabled: true,
         delegation,
       };
@@ -3078,31 +3077,53 @@ export class App {
         activeRegion: "sessions",
       });
       await this.saveSessionsFile();
+
+      const effectiveProfile = profile;
+      const core = await this.prepareLocalCoreClient();
+      if (core === undefined) {
+        await this.failBackgroundLaunchSetup(
+          delegatedSession,
+          delegation,
+          "Kestrel Local Core is required to resolve background execution profiles.",
+        );
+        return;
+      }
+      let executionProfile: Awaited<ReturnType<typeof core.resolveExecutionProfile>>;
+      try {
+        executionProfile = await core.resolveExecutionProfile({
+          client: "cli",
+          profileId: profile.id,
+          environmentPresetId: inheritedEnvironmentPresetId,
+        });
+        Object.assign(
+          delegatedSession,
+          toResolvedSessionIdentity(executionProfile, inheritedEnvironmentPresetId),
+        );
+      } catch (error) {
+        await this.failBackgroundLaunchSetup(
+          delegatedSession,
+          delegation,
+          error instanceof Error ? error.message : String(error),
+        );
+        return;
+      }
+      const runningDelegation: DelegationTaskMeta = {
+        ...delegation,
+        status: "RUNNING",
+        updatedAt: new Date().toISOString(),
+      };
+      Object.assign(delegatedSession, {
+        started: true,
+        delegation: runningDelegation,
+      });
+      this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, delegatedSession);
+      await this.saveSessionsFile();
       await this.appendSessionHistoryLine(
         delegatedSession,
         "system",
         `Background task started for '${prompt}'.`,
       );
       await this.appendHistoryLine("system", `Launched background task '${delegatedSession.name}'.`);
-
-      const effectiveProfile = profile;
-      const core = await this.prepareLocalCoreClient();
-      if (core === undefined) {
-        throw new Error(
-          "Kestrel Local Core is required to resolve background execution profiles.",
-        );
-      }
-      const executionProfile = await core.resolveExecutionProfile({
-        client: "cli",
-        profileId: profile.id,
-        environmentPresetId: inheritedEnvironmentPresetId,
-      });
-      Object.assign(
-        delegatedSession,
-        toResolvedSessionIdentity(executionProfile, inheritedEnvironmentPresetId),
-      );
-      this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, delegatedSession);
-      await this.saveSessionsFile();
       void this.client.sendCommand("run.start", {
         profileId: executionProfile.profileId,
         turn: {
@@ -3122,7 +3143,7 @@ export class App {
         },
       }).catch(async (error) => {
         await this.updateTaskSessionFromMeta({
-          ...delegation,
+          ...runningDelegation,
           status: "FAILED",
           errorMessage: error instanceof Error ? error.message : String(error),
           updatedAt: new Date().toISOString(),
@@ -3134,6 +3155,38 @@ export class App {
     await this.appendHistoryLine(
       "system",
       "Usage: /tasks [list] | /tasks open <name> | /tasks launch <profileId> <prompt...>",
+    );
+  }
+
+  private async failBackgroundLaunchSetup(
+    session: TuiSessionMeta,
+    delegation: DelegationTaskMeta,
+    message: string,
+  ): Promise<void> {
+    const failedDelegation: DelegationTaskMeta = {
+      ...delegation,
+      status: "FAILED",
+      errorMessage: message,
+      updatedAt: new Date().toISOString(),
+    };
+    const failedSession: TuiSessionMeta = {
+      ...session,
+      started: false,
+      lastRunStatus: "FAILED",
+      delegation: failedDelegation,
+      updatedAt: failedDelegation.updatedAt,
+    };
+    this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, failedSession);
+    this.uiStore.patch({ sessions: this.sessionsFile.sessions });
+    await this.saveSessionsFile();
+    await this.appendSessionHistoryLine(
+      failedSession,
+      "system",
+      `Background task setup failed: ${message}`,
+    );
+    await this.appendHistoryLine(
+      "system",
+      `Background task '${failedSession.name}' failed to start: ${message}`,
     );
   }
 
@@ -4543,7 +4596,6 @@ export class App {
       const activeSession = this.mergeSessionHistoryMetadata(state.activeSession, {
         preview,
         updatedAt,
-        started: true,
         hasArtifacts: dataHasArtifacts(data),
         hasSummary: role === "assistant" && preview.length > 0,
         launchSummary:
@@ -4628,7 +4680,6 @@ export class App {
         const updatedSession = this.mergeSessionHistoryMetadata(session, {
           preview: preview.length > 0 ? preview : undefined,
           updatedAt: new Date().toISOString(),
-          started: true,
           hasArtifacts: dataHasArtifacts(data),
           hasSummary: role === "assistant" && preview.length > 0,
           launchSummary:
