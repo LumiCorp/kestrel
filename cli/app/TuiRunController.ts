@@ -51,6 +51,7 @@ import {
   TuiEnvironmentIdentityError,
   type TuiEnvironmentPresetId,
 } from "../session/TuiExecutionEnvironment.js";
+import { hasDurableTuiRuntimeBinding } from "../session/TuiAuthoringProfile.js";
 import {
   advanceTuiQueueAuthority,
   bindTuiQueueSuccessor,
@@ -2334,7 +2335,7 @@ export class TuiRunController {
     session: TuiSessionMeta,
   ): Promise<TuiEnvironmentPresetId> {
     try {
-      if (session.started === false) {
+      if (hasDurableTuiRuntimeBinding(session) === false) {
         const environmentPresetId = resolveTuiSessionEnvironment({ session });
         if (session.environmentPresetId !== environmentPresetId) {
           await this.context.setSessionState(session.sessionId, { environmentPresetId });
@@ -2359,7 +2360,7 @@ export class TuiRunController {
       const environmentPresetId = resolveTuiSessionEnvironment({
         session,
         runtimeEnvironmentPresetId: response.payload.activeAssembly?.environmentPresetId,
-        requireRuntimeIdentity: true,
+        requireRuntimeIdentity: session.environmentPresetId === undefined,
       });
       await this.context.setSessionState(session.sessionId, {
         environmentPresetId,

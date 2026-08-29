@@ -5,6 +5,7 @@ import {
   snapshotEnvironmentIdentityDetails,
   type SessionEnvironmentIdentityFailureCode,
 } from "../../src/runtime/environmentIdentity.js";
+import { hasDurableTuiRuntimeBinding } from "./TuiAuthoringProfile.js";
 
 export type TuiEnvironmentPresetId = "cli_safe_local" | "cli_dev_local";
 
@@ -94,12 +95,12 @@ export function resolveTuiSessionEnvironment(input: {
   if (input.requireRuntimeIdentity === true && runtime === undefined) {
     throw new TuiEnvironmentIdentityError(
       "TUI_ENVIRONMENT_UNKNOWN",
-      `Environment unknown for session '${input.session.name}': the started runtime has no exact environment identity.`,
+      `Environment unknown for session '${input.session.name}': the runtime-bound session has no exact environment identity.`,
     );
   }
   if (runtime !== undefined) return runtime;
   if (persisted !== undefined) return persisted;
-  if (input.session.started) {
+  if (hasDurableTuiRuntimeBinding(input.session)) {
     throw new TuiEnvironmentIdentityError(
       "TUI_ENVIRONMENT_UNKNOWN",
       `Environment unknown for session '${input.session.name}': no persisted or runtime identity is available.`,

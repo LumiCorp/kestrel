@@ -107,6 +107,7 @@ import {
   TuiEnvironmentIdentityError,
   type TuiEnvironmentPresetId,
 } from "../session/TuiExecutionEnvironment.js";
+import { hasDurableTuiRuntimeBinding } from "../session/TuiAuthoringProfile.js";
 import {
   buildModelCatalogStatusLine,
   buildModelSearchResultBlock,
@@ -4165,7 +4166,8 @@ export class App {
       session: target,
       runtimeEnvironmentPresetId,
       requireRuntimeIdentity:
-        target.started && target.environmentPresetId === undefined,
+        hasDurableTuiRuntimeBinding(target)
+        && target.environmentPresetId === undefined,
     });
     const recoveredRoute = target.pendingRunMessageId === undefined
       ? undefined

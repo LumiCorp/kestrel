@@ -248,7 +248,9 @@ function createRunHarness(input: {
       : { environmentPresetId: "cli_dev_local" }),
     ...(input.effectiveAssemblyId !== undefined
       ? { effectiveAssemblyId: input.effectiveAssemblyId }
-      : input.legacyEnvironmentMissing === true || input.runtimeEnvironmentPresetId !== undefined
+      : input.started === false
+        || input.legacyEnvironmentMissing === true
+        || input.runtimeEnvironmentPresetId !== undefined
         ? {}
         : { effectiveAssemblyId: "bundle:kestrel:cli" }),
     ...(input.pendingWaitFor !== undefined ? { pendingWaitFor: input.pendingWaitFor } : {}),
@@ -1060,6 +1062,68 @@ test("TuiRunController starts a new workspace session under its developer enviro
   const session = harness.uiStore.getState().activeSession;
   assert.equal(session.environmentPresetId, "cli_dev_local");
   assert.equal(session.started, true);
+});
+
+test("TuiRunController describes stale unstarted state with durable assembly evidence before dispatch", async () => {
+  const harness = createRunHarness({
+    started: false,
+    legacyEnvironmentMissing: true,
+    effectiveAssemblyId: "bundle:stale-start-assembly",
+    runtimeEnvironmentPresetId: "cli_safe_local",
+  });
+
+  await harness.controller.startActiveTurn({ submittedMessage: "continue exact runtime" });
+
+  assert.equal(harness.sessionDescribeCount, 1);
+  assert.equal(
+    harness.uiStore.getState().activeSession.environmentPresetId,
+    "cli_safe_local",
+  );
+});
+
+test("TuiRunController fails closed for stale unstarted accepted-thread evidence without runtime identity", async () => {
+  const harness = createRunHarness({
+    started: false,
+    legacyEnvironmentMissing: true,
+    sessionDescribeWithoutRuntimeEvidence: true,
+    activeSessionPatch: {
+      acceptedRunThreadId: "thread-main:session-1",
+    },
+  });
+
+  await assert.rejects(
+    harness.controller.startActiveTurn({ submittedMessage: "continue accepted runtime" }),
+    /runtime-bound session has no exact environment identity/u,
+  );
+  assert.equal(harness.sessionDescribeCount, 1);
+  assert.equal(harness.commands.length, 0);
+  assert.equal(harness.uiStore.getState().activeSession.environmentPresetId, undefined);
+});
+
+test("TuiRunController rejects a stale unstarted queued-runtime environment conflict", async () => {
+  const harness = createRunHarness({
+    started: false,
+    environmentPresetId: "cli_dev_local",
+    runtimeEnvironmentPresetId: "cli_safe_local",
+    activeSessionPatch: {
+      queuedRunReservations: [{
+        runId: "run-accepted-queued",
+        messageId: "message-accepted-queued",
+        threadId: "thread-main:session-1",
+      }],
+    },
+  });
+
+  await assert.rejects(
+    harness.controller.startActiveTurn({ submittedMessage: "continue queued runtime" }),
+    /Environment consistency failure/u,
+  );
+  assert.ok(harness.sessionDescribeCount >= 1);
+  assert.equal(harness.commands.length, 0);
+  assert.equal(
+    harness.uiStore.getState().activeSession.environmentPresetId,
+    "cli_dev_local",
+  );
 });
 
 test("TuiRunController fails closed when a started legacy session has no exact environment", async () => {

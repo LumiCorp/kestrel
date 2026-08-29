@@ -220,6 +220,39 @@ test("startup fails closed when a started session's authoring profile is unavail
   );
 });
 
+test("describe projection cannot infer an environment for stale unstarted runtime evidence", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const sessionStore = appState.sessionStore as SessionStore;
+  const staleSession: TuiSessionMeta = {
+    ...uiStore.getState().activeSession,
+    started: false,
+    environmentPresetId: undefined,
+    effectiveAssemblyId: "bundle:stale-start",
+  };
+  appState.sessionsFile = sessionStore.upsert(
+    appState.sessionsFile as { sessions: TuiSessionMeta[] },
+    staleSession,
+  );
+  uiStore.patch({
+    activeSession: staleSession,
+    sessions: (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions,
+  });
+
+  await assert.rejects(
+    (appState.syncSessionFromDescribePayload as (payload: {
+      sessionId: string;
+      version: number;
+    }) => Promise<void>)({
+      sessionId: staleSession.sessionId,
+      version: 0,
+    }),
+    /runtime-bound session has no exact environment identity/u,
+  );
+  assert.equal(uiStore.getState().activeSession.environmentPresetId, undefined);
+});
+
 async function createAppHarness(input: {
   activeProfileId?: string;
   sessionName?: string;
