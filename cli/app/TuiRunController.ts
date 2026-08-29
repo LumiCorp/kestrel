@@ -2360,7 +2360,7 @@ export class TuiRunController {
       const environmentPresetId = resolveTuiSessionEnvironment({
         session,
         runtimeEnvironmentPresetId: response.payload.activeAssembly?.environmentPresetId,
-        requireRuntimeIdentity: session.environmentPresetId === undefined,
+        requireRuntimeIdentity: true,
       });
       await this.context.setSessionState(session.sessionId, {
         environmentPresetId,

@@ -1100,6 +1100,26 @@ test("TuiRunController fails closed for stale unstarted accepted-thread evidence
   assert.equal(harness.uiStore.getState().activeSession.environmentPresetId, undefined);
 });
 
+test("TuiRunController requires runtime confirmation even when stale runtime-bound state has persisted identity", async () => {
+  const harness = createRunHarness({
+    started: false,
+    environmentPresetId: "cli_dev_local",
+    effectiveAssemblyId: "bundle:stale-start-persisted-environment",
+    omitRuntimeEnvironmentIdentity: true,
+  });
+
+  await assert.rejects(
+    harness.controller.startActiveTurn({ submittedMessage: "confirm exact runtime" }),
+    /runtime-bound session has no exact environment identity/u,
+  );
+  assert.equal(harness.sessionDescribeCount, 1);
+  assert.equal(harness.commands.length, 0);
+  assert.equal(
+    harness.uiStore.getState().activeSession.environmentPresetId,
+    "cli_dev_local",
+  );
+});
+
 test("TuiRunController rejects a stale unstarted queued-runtime environment conflict", async () => {
   const harness = createRunHarness({
     started: false,
