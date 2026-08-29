@@ -12,6 +12,7 @@ import {
   parseBrowserSessionV1,
   projectBrowserAuditInput,
   projectBrowserAuditOutput,
+  validateBrowserResultAuthority,
   type BrowserServicePort,
 } from "../../src/browser/contracts.js";
 import { BROWSER_RUNTIME_RELEASE_MANIFEST } from "../../src/browser/runtimeReleaseManifest.js";
@@ -478,6 +479,11 @@ test("fake Browser port receives the exact prepared call and conditional effect 
     executionClass: "read_only",
     exactEffects: [],
     approval: "automatic",
+    preparedAuthority: {
+      version: "browser_prepared_authority_v1",
+      runId: listPrepared.runId,
+      threadId: "thread-session-1",
+    },
   });
 
   const switched = await executeBrowserCall(registry, "browser.tabs", {
@@ -493,6 +499,19 @@ test("fake Browser port receives the exact prepared call and conditional effect 
     executionClass: "external_side_effect",
     exactEffects: ["tab.switch"],
     approval: "automatic",
+    preparedAuthority: {
+      version: "browser_prepared_authority_v1",
+      runId: switchPrepared.runId,
+      threadId: "thread-session-1",
+    },
+    externalEffectDispatch: {
+      version: "durable_external_effect_dispatch_v1",
+      notStartedFailureCode: "BROWSER_ENGINE_FAILURE",
+      notStartedMessage: "The Browser operation was not dispatched.",
+      unknownOutcomeFailureCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      unknownOutcomeMessage:
+        "The Browser operation was dispatched, but its exact outcome could not be confirmed.",
+    },
   });
 
   const grant = await executeBrowserCall(
@@ -745,7 +764,7 @@ test("Browser dispatch acknowledgement distinguishes pre-dispatch failure from u
     const port: BrowserServicePort = {
       ...passiveBrowserPort(),
       async execute(_prepared, lifecycle) {
-        if (acknowledge) lifecycle.acknowledgeDispatch();
+        if (acknowledge) await lifecycle.acknowledgeDispatch();
         throw Object.assign(new Error(`host failed with ${secret}`), {
           details: { responseBody: secret, formValue: secret },
         });
@@ -783,7 +802,7 @@ test("Browser destructive operations persist their exact normalized result befor
   const port: BrowserServicePort = {
     ...passiveBrowserPort(),
     async execute(_prepared, lifecycle) {
-      lifecycle.acknowledgeDispatch();
+      await lifecycle.acknowledgeDispatch();
       await lifecycle.persistCompletedResult(output);
       ordering.push("cleanup");
       return output;
@@ -810,6 +829,90 @@ test("Browser destructive operations persist their exact normalized result befor
   assert.equal(result.outcome.kind, "success");
   if (result.outcome.kind !== "success") assert.fail("expected success");
   assert.deepEqual(result.outcome.rawOutput, output);
+});
+
+test("Browser results cannot cross prepared session or Thread authority", async () => {
+  const foreignSecret = "foreign-page-secret-sentinel";
+  let persisted = false;
+  const port: BrowserServicePort = {
+    ...passiveBrowserPort(),
+    async execute(_prepared, lifecycle) {
+      const output = {
+        ...validOutputs["browser.capture"],
+        sessionId: "foreign-browser-session",
+        artifact: {
+          ...(validOutputs["browser.capture"].artifact as Record<string, unknown>),
+          title: foreignSecret,
+        },
+      };
+      await lifecycle.persistCompletedResult(output);
+      return output;
+    },
+  };
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.capture"],
+    context: { browserService: port },
+  });
+  const { prepared, runContext } = await prepareBrowserCall(
+    registry,
+    "browser.capture",
+    { sessionId: "browser-session-1", kind: "screenshot" },
+  );
+  const result = await registry.executePreparedToolCall(prepared, {
+    runContext,
+    async persistCompletedCapabilityResult() {
+      persisted = true;
+    },
+  });
+  assert.equal(persisted, false);
+  assert.equal(result.outcome.kind, "failure");
+  if (result.outcome.kind !== "failure") assert.fail("expected failure");
+  assert.equal(result.outcome.normalizedFailureCode, "BROWSER_ENGINE_FAILURE");
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(foreignSecret));
+
+  const { prepared: openPrepared } = await prepareBrowserCall(
+    new UnifiedToolRegistry({
+      allowlist: ["browser.open"],
+      context: { browserService: passiveBrowserPort() },
+    }),
+    "browser.open",
+    validInputs["browser.open"],
+  );
+  assert.throws(
+    () =>
+      validateBrowserResultAuthority(openPrepared, {
+        ...validOutputs["browser.open"],
+        session: { ...session, threadId: "foreign-thread" },
+      }),
+    /Thread does not match prepared authority/u,
+  );
+  const adapter = openPrepared.inputAdapters.find(
+    (candidate) => candidate.adapterId === "kestrel.browser-contract:v1",
+  )!;
+  assert.throws(
+    () =>
+      validateBrowserResultAuthority(
+        {
+          ...openPrepared,
+          inputAdapters: openPrepared.inputAdapters.map((candidate) =>
+            candidate === adapter
+              ? {
+                  ...candidate,
+                  metadata: {
+                    ...candidate.metadata,
+                    preparedAuthority: {
+                      ...(candidate.metadata.preparedAuthority as Record<string, unknown>),
+                      runId: "foreign-run",
+                    },
+                  },
+                }
+              : candidate,
+          ),
+        },
+        validOutputs["browser.open"],
+      ),
+    /prepared.*authority is invalid/iu,
+  );
 });
 
 test("Browser origins and session semantics normalize before audit persistence", async () => {

@@ -45,6 +45,66 @@ test("effect execution claim atomically fences PENDING ownership before invocati
   sql.assertExhausted();
 });
 
+test("effect dispatch acknowledgement atomically advances claimed ownership", async () => {
+  const sql = new ScriptedSqlExecutor([
+    { match: /^BEGIN/u },
+    {
+      match: /SELECT run_id, session_id, status[\s\S]*FROM effects WHERE idempotency_key = \$1 FOR UPDATE/u,
+      rows: [{
+        run_id: "run-dispatch",
+        session_id: "session-dispatch",
+        status: "CLAIMED",
+      }],
+    },
+    {
+      match: /UPDATE effects SET status = 'DISPATCHED'[\s\S]*status = 'CLAIMED'/u,
+      rowCount: 1,
+    },
+    { match: /^COMMIT/u },
+  ]);
+  const store = new PostgresSessionStore(sql);
+
+  assert.equal(await store.markEffectDispatched("dispatch-1", {
+    runId: "run-dispatch",
+    sessionId: "session-dispatch",
+  }), "dispatched");
+  assert.deepEqual(sql.queries[2]?.values, [
+    "dispatch-1",
+    "run-dispatch",
+    "session-dispatch",
+  ]);
+  sql.assertExhausted();
+});
+
+test("effect execution claim preserves durable dispatched recovery state", async () => {
+  const sql = new ScriptedSqlExecutor([
+    { match: /^BEGIN/u },
+    {
+      match: /FROM effects WHERE idempotency_key = \$1 FOR UPDATE/u,
+      rows: [{
+        run_id: "run-dispatched",
+        session_id: "session-dispatched",
+        status: "DISPATCHED",
+        tenant_id: null,
+        tenant_ownership_state: "explicit_unbound",
+        effect_type: "test.dispatched",
+        payload_json: {},
+        step_index: 0,
+        failure_policy: "STOP",
+        created_at: "2026-08-29T00:00:00.000Z",
+      }],
+    },
+    { match: /^COMMIT/u },
+  ]);
+  const store = new PostgresSessionStore(sql);
+
+  assert.equal(await store.claimEffectExecution("dispatch-2", {
+    runId: "run-dispatched",
+    sessionId: "session-dispatched",
+  }), "already_dispatched");
+  sql.assertExhausted();
+});
+
 test("PostgresSessionStore persists model-call proof and marks older rows legacy", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /INSERT INTO model_call_provenance[\s\S]*proof_json/u, rowCount: 1 },

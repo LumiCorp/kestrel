@@ -5,6 +5,7 @@ import {
 import type { ToolExecutionClass } from "../../src/mode/contracts.js";
 import {
   BROWSER_CONTRACT_VERSION,
+  BROWSER_PREPARED_AUTHORITY_VERSION,
   BROWSER_POLICY_RESOLUTION_VERSION,
   BROWSER_TOOL_NAMES,
   browserArtifactPresentation,
@@ -14,8 +15,12 @@ import {
   parseBrowserPolicyResolutionV1,
   requireBrowserServicePort,
   validateBrowserResultSemantics,
+  validateBrowserResultAuthority,
   type BrowserToolName,
 } from "../../src/browser/contracts.js";
+import {
+  DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION,
+} from "../../src/io/ToolInvocationSupport.js";
 import {
   getBrowserToolContract,
   type BrowserToolContractFixtureV1,
@@ -53,8 +58,14 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
   const validateOutput = compileToolJsonSchemaV1(contract.outputSchema, {
     surface: "output",
   });
-  const normalizeOutput = (output: unknown): unknown => {
+  const normalizeOutput = (
+    output: unknown,
+    prepared?: import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+  ): unknown => {
     const normalized = validateBrowserResultSemantics(toolName, output);
+    if (prepared !== undefined) {
+      validateBrowserResultAuthority(prepared, normalized);
+    }
     if (validateOutput(normalized) !== true) {
       throw browserFailure(
         "BROWSER_ENGINE_FAILURE",
@@ -120,7 +131,8 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
     resolveExecutionClass(input) {
       return resolveExactExecutionClass(contract, input);
     },
-    prepareInputAdapter(input) {
+    prepareInputAdapter(input, context) {
+      const runtime = context?.runtime;
       return {
         adapterId: RESULT_NORMALIZER_ID,
         metadata: {
@@ -129,6 +141,30 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           executionClass: resolveExactExecutionClass(contract, input),
           exactEffects: [...resolveExactEffects(contract, input)],
           approval: contract.approval,
+          ...(runtime === undefined
+            ? {}
+            : {
+                preparedAuthority: {
+                  version: BROWSER_PREPARED_AUTHORITY_VERSION,
+                  runId: runtime.runId,
+                  threadId: runtime.threadId ?? runtime.sessionId,
+                },
+              }),
+          ...(resolveExactExecutionClass(contract, input) ===
+          "external_side_effect"
+            ? {
+                externalEffectDispatch: {
+                  version: DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION,
+                  notStartedFailureCode: "BROWSER_ENGINE_FAILURE",
+                  notStartedMessage:
+                    "The Browser operation was not dispatched.",
+                  unknownOutcomeFailureCode:
+                    "BROWSER_ACTION_OUTCOME_UNKNOWN",
+                  unknownOutcomeMessage:
+                    "The Browser operation was dispatched, but its exact outcome could not be confirmed.",
+                },
+              }
+            : {}),
         },
       };
     },
@@ -203,18 +239,18 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           const output = await requireBrowserServicePort(
             context.browserService,
           ).execute(prepared, {
-            acknowledgeDispatch() {
+            async acknowledgeDispatch() {
               if (!effectful || dispatchAcknowledged) return;
+              await context.acknowledgeExternalEffect?.();
               dispatchAcknowledged = true;
-              context.acknowledgeExternalEffect?.();
             },
             async persistCompletedResult(rawOutput) {
               await context.persistCompletedCapabilityResult?.(
-                normalizeOutput(rawOutput),
+                normalizeOutput(rawOutput, prepared),
               );
             },
           });
-          return normalizeOutput(output);
+          return normalizeOutput(output, prepared);
         } catch (error) {
           throw normalizeBrowserHostFailure(error, {
             toolName: contract.toolId,

@@ -406,7 +406,7 @@ export interface ToolGatewayCallOptions {
     | ((rawOutput: unknown) => Promise<void>)
     | undefined;
   /** @internal Gateway bridge for acknowledged external-effect dispatch. */
-  acknowledgeExternalEffect?: (() => void) | undefined;
+  acknowledgeExternalEffect?: (() => Promise<void>) | undefined;
 }
 
 export type ToolConsoleSink = (event: ToolConsoleEvent) => void | Promise<void>;

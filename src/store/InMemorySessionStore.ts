@@ -933,7 +933,12 @@ export class InMemorySessionStore implements SessionStore {
 
   async listPendingEffects(sessionId: string) {
     return this.effects
-      .filter((effect) => effect.sessionId === sessionId && (effect.status === "PENDING" || effect.status === "CLAIMED"))
+      .filter((effect) =>
+        effect.sessionId === sessionId &&
+        (effect.status === "PENDING" ||
+          effect.status === "CLAIMED" ||
+          effect.status === "DISPATCHED"),
+      )
       .map((effect) => ({ ...effect }));
   }
 
@@ -1019,7 +1024,9 @@ export class InMemorySessionStore implements SessionStore {
           : tenantRead.status === "not_found" ? "not_found" : "conflict",
       } as const;
     }
-    if (effect.status === "CLAIMED") return { status: "started" } as const;
+    if (effect.status === "CLAIMED" || effect.status === "DISPATCHED") {
+      return { status: "started" } as const;
+    }
     if (effect.status !== "PENDING") return { status: "conflict" } as const;
     effect.status = "FAILED";
     this.operationLog.push(`claimExactEffectCancellation:${input.idempotencyKey}`);
@@ -1156,7 +1163,7 @@ export class InMemorySessionStore implements SessionStore {
   async claimEffectExecution(
     idempotencyKey: string,
     owner: { runId: string; sessionId: string },
-  ): Promise<"claimed" | "already_claimed" | "terminal"> {
+  ): Promise<"claimed" | "already_claimed" | "already_dispatched" | "terminal"> {
     const effect = this.effects.find((candidate) => candidate.idempotencyKey === idempotencyKey);
     if (
       effect === undefined ||
@@ -1171,7 +1178,37 @@ export class InMemorySessionStore implements SessionStore {
       this.operationLog.push(`claimEffectExecution:${idempotencyKey}`);
       return "claimed";
     }
-    return effect.status === "CLAIMED" ? "already_claimed" : "terminal";
+    return effect.status === "CLAIMED"
+      ? "already_claimed"
+      : effect.status === "DISPATCHED"
+        ? "already_dispatched"
+        : "terminal";
+  }
+
+  async markEffectDispatched(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"dispatched" | "already_dispatched" | "not_claimed" | "terminal"> {
+    const effect = this.effects.find(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    if (
+      effect === undefined ||
+      effect.runId !== owner.runId ||
+      effect.sessionId !== owner.sessionId ||
+      !this.hasTrustedEffectStatusTenant(effect)
+    ) {
+      throw new SandboxCapabilityExactResultConflictError(
+        "Effect dispatch owner or tenant does not match durable authority",
+      );
+    }
+    if (effect.status === "CLAIMED") {
+      effect.status = "DISPATCHED";
+      this.operationLog.push(`markEffectDispatched:${idempotencyKey}`);
+      return "dispatched";
+    }
+    if (effect.status === "DISPATCHED") return "already_dispatched";
+    return effect.status === "PENDING" ? "not_claimed" : "terminal";
   }
 
   async resetPreparedApprovalCleanupEffectExecution(

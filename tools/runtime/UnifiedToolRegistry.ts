@@ -1045,17 +1045,17 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       let persistCompletedCapabilityRawOutput:
         | ((rawOutput: unknown) => Promise<void>)
         | undefined;
-      let acknowledgeExternalEffect: (() => void) | undefined;
+      let acknowledgeExternalEffect: (() => Promise<void>) | undefined;
       const preparedHandler = source.createHandler(
         {
           ...options,
-          acknowledgeExternalEffect: () => {
+          acknowledgeExternalEffect: async () => {
             if (acknowledgeExternalEffect === undefined) {
               throw new Error(
                 "External-effect dispatch acknowledgement is unavailable for this prepared execution.",
               );
             }
-            acknowledgeExternalEffect();
+            await acknowledgeExternalEffect();
           },
           persistCompletedCapabilityRawOutput: (rawOutput) => {
             if (persistCompletedCapabilityRawOutput === undefined) {
@@ -1082,6 +1082,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         signal: options.signal,
         persistCompletedCapabilityResult:
           options.persistCompletedCapabilityResult,
+        acknowledgeExternalEffect: options.acknowledgeExternalEffect,
       });
       if (
         result.outcome.kind === "failure" &&
@@ -1102,17 +1103,17 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             let persistRetryCapabilityRawOutput:
               | ((rawOutput: unknown) => Promise<void>)
               | undefined;
-            let acknowledgeRetryExternalEffect: (() => void) | undefined;
+            let acknowledgeRetryExternalEffect: (() => Promise<void>) | undefined;
             const retryHandler = retrySource.createHandler(
               {
                 ...options,
-                acknowledgeExternalEffect: () => {
+                acknowledgeExternalEffect: async () => {
                   if (acknowledgeRetryExternalEffect === undefined) {
                     throw new Error(
                       "External-effect dispatch acknowledgement is unavailable for this prepared execution.",
                     );
                   }
-                  acknowledgeRetryExternalEffect();
+                  await acknowledgeRetryExternalEffect();
                 },
                 persistCompletedCapabilityRawOutput: (rawOutput) => {
                   if (persistRetryCapabilityRawOutput === undefined) {
@@ -1140,6 +1141,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               signal: options.signal,
               persistCompletedCapabilityResult:
                 options.persistCompletedCapabilityResult,
+              acknowledgeExternalEffect: options.acknowledgeExternalEffect,
             });
           } finally {
             await retrySource.release?.();
@@ -1877,7 +1879,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         ...(hasExecutionClassResolver ? { resolveExecutionClass } : {}),
         ...(hasPreparedInputAdapter === false ? {} : {
           prepareInputAdapter: (input: Record<string, unknown>) =>
-            defaultToolCatalog.prepareInputAdapter(descriptor.toolId, input)!,
+            defaultToolCatalog.prepareInputAdapter(
+              descriptor.toolId,
+              input,
+              activeContext,
+            )!,
         }),
         resolvePolicy: (input: Record<string, unknown>) =>
           defaultToolCatalog.resolvePolicy(descriptor.toolId, activeContext, input),

@@ -491,8 +491,11 @@ export function createToolCatalog(
 
   const resolveExecutionClass = (name: string, input: Record<string, unknown>) =>
     map.get(name)?.resolveExecutionClass?.(input);
-  const prepareInputAdapter = (name: string, input: Record<string, unknown>) =>
-    map.get(name)?.prepareInputAdapter?.(input);
+  const prepareInputAdapter = (
+    name: string,
+    input: Record<string, unknown>,
+    context?: SharedToolContext | undefined,
+  ) => map.get(name)?.prepareInputAdapter?.(input, context);
   const resolvePolicy = async (
     name: string,
     context: SharedToolContext,

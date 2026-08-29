@@ -4,9 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Make Browser dispatch evidence durable without weakening other tools](01d-make-browser-dispatch-evidence-durable-without-weakening-other-tools.md)
-- [Bind Browser results to prepared authority](01e-bind-browser-results-to-prepared-authority.md)
-- [Bind Browser policy through every approval path](01f-bind-browser-policy-through-every-approval-path.md)
+None.
 
 ## In progress
 
@@ -28,6 +26,9 @@ None.
 - [Resolve Browser policy before approval](01a-resolve-browser-policy-before-approval.md) — blocked from `Done` by [complete approval-path binding](01f-bind-browser-policy-through-every-approval-path.md)
 - [Preserve Browser dispatch and exact results](01b-preserve-browser-dispatch-and-exact-results.md) — blocked from `Done` by [durable dispatch repair](01d-make-browser-dispatch-evidence-durable-without-weakening-other-tools.md)
 - [Enforce secret-safe Browser results](01c-enforce-secret-safe-browser-results.md) — blocked from `Done` by [prepared-authority result binding](01e-bind-browser-results-to-prepared-authority.md)
+- [Make Browser dispatch evidence durable without weakening other tools](01d-make-browser-dispatch-evidence-durable-without-weakening-other-tools.md) — awaiting independent review
+- [Bind Browser results to prepared authority](01e-bind-browser-results-to-prepared-authority.md) — awaiting independent review
+- [Bind Browser policy through every approval path](01f-bind-browser-policy-through-every-approval-path.md) — awaiting independent review
 
 ## Done
 

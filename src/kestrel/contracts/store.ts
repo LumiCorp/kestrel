@@ -461,7 +461,11 @@ export interface EffectStore {
   claimEffectExecution(
     idempotencyKey: string,
     owner: { runId: string; sessionId: string },
-  ): Promise<"claimed" | "already_claimed" | "terminal">;
+  ): Promise<"claimed" | "already_claimed" | "already_dispatched" | "terminal">;
+  markEffectDispatched(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"dispatched" | "already_dispatched" | "not_claimed" | "terminal">;
   resetPreparedApprovalCleanupEffectExecution(
     idempotencyKey: string,
     owner: { runId: string; sessionId: string },

@@ -104,6 +104,7 @@ export async function checkToolPolicyGate(input: {
           | undefined;
       }
     | undefined;
+  preparedToolCall?: PreparedToolCallV1 | undefined;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   modeSystemV2Enabled: boolean;
@@ -152,6 +153,7 @@ export async function checkToolPolicyGate(input: {
       trustedPolicyRevision: input.trustedPolicyRevision,
       approvalAuthority: input.approvalAuthority,
       toolIntent: input.toolIntent,
+      preparedToolCall: input.preparedToolCall,
       io: input.io,
     });
     if (
@@ -258,6 +260,7 @@ export async function checkToolPolicyGate(input: {
       trustedPolicyRevision: input.trustedPolicyRevision,
       approvalAuthority: input.approvalAuthority,
       toolIntent: input.toolIntent,
+      preparedToolCall: input.preparedToolCall,
       io: input.io,
     });
     if (
@@ -274,7 +277,12 @@ export async function checkToolPolicyGate(input: {
     }
   }
 
-  return { kind: "allowed" };
+  return {
+    kind: "allowed",
+    ...(input.preparedToolCall === undefined
+      ? {}
+      : { preparedToolCall: input.preparedToolCall }),
+  };
 }
 
 export async function checkToolBatchPolicyGate(input: {
@@ -595,6 +603,7 @@ async function maybeRequireToolApproval(input: {
           | undefined;
       }
     | undefined;
+  preparedToolCall?: PreparedToolCallV1 | undefined;
 }): Promise<
   Transition | { preparedToolCall: PreparedToolCallV1 } | undefined
 > {
@@ -668,7 +677,7 @@ async function maybeRequireToolApproval(input: {
         persistedPreparedToolCall.callId
       ) {
         throw new Error(
-          "persisted hosted approval does not reference its canonical prepared invocation",
+          "persisted approval does not reference its canonical prepared invocation",
         );
       }
       if (
@@ -752,9 +761,12 @@ async function maybeRequireToolApproval(input: {
   }
   const newlyPreparedToolCall =
     persistedPreparedToolCall === undefined &&
-    hasHostedPreparedApprovalAuthority(input.eventPayload) &&
-    input.io.prepareToolForApproval !== undefined
-      ? await input.io.prepareToolForApproval(
+    input.preparedToolCall !== undefined
+      ? input.preparedToolCall
+      : persistedPreparedToolCall === undefined &&
+        hasHostedPreparedApprovalAuthority(input.eventPayload) &&
+        input.io.prepareToolForApproval !== undefined
+        ? await input.io.prepareToolForApproval(
           input.toolName,
           input.toolInput,
           {
@@ -763,8 +775,8 @@ async function maybeRequireToolApproval(input: {
             capabilities: input.requiredApprovalCapabilities ?? [],
           },
           input.toolIntent,
-        )
-      : undefined;
+          )
+        : undefined;
   if (newlyPreparedToolCall?.policy.decision === "allow") {
     return { preparedToolCall: parseDurablePreparedToolCallV1(newlyPreparedToolCall) };
   }
@@ -2132,7 +2144,7 @@ function digestApprovalPayload(value: unknown): string {
     .digest("hex")}`;
 }
 
-function buildRuntimePolicyRevision(input: {
+export function buildRuntimePolicyRevision(input: {
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   executionPolicy: ExecutionPolicy | undefined;

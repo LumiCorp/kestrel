@@ -24,7 +24,10 @@ import {
 } from "../kestrel/contracts/tool-invocation.js";
 import type { ToolActivationRefV1 } from "../kestrel/contracts/tool-contract.js";
 import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
-import { buildUnknownPreparedToolCallResultV1 } from "../io/ToolInvocationSupport.js";
+import {
+  buildRecoveredPreparedToolCallResultV1,
+  readDurableExternalEffectDispatchV1,
+} from "../io/ToolInvocationSupport.js";
 import type { EffectRegistry } from "./EffectRegistry.js";
 import { createEffectExecutionError } from "./errors.js";
 
@@ -113,9 +116,15 @@ export class InlineEffectRunner implements EffectRunner {
 
       const toolActivity = readEffectToolActivity(effect);
       const startedAt = Date.now();
+      let durableDispatch:
+        | ReturnType<typeof readDurableExternalEffectDispatchV1>
+        | undefined;
       try {
         const handler = this.registry.resolve(effect.type);
         const prepared = validatePreparedEffectForExecution(effect, context);
+        durableDispatch = prepared === undefined
+          ? undefined
+          : readDurableExternalEffectDispatchV1(prepared);
         let claim = await this.store.claimEffectExecution(effect.idempotencyKey, effect);
         if (
           claim === "already_claimed" &&
@@ -161,23 +170,35 @@ export class InlineEffectRunner implements EffectRunner {
             };
           }
 
+          const recoveredNotStarted =
+            durableDispatch !== undefined && claim === "already_claimed";
           const runtimeError: RuntimeError = {
-            code: "EFFECT_EXECUTION_OUTCOME_UNKNOWN",
-            message: "Effect execution was durably claimed without a recorded exact result; refusing to repeat it",
+            code: recoveredNotStarted
+              ? durableDispatch!.notStartedFailureCode
+              : durableDispatch !== undefined && claim === "already_dispatched"
+                ? durableDispatch.unknownOutcomeFailureCode
+                : "EFFECT_EXECUTION_OUTCOME_UNKNOWN",
+            message: recoveredNotStarted
+              ? durableDispatch!.notStartedMessage
+              : durableDispatch !== undefined && claim === "already_dispatched"
+                ? durableDispatch.unknownOutcomeMessage
+                : "Effect execution was durably claimed without a recorded exact result; refusing to repeat it",
             details: {
               idempotencyKey: effect.idempotencyKey,
               effectType: effect.type,
               claimState: claim,
-              effectState: "unknown",
-              retryable: false,
+              effectState: recoveredNotStarted ? "not_started" : "unknown",
+              retryable: recoveredNotStarted,
             },
           };
           const unknownOutput = prepared === undefined
             ? undefined
-            : buildUnknownPreparedToolCallResultV1({
+            : buildRecoveredPreparedToolCallResultV1({
                 prepared,
                 error: runtimeError,
                 startedAt: new Date(startedAt).toISOString(),
+                effectState: recoveredNotStarted ? "not_started" : "unknown",
+                retryable: recoveredNotStarted,
               });
           errors.push(runtimeError);
           await this.store.saveEffectResult(effect.runId, effect.sessionId, {
@@ -293,6 +314,24 @@ export class InlineEffectRunner implements EffectRunner {
             ...context,
             session,
             persistCompletedCapabilityResult,
+            ...(durableDispatch === undefined
+              ? {}
+              : {
+                  acknowledgeExternalEffect: async () => {
+                    const dispatched = await this.store.markEffectDispatched(
+                      effect.idempotencyKey,
+                      effect,
+                    );
+                    if (
+                      dispatched !== "dispatched" &&
+                      dispatched !== "already_dispatched"
+                    ) {
+                      throw new Error(
+                        "Durable external-effect dispatch acknowledgement lost its claimed authority",
+                      );
+                    }
+                  },
+                }),
           });
           await persistCompletedResult(output);
         }
@@ -365,6 +404,18 @@ export class InlineEffectRunner implements EffectRunner {
           });
         }
       } catch (error) {
+        const exactResult = durableDispatch === undefined
+          ? null
+          : await this.store.getEffectResult(effect.idempotencyKey);
+        if (durableDispatch !== undefined && exactResult?.status === "DONE") {
+          assertExactRecordedToolResult(effect, exactResult);
+          await this.store.markEffectStatus(
+            effect.idempotencyKey,
+            "DONE",
+            effect,
+          );
+          continue;
+        }
         const runtimeError: RuntimeError = createEffectExecutionError(
           effect.type,
           effect.idempotencyKey,

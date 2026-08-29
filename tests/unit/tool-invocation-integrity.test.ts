@@ -1871,7 +1871,7 @@ test("committed external effects never become retryable after output-contract fa
   assert.equal(result.outcome.retryable, false);
 });
 
-test("external-effect failures remain not-started until dispatch is acknowledged", async () => {
+test("external-effect failures remain terminal without an explicit durable dispatch protocol", async () => {
   const module = createEmbeddedToolModuleV1({
     ownerId: "kestrel.tests",
     toolId: "test.external.throwing",
@@ -1908,8 +1908,8 @@ test("external-effect failures remain not-started until dispatch is acknowledged
 
   assert.equal(result.status, "FAILED");
   assert.equal(result.outcome.kind, "failure");
-  assert.equal(result.outcome.effectState, "not_started");
-  assert.equal(result.outcome.retryable, true);
+  assert.equal(result.outcome.effectState, "unknown");
+  assert.equal(result.outcome.retryable, false);
 });
 
 test("external effects persist committed evidence when cancellation races after handler return", async () => {

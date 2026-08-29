@@ -56,6 +56,16 @@ import {
 
 export const RUNTIME_DEADLINE_BUDGET_ADAPTER_ID =
   "runtime.deadline-budget:v1" as const;
+export const DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION =
+  "durable_external_effect_dispatch_v1" as const;
+
+export interface DurableExternalEffectDispatchV1 {
+  version: typeof DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION;
+  notStartedFailureCode: string;
+  notStartedMessage: string;
+  unknownOutcomeFailureCode: string;
+  unknownOutcomeMessage: string;
+}
 
 export interface PinnedToolExecutionV1 {
   descriptor: ToolDescriptorV1;
@@ -65,7 +75,7 @@ export interface PinnedToolExecutionV1 {
     input: unknown,
     lifecycle?: {
       persistCompletedCapabilityResult: (rawOutput: unknown) => Promise<void>;
-      acknowledgeExternalEffect: () => void;
+      acknowledgeExternalEffect: () => Promise<void>;
     },
   ) => Promise<unknown>;
   normalizer: (
@@ -305,6 +315,7 @@ export async function executePinnedToolCallV1(input: {
   pinned: PinnedToolExecutionV1;
   signal?: AbortSignal | undefined;
   persistCompletedCapabilityResult?: ((result: AgentToolResultV2) => Promise<void>) | undefined;
+  acknowledgeExternalEffect?: (() => Promise<void>) | undefined;
 }): Promise<AgentToolResultV2> {
   const prepared = parsePreparedToolCallV1(input.prepared);
   const executionClass = input.pinned.resolveExecutionClass?.(prepared.effectiveInput) ??
@@ -332,9 +343,18 @@ export async function executePinnedToolCallV1(input: {
   let preCleanupResult: AgentToolResultV2 | undefined;
   let preCleanupRawOutputDigest: string | undefined;
   let externalEffectAcknowledged = false;
+  const durableDispatch = readDurableExternalEffectDispatchV1(prepared);
   try {
     rawOutput = await input.pinned.handler(prepared.effectiveInput, {
-      acknowledgeExternalEffect: () => {
+      acknowledgeExternalEffect: async () => {
+        if (durableDispatch === undefined) {
+          throw createRuntimeFailure(
+            "TOOL_DISPATCH_PROTOCOL_UNDECLARED",
+            `Tool '${input.pinned.descriptor.toolId}' attempted durable dispatch acknowledgement without declaring the protocol.`,
+            { subsystem: "tooling", classification: "contract", recoverable: false },
+          );
+        }
+        await input.acknowledgeExternalEffect?.();
         externalEffectAcknowledged = true;
       },
       persistCompletedCapabilityResult: async (completedRawOutput) => {
@@ -357,11 +377,19 @@ export async function executePinnedToolCallV1(input: {
       },
     });
   } catch (error) {
-    if (error instanceof RunCancelledError || input.signal?.aborted === true) {
+    if (preCleanupResult !== undefined) {
+      return preCleanupResult;
+    }
+    if (
+      durableDispatch === undefined &&
+      (error instanceof RunCancelledError || input.signal?.aborted === true)
+    ) {
       throw error;
     }
-    const effectState = executionClass === "external_side_effect" && externalEffectAcknowledged
-      ? "unknown"
+    const effectState = executionClass === "external_side_effect"
+      ? durableDispatch === undefined || externalEffectAcknowledged
+        ? "unknown"
+        : "not_started"
       : "not_started";
     return buildFailureResult({
       prepared,
@@ -386,10 +414,62 @@ export async function executePinnedToolCallV1(input: {
   return buildCompletedToolResult({ prepared, pinned: input.pinned, rawOutput, startedAt, executionClass });
 }
 
+export function readDurableExternalEffectDispatchV1(
+  prepared: PreparedToolCallV1,
+): DurableExternalEffectDispatchV1 | undefined {
+  const candidates = prepared.inputAdapters.flatMap((adapter) => {
+    const value = adapter.metadata.externalEffectDispatch;
+    return value === undefined ? [] : [value];
+  });
+  if (candidates.length === 0) return;
+  if (candidates.length !== 1) {
+    throw new Error("Prepared tool call contains conflicting external-effect dispatch protocols");
+  }
+  const value = candidates[0];
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Prepared external-effect dispatch protocol is invalid");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.version !== DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION ||
+    typeof record.notStartedFailureCode !== "string" ||
+    record.notStartedFailureCode.length === 0 ||
+    typeof record.notStartedMessage !== "string" ||
+    record.notStartedMessage.length === 0 ||
+    typeof record.unknownOutcomeFailureCode !== "string" ||
+    record.unknownOutcomeFailureCode.length === 0 ||
+    typeof record.unknownOutcomeMessage !== "string" ||
+    record.unknownOutcomeMessage.length === 0
+  ) {
+    throw new Error("Prepared external-effect dispatch protocol is invalid");
+  }
+  return {
+    version: DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION,
+    notStartedFailureCode: record.notStartedFailureCode,
+    notStartedMessage: record.notStartedMessage,
+    unknownOutcomeFailureCode: record.unknownOutcomeFailureCode,
+    unknownOutcomeMessage: record.unknownOutcomeMessage,
+  };
+}
+
 export function buildUnknownPreparedToolCallResultV1(input: {
   prepared: PreparedToolCallV1;
   error: { code: string; message: string; details?: Record<string, unknown> | undefined };
   startedAt: string;
+}): AgentToolResultV2 {
+  return buildRecoveredPreparedToolCallResultV1({
+    ...input,
+    effectState: "unknown",
+    retryable: false,
+  });
+}
+
+export function buildRecoveredPreparedToolCallResultV1(input: {
+  prepared: PreparedToolCallV1;
+  error: { code: string; message: string; details?: Record<string, unknown> | undefined };
+  startedAt: string;
+  effectState: "not_started" | "unknown";
+  retryable: boolean;
 }): AgentToolResultV2 {
   const prepared = parsePreparedToolCallV1(input.prepared);
   const completedAt = new Date().toISOString();
@@ -410,9 +490,9 @@ export function buildUnknownPreparedToolCallResultV1(input: {
     kind: "failure",
     startedAt: input.startedAt,
     completedAt,
-    effectState: "unknown",
+    effectState: input.effectState,
     normalizedFailureCode: input.error.code,
-    retryable: false,
+    retryable: input.retryable,
     error: {
       message: input.error.message,
       ...(input.error.details === undefined ? {} : { details: input.error.details }),

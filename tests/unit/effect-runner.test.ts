@@ -391,6 +391,88 @@ test("Effect runner records terminal unknown and never repeats a claimed prepare
   assert.equal(handlerCalls, 0);
 });
 
+test("opted-in durable dispatch recovery distinguishes claimed from dispatched", async () => {
+  const gateway = adaptLegacyTestToolGateway({
+    validateInput: async (_name, input) => input,
+    call: async () => ({ unreachable: true }),
+  });
+  const basePrepared = await prepareTestToolCall({
+    gateway,
+    toolName: "fs.write_text",
+    toolInput: { path: "durable.txt", text: "once" },
+    runId: "run-durable-dispatch",
+    sessionId: "session-durable-dispatch",
+    callId: "call-durable-dispatch",
+  });
+  const preparedToolCall = {
+    ...basePrepared,
+    inputAdapters: [
+      ...basePrepared.inputAdapters,
+      {
+        adapterId: "test.durable-dispatch:v1",
+        metadata: {
+          externalEffectDispatch: {
+            version: "durable_external_effect_dispatch_v1",
+            notStartedFailureCode: "BROWSER_ENGINE_FAILURE",
+            notStartedMessage: "The Browser operation was not dispatched.",
+            unknownOutcomeFailureCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+            unknownOutcomeMessage: "The Browser operation outcome is unknown.",
+          },
+        },
+      },
+    ],
+  };
+
+  for (const [status, expectedState, expectedCode, retryable] of [
+    ["CLAIMED", "not_started", "BROWSER_ENGINE_FAILURE", true],
+    ["DISPATCHED", "unknown", "BROWSER_ACTION_OUTCOME_UNKNOWN", false],
+  ] as const) {
+    const store = new InMemorySessionStore();
+    const registry = new EffectRegistry();
+    let handlerCalls = 0;
+    registry.register("execute_tool_call", async () => {
+      handlerCalls += 1;
+      return { repeated: true };
+    });
+    const effect = {
+      runId: preparedToolCall.runId,
+      sessionId: preparedToolCall.sessionId,
+      stepIndex: 1,
+      type: "execute_tool_call",
+      payload: { preparedToolCall },
+      idempotencyKey: preparedToolCall.callId,
+      failurePolicy: "STOP" as const,
+      status,
+      createdAt: "2026-08-29T00:00:00.000Z",
+    };
+    (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({
+      ...effect,
+    });
+    const outcome = await new InlineEffectRunner(store, registry).runEffects(
+      [effect],
+      {
+        runId: effect.runId,
+        sessionId: effect.sessionId,
+        stepIndex: effect.stepIndex,
+      },
+    );
+    const recorded = await store.getEffectResult(effect.idempotencyKey);
+    const exact = recorded?.output as {
+      outcome?: {
+        effectState?: string;
+        normalizedFailureCode?: string;
+        retryable?: boolean;
+      };
+    };
+    assert.equal(outcome.stop, true, status);
+    assert.equal(outcome.errors[0]?.code, expectedCode, status);
+    assert.equal(exact.outcome?.effectState, expectedState, status);
+    assert.equal(exact.outcome?.normalizedFailureCode, expectedCode, status);
+    assert.equal(exact.outcome?.retryable, retryable, status);
+    assert.equal(handlerCalls, 0, status);
+  }
+});
+
 test("Effect runner accepts a continuation effect run while preserving prepared identity", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();

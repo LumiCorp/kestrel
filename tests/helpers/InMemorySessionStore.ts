@@ -640,7 +640,12 @@ export class InMemorySessionStore implements SessionStore {
 
   async listPendingEffects(sessionId: string) {
     return this.effects
-      .filter((effect) => effect.sessionId === sessionId && (effect.status === "PENDING" || effect.status === "CLAIMED"))
+      .filter((effect) =>
+        effect.sessionId === sessionId &&
+        (effect.status === "PENDING" ||
+          effect.status === "CLAIMED" ||
+          effect.status === "DISPATCHED"),
+      )
       .map((effect) => ({ ...effect }));
   }
 
@@ -754,7 +759,7 @@ export class InMemorySessionStore implements SessionStore {
   async claimEffectExecution(
     idempotencyKey: string,
     _owner: { runId: string; sessionId: string },
-  ): Promise<"claimed" | "already_claimed" | "terminal"> {
+  ): Promise<"claimed" | "already_claimed" | "already_dispatched" | "terminal"> {
     const effect = this.effects.find((candidate) => candidate.idempotencyKey === idempotencyKey);
     if (effect === undefined) {
       this.operationLog.push(`claimEffectExecution:${idempotencyKey}`);
@@ -765,7 +770,27 @@ export class InMemorySessionStore implements SessionStore {
       this.operationLog.push(`claimEffectExecution:${idempotencyKey}`);
       return "claimed";
     }
-    return effect.status === "CLAIMED" ? "already_claimed" : "terminal";
+    return effect.status === "CLAIMED"
+      ? "already_claimed"
+      : effect.status === "DISPATCHED"
+        ? "already_dispatched"
+        : "terminal";
+  }
+
+  async markEffectDispatched(
+    idempotencyKey: string,
+    _owner: { runId: string; sessionId: string },
+  ): Promise<"dispatched" | "already_dispatched" | "not_claimed" | "terminal"> {
+    const effect = this.effects.find(
+      (candidate) => candidate.idempotencyKey === idempotencyKey,
+    );
+    if (effect === undefined || effect.status === "PENDING") return "not_claimed";
+    if (effect.status === "CLAIMED") {
+      effect.status = "DISPATCHED";
+      this.operationLog.push(`markEffectDispatched:${idempotencyKey}`);
+      return "dispatched";
+    }
+    return effect.status === "DISPATCHED" ? "already_dispatched" : "terminal";
   }
 
   async resetPreparedApprovalCleanupEffectExecution(

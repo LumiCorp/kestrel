@@ -11,6 +11,8 @@ export const BROWSER_TOOL_RESULT_VERSION = "browser_tool_result_v1" as const;
 export const BROWSER_CONTRACT_VERSION = "browser_app_contract_v1" as const;
 export const BROWSER_POLICY_RESOLUTION_VERSION =
   "browser_policy_resolution_v1" as const;
+export const BROWSER_PREPARED_AUTHORITY_VERSION =
+  "browser_prepared_authority_v1" as const;
 
 export const BROWSER_TOOL_NAMES = [
   "browser.open",
@@ -105,7 +107,7 @@ export interface BrowserPolicyResolutionV1 {
 }
 
 export interface BrowserOperationLifecycleV1 {
-  acknowledgeDispatch(): void;
+  acknowledgeDispatch(): Promise<void>;
   persistCompletedResult(rawOutput: unknown): Promise<void>;
 }
 
@@ -487,6 +489,66 @@ export function validateBrowserResultSemantics(
     label: `${toolName} pendingDownload`,
   });
   return normalized;
+}
+
+export function validateBrowserResultAuthority(
+  prepared: PreparedToolCallV1,
+  value: unknown,
+): unknown {
+  const toolName = prepared.activation.descriptor.toolId;
+  if (!isBrowserToolName(toolName)) {
+    throw new Error("Prepared Browser result authority has an invalid operation.");
+  }
+  const adapter = prepared.inputAdapters.find(
+    (candidate) => candidate.adapterId === "kestrel.browser-contract:v1",
+  );
+  const authority = asRecord(adapter?.metadata.preparedAuthority);
+  if (
+    authority?.version !== BROWSER_PREPARED_AUTHORITY_VERSION ||
+    authority.runId !== prepared.runId ||
+    typeof authority.threadId !== "string" ||
+    authority.threadId.length === 0
+  ) {
+    throw new Error("Prepared Browser result authority is invalid.");
+  }
+  const output = requireRecord(value, `${toolName} output`);
+  const nestedSession = output.session === undefined
+    ? undefined
+    : parseBrowserSessionV1(output.session);
+  const topLevelSessionId =
+    typeof output.sessionId === "string" ? output.sessionId : undefined;
+  const inputSessionId =
+    typeof prepared.effectiveInput.sessionId === "string"
+      ? prepared.effectiveInput.sessionId
+      : undefined;
+  if (
+    topLevelSessionId !== undefined &&
+    nestedSession !== undefined &&
+    topLevelSessionId !== nestedSession.sessionId
+  ) {
+    throw new Error("Browser result contains conflicting session identities.");
+  }
+  if (
+    toolName !== "browser.open" &&
+    inputSessionId !== undefined &&
+    (topLevelSessionId !== undefined && topLevelSessionId !== inputSessionId ||
+      nestedSession !== undefined && nestedSession.sessionId !== inputSessionId)
+  ) {
+    throw new Error("Browser result session does not match prepared authority.");
+  }
+  if (
+    nestedSession !== undefined &&
+    nestedSession.threadId !== authority.threadId
+  ) {
+    throw new Error("Browser result Thread does not match prepared authority.");
+  }
+  if (toolName === "browser.open" && nestedSession === undefined) {
+    const outcome = output.outcome;
+    if (outcome !== "blocked") {
+      throw new Error("Browser open result is missing its prepared session authority.");
+    }
+  }
+  return value;
 }
 
 function projectBrowserAction(action: Record<string, unknown>) {

@@ -98,6 +98,7 @@ export interface PendingToolBatchState {
   }>;
   checkpointSize: number;
   executionMode?: "inline" | "durable" | undefined;
+  policyMode?: "per_item" | undefined;
   pendingItem?:
     | PendingToolBatchItem & {
         idempotencyKey: string;

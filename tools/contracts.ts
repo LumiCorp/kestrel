@@ -267,7 +267,7 @@ export interface SharedToolContext {
   /** Gateway-owned raw-output sink; capability tools invoke it before teardown. */
   persistCompletedCapabilityResult?: ((rawOutput: unknown) => Promise<void>) | undefined;
   /** Gateway-owned dispatch acknowledgement for exact external-effect outcomes. */
-  acknowledgeExternalEffect?: (() => void) | undefined;
+  acknowledgeExternalEffect?: (() => Promise<void>) | undefined;
   sandboxCapabilityRuntime?: (
     Omit<SandboxCapabilityRuntimeContext, "sessionId" | "runId" | "toolCallId" | "policy" | "approval" | "parentAuthorization"> & {
       /** Set only by the trusted prepared-call path in UnifiedToolRegistry. */
@@ -334,7 +334,10 @@ export interface SharedToolModule {
     prepared?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1 | undefined,
   ): SharedToolRawHandler;
   resolveExecutionClass?(input: Record<string, unknown>): ToolExecutionClass;
-  prepareInputAdapter?(input: Record<string, unknown>): import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1;
+  prepareInputAdapter?(
+    input: Record<string, unknown>,
+    context?: SharedToolContext | undefined,
+  ): import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1;
   resolvePolicy?(
     context: SharedToolContext,
     input: Record<string, unknown>,
@@ -386,7 +389,11 @@ export interface ToolCatalog {
     (output: unknown, input: unknown) => SharedToolNormalizedResult
   >;
   resolveExecutionClass(name: string, input: Record<string, unknown>): ToolExecutionClass | undefined;
-  prepareInputAdapter(name: string, input: Record<string, unknown>): import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1 | undefined;
+  prepareInputAdapter(
+    name: string,
+    input: Record<string, unknown>,
+    context?: SharedToolContext | undefined,
+  ): import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1 | undefined;
   resolvePolicy(
     name: string,
     context: SharedToolContext,
