@@ -418,6 +418,7 @@ export interface TuiSessionMeta {
   pendingRunThreadId?: string | undefined;
   pendingQueueSubmissions?: TuiPendingQueueSubmission[] | undefined;
   queuedRunReservations?: TuiQueuedRunReservation[] | undefined;
+  terminalQueuedRuns?: TuiTerminalQueuedRun[] | undefined;
   acceptedRunId?: string | undefined;
   acceptedRunMessageId?: string | undefined;
   acceptedRunThreadId?: string | undefined;
@@ -440,6 +441,10 @@ export interface TuiQueuedRunReservation {
   runId: string;
   messageId: string;
   threadId: string;
+}
+
+export interface TuiTerminalQueuedRun extends TuiQueuedRunReservation {
+  status: "COMPLETED" | "FAILED";
 }
 
 export interface TuiPendingQueueSubmission {

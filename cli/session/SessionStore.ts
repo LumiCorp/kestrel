@@ -330,6 +330,7 @@ function validateSession(value: unknown): TuiSessionMeta {
     : undefined;
   const pendingQueueSubmissions = readExactRunIdentityCollection(entry.pendingQueueSubmissions);
   const queuedRunReservations = readExactRunIdentityCollection(entry.queuedRunReservations);
+  const terminalQueuedRuns = readTerminalQueuedRuns(entry.terminalQueuedRuns);
   const acceptedRunId = typeof entry.acceptedRunId === "string"
     ? entry.acceptedRunId
     : undefined;
@@ -406,6 +407,9 @@ function validateSession(value: unknown): TuiSessionMeta {
     ...(queuedRunReservations !== undefined && queuedRunReservations.length > 0
       ? { queuedRunReservations }
       : {}),
+    ...(terminalQueuedRuns !== undefined && terminalQueuedRuns.length > 0
+      ? { terminalQueuedRuns }
+      : {}),
     ...(acceptedRunId !== undefined ? { acceptedRunId } : {}),
     ...(acceptedRunMessageId !== undefined ? { acceptedRunMessageId } : {}),
     ...(acceptedRunThreadId !== undefined ? { acceptedRunThreadId } : {}),
@@ -441,6 +445,33 @@ function readExactRunIdentityCollection(
         }]
       : [];
   });
+}
+
+function readTerminalQueuedRuns(
+  value: unknown,
+): NonNullable<TuiSessionMeta["terminalQueuedRuns"]> | undefined {
+  if (Array.isArray(value) === false) return undefined;
+  const runs = value.flatMap((candidate) => {
+    if (
+      typeof candidate !== "object"
+      || candidate === null
+      || Array.isArray(candidate)
+    ) return [];
+    const record = candidate as Record<string, unknown>;
+    if (
+      typeof record.runId !== "string"
+      || typeof record.messageId !== "string"
+      || typeof record.threadId !== "string"
+      || (record.status !== "COMPLETED" && record.status !== "FAILED")
+    ) return [];
+    return [{
+      runId: record.runId,
+      messageId: record.messageId,
+      threadId: record.threadId,
+      status: record.status,
+    }];
+  });
+  return runs.length === 0 ? undefined : runs;
 }
 
 function readRequiredString(value: Record<string, unknown>, key: string): string {

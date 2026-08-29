@@ -1711,7 +1711,7 @@ export class App {
     if (this.runController === undefined) {
       this.runController = new TuiRunController({
         ...this.getAppContext(),
-        refreshWorkspaceForActiveSession: () => this.refreshWorkspaceForActiveSession(),
+        resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
         shouldApplyCompactionOnContinuationResume: (session) =>
           this.shouldApplyCompactionOnContinuationResume(session),
         buildSessionOperatorState: (input) => this.buildSessionOperatorState(input),
@@ -3355,7 +3355,6 @@ export class App {
   private async reconcilePendingForegroundQueueSessions(skipSessionId?: string): Promise<void> {
     const pending = this.sessionsFile.sessions.filter((session) =>
       session.sessionId !== skipSessionId
-      && session.delegation === undefined
       && (
         (session.pendingQueueSubmissions?.length ?? 0) > 0
         || (session.queuedRunReservations?.length ?? 0) > 0
@@ -4006,9 +4005,14 @@ export class App {
     ) return;
     this.persistProjectedSession(patchedSession);
     await this.saveSessionsFile();
+    const discoveredQueuedTerminal = (patchedSession.terminalQueuedRuns?.length ?? 0)
+      > (beforeProjection.terminalQueuedRuns?.length ?? 0);
     if (
-      patchedSession.acceptedRunId !== undefined
-      && (patchedSession.lastRunStatus === "COMPLETED" || patchedSession.lastRunStatus === "FAILED")
+      discoveredQueuedTerminal
+      || (
+        patchedSession.acceptedRunId !== undefined
+        && (patchedSession.lastRunStatus === "COMPLETED" || patchedSession.lastRunStatus === "FAILED")
+      )
     ) {
       await this.recoverTerminalMessages(patchedSession);
     }
@@ -4112,6 +4116,7 @@ export class App {
       pendingWaitFor: resolvedWaitFor,
       pendingQueueSubmissions: queuedLifecycle.pendingQueueSubmissions,
       queuedRunReservations: queuedLifecycle.queuedRunReservations,
+      terminalQueuedRuns: queuedLifecycle.terminalQueuedRuns,
       ...(recoveredAcceptedRoute?.runId !== undefined
         ? {
             pendingRunId: undefined,
@@ -4142,6 +4147,17 @@ export class App {
             pendingWaitFor: queuedLifecycle.accepted.status === "WAITING"
               ? describedView?.thread.waitFor
               : undefined,
+            ...(target.delegation !== undefined
+              ? {
+                  delegation: {
+                    ...target.delegation,
+                    status: queuedLifecycle.accepted.status,
+                    errorCode: undefined,
+                    errorMessage: undefined,
+                    updatedAt: payload.updatedAt ?? target.updatedAt,
+                  },
+                }
+              : {}),
           }),
       ...(payload.focusedThreadId !== undefined ? { focusedThreadId: payload.focusedThreadId } : {}),
       operatorState: this.buildSessionOperatorState({
@@ -4161,7 +4177,11 @@ export class App {
 
   private persistProjectedSession(patchedSession: TuiSessionMeta): void {
     const state = this.uiStore.getState();
+    const activeSessionName = this.sessionsFile.activeSessionName;
     this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, patchedSession);
+    if (state.activeSession.sessionId !== patchedSession.sessionId) {
+      this.sessionsFile = { ...this.sessionsFile, activeSessionName };
+    }
     this.uiStore.patch({
       sessions: this.sessionsFile.sessions,
       ...(state.activeSession.sessionId === patchedSession.sessionId
@@ -5088,7 +5108,9 @@ export class App {
           launchSummary:
             role === "system" && text.startsWith("Task=") ? text : undefined,
         });
+        const activeSessionName = this.sessionsFile.activeSessionName;
         this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, updatedSession);
+        this.sessionsFile = { ...this.sessionsFile, activeSessionName };
         const state = this.uiStore.getState();
         const activeSession =
           state.activeSession.sessionId === updatedSession.sessionId ? updatedSession : state.activeSession;
@@ -5170,6 +5192,11 @@ export class App {
     messageId: string;
   }): Promise<boolean> {
     const session = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
+    const terminalQueuedRun = session?.terminalQueuedRuns?.find((terminal) =>
+      terminal.runId === input.runId
+      && terminal.messageId === input.messageId
+      && terminal.threadId === input.threadId
+    );
     const queuedReservation = session?.queuedRunReservations?.find((reservation) =>
       reservation.runId === input.runId
       && reservation.messageId === input.messageId
@@ -5178,6 +5205,7 @@ export class App {
     if (
       session === undefined
       || session.delegation !== undefined
+      || terminalQueuedRun !== undefined
       || (
         queuedReservation === undefined
         && (
@@ -5246,20 +5274,41 @@ export class App {
       && reservation.threadId === input.threadId
     );
     if (queuedReservation === undefined) return false;
+    const terminalStatus = input.result.output.status === "COMPLETED"
+      ? "COMPLETED" as const
+      : input.result.output.status === "FAILED"
+        ? "FAILED" as const
+        : undefined;
+    const installAsCurrent = session.acceptedRunId === undefined
+      || session.acceptedRunId === queuedReservation.runId;
     const accepted: TuiSessionMeta = {
       ...session,
       started: true,
-      acceptedRunId: queuedReservation.runId,
-      acceptedRunMessageId: queuedReservation.messageId,
-      acceptedRunThreadId: queuedReservation.threadId,
+      ...(installAsCurrent
+        ? {
+            acceptedRunId: queuedReservation.runId,
+            acceptedRunMessageId: queuedReservation.messageId,
+            acceptedRunThreadId: queuedReservation.threadId,
+          }
+        : {}),
       queuedRunReservations: omitQueuedRunReservation(
         session.queuedRunReservations,
         queuedReservation,
       ),
-      pendingWaitFor: input.result.output.status === "WAITING"
-        ? input.result.output.waitFor
-        : undefined,
-      lastRunStatus: input.result.output.status,
+      terminalQueuedRuns: terminalStatus === undefined
+        ? session.terminalQueuedRuns
+        : appendTerminalQueuedRun(session.terminalQueuedRuns, {
+            ...queuedReservation,
+            status: terminalStatus,
+          }),
+      ...(installAsCurrent
+        ? {
+            pendingWaitFor: input.result.output.status === "WAITING"
+              ? input.result.output.waitFor
+              : undefined,
+            lastRunStatus: input.result.output.status,
+          }
+        : {}),
       ...(input.result.operatorAffordance !== undefined && owningProfile !== undefined
         ? {
             operatorState: this.buildSessionOperatorState({
@@ -6195,6 +6244,7 @@ function hasSameTuiLifecycleEvidence(left: TuiSessionMeta, right: TuiSessionMeta
       right.pendingQueueSubmissions,
     )
     && hasSameQueuedRunReservations(left.queuedRunReservations, right.queuedRunReservations)
+    && hasSameTerminalQueuedRuns(left.terminalQueuedRuns, right.terminalQueuedRuns)
     && left.acceptedRunId === right.acceptedRunId
     && left.acceptedRunMessageId === right.acceptedRunMessageId
     && left.acceptedRunThreadId === right.acceptedRunThreadId
@@ -6227,6 +6277,7 @@ function reconcileExactQueuedLifecycle(
 ): {
   pendingQueueSubmissions: TuiSessionMeta["pendingQueueSubmissions"];
   queuedRunReservations: TuiSessionMeta["queuedRunReservations"];
+  terminalQueuedRuns: TuiSessionMeta["terminalQueuedRuns"];
   accepted?: {
     runId: string;
     messageId: string;
@@ -6236,8 +6287,9 @@ function reconcileExactQueuedLifecycle(
 } {
   let pendingQueueSubmissions = session.pendingQueueSubmissions;
   let queuedRunReservations = session.queuedRunReservations;
+  let terminalQueuedRuns = session.terminalQueuedRuns;
   if (view === undefined) {
-    return { pendingQueueSubmissions, queuedRunReservations };
+    return { pendingQueueSubmissions, queuedRunReservations, terminalQueuedRuns };
   }
   const acceptedCandidates: Array<{
     runId: string;
@@ -6262,12 +6314,12 @@ function reconcileExactQueuedLifecycle(
       continue;
     }
     if (route?.disposition !== "started" || route.runId !== submission.runId) continue;
-    const status = exactRunStatusFromDescribedView(view, submission.runId);
+    const status = exactQueuedRunStatusFromDescribedView(view, submission.runId);
     if (status !== undefined) acceptedCandidates.push({ ...submission, status });
   }
   for (const reservation of session.queuedRunReservations ?? []) {
     if (reservation.threadId !== view.thread.threadId) continue;
-    const status = exactRunStatusFromDescribedView(view, reservation.runId);
+    const status = exactQueuedRunStatusFromDescribedView(view, reservation.runId);
     if (status !== undefined) acceptedCandidates.push({ ...reservation, status });
   }
   const distinctCandidates = acceptedCandidates.filter((candidate, index, candidates) =>
@@ -6277,7 +6329,31 @@ function reconcileExactQueuedLifecycle(
       && other.threadId === candidate.threadId
     ) === index
   );
-  const accepted = distinctCandidates.length === 1 ? distinctCandidates[0] : undefined;
+  const terminalCandidates = distinctCandidates.filter(
+    (candidate) => candidate.status === "COMPLETED" || candidate.status === "FAILED",
+  );
+  for (const terminal of terminalCandidates) {
+    pendingQueueSubmissions = omitExactRunIdentity(pendingQueueSubmissions, terminal);
+    queuedRunReservations = omitExactRunIdentity(queuedRunReservations, terminal);
+    terminalQueuedRuns = appendTerminalQueuedRun(terminalQueuedRuns, {
+      runId: terminal.runId,
+      messageId: terminal.messageId,
+      threadId: terminal.threadId,
+      status: terminal.status as "COMPLETED" | "FAILED",
+    });
+  }
+  const activeCandidates = distinctCandidates.filter(
+    (candidate) => candidate.status === "RUNNING" || candidate.status === "WAITING",
+  );
+  const soleCandidate = activeCandidates.length === 1
+    ? activeCandidates[0]
+    : activeCandidates.length === 0 && terminalCandidates.length === 1
+      ? terminalCandidates[0]
+      : undefined;
+  const accepted = soleCandidate !== undefined
+    && (session.acceptedRunId === undefined || session.acceptedRunId === soleCandidate.runId)
+    ? soleCandidate
+    : undefined;
   if (accepted !== undefined) {
     pendingQueueSubmissions = omitExactRunIdentity(pendingQueueSubmissions, accepted);
     queuedRunReservations = omitExactRunIdentity(queuedRunReservations, accepted);
@@ -6285,8 +6361,42 @@ function reconcileExactQueuedLifecycle(
   return {
     pendingQueueSubmissions,
     queuedRunReservations,
+    terminalQueuedRuns,
     ...(accepted !== undefined ? { accepted } : {}),
   };
+}
+
+function exactQueuedRunStatusFromDescribedView(
+  view: NonNullable<SessionDescribedEventPayload["operatorThreadView"]>,
+  runId: string,
+): "RUNNING" | "WAITING" | "COMPLETED" | "FAILED" | undefined {
+  if (view.activeRun?.runId === runId) return view.activeRun.status;
+  const terminalTurn = [...(view.conversationTurns ?? [])]
+    .reverse()
+    .find((turn) =>
+      turn.terminalRunId === runId
+      && (turn.status === "COMPLETED" || turn.status === "FAILED")
+    );
+  return terminalTurn?.status;
+}
+
+function appendTerminalQueuedRun(
+  terminalRuns: TuiSessionMeta["terminalQueuedRuns"],
+  terminal: NonNullable<TuiSessionMeta["terminalQueuedRuns"]>[number],
+): NonNullable<TuiSessionMeta["terminalQueuedRuns"]> {
+  const existing = terminalRuns ?? [];
+  const sameRun = existing.find((candidate) => candidate.runId === terminal.runId);
+  if (sameRun !== undefined) {
+    if (
+      sameRun.messageId !== terminal.messageId
+      || sameRun.threadId !== terminal.threadId
+      || sameRun.status !== terminal.status
+    ) {
+      throw new Error("Terminal queued run identity conflicted with durable lifecycle evidence.");
+    }
+    return existing;
+  }
+  return [...existing, terminal];
 }
 
 function omitExactRunIdentity<T extends { runId: string; messageId: string; threadId: string }>(
@@ -6341,6 +6451,20 @@ function hasSameQueuedRunReservations(
     return candidate?.runId === reservation.runId
       && candidate.messageId === reservation.messageId
       && candidate.threadId === reservation.threadId;
+  });
+}
+
+function hasSameTerminalQueuedRuns(
+  left: TuiSessionMeta["terminalQueuedRuns"],
+  right: TuiSessionMeta["terminalQueuedRuns"],
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.length === right.length && left.every((terminal, index) => {
+    const candidate = right[index];
+    return candidate?.runId === terminal.runId
+      && candidate.messageId === terminal.messageId
+      && candidate.threadId === terminal.threadId
+      && candidate.status === terminal.status;
   });
 }
 

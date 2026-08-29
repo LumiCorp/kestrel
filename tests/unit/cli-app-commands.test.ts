@@ -2872,6 +2872,217 @@ test("startup scans inactive foreground queue evidence by exact session identity
   assert.equal(reconciled?.acceptedRunMessageId, messageId);
   assert.equal(reconciled?.acceptedRunThreadId, threadId);
   assert.equal(uiStore.getState().activeSession.sessionId, visible.sessionId);
+  assert.equal(
+    (appState.sessionsFile as { activeSessionName?: string }).activeSessionName,
+    visible.name,
+  );
+});
+
+test("session-scoped inactive start mutation preserves visible and durable active selection", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const visible = uiStore.getState().activeSession;
+  const inactive: TuiSessionMeta = {
+    ...visible,
+    name: "inactive-start-owner",
+    sessionId: "inactive-start-owner",
+    started: false,
+  };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = { ...sessionsFile, sessions: [...sessionsFile.sessions, inactive] };
+  uiStore.patch({ sessions: [...uiStore.getState().sessions, inactive] });
+
+  await (appState.setSessionState as (
+    sessionId: string,
+    patch: Partial<TuiSessionMeta>,
+  ) => Promise<TuiSessionMeta | undefined>)(inactive.sessionId, {
+    started: true,
+    acceptedRunId: "run-inactive-start",
+  });
+
+  assert.equal(uiStore.getState().activeSession.sessionId, visible.sessionId);
+  assert.equal(
+    (appState.sessionsFile as { activeSessionName?: string }).activeSessionName,
+    visible.name,
+  );
+  assert.equal(
+    uiStore.getState().sessions.find((session) => session.sessionId === inactive.sessionId)?.acceptedRunId,
+    "run-inactive-start",
+  );
+});
+
+test("restart consumes every exact queued terminal without overriding a different accepted run", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const terminals = ["COMPLETED", "FAILED", "COMPLETED"] as const;
+  const reservations = terminals.map((status, index) => ({
+    runId: `run-offline-terminal-${index}`,
+    messageId: `message-offline-terminal-${index}`,
+    threadId,
+    status,
+  }));
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-current",
+    acceptedRunMessageId: "message-current",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: reservations.map(({ status: _status, ...identity }) => identity),
+  };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+  appState.recoverTerminalMessages = async () => {};
+
+  await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Multiple offline queue terminals",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-current", status: "RUNNING" },
+      conversationTurns: reservations.map((terminal, index) => ({
+        turnId: `turn-offline-terminal-${index}`,
+        threadId,
+        sessionId: recovering.sessionId,
+        sequence: index + 1,
+        status: terminal.status,
+        rootRunId: terminal.runId,
+        sourceMessageId: terminal.messageId,
+        terminalRunId: terminal.runId,
+        terminalStatus: terminal.status,
+        startedAt: recovering.createdAt,
+        completedAt: recovering.updatedAt,
+        updatedAt: recovering.updatedAt,
+      })),
+    },
+  });
+
+  const reconciled = uiStore.getState().activeSession as TuiSessionMeta & {
+    terminalQueuedRuns?: Array<{ runId: string; messageId: string; threadId: string; status: string }>;
+  };
+  assert.equal(reconciled.acceptedRunId, "run-current");
+  assert.equal(reconciled.acceptedRunMessageId, "message-current");
+  assert.equal(reconciled.queuedRunReservations, undefined);
+  assert.deepEqual(reconciled.terminalQueuedRuns, reservations);
+  const reloaded = new SessionStore(home).findByName(
+    await new SessionStore(home).load(),
+    recovering.name,
+  );
+  assert.deepEqual(reloaded?.terminalQueuedRuns, reservations);
+  for (const terminal of reservations) {
+    assert.equal(await (appState.syncForegroundSessionProgress as (
+      input: { sessionId: string; threadId: string; runId: string; messageId: string },
+    ) => Promise<boolean>)({
+      sessionId: recovering.sessionId,
+      threadId: terminal.threadId,
+      runId: terminal.runId,
+      messageId: terminal.messageId,
+    }), false);
+  }
+  assert.deepEqual(
+    (uiStore.getState().activeSession as TuiSessionMeta).terminalQueuedRuns,
+    reservations,
+  );
+});
+
+test("startup scans delegated running and waiting queue owners without changing active selection", async (t) => {
+  for (const status of ["RUNNING", "WAITING"] as const) {
+    await t.test(status, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const visible = uiStore.getState().activeSession;
+      const ownerSessionId = `delegated-queue-${status.toLowerCase()}`;
+      const threadId = `thread-main:${ownerSessionId}`;
+      const runId = `run-delegated-${status.toLowerCase()}`;
+      const messageId = `message-delegated-${status.toLowerCase()}`;
+      const now = visible.updatedAt;
+      const owner: TuiSessionMeta = {
+        ...visible,
+        name: `delegated-${status.toLowerCase()}`,
+        sessionId: ownerSessionId,
+        queuedRunReservations: [{ runId, messageId, threadId }],
+        delegation: {
+          taskId: `task-${ownerSessionId}`,
+          title: "Delegated queued owner",
+          status,
+          childSessionId: ownerSessionId,
+          childSessionName: `delegated-${status.toLowerCase()}`,
+          profileId: visible.profileId,
+          provider: "openrouter",
+          model: "test-model",
+          createdAt: now,
+          updatedAt: now,
+        },
+      };
+      const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+      appState.sessionsFile = { ...sessionsFile, sessions: [...sessionsFile.sessions, owner] };
+      uiStore.patch({ sessions: [...uiStore.getState().sessions, owner] });
+      appState.client = {
+        sendCommand: async (type: string, payload: Record<string, unknown>) => {
+          assert.equal(type, "session.describe");
+          assert.equal(payload.sessionId, ownerSessionId);
+          return {
+            type: "session.described",
+            payload: {
+              sessionId: ownerSessionId,
+              version: 1,
+              threadId,
+              operatorThreadView: {
+                thread: {
+                  threadId,
+                  sessionId: ownerSessionId,
+                  title: "Delegated queue owner",
+                  status,
+                  waitFor: status === "WAITING" ? { kind: "user", eventType: "user.reply" } : undefined,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+                childThreads: [],
+                childBlockerChain: [],
+                activeRun: { runId, status },
+              },
+            },
+          };
+        },
+      };
+
+      await (appState.reconcilePendingForegroundQueueSessions as (
+        skipSessionId?: string,
+      ) => Promise<void>)(visible.sessionId);
+
+      const reconciled = uiStore.getState().sessions.find(
+        (session) => session.sessionId === ownerSessionId,
+      );
+      assert.equal(reconciled?.queuedRunReservations, undefined);
+      assert.equal(reconciled?.acceptedRunId, runId);
+      assert.equal(reconciled?.acceptedRunMessageId, messageId);
+      assert.equal(reconciled?.delegation?.status, status);
+      assert.equal(uiStore.getState().activeSession.sessionId, visible.sessionId);
+      assert.equal(
+        (appState.sessionsFile as { activeSessionName?: string }).activeSessionName,
+        visible.name,
+      );
+    });
+  }
 });
 
 test("queued-route restart recovery rejects wrong thread, wrong message, and conflicting run evidence", async () => {
@@ -3006,6 +3217,12 @@ test("inactive foreground queued terminal ownership is written to the owning ses
   assert.equal(persisted?.acceptedRunMessageId, messageId);
   assert.equal(persisted?.acceptedRunThreadId, threadId);
   assert.equal(persisted?.lastRunStatus, "COMPLETED");
+  assert.deepEqual(persisted?.terminalQueuedRuns, [{
+    runId,
+    messageId,
+    threadId,
+    status: "COMPLETED",
+  }]);
   assert.deepEqual(persisted?.operatorState?.provider, {
     id: "openai",
     model: "owner-profile-model",
