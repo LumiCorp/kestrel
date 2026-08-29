@@ -68,7 +68,10 @@ Use focused regression tests at the owning seams. Include a real smoke path for 
 - Focused developer-shell, Local Core, runtime-environment, migration, and tool-result tests pass.
 - `pnpm validate` and `pnpm validate:postgres` pass.
 
-## Review blockers
+## Review repair issues
 
 - [Preserve standalone developer-shell store resolution](02-preserve-standalone-store-resolution.md)
 - [Make incompatible developer-shell replacement exclusive](03-make-incompatible-service-replacement-exclusive.md)
+- [Serialize developer-shell service bootstrap](04-serialize-service-bootstrap.md)
+- [Refuse unproven legacy service termination](05-refuse-unproven-legacy-service-termination.md)
+- [Assert store binding at command dispatch](06-assert-binding-at-command-dispatch.md)

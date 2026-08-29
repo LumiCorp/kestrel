@@ -51,6 +51,11 @@ import {
   readDevShellSocketIdentity,
   removeDevShellSocketIfOwned,
 } from "./socketOwnership.js";
+import {
+  acquireDevShellBootstrapAuthority,
+  createDevShellBootstrapAuthorityToken,
+} from "./bootstrapAuthority.js";
+import { buildDevShellRequestIdentityHeaders } from "./requestIdentity.js";
 
 interface BoundedDevShellOutput {
   text: string;
@@ -121,6 +126,8 @@ export class LocalDevShellService implements DevShellServicePort {
   private readonly env: NodeJS.ProcessEnv;
   private readonly storeBinding: DevShellStoreBinding | undefined;
   private readonly missingStoreDatabaseUrl: boolean;
+  private readonly bootstrapAuthorityPath: string;
+  private readonly bootstrapAuthorityToken: string;
   private ownedChild: ChildProcess | undefined;
 
   constructor(
@@ -143,6 +150,8 @@ export class LocalDevShellService implements DevShellServicePort {
     this.bootstrapStatusPath = baseDir === undefined
       ? readOptionalEnvPath("KESTREL_DEV_SHELL_STATUS_PATH", this.env) ?? path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE)
       : path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE);
+    this.bootstrapAuthorityPath = `${this.socketPath}.bootstrap-authority`;
+    this.bootstrapAuthorityToken = createDevShellBootstrapAuthorityToken();
     this.startupTimeoutMs =
       options.startupTimeoutMs ??
       readOptionalPositiveIntegerEnv("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS", this.env) ??
@@ -243,6 +252,20 @@ export class LocalDevShellService implements DevShellServicePort {
       return;
     }
 
+    const [socketIdentity, health, status] = await Promise.all([
+      readDevShellSocketIdentity(this.socketPath),
+      this.tryReadHealth(),
+      this.readBootstrapStatus(),
+    ]);
+    const canCleanOwnedSocket =
+      child.pid !== undefined &&
+      socketIdentity !== undefined &&
+      health?.serviceProtocolVersion === DEV_SHELL_SERVICE_PROTOCOL_VERSION &&
+      health.servicePid === child.pid &&
+      status?.status === "ready" &&
+      status.pid === child.pid &&
+      status.socketPath === this.socketPath;
+
     child.ref();
     if (isChildProcessRunning(child)) {
       child.kill("SIGTERM");
@@ -252,7 +275,9 @@ export class LocalDevShellService implements DevShellServicePort {
       child.kill("SIGKILL");
       await waitForChildProcessExit(child, 500);
     }
-    await rm(this.socketPath, { force: true });
+    if (canCleanOwnedSocket && isChildProcessRunning(child) === false) {
+      await removeDevShellSocketIfOwned(this.socketPath, socketIdentity);
+    }
   }
 
   private async runCommandWithObservedOutput(
@@ -383,17 +408,53 @@ export class LocalDevShellService implements DevShellServicePort {
   }
 
   private async ensureService(): Promise<void> {
-    let health: DevShellHealth | undefined;
+    const health = await this.tryReadHealth();
+    if (isCompatibleDevShellHealth(health, this.storeBinding)) {
+      return;
+    }
+
+    const authority = await acquireDevShellBootstrapAuthority({
+      authorityPath: this.bootstrapAuthorityPath,
+      ownerToken: this.bootstrapAuthorityToken,
+      timeoutMs: this.startupTimeoutMs,
+      pollIntervalMs: this.pollIntervalMs,
+    });
+    if (authority.status === "unavailable") {
+      throw await this.createUnavailableFailure(
+        authority.reason === "wait_timeout"
+          ? "bootstrap_authority_timeout"
+          : "bootstrap_authority_invalid",
+        authority.reason === "wait_timeout"
+          ? "Developer shell service startup is already controlled by another live client."
+          : "Developer shell service startup found invalid ownership evidence and stopped safely.",
+        {
+          ...(authority.ownerPid !== undefined
+            ? { authorityOwnerPid: authority.ownerPid }
+            : {}),
+          nextSuggestedAction:
+            authority.reason === "wait_timeout"
+              ? "The command did not run. Allow the current developer-shell bootstrap to finish, then retry the original command."
+              : "The command did not run. Inspect the developer-shell bootstrap authority and socket ownership before retrying the original command.",
+        },
+      );
+    }
+
     try {
-      health = await this.readHealth();
-    } catch {}
+      await this.ensureServiceWithAuthority();
+    } finally {
+      await authority.lease.release();
+    }
+  }
+
+  private async ensureServiceWithAuthority(): Promise<void> {
+    const health = await this.tryReadHealth();
     if (isCompatibleDevShellHealth(health, this.storeBinding)) {
       return;
     }
     if (health !== undefined) {
       await this.stopIncompatibleService(health);
     } else {
-      await this.refuseSpawnWhileReadyServiceIsStillRunning();
+      await this.refuseSpawnWithoutExclusiveSocketAuthority();
     }
 
     const prerequisiteFailure = this.readBootstrapPrerequisiteFailure();
@@ -443,11 +504,19 @@ export class LocalDevShellService implements DevShellServicePort {
     return this.performRequest<DevShellHealth>("GET", "/health");
   }
 
-  private async refuseSpawnWhileReadyServiceIsStillRunning(): Promise<void> {
+  private async tryReadHealth(): Promise<DevShellHealth | undefined> {
+    try {
+      return await this.readHealth();
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async refuseSpawnWithoutExclusiveSocketAuthority(): Promise<void> {
     const status = await this.readBootstrapStatus();
     const pid = status?.pid;
     if (
-      status?.status !== "ready" ||
+      (status?.status !== "ready" && status?.status !== "booting") ||
       status.socketPath !== this.socketPath ||
       typeof pid !== "number" ||
       Number.isInteger(pid) === false ||
@@ -455,6 +524,16 @@ export class LocalDevShellService implements DevShellServicePort {
       pid === process.pid ||
       isPidRunning(pid) === false
     ) {
+      if (await readDevShellSocketIdentity(this.socketPath) !== undefined) {
+        throw await this.createUnavailableFailure(
+          "socket_ownership_unproven",
+          "Developer shell found an existing local socket without provable live ownership.",
+          {
+            nextSuggestedAction:
+              "The command did not run. Inspect the developer-shell socket and bootstrap status before retrying the original command.",
+          },
+        );
+      }
       return;
     }
     throw await this.createUnavailableFailure(
@@ -473,10 +552,8 @@ export class LocalDevShellService implements DevShellServicePort {
     const pid = status?.pid;
     const socketIdentity = await readDevShellSocketIdentity(this.socketPath);
     const healthIdentityMatches =
-      health.serviceProtocolVersion === DEV_SHELL_SERVICE_PROTOCOL_VERSION
-        ? health.servicePid === pid
-        : health.serviceProtocolVersion ===
-          DEV_SHELL_SERVICE_PROTOCOL_VERSION - 1;
+      health.serviceProtocolVersion === DEV_SHELL_SERVICE_PROTOCOL_VERSION &&
+      health.servicePid === pid;
     if (
       status?.status !== "ready" ||
       typeof pid !== "number" ||
@@ -734,6 +811,24 @@ export class LocalDevShellService implements DevShellServicePort {
 
   private async performRequest<T>(method: string, pathname: string, body?: unknown): Promise<T> {
     const payload = body === undefined ? undefined : JSON.stringify(body);
+    const requestIdentityHeaders = pathname === "/health"
+      ? {}
+      : this.storeBinding === undefined
+        ? undefined
+        : buildDevShellRequestIdentityHeaders(this.storeBinding);
+    if (requestIdentityHeaders === undefined) {
+      throw this.readBootstrapPrerequisiteFailure() ?? createRuntimeFailure(
+        "DEV_SHELL_SERVICE_UNAVAILABLE",
+        "Developer shell request could not be bound to its configured store.",
+        {
+          subsystem: "dev_shell",
+          failureReason: "store_binding_unavailable",
+          failurePhase: "service_bootstrap",
+          nextSuggestedAction:
+            "The command did not run. Configure the developer-shell store, then retry the original command.",
+        },
+      );
+    }
     return new Promise<T>((resolve, reject) => {
       let settled = false;
       const rejectOnce = (error: unknown) => {
@@ -748,12 +843,16 @@ export class LocalDevShellService implements DevShellServicePort {
           socketPath: this.socketPath,
           path: pathname,
           method,
-          headers: payload === undefined
-            ? undefined
-            : {
+          agent: false,
+          headers: {
+            ...requestIdentityHeaders,
+            ...(payload === undefined
+              ? {}
+              : {
                 "content-type": "application/json",
                 "content-length": Buffer.byteLength(payload),
-              },
+                }),
+          },
         },
         (response) => {
           const chunks: Buffer[] = [];
@@ -958,8 +1057,8 @@ function isChildProcessRunning(child: ChildProcess): boolean {
   try {
     process.kill(child.pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return readNodeErrorCode(error) === "EPERM";
   }
 }
 
@@ -967,8 +1066,8 @@ function isPidRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return readNodeErrorCode(error) === "EPERM";
   }
 }
 

@@ -580,7 +580,7 @@ test("LocalDevShellService preserves structured supervisor request errors", asyn
   }
 });
 
-test("LocalDevShellService restarts a stale supervisor with legacy health", async () => {
+test("LocalDevShellService replaces a current incompatible supervisor and rechecks health", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
   const service = new LocalDevShellService(baseDir, {
     startupTimeoutMs: 20,
@@ -596,10 +596,18 @@ test("LocalDevShellService restarts a stale supervisor with legacy health", asyn
   service.performRequest = async (method: string, pathname: string) => {
     if (method === "GET" && pathname === "/health") {
       healthChecks += 1;
-      if (healthChecks === 1) {
+      if (healthChecks <= 2) {
         return {
           ok: true,
-          serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION - 1,
+          serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+          servicePid: process.pid,
+          storeDriver: service.storeBinding.driver,
+          storeBindingRevision: "binding-stale",
+          capabilities: {
+            processWriteAndRead: true,
+            processRetentionLeases: true,
+            processRetentionPromotion: true,
+          },
         };
       }
       return {
@@ -779,7 +787,7 @@ test("LocalDevShellService does not spawn while a ready service PID is finishing
   }
 });
 
-test("LocalDevShellService does not signal a stale status PID that disagrees with current health", async () => {
+test("LocalDevShellService never signals a sidecar PID from legacy health without service PID proof", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-stale-pid-"));
   await mkdir(baseDir, { recursive: true });
   const service = new LocalDevShellService(baseDir, {
@@ -793,15 +801,7 @@ test("LocalDevShellService does not signal a stale status PID that disagrees wit
       response.setHeader("content-type", "application/json; charset=utf-8");
       response.end(JSON.stringify({
         ok: true,
-        serviceProtocolVersion: ${DEV_SHELL_SERVICE_PROTOCOL_VERSION},
-        servicePid: process.pid,
-        storeDriver: "sqlite",
-        storeBindingRevision: "binding-stale",
-        capabilities: {
-          processWriteAndRead: true,
-          processRetentionLeases: true,
-          processRetentionPromotion: true,
-        },
+        serviceProtocolVersion: ${DEV_SHELL_SERVICE_PROTOCOL_VERSION - 1},
       }));
     });
     server.listen(${JSON.stringify(service.socketPath)});
@@ -904,7 +904,7 @@ test("LocalDevShellService stops a current incompatible service only when health
   }
 });
 
-test("LocalDevShellService waits for slow legacy shutdown before binding a replacement socket", async () => {
+test("LocalDevShellService waits for slow proven current shutdown before binding a replacement socket", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-slow-replacement-"));
   await mkdir(baseDir, { recursive: true });
   const service = new LocalDevShellService(baseDir, {
@@ -920,7 +920,15 @@ test("LocalDevShellService waits for slow legacy shutdown before binding a repla
       response.setHeader("content-type", "application/json; charset=utf-8");
       response.end(JSON.stringify({
         ok: true,
-        serviceProtocolVersion: ${DEV_SHELL_SERVICE_PROTOCOL_VERSION - 1},
+        serviceProtocolVersion: ${DEV_SHELL_SERVICE_PROTOCOL_VERSION},
+        servicePid: process.pid,
+        storeDriver: "sqlite",
+        storeBindingRevision: "binding-stale",
+        capabilities: {
+          processWriteAndRead: true,
+          processRetentionLeases: true,
+          processRetentionPromotion: true,
+        },
       }));
     });
     server.listen(socketPath);
@@ -1099,7 +1107,7 @@ test("LocalDevShellService rejects a healthy service with a different store bind
         servicePid: process.pid,
         storeDriver: "sqlite",
         storeBindingRevision:
-          healthChecks === 1 ? "binding-stale" : "binding-current",
+          healthChecks <= 2 ? "binding-stale" : "binding-current",
         capabilities: {
           processWriteAndRead: true,
           processRetentionLeases: true,

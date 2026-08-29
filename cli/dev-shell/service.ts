@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import http from "node:http";
-import { appendFileSync, chmodSync, rmSync } from "node:fs";
+import { appendFileSync, chmodSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,7 +15,7 @@ import {
   resolveDefaultDevShellLogPath,
   resolveDefaultDevShellSocketPath,
 } from "../../src/devshell/paths.js";
-import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
+import { asRuntimeError, createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type {
   DevShellHealth,
   DevProcessStartInput,
@@ -36,6 +36,10 @@ import {
   readDevShellSocketIdentity,
   removeDevShellSocketIfOwned,
 } from "../../src/devshell/socketOwnership.js";
+import {
+  isMatchingDevShellRequestIdentity,
+  readDevShellRequestIdentity,
+} from "../../src/devshell/requestIdentity.js";
 
 async function main(): Promise<void> {
   const socketPath = resolveSocketPath();
@@ -49,8 +53,6 @@ async function main(): Promise<void> {
     await mkdir(path.dirname(statusPath), { recursive: true });
     await writeBootstrapStatus(statusPath, { status: "booting" });
   }
-  rmSync(socketPath, { force: true });
-
   const repoRoot = resolveRepoRoot();
   const sqlitePath = path.join(path.dirname(socketPath), "store.db");
   let storeHandle: SqlExecutorStoreHandle;
@@ -143,7 +145,7 @@ async function main(): Promise<void> {
   });
 }
 
-async function handleRequest(
+export async function handleRequest(
   supervisor: DevShellSupervisor,
   storeBinding: DevShellStoreBinding,
   request: http.IncomingMessage,
@@ -154,6 +156,34 @@ async function handleRequest(
 
   if (method === "GET" && url.pathname === "/health") {
     writeJson(response, 200, createHealthPayload(storeBinding));
+    return;
+  }
+
+  const requestIdentity = readDevShellRequestIdentity(request.headers);
+  if (isMatchingDevShellRequestIdentity(requestIdentity, storeBinding) === false) {
+    writeJson(response, 409, {
+      error: asRuntimeError(createRuntimeFailure(
+        "DEV_SHELL_SERVICE_BINDING_MISMATCH",
+        "Developer shell request was rejected before dispatch because the service binding changed.",
+        {
+          subsystem: "dev_shell",
+          failureReason: "service_binding_mismatch",
+          failurePhase: "command_dispatch",
+          expectedServiceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+          expectedStoreDriver: storeBinding.driver,
+          expectedStoreBindingRevision: storeBinding.revision,
+          ...(requestIdentity === undefined
+            ? { receivedRequestIdentity: "missing_or_invalid" }
+            : {
+                receivedServiceProtocolVersion: requestIdentity.serviceProtocolVersion,
+                receivedStoreDriver: requestIdentity.storeDriver,
+                receivedStoreBindingRevision: requestIdentity.storeBindingRevision,
+              }),
+          nextSuggestedAction:
+            "The command or process action did not run. Retry so the client can bind the request to the current developer-shell service.",
+        },
+      )),
+    });
     return;
   }
 
@@ -448,9 +478,14 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.stack ?? error.message : String(error);
 }
 
-void main().catch((error) => {
-  const message = formatDevShellBootstrapFailureMessage(error);
-  writeBootstrapLog(message);
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
-});
+const invokedEntrypoint = process.argv[1] === undefined
+  ? undefined
+  : path.resolve(process.argv[1]);
+if (invokedEntrypoint === fileURLToPath(import.meta.url)) {
+  void main().catch((error) => {
+    const message = formatDevShellBootstrapFailureMessage(error);
+    writeBootstrapLog(message);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  });
+}
