@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Reject uncorrelated descriptions and preserve evidence](09-reject-uncorrelated-descriptions-and-preserve-evidence.md)
 
 ## In progress
 
