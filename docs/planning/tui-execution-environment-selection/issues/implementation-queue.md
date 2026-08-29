@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Make durable describe strictly read-only and deterministic](07-make-durable-describe-strictly-read-only-and-deterministic.md)
+None.
 
 ## In progress
 
@@ -21,6 +21,7 @@ None.
 - [Keep TUI sessions unstarted until execution actually begins](03-repair-tui-session-start-lifecycle.md)
 - [Bind TUI start state to authoritative runtime acceptance](05-bind-start-state-to-authoritative-runtime-acceptance.md)
 - [Make session describe durable and environment-authoritative](04-make-session-describe-durable-and-environment-authoritative.md)
+- [Make durable describe strictly read-only and deterministic](07-make-durable-describe-strictly-read-only-and-deterministic.md)
 
 ## Done
 

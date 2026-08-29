@@ -86,6 +86,7 @@ export class OperatorControlPlane {
     threadId?: string | undefined;
   }, options: {
     persistDefaultFocus?: boolean | undefined;
+    synchronizeAttention?: boolean | undefined;
   } = {}): Promise<OperatorInboxSnapshot> {
     const threads = await this.resolveThreads(input);
     const focusedThreadId = await this.resolveFocusedThreadId(
@@ -94,7 +95,10 @@ export class OperatorControlPlane {
       options.persistDefaultFocus ?? this.persistDefaultFocus,
     );
     const items = (
-      await Promise.all(threads.map((thread) => this.buildInboxItemsForThread(thread)))
+      await Promise.all(threads.map((thread) => this.buildInboxItemsForThread(
+        thread,
+        options.synchronizeAttention !== false,
+      )))
     ).flat().sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return {
       ...(focusedThreadId !== undefined ? { focusThreadId: focusedThreadId } : {}),
@@ -113,7 +117,10 @@ export class OperatorControlPlane {
     };
   }
 
-  async getOperatorThreadView(threadId: string): Promise<OperatorThreadView | null> {
+  async getOperatorThreadView(
+    threadId: string,
+    options: { synchronizeAttention?: boolean | undefined } = {},
+  ): Promise<OperatorThreadView | null> {
     const status = await this.runtime.getThreadStatus(threadId);
     if (status === null) {
       return null;
@@ -241,7 +248,10 @@ export class OperatorControlPlane {
     }).sort((left, right) =>
       left.createdAt.localeCompare(right.createdAt) || left.messageId.localeCompare(right.messageId)
     );
-    const inboxItems = (await this.buildInboxItemsForThread(status.thread)).map((item) => {
+    const inboxItems = (await this.buildInboxItemsForThread(
+      status.thread,
+      options.synchronizeAttention !== false,
+    )).map((item) => {
       if (item.runId === undefined) return item;
       const owner = conversationTurns.find((turn) =>
         turn.rootRunId === item.runId ||
@@ -1053,7 +1063,10 @@ export class OperatorControlPlane {
     return ;
   }
 
-  private async buildInboxItemsForThread(thread: ThreadRecord): Promise<OperatorInboxItem[]> {
+  private async buildInboxItemsForThread(
+    thread: ThreadRecord,
+    synchronizeAttention = true,
+  ): Promise<OperatorInboxItem[]> {
     const items: OperatorInboxItem[] = [];
     const status = await this.runtime.getThreadStatus(thread.threadId);
     if (status === null) {
@@ -1107,7 +1120,12 @@ export class OperatorControlPlane {
         detail: child.resultSummary ?? child.errorMessage ?? child.outcomeState,
       });
     }
-    const attention = await this.syncOperatorAttention(thread, status, doctor);
+    const attention = await this.projectOperatorAttention(
+      thread,
+      status,
+      doctor,
+      synchronizeAttention,
+    );
     items.push(...attention.map((record) => toAttentionInboxItem(record)));
     return items;
   }
@@ -1138,10 +1156,11 @@ export class OperatorControlPlane {
     });
   }
 
-  private async syncOperatorAttention(
+  private async projectOperatorAttention(
     thread: ThreadRecord,
     status: ThreadStatusSnapshot,
     doctor: Awaited<ReturnType<OperatorControlPlane["getDoctorForThread"]>>,
+    synchronizeAttention: boolean,
   ): Promise<OperatorAttentionRecord[]> {
     const existing = await this.store.listOperatorAttention({
       threadId: thread.threadId,
@@ -1150,28 +1169,38 @@ export class OperatorControlPlane {
     const activeKeys = new Set<string>();
     const pendingCheckpoints = status.contextCheckpoints.filter((entry) => entry.status === "PENDING");
     for (const checkpoint of pendingCheckpoints) {
-      const record = await this.upsertAttentionRecord(
-        existing,
-        buildCheckpointAttention(thread, checkpoint),
-      );
+      const proposed = buildCheckpointAttention(thread, checkpoint);
+      const record = synchronizeAttention
+        ? await this.upsertAttentionRecord(existing, proposed)
+        : mergeAttentionRecord(existing, proposed);
       activeRecords.push(record);
       activeKeys.add(attentionIdentity(record));
     }
     const blockerChain = await this.buildChildBlockerChain(thread);
     const dominantChildBlocker = blockerChain[blockerChain.length - 1];
     if (dominantChildBlocker?.delegationId !== undefined) {
-      const record = await this.upsertAttentionRecord(
-        existing,
-        buildChildBlockerAttention(thread, dominantChildBlocker),
+      const proposed = buildChildBlockerAttention(
+        thread,
+        dominantChildBlocker,
+        synchronizeAttention ? undefined : thread.updatedAt,
       );
+      const record = synchronizeAttention
+        ? await this.upsertAttentionRecord(existing, proposed)
+        : mergeAttentionRecord(existing, proposed);
       activeRecords.push(record);
       activeKeys.add(attentionIdentity(record));
     }
     if (doctor?.status === "STALLED") {
-      const proposed = buildStalledAttention(thread, doctor.dominantFailure?.message);
+      const proposed = buildStalledAttention(
+        thread,
+        doctor.dominantFailure?.message,
+        synchronizeAttention ? undefined : thread.updatedAt,
+      );
       const prior = existing.find((record) => attentionIdentity(record) === attentionIdentity(proposed));
       if (prior?.status !== "RESOLVED" || prior.metadata?.deferredThreadUpdatedAt !== thread.updatedAt) {
-        const record = await this.upsertAttentionRecord(existing, proposed);
+        const record = synchronizeAttention
+          ? await this.upsertAttentionRecord(existing, proposed)
+          : mergeAttentionRecord(existing, proposed);
         activeRecords.push(record);
         activeKeys.add(attentionIdentity(record));
       }
@@ -1183,12 +1212,14 @@ export class OperatorControlPlane {
       if (activeKeys.has(attentionIdentity(record))) {
         continue;
       }
-      await this.store.upsertOperatorAttention({
-        ...record,
-        status: "RESOLVED",
-        updatedAt: new Date().toISOString(),
-        resolvedAt: new Date().toISOString(),
-      });
+      if (synchronizeAttention) {
+        await this.store.upsertOperatorAttention({
+          ...record,
+          status: "RESOLVED",
+          updatedAt: new Date().toISOString(),
+          resolvedAt: new Date().toISOString(),
+        });
+      }
     }
     return activeRecords.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
@@ -1197,18 +1228,7 @@ export class OperatorControlPlane {
     existing: OperatorAttentionRecord[],
     next: OperatorAttentionRecord,
   ): Promise<OperatorAttentionRecord> {
-    const prior = existing.find((record) => attentionIdentity(record) === attentionIdentity(next));
-    const merged: OperatorAttentionRecord =
-      prior === undefined
-        ? next
-        : {
-            ...prior,
-            ...next,
-            attentionId: prior.attentionId,
-            createdAt: prior.createdAt,
-            status: "ACTIVE",
-            resolvedAt: undefined,
-          };
+    const merged = mergeAttentionRecord(existing, next);
     await this.store.upsertOperatorAttention(merged);
     return merged;
   }
@@ -1768,6 +1788,7 @@ function buildCheckpointAttention(
 function buildChildBlockerAttention(
   thread: ThreadRecord,
   blocker: OperatorChildBlockerChainEntry,
+  projectedAt = new Date().toISOString(),
 ): OperatorAttentionRecord {
   return {
     attentionId: `child:${thread.threadId}:${blocker.delegationId ?? blocker.threadId}`,
@@ -1784,13 +1805,16 @@ function buildChildBlockerAttention(
       status: blocker.status,
       ...(blocker.waitEventType !== undefined ? { waitEventType: blocker.waitEventType } : {}),
     },
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: projectedAt,
+    updatedAt: projectedAt,
   };
 }
 
-function buildStalledAttention(thread: ThreadRecord, detail: string | undefined): OperatorAttentionRecord {
-  const now = new Date().toISOString();
+function buildStalledAttention(
+  thread: ThreadRecord,
+  detail: string | undefined,
+  projectedAt = new Date().toISOString(),
+): OperatorAttentionRecord {
   return {
     attentionId: `stalled:${thread.threadId}`,
     sessionId: thread.sessionId,
@@ -1800,8 +1824,8 @@ function buildStalledAttention(thread: ThreadRecord, detail: string | undefined)
     title: `Thread '${thread.title}' appears stalled.`,
     detail: detail ?? "No forward progress detected.",
     recommendedAction: "retry",
-    createdAt: now,
-    updatedAt: now,
+    createdAt: projectedAt,
+    updatedAt: projectedAt,
   };
 }
 
@@ -1813,6 +1837,25 @@ function attentionIdentity(record: Pick<OperatorAttentionRecord, "kind" | "threa
     record.delegationId ?? "",
     record.childThreadId ?? "",
   ].join(":");
+}
+
+function mergeAttentionRecord(
+  existing: OperatorAttentionRecord[],
+  next: OperatorAttentionRecord,
+): OperatorAttentionRecord {
+  const prior = existing.find(
+    (record) => attentionIdentity(record) === attentionIdentity(next),
+  );
+  return prior === undefined
+    ? next
+    : {
+        ...prior,
+        ...next,
+        attentionId: prior.attentionId,
+        createdAt: prior.createdAt,
+        status: "ACTIVE",
+        resolvedAt: undefined,
+      };
 }
 
 function delegationStatusRank(status: DelegationRecord["status"]): number {

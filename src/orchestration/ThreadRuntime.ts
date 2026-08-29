@@ -1620,11 +1620,18 @@ export class ThreadRuntime implements ThreadRuntimePort {
   }) {
     return this.operatorControlPlane.listOperatorInbox(input, {
       persistDefaultFocus: false,
+      synchronizeAttention: false,
     });
   }
 
   async getOperatorThreadView(threadId: string) {
     return this.operatorControlPlane.getOperatorThreadView(threadId);
+  }
+
+  async getOperatorThreadViewReadOnly(threadId: string) {
+    return this.operatorControlPlane.getOperatorThreadView(threadId, {
+      synchronizeAttention: false,
+    });
   }
 
   async listOperatorRuns(input: {

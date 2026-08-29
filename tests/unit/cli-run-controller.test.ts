@@ -134,6 +134,7 @@ function createRunHarness(input: {
   omitRuntimeEnvironmentIdentity?: boolean | undefined;
   sessionDescribeWithoutRuntimeEvidence?: boolean | undefined;
   sessionDescribeError?: Error | undefined;
+  describedSessionId?: string | undefined;
 } = {}): {
   controller: TuiRunController;
   uiStore: UiStore;
@@ -243,11 +244,11 @@ function createRunHarness(input: {
             type: "session.described",
             payload: input.sessionDescribeWithoutRuntimeEvidence === true
               ? {
-                  sessionId: activeSession.sessionId,
+                  sessionId: input.describedSessionId ?? activeSession.sessionId,
                   version: 0,
                 }
               : {
-                  sessionId: activeSession.sessionId,
+                  sessionId: input.describedSessionId ?? activeSession.sessionId,
                   version: 1,
                   activeAssembly: {
                     mode: "explicit",
@@ -405,7 +406,11 @@ function createRunHarness(input: {
     syncBackgroundSessionProgress: async () => {},
     syncBackgroundSessionResult: async () => {},
     syncBackgroundSessionFailure: async () => {},
-    syncSessionFromDescribePayload: async (payload) => {
+    syncSessionFromDescribePayload: async (
+      payload: Parameters<
+        TuiRunControllerContext["syncSessionFromDescribePayload"]
+      >[0],
+    ) => {
       if (
         payload.threadId === undefined
         && payload.focusedThreadId === undefined
@@ -592,6 +597,21 @@ test("TuiRunController re-verifies a started session with cached exact identity 
   assert.equal(harness.sessionDescribeCount, 1);
   assert.equal(harness.commands.length, 0);
   assert.equal(harness.diagnostics.at(-1)?.scope, "tui.environment_identity");
+});
+
+test("TuiRunController rejects a session.describe response for a different session", async () => {
+  const harness = createRunHarness({
+    environmentPresetId: "cli_dev_local",
+    effectiveAssemblyId: "bundle:kestrel:developer",
+    describedSessionId: "different-session",
+  });
+
+  await assert.rejects(
+    harness.controller.startActiveTurn({ submittedMessage: "continue" }),
+    /different session/u,
+  );
+  assert.equal(harness.commands.length, 0);
+  assert.equal(harness.uiStore.getState().activeSession.effectiveAssemblyId, "bundle:kestrel:developer");
 });
 
 test("TuiRunController routes blocked-run replies through the interaction command adapter", async () => {

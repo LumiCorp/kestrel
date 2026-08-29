@@ -948,6 +948,12 @@ export class TuiRunController {
           `Environment unknown for session '${session.name}': runtime identity could not be described.`,
         );
       }
+      if (response.payload.sessionId !== session.sessionId) {
+        throw new TuiEnvironmentIdentityError(
+          "TUI_ENVIRONMENT_UNKNOWN",
+          `Environment unknown for session '${session.name}': runtime described a different session.`,
+        );
+      }
       const environmentPresetId = resolveTuiSessionEnvironment({
         session,
         runtimeEnvironmentPresetId: response.payload.activeAssembly?.environmentPresetId,

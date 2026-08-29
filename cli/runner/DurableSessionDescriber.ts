@@ -1,8 +1,5 @@
 import type { SessionStore } from "../../src/kestrel/contracts/store.js";
-import type {
-  ThreadAssemblyRecord,
-  ThreadRecord,
-} from "../../src/kestrel/contracts/orchestration.js";
+import type { ThreadRecord } from "../../src/kestrel/contracts/orchestration.js";
 import {
   buildOperatorSessionProjection,
   type OperatorSessionProjectionRuntime,
@@ -10,6 +7,7 @@ import {
 import { OperatorControlPlane } from "../../src/orchestration/OperatorControlPlane.js";
 import type { ThreadStatusSnapshot } from "../../src/orchestration/contracts.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import { selectLatestThreadAssemblyRecord } from "../../src/orchestration/threadAssemblyOrdering.js";
 import type { RunnerSessionDescriber } from "./RunnerHost.js";
 
 export function createDurableSessionDescriber(
@@ -52,9 +50,17 @@ function createReadOnlyProjectionRuntime(
       );
     },
     getThreadStatus,
-    listOperatorInbox: (input) => controlPlane.listOperatorInbox(input),
-    listOperatorInboxReadOnly: (input) => controlPlane.listOperatorInbox(input),
+    listOperatorInbox: (input) => controlPlane.listOperatorInbox(input, {
+      synchronizeAttention: false,
+    }),
+    listOperatorInboxReadOnly: (input) => controlPlane.listOperatorInbox(input, {
+      synchronizeAttention: false,
+    }),
     getOperatorThreadView: (threadId) => controlPlane.getOperatorThreadView(threadId),
+    getOperatorThreadViewReadOnly: (threadId) => controlPlane.getOperatorThreadView(
+      threadId,
+      { synchronizeAttention: false },
+    ),
     listDelegations: (threadId) => store.listDelegations({ parentThreadId: threadId }),
   };
 }
@@ -108,7 +114,7 @@ async function readThreadStatus(
     store.listContextSummaryArtifacts(threadId),
     store.listThreadAssemblyRecords(threadId),
   ]);
-  const activeAssembly = selectLatestAssemblyRecord(records);
+  const activeAssembly = selectLatestThreadAssemblyRecord(records);
   const assemblyBundle = activeAssembly === undefined
     ? null
     : await store.getAssemblyBundle(activeAssembly.bundleId);
@@ -122,16 +128,4 @@ async function readThreadStatus(
     ...(assemblyBundle !== null ? { assemblyBundle } : {}),
     ...(summaries[0] !== undefined ? { latestSummary: summaries[0] } : {}),
   };
-}
-
-function selectLatestAssemblyRecord(
-  records: ThreadAssemblyRecord[],
-): ThreadAssemblyRecord | undefined {
-  let latest: ThreadAssemblyRecord | undefined;
-  for (const record of records) {
-    if (latest === undefined || record.createdAt >= latest.createdAt) {
-      latest = record;
-    }
-  }
-  return latest;
 }

@@ -5,8 +5,9 @@ import { createDurableSessionDescriber } from "../../cli/runner/DurableSessionDe
 import type { SessionStore } from "../../src/kestrel/contracts/store.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 import { buildOperatorSessionProjection } from "../../src/orchestration/OperatorSessionProjection.js";
+import { OperatorControlPlane } from "../../src/orchestration/OperatorControlPlane.js";
 
-test("durable session describe recovers default-tmp-3 after restart without runtime state or writes", async () => {
+test("durable session describe fails closed when thread and assembly environment identities conflict", async () => {
   const store = new InMemorySessionStore();
   const sessionId = "reference-default-tmp-3";
   const threadId = `thread-main:${sessionId}`;
@@ -67,31 +68,206 @@ test("durable session describe recovers default-tmp-3 after restart without runt
     },
   }) as SessionStore;
 
-  const described = await createDurableSessionDescriber(readOnlyStore)
-    .describeSession(sessionId);
-
-  assert.equal(described?.threadId, threadId);
-  assert.equal(described?.focusedThreadId, threadId);
-  assert.equal(described?.activeAssembly?.bundleId, "assembly-safe");
-  assert.equal(described?.activeAssembly?.environmentPresetId, "cli_safe_local");
-  assert.equal(described?.waitFor?.kind, "user");
-  assert.deepEqual(described?.operatorInbox, {
-    total: 0,
-    actionable: 0,
-    approvals: 0,
-    userInputs: 0,
-    checkpoints: 0,
-    childBlockers: 0,
-    stalled: 0,
-    assemblyProposals: 0,
-    compatibilityAlerts: 0,
-  });
-  assert.equal(described?.operatorThreadView?.thread.threadId, threadId);
+  await assert.rejects(
+    createDurableSessionDescriber(readOnlyStore).describeSession(sessionId),
+    (error: unknown) =>
+      typeof error === "object"
+      && error !== null
+      && "code" in error
+      && error.code === "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+  );
   assert.deepEqual(mutationCalls, []);
   assert.equal(await store.getOperatorFocus(sessionId), null);
   assert.equal((await store.listThreads({ sessionId })).length, 1);
   assert.equal((await store.listThreadAssemblyRecords(threadId)).length, 1);
 });
+
+test("durable session describe uses a deterministic record-id tie-break for equal assembly timestamps", async () => {
+  const store = new InMemorySessionStore();
+  const sessionId = "equal-assembly-session";
+  const threadId = "equal-assembly-thread";
+  const createdAt = "2026-08-28T12:00:00.000Z";
+  await store.ensureSession(sessionId, "agent.loop");
+  await store.upsertThread({
+    threadId,
+    sessionId,
+    title: "Equal assemblies",
+    status: "IDLE",
+    metadata: { mainThread: true },
+    createdAt,
+    updatedAt: createdAt,
+  });
+  for (const suffix of ["a", "z"] as const) {
+    await store.upsertAssemblyBundle({
+      bundleId: `bundle-${suffix}`,
+      label: `Bundle ${suffix}`,
+      source: "profile_default",
+      toolAllowlist: [],
+      specialistIds: [],
+      metadata: {
+        environmentPresetId: suffix === "z" ? "cli_dev_local" : "cli_safe_local",
+      },
+      createdAt,
+      updatedAt: createdAt,
+    });
+    await store.appendThreadAssemblyRecord({
+      recordId: `record-${suffix}`,
+      threadId,
+      bundleId: `bundle-${suffix}`,
+      cause: "thread_start",
+      authority: "profile",
+      createdAt,
+    });
+  }
+
+  assert.deepEqual(
+    (await store.listThreadAssemblyRecords(threadId)).map((record) => record.recordId),
+    ["record-z", "record-a"],
+  );
+  const described = await createDurableSessionDescriber(store).describeSession(sessionId);
+  assert.equal(described?.activeAssembly?.bundleId, "bundle-z");
+  assert.equal(described?.activeAssembly?.environmentPresetId, "cli_dev_local");
+});
+
+for (const scenario of [
+  "pending_checkpoint",
+  "child_blocker",
+  "stalled",
+  "obsolete_attention",
+] as const) {
+  test(`durable session describe does not synchronize ${scenario} attention`, async () => {
+    const store = new InMemorySessionStore();
+    const sessionId = `attention-${scenario}`;
+    const threadId = `thread-${scenario}`;
+    const now = "2026-08-28T12:00:00.000Z";
+    await store.ensureSession(sessionId, "agent.loop");
+    await store.upsertThread({
+      threadId,
+      sessionId,
+      title: scenario,
+      status: "IDLE",
+      environmentPresetId: "cli_dev_local",
+      ...(scenario === "stalled" ? { activeRunId: `run-${scenario}` } : {}),
+      metadata: { mainThread: true },
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (scenario === "pending_checkpoint") {
+      await store.upsertContextCheckpoint({
+        checkpointId: "checkpoint-pending",
+        threadId,
+        runId: "run-pending",
+        status: "PENDING",
+        recommendedAction: "operator_checkpoint",
+        reason: "Review before continuing.",
+        createdAt: now,
+      });
+    }
+    if (scenario === "child_blocker") {
+      const childThreadId = "thread-blocked-child";
+      await store.upsertThread({
+        threadId: childThreadId,
+        sessionId: "child-blocker-session",
+        parentThreadId: threadId,
+        title: "Blocked child",
+        status: "WAITING",
+        waitFor: { kind: "user", eventType: "user.reply" },
+        createdAt: now,
+        updatedAt: now,
+      });
+      await store.upsertDelegation({
+        delegationId: "delegation-blocked-child",
+        parentThreadId: threadId,
+        childThreadId,
+        title: "Blocked child",
+        prompt: "Wait for user",
+        launchedBy: "agent",
+        status: "WAITING",
+        waitEventType: "user.reply",
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    if (scenario === "stalled") {
+      await store.appendRunEvent({
+        runId: `run-${scenario}`,
+        sessionId,
+        type: "run.started",
+        level: "INFO",
+        timestamp: "2026-08-28T11:00:00.000Z",
+        metadata: { threadId },
+      });
+    }
+    if (scenario === "obsolete_attention") {
+      await store.upsertOperatorAttention({
+        attentionId: "obsolete-attention",
+        sessionId,
+        threadId,
+        kind: "context_checkpoint",
+        status: "ACTIVE",
+        title: "Obsolete",
+        checkpointId: "missing-checkpoint",
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    const originalUpsert = store.upsertOperatorAttention.bind(store);
+    let attentionWrites = 0;
+    store.upsertOperatorAttention = async (record) => {
+      attentionWrites += 1;
+      await originalUpsert(record);
+    };
+
+    const described = await createDurableSessionDescriber(store).describeSession(sessionId);
+    const describedAgain = await createDurableSessionDescriber(store).describeSession(sessionId);
+
+    assert.equal(described?.threadId, threadId);
+    assert.equal(attentionWrites, 0);
+    assert.deepEqual(describedAgain, described);
+    const expectedKind = scenario === "pending_checkpoint"
+      ? "context_checkpoint"
+      : scenario === "child_blocker"
+        ? "child_thread_blocker"
+        : scenario === "stalled"
+          ? "stalled_thread_attention"
+          : undefined;
+    if (expectedKind !== undefined) {
+      assert.equal(
+        described?.operatorThreadView?.inboxItems.some(
+          (item) => item.kind === expectedKind,
+        ),
+        true,
+      );
+    }
+
+    const getThreadStatus = async (candidateThreadId: string) => {
+      const thread = await store.getThread(candidateThreadId);
+      if (thread === null) return null;
+      return {
+        thread,
+        openRequests: await store.listInteractionRequests({
+          threadId: candidateThreadId,
+          status: "PENDING",
+        }),
+        activeGrants: await store.listApprovalGrants({
+          threadId: candidateThreadId,
+          status: "ACTIVE",
+        }),
+        contextCheckpoints: await store.listContextCheckpoints({
+          threadId: candidateThreadId,
+        }),
+        delegations: await store.listDelegations({
+          parentThreadId: candidateThreadId,
+        }),
+      };
+    };
+    await new OperatorControlPlane({
+      store,
+      runtime: { getThreadStatus },
+    }).listOperatorInbox({ sessionId });
+    assert.equal(attentionWrites > 0, true);
+  });
+}
 
 test("durable session describe isolates exact session identity from other cached durable sessions", async () => {
   const store = new InMemorySessionStore();
@@ -210,6 +386,7 @@ test("read-only operator projection never invokes thread or focus creation seams
         },
       }),
       getOperatorThreadView: async () => null,
+      getOperatorThreadViewReadOnly: async () => null,
     },
   });
 

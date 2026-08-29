@@ -25,6 +25,7 @@ import type {
   ThreadStatusSnapshot,
 } from "./contracts.js";
 import type { ShellPresetId } from "../profile/runtimeProfile.js";
+import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
 export interface OperatorAssemblyProviderSummary {
   id: "openrouter" | "openai" | "anthropic" | "ollama" | "lmstudio";
@@ -189,6 +190,7 @@ export interface OperatorSessionProjectionRuntime {
     threadId?: string | undefined;
   }) => Promise<OperatorInboxSnapshot>) | undefined;
   getOperatorThreadView(threadId: string): Promise<OperatorThreadView | null>;
+  getOperatorThreadViewReadOnly?: ((threadId: string) => Promise<OperatorThreadView | null>) | undefined;
   listDelegations?: ((threadId: string) => Promise<DelegationRecord[]>) | undefined;
 }
 
@@ -267,7 +269,10 @@ export async function buildOperatorSessionProjection(
       : null;
   const operatorView =
     input.threadRuntime !== undefined && operatorFocusThreadId !== undefined
-      ? await input.threadRuntime.getOperatorThreadView(operatorFocusThreadId)
+      ? input.createMainThread === false
+        && input.threadRuntime.getOperatorThreadViewReadOnly !== undefined
+        ? await input.threadRuntime.getOperatorThreadViewReadOnly(operatorFocusThreadId)
+        : await input.threadRuntime.getOperatorThreadView(operatorFocusThreadId)
       : null;
   const focusedThreadId =
     operatorInbox?.focusThreadId ??
@@ -370,6 +375,25 @@ export function toOperatorAssemblySummary(
     };
   }
   const bundle = threadStatus.assemblyBundle;
+  const threadEnvironmentPresetId = threadStatus.thread.environmentPresetId;
+  const bundleEnvironmentPresetId = readAssemblyEnvironmentPresetId(bundle?.metadata);
+  if (
+    threadEnvironmentPresetId !== undefined
+    && bundleEnvironmentPresetId !== undefined
+    && threadEnvironmentPresetId !== bundleEnvironmentPresetId
+  ) {
+    throw createRuntimeFailure(
+      "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+      `Thread '${threadStatus.thread.threadId}' environment '${threadEnvironmentPresetId}' conflicts with active assembly '${bundleEnvironmentPresetId}'.`,
+      {
+        sessionId: threadStatus.thread.sessionId,
+        threadId: threadStatus.thread.threadId,
+        bundleId: bundle?.bundleId ?? record.bundleId,
+        threadEnvironmentPresetId,
+        bundleEnvironmentPresetId,
+      },
+    );
+  }
   const latestDecision = findLatestAssemblyDecision(threadStatus.thread.metadata);
   return {
     mode: record.bundleId === "implicit/legacy" ? "implicit_legacy" : "explicit",
@@ -377,10 +401,10 @@ export function toOperatorAssemblySummary(
     bundleId: bundle?.bundleId ?? record.bundleId,
     ...(bundle?.label !== undefined ? { label: bundle.label } : {}),
     ...(bundle?.source !== undefined ? { source: bundle.source } : {}),
-    ...(threadStatus.thread.environmentPresetId !== undefined
-      ? { environmentPresetId: threadStatus.thread.environmentPresetId }
-      : readAssemblyEnvironmentPresetId(bundle?.metadata) !== undefined
-        ? { environmentPresetId: readAssemblyEnvironmentPresetId(bundle?.metadata) }
+    ...(threadEnvironmentPresetId !== undefined
+      ? { environmentPresetId: threadEnvironmentPresetId }
+      : bundleEnvironmentPresetId !== undefined
+        ? { environmentPresetId: bundleEnvironmentPresetId }
         : {}),
     authority: record.authority,
     cause: record.cause,

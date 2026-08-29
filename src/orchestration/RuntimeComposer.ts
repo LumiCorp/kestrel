@@ -8,6 +8,7 @@ import type {
   ThreadAssemblyRecord,
   ThreadRecord,
 } from "./contracts.js";
+import { selectLatestThreadAssemblyRecord } from "./threadAssemblyOrdering.js";
 import type { AssemblyChangeCause } from "../kestrel/contracts/orchestration.js";
 
 import type { AssemblyCatalog } from "./AssemblyCatalog.js";
@@ -106,7 +107,7 @@ export class RuntimeComposer {
     bundle?: AssemblyBundleRecord | undefined;
   } | null> {
     const records = await this.store.listThreadAssemblyRecords(threadId);
-    const record = selectLatestAssemblyRecord(records);
+    const record = selectLatestThreadAssemblyRecord(records);
     if (record === undefined) {
       return null;
     }
@@ -583,18 +584,6 @@ function readModelOverride(runtimeAssembly: Record<string, unknown> | undefined)
 
 function readPromptVariantOverride(runtimeAssembly: Record<string, unknown> | undefined): string | undefined {
   return typeof runtimeAssembly?.promptVariant === "string" ? runtimeAssembly.promptVariant : undefined;
-}
-
-function selectLatestAssemblyRecord(
-  records: ThreadAssemblyRecord[],
-): ThreadAssemblyRecord | undefined {
-  let latest: ThreadAssemblyRecord | undefined;
-  for (const record of records) {
-    if (latest === undefined || record.createdAt >= latest.createdAt) {
-      latest = record;
-    }
-  }
-  return latest;
 }
 
 function sameStrings(left: string[], right: string[]): boolean {
