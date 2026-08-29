@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Preserve queued evidence after acceptance](29-preserve-queued-evidence-after-acceptance.md)
 
 ## In progress
 
