@@ -985,6 +985,9 @@ export class TuiRunController {
           sessionId: session.sessionId,
           persistedEnvironmentPresetId: session.environmentPresetId,
           cause: error instanceof Error ? error.message : String(error),
+          ...(identityError.details !== undefined
+            ? { failureDetails: identityError.details }
+            : {}),
         }),
       });
       throw identityError;

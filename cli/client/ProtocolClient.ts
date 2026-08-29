@@ -210,6 +210,19 @@ export class ProtocolClient {
     const correlatedPending = event.commandId === undefined
       ? undefined
       : this.pending.get(event.commandId);
+    if (event.type === "session.described") {
+      if (correlatedPending?.requestedSessionId === undefined) {
+        return;
+      }
+      if (event.payload.sessionId !== correlatedPending.requestedSessionId) {
+        this.pending.delete(event.commandId as string);
+        correlatedPending.reject(createSessionDescribeMismatchError({
+          requestedSessionId: correlatedPending.requestedSessionId,
+          describedSessionId: event.payload.sessionId,
+        }));
+        return;
+      }
+    }
     if (
       correlatedPending !== undefined
       && isRunnerEventAllowedForCommand(correlatedPending.commandType, event) === false
@@ -223,18 +236,6 @@ export class ProtocolClient {
     }
     if (event.type === "runner.error" && event.commandId === undefined) {
       this.lastProcessError = normalizeDiagnosticLine(event.payload.message);
-    }
-    if (
-      correlatedPending?.requestedSessionId !== undefined
-      && event.type === "session.described"
-      && event.payload.sessionId !== correlatedPending.requestedSessionId
-    ) {
-      this.pending.delete(event.commandId as string);
-      correlatedPending.reject(createSessionDescribeMismatchError({
-        requestedSessionId: correlatedPending.requestedSessionId,
-        describedSessionId: event.payload.sessionId,
-      }));
-      return;
     }
     for (const listener of this.listeners) {
       try {

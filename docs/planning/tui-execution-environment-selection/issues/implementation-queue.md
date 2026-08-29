@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Reject uncorrelated descriptions and preserve evidence](09-reject-uncorrelated-descriptions-and-preserve-evidence.md)
+None.
 
 ## In progress
 
@@ -23,6 +23,7 @@ None.
 - [Make session describe durable and environment-authoritative](04-make-session-describe-durable-and-environment-authoritative.md)
 - [Make durable describe strictly read-only and deterministic](07-make-durable-describe-strictly-read-only-and-deterministic.md)
 - [Preserve environment consistency through protocol correlation](08-preserve-environment-consistency-through-protocol-correlation.md)
+- [Reject uncorrelated descriptions and preserve evidence](09-reject-uncorrelated-descriptions-and-preserve-evidence.md)
 
 ## Done
 

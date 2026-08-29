@@ -604,7 +604,16 @@ for (const code of [
   "SESSION_ENVIRONMENT_IDENTITY_UNSUPPORTED",
 ] as const) {
   test(`TuiRunController preserves ${code} in ordinary-turn diagnostics`, async () => {
-    const sessionDescribeError = Object.assign(new Error(`runtime ${code}`), { code });
+    const details = {
+      sessionId: "session-1",
+      threadId: "thread-main:session-1",
+      bundleId: "bundle-environment-failure",
+      bundleEnvironmentPresetId: "cli_future_local",
+    };
+    const sessionDescribeError = Object.assign(new Error(`runtime ${code}`), {
+      code,
+      details,
+    });
     const harness = createRunHarness({
       environmentPresetId: "cli_dev_local",
       effectiveAssemblyId: "bundle:kestrel:developer",
@@ -613,13 +622,22 @@ for (const code of [
 
     await assert.rejects(
       harness.controller.startActiveTurn({ submittedMessage: "continue" }),
-      (error: unknown) =>
-        error instanceof Error
-        && "code" in error
-        && error.code === code,
+      (error: unknown) => {
+        assert.ok(error instanceof Error && "code" in error && error.code === code);
+        assert.deepEqual(
+          (error as Error & { details?: Record<string, unknown> }).details,
+          details,
+        );
+        return true;
+      },
     );
     assert.equal(harness.commands.length, 0);
-    assert.match(harness.diagnostics.at(-1)?.details ?? "", new RegExp(code, "u"));
+    const diagnostic = JSON.parse(harness.diagnostics.at(-1)?.details ?? "{}") as {
+      code?: string;
+      failureDetails?: Record<string, unknown>;
+    };
+    assert.equal(diagnostic.code, code);
+    assert.deepEqual(diagnostic.failureDetails, details);
   });
 }
 

@@ -246,7 +246,13 @@ for (const code of [
       sessions: [main, target],
     };
     let changedActiveSession = false;
-    const runtimeError = Object.assign(new Error(`runtime ${code}`), { code });
+    const details = {
+      sessionId: target.sessionId,
+      threadId: `thread-main:${target.sessionId}`,
+      bundleId: "bundle-environment-failure",
+      bundleEnvironmentPresetId: "cli_future_local",
+    };
+    const runtimeError = Object.assign(new Error(`runtime ${code}`), { code, details });
     const context = {
       uiStore: { getState: () => ({ activeSession: main }) },
       sessionStore: {
@@ -262,9 +268,12 @@ for (const code of [
 
     await assert.rejects(
       new SessionController(context).switchSession(target.name),
-      (error: unknown) =>
-        error instanceof TuiEnvironmentIdentityError
-        && error.code === code,
+      (error: unknown) => {
+        assert.ok(error instanceof TuiEnvironmentIdentityError);
+        assert.equal(error.code, code);
+        assert.deepEqual(error.details, details);
+        return true;
+      },
     );
     assert.equal(changedActiveSession, false);
   });

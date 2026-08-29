@@ -19,6 +19,7 @@ export class TuiEnvironmentIdentityError extends Error {
       | "TUI_ENVIRONMENT_CONFLICT"
       | SessionEnvironmentIdentityFailureCode,
     message: string,
+    readonly details?: Record<string, unknown> | undefined,
   ) {
     super(message);
     this.name = "TuiEnvironmentIdentityError";
@@ -39,7 +40,13 @@ export function readTuiEnvironmentIdentityFailure(
   const message = error instanceof Error
     ? error.message
     : `Environment identity verification failed with '${code}'.`;
-  return new TuiEnvironmentIdentityError(code, message);
+  const details = "details" in error
+    && typeof error.details === "object"
+    && error.details !== null
+    && Array.isArray(error.details) === false
+      ? error.details as Record<string, unknown>
+      : undefined;
+  return new TuiEnvironmentIdentityError(code, message, details);
 }
 
 export function defaultTuiEnvironmentPresetId(

@@ -903,7 +903,112 @@ test("ProtocolClient rejects mismatched session.described before publishing it t
     );
     return true;
   });
+  transport.emitEvent({
+    id: "evt-late-correct-session-description",
+    type: "session.described",
+    ts: new Date().toISOString(),
+    commandId: "command-mismatched-session-description",
+    payload: {
+      sessionId: "session-requested",
+      version: 1,
+      operatorThreadView: {
+        thread: {
+          threadId: "thread-main:session-requested",
+          sessionId: "session-requested",
+          title: "Late active-session view",
+          status: "WAITING",
+        },
+      },
+    },
+  });
   assert.deepEqual(seen, []);
+  await client.close();
+});
+
+test("ProtocolClient drops unsolicited session.described events with or without command identity", async () => {
+  const transport = new ControlledExitTransport();
+  transport.respondToPing = false;
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  client.onEvent((event) => seen.push(event.type));
+  client.start();
+
+  for (const commandId of ["unsolicited-command", undefined] as const) {
+    transport.emitEvent({
+      id: `evt-unsolicited-${commandId ?? "none"}`,
+      type: "session.described",
+      ts: new Date().toISOString(),
+      ...(commandId !== undefined ? { commandId } : {}),
+      payload: {
+        sessionId: "session-active",
+        version: 1,
+        operatorThreadView: {
+          thread: {
+            threadId: "thread-main:session-active",
+            sessionId: "session-active",
+            title: "Unsolicited active-session view",
+            status: "WAITING",
+          },
+        },
+      },
+    });
+  }
+
+  assert.deepEqual(seen, []);
+  const unrelatedPending = client.sendCommandWithId(
+    "live-unrelated-command",
+    "runner.ping",
+    { nonce: "still-live" },
+  );
+  await tick();
+  transport.emitEvent({
+    id: "evt-description-colliding-with-unrelated-command",
+    type: "session.described",
+    ts: new Date().toISOString(),
+    commandId: "live-unrelated-command",
+    payload: { sessionId: "session-active", version: 1 },
+  });
+  assert.deepEqual(seen, []);
+  transport.emitEvent({
+    id: "evt-unrelated-command-response",
+    type: "runner.pong",
+    ts: new Date().toISOString(),
+    commandId: "live-unrelated-command",
+    payload: { nonce: "still-live" },
+  });
+  assert.equal((await unrelatedPending).type, "runner.pong");
+  await client.close();
+});
+
+test("ProtocolClient publishes one valid correlated session.described response and drops duplicates", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  client.onEvent((event) => seen.push(event.type));
+  const event = {
+    id: "evt-valid-session-description",
+    type: "session.described",
+    ts: new Date().toISOString(),
+    commandId: "command-valid-session-description",
+    payload: {
+      sessionId: "session-requested",
+      version: 1,
+    },
+  } as const;
+
+  const pending = client.sendCommandWithId(
+    event.commandId,
+    "session.describe",
+    { sessionId: event.payload.sessionId },
+  );
+  await tick();
+  transport.emitEvent(event);
+  const response = await pending;
+  assert.equal(response.type, "session.described");
+  assert.deepEqual(seen, ["session.described"]);
+
+  transport.emitEvent({ ...event, id: "evt-duplicate-session-description" });
+  assert.deepEqual(seen, ["session.described"]);
   await client.close();
 });
 
