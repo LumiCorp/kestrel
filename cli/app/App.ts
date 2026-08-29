@@ -87,6 +87,7 @@ import { WorkspaceController, type WorkspaceSelection } from "./WorkspaceControl
 import type { ProtocolClient } from "../client/ProtocolClient.js";
 import { createConfiguredCliProtocolClient } from "../client/configuredClient.js";
 import type { LocalCoreConnectionManager } from "../../src/localCore/connectionManager.js";
+import type { LocalCoreExecutionProfileResolution } from "../../src/localCore/contracts.js";
 import {
   defaultTuiEnvironmentPresetId,
   resolveTuiSessionEnvironment,
@@ -1707,6 +1708,7 @@ export class App {
           this.syncBackgroundSessionResult(output, assistantText, finalizedPayload, operatorState),
         syncBackgroundSessionFailure: (sessionId, message) =>
           this.syncBackgroundSessionFailure(sessionId, message),
+        syncSessionFromDescribePayload: (payload) => this.syncSessionFromDescribePayload(payload),
         applyTerminalResult: (sessionId, result, finalizedPayload) => this.applyTerminalResult(sessionId, result, finalizedPayload),
         recoverTerminalMessages: (session) => this.recoverTerminalMessages(session),
         getChatWrappedBodyWidth: () => this.getChatLayout(this.uiStore.getState()).wrappedBodyWidth,
@@ -3079,17 +3081,14 @@ export class App {
       await this.saveSessionsFile();
 
       const effectiveProfile = profile;
-      const core = await this.prepareLocalCoreClient();
-      if (core === undefined) {
-        await this.failBackgroundLaunchSetup(
-          delegatedSession,
-          delegation,
-          "Kestrel Local Core is required to resolve background execution profiles.",
-        );
-        return;
-      }
-      let executionProfile: Awaited<ReturnType<typeof core.resolveExecutionProfile>>;
+      let executionProfile: LocalCoreExecutionProfileResolution;
       try {
+        const core = await this.prepareLocalCoreClient();
+        if (core === undefined) {
+          throw new Error(
+            "Kestrel Local Core is required to resolve background execution profiles.",
+          );
+        }
         executionProfile = await core.resolveExecutionProfile({
           client: "cli",
           profileId: profile.id,
@@ -3099,6 +3098,9 @@ export class App {
           delegatedSession,
           toResolvedSessionIdentity(executionProfile, inheritedEnvironmentPresetId),
         );
+        this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, delegatedSession);
+        this.uiStore.patch({ sessions: this.sessionsFile.sessions });
+        await this.saveSessionsFile();
       } catch (error) {
         await this.failBackgroundLaunchSetup(
           delegatedSession,
@@ -3107,23 +3109,6 @@ export class App {
         );
         return;
       }
-      const runningDelegation: DelegationTaskMeta = {
-        ...delegation,
-        status: "RUNNING",
-        updatedAt: new Date().toISOString(),
-      };
-      Object.assign(delegatedSession, {
-        started: true,
-        delegation: runningDelegation,
-      });
-      this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, delegatedSession);
-      await this.saveSessionsFile();
-      await this.appendSessionHistoryLine(
-        delegatedSession,
-        "system",
-        `Background task started for '${prompt}'.`,
-      );
-      await this.appendHistoryLine("system", `Launched background task '${delegatedSession.name}'.`);
       void this.client.sendCommand("run.start", {
         profileId: executionProfile.profileId,
         turn: {
@@ -3141,13 +3126,14 @@ export class App {
           ...(workspace !== undefined ? { workspace: workspace.runtimeContext } : {}),
           stepAgent: getEntryStepAgent(effectiveProfile),
         },
+      }).then(async (response) => {
+        await this.syncBackgroundLaunchResponse(delegatedSession.sessionId, response);
       }).catch(async (error) => {
-        await this.updateTaskSessionFromMeta({
-          ...runningDelegation,
-          status: "FAILED",
-          errorMessage: error instanceof Error ? error.message : String(error),
-          updatedAt: new Date().toISOString(),
-        });
+        await this.reconcileBackgroundLaunchSubmissionFailure(
+          delegatedSession,
+          delegation,
+          error instanceof Error ? error.message : String(error),
+        );
       });
       return;
     }
@@ -3187,6 +3173,90 @@ export class App {
     await this.appendHistoryLine(
       "system",
       `Background task '${failedSession.name}' failed to start: ${message}`,
+    );
+  }
+
+  private async syncBackgroundLaunchResponse(
+    sessionId: string,
+    response: RunnerEvent,
+  ): Promise<void> {
+    if (response.type === "run.completed") {
+      await this.syncBackgroundSessionResult(
+        response.payload.result.output,
+        response.payload.result.assistantText,
+        response.payload.result.finalizedPayload,
+        response.payload.result.operatorAffordance,
+      );
+      return;
+    }
+    if (response.type === "run.failed" && response.payload.result !== undefined) {
+      await this.syncBackgroundSessionFailure(sessionId, response.payload.error.message);
+      return;
+    }
+    if (response.type === "run.cancelled") {
+      await this.syncBackgroundSessionFailure(
+        sessionId,
+        response.payload.result.output.errors[0]?.message ?? "Run cancelled.",
+      );
+      return;
+    }
+    const message = response.type === "run.failed"
+      ? response.payload.error.message
+      : `Unexpected background launch response '${response.type}'.`;
+    const session = this.sessionsFile.sessions.find((item) => item.sessionId === sessionId);
+    if (session?.delegation !== undefined) {
+      await this.reconcileBackgroundLaunchSubmissionFailure(session, session.delegation, message);
+    }
+  }
+
+  private async reconcileBackgroundLaunchSubmissionFailure(
+    session: TuiSessionMeta,
+    delegation: DelegationTaskMeta,
+    message: string,
+  ): Promise<void> {
+    try {
+      const described = await this.client.sendCommand("session.describe", {
+        sessionId: session.sessionId,
+      });
+      if (
+        described.type === "session.described"
+        && (
+          described.payload.threadId !== undefined
+          || described.payload.focusedThreadId !== undefined
+          || described.payload.activeAssembly !== undefined
+        )
+      ) {
+        const before = this.sessionsFile.sessions.find((item) => item.sessionId === session.sessionId);
+        await this.syncSessionFromDescribePayload(described.payload);
+        const threadStatus = described.payload.operatorThreadView?.thread.status;
+        const runtimeStatus = described.payload.operatorThreadView?.activeRun?.status
+          ?? (threadStatus === "RUNNING"
+            || threadStatus === "WAITING"
+            || threadStatus === "COMPLETED"
+            || threadStatus === "FAILED"
+              ? threadStatus
+              : undefined);
+        const current = this.sessionsFile.sessions.find((item) => item.sessionId === session.sessionId);
+        if (current?.delegation !== undefined) {
+          await this.updateAcceptedBackgroundSession({
+            ...current.delegation,
+            ...(runtimeStatus !== undefined ? { status: runtimeStatus } : {}),
+            updatedAt: new Date().toISOString(),
+          }, before?.started !== true);
+        }
+        return;
+      }
+    } catch {
+      // A durable run.started event may already have established acceptance while the response was lost.
+    }
+    const current = this.sessionsFile.sessions.find((item) => item.sessionId === session.sessionId);
+    if (current?.started === true) {
+      return;
+    }
+    await this.failBackgroundLaunchSetup(
+      current ?? session,
+      current?.delegation ?? delegation,
+      message,
     );
   }
 
@@ -3741,6 +3811,11 @@ export class App {
     }
     const patchedSession: TuiSessionMeta = {
       ...target,
+      started:
+        target.started
+        || payload.threadId !== undefined
+        || payload.focusedThreadId !== undefined
+        || payload.activeAssembly !== undefined,
       environmentPresetId,
       ...(payload.activeAssembly?.bundleId !== undefined
         ? { effectiveAssemblyId: payload.activeAssembly.bundleId }
@@ -4765,11 +4840,37 @@ export class App {
     if (session?.delegation === undefined) {
       return;
     }
-    await this.updateTaskSessionFromMeta({
+    await this.updateAcceptedBackgroundSession({
       ...session.delegation,
       status: "RUNNING",
       updatedAt: new Date().toISOString(),
     });
+  }
+
+  private async updateAcceptedBackgroundSession(
+    task: DelegationTaskMeta,
+    appendStartedHistory?: boolean,
+  ): Promise<void> {
+    const existing = this.sessionsFile.sessions.find(
+      (item) => item.sessionId === task.childSessionId,
+    );
+    const shouldAppendStartedHistory = appendStartedHistory ?? existing?.started !== true;
+    await this.updateTaskSessionFromMeta(task);
+    if (shouldAppendStartedHistory === false) {
+      return;
+    }
+    const accepted = this.sessionsFile.sessions.find(
+      (item) => item.sessionId === task.childSessionId,
+    );
+    if (accepted === undefined) {
+      return;
+    }
+    await this.appendSessionHistoryLine(
+      accepted,
+      "system",
+      `Background task started: ${task.title}`,
+    );
+    await this.appendHistoryLine("system", `Launched background task '${accepted.name}'.`);
   }
 
   private async syncBackgroundSessionResult(
@@ -4782,7 +4883,7 @@ export class App {
     if (session?.delegation === undefined) {
       return;
     }
-    await this.updateTaskSessionFromMeta({
+    await this.updateAcceptedBackgroundSession({
       ...session.delegation,
       status: output.status === "WAITING" ? "WAITING" : "COMPLETED",
       waitEventType: output.waitFor?.eventType,
@@ -4793,13 +4894,19 @@ export class App {
       updatedAt: new Date().toISOString(),
     });
     if (operatorState !== undefined) {
+      const acceptedSession = this.sessionsFile.sessions.find(
+        (item) => item.sessionId === output.sessionId,
+      );
+      if (acceptedSession === undefined) {
+        return;
+      }
       const updatedSession: TuiSessionMeta = {
-        ...session,
+        ...acceptedSession,
         pendingWaitFor: output.status === "WAITING" ? output.waitFor : undefined,
         lastRunStatus: output.status,
         operatorState: this.buildSessionOperatorState({
           session: {
-            ...session,
+            ...acceptedSession,
             pendingWaitFor: output.status === "WAITING" ? output.waitFor : undefined,
             lastRunStatus: output.status,
           },
@@ -4820,7 +4927,7 @@ export class App {
     if (session?.delegation === undefined) {
       return;
     }
-    await this.updateTaskSessionFromMeta({
+    await this.updateAcceptedBackgroundSession({
       ...session.delegation,
       status: "FAILED",
       errorMessage: message,

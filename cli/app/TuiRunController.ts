@@ -6,7 +6,7 @@ import type {
   TuiProfile,
   TuiSessionMeta,
 } from "../contracts.js";
-import type { RunnerEvent } from "../protocol/contracts.js";
+import type { RunnerEvent, SessionDescribedEventPayload } from "../protocol/contracts.js";
 import { randomUUID } from "node:crypto";
 import {
   buildWaitingSystemText,
@@ -98,6 +98,7 @@ export interface TuiRunControllerContext extends TuiAppContext {
     operatorState?: TuiSessionMeta["operatorState"] | undefined,
   ): Promise<void>;
   syncBackgroundSessionFailure(sessionId: string, message: string): Promise<void>;
+  syncSessionFromDescribePayload(payload: SessionDescribedEventPayload): Promise<void>;
   applyTerminalResult(
     sessionId: string,
     result: { assistantText: string | null; output: NormalizedOutput },
@@ -775,6 +776,13 @@ export class TuiRunController {
     } catch (error) {
       if (queueSubmission) {
         const recoveredView = await this.refreshConversationView(threadId).catch(() => undefined);
+        if (recoveredView !== undefined) {
+          await this.context.setActiveSessionState({
+            started: true,
+            focusedThreadId: recoveredView.thread.threadId,
+            updatedAt: new Date().toISOString(),
+          });
+        }
         const recoveredRoute = recoveredView?.conversationMessageRoutes?.find(
           (route) => route.messageId === submissionMessageId,
         );
@@ -824,6 +832,13 @@ export class TuiRunController {
       }
       if (resumeRequestId === undefined) {
         const recoveredView = await this.refreshConversationView(threadId).catch(() => undefined);
+        if (recoveredView !== undefined) {
+          await this.context.setActiveSessionState({
+            started: true,
+            focusedThreadId: recoveredView.thread.threadId,
+            updatedAt: new Date().toISOString(),
+          });
+        }
         const recoveredRoute = recoveredView?.conversationMessageRoutes?.find(
           (route) => route.messageId === submissionMessageId,
         );
@@ -858,7 +873,25 @@ export class TuiRunController {
           return true;
         }
         if (terminalObserved) {
+          await this.context.setActiveSessionState({
+            started: true,
+            updatedAt: new Date().toISOString(),
+          });
+          await this.context.persistSessionAndUi();
           return true;
+        }
+        const described = await this.context.client.sendCommand("session.describe", {
+          sessionId: state.activeSession.sessionId,
+        }).catch(() => undefined);
+        if (
+          described?.type === "session.described"
+          && (
+            described.payload.threadId !== undefined
+            || described.payload.focusedThreadId !== undefined
+            || described.payload.activeAssembly !== undefined
+          )
+        ) {
+          await this.context.syncSessionFromDescribePayload(described.payload);
         }
       }
       if (terminalResponseMeta !== undefined) {
@@ -874,7 +907,7 @@ export class TuiRunController {
       const message = error instanceof Error ? error.message : String(error);
       await this.context.appendHistoryLine("system", `Runner communication failed: ${message}`);
       await this.context.setActiveSessionState({
-        started: state.activeSession.started || requestAccepted,
+        started: this.context.uiStore.getState().activeSession.started || requestAccepted,
         updatedAt: new Date().toISOString(),
         ...(input.forceFreshTurn !== true && submittedPendingWait !== undefined && requestAccepted === false
           ? { pendingWaitFor: submittedPendingWait }
@@ -1041,6 +1074,9 @@ export class TuiRunController {
         running: true,
         statusLine: this.context.withMcpSummary(`running (${event.payload.eventType})`),
       });
+    }
+    if (event.type === "run.started") {
+      void this.context.syncBackgroundSessionProgress(event.payload.sessionId);
     }
     if (event.type === "operator.thread") {
       void this.installConversationView(event.payload.view);

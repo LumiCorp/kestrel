@@ -5,7 +5,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 ## Ready
 
 - [Make session describe durable and environment-authoritative](04-make-session-describe-durable-and-environment-authoritative.md)
-- [Bind TUI start state to authoritative runtime acceptance](05-bind-start-state-to-authoritative-runtime-acceptance.md)
 
 ## In progress
 
@@ -19,6 +18,7 @@ None.
 
 - [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md)
 - [Keep TUI sessions unstarted until execution actually begins](03-repair-tui-session-start-lifecycle.md)
+- [Bind TUI start state to authoritative runtime acceptance](05-bind-start-state-to-authoritative-runtime-acceptance.md)
 
 ## Done
 

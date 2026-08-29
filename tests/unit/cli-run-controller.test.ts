@@ -132,6 +132,7 @@ function createRunHarness(input: {
   workspaceRoot?: string | undefined;
   effectiveAssemblyId?: string | undefined;
   omitRuntimeEnvironmentIdentity?: boolean | undefined;
+  sessionDescribeWithoutRuntimeEvidence?: boolean | undefined;
 } = {}): {
   controller: TuiRunController;
   uiStore: UiStore;
@@ -233,22 +234,27 @@ function createRunHarness(input: {
         if (type === "session.describe") {
           return makeRunnerEvent({
             type: "session.described",
-            payload: {
-              sessionId: activeSession.sessionId,
-              version: 1,
-              activeAssembly: {
-                mode: "explicit",
-                bundleId: "bundle:kestrel:cli",
-                ...(input.omitRuntimeEnvironmentIdentity === true
-                  ? {}
-                  : {
-                      environmentPresetId:
-                        input.runtimeEnvironmentPresetId ??
-                        input.environmentPresetId ??
-                        "cli_dev_local",
-                    }),
-              },
-            },
+            payload: input.sessionDescribeWithoutRuntimeEvidence === true
+              ? {
+                  sessionId: activeSession.sessionId,
+                  version: 0,
+                }
+              : {
+                  sessionId: activeSession.sessionId,
+                  version: 1,
+                  activeAssembly: {
+                    mode: "explicit",
+                    bundleId: "bundle:kestrel:cli",
+                    ...(input.omitRuntimeEnvironmentIdentity === true
+                      ? {}
+                      : {
+                          environmentPresetId:
+                            input.runtimeEnvironmentPresetId ??
+                            input.environmentPresetId ??
+                            "cli_dev_local",
+                        }),
+                  },
+                },
           });
         }
         if (input.sendCommand !== undefined) {
@@ -392,6 +398,30 @@ function createRunHarness(input: {
     syncBackgroundSessionProgress: async () => {},
     syncBackgroundSessionResult: async () => {},
     syncBackgroundSessionFailure: async () => {},
+    syncSessionFromDescribePayload: async (payload) => {
+      if (
+        payload.threadId === undefined
+        && payload.focusedThreadId === undefined
+        && payload.activeAssembly === undefined
+      ) {
+        return;
+      }
+      const state = uiStore.getState();
+      uiStore.patch({
+        activeSession: {
+          ...state.activeSession,
+          started: true,
+          ...(payload.focusedThreadId !== undefined
+            ? { focusedThreadId: payload.focusedThreadId }
+            : payload.threadId !== undefined
+              ? { focusedThreadId: payload.threadId }
+              : {}),
+          ...(payload.activeAssembly?.bundleId !== undefined
+            ? { effectiveAssemblyId: payload.activeAssembly.bundleId }
+            : {}),
+        },
+      });
+    },
     applyTerminalResult: async (
       _sessionId: string,
       result: { assistantText: string | null; output: NormalizedOutput },
@@ -588,6 +618,7 @@ test("TuiRunController reconciles terminal outcomes when routing returns after c
 test("TuiRunController preserves an authoritative terminal event when the routed response is lost", async () => {
   let controller: TuiRunController | undefined;
   const harness = createRunHarness({
+    started: false,
     sendCommand: async (type) => {
       if (type === "conversation.message.submit") {
         controller!.onRunnerEvent(makeRunnerEvent({
@@ -613,12 +644,108 @@ test("TuiRunController preserves an authoritative terminal event when the routed
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(harness.uiStore.getState().activeSession.lastRunStatus, "COMPLETED");
+  assert.equal(harness.uiStore.getState().activeSession.started, true);
   assert.equal(harness.uiStore.getState().running, false);
   assert.equal(harness.uiStore.getState().errorOverlay, undefined);
   assert.equal(
     harness.history.some((line) => line.text.includes("Runner communication failed")),
     false,
   );
+});
+
+test("TuiRunController marks a first turn started when exact route recovery proves acceptance", async () => {
+  const messageId = "message-first-route-recovered";
+  const recoveredView = {
+    ...makeConversationView({ active: true }),
+    conversationMessageRoutes: [{
+      messageId,
+      disposition: "started" as const,
+      runId: "run-start-1",
+      turnId: "turn-1",
+      createdAt: "2026-05-14T00:00:04.000Z",
+    }],
+  };
+  const harness = createRunHarness({
+    started: false,
+    sendCommand: async (type) => {
+      if (type === "conversation.message.submit") throw new Error("route response lost");
+      if (type === "operator.thread") {
+        return makeRunnerEvent({ type: "operator.thread", payload: { view: recoveredView } });
+      }
+      throw new Error(`Unexpected command '${type}'.`);
+    },
+  });
+
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId,
+    submittedMessage: "start despite disconnect",
+  }), true);
+
+  const session = harness.uiStore.getState().activeSession;
+  assert.equal(session.started, true);
+  assert.equal(session.focusedThreadId, "thread-main:session-1");
+});
+
+test("TuiRunController keeps a rejected first turn unstarted without runtime evidence", async () => {
+  const harness = createRunHarness({
+    started: false,
+    sessionDescribeWithoutRuntimeEvidence: true,
+    sendCommand: async (type) => {
+      if (type === "conversation.message.submit") throw new Error("submission rejected");
+      if (type === "operator.thread") throw new Error("thread not found");
+      throw new Error(`Unexpected command '${type}'.`);
+    },
+  });
+
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId: "message-first-rejected",
+    submittedMessage: "do not start",
+  }), false);
+
+  assert.equal(harness.uiStore.getState().activeSession.started, false);
+});
+
+test("TuiRunController preserves durable thread start evidence when message acceptance is unconfirmed", async () => {
+  const harness = createRunHarness({
+    started: false,
+    sendCommand: async (type) => {
+      if (type === "conversation.message.submit") throw new Error("route response lost");
+      if (type === "operator.thread") {
+        return makeRunnerEvent({
+          type: "operator.thread",
+          payload: { view: makeConversationView({ active: true }) },
+        });
+      }
+      throw new Error(`Unexpected command '${type}'.`);
+    },
+  });
+
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId: "message-thread-recovered",
+    submittedMessage: "start with durable thread",
+  }), false);
+
+  assert.equal(harness.uiStore.getState().activeSession.started, true);
+  assert.equal(harness.uiStore.getState().activeSession.focusedThreadId, "thread-main:session-1");
+});
+
+test("TuiRunController preserves durable assembly start evidence when routing recovery is unavailable", async () => {
+  const harness = createRunHarness({
+    started: false,
+    sendCommand: async (type) => {
+      if (type === "conversation.message.submit") throw new Error("route response lost");
+      if (type === "operator.thread") throw new Error("thread transport unavailable");
+      throw new Error(`Unexpected command '${type}'.`);
+    },
+  });
+
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId: "message-assembly-recovered",
+    submittedMessage: "start with durable assembly",
+  }), false);
+
+  assert.equal(harness.uiStore.getState().activeSession.started, true);
+  assert.equal(harness.uiStore.getState().activeSession.effectiveAssemblyId, "bundle:kestrel:cli");
 });
 
 test("TuiRunController sends active-run input to Local Core queue authority immediately", async () => {

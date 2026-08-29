@@ -1263,11 +1263,11 @@ test("start task journey creates a session with the canonical profile, mode, and
   assert.match(rawHistory, /Task=Investigate queue latency/u);
 });
 
-test("background launch persists successful setup as started with inherited environment", async () => {
-  const { app } = await createAppHarness();
+test("background launch stays pending until run.started proves acceptance", async () => {
+  const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   appState.client = {
-    sendCommand: async () => ({ type: "run.completed", payload: {} }),
+    sendCommand: async () => await new Promise(() => {}),
   };
 
   await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
@@ -1276,12 +1276,38 @@ test("background launch persists successful setup as started with inherited envi
     "inspect dependencies",
   ]);
 
-  const child = (appState.uiStore as UiStore).getState().sessions.find(
+  let child = (appState.uiStore as UiStore).getState().sessions.find(
     (session) => session.delegation?.parentSessionId === "session-1",
   );
-  assert.equal(child?.delegation?.status, "RUNNING");
-  assert.equal(child?.started, true);
+  assert.equal(child?.delegation?.status, "PENDING");
+  assert.equal(child?.started, false);
   assert.equal(child?.environmentPresetId, "cli_dev_local");
+  assert.equal(existsSync(historyPath), false);
+
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "run-started-background",
+    type: "run.started",
+    ts: "2026-08-28T00:00:00.000Z",
+    commandId: "command-background",
+    sessionId: child?.sessionId,
+    threadId: child?.sessionId,
+    runId: "run-background",
+    payload: {
+      sessionId: child?.sessionId,
+      runId: "run-background",
+      eventType: "user.message",
+    },
+  });
+  await waitFor(() => {
+    child = (appState.uiStore as UiStore).getState().sessions.find(
+      (session) => session.delegation?.parentSessionId === "session-1",
+    );
+    return child?.delegation?.status === "RUNNING";
+  });
+
+  assert.equal(child?.started, true);
+  await waitFor(() => existsSync(historyPath));
+  assert.match(await readFile(historyPath, "utf8"), /Background task started/u);
 });
 
 test("background profile resolution failure leaves a truthful failed unstarted child", async () => {
@@ -1308,6 +1334,166 @@ test("background profile resolution failure leaves a truthful failed unstarted c
   assert.equal(child?.delegation?.errorMessage, "profile resolution unavailable");
   assert.equal(child?.started, false);
   assert.equal(child?.environmentPresetId, "cli_dev_local");
+});
+
+test("background Local Core preparation failure leaves a truthful failed unstarted child", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.prepareLocalCoreClient = async () => {
+    throw new Error("local core preparation unavailable");
+  };
+
+  await assert.doesNotReject(
+    (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+      "launch",
+      "kestrel",
+      "inspect dependencies",
+    ]),
+  );
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.delegation?.status, "FAILED");
+  assert.equal(child?.delegation?.errorMessage, "local core preparation unavailable");
+  assert.equal(child?.started, false);
+});
+
+test("background submission rejection leaves a truthful failed unstarted child", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "run.start") {
+        throw new Error("run submission rejected");
+      }
+      assert.equal(type, "session.describe");
+      return {
+        type: "session.described",
+        payload: {
+          sessionId: String(payload.sessionId),
+          version: 0,
+        },
+      };
+    },
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+  await waitFor(() => (appState.uiStore as UiStore).getState().sessions.some(
+    (session) => session.delegation?.status === "FAILED",
+  ));
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.delegation?.status, "FAILED");
+  assert.equal(child?.delegation?.errorMessage, "run submission rejected");
+  assert.equal(child?.started, false);
+});
+
+test("background response loss reconciles authoritative running state", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  let childSessionId: string | undefined;
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "run.start") {
+        childSessionId = String((payload.turn as Record<string, unknown>).sessionId);
+        throw new Error("run response lost");
+      }
+      assert.equal(type, "session.describe");
+      const sessionId = String(payload.sessionId);
+      assert.equal(sessionId, childSessionId);
+      return {
+        type: "session.described",
+        payload: {
+          sessionId,
+          version: 1,
+          threadId: sessionId,
+          activeAssembly: {
+            mode: "explicit",
+            bundleId: "bundle:kestrel:cli",
+            environmentPresetId: "cli_dev_local",
+          },
+          operatorThreadView: {
+            thread: {
+              threadId: sessionId,
+              sessionId,
+              title: "Background",
+              status: "RUNNING",
+              createdAt: "2026-08-28T00:00:00.000Z",
+              updatedAt: "2026-08-28T00:00:01.000Z",
+            },
+            childThreads: [],
+            childBlockerChain: [],
+            activeRun: { runId: "run-background", status: "RUNNING" },
+          },
+        },
+      };
+    },
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+  await waitFor(() => (appState.uiStore as UiStore).getState().sessions.some(
+    (session) => session.delegation?.status === "RUNNING",
+  ));
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.sessionId === childSessionId,
+  );
+  assert.equal(child?.delegation?.status, "RUNNING");
+  assert.equal(child?.started, true);
+  assert.equal(child?.lastRunStatus, undefined);
+  assert.equal(child?.environmentPresetId, "cli_dev_local");
+  assert.equal(child?.effectiveAssemblyId, "bundle:kestrel:cli");
+});
+
+test("session description marks an unstarted session started from durable thread or assembly evidence", async (t) => {
+  for (const evidence of ["thread", "assembly"] as const) {
+    await t.test(evidence, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const unstarted = {
+        ...uiStore.getState().activeSession,
+        started: false,
+        effectiveAssemblyId: undefined,
+      };
+      const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === unstarted.sessionId ? unstarted : session
+        ),
+      };
+      uiStore.patch({ activeSession: unstarted, sessions: [unstarted] });
+
+      await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+        sessionId: unstarted.sessionId,
+        version: 1,
+        ...(evidence === "thread"
+          ? { threadId: `thread-main:${unstarted.sessionId}` }
+          : {
+              activeAssembly: {
+                mode: "explicit",
+                bundleId: "bundle:kestrel:cli",
+                environmentPresetId: "cli_dev_local",
+              },
+            }),
+      });
+
+      assert.equal(uiStore.getState().activeSession.started, true);
+      assert.equal(uiStore.getState().activeSession.environmentPresetId, "cli_dev_local");
+    });
+  }
 });
 
 test("start task journey clears inherited preset metadata when preset none is selected", async () => {
