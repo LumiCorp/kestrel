@@ -35,11 +35,11 @@ export class SessionStore {
         ? (response as { activeSessionName?: unknown }).activeSessionName
         : undefined;
       return {
-        version: 5,
+        version: 6,
         ...(typeof activeSessionName === "string"
           ? { activeSessionName }
           : {}),
-        sessions: extractResponseField<TuiSessionMeta[]>(response, "sessions", "sessions"),
+        sessions: extractResponseField<unknown[]>(response, "sessions", "sessions").map(validateSession),
       };
     }
 
@@ -48,7 +48,7 @@ export class SessionStore {
     const raw = await this.readFile();
     if (raw === undefined) {
       const empty: SessionsFile = {
-        version: 5,
+        version: 6,
         sessions: [],
       };
       await this.save(empty);
@@ -60,7 +60,7 @@ export class SessionStore {
     } catch (error) {
       if (error instanceof SessionSchemaVersionError) {
         const empty: SessionsFile = {
-          version: 5,
+          version: 6,
           sessions: [],
         };
         await this.save(empty);
@@ -208,8 +208,8 @@ export function parseSessionsFile(raw: string): SessionsFile {
   }
 
   const root = decoded as Record<string, unknown>;
-  if (root.version !== 2 && root.version !== 3 && root.version !== 4 && root.version !== 5) {
-    throw new SessionSchemaVersionError("sessions.json version must be 2, 3, 4, or 5");
+  if (root.version !== 2 && root.version !== 3 && root.version !== 4 && root.version !== 5 && root.version !== 6) {
+    throw new SessionSchemaVersionError("sessions.json version must be 2, 3, 4, 5, or 6");
   }
 
   const activeSessionName =
@@ -223,7 +223,7 @@ export function parseSessionsFile(raw: string): SessionsFile {
   const sessions = sessionsInput.map(validateSession);
 
   return {
-    version: 5,
+    version: 6,
     ...(activeSessionName !== undefined ? { activeSessionName } : {}),
     sessions,
   };
@@ -323,6 +323,7 @@ function validateSession(value: unknown): TuiSessionMeta {
   const pendingRunId = typeof entry.pendingRunId === "string"
     ? entry.pendingRunId
     : undefined;
+  const rejectedLegacyForeground = pendingRunId?.startsWith("tui-foreground:") === true;
   const pendingRunRequestId = typeof entry.pendingRunRequestId === "string"
     ? entry.pendingRunRequestId
     : undefined;
@@ -335,8 +336,10 @@ function validateSession(value: unknown): TuiSessionMeta {
   const terminalMessageCursor = typeof entry.terminalMessageCursor === "string"
     ? entry.terminalMessageCursor
     : undefined;
-  const pendingQueueSubmissions = readExactRunIdentityCollection(entry.pendingQueueSubmissions);
-  const queuedRunReservations = readExactRunIdentityCollection(entry.queuedRunReservations);
+  const pendingQueueSubmissions = readExactRunIdentityCollection(entry.pendingQueueSubmissions)
+    ?.filter((candidate) => candidate.runId.startsWith("tui-foreground:") === false);
+  const queuedRunReservations = readExactRunIdentityCollection(entry.queuedRunReservations)
+    ?.filter((candidate) => candidate.runId.startsWith("tui-foreground:") === false);
   const terminalQueuedRuns = readTerminalQueuedRuns(entry.terminalQueuedRuns);
   const acceptedRunId = typeof entry.acceptedRunId === "string"
     ? entry.acceptedRunId
@@ -399,7 +402,7 @@ function validateSession(value: unknown): TuiSessionMeta {
     createdAt: readRequiredString(entry, "createdAt"),
     updatedAt: readRequiredString(entry, "updatedAt"),
     started: typeof entry.started === "boolean" ? entry.started : false,
-    ...(lastRunStatus !== undefined ? { lastRunStatus } : {}),
+    ...(rejectedLegacyForeground ? { lastRunStatus: "FAILED" as const } : lastRunStatus !== undefined ? { lastRunStatus } : {}),
     ...(pendingWaitFor !== undefined ? { pendingWaitFor } : {}),
     ...(lastMessagePreview !== undefined ? { lastMessagePreview } : {}),
     ...(launchSummary !== undefined ? { launchSummary } : {}),
@@ -408,10 +411,12 @@ function validateSession(value: unknown): TuiSessionMeta {
     ...(pendingManualCompaction !== undefined ? { pendingManualCompaction } : {}),
     ...(autoCompactionEnabled !== undefined ? { autoCompactionEnabled } : {}),
     ...(suppressAutoCompactionOnce !== undefined ? { suppressAutoCompactionOnce } : {}),
-    ...(pendingRunId !== undefined ? { pendingRunId } : {}),
-    ...(pendingRunRequestId !== undefined ? { pendingRunRequestId } : {}),
-    ...(pendingRunMessageId !== undefined ? { pendingRunMessageId } : {}),
-    ...(pendingRunThreadId !== undefined ? { pendingRunThreadId } : {}),
+    ...(pendingRunId !== undefined && rejectedLegacyForeground === false ? { pendingRunId } : {}),
+    ...(pendingRunRequestId !== undefined && rejectedLegacyForeground === false
+      ? { pendingRunRequestId }
+      : {}),
+    ...(pendingRunMessageId !== undefined && rejectedLegacyForeground === false ? { pendingRunMessageId } : {}),
+    ...(pendingRunThreadId !== undefined && rejectedLegacyForeground === false ? { pendingRunThreadId } : {}),
     ...(terminalMessageCursor !== undefined ? { terminalMessageCursor } : {}),
     ...(pendingQueueSubmissions !== undefined && pendingQueueSubmissions.length > 0
       ? { pendingQueueSubmissions }

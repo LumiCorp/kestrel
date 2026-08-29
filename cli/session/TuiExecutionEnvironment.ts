@@ -13,12 +13,14 @@ export class TuiEnvironmentIdentityError extends Error {
   readonly code:
     | "TUI_ENVIRONMENT_UNKNOWN"
     | "TUI_ENVIRONMENT_CONFLICT"
+    | "INVALID_COMMAND"
     | SessionEnvironmentIdentityFailureCode;
 
   constructor(
     code:
       | "TUI_ENVIRONMENT_UNKNOWN"
       | "TUI_ENVIRONMENT_CONFLICT"
+      | "INVALID_COMMAND"
       | SessionEnvironmentIdentityFailureCode,
     message: string,
     readonly details?: Record<string, unknown> | undefined,
@@ -51,7 +53,28 @@ export function readTuiEnvironmentIdentityFailure(
 export function readAuthoritativeRunStartRejection(
   error: unknown,
 ): TuiEnvironmentIdentityError | undefined {
-  return readTuiEnvironmentIdentityFailure(error);
+  const environmentFailure = readTuiEnvironmentIdentityFailure(error);
+  if (environmentFailure !== undefined) return environmentFailure;
+  if (
+    typeof error !== "object"
+    || error === null
+    || !("code" in error)
+    || error.code !== "INVALID_COMMAND"
+  ) return;
+  const message = error instanceof Error
+    ? error.message
+    : "Runner command validation rejected the command before acceptance.";
+  const details = "details" in error
+    && typeof error.details === "object"
+    && error.details !== null
+    && Array.isArray(error.details) === false
+    ? structuredClone(error.details as Record<string, unknown>)
+    : undefined;
+  return new TuiEnvironmentIdentityError(
+    "INVALID_COMMAND",
+    message,
+    details,
+  );
 }
 
 export function defaultTuiEnvironmentPresetId(

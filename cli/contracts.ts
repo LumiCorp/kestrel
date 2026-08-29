@@ -460,7 +460,7 @@ export interface TuiPendingQueueSubmission {
 }
 
 export interface SessionsFile {
-  version?: 2 | 3 | 4 | 5;
+  version?: 2 | 3 | 4 | 5 | 6;
   activeSessionName?: string | undefined;
   sessions: TuiSessionMeta[];
 }
