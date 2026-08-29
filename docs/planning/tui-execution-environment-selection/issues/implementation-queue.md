@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Separate queued reservations and backfill thread ownership](15-separate-queued-reservations-and-backfill-thread-ownership.md)
 
 ## In progress
 
