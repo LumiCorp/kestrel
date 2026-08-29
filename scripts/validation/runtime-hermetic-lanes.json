@@ -46,6 +46,7 @@
         "tests/unit/devshell-normalize-command.test.ts",
         "tests/unit/dialog-tool-mode-contract.test.ts",
         "tests/unit/docker-sandbox-executor.test.ts",
+        "tests/unit/durable-session-describer.test.ts",
         "tests/unit/effect-runner.test.ts",
         "tests/unit/exact-effect-result-read.test.ts",
         "tests/unit/evidence-quality.test.ts",
@@ -173,6 +174,7 @@
         "tests/unit/terminal-bench-harbor.test.ts",
         "tests/unit/terminal-bench-orchestrator.test.ts",
         "tests/unit/terminal-control-transcript.test.ts",
+        "tests/unit/thread-assembly-ordering.test.ts",
         "tests/unit/thread-workspace-binding.test.ts",
         "tests/unit/timestamps.test.ts",
         "tests/unit/transition-validator.test.ts",
@@ -245,6 +247,8 @@
         "tests/unit/cli-workspace-store.test.ts",
         "tests/unit/reference-react-command-processor.test.ts",
         "tests/unit/runtime-cli-store-flag.test.ts",
+        "tests/unit/tui-environment-presentation.test.ts",
+        "tests/unit/tui-queue-graph.test.ts",
         "tests/unit/web-command.test.ts"
       ]
     },
