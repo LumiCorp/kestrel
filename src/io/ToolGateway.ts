@@ -26,7 +26,7 @@ import type {
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import {
   createPreparedToolCallV1,
-  createPreparedToolApprovalAuthorityV1,
+  createPreparedToolApprovalAuthorityV2,
   createToolSurfaceForDescriptorsV1,
   executePinnedToolCallV1,
   fingerprintToolRunScopeV1,
@@ -287,8 +287,9 @@ export class AllowlistedToolGateway implements ToolGateway {
       input.policy.decision === "approval_required" &&
       input.approval !== undefined &&
       options.runContext !== undefined
-        ? createPreparedToolApprovalAuthorityV1({
+        ? createPreparedToolApprovalAuthorityV2({
             activation: input.activation,
+            executionClass: module.descriptor.capability.executionClass,
             effectiveInput: input.rawInput,
             policyRevision: input.policy.policyRevision,
             approvalAuthorityRevision: input.approval.authorityRevision,

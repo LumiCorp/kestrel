@@ -14,7 +14,7 @@ import {
   parseToolExecutionOutcomeV1,
 } from "../../src/kestrel/contracts/tool-invocation.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
-import { createPreparedToolApprovalAuthorityV1 } from "../../src/io/ToolInvocationSupport.js";
+import { createPreparedToolApprovalAuthorityV2 } from "../../src/io/ToolInvocationSupport.js";
 
 const descriptor = defaultToolCatalog.getDescriptorRef("FinalizeAnswer");
 if (descriptor === undefined) throw new Error("FinalizeAnswer descriptor missing");
@@ -30,7 +30,13 @@ const activation = createToolActivationRefV1({
 });
 const timestamp = "2026-08-03T12:00:00.000Z";
 
-function v2PreparedCallFixture(): Record<string, unknown> {
+function v2PreparedCallFixture(
+  toolClass:
+    | "read_only"
+    | "planning_write"
+    | "sandboxed_only"
+    | "external_side_effect" = "external_side_effect",
+): Record<string, unknown> {
   const effectiveInput = { message: "done" };
   const policyRevision = hashCanonical({ policy: "ask" });
   const actor = {
@@ -45,7 +51,7 @@ function v2PreparedCallFixture(): Record<string, unknown> {
     approvalAuthorityRevision: "approval-authority-v1",
   };
   const authorityPayload = {
-    version: "prepared_tool_stable_authority_v1" as const,
+    version: "prepared_tool_stable_authority_v2" as const,
     actor,
     organizationId: "org-1",
     environmentId: "env-1",
@@ -64,6 +70,7 @@ function v2PreparedCallFixture(): Record<string, unknown> {
       toolId: activation.descriptor.toolId,
       effectiveInput,
     }),
+    executionClass: toolClass,
   };
   const stableAuthority = {
     ...authorityPayload,
@@ -79,7 +86,7 @@ function v2PreparedCallFixture(): Record<string, unknown> {
     stableAuthorityFingerprint: stableAuthority.fingerprint,
     stableToolIdentity,
     requestingActor: actor,
-    toolClass: "external_side_effect" as const,
+    toolClass,
     capabilities: authorityPayload.capabilities,
     authorityKind: "hosted_app_policy" as const,
     authorityRevision: stableToolIdentity.approvalAuthorityRevision,
@@ -263,8 +270,9 @@ test("stable prepared approval authority excludes renewable execution credential
       activation?: typeof activation;
       approvalAuthorityRevision?: string;
     } = {},
-  ) => createPreparedToolApprovalAuthorityV1({
+  ) => createPreparedToolApprovalAuthorityV2({
     activation: overrides.activation ?? activation,
+    executionClass: "external_side_effect",
     effectiveInput,
     policyRevision: hashCanonical({ policy: "ask" }),
     approvalAuthorityRevision:
@@ -330,7 +338,7 @@ test("V2 prepared approval authority round-trips as one consistent identity", ()
   );
 });
 
-test("durable V2 prepared approval authority requires its complete binding", () => {
+test("durable V2 approval authority requires one complete binding for every tool class", () => {
   const transient = structuredClone(v2PreparedCallFixture()) as Record<
     string,
     any
@@ -340,11 +348,38 @@ test("durable V2 prepared approval authority requires its complete binding", () 
   assert.doesNotThrow(() => parsePreparedToolCallV1(transient));
   assert.throws(
     () => parseDurablePreparedToolCallV1(transient),
-    /requires a complete v2 external approval binding/u,
+    /requires a complete v2 prepared approval binding/u,
   );
-  assert.doesNotThrow(() =>
-    parseDurablePreparedToolCallV1(v2PreparedCallFixture()),
+  for (const toolClass of [
+    "read_only",
+    "planning_write",
+    "sandboxed_only",
+    "external_side_effect",
+  ] as const) {
+    const prepared = parseDurablePreparedToolCallV1(
+      v2PreparedCallFixture(toolClass),
+    );
+    assert.equal(prepared.approval?.externalApprovalBinding?.toolClass, toolClass);
+  }
+
+  const incorrectlyBoundReadOnly = structuredClone(
+    v2PreparedCallFixture("read_only"),
+  ) as Record<string, any>;
+  incorrectlyBoundReadOnly.approval.externalApprovalBinding =
+    (v2PreparedCallFixture("external_side_effect") as Record<string, any>)
+      .approval.externalApprovalBinding;
+  assert.throws(
+    () => parseDurablePreparedToolCallV1(incorrectlyBoundReadOnly),
+    /identities do not agree/u,
   );
+
+  const allowed = structuredClone(v2PreparedCallFixture("read_only")) as Record<
+    string,
+    any
+  >;
+  allowed.policy.decision = "allow";
+  delete allowed.approval.externalApprovalBinding;
+  assert.doesNotThrow(() => parseDurablePreparedToolCallV1(allowed));
 });
 
 test("V2 stable actor tenant must match its organization", () => {
@@ -423,7 +458,7 @@ test("V2 prepared approval authority rejects contradictory persisted identity", 
   for (const [label, update] of contradictions) {
     assert.throws(
       () => parsePreparedToolCallV1(mutate(update)),
-      /fingerprint does not match|normalized action does not match|identities do not agree/u,
+      /fingerprint does not match|normalized action does not match|stable authority does not match|identities do not agree/u,
       label,
     );
   }

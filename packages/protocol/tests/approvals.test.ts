@@ -120,6 +120,43 @@ test("new hosted approval contracts are strict, versioned, and empty-compatible"
     expiresAt: "2026-08-03T12:05:00.000Z",
   } as const;
   assert.deepEqual(parseRunnerExternalApprovalBindingV2(bindingV2), bindingV2);
+  for (const toolClass of [
+    "read_only",
+    "planning_write",
+    "sandboxed_only",
+    "external_side_effect",
+  ] as const) {
+    assert.deepEqual(
+      parseRunnerExternalApprovalBindingV2({ ...bindingV2, toolClass }),
+      { ...bindingV2, toolClass },
+    );
+  }
+  assert.throws(
+    () =>
+      parseRunnerExternalApprovalBindingV2({
+        ...bindingV2,
+        toolClass: "unknown",
+      }),
+    /toolClass is invalid/u,
+  );
+  assert.throws(
+    () =>
+      parseRunnerExternalApprovalBindingV1({
+        version: "runner_external_approval_binding_v1",
+        approvalId: "approval-1",
+        threadId: "thread-1",
+        runId: "run-1",
+        actionKey: "hosted.tool",
+        payloadHash: `sha256:${"c".repeat(64)}`,
+        toolClass: "read_only",
+        capabilities: [],
+        authorityKind: "hosted_app_policy",
+        authorityRevision: "authority-v1",
+        requestedAt: "2026-08-03T12:00:00.000Z",
+        expiresAt: "2026-08-03T12:05:00.000Z",
+      }),
+    /toolClass must be 'external_side_effect'/u,
+  );
   assert.throws(
     () =>
       parseRunnerExternalApprovalBindingV2({

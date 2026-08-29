@@ -58,6 +58,49 @@ test("Kestrel One does not guess a mode switch without the explicit contract", (
   assert.doesNotMatch(html, /Switch to Build/u);
 });
 
+test("approval cards omit the generic review instruction", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[
+        {
+          ...interaction,
+          kind: "approval",
+          eventType: "user.approval",
+          prompt: "Review this action before it runs.",
+          requestEnvelope: {},
+        },
+      ]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+
+  assert.match(html, /Approval required/u);
+  assert.doesNotMatch(html, /Review this action before it runs\./u);
+});
+
+test("unstructured approval cards preserve their specific prompt", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[
+        {
+          ...interaction,
+          kind: "approval",
+          eventType: "user.approval",
+          prompt: "Approve deployment to production?",
+          requestEnvelope: {},
+        },
+      ]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+
+  assert.match(html, /Approve deployment to production\?/u);
+});
+
 test("legacy approval cards keep their explicit compatibility actions", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
@@ -130,7 +173,7 @@ test("strict V4 approval cards advertise exact decisions", () => {
         ...interaction,
         kind: "approval",
         eventType: "user.approval",
-        prompt: "Approve test.tool?",
+        prompt: "Review this action before it runs.",
         requestEnvelope: {
           version: "runner_hosted_tool_approval_interaction_v4",
           approval: { toolName: "test.tool" },
@@ -155,6 +198,7 @@ test("strict V4 approval cards advertise exact decisions", () => {
   );
   assert.match(html, />Don&#x27;t allow</u);
   assert.match(html, />Allow once</u);
+  assert.doesNotMatch(html, /Review this action before it runs\./u);
   assert.doesNotMatch(html, />Allow for thread</u);
   assert.doesNotMatch(html, />Deny</u);
 });

@@ -723,7 +723,10 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         });
       }
 
-      if (toolClass !== "read_only" && toolClass !== "planning_write") {
+      if (
+        policyGate.preparedToolCall !== undefined ||
+        (toolClass !== "read_only" && toolClass !== "planning_write")
+      ) {
         return dispatchDurableToolCall({
           runId: ctx.runId,
           sessionId: ctx.session.sessionId,

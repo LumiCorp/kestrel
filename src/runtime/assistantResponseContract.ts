@@ -322,7 +322,20 @@ export function projectHostedToolApprovalInteractionV4(input: {
   if (binding?.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION) {
     throw createRuntimeFailure(
       "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
-      "A new-version hosted approval must contain its complete external approval binding.",
+      "A hosted approval must contain its complete prepared approval binding.",
+    );
+  }
+  if (
+    (prepared.stableAuthority.version ===
+      "prepared_tool_stable_authority_v1" &&
+      binding.toolClass !== "external_side_effect") ||
+    (prepared.stableAuthority.version ===
+      "prepared_tool_stable_authority_v2" &&
+      binding.toolClass !== prepared.stableAuthority.executionClass)
+  ) {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      "A hosted approval binding must match its prepared execution class.",
     );
   }
   const reasonCode = readRequiredToolApprovalReasonCode(input.reasonCode);
@@ -334,7 +347,7 @@ export function projectHostedToolApprovalInteractionV4(input: {
       reasonCode,
       authority: {
         kind: binding.authorityKind,
-        revision: binding.authorityRevision,
+        revision: prepared.stableToolIdentity.approvalAuthorityRevision,
       },
     },
   });

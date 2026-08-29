@@ -193,12 +193,25 @@ export class InteractionManager {
       request.kind === "approval" && input.approve !== false
         ? readExternalApprovalBinding(request.metadata)
         : undefined;
-    if (request.kind === "approval" && input.approve !== false && binding !== undefined) {
-      validateExecutableApproval({
-        request,
-        binding,
-        actor,
-      });
+    if (request.kind === "approval" && input.approve !== false) {
+      if (
+        request.metadata?.preparedToolCall !== undefined &&
+        binding === undefined
+      ) {
+        throw createRuntimeFailure(
+          "EXTERNAL_APPROVAL_BINDING_INVALID",
+          "The hosted approval is missing its prepared invocation binding.",
+          {
+            classification: "policy",
+            recoverable: false,
+            effectStatus: "not_started",
+            retryable: false,
+          },
+        );
+      }
+      if (binding !== undefined) {
+        validateExecutableApproval({ request, binding, actor });
+      }
     }
 
     const resolvedRequest: InteractionRequestRecord = {
@@ -221,7 +234,8 @@ export class InteractionManager {
       request.kind !== "approval" ||
       input.approve === false ||
       request.eventType === "runtime.assembly_change" ||
-      binding === undefined
+      binding === undefined ||
+      binding.toolClass !== "external_side_effect"
     ) {
       return { request: resolvedRequest };
     }
@@ -383,7 +397,7 @@ function readExternalApprovalBinding(
   } catch (error) {
     throw createRuntimeFailure(
       "EXTERNAL_APPROVAL_BINDING_INVALID",
-      "The pending external-effect approval binding is invalid.",
+      "The pending tool approval binding is invalid.",
       {
         classification: "policy",
         recoverable: false,
@@ -432,7 +446,7 @@ function validateExecutableApproval(input: {
   if (input.actor === undefined) {
     throw createRuntimeFailure(
       "APPROVAL_ACTOR_REQUIRED",
-      "External-effect approval requires authenticated actor metadata.",
+      "Tool approval requires authenticated actor metadata.",
       {
         classification: "policy",
         recoverable: false,
@@ -476,7 +490,7 @@ function validateExecutableApproval(input: {
   if (!identityMatches) {
     throw createRuntimeFailure(
       "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-      "External-effect approval does not match the pending request identity.",
+      "Tool approval does not match the pending request identity.",
       {
         classification: "policy",
         recoverable: false,
@@ -498,18 +512,20 @@ function validateExecutableApproval(input: {
   }
   if (
     pendingAction !== input.binding.actionKey ||
-    pendingPayloadHash !== input.binding.payloadHash
+    pendingPayloadHash !== input.binding.payloadHash ||
+    (input.binding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+      input.request.metadata?.toolClass !== input.binding.toolClass)
   ) {
     throw createRuntimeFailure(
       "EXTERNAL_APPROVAL_ACTION_MISMATCH",
-      "External-effect approval does not match the exact pending action and payload.",
+      "Tool approval does not match the exact pending action and payload.",
       { classification: "policy", recoverable: false, effectStatus: "not_started", retryable: false },
     );
   }
   if (Date.parse(input.binding.expiresAt) <= Date.now()) {
     throw createRuntimeFailure(
       "EXTERNAL_APPROVAL_EXPIRED",
-      "External-effect approval expired before the decision was recorded.",
+      "Tool approval expired before the decision was recorded.",
       {
         classification: "policy",
         recoverable: true,
@@ -534,7 +550,7 @@ function validateExecutableApproval(input: {
   ) {
     throw createRuntimeFailure(
       "APPROVAL_ACTOR_MISMATCH",
-      "External-effect approval must be decided by the authenticated actor that requested it.",
+      "Tool approval must be decided by the authenticated actor that requested it.",
       { classification: "policy", recoverable: false, effectStatus: "not_started", retryable: false },
     );
   }

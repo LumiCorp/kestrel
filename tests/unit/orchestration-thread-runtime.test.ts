@@ -11,6 +11,7 @@ import type { PersistedRunRecord, SessionRecord } from "../../src/kestrel/contra
 import { createEvaluationReviewBindingV1 } from "../../src/kestrel/contracts/evaluation.js";
 
 import {
+  InteractionManager,
   ThreadRuntime,
   type TurnExecutionInput,
   type TurnExecutionResult,
@@ -70,6 +71,14 @@ class QueueTurnExecutor implements TurnExecutor {
         ...result.output,
         runId,
         sessionId: input.sessionId,
+        ...(result.output.waitFor === undefined
+          ? {}
+          : {
+              waitFor: materializePreparedFixtureRunId(
+                result.output.waitFor,
+                runId,
+              ),
+            }),
       },
     });
     await this.sessionStore.completeRun(
@@ -120,6 +129,27 @@ function materializeFixtureAssistantResponse(
     }
   }
   return { ...result, assistantText: null };
+}
+
+function materializePreparedFixtureRunId(
+  waitFor: NonNullable<NormalizedOutput["waitFor"]>,
+  runId: string,
+): NonNullable<NormalizedOutput["waitFor"]> {
+  const metadata = waitFor.metadata;
+  const preparedToolCall = asRecord(metadata?.preparedToolCall);
+  if (preparedToolCall === undefined) {
+    return waitFor;
+  }
+  return {
+    ...waitFor,
+    metadata: {
+      ...metadata,
+      preparedToolCall: {
+        ...preparedToolCall,
+        runId,
+      },
+    },
+  };
 }
 
 class RunForeignKeyEnforcingStore extends InMemorySessionStore {
@@ -1907,6 +1937,7 @@ test("ThreadRuntime resolves prepared approval requests without broad turn-scope
           runId: "run-approval-1",
           actorId: "operator",
           prompt: "Approve file changes",
+          toolClass: "read_only",
         }),
       }),
     },
@@ -2022,6 +2053,43 @@ test("ThreadRuntime resolves prepared approval requests without broad turn-scope
   assert.equal(replay.some((event) => event.type === "interaction.requested"), true);
   assert.equal(replay.some((event) => event.type === "interaction.resolved"), true);
   assert.equal(replay.some((event) => event.type === "approval.granted"), false);
+});
+
+test("InteractionManager keeps exact read-only prepared approvals out of turn grants", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const manager = new InteractionManager(sessionStore);
+  const actor = { actorType: "operator" as const, actorId: "operator" };
+  const waitFor = buildPreparedApprovalWait({
+    threadId: "thread-read-only-approval",
+    runId: "run-read-only-approval",
+    actorId: actor.actorId,
+    prompt: "Approve reading the file",
+    toolClass: "read_only",
+  });
+  const request = await manager.syncWaitState({
+    threadId: "thread-read-only-approval",
+    sessionId: "thread-read-only-approval",
+    runId: "run-read-only-approval",
+    actor,
+    waitFor,
+  });
+  assert.ok(request);
+
+  const resolved = await manager.resolveRequest({
+    threadId: request.threadId,
+    requestId: request.requestId,
+    message: "approved",
+    approve: true,
+    actor,
+  });
+
+  assert.equal(resolved.grant, undefined);
+  assert.equal(
+    (await sessionStore.listApprovalGrants({
+      threadId: request.threadId,
+    })).length,
+    0,
+  );
 });
 
 test("ThreadRuntime resumes the active blocked request and derives approval grants", async () => {
@@ -5461,6 +5529,7 @@ function buildPreparedApprovalWait(input: {
   runId: string;
   actorId: string;
   prompt: string;
+  toolClass?: "read_only" | undefined;
 }): NonNullable<NormalizedOutput["waitFor"]> {
   const descriptor = defaultToolCatalog.getDescriptorRef("fs.read_text");
   if (descriptor === undefined) {
@@ -5483,8 +5552,7 @@ function buildPreparedApprovalWait(input: {
     descriptorContractRevision: descriptor.contractRevision,
     approvalAuthorityRevision: "approval-authority-thread-runtime",
   };
-  const stableAuthorityPayload = {
-    version: "prepared_tool_stable_authority_v1" as const,
+  const stableAuthorityBase = {
     actor: requestingActor,
     organizationId: "organization-thread-approval",
     environmentId: "environment-thread-approval",
@@ -5503,6 +5571,17 @@ function buildPreparedApprovalWait(input: {
       effectiveInput,
     }),
   };
+  const stableAuthorityPayload =
+    input.toolClass === "read_only"
+      ? {
+          ...stableAuthorityBase,
+          version: "prepared_tool_stable_authority_v2" as const,
+          executionClass: "read_only" as const,
+        }
+      : {
+          ...stableAuthorityBase,
+          version: "prepared_tool_stable_authority_v1" as const,
+        };
   const stableAuthority = {
     ...stableAuthorityPayload,
     fingerprint: hashCanonical(stableAuthorityPayload),
@@ -5539,7 +5618,7 @@ function buildPreparedApprovalWait(input: {
         stableAuthorityFingerprint: stableAuthority.fingerprint,
         stableToolIdentity,
         requestingActor,
-        toolClass: "external_side_effect",
+        toolClass: input.toolClass ?? "external_side_effect",
         capabilities: ["filesystem.read"],
         authorityKind: "runtime_policy",
         authorityRevision: stableToolIdentity.approvalAuthorityRevision,
@@ -5560,6 +5639,16 @@ function buildPreparedApprovalWait(input: {
     eventType: "user.approval",
     metadata: {
       prompt: input.prompt,
+      ...(input.toolClass === "read_only"
+        ? {
+            approvalId,
+            toolName: descriptor.toolId,
+            toolInput: effectiveInput,
+            toolClass: input.toolClass,
+            externalApprovalBinding:
+              preparedToolCall.approval?.externalApprovalBinding,
+          }
+        : {}),
       preparedToolCall,
       reasonCode: "environment_policy",
     },

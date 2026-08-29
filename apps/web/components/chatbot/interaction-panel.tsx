@@ -371,7 +371,9 @@ export function InteractionPanel({
                   {interaction.approvalOutcome.publicMessage}
                 </p>
               ) : null}
-              {approvalDetails === null ? (
+              {approvalDetails === null &&
+              (interaction.kind !== "approval" ||
+                interaction.prompt !== "Review this action before it runs.") ? (
                 <p className="text-sm">{interaction.prompt}</p>
               ) : null}
               {structuredReview.kind === "invalid_review" ? (

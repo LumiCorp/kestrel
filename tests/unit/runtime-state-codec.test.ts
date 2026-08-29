@@ -14,7 +14,10 @@ import {
   fingerprintToolScopeV1,
   hashCanonical,
 } from "../../src/kestrel/contracts/tool-contract.js";
-import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import {
+  parseDurablePreparedToolCallV1,
+  parsePreparedToolCallV1,
+} from "../../src/kestrel/contracts/tool-invocation.js";
 import {
   projectHostedToolApprovalInteractionV4,
   projectLocalToolApprovalInteractionV1,
@@ -196,6 +199,33 @@ test("runtime state restart preserves the exact prepared canonical hosted approv
     registryGeneration: "generation-restart",
     scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
   });
+  const effectiveInput = { query: "persist exactly" };
+  const policyRevision = hashCanonical({ policy: "ask" });
+  const stableAuthorityPayload = {
+    version: "prepared_tool_stable_authority_v2" as const,
+    actor: {
+      actorType: "end_user" as const,
+      actorId: "user-1",
+      tenantId: "org-1",
+    },
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    threadId: "thread-restart",
+    resourceAuthority: {
+      toolSourceKind: descriptor.sourceKind,
+      toolSourceId: descriptor.sourceId,
+    },
+    policyRevision,
+    capabilities: ["network.call"],
+    descriptorContractRevision: descriptor.contractRevision,
+    approvalAuthorityRevision: "approval-authority-v1",
+    normalizedActionHash: hashCanonical({
+      toolId: descriptor.toolId,
+      effectiveInput,
+    }),
+    executionClass: "read_only" as const,
+  };
   const unboundPrepared = parsePreparedToolCallV1({
     version: "v1",
     runId: "run-before-restart",
@@ -207,11 +237,11 @@ test("runtime state restart preserves the exact prepared canonical hosted approv
       snapshotId: hashCanonical({ snapshot: "restart" }),
       modelToolCallId: "model-call-restart",
     },
-    effectiveInput: { query: "persist exactly" },
+    effectiveInput,
     inputAdapters: [],
     policy: {
       decision: "approval_required",
-      policyRevision: hashCanonical({ policy: "ask" }),
+      policyRevision,
       reasonCode: "environment_policy",
     },
     approval: {
@@ -219,26 +249,8 @@ test("runtime state restart preserves the exact prepared canonical hosted approv
       authorityRevision: hashCanonical({ approval: "restart" }),
     },
     stableAuthority: {
-      version: "prepared_tool_stable_authority_v1",
-      fingerprint: hashCanonical({ stable: "restart" }),
-      actor: {
-        actorType: "end_user",
-        actorId: "user-1",
-        tenantId: "org-1",
-      },
-      organizationId: "org-1",
-      environmentId: "env-1",
-      projectId: "project-1",
-      threadId: "thread-restart",
-      resourceAuthority: {
-        toolSourceKind: descriptor.sourceKind,
-        toolSourceId: descriptor.sourceId,
-      },
-      policyRevision: hashCanonical({ policy: "ask" }),
-      capabilities: ["network.call"],
-      descriptorContractRevision: descriptor.contractRevision,
-      approvalAuthorityRevision: "approval-authority-v1",
-      normalizedActionHash: hashCanonical({ query: "persist exactly" }),
+      ...stableAuthorityPayload,
+      fingerprint: hashCanonical(stableAuthorityPayload),
     },
     stableToolIdentity: {
       version: "stable_tool_approval_identity_v1",
@@ -252,43 +264,31 @@ test("runtime state restart preserves the exact prepared canonical hosted approv
     },
     preparedAt: "2026-08-26T12:00:00.000Z",
   });
-  const {
-    fingerprint: _staleFingerprint,
-    ...stableAuthorityPayload
-  } = unboundPrepared.stableAuthority!;
-  const canonicalStableAuthorityPayload = {
-    ...stableAuthorityPayload,
-    normalizedActionHash: hashCanonical({
-      toolId: descriptor.toolId,
-      effectiveInput: unboundPrepared.effectiveInput,
-    }),
+  const requestedAt = "2026-08-26T12:00:00.000Z";
+  const expiresAt = "2026-08-26T12:05:00.000Z";
+  const binding = {
+    version: "runner_external_approval_binding_v2" as const,
+    approvalId: "approval-restart-1",
+    preparedInvocationId: unboundPrepared.callId,
+    threadId: stableAuthorityPayload.threadId,
+    actionKey: descriptor.toolId,
+    payloadHash: hashCanonical(effectiveInput),
+    stableAuthorityFingerprint: unboundPrepared.stableAuthority!.fingerprint,
+    stableToolIdentity: unboundPrepared.stableToolIdentity!,
+    requestingActor: stableAuthorityPayload.actor,
+    toolClass: "read_only" as const,
+    capabilities: stableAuthorityPayload.capabilities,
+    authorityKind: "runtime_policy" as const,
+    authorityRevision:
+      unboundPrepared.stableToolIdentity!.approvalAuthorityRevision,
+    requestedAt,
+    expiresAt,
   };
-  const stableAuthority = {
-    ...canonicalStableAuthorityPayload,
-    fingerprint: hashCanonical(canonicalStableAuthorityPayload),
-  };
-  const prepared = parsePreparedToolCallV1({
+  const prepared = parseDurablePreparedToolCallV1({
     ...unboundPrepared,
-    stableAuthority,
     approval: {
       ...unboundPrepared.approval,
-      externalApprovalBinding: {
-        version: "runner_external_approval_binding_v2",
-        approvalId: "approval-restart-1",
-        preparedInvocationId: unboundPrepared.callId,
-        threadId: "thread-restart",
-        actionKey: descriptor.toolId,
-        payloadHash: hashCanonical(unboundPrepared.effectiveInput),
-        stableAuthorityFingerprint: stableAuthority.fingerprint,
-        stableToolIdentity: unboundPrepared.stableToolIdentity,
-        requestingActor: stableAuthority.actor,
-        toolClass: "external_side_effect",
-        capabilities: ["network.call"],
-        authorityKind: "runtime_policy",
-        authorityRevision: "approval-authority-v1",
-        requestedAt: "2026-08-26T12:00:00.000Z",
-        expiresAt: "2026-08-26T12:05:00.000Z",
-      },
+      externalApprovalBinding: binding,
     },
   });
   const interaction = projectHostedToolApprovalInteractionV4({
@@ -305,6 +305,11 @@ test("runtime state restart preserves the exact prepared canonical hosted approv
         pendingApproval: {
           version: "hosted_tool_approval_v2",
           preparedInvocationId: prepared.callId,
+          approvalId: prepared.approval?.approvalId,
+          toolName: descriptor.toolId,
+          toolClass: "read_only",
+          expiresAt,
+          externalApprovalBinding: binding,
         },
       },
       assistantText: interaction.prompt,
@@ -313,7 +318,17 @@ test("runtime state restart preserves the exact prepared canonical hosted approv
         eventType: "user.approval",
         reason: "Approval required",
         resumeInstruction: "Choose an approval decision.",
-        metadata: { preparedToolCall: prepared, reasonCode: "environment_policy" },
+        metadata: {
+          preparedToolCall: prepared,
+          approvalId: prepared.approval?.approvalId,
+          toolName: descriptor.toolId,
+          toolClass: "read_only",
+          requestedAt,
+          expiresAt,
+          approvalAuthorityKind: "runtime_policy",
+          reasonCode: "environment_policy",
+          externalApprovalBinding: binding,
+        },
         interaction,
       },
     },
@@ -329,6 +344,11 @@ test("runtime state restart preserves the exact prepared canonical hosted approv
   assert.deepEqual(readExecState(restarted).pendingApproval, {
     version: "hosted_tool_approval_v2",
     preparedInvocationId: prepared.callId,
+    approvalId: prepared.approval?.approvalId,
+    toolName: descriptor.toolId,
+    toolClass: "read_only",
+    expiresAt,
+    externalApprovalBinding: binding,
   });
   const rememberedInteraction = projectHostedToolApprovalInteractionV4({
     preparedToolCall: prepared,
