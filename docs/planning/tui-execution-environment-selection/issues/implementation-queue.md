@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Order legacy forks from complete runtime evidence](23-order-legacy-forks-from-runtime-evidence.md)
 
 ## In progress
 
