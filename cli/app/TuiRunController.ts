@@ -2516,8 +2516,8 @@ export class TuiRunController {
           && exactAcceptedForegroundStart === false
           && exactBackgroundStart === false
       ) return;
-      this.applySharedActivityEvent(event);
       if (exactBackgroundStart) {
+        this.applySharedActivityEvent(event);
         this.observedActiveRunBySession.set(event.sessionId, event.runId);
         const acceptedRuns = this.acceptedRunSourceMessageBySession.get(event.sessionId) ?? new Map();
         acceptedRuns.set(event.runId, event.payload.sourceMessageId);
@@ -2532,6 +2532,7 @@ export class TuiRunController {
             messageId: event.payload.sourceMessageId!,
           });
           if (accepted === false) return;
+          this.applySharedActivityEvent(event);
           this.observedActiveRunBySession.set(event.sessionId, event.runId);
           const acceptedRuns = this.acceptedRunSourceMessageBySession.get(event.sessionId) ?? new Map();
           acceptedRuns.set(event.runId, event.payload.sourceMessageId);
@@ -2549,7 +2550,12 @@ export class TuiRunController {
         });
       }
     }
-    if (event.type !== "run.started") this.applySharedActivityEvent(event);
+    if (
+      event.type !== "run.started"
+      && event.type !== "run.completed"
+      && event.type !== "run.failed"
+      && event.type !== "run.cancelled"
+    ) this.applySharedActivityEvent(event);
     if (event.type === "operator.thread") {
       void this.installConversationView(event.payload.view);
       return;
@@ -2638,27 +2644,42 @@ export class TuiRunController {
           output.runId,
           event.threadId,
         );
+        const queuedTerminalEvidence = this.foregroundQueuedTerminalEvidence(
+          output.sessionId,
+          output.runId,
+          event.threadId,
+        );
+        const terminalWasCommitted = this.terminalLifecycleAlreadyCommitted(
+          output.sessionId,
+          output.runId,
+        );
         const authoritativeView = terminalOwnsCurrentLifecycle === false && event.threadId !== undefined
           ? await this.requestConversationView(event.threadId).catch(() => undefined)
           : undefined;
-        const terminalOwnsActiveRun = this.recordTerminalEvent(output, event.ts, event.threadId);
+        if (queuedTerminalEvidence && event.threadId !== undefined) {
+          const synchronizedQueuedTerminal = await this.context.syncForegroundQueuedTerminal({
+            sessionId: output.sessionId,
+            threadId: event.threadId,
+            runId: output.runId,
+            result: event.payload.result,
+            authoritativeView,
+          });
+          if (synchronizedQueuedTerminal === false) return;
+          terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
+            output.sessionId,
+            output.runId,
+            event.threadId,
+          );
+          if (terminalOwnsCurrentLifecycle === false) return;
+        }
+        const terminalOwnsActiveRun = this.recordTerminalEvent(
+          output,
+          event.ts,
+          event.threadId,
+          queuedTerminalEvidence && terminalWasCommitted === false,
+        );
         if (terminalOwnsActiveRun) {
-          if (event.threadId !== undefined) {
-            const synchronizedQueuedTerminal = await this.context.syncForegroundQueuedTerminal({
-              sessionId: output.sessionId,
-              threadId: event.threadId,
-              runId: output.runId,
-              result: event.payload.result,
-              authoritativeView,
-            });
-            if (synchronizedQueuedTerminal) {
-              terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
-                output.sessionId,
-                output.runId,
-                event.threadId,
-              );
-            }
-          }
+          this.applySharedActivityEvent(event);
           await this.context.syncBackgroundSessionResult(
             output.sessionId,
             output.runId,
@@ -2687,7 +2708,8 @@ export class TuiRunController {
           await this.context.appendHistoryLine("system", "Run Completed");
         }
         if (
-          terminalOwnsCurrentLifecycle
+          terminalOwnsActiveRun
+          && terminalOwnsCurrentLifecycle
           && this.context.uiStore.getState().activeSession.sessionId === output.sessionId
         ) {
           this.context.pushRunLog({
@@ -2735,31 +2757,42 @@ export class TuiRunController {
             output.runId,
             event.threadId,
           );
+          const queuedTerminalEvidence = this.foregroundQueuedTerminalEvidence(
+            output.sessionId,
+            output.runId,
+            event.threadId,
+          );
+          const terminalWasCommitted = this.terminalLifecycleAlreadyCommitted(
+            output.sessionId,
+            output.runId,
+          );
           const authoritativeView = terminalOwnsCurrentLifecycle === false && event.threadId !== undefined
             ? await this.requestConversationView(event.threadId).catch(() => undefined)
             : undefined;
+          if (queuedTerminalEvidence && event.threadId !== undefined) {
+            const synchronizedQueuedTerminal = await this.context.syncForegroundQueuedTerminal({
+              sessionId: output.sessionId,
+              threadId: event.threadId,
+              runId: output.runId,
+              result: event.payload.result!,
+              authoritativeView,
+            });
+            if (synchronizedQueuedTerminal === false) return;
+            terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
+              output.sessionId,
+              output.runId,
+              event.threadId,
+            );
+            if (terminalOwnsCurrentLifecycle === false) return;
+          }
           const terminalOwnsActiveRun = this.recordTerminalEvent(
             output,
             event.ts,
             event.threadId,
+            queuedTerminalEvidence && terminalWasCommitted === false,
           );
           if (terminalOwnsActiveRun) {
-            if (event.threadId !== undefined) {
-              const synchronizedQueuedTerminal = await this.context.syncForegroundQueuedTerminal({
-                sessionId: output.sessionId,
-                threadId: event.threadId,
-                runId: output.runId,
-                result: event.payload.result!,
-                authoritativeView,
-              });
-              if (synchronizedQueuedTerminal) {
-                terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
-                  output.sessionId,
-                  output.runId,
-                  event.threadId,
-                );
-              }
-            }
+            this.applySharedActivityEvent(event);
             await this.context.syncBackgroundSessionFailure(
               output.sessionId,
               output.runId,
@@ -2776,7 +2809,8 @@ export class TuiRunController {
             await this.refreshConversationView(event.threadId).catch(() => undefined);
           }
           if (
-            terminalOwnsCurrentLifecycle
+            terminalOwnsActiveRun
+            && terminalOwnsCurrentLifecycle
             && this.context.uiStore.getState().activeSession.sessionId === output.sessionId
           ) {
             this.context.pushRunLog({
@@ -2822,27 +2856,42 @@ export class TuiRunController {
           output.runId,
           event.threadId,
         );
+        const queuedTerminalEvidence = this.foregroundQueuedTerminalEvidence(
+          output.sessionId,
+          output.runId,
+          event.threadId,
+        );
+        const terminalWasCommitted = this.terminalLifecycleAlreadyCommitted(
+          output.sessionId,
+          output.runId,
+        );
         const authoritativeView = terminalOwnsCurrentLifecycle === false && event.threadId !== undefined
           ? await this.requestConversationView(event.threadId).catch(() => undefined)
           : undefined;
-        const terminalOwnsActiveRun = this.recordTerminalEvent(output, event.ts, event.threadId);
+        if (queuedTerminalEvidence && event.threadId !== undefined) {
+          const synchronizedQueuedTerminal = await this.context.syncForegroundQueuedTerminal({
+            sessionId: output.sessionId,
+            threadId: event.threadId,
+            runId: output.runId,
+            result: event.payload.result,
+            authoritativeView,
+          });
+          if (synchronizedQueuedTerminal === false) return;
+          terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
+            output.sessionId,
+            output.runId,
+            event.threadId,
+          );
+          if (terminalOwnsCurrentLifecycle === false) return;
+        }
+        const terminalOwnsActiveRun = this.recordTerminalEvent(
+          output,
+          event.ts,
+          event.threadId,
+          queuedTerminalEvidence && terminalWasCommitted === false,
+        );
         if (terminalOwnsActiveRun) {
-          if (event.threadId !== undefined) {
-            const synchronizedQueuedTerminal = await this.context.syncForegroundQueuedTerminal({
-              sessionId: output.sessionId,
-              threadId: event.threadId,
-              runId: output.runId,
-              result: event.payload.result,
-              authoritativeView,
-            });
-            if (synchronizedQueuedTerminal) {
-              terminalOwnsCurrentLifecycle = this.terminalEventOwnsCurrentLifecycle(
-                output.sessionId,
-                output.runId,
-                event.threadId,
-              );
-            }
-          }
+          this.applySharedActivityEvent(event);
           await this.context.syncBackgroundSessionFailure(
             output.sessionId,
             output.runId,
@@ -2859,7 +2908,8 @@ export class TuiRunController {
           await this.refreshConversationView(event.threadId).catch(() => undefined);
         }
         if (
-          terminalOwnsCurrentLifecycle
+          terminalOwnsActiveRun
+          && terminalOwnsCurrentLifecycle
           && this.context.uiStore.getState().activeSession.sessionId === output.sessionId
         ) {
           this.context.pushRunLog({
@@ -3246,10 +3296,38 @@ export class TuiRunController {
     return evidence !== undefined && queuedEvidenceCanReplaceAcceptedRun(session, evidence);
   }
 
+  private foregroundQueuedTerminalEvidence(
+    sessionId: string,
+    runId: string,
+    threadId: string | undefined,
+  ): boolean {
+    if (threadId === undefined) return false;
+    const session = this.context.uiStore.getState().sessions.find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+    if (session === undefined || session.delegation !== undefined) return false;
+    return findQueuedRunReservation(session.queuedRunReservations, runId, threadId) !== undefined
+      || session.pendingQueueSubmissions?.some(
+        (candidate) => candidate.runId === runId && candidate.threadId === threadId,
+      ) === true
+      || session.terminalQueuedRuns?.some(
+        (candidate) => candidate.runId === runId && candidate.threadId === threadId,
+      ) === true;
+  }
+
+  private terminalLifecycleAlreadyCommitted(sessionId: string, runId: string): boolean {
+    const session = this.context.uiStore.getState().sessions.find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+    return session?.acceptedRunId === runId
+      && (session.lastRunStatus === "COMPLETED" || session.lastRunStatus === "FAILED");
+  }
+
   private recordTerminalEvent(
     output: NormalizedOutput,
     timestamp: string,
     threadId?: string | undefined,
+    acceptJustCommitted = false,
   ): boolean {
     const { sessionId, runId } = output;
     const persistedSession = this.context.uiStore.getState().sessions.find(
@@ -3257,7 +3335,8 @@ export class TuiRunController {
     );
     const persistedAcceptedRunId = persistedSession?.acceptedRunId;
     if (
-      persistedAcceptedRunId === runId
+      acceptJustCommitted === false
+      && persistedAcceptedRunId === runId
       && (
         persistedSession?.lastRunStatus === "COMPLETED"
         || persistedSession?.lastRunStatus === "FAILED"

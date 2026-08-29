@@ -194,6 +194,7 @@ function createRunHarness(input: {
   resolveWorkspaceForSession?: ((session: TuiSessionMeta) => Promise<ResolvedWorkspace | undefined>) | undefined;
   beforeSetSessionState?: ((sessionId: string, patch: Partial<TuiSessionMeta>) => Promise<void>) | undefined;
   syncForegroundSessionProgress?: TuiRunControllerContext["syncForegroundSessionProgress"] | undefined;
+  syncForegroundQueuedTerminal?: TuiRunControllerContext["syncForegroundQueuedTerminal"] | undefined;
 } = {}): {
   controller: TuiRunController;
   uiStore: UiStore;
@@ -627,7 +628,7 @@ function createRunHarness(input: {
       persistCount += 1;
       return true;
     }),
-    syncForegroundQueuedTerminal: async (terminalInput: Parameters<
+    syncForegroundQueuedTerminal: input.syncForegroundQueuedTerminal ?? (async (terminalInput: Parameters<
       TuiRunControllerContext["syncForegroundQueuedTerminal"]
     >[0]) => {
       const {
@@ -766,7 +767,7 @@ function createRunHarness(input: {
       });
       persistCount += 1;
       return true;
-    },
+    }),
     syncBackgroundSessionProgress: async (progress) => {
       backgroundProgress.push(progress);
     },
@@ -3022,6 +3023,113 @@ test("TuiRunController promotes a direct Q2 terminal after durable Q1 terminal a
   assert.equal(harness.history.filter((line) => line.output?.runId === "run-q2").length, 1);
 });
 
+test("TuiRunController reconciles a tombstoned terminal after lookup recovery and publishes once", async () => {
+  const threadId = "thread-main:session-1";
+  let lookupCount = 0;
+  let syncCount = 0;
+  let harness!: ReturnType<typeof createRunHarness>;
+  harness = createRunHarness({
+    activeSessionPatch: {
+      acceptedRunId: "run-q1",
+      acceptedRunMessageId: "message-q1",
+      acceptedRunThreadId: threadId,
+      acceptedRunPredecessorId: "run-r0",
+      queuedRunReservations: [{
+        runId: "run-q2",
+        messageId: "message-q2",
+        threadId,
+        predecessorRunId: "run-r0",
+      }],
+      terminalQueuedRuns: [{
+        runId: "run-q1",
+        messageId: "message-q1",
+        threadId,
+        predecessorRunId: "run-r0",
+        status: "COMPLETED",
+      }],
+    },
+    sendCommand: async (type) => {
+      assert.equal(type, "operator.thread");
+      lookupCount += 1;
+      if (lookupCount === 1) throw new Error("authority temporarily unavailable");
+      return makeRunnerEvent({
+        type: "operator.thread",
+        payload: {
+          view: makeQueuedTerminalAuthorityView([
+            { runId: "run-q1", messageId: "message-q1", status: "COMPLETED" },
+            { runId: "run-q2", messageId: "message-q2", status: "COMPLETED" },
+          ]),
+        },
+      });
+    },
+    syncForegroundQueuedTerminal: async ({ authoritativeView }) => {
+      syncCount += 1;
+      const state = harness.uiStore.getState();
+      if (syncCount === 1) {
+        assert.equal(authoritativeView, undefined);
+        const tombstoned = {
+          ...state.activeSession,
+          queuedRunReservations: undefined,
+          terminalQueuedRuns: [...(state.activeSession.terminalQueuedRuns ?? []), {
+            runId: "run-q2",
+            messageId: "message-q2",
+            threadId,
+            predecessorRunId: "run-r0",
+            status: "COMPLETED" as const,
+          }],
+        };
+        harness.uiStore.patch({ activeSession: tombstoned, sessions: [tombstoned] });
+        return true;
+      }
+      if (syncCount === 2) {
+        assert.notEqual(authoritativeView, undefined);
+        const accepted = {
+          ...state.activeSession,
+          acceptedRunId: "run-q2",
+          acceptedRunMessageId: "message-q2",
+          acceptedRunThreadId: threadId,
+          acceptedRunPredecessorId: "run-q1",
+          lastRunStatus: "COMPLETED" as const,
+          terminalQueuedRuns: state.activeSession.terminalQueuedRuns?.map((terminal) =>
+            terminal.runId === "run-q2"
+              ? { ...terminal, predecessorRunId: "run-q1" }
+              : terminal
+          ),
+        };
+        harness.uiStore.patch({ activeSession: accepted, sessions: [accepted] });
+        return true;
+      }
+      return true;
+    },
+  });
+  const terminalEvent = () => makeRunnerEvent({
+    type: "run.completed",
+    sessionId: "session-1",
+    threadId,
+    runId: "run-q2",
+    payload: { result: makeCompletedResult("run-q2") },
+  });
+
+  harness.controller.onRunnerEvent(terminalEvent());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.uiStore.getState().activeSession.acceptedRunId, "run-q1");
+  assert.equal(harness.history.some((line) => line.output?.runId === "run-q2"), false);
+
+  harness.controller.onRunnerEvent(terminalEvent());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.uiStore.getState().activeSession.acceptedRunId, "run-q2");
+  assert.equal(harness.history.filter((line) => line.output?.runId === "run-q2").length, 1);
+
+  harness.controller.onRunnerEvent(terminalEvent());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.history.filter((line) => line.output?.runId === "run-q2").length, 1);
+  assert.equal(harness.runLogs.filter((line) => line.runId === "run-q2").length, 1);
+  assert.equal(lookupCount >= 2, true);
+  assert.equal(syncCount, 3);
+});
+
 test("TuiRunController promotes direct failed and cancelled Q2 after durable Q1 authority", async (t) => {
   for (const eventType of ["run.failed", "run.cancelled"] as const) {
     await t.test(eventType, async () => {
@@ -4269,6 +4377,55 @@ test("TuiRunController does not let a rejected delayed start poison later termin
   assert.equal(state.running, true);
   assert.equal(state.statusLine, "R2 running");
   assert.equal(harness.history.some((line) => line.output?.runId === queuedRunId), false);
+});
+
+test("TuiRunController publishes no queued terminal output before durable ownership commits", async () => {
+  const threadId = "thread-main:session-1";
+  const harness = createRunHarness({
+    activeSessionPatch: {
+      acceptedRunId: "run-r0",
+      acceptedRunMessageId: "message-r0",
+      acceptedRunThreadId: threadId,
+      queuedRunReservations: [{
+        runId: "run-q1",
+        messageId: "message-q1",
+        threadId,
+        predecessorRunId: "run-r0",
+      }],
+    },
+    syncForegroundQueuedTerminal: async () => false,
+  });
+  harness.uiStore.patch({
+    running: true,
+    statusLine: "R0 running",
+    conversationActivity: [{
+      id: "activity-q1",
+      runId: "run-q1",
+      kind: "status",
+      label: "Run",
+      text: "queued",
+      visible: true,
+      updatedAt: "2026-05-14T00:00:02.000Z",
+    }],
+  });
+
+  harness.controller.onRunnerEvent(makeRunnerEvent({
+    type: "run.completed",
+    sessionId: "session-1",
+    threadId,
+    runId: "run-q1",
+    payload: { result: makeCompletedResult("run-q1") },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const state = harness.uiStore.getState();
+  assert.equal(state.activeSession.acceptedRunId, "run-r0");
+  assert.equal(state.running, true);
+  assert.equal(state.statusLine, "R0 running");
+  assert.equal(state.conversationActivity.some((item) => item.runId === "run-q1"), true);
+  assert.equal(harness.history.some((line) => line.output?.runId === "run-q1"), false);
+  assert.equal(harness.runLogs.some((line) => line.runId === "run-q1"), false);
 });
 
 test("TuiRunController rejects a result-less failed response with the wrong top-level session", async () => {

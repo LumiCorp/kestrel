@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Commit queue authority before publication](25-commit-queue-authority-before-publication.md)
+None.
 
 ## In progress
 
@@ -16,6 +16,7 @@ None.
 
 ## Implemented
 
+- [Commit queue authority before publication](25-commit-queue-authority-before-publication.md)
 - [Persist accepted queue order authority](24-persist-accepted-queue-order-authority.md)
 - [Order legacy forks from complete runtime evidence](23-order-legacy-forks-from-runtime-evidence.md)
 - [Resolve legacy queue forks from exact authority](22-resolve-legacy-queue-forks-from-authority.md)
