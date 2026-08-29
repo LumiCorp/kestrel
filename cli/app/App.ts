@@ -279,6 +279,7 @@ export class App {
   };
   private bootstrapHintShown = false;
   private transcriptAppendQueue: Promise<void> = Promise.resolve();
+  private readonly queueSessionCommitTailBySession = new Map<string, Promise<void>>();
   private startTaskJourney: StartTaskJourneyState | undefined;
   private childMissionJourney: ChildMissionJourneyState | undefined;
   private scriptedInputsEnqueued = false;
@@ -1732,6 +1733,7 @@ export class App {
         syncForegroundSessionProgress: (input) => this.syncForegroundSessionProgress(input),
         syncForegroundQueuedTerminal: (input) => this.syncForegroundQueuedTerminal(input),
         setSessionState: (sessionId, patch) => this.setSessionState(sessionId, patch),
+        commitQueueSessionState: (sessionId, patch) => this.commitQueueSessionState(sessionId, patch),
         syncBackgroundSessionProgress: (input) => this.syncBackgroundSessionProgress(input),
         syncBackgroundSessionResult: (expectedSessionId, expectedRunId, allowUnstartedAcceptance, output, assistantText, finalizedPayload, operatorState) =>
           this.syncBackgroundSessionResult(expectedSessionId, expectedRunId, allowUnstartedAcceptance, output, assistantText, finalizedPayload, operatorState),
@@ -4026,8 +4028,7 @@ export class App {
       || current === undefined
       || hasSameTuiLifecycleEvidence(beforeProjection, current) === false
     ) return;
-    this.persistProjectedSession(patchedSession);
-    await this.saveSessionsFile();
+    if (await this.commitProjectedSession(patchedSession, current) === false) return;
     const discoveredQueuedTerminal = (patchedSession.terminalQueuedRuns?.length ?? 0)
       > (beforeProjection.terminalQueuedRuns?.length ?? 0);
     if (
@@ -4217,47 +4218,77 @@ export class App {
     });
   }
 
-  private async commitProjectedSession(patchedSession: TuiSessionMeta): Promise<boolean> {
-    const previousFile = this.sessionsFile;
-    const previousSession = previousFile.sessions.find(
-      (session) => session.sessionId === patchedSession.sessionId,
-    );
-    const activeSessionName = previousFile.activeSessionName;
-    let stagedFile = this.sessionStore.upsert(previousFile, patchedSession);
-    if (previousFile.sessions.find((session) => session.sessionId === patchedSession.sessionId)?.name
-      !== activeSessionName) {
-      stagedFile = { ...stagedFile, activeSessionName };
-    }
-    this.sessionsFile = stagedFile;
-    try {
-      await this.saveSessionsFile({ requireSessionSave: true });
-    } catch {
-      const currentSession = this.sessionsFile.sessions.find(
-        (session) => session.sessionId === patchedSession.sessionId,
-      );
-      if (currentSession === patchedSession) {
-        const sessions = previousSession === undefined
-          ? this.sessionsFile.sessions.filter(
-              (session) => session.sessionId !== patchedSession.sessionId,
-            )
-          : this.sessionsFile.sessions.map((session) =>
-              session.sessionId === patchedSession.sessionId ? previousSession : session
-            );
-        this.sessionsFile = { ...this.sessionsFile, sessions };
+  private async commitProjectedSession(
+    patchedSession: TuiSessionMeta,
+    expectedSession: TuiSessionMeta,
+  ): Promise<boolean> {
+    return await this.commitQueueSessionMutation(
+      patchedSession.sessionId,
+      (current) => current === expectedSession ? patchedSession : undefined,
+    ) !== undefined;
+  }
+
+  private async commitQueueSessionState(
+    sessionId: string,
+    patch: Partial<TuiSessionMeta>,
+  ): Promise<TuiSessionMeta | undefined> {
+    return await this.commitQueueSessionMutation(sessionId, (current) => ({
+      ...current,
+      ...patch,
+    }));
+  }
+
+  private async commitQueueSessionMutation(
+    sessionId: string,
+    mutation: (current: TuiSessionMeta) => TuiSessionMeta | undefined,
+  ): Promise<TuiSessionMeta | undefined> {
+    const previous = this.queueSessionCommitTailBySession.get(sessionId) ?? Promise.resolve();
+    let committed: TuiSessionMeta | undefined;
+    const operation = previous.catch(() => undefined).then(async () => {
+      const sourceFile = this.sessionsFile;
+      const sourceSession = sourceFile.sessions.find((session) => session.sessionId === sessionId);
+      if (sourceSession === undefined) return;
+      const projectedSession = mutation(sourceSession);
+      if (projectedSession === undefined) return;
+      const activeSessionName = sourceFile.activeSessionName;
+      let privateSnapshot = this.sessionStore.upsert(sourceFile, projectedSession);
+      if (sourceSession.name !== activeSessionName) {
+        privateSnapshot = { ...privateSnapshot, activeSessionName };
       }
-      return false;
-    }
-    if (this.sessionsFile.sessions.find(
-      (session) => session.sessionId === patchedSession.sessionId,
-    ) !== patchedSession) return false;
-    const state = this.uiStore.getState();
-    this.uiStore.patch({
-      sessions: this.sessionsFile.sessions,
-      ...(state.activeSession.sessionId === patchedSession.sessionId
-        ? { activeSession: patchedSession }
-        : {}),
+      try {
+        await this.sessionStore.save(privateSnapshot);
+      } catch (error) {
+        this.recordPersistenceFailure("sessions.queue_commit", error);
+        return;
+      }
+      const currentFile = this.sessionsFile;
+      const currentSession = currentFile.sessions.find((session) => session.sessionId === sessionId);
+      if (currentSession !== sourceSession) return;
+      const currentActiveSessionName = currentFile.activeSessionName;
+      let publishedFile = this.sessionStore.upsert(currentFile, projectedSession);
+      if (sourceSession.name !== currentActiveSessionName) {
+        publishedFile = { ...publishedFile, activeSessionName: currentActiveSessionName };
+      }
+      this.sessionsFile = publishedFile;
+      const state = this.uiStore.getState();
+      this.uiStore.patch({
+        sessions: publishedFile.sessions,
+        ...(state.activeSession.sessionId === sessionId
+          ? { activeSession: projectedSession }
+          : {}),
+      });
+      committed = projectedSession;
     });
-    return true;
+    const tail = operation.then(() => undefined, () => undefined);
+    this.queueSessionCommitTailBySession.set(sessionId, tail);
+    try {
+      await operation;
+      return committed;
+    } finally {
+      if (this.queueSessionCommitTailBySession.get(sessionId) === tail) {
+        this.queueSessionCommitTailBySession.delete(sessionId);
+      }
+    }
   }
 
   private async applyOperatorControlResponse(
@@ -5366,7 +5397,7 @@ export class App {
       lastRunStatus: undefined,
       updatedAt: new Date().toISOString(),
     };
-    if (await this.commitProjectedSession(accepted) === false) return false;
+    if (await this.commitProjectedSession(accepted, persistedSession) === false) return false;
     if (this.uiStore.getState().activeSession.sessionId === input.sessionId) {
       this.uiStore.patch({
         running: true,
@@ -5432,20 +5463,25 @@ export class App {
         );
     const queuedEvidence = queuedReservation ?? pendingQueueSubmission ?? terminalQueuedRun;
     if (queuedEvidence === undefined) return false;
+    const hasExactTerminalAuthority = terminalStatus === undefined
+      || (
+        input.authoritativeView !== undefined
+        && input.authoritativeView.thread.sessionId === input.sessionId
+        && input.authoritativeView.thread.threadId === input.threadId
+        && hasExactQueuedTerminalTurn(input.authoritativeView, {
+          ...queuedEvidence,
+          status: terminalStatus,
+        })
+      );
     let currentQueueGraph = normalizeTuiQueueGraph(session);
     let orderedEvidence = queuedEvidence;
     if (
       queuedEvidenceCanReplaceAcceptedRun(session, queuedEvidence) === false
-      && input.authoritativeView !== undefined
-      && input.authoritativeView.thread.sessionId === input.sessionId
-      && input.authoritativeView.thread.threadId === input.threadId
       && terminalStatus !== undefined
-      && hasExactQueuedTerminalTurn(input.authoritativeView, {
-        ...queuedEvidence,
-        status: terminalStatus,
-      })
+      && hasExactTerminalAuthority
     ) {
-      const reconciled = reconcileExactQueuedLifecycle(session, input.authoritativeView);
+      const authoritativeView = input.authoritativeView!;
+      const reconciled = reconcileExactQueuedLifecycle(session, authoritativeView);
       currentQueueGraph = {
         pendingQueueSubmissions: reconciled.pendingQueueSubmissions,
         queuedRunReservations: reconciled.queuedRunReservations,
@@ -5462,10 +5498,11 @@ export class App {
       );
       if (reconciledEvidence !== undefined) orderedEvidence = reconciledEvidence;
     }
-    const installAsCurrent = queuedEvidenceCanReplaceAcceptedRun(
-      { ...session, ...currentQueueGraph },
-      orderedEvidence,
-    );
+    const installAsCurrent = hasExactTerminalAuthority
+      && queuedEvidenceCanReplaceAcceptedRun(
+        { ...session, ...currentQueueGraph },
+        orderedEvidence,
+      );
     let settledQueueGraph = installAsCurrent
       ? advanceTuiQueueAuthority(currentQueueGraph, orderedEvidence)
       : {
@@ -5529,7 +5566,7 @@ export class App {
         : {}),
       updatedAt: new Date().toISOString(),
     };
-    if (await this.commitProjectedSession(accepted) === false) return false;
+    if (await this.commitProjectedSession(accepted, persistedSession) === false) return false;
     return true;
   }
 
@@ -6589,7 +6626,7 @@ function reconcileExactQueuedLifecycle(
       && session.acceptedRunThreadId === view.thread.threadId
       && activeIdentity.runId !== session.acceptedRunId
     ) {
-      const acceptedTerminal = terminalQueuedRuns?.find((terminal) =>
+      const persistedAcceptedTerminal = terminalQueuedRuns?.find((terminal) =>
         terminal.runId === session.acceptedRunId
         && terminal.messageId === session.acceptedRunMessageId
         && terminal.threadId === session.acceptedRunThreadId
@@ -6599,7 +6636,31 @@ function reconcileExactQueuedLifecycle(
           || acceptedQueuePredecessorMatches(session, activeIdentity!)
         )
       );
+      const acceptedTerminalStatus = exactQueuedRunStatusFromDescribedView(
+        view,
+        session.acceptedRunId,
+      );
+      const acceptedTerminal = persistedAcceptedTerminal ?? (
+        (acceptedTerminalStatus === "COMPLETED" || acceptedTerminalStatus === "FAILED")
+        && hasExactQueuedTerminalTurn(view, {
+          runId: session.acceptedRunId,
+          messageId: session.acceptedRunMessageId,
+          threadId: session.acceptedRunThreadId,
+          status: acceptedTerminalStatus,
+        })
+          ? {
+              runId: session.acceptedRunId,
+              messageId: session.acceptedRunMessageId,
+              threadId: session.acceptedRunThreadId,
+              status: acceptedTerminalStatus,
+              ...(activeIdentity.predecessorRunId === undefined
+                ? {}
+                : { predecessorRunId: activeIdentity.predecessorRunId }),
+            }
+          : undefined
+      );
       if (acceptedTerminal !== undefined) {
+        terminalQueuedRuns = appendTerminalQueuedRun(terminalQueuedRuns, acceptedTerminal);
         const bound = bindTuiQueueSuccessor({
           pendingQueueSubmissions,
           queuedRunReservations,
@@ -6623,14 +6684,16 @@ function reconcileExactQueuedLifecycle(
       && (
         session.acceptedRunPredecessorId !== undefined
           ? candidate.predecessorRunId === activeIdentity?.predecessorRunId
-          : [
-              ...(pendingQueueSubmissions ?? []),
-              ...(queuedRunReservations ?? []),
-              ...(terminalQueuedRuns ?? []),
-            ].some((record) =>
-              record.runId === candidate.predecessorRunId
-              && record.runId !== activeIdentity?.runId
-            ) === false
+          : candidate.predecessorRunId === activeIdentity?.runId
+            || view.conversationTurns?.some((turn) =>
+              turn.threadId === view.thread.threadId
+              && turn.sessionId === view.thread.sessionId
+              && turn.sourceMessageId === activeIdentity?.messageId
+              && turn.terminalRunId === activeIdentity?.runId
+              && (turn.status === "COMPLETED" || turn.status === "FAILED")
+              && turn.sequence !== null
+              && Number.isSafeInteger(turn.sequence)
+            ) === true
       )
       && view.conversationMessageRoutes?.some((route) =>
         route.messageId === candidate.messageId
@@ -6681,6 +6744,7 @@ function reconcileExactQueuedLifecycle(
   }
   let acceptedFromTerminalSequence: (typeof terminalCandidates)[number] | undefined;
   let priorOrderedTerminal: (typeof terminalCandidates)[number] | undefined;
+  let priorTerminalEpochRoot: string | undefined;
   for (const terminalCandidate of exactOrderedTerminalCandidates ?? []) {
     let terminal = terminalCandidate;
     const durableTerminalIdentity = [
@@ -6693,6 +6757,20 @@ function reconcileExactQueuedLifecycle(
       && candidate.threadId === terminal.threadId
     );
     if (durableTerminalIdentity === undefined) continue;
+    const terminalEpochRoot = exactQueueEpochRootRunId(
+      durableTerminalIdentity,
+      reboundQueueRecords,
+    );
+    if (
+      priorOrderedTerminal !== undefined
+      && (
+        terminalEpochRoot === undefined
+        || priorTerminalEpochRoot === undefined
+        || terminalEpochRoot !== priorTerminalEpochRoot
+      )
+    ) {
+      priorOrderedTerminal = undefined;
+    }
     if (
       priorOrderedTerminal !== undefined
       && durableTerminalIdentity.predecessorRunId !== priorOrderedTerminal.runId
@@ -6711,6 +6789,7 @@ function reconcileExactQueuedLifecycle(
       };
     }
     priorOrderedTerminal = terminal;
+    priorTerminalEpochRoot = terminalEpochRoot;
     pendingQueueSubmissions = omitExactRunIdentity(pendingQueueSubmissions, terminal);
     queuedRunReservations = omitExactRunIdentity(queuedRunReservations, terminal);
     terminalQueuedRuns = appendTerminalQueuedRun(terminalQueuedRuns, {
@@ -6746,6 +6825,8 @@ function reconcileExactQueuedLifecycle(
   if (
     exactActiveCandidate !== undefined
     && priorOrderedTerminal !== undefined
+    && exactQueueEpochRootRunId(exactActiveCandidate, reboundQueueRecords) !== undefined
+    && exactQueueEpochRootRunId(exactActiveCandidate, reboundQueueRecords) === priorTerminalEpochRoot
     && session.acceptedRunId === exactActiveCandidate.runId
     && session.acceptedRunMessageId === exactActiveCandidate.messageId
     && session.acceptedRunThreadId === exactActiveCandidate.threadId
@@ -6871,6 +6952,34 @@ function hasExactQueuedTerminalTurn(
     && Number.isSafeInteger(turn.sequence)
   ) ?? [];
   return matchingTurns.length === 1;
+}
+
+function exactQueueEpochRootRunId(
+  candidate: {
+    runId: string;
+    threadId: string;
+    predecessorRunId?: string | undefined;
+  },
+  records: Array<{
+    runId: string;
+    threadId: string;
+    predecessorRunId?: string | undefined;
+  }>,
+): string | undefined {
+  let predecessorRunId = candidate.predecessorRunId;
+  const visited = new Set([candidate.runId]);
+  while (predecessorRunId !== undefined) {
+    if (visited.has(predecessorRunId)) return undefined;
+    visited.add(predecessorRunId);
+    const predecessors = records.filter((record) =>
+      record.runId === predecessorRunId
+      && record.threadId === candidate.threadId
+    );
+    if (predecessors.length === 0) return predecessorRunId;
+    if (predecessors.length !== 1) return undefined;
+    predecessorRunId = predecessors[0]!.predecessorRunId;
+  }
+  return undefined;
 }
 
 function appendTerminalQueuedRun(
