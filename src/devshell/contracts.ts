@@ -15,6 +15,7 @@ export const DEV_SHELL_TIMEOUT_MS_MODEL_WARNING =
 export interface DevShellHealth {
   ok: boolean;
   serviceProtocolVersion: number;
+  servicePid: number;
   storeDriver: "sqlite" | "postgres";
   storeBindingRevision: string;
   capabilities: {

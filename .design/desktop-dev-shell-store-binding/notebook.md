@@ -20,8 +20,8 @@ Changed scenarios:
 
 ## Starting Sources
 
-- Repository: `/Users/gregasher/Projects/kestrel-harness`
-- Branch worktree: `/tmp/kestrel-harness-desktop-dev-shell-migration-failure`
+- Repository: the current Kestrel checkout root
+- Branch worktree: an isolated feature worktree
 - Exact Desktop run `481d5074-8db9-4d37-b62d-0f6a39328351`
 - Canonical Local Core state under `~/Library/Application Support/Kestrel/state/0.6`
 - Repository architecture, design, reliability, and `AGENTS.md` guardrails

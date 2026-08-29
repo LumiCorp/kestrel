@@ -47,6 +47,10 @@ import {
   resolveLegacyDevShellStoreBinding,
   type DevShellStoreBinding,
 } from "./storeBinding.js";
+import {
+  readDevShellSocketIdentity,
+  removeDevShellSocketIfOwned,
+} from "./socketOwnership.js";
 
 interface BoundedDevShellOutput {
   text: string;
@@ -104,6 +108,8 @@ interface DevShellBootstrapStatus {
   socketPath?: string | undefined;
   at?: string | undefined;
 }
+
+const INCOMPATIBLE_SERVICE_SHUTDOWN_TIMEOUT_MS = 30_000;
 
 export class LocalDevShellService implements DevShellServicePort {
   readonly socketPath: string;
@@ -385,7 +391,9 @@ export class LocalDevShellService implements DevShellServicePort {
       return;
     }
     if (health !== undefined) {
-      await this.stopIncompatibleService();
+      await this.stopIncompatibleService(health);
+    } else {
+      await this.refuseSpawnWhileReadyServiceIsStillRunning();
     }
 
     const prerequisiteFailure = this.readBootstrapPrerequisiteFailure();
@@ -435,32 +443,107 @@ export class LocalDevShellService implements DevShellServicePort {
     return this.performRequest<DevShellHealth>("GET", "/health");
   }
 
-  private async stopIncompatibleService(): Promise<void> {
+  private async refuseSpawnWhileReadyServiceIsStillRunning(): Promise<void> {
     const status = await this.readBootstrapStatus();
+    const pid = status?.pid;
     if (
-      typeof status?.pid === "number" &&
-      Number.isInteger(status.pid) &&
-      status.pid > 0 &&
-      status.pid !== process.pid
+      status?.status !== "ready" ||
+      status.socketPath !== this.socketPath ||
+      typeof pid !== "number" ||
+      Number.isInteger(pid) === false ||
+      pid <= 0 ||
+      pid === process.pid ||
+      isPidRunning(pid) === false
     ) {
-      try {
-        process.kill(status.pid, "SIGTERM");
-      } catch (error) {
-        if (readNodeErrorCode(error) !== "ESRCH") {
-          throw error;
-        }
-      }
-      const deadline = Date.now() + 1000;
-      while (Date.now() < deadline) {
-        try {
-          await this.performRequest("GET", "/health");
-          await this.wait(50);
-        } catch {
-          break;
-        }
-      }
+      return;
     }
-    await rm(this.socketPath, { force: true });
+    throw await this.createUnavailableFailure(
+      "service_shutdown_in_progress",
+      "Developer shell did not start another service because the previous service is still completing shutdown.",
+      {
+        pid,
+        nextSuggestedAction:
+          "The command did not run. Allow the existing developer-shell service to finish shutdown, then retry the original command.",
+      },
+    );
+  }
+
+  private async stopIncompatibleService(health: DevShellHealth): Promise<void> {
+    const status = await this.readBootstrapStatus();
+    const pid = status?.pid;
+    const socketIdentity = await readDevShellSocketIdentity(this.socketPath);
+    const healthIdentityMatches =
+      health.serviceProtocolVersion === DEV_SHELL_SERVICE_PROTOCOL_VERSION
+        ? health.servicePid === pid
+        : health.serviceProtocolVersion ===
+          DEV_SHELL_SERVICE_PROTOCOL_VERSION - 1;
+    if (
+      status?.status !== "ready" ||
+      typeof pid !== "number" ||
+      Number.isInteger(pid) === false ||
+      pid <= 0 ||
+      pid === process.pid ||
+      healthIdentityMatches === false ||
+      status.socketPath !== this.socketPath ||
+      socketIdentity === undefined ||
+      isPidRunning(pid) === false
+    ) {
+      throw await this.createUnavailableFailure(
+        "incompatible_service_identity_unavailable",
+        "Developer shell found an incompatible service but could not establish its shutdown identity.",
+        {
+          nextSuggestedAction:
+            "The command did not run. Inspect the developer-shell bootstrap status and stop the incompatible service safely before retrying the original command.",
+        },
+      );
+    }
+
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch (error) {
+      throw await this.createUnavailableFailure(
+        "incompatible_service_identity_unavailable",
+        "Developer shell could not signal the incompatible service identified by its bootstrap status.",
+        {
+          pid,
+          signalErrorCode: readNodeErrorCode(error),
+          nextSuggestedAction:
+            "The command did not run. Verify the incompatible developer-shell service identity, stop it safely, and retry the original command.",
+        },
+      );
+    }
+
+    const deadline = Date.now() + INCOMPATIBLE_SERVICE_SHUTDOWN_TIMEOUT_MS;
+    while (Date.now() < deadline && isPidRunning(pid)) {
+      await this.wait(50);
+    }
+    if (isPidRunning(pid)) {
+      throw await this.createUnavailableFailure(
+        "incompatible_service_shutdown_timeout",
+        "Developer shell did not replace an incompatible service because its shutdown did not complete.",
+        {
+          pid,
+          shutdownTimeoutMs: INCOMPATIBLE_SERVICE_SHUTDOWN_TIMEOUT_MS,
+          nextSuggestedAction:
+            "The command did not run. Allow or complete the existing developer-shell shutdown, then retry the original command.",
+        },
+      );
+    }
+
+    const socketCleanup = await removeDevShellSocketIfOwned(
+      this.socketPath,
+      socketIdentity,
+    );
+    if (socketCleanup === "different_owner") {
+      throw await this.createUnavailableFailure(
+        "incompatible_service_socket_replaced",
+        "Developer shell did not start another service because the shared socket acquired a different owner during shutdown.",
+        {
+          nextSuggestedAction:
+            "The command did not run. Retry after the developer-shell service currently owning the socket becomes healthy.",
+        },
+      );
+    }
   }
 
   private readBootstrapPrerequisiteFailure() {
@@ -730,6 +813,9 @@ export function isCompatibleDevShellHealth(
     record.ok === true &&
     expectedBinding !== undefined &&
     record.serviceProtocolVersion === DEV_SHELL_SERVICE_PROTOCOL_VERSION &&
+    typeof record.servicePid === "number" &&
+    Number.isInteger(record.servicePid) &&
+    record.servicePid > 0 &&
     record.storeDriver === expectedBinding.driver &&
     record.storeBindingRevision === expectedBinding.revision &&
     typeof capabilities === "object" &&
@@ -871,6 +957,15 @@ function isChildProcessRunning(child: ChildProcess): boolean {
   }
   try {
     process.kill(child.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isPidRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
     return true;
   } catch {
     return false;

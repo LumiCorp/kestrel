@@ -50,6 +50,13 @@ export interface CreateSessionStoreOptions {
   enforceSchemaV3?: boolean | undefined;
 }
 
+export interface StoreDriverSelection {
+  requestedDriver: StoreDriver;
+  effectiveDriver: Exclude<StoreDriver, "auto">;
+  databaseUrl?: string | undefined;
+  sqlitePath: string;
+}
+
 const DEFAULT_MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../db/migrations");
 
 export function createSessionStoreFromEnv(options: CreateSessionStoreOptions = {}): SessionStoreHandle {
@@ -69,21 +76,8 @@ export function createSessionStoreFromEnv(options: CreateSessionStoreOptions = {
 }
 
 export function createSqlExecutorFromEnv(options: CreateSessionStoreOptions = {}): SqlExecutorStoreHandle {
-  const defaults = readRuntimeStoreDefaults();
-  const requestedDriver = normalizeStoreDriver(
-    options.driver ??
-      readOptionalString(process.env.KESTREL_STORE_DRIVER) ??
-      defaults.storeDriver ??
-      "auto",
-  );
-  const databaseUrl =
-    options.databaseUrl ??
-    readOptionalString(process.env.DATABASE_URL);
-
-  const effectiveDriver: Exclude<StoreDriver, "auto"> =
-    requestedDriver === "auto"
-      ? (databaseUrl !== undefined ? "postgres" : "sqlite")
-      : requestedDriver;
+  const { requestedDriver, effectiveDriver, databaseUrl, sqlitePath: selectedSqlitePath } =
+    resolveStoreDriverSelection(options);
 
   if (effectiveDriver === "postgres") {
     if (databaseUrl === undefined) {
@@ -108,12 +102,7 @@ export function createSqlExecutorFromEnv(options: CreateSessionStoreOptions = {}
     };
   }
 
-  const sqlitePath = resolveSqliteStorePath(
-    options.sqlitePath ??
-      readOptionalString(process.env.KESTREL_SQLITE_PATH) ??
-      defaults.sqlitePath ??
-      path.join(resolveRuntimeHomePath(), "runtime.db"),
-  );
+  const sqlitePath = resolveSqliteStorePath(selectedSqlitePath);
 
   mkdirSync(path.dirname(sqlitePath), { recursive: true });
   // "sqlite" is a local durable mode backed by PGlite so we can preserve Postgres semantics.
@@ -157,6 +146,36 @@ export function createSqlExecutorFromEnv(options: CreateSessionStoreOptions = {}
   };
 }
 
+export function resolveStoreDriverSelection(
+  options: Pick<CreateSessionStoreOptions, "driver" | "databaseUrl" | "sqlitePath"> = {},
+  env: NodeJS.ProcessEnv = process.env,
+): StoreDriverSelection {
+  const defaults = readRuntimeStoreDefaults(env);
+  const requestedDriver = normalizeStoreDriver(
+    options.driver ??
+      readOptionalString(env.KESTREL_STORE_DRIVER) ??
+      defaults.storeDriver ??
+      "auto",
+  );
+  const databaseUrl =
+    options.databaseUrl ??
+    readOptionalString(env.DATABASE_URL);
+  const effectiveDriver: Exclude<StoreDriver, "auto"> =
+    requestedDriver === "auto"
+      ? (databaseUrl !== undefined ? "postgres" : "sqlite")
+      : requestedDriver;
+  return {
+    requestedDriver,
+    effectiveDriver,
+    ...(databaseUrl !== undefined ? { databaseUrl } : {}),
+    sqlitePath:
+      options.sqlitePath ??
+      readOptionalString(env.KESTREL_SQLITE_PATH) ??
+      defaults.sqlitePath ??
+      path.join(resolveRuntimeHomePath(env), "runtime.db"),
+  };
+}
+
 function normalizeStoreDriver(value: string): StoreDriver {
   if (value === "auto" || value === "postgres" || value === "sqlite") {
     return value;
@@ -175,11 +194,11 @@ function readOptionalString(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function readRuntimeStoreDefaults(): {
+function readRuntimeStoreDefaults(env: NodeJS.ProcessEnv): {
   storeDriver?: StoreDriver | undefined;
   sqlitePath?: string | undefined;
 } {
-  const settingsPath = resolveRuntimeSettingsPath();
+  const settingsPath = resolveRuntimeSettingsPath(env);
   if (existsSync(settingsPath) === false) {
     return {};
   }
@@ -210,12 +229,12 @@ function readRuntimeStoreDefaults(): {
   }
 }
 
-function resolveRuntimeSettingsPath(): string {
-  return path.join(resolveRuntimeHomePath(), "settings.json");
+function resolveRuntimeSettingsPath(env: NodeJS.ProcessEnv): string {
+  return path.join(resolveRuntimeHomePath(env), "settings.json");
 }
 
-function resolveRuntimeHomePath(): string {
-  return resolveKestrelHomePath();
+function resolveRuntimeHomePath(env: NodeJS.ProcessEnv = process.env): string {
+  return resolveKestrelHomePath(env);
 }
 
 function resolveSqliteStorePath(candidate: string): string {

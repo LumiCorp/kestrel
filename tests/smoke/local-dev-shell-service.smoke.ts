@@ -2,20 +2,27 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-test("LocalDevShellService starts a real supervisor with a sqlite store", async () => {
+test("standalone LocalDevShellService uses its SQLite settings store while inheriting an application URL", async () => {
   const serviceModuleUrl = new URL("../../src/devshell/LocalDevShellService.ts", import.meta.url).href;
   const script = `
-    import { mkdtemp } from "node:fs/promises";
+    import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
     import path from "node:path";
     import { LocalDevShellService } from ${JSON.stringify(serviceModuleUrl)};
 
     const baseDir = await mkdtemp(path.join("/tmp", "ldss-"));
+    const runtimeHome = path.join(baseDir, "runtime-home");
+    await mkdir(runtimeHome, { recursive: true });
+    await writeFile(
+      path.join(runtimeHome, "settings.json"),
+      JSON.stringify({ version: 1, defaults: { storeDriver: "sqlite" } }),
+      "utf8",
+    );
     const service = new LocalDevShellService(baseDir, {
       env: {
         ...process.env,
-        KESTREL_HOME: path.join(baseDir, "runtime-home"),
-        KESTREL_STORE_DRIVER: "sqlite",
-        DATABASE_URL: undefined,
+        KESTREL_HOME: runtimeHome,
+        KESTREL_STORE_DRIVER: undefined,
+        DATABASE_URL: "postgres://application.example/workspace",
       },
       startupTimeoutMs: 30_000,
       pollIntervalMs: 25,
@@ -23,7 +30,8 @@ test("LocalDevShellService starts a real supervisor with a sqlite store", async 
 
     const result = await service.runCommand({
       workspaceRoot: baseDir,
-      command: "printf ok",
+      command: "printf \\\"$DATABASE_URL\\\"",
+      envMode: "inherit",
       timeoutMs: 2_000,
     });
     await service.close();
@@ -40,7 +48,7 @@ test("LocalDevShellService starts a real supervisor with a sqlite store", async 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const payload = JSON.parse(result.stdout.trim()) as { status: string; text: string };
   assert.equal(payload.status, "COMPLETED");
-  assert.equal(payload.text, "ok");
+  assert.equal(payload.text, "postgres://application.example/workspace");
 });
 
 test("LocalDevShellService recovers a real supervisor from a corrupt sqlite store", async () => {

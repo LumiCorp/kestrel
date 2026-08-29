@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { resolveStoreDriverSelection } from "../store/createSessionStore.js";
+
 export const DEV_SHELL_STORE_DRIVER_ENV = "KESTREL_DEV_SHELL_STORE_DRIVER";
 export const DEV_SHELL_STORE_DATABASE_URL_ENV =
   "KESTREL_DEV_SHELL_STORE_DATABASE_URL";
@@ -29,13 +31,10 @@ export function createDevShellStoreBindingRevision(): string {
 export function resolveLegacyDevShellStoreBinding(
   env: NodeJS.ProcessEnv,
 ): LegacyDevShellStoreBindingResolution {
-  const configuredDriver = env.KESTREL_STORE_DRIVER?.trim();
-  const databaseUrl = readRequiredValue(env.DATABASE_URL);
-  const driver =
-    configuredDriver === "postgres" ||
-    (configuredDriver !== "sqlite" && databaseUrl !== undefined)
-      ? "postgres"
-      : "sqlite";
+  const {
+    effectiveDriver: driver,
+    databaseUrl,
+  } = resolveStoreDriverSelection({}, env);
   const revision = createDevShellStoreBindingRevision();
   if (driver === "postgres") {
     if (databaseUrl === undefined) {

@@ -32,6 +32,10 @@ import {
   readDevShellStoreBindingFromEnvironment,
   type DevShellStoreBinding,
 } from "../../src/devshell/storeBinding.js";
+import {
+  readDevShellSocketIdentity,
+  removeDevShellSocketIfOwned,
+} from "../../src/devshell/socketOwnership.js";
 
 async function main(): Promise<void> {
   const socketPath = resolveSocketPath();
@@ -96,18 +100,36 @@ async function main(): Promise<void> {
   } catch (error) {
     writeBootstrapLog(`warning: unable to chmod supervisor socket: ${toErrorMessage(error)}`);
   }
+  const socketIdentity = await readDevShellSocketIdentity(socketPath);
+  if (socketIdentity === undefined) {
+    await writeBootstrapFailure(statusPath, "socket_bind_failed");
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    throw new Error("Developer shell service could not establish ownership of its local socket.");
+  }
   await writeBootstrapStatus(statusPath, {
     status: "ready",
     pid: process.pid,
   });
 
-  const shutdown = async () => {
-    await supervisor.close();
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
-    await storeHandle.close();
-    rmSync(socketPath, { force: true });
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = () => {
+    shutdownPromise ??= (async () => {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      const socketCleanup = await removeDevShellSocketIfOwned(
+        socketPath,
+        socketIdentity,
+      );
+      if (socketCleanup === "different_owner") {
+        writeBootstrapLog(
+          "warning: skipped developer shell socket cleanup because the path has a different owner",
+        );
+      }
+      await supervisor.close();
+      await storeHandle.close();
+    })();
+    return shutdownPromise;
   };
   const ownerWatch = startOwnerWatch(supervisor, shutdown);
 
@@ -247,6 +269,7 @@ function createHealthPayload(storeBinding: DevShellStoreBinding): DevShellHealth
   return {
     ok: true,
     serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    servicePid: process.pid,
     storeDriver: storeBinding.driver,
     storeBindingRevision: storeBinding.revision,
     capabilities: {

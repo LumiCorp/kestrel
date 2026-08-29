@@ -154,6 +154,59 @@ test("LocalDevShellService preserves an explicitly configured Postgres prerequis
   }
 });
 
+test("LocalDevShellService standalone construction honors injected-home settings", async () => {
+  const sqliteHome = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-settings-sqlite-"));
+  const postgresHome = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-settings-postgres-"));
+  await writeFile(
+    path.join(sqliteHome, "settings.json"),
+    JSON.stringify({ version: 1, defaults: { storeDriver: "sqlite" } }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(postgresHome, "settings.json"),
+    JSON.stringify({ version: 1, defaults: { storeDriver: "postgres" } }),
+    "utf8",
+  );
+  const sqliteService = new LocalDevShellService(undefined, {
+    env: {
+      KESTREL_HOME: sqliteHome,
+      DATABASE_URL: "postgres://application.example/workspace",
+    },
+  }) as any;
+  const postgresService = new LocalDevShellService(undefined, {
+    env: { KESTREL_HOME: postgresHome },
+  }) as any;
+  let spawned = false;
+  postgresService.spawnService = async () => {
+    spawned = true;
+    throw new Error("service must not spawn");
+  };
+
+  assert.equal(sqliteService.storeBinding.driver, "sqlite");
+  assert.equal(
+    sqliteService.env.DATABASE_URL,
+    "postgres://application.example/workspace",
+  );
+  await assert.rejects(
+    postgresService.runCommand({ workspaceRoot: ".", command: "echo unreachable" }),
+    (error: unknown) =>
+      (error as { details?: Record<string, unknown> }).details?.bootstrapReason ===
+      "missing_database_url",
+  );
+  assert.equal(spawned, false);
+});
+
+test("LocalDevShellService standalone construction preserves invalid driver rejection", () => {
+  assert.throws(
+    () =>
+      new LocalDevShellService(undefined, {
+        env: { KESTREL_STORE_DRIVER: "invalid" },
+      }),
+    (error: unknown) =>
+      (error as { code?: unknown }).code === "STORE_DRIVER_INVALID",
+  );
+});
+
 test("appendBoundedDevShellOutput enforces an aggregate UTF-8 byte limit", () => {
   const first = appendBoundedDevShellOutput(
     { text: "", byteLength: 0, truncated: false },
@@ -544,11 +597,15 @@ test("LocalDevShellService restarts a stale supervisor with legacy health", asyn
     if (method === "GET" && pathname === "/health") {
       healthChecks += 1;
       if (healthChecks === 1) {
-        return { ok: true };
+        return {
+          ok: true,
+          serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION - 1,
+        };
       }
       return {
         ok: true,
         serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+        servicePid: process.pid,
         storeDriver: service.storeBinding.driver,
         storeBindingRevision: service.storeBinding.revision,
         capabilities: {
@@ -596,94 +653,376 @@ test("LocalDevShellService restarts a stale supervisor with legacy health", asyn
   }
 });
 
-test("LocalDevShellService cleans up an incompatible supervisor socket recorded in bootstrap status", async () => {
-  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
+test("LocalDevShellService refuses incompatible replacement when status identity is missing or corrupt", async () => {
+  for (const statusFixture of [undefined, "not-json"] as const) {
+    const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-identity-"));
+    await mkdir(baseDir, { recursive: true });
+    const service = new LocalDevShellService(baseDir, {
+      storeBinding: { driver: "sqlite", revision: "binding-current" },
+      startupTimeoutMs: 20,
+      pollIntervalMs: 1,
+    }) as any;
+    const server = http.createServer((_request, response) => {
+      response.setHeader("content-type", "application/json; charset=utf-8");
+      response.end(JSON.stringify({
+        ok: true,
+        serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION - 1,
+      }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(service.socketPath, () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
+    if (statusFixture !== undefined) {
+      await writeFile(service.bootstrapStatusPath, statusFixture, "utf8");
+    }
+    let spawned = false;
+    service.spawnService = async () => {
+      spawned = true;
+      throw new Error("replacement must not start");
+    };
+
+    try {
+      await assert.rejects(
+        service.runCommand({ workspaceRoot: ".", command: "echo unreachable" }),
+        (error: unknown) => {
+          const failure = error as Error & {
+            code?: string;
+            details?: Record<string, unknown>;
+          };
+          assert.equal(failure.code, "DEV_SHELL_SERVICE_UNAVAILABLE");
+          assert.equal(
+            failure.details?.bootstrapReason,
+            "incompatible_service_identity_unavailable",
+          );
+          assert.match(
+            String(failure.details?.nextSuggestedAction),
+            /command did not run.*stop the incompatible service safely/is,
+          );
+          return true;
+        },
+      );
+      assert.equal(spawned, false);
+      assert.deepEqual(
+        await service.performRequest("GET", "/health"),
+        {
+          ok: true,
+          serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION - 1,
+        },
+      );
+    } finally {
+      await closeServer(server);
+    }
+  }
+});
+
+test("LocalDevShellService does not spawn while a ready service PID is finishing cleanup without a socket", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-live-status-"));
   await mkdir(baseDir, { recursive: true });
   const service = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-current" },
     startupTimeoutMs: 20,
     pollIntervalMs: 1,
   }) as any;
-
-  const server = http.createServer((_request, response) => {
-    response.setHeader("content-type", "application/json; charset=utf-8");
-    response.end(JSON.stringify({ ok: true }));
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(service.socketPath, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-  await writeFile(
-    service.bootstrapStatusPath,
-    JSON.stringify({
-      status: "ready",
-      pid: process.pid,
-      at: new Date("2026-05-16T12:00:00.000Z").toISOString(),
-    }),
-    "utf8",
+  const shuttingDownChild = spawn(
+    process.execPath,
+    ["-e", "setInterval(() => {}, 1000)"],
+    { stdio: "ignore" },
   );
-
-  const originalDatabaseUrl = process.env.DATABASE_URL;
-  const originalPerformRequest = service.performRequest.bind(service);
-  process.env.DATABASE_URL = "postgres://local-dev-shell-test";
-  let firstHealthCheck = true;
   let spawned = false;
-  service.spawnService = async () => {
-    spawned = true;
-    await serverClosed(server);
-    return {
-      exitCode: null,
-      signalCode: null,
-      unref() {},
-    };
-  };
-  service.performRequest = async (method: string, pathname: string) => {
-    if (method === "GET" && pathname === "/health") {
-      if (firstHealthCheck) {
-        firstHealthCheck = false;
-        return originalPerformRequest(method, pathname);
-      }
-      if (spawned) {
-        return {
-          ok: true,
-          serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
-          storeDriver: service.storeBinding.driver,
-          storeBindingRevision: service.storeBinding.revision,
-          capabilities: {
-            processWriteAndRead: true,
-            processRetentionLeases: true,
-            processRetentionPromotion: true,
-          },
-        };
-      }
-      throw new Error("stale server should have been closed before spawn");
-    }
-    if (method === "POST" && pathname === "/shell/run") {
-      return {
-        status: "COMPLETED",
-        stdout: "ok\n",
-        text: "ok\n",
-        truncated: false,
-        exitCode: 0,
-      };
-    }
-    throw new Error(`unexpected request ${method} ${pathname}`);
-  };
-
   try {
-    await service.runCommand({ workspaceRoot: ".", command: "echo ok" });
+    assert.ok(shuttingDownChild.pid !== undefined);
+    await writeFile(
+      service.bootstrapStatusPath,
+      JSON.stringify({
+        status: "ready",
+        pid: shuttingDownChild.pid,
+        socketPath: service.socketPath,
+        at: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+    service.spawnService = async () => {
+      spawned = true;
+      throw new Error("replacement must not start");
+    };
 
-    const status = JSON.parse(await readFile(service.bootstrapStatusPath, "utf8")) as { pid?: unknown };
-    assert.equal(status.pid, process.pid);
-    assert.equal(spawned, true);
+    await assert.rejects(
+      service.runCommand({ workspaceRoot: ".", command: "echo unreachable" }),
+      (error: unknown) => {
+        const failure = error as Error & {
+          code?: string;
+          details?: Record<string, unknown>;
+        };
+        assert.equal(failure.code, "DEV_SHELL_SERVICE_UNAVAILABLE");
+        assert.equal(
+          failure.details?.bootstrapReason,
+          "service_shutdown_in_progress",
+        );
+        assert.match(
+          String(failure.details?.nextSuggestedAction),
+          /command did not run.*finish shutdown.*retry the original command/is,
+        );
+        return true;
+      },
+    );
+    assert.equal(spawned, false);
+    assert.equal(isChildRunning(shuttingDownChild), true);
   } finally {
-    await closeServer(server);
-    if (originalDatabaseUrl !== undefined) {
-      process.env.DATABASE_URL = originalDatabaseUrl;
-    } else {
-      delete process.env.DATABASE_URL;
+    if (isChildRunning(shuttingDownChild)) {
+      shuttingDownChild.kill("SIGKILL");
+      await waitForChildExit(shuttingDownChild, 1_000);
+    }
+  }
+});
+
+test("LocalDevShellService does not signal a stale status PID that disagrees with current health", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-stale-pid-"));
+  await mkdir(baseDir, { recursive: true });
+  const service = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-current" },
+    startupTimeoutMs: 20,
+    pollIntervalMs: 1,
+  }) as any;
+  const serverScript = `
+    const http = require("node:http");
+    const server = http.createServer((_request, response) => {
+      response.setHeader("content-type", "application/json; charset=utf-8");
+      response.end(JSON.stringify({
+        ok: true,
+        serviceProtocolVersion: ${DEV_SHELL_SERVICE_PROTOCOL_VERSION},
+        servicePid: process.pid,
+        storeDriver: "sqlite",
+        storeBindingRevision: "binding-stale",
+        capabilities: {
+          processWriteAndRead: true,
+          processRetentionLeases: true,
+          processRetentionPromotion: true,
+        },
+      }));
+    });
+    server.listen(${JSON.stringify(service.socketPath)});
+    setInterval(() => {}, 1_000);
+  `;
+  const servingChild = spawn(process.execPath, ["-e", serverScript], { stdio: "ignore" });
+  const unrelatedChild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  try {
+    const healthDeadline = Date.now() + 5_000;
+    while (Date.now() < healthDeadline) {
+      try {
+        await service.performRequest("GET", "/health");
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    assert.ok(servingChild.pid !== undefined);
+    assert.ok(unrelatedChild.pid !== undefined);
+    await writeFile(
+      service.bootstrapStatusPath,
+      JSON.stringify({
+        status: "ready",
+        pid: unrelatedChild.pid,
+        socketPath: service.socketPath,
+        at: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+    let spawned = false;
+    service.spawnService = async () => {
+      spawned = true;
+      throw new Error("replacement must not start");
+    };
+
+    await assert.rejects(
+      service.runCommand({ workspaceRoot: ".", command: "echo unreachable" }),
+      (error: unknown) =>
+        (error as { details?: Record<string, unknown> }).details?.bootstrapReason ===
+        "incompatible_service_identity_unavailable",
+    );
+    assert.equal(spawned, false);
+    assert.equal(isChildRunning(servingChild), true);
+    assert.equal(isChildRunning(unrelatedChild), true);
+  } finally {
+    for (const child of [servingChild, unrelatedChild]) {
+      if (isChildRunning(child)) {
+        child.kill("SIGKILL");
+        await waitForChildExit(child, 1_000);
+      }
+    }
+  }
+});
+
+test("LocalDevShellService stops a current incompatible service only when health and status PID match", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-current-pid-"));
+  await mkdir(baseDir, { recursive: true });
+  const service = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-current" },
+  }) as any;
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  try {
+    assert.ok(child.pid !== undefined);
+    await writeFile(service.socketPath, "current socket owner", "utf8");
+    await writeFile(
+      service.bootstrapStatusPath,
+      JSON.stringify({
+        status: "ready",
+        pid: child.pid,
+        socketPath: service.socketPath,
+        at: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+
+    await service.stopIncompatibleService({
+      ok: true,
+      serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+      servicePid: child.pid,
+      storeDriver: "sqlite",
+      storeBindingRevision: "binding-stale",
+      capabilities: {
+        processWriteAndRead: true,
+        processRetentionLeases: true,
+        processRetentionPromotion: true,
+      },
+    });
+
+    assert.equal(isChildRunning(child), false);
+    await assert.rejects(readFile(service.socketPath, "utf8"), /ENOENT/u);
+  } finally {
+    if (isChildRunning(child)) {
+      child.kill("SIGKILL");
+      await waitForChildExit(child, 1_000);
+    }
+  }
+});
+
+test("LocalDevShellService waits for slow legacy shutdown before binding a replacement socket", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-slow-replacement-"));
+  await mkdir(baseDir, { recursive: true });
+  const service = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-current" },
+    startupTimeoutMs: 5_000,
+    pollIntervalMs: 10,
+  }) as any;
+  const childScript = `
+    const http = require("node:http");
+    const { rmSync } = require("node:fs");
+    const socketPath = ${JSON.stringify(service.socketPath)};
+    const server = http.createServer((_request, response) => {
+      response.setHeader("content-type", "application/json; charset=utf-8");
+      response.end(JSON.stringify({
+        ok: true,
+        serviceProtocolVersion: ${DEV_SHELL_SERVICE_PROTOCOL_VERSION - 1},
+      }));
+    });
+    server.listen(socketPath);
+    let stopping = false;
+    process.on("SIGTERM", () => {
+      if (stopping) return;
+      stopping = true;
+      setTimeout(() => {
+        server.close(() => {
+          rmSync(socketPath, { force: true });
+          process.exit(0);
+        });
+      }, 1_200);
+    });
+  `;
+  const staleChild = spawn(process.execPath, ["-e", childScript], {
+    stdio: "ignore",
+  });
+  let replacementServer: http.Server | undefined;
+  let replacementBoundAt = 0;
+  try {
+    const healthDeadline = Date.now() + 5_000;
+    while (Date.now() < healthDeadline) {
+      try {
+        await service.performRequest("GET", "/health");
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    assert.ok(staleChild.pid !== undefined);
+    await writeFile(
+      service.bootstrapStatusPath,
+      JSON.stringify({
+        status: "ready",
+        pid: staleChild.pid,
+        socketPath: service.socketPath,
+        at: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+
+    service.spawnService = async () => {
+      assert.equal(isChildRunning(staleChild), false);
+      replacementServer = http.createServer((request, response) => {
+        response.setHeader("content-type", "application/json; charset=utf-8");
+        if (request.method === "GET" && request.url === "/health") {
+          response.end(JSON.stringify({
+            ok: true,
+            serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+            servicePid: process.pid,
+            storeDriver: "sqlite",
+            storeBindingRevision: "binding-current",
+            capabilities: {
+              processWriteAndRead: true,
+              processRetentionLeases: true,
+              processRetentionPromotion: true,
+            },
+          }));
+          return;
+        }
+        response.end(JSON.stringify({
+          status: "COMPLETED",
+          stdout: "replacement ok\n",
+          text: "replacement ok\n",
+          truncated: false,
+          exitCode: 0,
+        }));
+      });
+      await new Promise<void>((resolve, reject) => {
+        replacementServer!.once("error", reject);
+        replacementServer!.listen(service.socketPath, () => {
+          replacementServer!.off("error", reject);
+          replacementBoundAt = Date.now();
+          resolve();
+        });
+      });
+      return { exitCode: null, signalCode: null, unref() {} };
+    };
+
+    const replacementStartedAt = Date.now();
+    const result = await service.runCommand({
+      workspaceRoot: ".",
+      command: "echo replacement",
+    });
+
+    assert.equal(result.status, "COMPLETED");
+    assert.match(result.text, /replacement ok/u);
+    assert.ok(replacementBoundAt - replacementStartedAt >= 1_100);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(
+      (await service.performRequest("GET", "/health") as { storeBindingRevision?: unknown })
+        .storeBindingRevision,
+      "binding-current",
+    );
+  } finally {
+    if (replacementServer !== undefined) {
+      await closeServer(replacementServer);
+    }
+    if (isChildRunning(staleChild)) {
+      staleChild.kill("SIGKILL");
+      await waitForChildExit(staleChild, 1_000);
     }
   }
 });
@@ -699,11 +1038,24 @@ test("isCompatibleDevShellHealth requires the current process contract", () => {
     capabilities: {
       processWriteAndRead: true,
       processRetentionLeases: true,
+      processRetentionPromotion: true,
     },
   }, binding), false);
   assert.equal(isCompatibleDevShellHealth({
     ok: true,
     serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    servicePid: process.pid,
+    storeDriver: "sqlite",
+    storeBindingRevision: "binding-current",
+    capabilities: {
+      processWriteAndRead: true,
+      processRetentionLeases: true,
+    },
+  }, binding), false);
+  assert.equal(isCompatibleDevShellHealth({
+    ok: true,
+    serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    servicePid: process.pid,
     storeDriver: "sqlite",
     storeBindingRevision: "binding-current",
     capabilities: {
@@ -715,6 +1067,7 @@ test("isCompatibleDevShellHealth requires the current process contract", () => {
   assert.equal(isCompatibleDevShellHealth({
     ok: true,
     serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    servicePid: process.pid,
     storeDriver: "sqlite",
     storeBindingRevision: "binding-stale",
     capabilities: {
@@ -743,6 +1096,7 @@ test("LocalDevShellService rejects a healthy service with a different store bind
       return {
         ok: true,
         serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+        servicePid: process.pid,
         storeDriver: "sqlite",
         storeBindingRevision:
           healthChecks === 1 ? "binding-stale" : "binding-current",

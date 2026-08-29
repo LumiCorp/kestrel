@@ -4,8 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Preserve standalone developer-shell store resolution](02-preserve-standalone-store-resolution.md)
-- [Make incompatible developer-shell replacement exclusive](03-make-incompatible-service-replacement-exclusive.md)
+None.
 
 ## In progress
 
@@ -18,6 +17,8 @@ None.
 ## Implemented
 
 - [Bind the developer shell to Local Core storage authority](01-bind-developer-shell-storage-authority.md)
+- [Preserve standalone developer-shell store resolution](02-preserve-standalone-store-resolution.md)
+- [Make incompatible developer-shell replacement exclusive](03-make-incompatible-service-replacement-exclusive.md)
 
 ## Done
 
