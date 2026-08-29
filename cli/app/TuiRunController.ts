@@ -345,7 +345,6 @@ export class TuiRunController {
     }
     const environmentPresetId = await this.resolveActiveSessionEnvironment(
       state.activeSession,
-      input.resumeBlockedRun === true,
     );
     const executionProfile = await core.resolveExecutionProfile({
       client: "cli",
@@ -931,7 +930,6 @@ export class TuiRunController {
 
   private async resolveActiveSessionEnvironment(
     session: TuiSessionMeta,
-    verifyRuntimeIdentity: boolean,
   ): Promise<TuiEnvironmentPresetId> {
     try {
       if (session.started === false) {
@@ -941,14 +939,6 @@ export class TuiRunController {
         }
         return environmentPresetId;
       }
-      if (
-        verifyRuntimeIdentity === false &&
-        session.environmentPresetId !== undefined &&
-        session.effectiveAssemblyId !== undefined
-      ) {
-        return resolveTuiSessionEnvironment({ session });
-      }
-
       const response = await this.context.client.sendCommand("session.describe", {
         sessionId: session.sessionId,
       });

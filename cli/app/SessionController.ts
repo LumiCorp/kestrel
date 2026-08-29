@@ -20,7 +20,10 @@ import {
 import { describeResolvedWorkspace } from "../workspace/WorkspaceResolver.js";
 import type { TuiAppContext } from "./TuiAppContext.js";
 import type { SessionDescribedEventPayload } from "../protocol/contracts.js";
-import { TuiEnvironmentIdentityError } from "../session/TuiExecutionEnvironment.js";
+import {
+  resolveTuiSessionEnvironment,
+  TuiEnvironmentIdentityError,
+} from "../session/TuiExecutionEnvironment.js";
 import type { ConversationActivityItem } from "@kestrel-agents/conversation";
 
 export interface CreateSessionOptions {
@@ -223,22 +226,42 @@ export class SessionController {
     }
 
     let resolvedTarget = target;
-    try {
-      const describe = await this.context.client.sendCommand("session.describe", {
-        sessionId: target.sessionId,
-      });
-      if (describe.type === "session.described") {
+    if (target.started) {
+      try {
+        const describe = await this.context.client.sendCommand("session.describe", {
+          sessionId: target.sessionId,
+        });
+        if (describe.type !== "session.described") {
+          throw new TuiEnvironmentIdentityError(
+            "TUI_ENVIRONMENT_UNKNOWN",
+            `Environment unknown for session '${target.name}': runtime identity could not be described.`,
+          );
+        }
+        if (describe.payload.sessionId !== target.sessionId) {
+          throw new TuiEnvironmentIdentityError(
+            "TUI_ENVIRONMENT_UNKNOWN",
+            `Environment unknown for session '${target.name}': runtime described a different session.`,
+          );
+        }
+        resolveTuiSessionEnvironment({
+          session: target,
+          runtimeEnvironmentPresetId: describe.payload.activeAssembly?.environmentPresetId,
+          requireRuntimeIdentity: true,
+        });
         await this.context.syncSessionFromDescribePayload(describe.payload);
         resolvedTarget = this.context.sessionStore.findByName(
           this.context.getSessionsFile(),
           target.name,
         ) ?? target;
+      } catch (error) {
+        if (error instanceof TuiEnvironmentIdentityError) {
+          throw error;
+        }
+        throw new TuiEnvironmentIdentityError(
+          "TUI_ENVIRONMENT_UNKNOWN",
+          `Environment unknown for session '${target.name}': runtime identity could not be verified.`,
+        );
       }
-    } catch (error) {
-      if (error instanceof TuiEnvironmentIdentityError) {
-        throw error;
-      }
-      // Session switching should remain usable if the runner is not ready yet.
     }
 
     const profiles = await this.context.profileStore.load();

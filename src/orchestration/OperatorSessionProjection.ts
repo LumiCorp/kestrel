@@ -168,6 +168,7 @@ export type {
 } from "./contracts.js";
 
 export interface OperatorSessionProjectionRuntime {
+  findMainThreadForSession?: ((sessionId: string) => Promise<ThreadRecord | undefined>) | undefined;
   ensureMainThreadForSession?: ((input: {
     sessionId: string;
     title?: string | undefined;
@@ -183,6 +184,10 @@ export interface OperatorSessionProjectionRuntime {
     sessionId?: string | undefined;
     threadId?: string | undefined;
   }): Promise<OperatorInboxSnapshot>;
+  listOperatorInboxReadOnly?: ((input: {
+    sessionId?: string | undefined;
+    threadId?: string | undefined;
+  }) => Promise<OperatorInboxSnapshot>) | undefined;
   getOperatorThreadView(threadId: string): Promise<OperatorThreadView | null>;
   listDelegations?: ((threadId: string) => Promise<DelegationRecord[]>) | undefined;
 }
@@ -196,6 +201,7 @@ export interface OperatorSessionProjectionInput {
     state: Record<string, unknown>;
   };
   threadRuntime?: OperatorSessionProjectionRuntime | undefined;
+  createMainThread?: boolean | undefined;
 }
 
 export interface OperatorSessionProjection {
@@ -235,14 +241,21 @@ export async function buildOperatorSessionProjection(
   input: OperatorSessionProjectionInput,
 ): Promise<OperatorSessionProjection> {
   const updatedAt = normalizeOptionalSessionTimestamp(input.session.updatedAt);
-  const mainThread = await ensureMainThread(input.sessionId, input.threadRuntime);
+  const mainThread = await resolveMainThread(
+    input.sessionId,
+    input.threadRuntime,
+    input.createMainThread !== false,
+  );
   const threadStatus =
     input.threadRuntime !== undefined && mainThread !== undefined
       ? await input.threadRuntime.getThreadStatus(mainThread.threadId)
       : null;
   const operatorInbox =
     input.threadRuntime !== undefined
-      ? await input.threadRuntime.listOperatorInbox({ sessionId: input.sessionId })
+      ? input.createMainThread === false
+        && input.threadRuntime.listOperatorInboxReadOnly !== undefined
+        ? await input.threadRuntime.listOperatorInboxReadOnly({ sessionId: input.sessionId })
+        : await input.threadRuntime.listOperatorInbox({ sessionId: input.sessionId })
       : undefined;
   const operatorFocusThreadId =
     operatorInbox?.focusThreadId ??
@@ -404,12 +417,23 @@ function readAssemblyEnvironmentPresetId(
     : undefined;
 }
 
-async function ensureMainThread(
+async function resolveMainThread(
   sessionId: string,
   threadRuntime: OperatorSessionProjectionRuntime | undefined,
+  createIfMissing: boolean,
 ): Promise<ThreadRecord | undefined> {
   if (threadRuntime === undefined) {
     return ;
+  }
+  if (typeof threadRuntime.findMainThreadForSession === "function") {
+    const existing = await threadRuntime.findMainThreadForSession(sessionId);
+    if (existing !== undefined || createIfMissing === false) {
+      return existing;
+    }
+  }
+  if (createIfMissing === false) {
+    const legacyThread = await threadRuntime.getThreadStatus(sessionId);
+    return legacyThread?.thread;
   }
   if (typeof threadRuntime.ensureMainThreadForSession === "function") {
     return threadRuntime.ensureMainThreadForSession({

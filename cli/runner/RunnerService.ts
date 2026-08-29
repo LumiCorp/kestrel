@@ -23,6 +23,7 @@ import type {
   RunnerHost,
   RunnerProfileProvider,
   RunnerProfileSourcePolicy,
+  RunnerSessionDescriber,
 } from "./RunnerHost.js";
 import type { CommandRouter } from "./CommandRouter.js";
 import {
@@ -94,6 +95,7 @@ interface RunnerServiceRuntimeOptions {
   runtimeStore?: RunnerRuntimeStoreLifecycle | undefined;
   exactEffectResultStore?: NonNullable<ConstructorParameters<typeof RunnerHost>[3]>["exactEffectResultStore"];
   exactEffectResultTenantId?: string | undefined;
+  sessionDescriber?: RunnerSessionDescriber | undefined;
   onRuntimeStoreEvent?: ((event: RunnerRuntimeStoreEvent) => void) | undefined;
 }
 
@@ -263,6 +265,7 @@ export function createRunnerServiceHttpHandler(
     eventJournal: options.eventJournal,
     exactEffectResultStore: options.exactEffectResultStore,
     exactEffectResultTenantId: options.exactEffectResultTenantId,
+    sessionDescriber: options.sessionDescriber,
   });
   const runtimeStore = createRunnerRuntimeStoreReadiness(
     options.runtimeStore,
@@ -396,6 +399,7 @@ export async function createRunnerServiceServer(options: RunnerServiceOptions = 
     runtimeStore: options.runtimeStore,
     exactEffectResultStore: options.exactEffectResultStore,
     exactEffectResultTenantId: options.exactEffectResultTenantId,
+    sessionDescriber: options.sessionDescriber,
     onRuntimeStoreEvent: options.onRuntimeStoreEvent,
   });
   await handler.ready();
@@ -559,6 +563,7 @@ export function createInMemoryRunnerService(options: RunnerServiceOptions = {}):
     eventJournal: options.eventJournal,
     exactEffectResultStore: options.exactEffectResultStore,
     exactEffectResultTenantId: options.exactEffectResultTenantId,
+    sessionDescriber: options.sessionDescriber,
   });
 
   return {

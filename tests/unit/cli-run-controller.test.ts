@@ -133,6 +133,7 @@ function createRunHarness(input: {
   effectiveAssemblyId?: string | undefined;
   omitRuntimeEnvironmentIdentity?: boolean | undefined;
   sessionDescribeWithoutRuntimeEvidence?: boolean | undefined;
+  sessionDescribeError?: Error | undefined;
 } = {}): {
   controller: TuiRunController;
   uiStore: UiStore;
@@ -148,6 +149,7 @@ function createRunHarness(input: {
   runLogs: AgentRunLogLine[];
   reasoning: AgentProgressUpdateV1[];
   registeredProfileId: string;
+  sessionDescribeCount: number;
 } {
   const activeProfile: TuiProfile = {
     id: "kestrel",
@@ -202,6 +204,7 @@ function createRunHarness(input: {
   );
 
   const commands: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  let sessionDescribeCount = 0;
   const registeredProfileId =
     "kestrel:cli_dev_local:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const history: Array<{
@@ -232,6 +235,10 @@ function createRunHarness(input: {
         metadata?: Record<string, unknown> | undefined,
       ) => {
         if (type === "session.describe") {
+          sessionDescribeCount += 1;
+          if (input.sessionDescribeError !== undefined) {
+            throw input.sessionDescribeError;
+          }
           return makeRunnerEvent({
             type: "session.described",
             payload: input.sessionDescribeWithoutRuntimeEvidence === true
@@ -479,6 +486,9 @@ function createRunHarness(input: {
     runLogs,
     reasoning,
     registeredProfileId,
+    get sessionDescribeCount() {
+      return sessionDescribeCount;
+    },
   };
 }
 
@@ -566,6 +576,22 @@ test("TuiRunController fails closed when persisted and runtime environments conf
   assert.equal(harness.commands.length, 0);
   assert.equal(harness.diagnostics.at(-1)?.scope, "tui.environment_identity");
   assert.match(harness.diagnostics.at(-1)?.details ?? "", /TUI_ENVIRONMENT_CONFLICT/u);
+});
+
+test("TuiRunController re-verifies a started session with cached exact identity and fails closed on transport loss", async () => {
+  const harness = createRunHarness({
+    environmentPresetId: "cli_dev_local",
+    effectiveAssemblyId: "bundle:kestrel:developer",
+    sessionDescribeError: new Error("runner unavailable"),
+  });
+
+  await assert.rejects(
+    harness.controller.startActiveTurn({ submittedMessage: "continue" }),
+    /runtime identity could not be verified/u,
+  );
+  assert.equal(harness.sessionDescribeCount, 1);
+  assert.equal(harness.commands.length, 0);
+  assert.equal(harness.diagnostics.at(-1)?.scope, "tui.environment_identity");
 });
 
 test("TuiRunController routes blocked-run replies through the interaction command adapter", async () => {

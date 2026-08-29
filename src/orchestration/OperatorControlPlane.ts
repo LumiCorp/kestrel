@@ -67,23 +67,32 @@ export class OperatorControlPlane {
     ThreadRuntimePort,
     "getThreadStatus"
   > & Partial<Pick<ThreadRuntimePort, "replyToRequest" | "submitTurn" | "spawnDelegation">>;
+  private readonly persistDefaultFocus: boolean;
 
   constructor(options: {
     store: ReplayStore;
     runtime: Pick<ThreadRuntimePort, "getThreadStatus"> &
       Partial<Pick<ThreadRuntimePort, "replyToRequest" | "submitTurn" | "spawnDelegation">>;
+    persistDefaultFocus?: boolean | undefined;
   }) {
     this.store = options.store;
     this.runtime = options.runtime;
     this.replay = new RunReplayService(this.store);
+    this.persistDefaultFocus = options.persistDefaultFocus !== false;
   }
 
   async listOperatorInbox(input: {
     sessionId?: string | undefined;
     threadId?: string | undefined;
-  }): Promise<OperatorInboxSnapshot> {
+  }, options: {
+    persistDefaultFocus?: boolean | undefined;
+  } = {}): Promise<OperatorInboxSnapshot> {
     const threads = await this.resolveThreads(input);
-    const focusedThreadId = await this.resolveFocusedThreadId(threads, input);
+    const focusedThreadId = await this.resolveFocusedThreadId(
+      threads,
+      input,
+      options.persistDefaultFocus ?? this.persistDefaultFocus,
+    );
     const items = (
       await Promise.all(threads.map((thread) => this.buildInboxItemsForThread(thread)))
     ).flat().sort((left, right) => right.createdAt.localeCompare(left.createdAt));
@@ -1020,6 +1029,7 @@ export class OperatorControlPlane {
   private async resolveFocusedThreadId(
     threads: ThreadRecord[],
     input: { sessionId?: string | undefined; threadId?: string | undefined },
+    persistDefaultFocus: boolean,
   ): Promise<string | undefined> {
     if (threads.length === 0) {
       return ;
@@ -1035,7 +1045,9 @@ export class OperatorControlPlane {
     }
     const first = pickDefaultFocusThread(threads);
     if (first !== undefined) {
-      await this.persistFocus(first.sessionId, first.threadId, "runtime");
+      if (persistDefaultFocus) {
+        await this.persistFocus(first.sessionId, first.threadId, "runtime");
+      }
       return first.threadId;
     }
     return ;

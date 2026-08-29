@@ -434,16 +434,33 @@ export class ThreadRuntime implements ThreadRuntimePort {
     title?: string | undefined;
     metadata?: Record<string, unknown> | undefined;
   }): Promise<ThreadRecord> {
-    const threads = await this.store.listThreads({ sessionId: input.sessionId });
+    const existing = await this.findMainThreadForSession(input.sessionId);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    return this.startThread({
+      threadId: canonicalMainThreadId(input.sessionId),
+      sessionId: input.sessionId,
+      title: input.title ?? input.sessionId,
+      metadata: {
+        ...(input.metadata ?? {}),
+        mainThread: true,
+      },
+    });
+  }
+
+  async findMainThreadForSession(sessionId: string): Promise<ThreadRecord | undefined> {
+    const threads = await this.store.listThreads({ sessionId });
     const rootThreads = threads.filter((thread) => thread.parentThreadId === undefined);
     const explicitMainThreads = rootThreads.filter((thread) => readThreadMainRole(thread) === true);
 
     if (explicitMainThreads.length > 1) {
       throw createRuntimeFailure(
         "THREAD_MAIN_RESOLUTION_FAILED",
-        `Session '${input.sessionId}' has multiple canonical main threads.`,
+        `Session '${sessionId}' has multiple canonical main threads.`,
         {
-          sessionId: input.sessionId,
+          sessionId,
           threadIds: explicitMainThreads.map((thread) => thread.threadId),
         },
       );
@@ -457,23 +474,15 @@ export class ThreadRuntime implements ThreadRuntimePort {
     if (rootThreads.length > 1) {
       throw createRuntimeFailure(
         "THREAD_MAIN_RESOLUTION_FAILED",
-        `Session '${input.sessionId}' has multiple root threads and no canonical main thread.`,
+        `Session '${sessionId}' has multiple root threads and no canonical main thread.`,
         {
-          sessionId: input.sessionId,
+          sessionId,
           threadIds: rootThreads.map((thread) => thread.threadId),
         },
       );
     }
 
-    return this.startThread({
-      threadId: canonicalMainThreadId(input.sessionId),
-      sessionId: input.sessionId,
-      title: input.title ?? input.sessionId,
-      metadata: {
-        ...(input.metadata ?? {}),
-        mainThread: true,
-      },
-    });
+    return undefined;
   }
 
   async submitTurn(input: SubmitTurnInput): Promise<SubmitTurnResult> {
@@ -1603,6 +1612,15 @@ export class ThreadRuntime implements ThreadRuntimePort {
     threadId?: string | undefined;
   }) {
     return this.operatorControlPlane.listOperatorInbox(input);
+  }
+
+  async listOperatorInboxReadOnly(input: {
+    sessionId?: string | undefined;
+    threadId?: string | undefined;
+  }) {
+    return this.operatorControlPlane.listOperatorInbox(input, {
+      persistDefaultFocus: false,
+    });
   }
 
   async getOperatorThreadView(threadId: string) {
