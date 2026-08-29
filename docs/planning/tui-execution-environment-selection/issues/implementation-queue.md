@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Make submission settlement durable and serial](20-make-submission-settlement-durable-and-serial.md)
 
 ## In progress
 
