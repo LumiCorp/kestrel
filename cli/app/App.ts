@@ -436,8 +436,20 @@ export class App {
       if (describe.type !== "session.described" || describe.payload.sessionId !== state.activeSession.sessionId) {
         throw new Error("Runner session handshake failed");
       }
-      await this.syncSessionFromDescribePayload(describe.payload);
-      await this.reconcilePendingBackgroundSessions();
+      const activeDelegationStatus = state.activeSession.delegation?.status;
+      const activeSessionNeedsBackgroundReconciliation =
+        activeDelegationStatus === "PENDING" || activeDelegationStatus === "RECOVERING";
+      if (activeSessionNeedsBackgroundReconciliation) {
+        await this.reconcileBackgroundSessionDescription(
+          describe.payload,
+          state.activeSession.started !== true,
+        );
+      } else {
+        await this.syncSessionFromDescribePayload(describe.payload);
+      }
+      await this.reconcilePendingBackgroundSessions(
+        activeSessionNeedsBackgroundReconciliation ? state.activeSession.sessionId : undefined,
+      );
       this.updateSplashPreflightCheck("handshake", {
         state: "ok",
         detail: "session linked",
@@ -3141,7 +3153,12 @@ export class App {
           stepAgent: getEntryStepAgent(effectiveProfile),
         },
       }).then(async (response) => {
-        await this.syncBackgroundLaunchResponse(delegatedSession.sessionId, pendingRunId, response);
+        await this.syncBackgroundLaunchResponse(
+          delegatedSession.sessionId,
+          delegatedSession.sessionId,
+          pendingRunId,
+          response,
+        );
       }).catch(async (error) => {
         await this.reconcileBackgroundLaunchSubmissionFailure(
           delegatedSession,
@@ -3201,9 +3218,11 @@ export class App {
 
   private async syncBackgroundLaunchResponse(
     sessionId: string,
+    expectedThreadId: string,
     expectedRunId: string,
     response: RunnerEvent,
   ): Promise<void> {
+    if (response.threadId !== undefined && response.threadId !== expectedThreadId) return;
     if (response.type === "run.completed") {
       const output = response.payload.result.output;
       if (
@@ -3309,9 +3328,10 @@ export class App {
     if (current?.started === true) return;
   }
 
-  private async reconcilePendingBackgroundSessions(): Promise<void> {
+  private async reconcilePendingBackgroundSessions(skipSessionId?: string): Promise<void> {
     const pending = this.sessionsFile.sessions.filter((session) =>
-      session.delegation !== undefined
+      session.sessionId !== skipSessionId
+      && session.delegation !== undefined
       && (session.delegation.status === "PENDING" || session.delegation.status === "RECOVERING")
     );
     for (const session of pending) {
@@ -3333,7 +3353,7 @@ export class App {
     payload: SessionDescribedEventPayload,
     appendStartedHistory: boolean,
   ): Promise<void> {
-    const current = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
+    let current = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
     if (current?.delegation === undefined) return;
     const currentStatus = current.delegation.status;
     if (currentStatus === "COMPLETED" || currentStatus === "FAILED") return;
@@ -3360,6 +3380,27 @@ export class App {
     ) return;
     const projected = await this.projectSessionFromDescribePayload(payload);
     if (projected === undefined) return;
+    current = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
+    if (current?.delegation === undefined) return;
+    const latestStatus = current.delegation.status;
+    if (latestStatus === "COMPLETED" || latestStatus === "FAILED") return;
+    const latestPendingMessageRoute = current.pendingRunMessageId === undefined
+      ? undefined
+      : payload.operatorThreadView?.conversationMessageRoutes?.find(
+          (route) => route.messageId === current!.pendingRunMessageId,
+        );
+    const latestExpectedRunId = current.pendingRunId
+      ?? latestPendingMessageRoute?.runId
+      ?? current.acceptedRunId;
+    if (
+      latestExpectedRunId !== undefined
+      && evidenceRunId !== undefined
+      && latestExpectedRunId !== evidenceRunId
+    ) return;
+    if (
+      evidenceRunId === undefined
+      && (latestStatus === "RUNNING" || latestStatus === "WAITING")
+    ) return;
     const exactRunId = evidenceRunId ?? current.acceptedRunId;
     const runtimeStatus = activeRunId !== undefined && activeRunId === exactRunId
       ? payload.operatorThreadView?.activeRun?.status
@@ -3373,11 +3414,11 @@ export class App {
       || payload.activeAssembly !== undefined;
     if (durableAcceptance === false) return;
     const nextStatus = runtimeStatus
-      ?? (currentStatus === "RUNNING" || currentStatus === "WAITING"
-        ? currentStatus
+      ?? (latestStatus === "RUNNING" || latestStatus === "WAITING"
+        ? latestStatus
         : "RECOVERING");
     const exactNewAcceptance = exactRunId !== undefined
-      && exactRunId === expectedRunId;
+      && exactRunId === latestExpectedRunId;
     await this.updateAcceptedBackgroundSession({
       ...current.delegation,
       status: nextStatus,
@@ -3913,8 +3954,19 @@ export class App {
   private async syncSessionFromDescribePayload(
     payload: SessionDescribedEventPayload,
   ): Promise<void> {
+    const beforeProjection = this.sessionsFile.sessions.find(
+      (session) => session.sessionId === payload.sessionId,
+    );
     const patchedSession = await this.projectSessionFromDescribePayload(payload);
     if (patchedSession === undefined) return;
+    const current = this.sessionsFile.sessions.find(
+      (session) => session.sessionId === payload.sessionId,
+    );
+    if (
+      beforeProjection === undefined
+      || current === undefined
+      || hasSameTuiLifecycleEvidence(beforeProjection, current) === false
+    ) return;
     this.persistProjectedSession(patchedSession);
     await this.saveSessionsFile();
   }
@@ -3922,8 +3974,8 @@ export class App {
   private async projectSessionFromDescribePayload(
     payload: SessionDescribedEventPayload,
   ): Promise<TuiSessionMeta | undefined> {
-    const target = this.sessionsFile.sessions.find((session) => session.sessionId === payload.sessionId);
-    if (target === undefined) {
+    const initialTarget = this.sessionsFile.sessions.find((session) => session.sessionId === payload.sessionId);
+    if (initialTarget === undefined) {
       return;
     }
     const describedView = payload.operatorThreadView;
@@ -3936,6 +3988,15 @@ export class App {
     ) {
       throw new Error("Session description thread identity did not match the described session.");
     }
+    const state = this.uiStore.getState();
+    const loadedProfiles = state.activeProfile.id === initialTarget.profileId
+      ? undefined
+      : await this.profileStore.load();
+    const target = this.sessionsFile.sessions.find((session) => session.sessionId === payload.sessionId);
+    if (target === undefined) return;
+    const profile = state.activeProfile.id === target.profileId
+      ? state.activeProfile
+      : loadedProfiles?.find((candidate) => candidate.id === target.profileId) ?? state.activeProfile;
     const resolvedWaitFor = payload.waitFor ?? target.pendingWaitFor;
     const runtimePayload: SessionDescribedEventPayload =
       payload.waitFor === resolvedWaitFor
@@ -3944,10 +4005,6 @@ export class App {
             ...payload,
             waitFor: resolvedWaitFor,
           };
-    const state = this.uiStore.getState();
-    const profile = state.activeProfile.id === target.profileId
-      ? state.activeProfile
-      : (await this.profileStore.load()).find((candidate) => candidate.id === target.profileId) ?? state.activeProfile;
     const runtimeEnvironmentPresetId = payload.activeAssembly?.environmentPresetId;
     let environmentPresetId: TuiEnvironmentPresetId;
     try {
@@ -3977,6 +4034,12 @@ export class App {
       : describedView?.conversationMessageRoutes?.find(
           (route) => route.messageId === target.pendingRunMessageId,
         );
+    const recoveredRequestRoute = target.pendingRunRequestId === undefined
+      ? undefined
+      : describedView?.conversationMessageRoutes?.find(
+          (route) => route.requestId === target.pendingRunRequestId,
+        );
+    const recoveredAcceptedRoute = recoveredRoute ?? recoveredRequestRoute;
     return {
       ...target,
       started:
@@ -3993,13 +4056,16 @@ export class App {
         : {}),
       ...(payload.updatedAt !== undefined ? { updatedAt: payload.updatedAt } : {}),
       pendingWaitFor: resolvedWaitFor,
-      ...(recoveredRoute?.runId !== undefined
+      ...(recoveredAcceptedRoute?.runId !== undefined
         ? {
             pendingRunId: undefined,
+            pendingRunRequestId: undefined,
             pendingRunMessageId: undefined,
             pendingRunThreadId: undefined,
-            acceptedRunMessageId: recoveredRoute.messageId,
-            acceptedRunId: recoveredRoute.runId,
+            ...(recoveredRoute !== undefined
+              ? { acceptedRunMessageId: recoveredRoute.messageId }
+              : {}),
+            acceptedRunId: recoveredAcceptedRoute.runId,
           }
         : {}),
       ...(payload.focusedThreadId !== undefined ? { focusedThreadId: payload.focusedThreadId } : {}),
@@ -5081,6 +5147,7 @@ export class App {
       );
     if (session.acceptedRunId !== input.runId && exactPendingAcceptance === false) return;
     if (session.acceptedRunId === input.runId && status === "RUNNING") return;
+    if (session.acceptedRunId === input.runId && status === "WAITING") return;
     await this.updateAcceptedBackgroundSession({
       ...session.delegation,
       status: "RUNNING",
@@ -5868,6 +5935,19 @@ function slugify(value: string): string {
     .slice(0, 32);
 
   return compact.length === 0 ? "session" : compact;
+}
+
+function hasSameTuiLifecycleEvidence(left: TuiSessionMeta, right: TuiSessionMeta): boolean {
+  return left.started === right.started
+    && left.pendingRunId === right.pendingRunId
+    && left.pendingRunRequestId === right.pendingRunRequestId
+    && left.pendingRunMessageId === right.pendingRunMessageId
+    && left.pendingRunThreadId === right.pendingRunThreadId
+    && left.acceptedRunId === right.acceptedRunId
+    && left.acceptedRunMessageId === right.acceptedRunMessageId
+    && left.lastRunStatus === right.lastRunStatus
+    && left.delegation?.status === right.delegation?.status
+    && isSameWaitFor(left.pendingWaitFor, right.pendingWaitFor);
 }
 
 export function isSameWaitFor(

@@ -309,6 +309,9 @@ function validateSession(value: unknown): TuiSessionMeta {
   const pendingRunId = typeof entry.pendingRunId === "string"
     ? entry.pendingRunId
     : undefined;
+  const pendingRunRequestId = typeof entry.pendingRunRequestId === "string"
+    ? entry.pendingRunRequestId
+    : undefined;
   const pendingRunMessageId = typeof entry.pendingRunMessageId === "string"
     ? entry.pendingRunMessageId
     : undefined;
@@ -379,6 +382,7 @@ function validateSession(value: unknown): TuiSessionMeta {
     ...(autoCompactionEnabled !== undefined ? { autoCompactionEnabled } : {}),
     ...(suppressAutoCompactionOnce !== undefined ? { suppressAutoCompactionOnce } : {}),
     ...(pendingRunId !== undefined ? { pendingRunId } : {}),
+    ...(pendingRunRequestId !== undefined ? { pendingRunRequestId } : {}),
     ...(pendingRunMessageId !== undefined ? { pendingRunMessageId } : {}),
     ...(pendingRunThreadId !== undefined ? { pendingRunThreadId } : {}),
     ...(acceptedRunId !== undefined ? { acceptedRunId } : {}),

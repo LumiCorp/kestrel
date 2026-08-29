@@ -413,6 +413,7 @@ export interface TuiSessionMeta {
   executionPolicy?: ExecutionPolicyOverride | undefined;
   started: boolean;
   pendingRunId?: string | undefined;
+  pendingRunRequestId?: string | undefined;
   pendingRunMessageId?: string | undefined;
   pendingRunThreadId?: string | undefined;
   acceptedRunId?: string | undefined;

@@ -1901,6 +1901,108 @@ test("stale assembly-only describe cannot regress a newer accepted background ru
   assert.equal(current?.acceptedRunId, "run-new");
 });
 
+test("live background acceptance wins over a describe projection delayed by profile loading", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-interleaved-describe",
+    profileId: "profile-loaded-late",
+    pendingRunId: "run-live",
+    pendingRunThreadId: "child-interleaved-describe",
+  });
+  const persistedStatuses: Array<string | undefined> = [];
+  const saveSessionsFile = (appState.saveSessionsFile as () => Promise<void>).bind(app);
+  appState.saveSessionsFile = async () => {
+    persistedStatuses.push((appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions.find(
+      (session) => session.sessionId === child.sessionId,
+    )?.delegation?.status);
+    await saveSessionsFile();
+  };
+  let releaseProfileLoad: ((profiles: unknown[]) => void) | undefined;
+  let profileLoadStartedResolve: (() => void) | undefined;
+  const profileLoadStarted = new Promise<void>((resolve) => {
+    profileLoadStartedResolve = resolve;
+  });
+  appState.profileStore = {
+    load: async () => await new Promise<unknown[]>((resolve) => {
+      releaseProfileLoad = resolve;
+      profileLoadStartedResolve?.();
+    }),
+  };
+
+  const describing = (appState.reconcileBackgroundSessionDescription as (
+    payload: Record<string, unknown>,
+    appendStartedHistory: boolean,
+  ) => Promise<void>)({
+    sessionId: child.sessionId,
+    version: 1,
+    activeAssembly: {
+      mode: "explicit",
+      bundleId: "bundle:stale-assembly-only",
+      environmentPresetId: "cli_dev_local",
+    },
+  }, false);
+  await profileLoadStarted;
+
+  await (appState.syncBackgroundSessionProgress as (input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+  }) => Promise<void>)({
+    sessionId: child.sessionId,
+    threadId: child.sessionId,
+    runId: "run-live",
+  });
+  releaseProfileLoad?.([]);
+  await describing;
+
+  const current = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.acceptedRunId, "run-live");
+  assert.equal(current?.lastRunStatus, undefined);
+  assert.deepEqual(persistedStatuses, ["RUNNING"]);
+});
+
+test("same-run background progress cannot regress WAITING to RUNNING", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-waiting-monotonic",
+    started: true,
+    acceptedRunId: "run-waiting",
+    lastRunStatus: "WAITING",
+    delegation: {
+      taskId: "task-child-waiting-monotonic",
+      parentSessionId: "session-1",
+      childSessionId: "child-waiting-monotonic",
+      childSessionName: "child-waiting-monotonic",
+      title: "waiting child",
+      status: "WAITING",
+      profileId: "kestrel",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: "2026-08-28T00:00:00.000Z",
+      updatedAt: "2026-08-28T00:00:00.000Z",
+    },
+  });
+
+  await (appState.syncBackgroundSessionProgress as (input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+  }) => Promise<void>)({
+    sessionId: child.sessionId,
+    threadId: child.sessionId,
+    runId: "run-waiting",
+  });
+
+  const current = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "WAITING");
+  assert.equal(current?.lastRunStatus, "WAITING");
+});
+
 test("exact describe acceptance persists identity and lifecycle in one session write", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
@@ -1954,6 +2056,127 @@ test("exact describe acceptance persists identity and lifecycle in one session w
   assert.equal(snapshots.some((snapshot) => snapshot.some(
     (item) => item.sessionId === child.sessionId && item.started && item.delegation?.status === "PENDING",
   )), false);
+});
+
+test("startup reconciles an active pending child atomically before generic describe persistence", async () => {
+  const { app } = await createAppHarness({ scripted: true });
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-active-startup",
+    pendingRunId: "run-active-startup",
+    pendingRunThreadId: "child-active-startup",
+  });
+  const sessionsFile = appState.sessionsFile as {
+    version: 5;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = { ...sessionsFile, activeSessionName: child.name };
+  uiStore.patch({ activeSession: child, sessions: appState.sessionsFile.sessions });
+  const persisted: TuiSessionMeta[][] = [];
+  const saveSessionsFile = (appState.saveSessionsFile as () => Promise<void>).bind(app);
+  appState.saveSessionsFile = async () => {
+    persisted.push((appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions.map(
+      (session) => structuredClone(session),
+    ));
+    await saveSessionsFile();
+  };
+  appState.client = {
+    start: () => {},
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      assert.equal(type, "session.describe");
+      assert.equal(payload.sessionId, child.sessionId);
+      return {
+        type: "session.described",
+        payload: {
+          sessionId: child.sessionId,
+          version: 1,
+          threadId: child.sessionId,
+          activeAssembly: {
+            mode: "explicit",
+            bundleId: "bundle:startup",
+            environmentPresetId: "cli_dev_local",
+          },
+          operatorThreadView: {
+            thread: {
+              threadId: child.sessionId,
+              sessionId: child.sessionId,
+              title: "startup child",
+              status: "RUNNING",
+              createdAt: child.createdAt,
+              updatedAt: child.updatedAt,
+            },
+            childThreads: [],
+            childBlockerChain: [],
+            activeRun: { runId: "run-active-startup", status: "RUNNING" },
+          },
+        },
+      };
+    },
+  };
+  appState.runnerUsesLocalCore = true;
+  const localCoreStatus = appState.localCoreStatus as { client: Record<string, unknown> };
+  localCoreStatus.client.providerReadiness = async () => ({
+    ok: true,
+    providerReadiness: {
+      openrouter: { ready: true, credential: "configured" },
+    },
+    toolReadiness: {
+      tavily: { ready: true, credential: "configured" },
+    },
+  });
+  appState.runSplashDatabaseCheck = async () => {};
+  appState.runSplashMcpCheck = async () => {};
+
+  await (appState.runSplashPreflight as () => Promise<void>)();
+
+  assert.equal(persisted.length > 0, true);
+  assert.equal(persisted.some((snapshot) => snapshot.some((session) =>
+    session.sessionId === child.sessionId
+    && session.started === true
+    && session.delegation?.status === "PENDING"
+  )), false);
+  const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.acceptedRunId, "run-active-startup");
+});
+
+test("background direct terminal response must match the expected child thread", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-thread-bound-response",
+    pendingRunId: "run-thread-bound",
+    pendingRunThreadId: "thread-main:child-thread-bound-response",
+  });
+  const output = {
+    status: "COMPLETED" as const,
+    sessionId: child.sessionId,
+    runId: "run-thread-bound",
+    quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+    errors: [],
+    telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+  };
+
+  await (appState.syncBackgroundLaunchResponse as (
+    sessionId: string,
+    threadId: string,
+    runId: string,
+    response: Record<string, unknown>,
+  ) => Promise<void>)(child.sessionId, "thread-main:child-thread-bound-response", output.runId, {
+    type: "run.completed",
+    sessionId: child.sessionId,
+    threadId: "thread-wrong",
+    runId: output.runId,
+    payload: { result: { assistantText: "wrong thread", output } },
+  });
+
+  const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "PENDING");
+  assert.equal(current?.started, false);
+  assert.equal(current?.acceptedRunId, undefined);
 });
 
 test("background launch drops a cross-session terminal response", async () => {
@@ -2979,6 +3202,7 @@ test("TasksView renders additive assembly provider, variant, and downgrade marke
     updatedAt: new Date(0).toISOString(),
     started: true,
     pendingRunId: "internal-pending-run-id",
+    pendingRunRequestId: "internal-pending-request-id",
     pendingRunMessageId: "internal-pending-message-id",
     pendingRunThreadId: "internal-pending-thread-id",
     acceptedRunId: "internal-accepted-run-id",
@@ -4812,9 +5036,12 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
       capturedCommandType = type;
       capturedPayload = payload;
       return {
-        type: "run.completed",
+        type: "operator.controlled",
         payload: {
+          threadId: "thread-main:session-1",
+          disposition: "completed",
           result: {
+            assistantText: null,
             output: {
               status: "COMPLETED",
               sessionId: "session-1",
@@ -5372,9 +5599,12 @@ test("exact continuation text during ordinary waits is routed by the runtime", a
       capturedCommandType = type;
       capturedPayload = payload;
       return {
-        type: "run.completed",
+        type: "operator.controlled",
         payload: {
+          threadId: "thread-main:session-1",
+          disposition: "completed",
           result: {
+            assistantText: null,
             output: {
               status: "COMPLETED",
               sessionId: "session-1",

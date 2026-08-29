@@ -88,6 +88,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
     updatedAt: now,
     started: true,
     pendingRunId: "run-pending",
+    pendingRunRequestId: "request-pending",
     pendingRunMessageId: "message-pending",
     pendingRunThreadId: "thread-main:exact-run-child",
     acceptedRunId: "run-accepted",
@@ -97,6 +98,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
   await store.save(store.upsert(await store.load(), session));
   const loaded = store.findByName(await store.load(), session.name);
   assert.equal(loaded?.pendingRunId, "run-pending");
+  assert.equal(loaded?.pendingRunRequestId, "request-pending");
   assert.equal(loaded?.pendingRunMessageId, "message-pending");
   assert.equal(loaded?.pendingRunThreadId, "thread-main:exact-run-child");
   assert.equal(loaded?.acceptedRunId, "run-accepted");
@@ -119,6 +121,7 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
   );
   const legacy = store.findByName(await store.load(), "legacy-no-run-identity");
   assert.equal(legacy?.pendingRunId, undefined);
+  assert.equal(legacy?.pendingRunRequestId, undefined);
   assert.equal(legacy?.pendingRunMessageId, undefined);
   assert.equal(legacy?.acceptedRunId, undefined);
 });
