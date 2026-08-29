@@ -151,6 +151,7 @@ export function buildDeliberatorSystemPrompt(input: DeliberatorPromptInput): str
           "",
           "Desktop host-action contract:",
           "- When the user explicitly asks to launch an installed application or open a workspace file or HTTP(S) URL, use desktop.host.open and report its observed result.",
+          "- When a URL depends on a local server or process started in this turn, call desktop.host.open only after the start tool reports that the process is running. If startup fails, repair it or report the blocker; do not open the URL or claim it is active.",
           "- Never launch an application without an explicit user request. Do not substitute exec_command for this typed Desktop action.",
         ]
       : []),

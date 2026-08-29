@@ -36,6 +36,7 @@ import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 import { kestrelOneGitHubIssueCreateTool } from "../../tools/kestrelOne/githubActions.js";
+import { desktopHostOpenTool } from "../../tools/desktop/hostOpen.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
 import {
@@ -891,6 +892,118 @@ test("exec.wait_approval records processor-owned approval denials", async () => 
   assert.equal(lastCheckpoint.substate, "dispatch");
   assert.equal(lastCheckpoint.currentStepAgent, "agent.exec.wait_approval");
   assert.equal(workingPlan.status, "dispatching");
+});
+
+test("local Desktop external confirmation waits on and resumes its exact V1 action binding", async () => {
+  const definition = desktopHostOpenTool.definition;
+  const toolInput = {
+    kind: "url",
+    url: "http://localhost:4173",
+    application: "Safari",
+  };
+  const config = {
+    ...buildExecConfig(),
+    capabilityManifestProvider: () => [
+      {
+        name: definition.name,
+        freshnessClass: definition.capability.freshnessClass,
+        capabilityClasses: [...definition.capability.capabilityClasses],
+        approvalCapabilities: ["external.confirm"],
+        approvalDisposition: {
+          mode: "ask" as const,
+          reasonCode: "tool_minimum" as const,
+          authority: {
+            kind: "runtime_policy" as const,
+            revision: "desktop-local-policy-v1",
+          },
+        },
+        approvalAuthority: {
+          kind: "runtime_policy" as const,
+          revision: "desktop-local-policy-v1",
+        },
+        executionClass: "external_side_effect" as const,
+      },
+    ],
+  };
+  const dispatchStep = createExecDispatchStep(config);
+  const waitApprovalStep = createExecWaitApprovalStep(config);
+  const modePayload = {
+    modeSystemV2Enabled: true,
+    interactionMode: "build",
+    actSubmode: "full_auto",
+    executionPolicy: {
+      toolClassPolicy: { external_side_effect: true },
+      capabilityPolicy: {
+        "desktop.host.open": true,
+        "external.confirm": true,
+      },
+    },
+  };
+  const initial = buildContext({
+    session: {
+      ...buildContext().session,
+      state: {
+        agent: {
+          nextAction: {
+            kind: "tool",
+            name: definition.name,
+            input: toolInput,
+          },
+        },
+      },
+    },
+    event: {
+      ...buildContext().event,
+      payload: modePayload,
+    },
+  });
+  const io: StepIO = {
+    useModel: async () => {
+      throw new Error("not expected");
+    },
+    useTool: async () => {
+      throw new Error("external action must not execute inline");
+    },
+    inspectTool: async () => ({ effectiveInput: toolInput }),
+  };
+
+  const approvalWait = await dispatchStep(initial, io);
+  const approvalAgent = approvalWait.statePatch?.agent as Record<string, unknown>;
+  const approvalExec = approvalAgent.exec as Record<string, unknown>;
+  const pendingApproval = approvalExec.pendingApproval as Record<string, unknown>;
+  const waitingFor = approvalAgent.waitingFor as Record<string, unknown>;
+  const waitMetadata = waitingFor.metadata as Record<string, unknown>;
+
+  assert.equal(approvalWait.status, "WAITING");
+  assert.equal(pendingApproval.version, "local_tool_approval_v1");
+  assert.equal(
+    (pendingApproval.externalApprovalBinding as Record<string, unknown>).version,
+    "runner_external_approval_binding_v1",
+  );
+  assert.equal(waitMetadata.preparedToolCall, undefined);
+
+  const resumed = await waitApprovalStep(
+    buildContext({
+      session: {
+        ...buildContext().session,
+        state: { agent: approvalAgent },
+        currentStepAgent: "agent.exec.wait_approval",
+      },
+      event: {
+        id: "evt-local-approval",
+        type: "user.approval",
+        sessionId: "session-1",
+        payload: {
+          ...modePayload,
+          decision: "approve_once",
+        },
+      },
+    }),
+    io,
+  );
+
+  assert.equal(resumed.status, "RUNNING");
+  assert.equal(resumed.nextStepAgent, "agent.exec.wait_effect");
 });
 
 test("GitHub external confirmation resumes the exact mutation and releases rejected Remember continuations", async () => {

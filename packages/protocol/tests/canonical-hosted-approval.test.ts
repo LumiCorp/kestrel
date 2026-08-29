@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   parseRunnerInteractionRequest,
   parseRunnerHostedToolApprovalInteractionV4,
+  parseRunnerLocalToolApprovalInteractionV1,
 } from "../src/execution.js";
 
 const canonical = {
@@ -52,6 +53,49 @@ const canonical = {
 test("canonical hosted approval preserves exact exec_command scope", () => {
   assert.deepEqual(parseRunnerHostedToolApprovalInteractionV4(canonical), canonical);
   assert.deepEqual(parseRunnerInteractionRequest(canonical), canonical);
+});
+
+test("canonical local approval exposes only one-time decisions", () => {
+  const local = {
+    version: "runner_local_tool_approval_interaction_v1",
+    requestId: "local-approval-1",
+    kind: "approval",
+    eventType: "user.approval",
+    prompt: "Review this action before it runs.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["decision"],
+      properties: {
+        decision: { type: "string", enum: ["decline", "approve_once"] },
+      },
+    },
+    approval: {
+      approvalId: "local-approval-1",
+      toolName: "desktop.host.open",
+      requestedAt: "2026-08-28T12:00:00.000Z",
+      expiresAt: "2026-08-28T12:05:00.000Z",
+      presentation: { title: "Open in Safari" },
+    },
+  } as const;
+
+  assert.deepEqual(parseRunnerLocalToolApprovalInteractionV1(local), local);
+  assert.deepEqual(parseRunnerInteractionRequest(local), local);
+  assert.throws(
+    () => parseRunnerLocalToolApprovalInteractionV1({
+      ...local,
+      inputSchema: {
+        ...local.inputSchema,
+        properties: {
+          decision: {
+            type: "string",
+            enum: ["decline", "approve_once", "remember_approval"],
+          },
+        },
+      },
+    }),
+    /inputSchema is invalid/u,
+  );
 });
 
 test("legacy approval envelopes are rejected by the canonical parser", () => {

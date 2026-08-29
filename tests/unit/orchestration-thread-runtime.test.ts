@@ -2059,6 +2059,30 @@ test("ThreadRuntime resumes the active blocked request and derives approval gran
     runId: "run-waiting",
     kind: "approval",
     eventType: "user.approval",
+    interaction: {
+      version: "runner_local_tool_approval_interaction_v1",
+      requestId: "request-current",
+      kind: "approval",
+      eventType: "user.approval",
+      prompt: "Review this action before it runs.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["decision"],
+        properties: {
+          decision: {
+            type: "string",
+            enum: ["decline", "approve_once"],
+          },
+        },
+      },
+      approval: {
+        approvalId: "approval-resume-active",
+        toolName: "hosted.tool",
+        requestedAt: "2026-05-22T12:01:00.000Z",
+        expiresAt: "2026-05-22T12:06:00.000Z",
+      },
+    },
     status: "PENDING",
     createdAt: "2026-05-22T12:01:00.000Z",
     metadata: {
@@ -2111,6 +2135,7 @@ test("ThreadRuntime resumes the active blocked request and derives approval gran
   assert.equal(resumed.output.status, "COMPLETED");
   assert.equal(executor.inputs[0]?.resumeBlockedRun, true);
   assert.equal(executor.inputs[0]?.eventType, "user.approval");
+  assert.equal(executor.inputs[0]?.runtimeTurn?.decision, "approve_once");
   const grants = await sessionStore.listApprovalGrants({
     threadId: "thread-resume-active",
   });

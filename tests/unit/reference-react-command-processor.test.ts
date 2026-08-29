@@ -334,7 +334,7 @@ test("createReferenceReactWaitCheckpoint rejects approval without preparation", 
       waitFor,
       substate: "wait_approval",
     }),
-    /exact prepared invocation/u,
+    /exact versioned request/u,
   );
 });
 

@@ -815,6 +815,15 @@
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=new hosted approval card reloads", "tests/unit/assistant-response-contract.test.ts"],
       "testFiles": ["tests/unit/assistant-response-contract.test.ts"]
+    },
+    {
+      "id": "local-approval-exact-binding-omission",
+      "target": "src/runtime/assistantResponseContract.ts",
+      "find": "  if (metadata?.toolClass === \"external_side_effect\") {",
+      "replace": "  if (false) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=rejects a local external approval without its exact binding", "tests/unit/assistant-response-contract.test.ts"],
+      "testFiles": ["tests/unit/assistant-response-contract.test.ts"]
     }
   ]
 }

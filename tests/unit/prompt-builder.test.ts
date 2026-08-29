@@ -149,6 +149,8 @@ test("deliberator prompt exposes typed host actions only for Desktop Chat and Bu
 
   assert.match(desktopChat, /use desktop\.host\.open/u);
   assert.match(desktopBuild, /use desktop\.host\.open/u);
+  assert.match(desktopChat, /only after the start tool reports that the process is running/u);
+  assert.match(desktopBuild, /If startup fails, repair it or report the blocker/u);
   assert.doesNotMatch(desktopPlan, /desktop\.host\.open/u);
   assert.doesNotMatch(cliBuild, /desktop\.host\.open/u);
   assert.doesNotMatch(webChat, /desktop\.host\.open/u);

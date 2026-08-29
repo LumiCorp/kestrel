@@ -3,12 +3,16 @@ import type {
   RuntimeInteractionRequest,
   RuntimeInteractionRequestV1,
   RuntimeHostedToolApprovalInteractionV4,
+  RuntimeLocalToolApprovalInteractionV1,
   WaitForMatcher,
 } from "../kestrel/contracts/execution.js";
 import type { InteractionRequestRecord } from "../kestrel/contracts/orchestration.js";
 import {
+  parseRunnerExternalApprovalBindingV1,
   parseRunnerHostedToolApprovalInteractionV4,
+  parseRunnerLocalToolApprovalInteractionV1,
   parseRunnerStructuredReviewInteractionV1,
+  RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION,
   RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
 } from "@kestrel-agents/protocol";
 import { parsePreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
@@ -98,19 +102,14 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
       { eventType: waitFor.eventType, reason: authoredStructuredReview.reason },
     );
   }
-  if (waitFor.kind === "approval" && metadata?.preparedToolCall === undefined) {
-    throw createRuntimeFailure(
-      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
-      "A hosted approval requires an exact prepared invocation.",
-      { eventType: waitFor.eventType },
-    );
-  }
   const preparedApprovalInteraction = waitFor.kind === "approval"
-    ? projectHostedToolApprovalInteractionV4({
-        preparedToolCall: metadata!.preparedToolCall,
-        requestId,
-        reasonCode: metadata!.reasonCode,
-      })
+    ? metadata?.preparedToolCall === undefined
+      ? projectLocalToolApprovalInteractionV1({ metadata, requestId })
+      : projectHostedToolApprovalInteractionV4({
+          preparedToolCall: metadata.preparedToolCall,
+          requestId,
+          reasonCode: metadata.reasonCode,
+        })
     : undefined;
   const interaction: RuntimeInteractionRequest =
     authoredStructuredReview?.kind === "structured_review"
@@ -370,6 +369,81 @@ export function projectHostedToolApprovalInteractionV4(input: {
       presentation,
     },
   }) as RuntimeHostedToolApprovalInteractionV4;
+}
+
+export function projectLocalToolApprovalInteractionV1(input: {
+  metadata: Record<string, unknown> | undefined;
+  requestId?: string | undefined;
+}): RuntimeLocalToolApprovalInteractionV1 {
+  const metadata = input.metadata;
+  const approvalId = readNonEmptyString(metadata?.approvalId);
+  const toolName = readNonEmptyString(metadata?.toolName);
+  const requestedAt = readNonEmptyString(metadata?.requestedAt);
+  const expiresAt = readNonEmptyString(metadata?.expiresAt);
+  if (
+    approvalId === undefined ||
+    toolName === undefined ||
+    requestedAt === undefined ||
+    expiresAt === undefined
+  ) {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      "A local approval requires an exact versioned request.",
+    );
+  }
+  if (metadata?.toolClass === "external_side_effect") {
+    let binding;
+    try {
+      binding = parseRunnerExternalApprovalBindingV1(
+        metadata.externalApprovalBinding,
+      );
+    } catch (error) {
+      throw createRuntimeFailure(
+        "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+        "A local external-effect approval requires its exact action binding.",
+        { cause: error instanceof Error ? error.message : String(error) },
+      );
+    }
+    if (
+      binding.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION ||
+      binding.approvalId !== approvalId ||
+      binding.actionKey !== toolName ||
+      binding.requestedAt !== requestedAt ||
+      binding.expiresAt !== expiresAt
+    ) {
+      throw createRuntimeFailure(
+        "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+        "A local approval card does not match its exact action binding.",
+      );
+    }
+  }
+  return parseRunnerLocalToolApprovalInteractionV1({
+    version: "runner_local_tool_approval_interaction_v1",
+    requestId: input.requestId ?? approvalId,
+    kind: "approval",
+    eventType: "user.approval",
+    prompt: "Review this action before it runs.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["decision"],
+      properties: {
+        decision: {
+          type: "string",
+          enum: ["decline", "approve_once"],
+        },
+      },
+    },
+    approval: {
+      approvalId,
+      toolName,
+      ...(metadata?.approvalPresentation === undefined
+        ? {}
+        : { presentation: metadata.approvalPresentation }),
+      requestedAt,
+      expiresAt,
+    },
+  }) as RuntimeLocalToolApprovalInteractionV1;
 }
 
 function buildRememberedApprovalScope(toolName: string, effectiveInput: unknown) {

@@ -975,7 +975,10 @@ async function maybeRequireToolApproval(input: {
       preparedToolCall: declinedPreparedToolCall,
     });
   }
-  if (durablePreparedToolCall === undefined) {
+  if (
+    durablePreparedToolCall === undefined &&
+    hasHostedPreparedApprovalAuthority(input.eventPayload)
+  ) {
     throw new Error("Hosted approval preparation did not produce a durable invocation.");
   }
 
@@ -992,6 +995,7 @@ async function maybeRequireToolApproval(input: {
       reason: approvalReason,
       reasonCode: effectiveDisposition.reasonCode,
       approvalPresentation,
+      requestedAt,
       expiresAt,
       ...(binding !== undefined ? { externalApprovalBinding: binding } : {}),
       ...(durablePreparedToolCall === undefined
@@ -1035,7 +1039,7 @@ async function maybeRequireToolApproval(input: {
     execPatch: {
       pendingApproval: {
         ...(durablePreparedToolCall === undefined
-          ? {}
+          ? { version: "local_tool_approval_v1" }
           : {
               version: "hosted_tool_approval_v2",
               preparedInvocationId: durablePreparedToolCall.callId,
@@ -1050,7 +1054,7 @@ async function maybeRequireToolApproval(input: {
     regionExecPatch: {
       pendingApproval: {
         ...(durablePreparedToolCall === undefined
-          ? {}
+          ? { version: "local_tool_approval_v1" }
           : {
               version: "hosted_tool_approval_v2",
               preparedInvocationId: durablePreparedToolCall.callId,
@@ -2058,6 +2062,8 @@ async function resolveApprovalDecision(input: {
     if (input.eventPayload?.decision === "decline") return "deny";
     return ;
   }
+  if (input.eventPayload?.decision === "approve_once") return "approve";
+  if (input.eventPayload?.decision === "decline") return "deny";
   const existing = readHighConfidenceApprovalDecision(readUserReplyIntent(input.eventPayload?.userReplyIntent));
   if (existing !== undefined) {
     return existing;

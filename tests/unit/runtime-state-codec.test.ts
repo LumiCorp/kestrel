@@ -17,6 +17,7 @@ import {
 import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
 import {
   projectHostedToolApprovalInteractionV4,
+  projectLocalToolApprovalInteractionV1,
 } from "../../src/runtime/assistantResponseContract.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
 
@@ -423,6 +424,190 @@ test("runtime state restart preserves the exact prepared canonical hosted approv
       forgedCard.name,
     );
   }
+});
+
+test("runtime state restart preserves a canonical local exact-action approval", () => {
+  const approvalId = "local-approval-state-1";
+  const requestedAt = "2026-08-28T12:00:00.000Z";
+  const expiresAt = "2026-08-28T12:05:00.000Z";
+  const binding = {
+    version: "runner_external_approval_binding_v1",
+    approvalId,
+    threadId: "session-local",
+    runId: "run-local",
+    actionKey: "desktop.host.open",
+    payloadHash: hashCanonical({
+      kind: "url",
+      url: "http://localhost:4173",
+      application: "Safari",
+    }),
+    toolClass: "external_side_effect",
+    capabilities: ["external.confirm"],
+    authorityKind: "runtime_policy",
+    authorityRevision: "desktop-local-policy-v1",
+    requestedAt,
+    expiresAt,
+  };
+  const metadata = {
+    approvalId,
+    toolName: "desktop.host.open",
+    toolClass: "external_side_effect",
+    approvalPresentation: { title: "Open in Safari" },
+    requestedAt,
+    expiresAt,
+    externalApprovalBinding: binding,
+    prompt: "Review this action before it runs.",
+  };
+  const interaction = projectLocalToolApprovalInteractionV1({
+    metadata,
+    requestId: "request-local",
+  });
+  const interactionWithModeSwitch = {
+    ...interaction,
+    metadata: { modeSwitch: { mode: "build" } },
+  };
+  const state = normalizeRuntimeStateForPersist({
+    agent: {
+      observations: [],
+      exec: {
+        substate: "wait_approval",
+        pendingApproval: {
+          version: "local_tool_approval_v1",
+          approvalId,
+          toolName: "desktop.host.open",
+          toolClass: "external_side_effect",
+          expiresAt,
+          externalApprovalBinding: binding,
+        },
+      },
+      assistantText: interaction.prompt,
+      waitingFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        reason: "Approval required",
+        resumeInstruction: "Choose an approval decision.",
+        metadata,
+        interaction: interactionWithModeSwitch,
+      },
+    },
+  });
+
+  assert.equal(validateRuntimeSessionState(structuredClone(state)), undefined);
+  const forged = structuredClone(state);
+  const forgedAgent = forged.agent as Record<string, unknown>;
+  const forgedWait = forgedAgent.waitingFor as Record<string, unknown>;
+  const forgedInteraction = forgedWait.interaction as Record<string, unknown>;
+  const forgedApproval = forgedInteraction.approval as Record<string, unknown>;
+  forgedApproval.toolName = "desktop.host.open.other";
+  assert.equal(validateRuntimeSessionState(forged)?.code, "RUNTIME_STATE_INVALID");
+});
+
+test("runtime state accepts a canonical local approval without an external binding", () => {
+  const metadata = {
+    approvalId: "local-sandboxed-approval",
+    toolName: "filesystem.write_text",
+    toolClass: "sandboxed_only",
+    requestedAt: "2026-08-28T12:00:00.000Z",
+    expiresAt: "2026-08-28T12:05:00.000Z",
+  };
+  const interaction = projectLocalToolApprovalInteractionV1({
+    metadata,
+    requestId: "request-local-sandboxed",
+  });
+  const state = normalizeRuntimeStateForPersist({
+    agent: {
+      observations: [],
+      exec: {
+        substate: "wait_approval",
+        pendingApproval: {
+          version: "local_tool_approval_v1",
+          approvalId: metadata.approvalId,
+          toolName: metadata.toolName,
+          toolClass: metadata.toolClass,
+          expiresAt: metadata.expiresAt,
+        },
+      },
+      assistantText: interaction.prompt,
+      waitingFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        reason: "Approval required",
+        resumeInstruction: "Choose an approval decision.",
+        metadata,
+        interaction,
+      },
+    },
+  });
+
+  assert.equal(validateRuntimeSessionState(state), undefined);
+});
+
+test("runtime state codec upgrades an unversioned legacy local approval", () => {
+  const approvalId = "legacy-local-approval";
+  const requestedAt = "2026-08-28T12:00:00.000Z";
+  const expiresAt = "2026-08-28T12:05:00.000Z";
+  const binding = {
+    version: "runner_external_approval_binding_v1",
+    approvalId,
+    threadId: "session-legacy",
+    runId: "run-legacy",
+    actionKey: "desktop.host.open",
+    payloadHash: hashCanonical({ kind: "url", url: "http://localhost:4173" }),
+    toolClass: "external_side_effect",
+    capabilities: ["external.confirm"],
+    authorityKind: "runtime_policy",
+    authorityRevision: "legacy-policy",
+    requestedAt,
+    expiresAt,
+  };
+  const decoded = decodeRuntimeSessionState({
+    runtime: { schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION },
+    agent: {
+      observations: [],
+      assistantText: "Approve desktop.host.open?",
+      exec: {
+        substate: "wait_approval",
+        pendingApproval: {
+          approvalId,
+          toolName: "desktop.host.open",
+          toolClass: "external_side_effect",
+          expiresAt,
+          externalApprovalBinding: binding,
+        },
+      },
+      waitingFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        reason: "Approval required",
+        resumeInstruction: "Choose an approval decision.",
+        metadata: {
+          approvalId,
+          toolName: "desktop.host.open",
+          toolClass: "external_side_effect",
+          expiresAt,
+          externalApprovalBinding: binding,
+          prompt: "Approve desktop.host.open?",
+        },
+        interaction: {
+          version: "v1",
+          requestId: "legacy-request",
+          kind: "approval",
+          eventType: "user.approval",
+          prompt: "Approve desktop.host.open?",
+        },
+      },
+    },
+  });
+
+  assert.equal(
+    (readExecState(decoded).pendingApproval as Record<string, unknown>).version,
+    "local_tool_approval_v1",
+  );
+  assert.equal(
+    readWaitState(decoded)?.interaction?.version,
+    "runner_local_tool_approval_interaction_v1",
+  );
+  assert.equal(validateRuntimeSessionState(decoded), undefined);
 });
 
 test("runtime state rejects a mixed V2 interaction carrying legacy approval fields", () => {

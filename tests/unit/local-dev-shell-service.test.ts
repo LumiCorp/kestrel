@@ -92,6 +92,68 @@ test("LocalDevShellService reports a missing resolved entrypoint before spawn", 
   }
 });
 
+test("LocalDevShellService uses its injected runtime environment for bootstrap prerequisites", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-injected-env-"));
+  const previousStoreDriver = process.env.KESTREL_STORE_DRIVER;
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  process.env.KESTREL_STORE_DRIVER = "postgres";
+  process.env.DATABASE_URL = "postgres://127.0.0.1:55432/leaked-repository-env";
+  const service = new LocalDevShellService(baseDir, {
+    env: {
+      ...process.env,
+      KESTREL_STORE_DRIVER: "sqlite",
+      DATABASE_URL: undefined,
+    },
+    startupTimeoutMs: 20,
+    pollIntervalMs: 1,
+    runtimeModuleUrl: new URL(
+      "dist/src/devshell/LocalDevShellService.js",
+      `file://${baseDir}/`,
+    ).href,
+  });
+
+  try {
+    await assert.rejects(
+      service.runCommand({ workspaceRoot: baseDir, command: "printf unreachable" }),
+      (error: unknown) => {
+        const failure = error as Error & { details?: Record<string, unknown> };
+        assert.equal(failure.details?.bootstrapReason, "entrypoint_missing");
+        return true;
+      },
+    );
+  } finally {
+    await service.close();
+    restoreEnvVar("KESTREL_STORE_DRIVER", previousStoreDriver);
+    restoreEnvVar("DATABASE_URL", previousDatabaseUrl);
+  }
+});
+
+test("LocalDevShellService preserves an explicitly configured Postgres prerequisite", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-explicit-postgres-"));
+  const service = new LocalDevShellService(baseDir, {
+    env: {
+      ...process.env,
+      KESTREL_STORE_DRIVER: "postgres",
+      DATABASE_URL: undefined,
+    },
+    startupTimeoutMs: 20,
+    pollIntervalMs: 1,
+  });
+
+  try {
+    await assert.rejects(
+      service.runCommand({ workspaceRoot: baseDir, command: "printf unreachable" }),
+      (error: unknown) => {
+        const failure = error as Error & { details?: Record<string, unknown> };
+        assert.equal(failure.details?.bootstrapReason, "missing_database_url");
+        return true;
+      },
+    );
+  } finally {
+    await service.close();
+  }
+});
+
 test("appendBoundedDevShellOutput enforces an aggregate UTF-8 byte limit", () => {
   const first = appendBoundedDevShellOutput(
     { text: "", byteLength: 0, truncated: false },
@@ -252,14 +314,14 @@ test("LocalDevShellService shortens overlong isolated socket paths", async () =>
 test("LocalDevShellService fails fast with an explicit bootstrap reason when postgres DATABASE_URL is missing", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
   const service = new LocalDevShellService(baseDir, {
+    env: {
+      ...process.env,
+      KESTREL_STORE_DRIVER: "postgres",
+      DATABASE_URL: undefined,
+    },
     startupTimeoutMs: 20,
     pollIntervalMs: 1,
   });
-
-  const originalDatabaseUrl = process.env.DATABASE_URL;
-  const originalStoreDriver = process.env.KESTREL_STORE_DRIVER;
-  delete process.env.DATABASE_URL;
-  process.env.KESTREL_STORE_DRIVER = "postgres";
 
   try {
     await assert.rejects(
@@ -277,16 +339,7 @@ test("LocalDevShellService fails fast with an explicit bootstrap reason when pos
       },
     );
   } finally {
-    if (originalDatabaseUrl !== undefined) {
-      process.env.DATABASE_URL = originalDatabaseUrl;
-    } else {
-      delete process.env.DATABASE_URL;
-    }
-    if (originalStoreDriver !== undefined) {
-      process.env.KESTREL_STORE_DRIVER = originalStoreDriver;
-    } else {
-      delete process.env.KESTREL_STORE_DRIVER;
-    }
+    await service.close();
   }
 });
 

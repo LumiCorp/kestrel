@@ -701,6 +701,34 @@ export interface RunnerInteractionRequestV1 extends Record<string, unknown> {
   metadata?: Record<string, unknown> | undefined;
 }
 
+export const RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1 =
+  "runner_local_tool_approval_interaction_v1" as const;
+
+export interface RunnerLocalToolApprovalInteractionV1
+  extends Record<string, unknown> {
+  version: typeof RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1;
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: {
+    type: "object";
+    additionalProperties: false;
+    required: ["decision"];
+    properties: {
+      decision: { type: "string"; enum: Array<"decline" | "approve_once"> };
+    };
+  };
+  metadata?: Record<string, unknown> | undefined;
+  approval: {
+    approvalId: string;
+    toolName: string;
+    presentation?: unknown;
+    requestedAt: string;
+    expiresAt: string;
+  };
+}
+
 export const RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4 =
   "runner_hosted_tool_approval_interaction_v4" as const;
 
@@ -734,6 +762,7 @@ export interface RunnerHostedToolApprovalInteractionV4
 
 export type RunnerInteractionRequest =
   | RunnerInteractionRequestV1
+  | RunnerLocalToolApprovalInteractionV1
   | RunnerHostedToolApprovalInteractionV4;
 
 export type RunnerStructuredReviewReason =
@@ -819,11 +848,30 @@ export function parseRunnerHostedToolApprovalInteractionV4(
   return parsed;
 }
 
+export function parseRunnerLocalToolApprovalInteractionV1(
+  value: unknown,
+  expectedEventType = "user.approval",
+): RunnerLocalToolApprovalInteractionV1 {
+  const interaction = requireRecord(value, "local tool approval interaction");
+  validateRunnerLocalToolApprovalInteractionV1(
+    interaction,
+    "local tool approval interaction",
+    expectedEventType,
+  );
+  return structuredClone(interaction) as RunnerLocalToolApprovalInteractionV1;
+}
+
 export function parseRunnerInteractionRequest(
   value: unknown,
   expectedEventType?: string | undefined,
 ): RunnerInteractionRequest {
   const interaction = requireRecord(value, "runner interaction");
+  if (interaction.version === RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1) {
+    return parseRunnerLocalToolApprovalInteractionV1(
+      interaction,
+      expectedEventType,
+    );
+  }
   if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4) {
     return parseRunnerHostedToolApprovalInteractionV4(
       interaction,
@@ -4361,6 +4409,14 @@ function validateRunnerInteractionRequest(
   waitEventType: string,
 ): void {
   const interaction = requireRecord(value, label);
+  if (interaction.version === RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1) {
+    validateRunnerLocalToolApprovalInteractionV1(
+      interaction,
+      label,
+      waitEventType,
+    );
+    return;
+  }
   if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4) {
     validateRunnerHostedToolApprovalInteractionV4(
       interaction,
@@ -4390,6 +4446,88 @@ function validateRunnerInteractionRequest(
   ) {
     throw new RunnerProtocolContractError(
       `${label} is an invalid structured review: ${structuredReview.error}`,
+    );
+  }
+}
+
+function validateRunnerLocalToolApprovalInteractionV1(
+  interaction: Record<string, unknown>,
+  label: string,
+  waitEventType: string,
+): void {
+  rejectUnknownFields(interaction, label, [
+    "version",
+    "requestId",
+    "kind",
+    "eventType",
+    "prompt",
+    "inputSchema",
+    "metadata",
+    "approval",
+  ]);
+  if (interaction.version !== RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1) {
+    throw new RunnerProtocolContractError(
+      `${label}.version must be '${RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1}'`,
+    );
+  }
+  requireNonEmptyString(interaction.requestId, `${label}.requestId`);
+  if (interaction.kind !== "approval") {
+    throw new RunnerProtocolContractError(`${label}.kind must be 'approval'`);
+  }
+  if (interaction.eventType !== "user.approval" || waitEventType !== "user.approval") {
+    throw new RunnerProtocolContractError(`${label}.eventType must be 'user.approval'`);
+  }
+  requireNonEmptyString(interaction.prompt, `${label}.prompt`);
+  validateOptionalRecord(interaction.metadata, `${label}.metadata`);
+  const schema = requireRecord(interaction.inputSchema, `${label}.inputSchema`);
+  rejectUnknownFields(schema, `${label}.inputSchema`, [
+    "type",
+    "additionalProperties",
+    "required",
+    "properties",
+  ]);
+  const properties = requireRecord(schema.properties, `${label}.inputSchema.properties`);
+  rejectUnknownFields(properties, `${label}.inputSchema.properties`, ["decision"]);
+  const decision = requireRecord(properties.decision, `${label}.inputSchema.properties.decision`);
+  rejectUnknownFields(decision, `${label}.inputSchema.properties.decision`, [
+    "type",
+    "enum",
+  ]);
+  if (
+    schema.type !== "object" ||
+    schema.additionalProperties !== false ||
+    Array.isArray(schema.required) === false ||
+    schema.required.length !== 1 ||
+    schema.required[0] !== "decision" ||
+    decision.type !== "string" ||
+    Array.isArray(decision.enum) === false ||
+    decision.enum.length !== 2 ||
+    decision.enum[0] !== "decline" ||
+    decision.enum[1] !== "approve_once"
+  ) {
+    throw new RunnerProtocolContractError(`${label}.inputSchema is invalid`);
+  }
+  const approval = requireRecord(interaction.approval, `${label}.approval`);
+  rejectUnknownFields(approval, `${label}.approval`, [
+    "approvalId",
+    "toolName",
+    "presentation",
+    "requestedAt",
+    "expiresAt",
+  ]);
+  requireNonEmptyString(approval.approvalId, `${label}.approval.approvalId`);
+  requireNonEmptyString(approval.toolName, `${label}.approval.toolName`);
+  const requestedAt = requireIsoTimestamp(
+    approval.requestedAt,
+    `${label}.approval.requestedAt`,
+  );
+  const expiresAt = requireIsoTimestamp(
+    approval.expiresAt,
+    `${label}.approval.expiresAt`,
+  );
+  if (Date.parse(expiresAt) <= Date.parse(requestedAt)) {
+    throw new RunnerProtocolContractError(
+      `${label}.approval.expiresAt must be after requestedAt`,
     );
   }
 }
