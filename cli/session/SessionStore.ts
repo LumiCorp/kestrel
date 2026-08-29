@@ -324,6 +324,9 @@ function validateSession(value: unknown): TuiSessionMeta {
   const acceptedRunMessageId = typeof entry.acceptedRunMessageId === "string"
     ? entry.acceptedRunMessageId
     : undefined;
+  const acceptedRunThreadId = typeof entry.acceptedRunThreadId === "string"
+    ? entry.acceptedRunThreadId
+    : undefined;
   const delegation =
     typeof entry.delegation === "object" &&
     entry.delegation !== null &&
@@ -387,6 +390,7 @@ function validateSession(value: unknown): TuiSessionMeta {
     ...(pendingRunThreadId !== undefined ? { pendingRunThreadId } : {}),
     ...(acceptedRunId !== undefined ? { acceptedRunId } : {}),
     ...(acceptedRunMessageId !== undefined ? { acceptedRunMessageId } : {}),
+    ...(acceptedRunThreadId !== undefined ? { acceptedRunThreadId } : {}),
     ...(delegation !== undefined ? { delegation } : {}),
     ...(operatorState !== undefined ? { operatorState } : {}),
     interactionMode: modeResolution.interactionMode,

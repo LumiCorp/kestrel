@@ -1731,6 +1731,7 @@ test("background lifecycle ignores delayed starts after terminal and stale run A
     focusedThreadId: "child-monotonic",
     acceptedRunId: "run-b",
     acceptedRunMessageId: "message-b",
+    acceptedRunThreadId: "child-monotonic",
     delegation: {
       ...base.delegation!,
       status: "RUNNING",
@@ -2059,6 +2060,7 @@ test("exact accepted reply advances a delegated WAITING child to its new run", a
   const current = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
   assert.equal(current?.delegation?.status, "RUNNING");
   assert.equal(current?.acceptedRunId, "run-waiting-new");
+  assert.equal(current?.acceptedRunThreadId, threadId);
   assert.equal(current?.pendingRunRequestId, undefined);
   assert.equal(current?.pendingRunThreadId, undefined);
   assert.equal(current?.pendingWaitFor, undefined);
@@ -2113,6 +2115,7 @@ test("exact describe acceptance persists identity and lifecycle in one session w
   assert.equal(persisted?.delegation?.status, "RUNNING");
   assert.equal(persisted?.effectiveAssemblyId, "bundle:atomic");
   assert.equal(persisted?.acceptedRunId, "run-atomic");
+  assert.equal(persisted?.acceptedRunThreadId, "thread-main:child-atomic-acceptance");
   assert.equal(persisted?.pendingRunId, undefined);
   assert.equal(persisted?.pendingRunMessageId, undefined);
   assert.equal(snapshots.some((snapshot) => snapshot.some(
@@ -3269,6 +3272,7 @@ test("TasksView renders additive assembly provider, variant, and downgrade marke
     pendingRunThreadId: "internal-pending-thread-id",
     acceptedRunId: "internal-accepted-run-id",
     acceptedRunMessageId: "internal-accepted-message-id",
+    acceptedRunThreadId: "internal-accepted-thread-id",
     delegation: {
       taskId: "task-1",
       title: "Delegated compatibility check",
@@ -5321,17 +5325,19 @@ test("run completion appends finalize provenance notice when reporting grounding
   const appState = app as unknown as Record<string, unknown>;
 
   appState.client = {
-    sendCommand: async (type: string) => {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
       if (type === "session.describe") return makeExactTuiSessionDescription();
+      const runId = String((payload.turn as Record<string, unknown>).runId);
       return {
         type: "run.completed",
+        runId,
         payload: {
           result: {
             assistantText: "Implemented requested repository update.",
             output: {
               status: "COMPLETED",
               sessionId: "session-1",
-              runId: "run-1",
+              runId,
               quality: {
                 citationCoverage: 1,
                 unresolvedClaims: 0,
@@ -5387,16 +5393,18 @@ test("continuation grant history line confirms resumption without raw counters",
   });
 
   appState.client = {
-    sendCommand: async (type: string) => {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
       if (type === "session.describe") return makeExactTuiSessionDescription();
+      const runId = String((payload.turn as Record<string, unknown>).runId);
       return {
         type: "run.completed",
+        runId,
         payload: {
           result: {
             output: {
               status: "WAITING",
               sessionId: "session-1",
-              runId: "run-1",
+              runId,
               waitFor: {
                 kind: "user",
                 eventType: "user.reply",

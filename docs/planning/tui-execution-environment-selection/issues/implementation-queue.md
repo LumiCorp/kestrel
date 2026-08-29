@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Persist submission and thread ownership](14-persist-submission-and-thread-ownership.md)
+None.
 
 ## In progress
 
@@ -23,6 +23,7 @@ None.
 - [Make TUI lifecycle reconciliation monotonic and exact](11-make-tui-lifecycle-reconciliation-monotonic-and-exact.md)
 - [Close remaining TUI lifecycle ordering gaps](12-close-remaining-tui-lifecycle-ordering-gaps.md)
 - [Finish exact reply and terminal ownership](13-finish-exact-reply-and-terminal-ownership.md)
+- [Persist submission and thread ownership](14-persist-submission-and-thread-ownership.md)
 
 ## Done
 

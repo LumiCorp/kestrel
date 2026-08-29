@@ -418,6 +418,7 @@ export interface TuiSessionMeta {
   pendingRunThreadId?: string | undefined;
   acceptedRunId?: string | undefined;
   acceptedRunMessageId?: string | undefined;
+  acceptedRunThreadId?: string | undefined;
   lastRunStatus?: NormalizedOutput["status"] | undefined;
   pendingWaitFor?: Exclude<NormalizedOutput["waitFor"], undefined> | undefined;
   lastMessagePreview?: string | undefined;

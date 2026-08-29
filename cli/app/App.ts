@@ -3428,6 +3428,15 @@ export class App {
     }, appendStartedHistory, {
       ...projected,
       acceptedRunId: exactRunId,
+      ...(exactRunId !== undefined
+        ? {
+            acceptedRunThreadId:
+              payload.operatorThreadView?.thread.threadId
+              ?? payload.threadId
+              ?? payload.focusedThreadId
+              ?? current.acceptedRunThreadId,
+          }
+        : {}),
       ...(exactNewAcceptance
         ? {
             acceptedRunMessageId: current.pendingRunMessageId,
@@ -4032,7 +4041,11 @@ export class App {
     const recoveredRoute = target.pendingRunMessageId === undefined
       ? undefined
       : describedView?.conversationMessageRoutes?.find(
-          (route) => route.messageId === target.pendingRunMessageId,
+          (route) => route.messageId === target.pendingRunMessageId
+            && (
+              target.pendingRunId === undefined
+              || route.runId === target.pendingRunId
+            ),
         );
     const recoveredRequestRoute = target.pendingRunRequestId === undefined
       ? undefined
@@ -4066,6 +4079,9 @@ export class App {
               ? { acceptedRunMessageId: recoveredRoute.messageId }
               : {}),
             acceptedRunId: recoveredAcceptedRoute.runId,
+            ...(describedView !== undefined
+              ? { acceptedRunThreadId: describedView.thread.threadId }
+              : {}),
           }
         : {}),
       ...(payload.focusedThreadId !== undefined ? { focusedThreadId: payload.focusedThreadId } : {}),
@@ -5098,6 +5114,7 @@ export class App {
     if (
       session === undefined
       || session.delegation !== undefined
+      || session.pendingRunId !== input.runId
       || session.pendingRunMessageId !== input.messageId
       || session.pendingRunThreadId !== input.threadId
     ) return false;
@@ -5107,6 +5124,8 @@ export class App {
       focusedThreadId: input.threadId,
       acceptedRunId: input.runId,
       acceptedRunMessageId: input.messageId,
+      acceptedRunThreadId: input.threadId,
+      pendingRunId: undefined,
       pendingRunMessageId: undefined,
       pendingRunThreadId: undefined,
       lastRunStatus: undefined,
@@ -5170,6 +5189,7 @@ export class App {
       focusedThreadId: input.threadId,
       acceptedRunId: input.runId,
       acceptedRunMessageId: input.messageId ?? session.pendingRunMessageId,
+      acceptedRunThreadId: input.threadId,
       pendingRunId: undefined,
       pendingRunRequestId: undefined,
       pendingRunMessageId: undefined,
@@ -5251,6 +5271,7 @@ export class App {
       ...session,
       acceptedRunId: expectedRunId,
       acceptedRunMessageId: session.pendingRunMessageId ?? session.acceptedRunMessageId,
+      acceptedRunThreadId: session.pendingRunThreadId ?? session.acceptedRunThreadId,
       pendingRunId: undefined,
       pendingRunMessageId: undefined,
       pendingRunThreadId: undefined,
@@ -5970,6 +5991,7 @@ function hasSameTuiLifecycleEvidence(left: TuiSessionMeta, right: TuiSessionMeta
     && left.pendingRunThreadId === right.pendingRunThreadId
     && left.acceptedRunId === right.acceptedRunId
     && left.acceptedRunMessageId === right.acceptedRunMessageId
+    && left.acceptedRunThreadId === right.acceptedRunThreadId
     && left.lastRunStatus === right.lastRunStatus
     && left.delegation?.status === right.delegation?.status
     && isSameWaitFor(left.pendingWaitFor, right.pendingWaitFor);

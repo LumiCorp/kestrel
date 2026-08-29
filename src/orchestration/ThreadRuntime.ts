@@ -2177,7 +2177,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
               }
               promotedIdentity = {
                 turnId: route.turnId ?? `turn-${randomUUID()}`,
-                runId: route.runId ?? randomUUID(),
+                runId: route.runId ?? next.runtimeContext?.runId ?? randomUUID(),
               };
               updated = writeConversationMessageRoute(updated, {
                 ...route,
