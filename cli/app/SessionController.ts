@@ -24,17 +24,20 @@ import {
   readTuiEnvironmentIdentityFailure,
   resolveTuiSessionEnvironment,
   TuiEnvironmentIdentityError,
+  type TuiEnvironmentPresetId,
 } from "../session/TuiExecutionEnvironment.js";
 import type { ConversationActivityItem } from "@kestrel-agents/conversation";
 import {
   hasDurableTuiRuntimeBinding,
   resolveStartedSessionAuthoringProfile,
 } from "../session/TuiAuthoringProfile.js";
+import { formatTuiEnvironmentLabel } from "../session/TuiEnvironmentPresentation.js";
 
 export interface CreateSessionOptions {
   launch: OperatorResolvedStartTask;
   profile: TuiProfile;
   workspace?: ResolvedWorkspace | undefined;
+  environmentPresetId?: TuiEnvironmentPresetId | undefined;
 }
 
 export interface SessionControllerContext extends TuiAppContext {
@@ -81,7 +84,11 @@ export class SessionController {
         session.pendingWaitFor?.eventType !== undefined ? ` waiting:${session.pendingWaitFor.eventType}` : "";
       const runStatus = session.lastRunStatus ? ` status:${session.lastRunStatus.toLowerCase()}` : "";
       const mode = formatTuiSessionMode(session);
-      return `${session.name}${active} -> ${session.sessionId} mode:${mode}${waiting}${runStatus}`;
+      const agent = session.agentProfileLabel
+        ?? session.profileLabel
+        ?? (session.profileId === state.activeProfile?.id ? state.activeProfile.label : session.profileId);
+      const environment = formatTuiEnvironmentLabel(session.environmentPresetId);
+      return `${session.name}${active} -> ${session.sessionId} agent:${agent} environment:${environment} mode:${mode}${waiting}${runStatus}`;
     });
 
     await this.context.appendHistoryLine("system", `Sessions:\n${lines.join("\n") || "(none)"}`);
@@ -133,7 +140,20 @@ export class SessionController {
 
   async createSession(options: CreateSessionOptions): Promise<void> {
     const state = this.context.uiStore.getState();
-    const created = this.context.createSessionMeta(options.launch, options.profile, options.workspace);
+    const defaultSession = this.context.createSessionMeta(options.launch, options.profile, options.workspace);
+    const createdWithEnvironment: TuiSessionMeta = {
+      ...defaultSession,
+      ...(options.environmentPresetId !== undefined
+        ? { environmentPresetId: options.environmentPresetId }
+        : {}),
+    };
+    const created: TuiSessionMeta = {
+      ...createdWithEnvironment,
+      operatorState: this.context.buildSessionOperatorState({
+        session: createdWithEnvironment,
+        profile: options.profile,
+      }),
+    };
     this.context.setSessionsFile(this.context.sessionStore.upsert(this.context.getSessionsFile(), created));
     await this.context.saveSessionsFile();
 
@@ -190,6 +210,10 @@ export class SessionController {
     });
 
     await this.context.appendHistoryLine("system", `Started new session '${options.launch.title}'.`);
+    await this.context.appendHistoryLine(
+      "system",
+      `Agent: ${created.agentProfileLabel ?? options.profile.label}\nEnvironment: ${formatTuiEnvironmentLabel(created.environmentPresetId)}`,
+    );
     await this.context.appendHistoryLine("system", formatOperatorLaunchSummary(options.launch));
     await this.context.persistUiState();
     if (options.launch.initialPrompt !== undefined) {

@@ -107,7 +107,14 @@ import {
   TuiEnvironmentIdentityError,
   type TuiEnvironmentPresetId,
 } from "../session/TuiExecutionEnvironment.js";
-import { hasDurableTuiRuntimeBinding } from "../session/TuiAuthoringProfile.js";
+import {
+  hasDurableTuiRuntimeBinding,
+  resolveStartedSessionAuthoringProfile,
+} from "../session/TuiAuthoringProfile.js";
+import {
+  describeTuiEnvironmentPreset,
+  formatTuiEnvironmentLabel,
+} from "../session/TuiEnvironmentPresentation.js";
 import {
   buildModelCatalogStatusLine,
   buildModelSearchResultBlock,
@@ -205,7 +212,7 @@ class SplashPreflightError extends Error {
   }
 }
 
-type StartTaskJourneyStep = "template" | "preset" | "workspace" | "title" | "profile" | "mode" | "prompt";
+type StartTaskJourneyStep = "template" | "preset" | "workspace" | "environment" | "title" | "profile" | "mode" | "prompt";
 type ChildMissionJourneyStep = "title" | "scope" | "return";
 
 interface StartTaskJourneyState {
@@ -220,6 +227,7 @@ interface StartTaskJourneyState {
   availableWorkspaces: ResolvedWorkspace[];
   workspace: ResolvedWorkspace | undefined;
   workspaceBinding: "active" | "detached";
+  environmentPresetId: TuiEnvironmentPresetId;
 }
 
 interface ChildMissionJourneyState {
@@ -233,6 +241,7 @@ interface CreateSessionOptions {
   launch: OperatorResolvedStartTask;
   profile: TuiProfile;
   workspace?: ResolvedWorkspace | undefined;
+  environmentPresetId?: TuiEnvironmentPresetId | undefined;
 }
 
 export class App {
@@ -1899,6 +1908,11 @@ export class App {
     const availableWorkspaces = await this.listDiscoveredWorkspaces();
     const state = this.uiStore.getState();
     const defaultWorkspace = this.activeWorkspace ?? this.launchWorkspace;
+    const defaultEnvironmentPresetId = defaultTuiEnvironmentPresetId({
+      workspaceBinding: defaultWorkspace !== undefined ? "active" : "detached",
+      workspaceId: defaultWorkspace?.manifest.workspaceId,
+      workspaceRoot: defaultWorkspace?.rootPath,
+    });
     this.startTaskJourney = {
       step: "template",
       profile: state.activeProfile,
@@ -1906,6 +1920,7 @@ export class App {
       availableWorkspaces,
       workspace: defaultWorkspace,
       workspaceBinding: defaultWorkspace !== undefined ? "active" : "detached",
+      environmentPresetId: defaultEnvironmentPresetId,
     };
     const launchSetup = buildOperatorLaunchSetup({
       profileLabel: state.activeProfile.label,
@@ -1917,10 +1932,11 @@ export class App {
       [
         "Start task journey",
         `Workspace: ${describeResolvedWorkspace(defaultWorkspace)}`,
-        `Profile: ${state.activeProfile.id}`,
+        `Agent: ${state.activeProfile.label}`,
+        `Environment: ${formatTuiEnvironmentLabel(defaultEnvironmentPresetId)}`,
         `Policy: approval ${launchSetup.approvalPosture} · code ${launchSetup.codePosture}`,
         `Execution boundary: ${launchSetup.executionBoundarySummary}`,
-        "Choose template, preset, and workspace in the palette. Type '/cancel' to stop.",
+        "Choose template, preset, workspace, and environment in the palette. Type '/cancel' to stop.",
       ].join("\n"),
     );
     this.openStartTaskChooserForStep("template");
@@ -2034,11 +2050,51 @@ export class App {
         );
         return true;
       }
-      journey.step = "title";
+      journey.environmentPresetId = defaultTuiEnvironmentPresetId({
+        workspaceBinding: journey.workspaceBinding,
+        workspaceId: journey.workspace?.manifest.workspaceId,
+        workspaceRoot: journey.workspace?.rootPath,
+      });
+      journey.step = "environment";
       await this.appendHistoryLine(
         "system",
         [
           `Workspace: ${journey.workspaceBinding === "active" ? describeResolvedWorkspace(journey.workspace) : "Detached workspace"}`,
+          `Select environment [default: ${formatTuiEnvironmentLabel(journey.environmentPresetId)}].`,
+          ...(journey.workspace !== undefined
+            ? [`- developer: use tools installed in ${journey.workspace.rootPath}, subject to execution policy`]
+            : []),
+          "- safe: run isolated snippets outside the project workspace; project install, build, and validation are unavailable",
+        ].join("\n"),
+      );
+      return true;
+    }
+
+    if (journey.step === "environment") {
+      const requested = trimmed === "default"
+        ? journey.environmentPresetId
+        : trimmed === "developer"
+          ? "cli_dev_local"
+          : trimmed === "safe"
+            ? "cli_safe_local"
+            : undefined;
+      if (requested === undefined) {
+        await this.appendHistoryLine("system", "Unknown environment. Use developer, safe, or default.");
+        return true;
+      }
+      if (requested === "cli_dev_local" && journey.workspace === undefined) {
+        await this.appendHistoryLine(
+          "system",
+          "Developer workspace requires a selected workspace. Choose Safe sandbox or go back and select a workspace.",
+        );
+        return true;
+      }
+      journey.environmentPresetId = requested;
+      journey.step = "title";
+      await this.appendHistoryLine(
+        "system",
+        [
+          `Environment: ${formatTuiEnvironmentLabel(requested)}`,
           `Enter a task title [default: ${journey.title ?? "none"}].`,
         ].join("\n"),
       );
@@ -2057,9 +2113,9 @@ export class App {
         "system",
         [
           `Task: ${resolvedTitle}`,
-          `Select profile [default: ${journey.profile?.id ?? "none"}]`,
+          `Select agent profile [default: ${journey.profile?.id ?? "none"}]`,
           ...journey.availableProfiles.map((profile) => `- ${profile.id}: ${profile.label}`),
-          "Type a profile id or 'current'.",
+          "Type an agent profile id or 'current'.",
         ].join("\n"),
       );
       return true;
@@ -2077,7 +2133,7 @@ export class App {
       const defaultMode = formatOperatorMode(nextProfile.defaultInteractionMode, nextProfile.defaultActSubmode);
       await this.appendHistoryLine(
         "system",
-        `Profile: ${nextProfile.id}\nSelect mode [default: ${defaultMode}] using chat, build, plan, or default.`,
+        `Agent: ${nextProfile.label}\nSelect mode [default: ${defaultMode}] using chat, build, plan, or default.`,
       );
       return true;
     }
@@ -2103,22 +2159,22 @@ export class App {
 
     const prompt = trimmed === "skip" ? undefined : trimmed;
     const selectedProfile = journey.profile ?? this.uiStore.getState().activeProfile;
-      const launch = resolveOperatorStartTask({
-        title: journey.title ?? "",
-        ...(journey.presetId !== undefined ? { presetId: journey.presetId } : {}),
-        ...(journey.templateId !== undefined ? { templateId: journey.templateId } : {}),
-        profileId: selectedProfile.id,
-        profileLabel: selectedProfile.label,
-        interactionMode: journey.interactionMode,
-        actSubmode: journey.actSubmode,
-        initialPrompt: prompt,
-        workspaceBinding: journey.workspaceBinding,
-        workspaceId: journey.workspace?.manifest.workspaceId,
-        workspaceLabel:
-          journey.workspaceBinding === "active"
-            ? describeResolvedWorkspace(journey.workspace)
-            : "Detached workspace",
-        workspaceRoot: journey.workspace?.rootPath,
+    const launch = resolveOperatorStartTask({
+      title: journey.title ?? "",
+      ...(journey.presetId !== undefined ? { presetId: journey.presetId } : {}),
+      ...(journey.templateId !== undefined ? { templateId: journey.templateId } : {}),
+      profileId: selectedProfile.id,
+      profileLabel: selectedProfile.label,
+      interactionMode: journey.interactionMode,
+      actSubmode: journey.actSubmode,
+      initialPrompt: prompt,
+      workspaceBinding: journey.workspaceBinding,
+      workspaceId: journey.workspace?.manifest.workspaceId,
+      workspaceLabel:
+        journey.workspaceBinding === "active"
+          ? describeResolvedWorkspace(journey.workspace)
+          : "Detached workspace",
+      workspaceRoot: journey.workspace?.rootPath,
       defaultProfileId: selectedProfile.id,
       defaultProfileLabel: selectedProfile.label,
       defaultInteractionMode: selectedProfile.defaultInteractionMode,
@@ -2130,6 +2186,7 @@ export class App {
       launch,
       profile: selectedProfile,
       workspace: journey.workspace,
+      environmentPresetId: journey.environmentPresetId,
     });
     return true;
   }
@@ -2182,7 +2239,9 @@ export class App {
           ? "start-preset"
           : step === "workspace"
             ? "start-workspace"
-            : undefined;
+            : step === "environment"
+              ? "start-environment"
+              : undefined;
     if (paletteContext === undefined) {
       return;
     }
@@ -2272,6 +2331,31 @@ export class App {
         journey.workspaceBinding = "active";
         journey.workspace = selectedWorkspace;
       }
+      journey.environmentPresetId = defaultTuiEnvironmentPresetId({
+        workspaceBinding: journey.workspaceBinding,
+        workspaceId: journey.workspace?.manifest.workspaceId,
+        workspaceRoot: journey.workspace?.rootPath,
+      });
+      journey.step = "environment";
+      await this.appendHistoryLine(
+        "system",
+        `Workspace: ${journey.workspaceBinding === "active" ? describeResolvedWorkspace(journey.workspace) : "Detached workspace"}`,
+      );
+      this.openStartTaskChooserForStep("environment");
+      return true;
+    }
+    if (journey.step === "environment" && selected.id.startsWith("start.environment.")) {
+      const selection = selected.id.slice("start.environment.".length);
+      const requested = selection === "developer"
+        ? "cli_dev_local"
+        : selection === "safe"
+          ? "cli_safe_local"
+          : undefined;
+      if (requested === undefined || (requested === "cli_dev_local" && journey.workspace === undefined)) {
+        await this.appendHistoryLine("system", "Selected environment is not available for this workspace binding.");
+        return true;
+      }
+      journey.environmentPresetId = requested;
       journey.step = "title";
       this.uiStore.patch({
         paletteOpen: false,
@@ -2286,7 +2370,7 @@ export class App {
       await this.appendHistoryLine(
         "system",
         [
-          `Workspace: ${journey.workspaceBinding === "active" ? describeResolvedWorkspace(journey.workspace) : "Detached workspace"}`,
+          `Environment: ${formatTuiEnvironmentLabel(requested)}`,
           `Enter a task title [default: ${journey.title ?? "none"}].`,
         ].join("\n"),
       );
@@ -2553,6 +2637,9 @@ export class App {
           workspace: async (args) => {
             await this.getWorkspaceController().handleWorkspaceCommand(args);
           },
+          environment: async (args) => {
+            await this.handleEnvironmentCommand(args);
+          },
           tasks: async (args) => {
             await this.handleTasksCommand(args);
           },
@@ -2667,7 +2754,7 @@ export class App {
     const snapshot = buildOperatorStatusSnapshot({
       title: refreshedState.activeSession.name,
       workspaceLabel: describeResolvedWorkspace(this.activeWorkspace),
-      profileLabel: refreshedState.activeProfile.id,
+      profileLabel: refreshedState.activeSession.agentProfileLabel ?? refreshedState.activeProfile.label,
       interactionMode: refreshedState.activeSession.interactionMode,
       actSubmode: refreshedState.activeSession.actSubmode,
       pendingWaitEventType: refreshedState.activeSession.pendingWaitFor?.eventType,
@@ -2680,7 +2767,7 @@ export class App {
       [
         `${snapshot.headline} :: ${snapshot.recommendedLabel}`,
         snapshot.subline,
-        `Profile=${refreshedState.activeProfile.id} Session=${refreshedState.activeSession.name} ${describeResolvedWorkspace(this.activeWorkspace)} Mode=${formatSessionMode(refreshedState.activeSession)} Lane=${lastLane} WaitFor=${refreshedState.activeSession.pendingWaitFor?.eventType ?? "none"} Status=${refreshedState.statusLine} Runner=${runnerState} MCP=${mcpState}`,
+        `Agent=${refreshedState.activeSession.agentProfileLabel ?? refreshedState.activeProfile.label} Environment=${formatTuiEnvironmentLabel(refreshedState.activeSession.environmentPresetId)} Session=${refreshedState.activeSession.name} ${describeResolvedWorkspace(this.activeWorkspace)} Mode=${formatSessionMode(refreshedState.activeSession)} Lane=${lastLane} WaitFor=${refreshedState.activeSession.pendingWaitFor?.eventType ?? "none"} Status=${refreshedState.statusLine} Runner=${runnerState} MCP=${mcpState}`,
         ...formatOperatorAffordance(
           this.buildSessionOperatorState({
             session: refreshedState.activeSession,
@@ -2731,6 +2818,134 @@ export class App {
     await this.getCodeModeController().handleCodeCommand(args);
   }
 
+  private async handleEnvironmentCommand(args: string[]): Promise<void> {
+    const state = this.uiStore.getState();
+    const current = state.activeSession;
+    const currentPresentation = describeTuiEnvironmentPreset(current.environmentPresetId);
+
+    if (args.length === 0) {
+      await this.appendHistoryLine(
+        "system",
+        [
+          `Agent: ${current.agentProfileLabel ?? state.activeProfile.label}`,
+          `Environment: ${currentPresentation.label}`,
+          currentPresentation.detail,
+          `Workspace: ${describeResolvedWorkspace(this.activeWorkspace)}`,
+          hasDurableTuiRuntimeBinding(current)
+            ? "This environment belongs to the started session. Choosing another environment creates a new session with the same workspace and agent."
+            : "This session has not started; choosing another environment updates it in place.",
+        ].join("\n"),
+      );
+      const paletteState = this.uiStore.getState();
+      this.uiStore.patch({
+        paletteOpen: true,
+        paletteSource: "manual",
+        paletteContext: "environment",
+        paletteQuery: "",
+        paletteSelectedIndex: 0,
+        commandBarReturnRegion: this.resolveCommandBarReturnRegion(paletteState),
+        helpOpen: false,
+        activeRegion: "command_bar",
+        focusRegion: "command_bar",
+      });
+      return;
+    }
+
+    if (args.length !== 1 || (args[0] !== "developer" && args[0] !== "safe")) {
+      await this.appendHistoryLine(
+        "system",
+        "Usage: /environment [developer|safe]",
+      );
+      return;
+    }
+
+    const requested: TuiEnvironmentPresetId = args[0] === "developer"
+      ? "cli_dev_local"
+      : "cli_safe_local";
+    const workspace = await this.resolveWorkspaceForSession(current);
+    if (requested === "cli_dev_local" && workspace === undefined) {
+      await this.appendHistoryLine(
+        "system",
+        "Developer workspace requires a selected workspace. Bind a workspace first with /workspace, or use Safe sandbox.",
+      );
+      return;
+    }
+
+    if (current.environmentPresetId === requested) {
+      await this.appendHistoryLine(
+        "system",
+        `Environment is already ${formatTuiEnvironmentLabel(requested)}.`,
+      );
+      return;
+    }
+
+    if (hasDurableTuiRuntimeBinding(current) === false) {
+      await this.setActiveSessionState({
+        environmentPresetId: requested,
+        environmentShellKind: undefined,
+        environmentCapabilityPackIds: undefined,
+        effectiveAssemblyId: undefined,
+        effectiveAssemblyLabel: undefined,
+        updatedAt: new Date().toISOString(),
+      });
+      await this.persistSessionAndUi({ requireSessionSave: true });
+      await this.appendHistoryLine(
+        "system",
+        [
+          `Agent: ${current.agentProfileLabel ?? state.activeProfile.label}`,
+          `Environment: ${formatTuiEnvironmentLabel(requested)}`,
+          "Updated this unstarted session in place.",
+        ].join("\n"),
+      );
+      return;
+    }
+
+    const profiles = await this.profileStore.load();
+    const authoringProfile = resolveStartedSessionAuthoringProfile({
+      session: current,
+      profiles,
+      profileStore: this.profileStore,
+    });
+    if (authoringProfile === undefined) {
+      throw new Error(`Authoring profile '${current.profileId}' is unavailable.`);
+    }
+    const suffix = requested === "cli_dev_local" ? "developer" : "safe";
+    const title = this.buildUniqueSessionName(`${current.name}-${suffix}`);
+    const launch = resolveOperatorStartTask({
+      title,
+      profileId: authoringProfile.id,
+      profileLabel: authoringProfile.label,
+      interactionMode: current.interactionMode,
+      actSubmode: current.actSubmode,
+      workspaceBinding: workspace !== undefined ? "active" : "detached",
+      workspaceId: workspace?.manifest.workspaceId,
+      workspaceLabel: workspace !== undefined
+        ? describeResolvedWorkspace(workspace)
+        : "Detached workspace",
+      workspaceRoot: workspace?.rootPath,
+      defaultProfileId: authoringProfile.id,
+      defaultProfileLabel: authoringProfile.label,
+      defaultInteractionMode: authoringProfile.defaultInteractionMode,
+      defaultActSubmode: authoringProfile.defaultActSubmode,
+      requireTitle: true,
+    });
+    const sourceSessionName = current.name;
+    await this.createSession({
+      launch,
+      profile: authoringProfile,
+      workspace,
+      environmentPresetId: requested,
+    });
+    await this.appendHistoryLine(
+      "system",
+      [
+        `Created from started session '${sourceSessionName}' without copying runtime or conversation history.`,
+        `Agent: ${authoringProfile.label}`,
+        `Environment: ${formatTuiEnvironmentLabel(requested)}`,
+      ].join("\n"),
+    );
+  }
+
   private async handleProfilesCommand(args: string[]): Promise<void> {
     const [subcommand, profileId] = args;
     const profiles = await this.profileStore.load();
@@ -2739,7 +2954,7 @@ export class App {
     if (subcommand === undefined || subcommand === "list") {
       const lines = profiles.map((profile) => {
         const mode = profile.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE;
-        return `${profile.id}${profile.id === state.activeProfile.id ? " (active)" : ""}: ${profile.label} preset=${profile.presetId ?? "default"} mode=${mode} tools=${profile.toolAllowlist?.length ?? 0}`;
+        return `${profile.id}${profile.id === state.activeProfile.id ? " (active)" : ""}: ${profile.label} mode=${mode} tools=${profile.toolAllowlist?.length ?? 0}`;
       });
       await this.appendHistoryLine("system", `Profiles:\n${lines.join("\n")}`);
       return;
@@ -2763,7 +2978,7 @@ export class App {
       await this.persistSessionAndUi();
       await this.appendHistoryLine(
         "system",
-        `Profile set to '${nextProfile.id}' (preset=${nextProfile.presetId ?? "default"}).`,
+        `Agent profile set to '${nextProfile.id}' (${nextProfile.label}).`,
       );
       return;
     }

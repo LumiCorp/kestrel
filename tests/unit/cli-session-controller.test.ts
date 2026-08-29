@@ -93,6 +93,7 @@ test("SessionController lists sessions with active, mode, wait, and run status m
     sessionId: "s-main",
     interactionMode: "build",
     actSubmode: "safe",
+    environmentPresetId: "cli_dev_local",
   });
   const waitingSession = makeSession({
     name: "blocked",
@@ -100,6 +101,7 @@ test("SessionController lists sessions with active, mode, wait, and run status m
     interactionMode: "plan",
     pendingWaitFor: { kind: "user", eventType: "user.reply" },
     lastRunStatus: "WAITING",
+    environmentPresetId: "cli_safe_local",
   });
   const { controller, history } = createControllerForState({
     activeSession,
@@ -112,8 +114,8 @@ test("SessionController lists sessions with active, mode, wait, and run status m
     history[0],
     [
       "Sessions:",
-      "main (active) -> s-main mode:Build",
-      "blocked -> s-blocked mode:Plan waiting:user.reply status:waiting",
+      "main (active) -> s-main agent:reference environment:Developer workspace mode:Build",
+      "blocked -> s-blocked agent:reference environment:Safe sandbox mode:Plan waiting:user.reply status:waiting",
     ].join("\n"),
   );
 });

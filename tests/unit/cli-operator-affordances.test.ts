@@ -404,6 +404,25 @@ test("formatOperatorAffordance includes focused thread, blocker, and next action
   assert.match(rendered, /Checkpoint route: agent\.exec\.dispatch -> agent\.exec\.wait_approval \(wait_approval\)/u);
 });
 
+test("formatOperatorAffordance presents assembly environment product language", () => {
+  const rendered = formatOperatorAffordance({
+    interactionMode: "build",
+    allowedToolClasses: ["read_only"],
+    assembly: {
+      mode: "explicit",
+      threadId: "thread-safe",
+      bundleId: "bundle:kestrel:cli_safe_local",
+      label: "Kestrel on cli:cli_safe_local",
+      environmentPresetId: "cli_safe_local",
+      authority: "profile",
+      cause: "thread_start",
+    },
+  }).join("\n");
+
+  assert.match(rendered, /Assembly: Kestrel on Safe sandbox/u);
+  assert.doesNotMatch(rendered, /cli_safe_local|bundle:kestrel/u);
+});
+
 test("decorateOperatorAffordance recomputes tool classes for session-only fallback state", () => {
   const decorated = decorateOperatorAffordance({
     base: {

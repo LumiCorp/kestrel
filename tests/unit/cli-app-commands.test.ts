@@ -1090,7 +1090,8 @@ test("profiles use rebinds the active session and subsequent history to the cano
       detailDrawerOpen: true,
     }),
   );
-  assert.match(rendered, /profile=kestrel/u);
+  assert.match(rendered, /Agent=kestrel/u);
+  assert.match(rendered, /Environment=Developer workspace/u);
 
   const rawHistory = await readFile(historyPath, "utf8");
   const records = rawHistory
@@ -1100,8 +1101,212 @@ test("profiles use rebinds the active session and subsequent history to the cano
     .map((line) => JSON.parse(line) as { profileId: string; text: string });
   const lastRecord = records[records.length - 1];
   assert.equal(lastRecord?.profileId, "kestrel");
-  assert.match(String(lastRecord?.text), /Profile set to 'kestrel'/u);
+  assert.match(String(lastRecord?.text), /Agent profile set to 'kestrel'/u);
   assert.doesNotMatch(String(lastRecord?.text), /provider=|openai|anthropic/u);
+});
+
+test("environment command reports the product environment and opens its chooser", async () => {
+  const { app, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "environment",
+    args: [],
+  });
+
+  const state = (appState.uiStore as UiStore).getState();
+  assert.equal(state.paletteOpen, true);
+  assert.equal(state.paletteContext, "environment");
+  const actions = (appState.getPaletteController as () => {
+    getActions(state?: ReturnType<UiStore["getState"]>): PaletteCommand[];
+  })().getActions(state);
+  assert.equal(actions.some((action) => action.command === "/environment safe"), true);
+  assert.equal(actions.some((action) => action.command === "/environment developer"), false);
+  const records = (await readFile(historyPath, "utf8"))
+    .trim()
+    .split(/\r?\n/u)
+    .map((line) => JSON.parse(line) as { text: string });
+  const text = records.at(-1)?.text ?? "";
+  assert.match(text, /Agent: Kestrel/u);
+  assert.match(text, /Environment: Developer workspace/u);
+  assert.match(text, /Choosing another environment creates a new session/u);
+  assert.doesNotMatch(text, /cli_dev_local|cli_safe_local/u);
+});
+
+test("guided palette inserts Environment after workspace and marks Developer as the workspace default", async () => {
+  const { app, cwd } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const workspaceRoot = path.join(cwd, "guided-project");
+  await mkdir(workspaceRoot, { recursive: true });
+  const workspace = await initializeWorkspaceAtRoot(
+    workspaceRoot,
+    appState.workspaceStore as WorkspaceStore,
+    { label: "guided-project" },
+  );
+  appState.activeWorkspace = workspace;
+  appState.launchWorkspace = workspace;
+
+  await (appState.beginStartTaskJourney as () => Promise<void>)();
+  const select = appState.handleStartTaskPaletteSelection as (selected: PaletteCommand) => Promise<boolean>;
+  await select.call(app, { id: "start.template.none", label: "Template: None" });
+  await select.call(app, { id: "start.preset.none", label: "Preset: None" });
+  await select.call(app, { id: "start.workspace.active", label: "Workspace: Active" });
+
+  const uiStore = appState.uiStore as UiStore;
+  const state = uiStore.getState();
+  assert.equal(state.paletteContext, "start-environment");
+  const actions = (appState.getPaletteController as () => {
+    getActions(state?: ReturnType<UiStore["getState"]>): PaletteCommand[];
+  })().getActions(state);
+  assert.equal(
+    actions.some((action) => action.id === "start.environment.developer" && action.label.includes("(default)")),
+    true,
+  );
+  assert.equal(actions.some((action) => action.id === "start.environment.safe"), true);
+});
+
+test("environment command changes an unstarted session in place", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const originalId = (appState.uiStore as UiStore).getState().activeSession.sessionId;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    started: false,
+    effectiveAssemblyId: undefined,
+    effectiveAssemblyLabel: undefined,
+    operatorState: undefined,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "environment",
+    args: ["safe"],
+  });
+
+  const state = (appState.uiStore as UiStore).getState();
+  assert.equal(state.activeSession.sessionId, originalId);
+  assert.equal(state.activeSession.environmentPresetId, "cli_safe_local");
+  assert.equal(state.activeSession.started, false);
+  assert.equal(state.activeSession.effectiveAssemblyId, undefined);
+  const persisted = await new SessionStore(home).load();
+  assert.equal(persisted.sessions.length, 1);
+  assert.equal(persisted.sessions[0]?.environmentPresetId, "cli_safe_local");
+});
+
+test("environment command creates a clean Developer workspace session from a started Safe session", async () => {
+  const { app, cwd, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const workspaceRoot = path.join(cwd, "developer-project");
+  await mkdir(workspaceRoot, { recursive: true });
+  const workspace = await initializeWorkspaceAtRoot(
+    workspaceRoot,
+    appState.workspaceStore as WorkspaceStore,
+    { label: "developer-project" },
+  );
+  appState.activeWorkspace = workspace;
+  appState.launchWorkspace = workspace;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    workspaceBinding: "active",
+    workspaceId: workspace.manifest.workspaceId,
+    workspaceRoot: workspace.rootPath,
+    workspaceLabel: workspace.manifest.label,
+    environmentPresetId: "cli_safe_local",
+    environmentShellKind: "safe",
+    effectiveAssemblyId: "bundle:kestrel:safe",
+    effectiveAssemblyLabel: "legacy raw safe label",
+    started: true,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+  const source = uiStore.getState().activeSession;
+  await (appState.appendHistoryLine as (role: "assistant", text: string) => Promise<void>)(
+    "assistant",
+    "source-only-history",
+  );
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "environment",
+    args: ["developer"],
+  });
+
+  const state = uiStore.getState();
+  const created = state.activeSession;
+  const preservedSource = state.sessions.find((session) => session.sessionId === source.sessionId);
+  assert.notEqual(created.sessionId, source.sessionId);
+  assert.equal(created.environmentPresetId, "cli_dev_local");
+  assert.equal(created.workspaceId, workspace.manifest.workspaceId);
+  assert.equal(created.workspaceRoot, workspace.rootPath);
+  assert.equal(created.profileId, source.profileId);
+  assert.equal(created.started, false);
+  assert.equal(created.effectiveAssemblyId, undefined);
+  assert.equal(created.acceptedRunId, undefined);
+  assert.equal(created.pendingWaitFor, undefined);
+  assert.equal(state.transcript.some((line) => line.text.includes("source-only-history")), false);
+  assert.equal(preservedSource?.environmentPresetId, "cli_safe_local");
+  assert.equal(preservedSource?.effectiveAssemblyId, "bundle:kestrel:safe");
+  const persisted = await new SessionStore(home).load();
+  assert.equal(persisted.sessions.length, 2);
+  assert.equal(
+    persisted.sessions.find((session) => session.sessionId === source.sessionId)?.environmentPresetId,
+    "cli_safe_local",
+  );
+});
+
+test("profiles, status, and sessions present Agent and Environment separately", async () => {
+  const { app, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = {
+    sendCommand: async (type: string) => {
+      if (type === "session.describe") {
+        return makeExactTuiSessionDescription();
+      }
+      if (type === "mcp.status") {
+        return {
+          type: "mcp.status",
+          payload: {
+            status: {
+              healthy: true,
+              checkedAt: "2026-08-29T00:00:00.000Z",
+              servers: [],
+              tools: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected command '${type}'.`);
+    },
+  };
+
+  for (const [command, args] of [
+    ["profiles", ["list"]],
+    ["sessions", []],
+    ["status", []],
+  ] as const) {
+    await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+      kind: "command",
+      command,
+      args,
+    });
+  }
+
+  const records = (await readFile(historyPath, "utf8"))
+    .trim()
+    .split(/\r?\n/u)
+    .map((line) => JSON.parse(line) as { text: string });
+  const profilesText = records.find((record) => record.text.startsWith("Profiles:"))?.text ?? "";
+  const sessionsText = records.find((record) => record.text.startsWith("Sessions:"))?.text ?? "";
+  const statusText = records.find((record) => record.text.includes("Agent=Kestrel Environment="))?.text ?? "";
+  assert.doesNotMatch(profilesText, /preset=/u);
+  assert.match(sessionsText, /agent:Kestrel/u);
+  assert.match(sessionsText, /environment:Developer workspace/u);
+  assert.match(statusText, /Agent=Kestrel Environment=Developer workspace/u);
+  assert.doesNotMatch(`${sessionsText}\n${statusText}`, /cli_dev_local|cli_safe_local/u);
 });
 
 async function reserveLocalPort(): Promise<number> {
@@ -1487,6 +1692,7 @@ test("start task journey creates a session with the canonical profile, mode, and
   await (appState.handleLine as (line: string) => Promise<void>)("investigation-task");
   await (appState.handleLine as (line: string) => Promise<void>)("investigation");
   await (appState.handleLine as (line: string) => Promise<void>)("detached");
+  await (appState.handleLine as (line: string) => Promise<void>)("default");
   await (appState.handleLine as (line: string) => Promise<void>)("Investigate queue latency");
   await (appState.handleLine as (line: string) => Promise<void>)("kestrel");
   await (appState.handleLine as (line: string) => Promise<void>)("build");
@@ -5986,6 +6192,7 @@ test("start task journey clears inherited preset metadata when preset none is se
   await (appState.handleLine as (line: string) => Promise<void>)("investigation-task");
   await (appState.handleLine as (line: string) => Promise<void>)("none");
   await (appState.handleLine as (line: string) => Promise<void>)("detached");
+  await (appState.handleLine as (line: string) => Promise<void>)("default");
   await (appState.handleLine as (line: string) => Promise<void>)("Investigate queue latency");
   await (appState.handleLine as (line: string) => Promise<void>)("current");
   await (appState.handleLine as (line: string) => Promise<void>)("default");
@@ -6037,6 +6244,7 @@ test("start task journey treats launch workspace as current when active session 
   await (appState.handleLine as (line: string) => Promise<void>)("none");
   await (appState.handleLine as (line: string) => Promise<void>)("none");
   await (appState.handleLine as (line: string) => Promise<void>)("current");
+  await (appState.handleLine as (line: string) => Promise<void>)("default");
   await (appState.handleLine as (line: string) => Promise<void>)("Scaffold app");
   await (appState.handleLine as (line: string) => Promise<void>)("current");
   await (appState.handleLine as (line: string) => Promise<void>)("default");
@@ -6113,6 +6321,7 @@ test("start task journey accepts a discovered workspace id", async () => {
   await (appState.handleLine as (line: string) => Promise<void>)("none");
   await (appState.handleLine as (line: string) => Promise<void>)("none");
   await (appState.handleLine as (line: string) => Promise<void>)(workspace.manifest.workspaceId);
+  await (appState.handleLine as (line: string) => Promise<void>)("default");
   await (appState.handleLine as (line: string) => Promise<void>)("Investigate workspace selection");
   await (appState.handleLine as (line: string) => Promise<void>)("current");
   await (appState.handleLine as (line: string) => Promise<void>)("default");
@@ -6732,6 +6941,7 @@ test("SessionsView renders additive assembly state in the detail drawer", async 
           threadId: session.sessionId,
           bundleId: "bundle:reference:default",
           label: "Reference default",
+          environmentPresetId: "cli_dev_local",
           authority: "profile",
           cause: "thread_start",
           provider: {
@@ -6826,7 +7036,8 @@ test("SessionsView renders additive assembly state in the detail drawer", async 
     }),
   );
 
-  assert.match(rendered, /assembly=Reference default/u);
+  assert.match(rendered, /assembly=Kestrel on Developer workspace/u);
+  assert.doesNotMatch(rendered, /bundle:reference:default|cli_dev_local/u);
   assert.match(rendered, /openrouter\/google\/gemini-3\.1-flash-lite-preview/u);
   assert.match(rendered, /variant:reference-react:plan/u);
   assert.match(rendered, /compat:downgraded/u);
@@ -6881,6 +7092,7 @@ test("TasksView renders additive assembly provider, variant, and downgrade marke
         threadId: "task-thread-1",
         bundleId: "bundle:ops:task",
         label: "Task downgraded bundle",
+        environmentPresetId: "workspace_hosted",
         authority: "policy",
         cause: "capability_loss",
         provider: {
@@ -6963,7 +7175,8 @@ test("TasksView renders additive assembly provider, variant, and downgrade marke
     }),
   );
 
-  assert.match(rendered, /Task downgraded bundle/u);
+  assert.match(rendered, /Kestrel on Developer workspace \(hosted\)/u);
+  assert.doesNotMatch(rendered, /bundle:ops:task|workspace_hosted/u);
   assert.match(rendered, /var:ops\.approval/u);
   assert.match(rendered, /!downgraded/u);
   assert.match(rendered, /assemblyProvider=openrouter\/google\/gemini-3\.1-flash-lite-preview/u);

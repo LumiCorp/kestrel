@@ -622,6 +622,7 @@ export type ParsedInput =
         | "new"
         | "sessions"
         | "workspace"
+        | "environment"
         | "tasks"
         | "switch"
         | "resume"

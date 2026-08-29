@@ -13,6 +13,7 @@ import { truncate } from "../ui/format.js";
 import { DetailDrawer } from "../components/DetailDrawer.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 import { StatusChip } from "../components/StatusChip.js";
+import { formatTuiAssemblyLabel } from "../../session/TuiEnvironmentPresentation.js";
 
 interface TasksViewProps {
   tasks: TuiSessionMeta[];
@@ -42,7 +43,9 @@ export function TasksView(props: TasksViewProps): React.JSX.Element {
             const status = readTaskStatus(session);
             const title = truncate(delegation?.title ?? session.name, 42);
             const provider = delegation !== undefined ? `${delegation.provider}/${delegation.model}` : session.profileId;
-            const assembly = session.operatorState?.assembly?.label ?? session.operatorState?.assembly?.bundleId;
+            const assembly = session.operatorState?.assembly === undefined
+              ? undefined
+              : formatTuiAssemblyLabel(session.operatorState.assembly.environmentPresetId);
             const variant = session.operatorState?.assembly?.provider?.promptVariant;
             const compatibilityStatus = session.operatorState?.assembly?.compatibility?.status;
             const adaptationStatus = session.operatorState?.latestAdaptation?.status;
@@ -101,9 +104,9 @@ export function TasksView(props: TasksViewProps): React.JSX.Element {
             </Text>
             <Text color={theme.muted}>
               assembly=
-              {selected.operatorState?.assembly?.label ??
-                selected.operatorState?.assembly?.bundleId ??
-                (selected.operatorState?.assembly?.mode === "implicit_legacy" ? "implicit/legacy" : "not recorded")}
+              {selected.operatorState?.assembly === undefined
+                ? "not recorded"
+                : formatTuiAssemblyLabel(selected.operatorState.assembly.environmentPresetId)}
             </Text>
             <Text color={theme.muted}>
               assemblyProvider=

@@ -4,7 +4,7 @@ This queue contains the original two-ticket product delivery. Move each issue be
 
 ## Ready
 
-- [Let users choose and understand the TUI execution environment](02-expose-environment-controls-and-language.md)
+None.
 
 ## In progress
 
@@ -16,7 +16,7 @@ None.
 
 ## Implemented
 
-None.
+- [Let users choose and understand the TUI execution environment](02-expose-environment-controls-and-language.md)
 
 ## Done
 
