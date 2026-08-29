@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Make TUI lifecycle reconciliation monotonic and exact](11-make-tui-lifecycle-reconciliation-monotonic-and-exact.md)
 
 ## In progress
 
