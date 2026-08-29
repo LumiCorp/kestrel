@@ -94,6 +94,7 @@ import {
   advanceTuiQueueAuthority,
   bindTuiQueueSuccessor,
   normalizeTuiQueueGraph,
+  replaceTuiQueueRunIdentity,
   removeAndRewireTuiQueueRecord,
   resolveExactTuiQueuedEvidence,
 } from "../session/TuiQueueGraph.js";
@@ -4446,6 +4447,21 @@ export class App {
           (route) => route.requestId === target.pendingRunRequestId,
         );
     const recoveredAcceptedRoute = recoveredRoute ?? recoveredRequestRoute;
+    const recoveredPendingTurn = target.pendingRunMessageId === undefined
+      ? undefined
+      : describedView?.conversationTurns?.find((turn) =>
+          turn.threadId === describedView.thread.threadId
+          && turn.sessionId === target.sessionId
+          && turn.sourceMessageId === target.pendingRunMessageId
+          && (turn.activeRunId !== undefined || turn.terminalRunId !== undefined)
+        );
+    const recoveredAcceptedRunId = recoveredAcceptedRoute?.runId
+      ?? recoveredPendingTurn?.activeRunId
+      ?? recoveredPendingTurn?.terminalRunId;
+    const authoritativePendingRejection = target.pendingRunMessageId !== undefined
+      && describedView?.conversationMessageRoutes !== undefined
+      && recoveredRoute === undefined
+      && recoveredPendingTurn === undefined;
     const queuedLifecycle = reconcileExactQueuedLifecycle(target, describedView);
     const acceptedRunThreadBackfill = target.acceptedRunId !== undefined
       && target.acceptedRunThreadId === undefined
@@ -4472,20 +4488,29 @@ export class App {
       pendingQueueSubmissions: queuedLifecycle.pendingQueueSubmissions,
       queuedRunReservations: queuedLifecycle.queuedRunReservations,
       terminalQueuedRuns: queuedLifecycle.terminalQueuedRuns,
-      ...(recoveredAcceptedRoute?.runId !== undefined
+      ...(recoveredAcceptedRunId !== undefined
         ? {
             pendingRunId: undefined,
             pendingRunRequestId: undefined,
             pendingRunMessageId: undefined,
             pendingRunThreadId: undefined,
-            ...(recoveredRoute !== undefined
-              ? { acceptedRunMessageId: recoveredRoute.messageId }
+            ...(recoveredRoute !== undefined || recoveredPendingTurn !== undefined
+              ? { acceptedRunMessageId: recoveredRoute?.messageId ?? target.pendingRunMessageId }
               : {}),
-            acceptedRunId: recoveredAcceptedRoute.runId,
+            acceptedRunId: recoveredAcceptedRunId,
             acceptedRunPredecessorId: undefined,
             ...(describedView !== undefined
               ? { acceptedRunThreadId: describedView.thread.threadId }
               : {}),
+          }
+        : {}),
+      ...(authoritativePendingRejection
+        ? {
+            pendingRunId: undefined,
+            pendingRunRequestId: undefined,
+            pendingRunMessageId: undefined,
+            pendingRunThreadId: undefined,
+            lastRunStatus: "FAILED" as const,
           }
         : {}),
       ...(acceptedRunThreadBackfill !== undefined
@@ -6985,12 +7010,13 @@ function reconcileExactQueuedLifecycle(
     status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
   }> = [];
   for (const submission of normalizedSession.pendingQueueSubmissions ?? []) {
-    const currentSubmission = pendingQueueSubmissions?.find(
+    let currentSubmission = pendingQueueSubmissions?.find(
       (candidate) => candidate.runId === submission.runId,
     );
     if (currentSubmission === undefined || currentSubmission.threadId !== view.thread.threadId) continue;
+    const currentMessageId = currentSubmission.messageId;
     const route = view.conversationMessageRoutes?.find(
-      (candidate) => candidate.messageId === currentSubmission.messageId,
+      (candidate) => candidate.messageId === currentMessageId,
     );
     if (view.conversationMessageRoutes !== undefined && route === undefined) {
       const rewired = removeAndRewireTuiQueueRecord({
@@ -7003,10 +7029,23 @@ function reconcileExactQueuedLifecycle(
       terminalQueuedRuns = rewired.terminalQueuedRuns;
       continue;
     }
-    if (
-      route?.disposition === "queued"
-      && (route.runId === undefined || route.runId === currentSubmission.runId)
-    ) {
+    if (route?.runId !== undefined && route.runId !== currentSubmission.runId) {
+      const rebound = replaceTuiQueueRunIdentity({
+        pendingQueueSubmissions,
+        queuedRunReservations,
+        terminalQueuedRuns,
+      }, currentSubmission, route.runId);
+      pendingQueueSubmissions = rebound.pendingQueueSubmissions;
+      queuedRunReservations = rebound.queuedRunReservations;
+      terminalQueuedRuns = rebound.terminalQueuedRuns;
+      currentSubmission = pendingQueueSubmissions?.find((candidate) =>
+        candidate.runId === route.runId
+        && candidate.messageId === submission.messageId
+        && candidate.threadId === submission.threadId
+      );
+      if (currentSubmission === undefined) continue;
+    }
+    if (route?.disposition === "queued") {
       pendingQueueSubmissions = omitExactRunIdentity(pendingQueueSubmissions, currentSubmission);
       queuedRunReservations = appendExactQueuedRunReservation(
         queuedRunReservations,
@@ -7014,14 +7053,39 @@ function reconcileExactQueuedLifecycle(
       );
       continue;
     }
-    if (route?.disposition !== "started" || route.runId !== currentSubmission.runId) continue;
+    if (route?.disposition !== "started" || route.runId === undefined) continue;
     const status = exactQueuedRunStatusFromDescribedView(view, currentSubmission.runId);
     if (status !== undefined) acceptedCandidates.push({ ...currentSubmission, status });
   }
   for (const reservation of normalizedSession.queuedRunReservations ?? []) {
-    if (reservation.threadId !== view.thread.threadId) continue;
-    const status = exactQueuedRunStatusFromDescribedView(view, reservation.runId);
-    if (status !== undefined) acceptedCandidates.push({ ...reservation, status });
+    let currentReservation = queuedRunReservations?.find((candidate) =>
+      candidate.runId === reservation.runId
+      && candidate.messageId === reservation.messageId
+      && candidate.threadId === reservation.threadId
+    );
+    if (currentReservation === undefined || currentReservation.threadId !== view.thread.threadId) continue;
+    const currentMessageId = currentReservation.messageId;
+    const route = view.conversationMessageRoutes?.find(
+      (candidate) => candidate.messageId === currentMessageId,
+    );
+    if (route?.runId !== undefined && route.runId !== currentReservation.runId) {
+      const rebound = replaceTuiQueueRunIdentity({
+        pendingQueueSubmissions,
+        queuedRunReservations,
+        terminalQueuedRuns,
+      }, currentReservation, route.runId);
+      pendingQueueSubmissions = rebound.pendingQueueSubmissions;
+      queuedRunReservations = rebound.queuedRunReservations;
+      terminalQueuedRuns = rebound.terminalQueuedRuns;
+      currentReservation = queuedRunReservations?.find((candidate) =>
+        candidate.runId === route.runId
+        && candidate.messageId === reservation.messageId
+        && candidate.threadId === reservation.threadId
+      );
+      if (currentReservation === undefined) continue;
+    }
+    const status = exactQueuedRunStatusFromDescribedView(view, currentReservation.runId);
+    if (status !== undefined) acceptedCandidates.push({ ...currentReservation, status });
   }
   for (const terminal of normalizedSession.terminalQueuedRuns ?? []) {
     if (terminal.threadId !== view.thread.threadId) continue;
@@ -7346,7 +7410,11 @@ function projectForegroundSessionProgress(
     exactAcceptedStart === false
     && queuedEvidence === undefined
     && (
-      session.pendingRunId !== input.runId
+      (
+        session.pendingRunId !== undefined
+        && session.pendingRunId !== input.runId
+        && session.pendingRunId.startsWith("tui-foreground:") === false
+      )
       || session.pendingRunMessageId !== input.messageId
       || session.pendingRunThreadId !== input.threadId
     )

@@ -173,6 +173,53 @@ test("SessionStore round-trips exact pending and accepted TUI run identity with 
   assert.equal(legacy?.acceptedRunPredecessorId, undefined);
 });
 
+test("SessionStore v6 rejects legacy caller-owned foreground reservations", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-v6-"));
+  const store = new SessionStore(tempDir);
+  const now = new Date(0).toISOString();
+  await writeFile(
+    path.join(tempDir, "sessions.json"),
+    JSON.stringify({
+      version: 5,
+      sessions: [{
+        name: "legacy-caller-owned-run",
+        sessionId: "legacy-caller-owned-run",
+        profileId: "reference",
+        createdAt: now,
+        updatedAt: now,
+        started: true,
+        pendingRunId: "tui-foreground:legacy-reservation",
+        pendingRunRequestId: "request-legacy",
+        pendingRunMessageId: "message-legacy",
+        pendingRunThreadId: "thread-main:legacy-caller-owned-run",
+        pendingQueueSubmissions: [{
+          runId: "tui-foreground:legacy-queue",
+          messageId: "message-legacy-queue",
+          threadId: "thread-main:legacy-caller-owned-run",
+        }],
+        queuedRunReservations: [{
+          runId: "tui-foreground:legacy-reservation-queue",
+          messageId: "message-legacy-reservation-queue",
+          threadId: "thread-main:legacy-caller-owned-run",
+        }],
+      }],
+    }),
+    "utf8",
+  );
+
+  const loadedFile = await store.load();
+  const loaded = store.findByName(loadedFile, "legacy-caller-owned-run");
+
+  assert.equal(loadedFile.version, 6);
+  assert.equal(loaded?.pendingRunId, undefined);
+  assert.equal(loaded?.pendingRunRequestId, undefined);
+  assert.equal(loaded?.pendingRunMessageId, undefined);
+  assert.equal(loaded?.pendingRunThreadId, undefined);
+  assert.equal(loaded?.pendingQueueSubmissions, undefined);
+  assert.equal(loaded?.queuedRunReservations, undefined);
+  assert.equal(loaded?.lastRunStatus, "FAILED");
+});
+
 test("SessionStore readers never observe a partially written sessions file", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-atomic-"));
   const store = new SessionStore(tempDir);
@@ -196,7 +243,7 @@ test("SessionStore readers never observe a partially written sessions file", asy
   const loaded = await Promise.all(reads);
   await Promise.all(writes);
 
-  assert.equal(loaded.every((file) => file.version === 5 && file.sessions.length === 250), true);
+  assert.equal(loaded.every((file) => file.version === 6 && file.sessions.length === 250), true);
 });
 
 test("SessionStore serializes delayed saves in invocation order", async () => {
@@ -370,7 +417,7 @@ test("SessionStore resets to empty when legacy version file is present", async (
 
   const store = new SessionStore(tempDir);
   const loaded = await store.load();
-  assert.equal(loaded.version, 5);
+  assert.equal(loaded.version, 6);
   assert.equal(loaded.sessions.length, 0);
 });
 

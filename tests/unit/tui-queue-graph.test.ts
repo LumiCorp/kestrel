@@ -7,6 +7,7 @@ import {
   bindTuiQueueSuccessor,
   exactTuiQueueTailRunId,
   normalizeTuiQueueGraph,
+  replaceTuiQueueRunIdentity,
   removeAndRewireTuiQueueRecord,
   resolveExactTuiQueuedEvidence,
   TuiQueueGraphConsistencyError,
@@ -286,6 +287,67 @@ test("TuiQueueGraph rewires an exact successor before removing its predecessor",
     threadId: "thread-main:session-queue",
     predecessorRunId: "run-r0",
   }]);
+});
+
+test("TuiQueueGraph replaces a provisional queue identity and rewires its successor", () => {
+  const input = session({
+    pendingQueueSubmissions: [{
+      runId: "provisional-q1",
+      messageId: "message-q1",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-r0",
+    }, {
+      runId: "provisional-q2",
+      messageId: "message-q2",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "provisional-q1",
+    }],
+  });
+  const graph = normalizeTuiQueueGraph(input);
+
+  const rebound = replaceTuiQueueRunIdentity(
+    graph,
+    graph.pendingQueueSubmissions![0]!,
+    "runtime-q1",
+  );
+
+  assert.deepEqual(rebound.pendingQueueSubmissions, [{
+    runId: "runtime-q1",
+    messageId: "message-q1",
+    threadId: "thread-main:session-queue",
+    predecessorRunId: "run-r0",
+  }, {
+    runId: "provisional-q2",
+    messageId: "message-q2",
+    threadId: "thread-main:session-queue",
+    predecessorRunId: "runtime-q1",
+  }]);
+});
+
+test("TuiQueueGraph rejects a runtime identity already owned by other queue evidence", () => {
+  const input = session({
+    pendingQueueSubmissions: [{
+      runId: "provisional-q1",
+      messageId: "message-q1",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "run-r0",
+    }, {
+      runId: "runtime-q2",
+      messageId: "message-q2",
+      threadId: "thread-main:session-queue",
+      predecessorRunId: "provisional-q1",
+    }],
+  });
+  const graph = normalizeTuiQueueGraph(input);
+
+  assert.throws(
+    () => replaceTuiQueueRunIdentity(
+      graph,
+      graph.pendingQueueSubmissions![0]!,
+      "runtime-q2",
+    ),
+    /already belongs to different queued evidence/u,
+  );
 });
 
 test("TuiQueueGraph blocks ambiguous active tails from extension", () => {

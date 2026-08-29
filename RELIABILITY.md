@@ -3,7 +3,7 @@ id: reliability-root
 domain: ops
 status: active
 owner: kestrel-ops
-last_verified_at: 2026-07-20
+last_verified_at: 2026-08-29
 depends_on:
   - ARCHITECTURE.md
   - docs/generated/quality-scorecard.json
@@ -28,6 +28,13 @@ A reliable Kestrel run has:
 - typed tool and effect outcomes
 - visible waiting, steering, cancellation, retry, and recovery actions
 - enough logs, artifacts, and checkpoints to explain what happened
+
+Client conversation surfaces own message identity; the Runtime owns run
+identity. An ordinary `conversation.message.submit` therefore omits `turn.runId`.
+The client binds the run ID returned by the routed response or the exact
+`run.started` event, using the submitted message and thread as correlation
+evidence. A protocol rejection before that binding is a rejection, not an
+unconfirmed accepted run.
 
 An HTTP success response means the request reached a service. The run's
 terminal result determines whether the requested agent work completed.

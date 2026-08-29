@@ -224,6 +224,54 @@ export function removeAndRewireTuiQueueRecord(
   return next;
 }
 
+export function replaceTuiQueueRunIdentity(
+  graph: NormalizedTuiQueueGraph,
+  current: QueueRecord,
+  runtimeRunId: string,
+): NormalizedTuiQueueGraph {
+  if (runtimeRunId === current.runId) return graph;
+  const allRecords: QueueRecord[] = [
+    ...(graph.pendingQueueSubmissions ?? []),
+    ...(graph.queuedRunReservations ?? []),
+    ...(graph.terminalQueuedRuns ?? []),
+  ];
+  if (allRecords.some((candidate) => candidate.runId === runtimeRunId)) {
+    throw new TuiQueueGraphConsistencyError(
+      `Runtime run '${runtimeRunId}' already belongs to different queued evidence.`,
+    );
+  }
+  let replaced = false;
+  const replace = <T extends QueueRecord>(records: T[] | undefined): T[] | undefined => records?.map(
+    (candidate) => {
+      if (candidate.runId === current.runId) {
+        if (
+          candidate.messageId !== current.messageId
+          || candidate.threadId !== current.threadId
+        ) {
+          throw new TuiQueueGraphConsistencyError(
+            "Queued runtime identity conflicted with the pending message.",
+          );
+        }
+        replaced = true;
+        return { ...candidate, runId: runtimeRunId };
+      }
+      return candidate.predecessorRunId === current.runId
+        ? { ...candidate, predecessorRunId: runtimeRunId }
+        : candidate;
+    },
+  );
+  const next = {
+    pendingQueueSubmissions: replace(graph.pendingQueueSubmissions),
+    queuedRunReservations: replace(graph.queuedRunReservations),
+    terminalQueuedRuns: replace(graph.terminalQueuedRuns),
+  };
+  if (replaced === false) {
+    throw new TuiQueueGraphConsistencyError("Queued message was absent from durable state.");
+  }
+  assertExactQueueGraph(next);
+  return next;
+}
+
 export function exactTuiQueueTailRunId(
   session: TuiSessionMeta,
   graph = normalizeTuiQueueGraph(session),
