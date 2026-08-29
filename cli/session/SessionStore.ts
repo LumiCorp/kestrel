@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { SessionsFile, TuiSessionMeta } from "../contracts.js";
+import type {
+  SessionsFile,
+  TuiSessionMeta,
+  TuiTerminalQueuedRun,
+} from "../contracts.js";
 import {
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
@@ -464,24 +468,25 @@ function readTerminalQueuedRuns(
   value: unknown,
 ): NonNullable<TuiSessionMeta["terminalQueuedRuns"]> | undefined {
   if (Array.isArray(value) === false) return undefined;
-  const runs = value.flatMap((candidate) => {
+  const runs = value.flatMap<TuiTerminalQueuedRun>((candidate) => {
     if (
       typeof candidate !== "object"
       || candidate === null
       || Array.isArray(candidate)
     ) return [];
     const record = candidate as Record<string, unknown>;
+    const status = record.status;
     if (
       typeof record.runId !== "string"
       || typeof record.messageId !== "string"
       || typeof record.threadId !== "string"
-      || (record.status !== "COMPLETED" && record.status !== "FAILED")
+      || (status !== "COMPLETED" && status !== "FAILED")
     ) return [];
     return [{
       runId: record.runId,
       messageId: record.messageId,
       threadId: record.threadId,
-      status: record.status,
+      status,
       ...(typeof record.predecessorRunId === "string"
         ? { predecessorRunId: record.predecessorRunId }
         : {}),

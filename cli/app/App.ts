@@ -148,6 +148,7 @@ import {
   type McpStatusSnapshot,
 } from "../../src/index.js";
 import type { ResolvedModelPolicy } from "../../src/profile/modelPolicy.js";
+import type { OperatorThreadView } from "../../src/orchestration/contracts.js";
 import {
   buildOperatorBootstrapSnapshot,
   buildChildMissionPrompt,
@@ -5729,7 +5730,7 @@ export class App {
         && submission.threadId === queuedEvidence.threadId
       );
       let currentQueueGraph = normalizeTuiQueueGraph(session);
-      let orderedEvidence = queuedEvidence;
+      let orderedEvidence: NonNullable<TuiSessionMeta["queuedRunReservations"]>[number] = queuedEvidence;
       if (
         queuedEvidenceCanReplaceAcceptedRun(session, queuedEvidence) === false
         && terminalStatus !== undefined
@@ -5967,12 +5968,14 @@ export class App {
     appendStartedHistory?: boolean,
     patch: Partial<TuiSessionMeta> = {},
   ): Promise<boolean> {
+    const childSessionId = task.childSessionId;
+    if (childSessionId === undefined) return false;
     const existing = this.sessionsFile.sessions.find(
-      (item) => item.sessionId === task.childSessionId,
+      (item) => item.sessionId === childSessionId,
     );
     if (existing === undefined) return false;
     const shouldAppendStartedHistory = appendStartedHistory ?? existing?.started !== true;
-    const accepted = await this.commitQueueSessionMutation(task.childSessionId, (current) => {
+    const accepted = await this.commitQueueSessionMutation(childSessionId, (current) => {
       const exactRunId = patch.acceptedRunId;
       const queuedIdentity = exactRunId === undefined
         ? undefined

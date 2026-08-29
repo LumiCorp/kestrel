@@ -40,7 +40,8 @@ import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { initializeWorkspaceAtRoot } from "../../cli/workspace/WorkspaceResolver.js";
 import type { PaletteCommand } from "../../cli/app/PaletteController.js";
 import type { InkAppController } from "../../cli/ink/AppRoot.js";
-import type { TuiProfile, TuiSessionMeta } from "../../cli/contracts.js";
+import type { SessionsFile, TuiProfile, TuiSessionMeta } from "../../cli/contracts.js";
+import type { SessionDescribedEventPayload } from "../../cli/protocol/contracts.js";
 import type { OperatorDelegationWorkspaceSnapshot } from "../../src/operatorShell.js";
 import type { LocalCoreStatus } from "../../src/localCore/contracts.js";
 import { startLocalCoreApiServer } from "../../src/localCore/api.js";
@@ -129,7 +130,10 @@ test("startup preserves a runtime-bound session's authoring profile when started
   assert.equal(resolved.id, authoringProfile.id);
 });
 
-for (const scenario of [
+const preAcceptanceProfileScenarios: Array<{
+  label: string;
+  patch: Partial<TuiSessionMeta>;
+}> = [
   {
     label: "pending ordinary-turn correlation",
     patch: {
@@ -149,7 +153,9 @@ for (const scenario of [
       }],
     },
   },
-] as const) {
+];
+
+for (const scenario of preAcceptanceProfileScenarios) {
   test(`startup keeps ${scenario.label} mutable before runtime acceptance`, async () => {
     const authoringProfile: TuiProfile = {
       id: "preaccept-authoring-profile",
@@ -1251,7 +1257,7 @@ test("environment command creates a clean Developer workspace session from a sta
     workspaceRoot: workspace.rootPath,
     workspaceLabel: workspace.manifest.label,
     environmentPresetId: "cli_safe_local",
-    environmentShellKind: "safe",
+    environmentShellKind: "cli",
     effectiveAssemblyId: "bundle:kestrel:safe",
     effectiveAssemblyLabel: "legacy raw safe label",
     started: true,
@@ -2070,11 +2076,7 @@ test("delegated queued acceptance publishes only after its required session comm
       };
       const sessionStore = appState.sessionStore as SessionStore;
       const originalSave = sessionStore.save.bind(sessionStore);
-      const currentFile = appState.sessionsFile as {
-        version: number;
-        activeSessionName?: string;
-        sessions: TuiSessionMeta[];
-      };
+      const currentFile = appState.sessionsFile as SessionsFile;
       appState.sessionsFile = sessionStore.upsert(currentFile, queued);
       uiStore.patch({ sessions: (appState.sessionsFile as typeof currentFile).sessions });
       await originalSave(appState.sessionsFile as never);
@@ -2398,7 +2400,7 @@ test("same-child task and history updates merge after queued commit settlement",
       });
       await saveStarted;
       const taskUpdate = (appState.updateTaskSessionFromMeta as (
-        task: typeof child.delegation,
+        task: NonNullable<TuiSessionMeta["delegation"]>,
       ) => Promise<void>)({
         ...child.delegation,
         status: "WAITING",
@@ -3015,7 +3017,7 @@ test("assembly-only background recovery uses an explicit recoverable lifecycle s
   };
 
   await (appState.reconcileBackgroundSessionDescription as (
-    payload: typeof payload,
+    describedPayload: SessionDescribedEventPayload,
     appendStartedHistory: boolean,
   ) => Promise<void>)(payload, true);
 
@@ -3261,6 +3263,7 @@ test("live background acceptance wins over a describe projection delayed by prof
     sessionId: string;
     threadId: string;
     runId: string;
+    messageId?: string | undefined;
   }) => Promise<void>)({
     sessionId: child.sessionId,
     threadId: child.sessionId,
@@ -3524,7 +3527,10 @@ test("startup reconciles an active pending child atomically before generic descr
     sessions: TuiSessionMeta[];
   };
   appState.sessionsFile = { ...sessionsFile, activeSessionName: child.name };
-  uiStore.patch({ activeSession: child, sessions: appState.sessionsFile.sessions });
+  uiStore.patch({
+    activeSession: child,
+    sessions: (appState.sessionsFile as SessionsFile).sessions,
+  });
   const persisted: TuiSessionMeta[][] = [];
   const observedSessionStore = appState.sessionStore as SessionStore;
   const saveSessionsFile = observedSessionStore.save.bind(observedSessionStore);
@@ -4658,11 +4664,7 @@ test("the global sessions-file coordinator preserves an interleaved ordinary ses
       };
       const sessionStore = appState.sessionStore as SessionStore;
       const originalSave = sessionStore.save.bind(sessionStore);
-      let file = appState.sessionsFile as {
-        version: number;
-        activeSessionName?: string;
-        sessions: TuiSessionMeta[];
-      };
+      let file = appState.sessionsFile as SessionsFile;
       file = sessionStore.upsert(file, queued);
       file = sessionStore.upsert(file, ordinary);
       appState.sessionsFile = file;
@@ -5018,11 +5020,7 @@ test("describe preserves an explicit accepted-predecessor conflict and does not 
       predecessorRunId: "run-other",
     }],
   };
-  const sessionsFile = appState.sessionsFile as {
-    version: number;
-    activeSessionName?: string;
-    sessions: TuiSessionMeta[];
-  };
+  const sessionsFile = appState.sessionsFile as SessionsFile;
   appState.sessionsFile = (appState.sessionStore as SessionStore).upsert(sessionsFile, conflicted);
   uiStore.patch({ activeSession: conflicted, sessions: (appState.sessionsFile as typeof sessionsFile).sessions });
   appState.recoverTerminalMessages = async () => {};
@@ -5092,11 +5090,7 @@ test("describe preserves a legacy undefined-predecessor conflict without a compl
       predecessorRunId: "run-other",
     }],
   };
-  const sessionsFile = appState.sessionsFile as {
-    version: number;
-    activeSessionName?: string;
-    sessions: TuiSessionMeta[];
-  };
+  const sessionsFile = appState.sessionsFile as SessionsFile;
   appState.sessionsFile = (appState.sessionStore as SessionStore).upsert(sessionsFile, conflicted);
   uiStore.patch({ activeSession: conflicted, sessions: (appState.sessionsFile as typeof sessionsFile).sessions });
   appState.recoverTerminalMessages = async () => {};

@@ -233,7 +233,7 @@ for (const scenario of [
           : undefined;
     if (expectedKind !== undefined) {
       assert.equal(
-        described?.operatorThreadView?.inboxItems.some(
+        described?.operatorThreadView?.inboxItems?.some(
           (item) => item.kind === expectedKind,
         ),
         true,

@@ -14,7 +14,11 @@ import type {
 } from "../../cli/contracts.js";
 import { buildInitialUiRuntimeState, UiStore } from "../../cli/ink/store/UiStore.js";
 import { createUiDerivedSelectors } from "../../cli/ink/store/selectors.js";
-import type { RunnerEvent } from "../../cli/protocol/contracts.js";
+import type {
+  RunnerCommandPayloadByType,
+  RunnerCommandType,
+  RunnerEvent,
+} from "../../cli/protocol/contracts.js";
 import {
   buildWaitingSystemText,
   extractWaitPrompt,
@@ -30,6 +34,23 @@ import {
   normalizeTuiQueueGraph,
   resolveExactTuiQueuedEvidence,
 } from "../../cli/session/TuiQueueGraph.js";
+
+function requireConversationMessageSubmitPayload(
+  payload: unknown,
+): RunnerCommandPayloadByType["conversation.message.submit"] {
+  if (
+    typeof payload !== "object"
+    || payload === null
+    || !("messageId" in payload)
+    || typeof payload.messageId !== "string"
+    || !("turn" in payload)
+    || typeof payload.turn !== "object"
+    || payload.turn === null
+  ) {
+    assert.fail("Expected a conversation.message.submit payload.");
+  }
+  return payload as RunnerCommandPayloadByType["conversation.message.submit"];
+}
 
 
 function makeCompletedOutput(sessionId: string, runId: string): NormalizedOutput {
@@ -200,6 +221,7 @@ function createRunHarness(input: {
   disableSynthesizedTerminalAuthority?: boolean | undefined;
 } = {}): {
   controller: TuiRunController;
+  context: TuiRunControllerContext;
   uiStore: UiStore;
   commands: Array<{ type: string; payload: Record<string, unknown> }>;
   history: Array<{
@@ -328,8 +350,8 @@ function createRunHarness(input: {
         metadata?: Record<string, unknown> | undefined,
       ) => {
         if (type === "conversation.message.submit") {
-          submittedIdentityByRunId.set(String((payload.turn as Record<string, unknown>).runId), {
-            messageId: String(payload.messageId),
+          submittedIdentityByRunId.set(String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId), {
+            messageId: String(requireConversationMessageSubmitPayload(payload).messageId),
             threadId: String(payload.threadId),
           });
         }
@@ -419,6 +441,7 @@ function createRunHarness(input: {
                   messageId: authority.messageId,
                   disposition: "started",
                   runId: authority.runId,
+                  createdAt: "2026-05-14T00:00:00.000Z",
                 }],
                 conversationTurns: [{
                   turnId: `turn-authority-${authority.runId}`,
@@ -471,10 +494,10 @@ function createRunHarness(input: {
           payload: {
             threadId: activeSession.focusedThreadId ?? `thread-main:${activeSession.sessionId}`,
             sessionId: activeSession.sessionId,
-            messageId: String(payload.messageId ?? "message-1"),
+            messageId: String(requireConversationMessageSubmitPayload(payload).messageId ?? "message-1"),
             disposition: "replied",
             requestId: "request-resume-1",
-            runId: String((payload.turn as Record<string, unknown> | undefined)?.runId),
+            runId: String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown> | undefined)?.runId),
             view: makeConversationView(),
           },
         });
@@ -900,7 +923,9 @@ function createRunHarness(input: {
       persistCount += 1;
       return true;
     }),
-    syncBackgroundSessionProgress: async (progress) => {
+    syncBackgroundSessionProgress: async (
+      progress: Parameters<TuiRunControllerContext["syncBackgroundSessionProgress"]>[0],
+    ) => {
       backgroundProgress.push(progress);
     },
     syncBackgroundSessionResult: async () => {},
@@ -1721,13 +1746,13 @@ test("TuiRunController reconciles terminal outcomes when routing returns after c
     },
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return makeRunnerEvent({
         type: "conversation.message.routed",
         payload: {
           threadId: "thread-main:session-1",
           sessionId: "session-1",
-          messageId: String(payload.messageId),
+          messageId: String(requireConversationMessageSubmitPayload(payload).messageId),
           disposition: "replied",
           runId,
           view: {
@@ -1765,7 +1790,7 @@ test("TuiRunController preserves an authoritative terminal event when the routed
     started: false,
     sendCommand: async (type, payload) => {
       if (type === "conversation.message.submit") {
-        const reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+        const reservedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
         controller!.onRunnerEvent(makeRunnerEvent({
           type: "run.started",
           commandId: "command-route-lost",
@@ -1818,7 +1843,7 @@ test("TuiRunController marks a first turn started when exact route recovery prov
     started: false,
     sendCommand: async (type, payload) => {
       if (type === "conversation.message.submit") {
-        reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+        reservedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
         throw new Error("route response lost");
       }
       if (type === "operator.thread") {
@@ -2014,14 +2039,14 @@ test("TuiRunController persists and dispatches one caller-owned foreground run r
     started: false,
     sendCommand: async (_type, payload) => {
       persistedReservation = harness.uiStore.getState().activeSession.pendingRunId;
-      dispatchedReservation = (payload.turn as Record<string, unknown> | undefined)?.runId as string | undefined;
+      dispatchedReservation = (requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown> | undefined)?.runId as string | undefined;
       const view = makeConversationView({ active: true });
       return makeRunnerEvent({
         type: "conversation.message.routed",
         payload: {
           sessionId: "session-1",
           threadId: "thread-main:session-1",
-          messageId: String(payload.messageId),
+          messageId: String(requireConversationMessageSubmitPayload(payload).messageId),
           disposition: "started",
           runId: dispatchedReservation,
           view: {
@@ -2063,7 +2088,7 @@ test("TuiRunController rejects a routed run that disagrees with its persisted re
         payload: {
           sessionId: "session-1",
           threadId: "thread-main:session-1",
-          messageId: String(payload.messageId),
+          messageId: String(requireConversationMessageSubmitPayload(payload).messageId),
           disposition: "started",
           runId: "run-not-reserved",
           view: {
@@ -2275,7 +2300,7 @@ test("TuiRunController keeps a pre-run.started protocol failure unstarted", asyn
   const harness = createRunHarness({
     started: false,
     sendCommand: async (_type, payload) => {
-      rejectedReservation = (payload.turn as Record<string, unknown> | undefined)?.runId as string | undefined;
+      rejectedReservation = (requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown> | undefined)?.runId as string | undefined;
       return makeRunnerEvent({
         type: "run.failed",
         commandId: "command-preaccept-failure",
@@ -2359,7 +2384,7 @@ test("TuiRunController sends active-run input to Local Core queue authority imme
     },
     sendCommand: async (type, payload) => {
       commands.push({ type, payload: payload as Record<string, unknown> });
-      queuedReservation = (payload.turn as Record<string, unknown> | undefined)?.runId as string | undefined;
+      queuedReservation = (requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown> | undefined)?.runId as string | undefined;
       return makeRunnerEvent({
         type: "conversation.message.routed",
         commandId: "command-queued",
@@ -2409,7 +2434,7 @@ test("TuiRunController sends active-run input to Local Core queue authority imme
 
   assert.equal(commands.length, 1);
   assert.equal(commands[0]?.type, "conversation.message.submit");
-  assert.equal(commands[0]?.payload.messageId, "message-queued");
+  assert.equal(requireConversationMessageSubmitPayload(commands[0]?.payload).messageId, "message-queued");
   assert.match(queuedReservation ?? "", /^tui-foreground:/u);
   assert.equal(harness.uiStore.getState().activeSession.pendingRunId, undefined);
   assert.deepEqual(harness.uiStore.getState().activeSession.queuedRunReservations, [{
@@ -2467,7 +2492,7 @@ test("TuiRunController retains two exact queued reservations and consumes only t
       }
       assert.equal(type, "conversation.message.submit");
       const messageId = String((payload as Record<string, unknown>).messageId);
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       dispatched.push({ runId, messageId });
       return makeRunnerEvent({
         type: "conversation.message.routed",
@@ -2536,7 +2561,7 @@ test("TuiRunController preserves an exact queued reservation when the route resp
   const harness = createRunHarness({
     sendCommand: async (type, payload) => {
       if (type === "conversation.message.submit") {
-        reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+        reservedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
         throw Object.assign(new Error("route response lost"), { code: "ECONNRESET" });
       }
       assert.equal(type, "operator.thread");
@@ -2582,7 +2607,7 @@ test("TuiRunController keeps two pre-confirmation queue submissions independentl
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
       const messageId = String((payload as Record<string, unknown>).messageId);
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return await new Promise<RunnerEvent>((resolve, reject) => {
         pendingResponses.set(messageId, { runId, resolve, reject });
       });
@@ -2677,8 +2702,8 @@ test("TuiRunController rewires a successor when its live predecessor is rejected
     },
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
-      const messageId = String(payload.messageId);
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const messageId = String(requireConversationMessageSubmitPayload(payload).messageId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return await new Promise<RunnerEvent>((resolve, reject) => {
         pendingResponses.set(messageId, { runId, resolve, reject });
       });
@@ -2771,7 +2796,7 @@ test("TuiRunController removes a response-lost absent route before queuing its s
       assert.equal(type, "conversation.message.submit");
       submissionCount += 1;
       if (submissionCount === 1) throw new Error("Q1 route response lost");
-      q2RunId = String((payload.turn as Record<string, unknown>).runId);
+      q2RunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return makeRunnerEvent({
         type: "conversation.message.routed",
         payload: {
@@ -2822,7 +2847,7 @@ test("TuiRunController preserves exact pending predecessors across reverse queue
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
       const messageId = String((payload as Record<string, unknown>).messageId);
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return await new Promise<RunnerEvent>((resolve) => {
         pendingResponses.set(messageId, { runId, resolve });
       });
@@ -2909,7 +2934,7 @@ test("TuiRunController settles reverse queued terminal responses exactly once", 
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
       const messageId = String((payload as Record<string, unknown>).messageId);
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return await new Promise<RunnerEvent>((resolve) => {
         pendingResponses.set(messageId, { runId, resolve });
       });
@@ -2997,7 +3022,7 @@ test("TuiRunController blocks Q3 until exact authority resolves an issue19 fork"
     },
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
-      q3RunId = String((payload.turn as Record<string, unknown>).runId);
+      q3RunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return makeRunnerEvent({
         type: "conversation.message.routed",
         payload: {
@@ -3594,7 +3619,7 @@ test("TuiRunController serializes the full queue journal so a failed first barri
     },
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
-      const messageId = String(payload.messageId);
+      const messageId = String(requireConversationMessageSubmitPayload(payload).messageId);
       dispatched.push(messageId);
       return makeRunnerEvent({
         type: "conversation.message.routed",
@@ -3655,7 +3680,7 @@ test("TuiRunController keeps queue preparation bound to session A across every p
         });
         stageReleased = true;
       };
-      let submitted: { payload: Record<string, unknown>; metadata?: Record<string, unknown> } | undefined;
+      let submitted: { payload: unknown; metadata?: unknown } | undefined;
       let harness: ReturnType<typeof createRunHarness>;
       const workspaceA = {
         rootPath: "/workspace/a",
@@ -3723,7 +3748,7 @@ test("TuiRunController keeps queue preparation bound to session A across every p
         persistSessionAndUi: async () => await waitAtStage("persistence"),
         sendCommand: async (type, payload, metadata) => {
           assert.equal(type, "conversation.message.submit");
-          submitted = { payload, metadata };
+          submitted = { payload, ...(metadata === undefined ? {} : { metadata }) };
           return makeRunnerEvent({
             type: "conversation.message.routed",
             payload: {
@@ -3773,11 +3798,14 @@ test("TuiRunController keeps queue preparation bound to session A across every p
       releaseStage?.();
 
       assert.equal(await submission, true);
-      const turn = submitted?.payload.turn as Record<string, unknown>;
+      const turn = requireConversationMessageSubmitPayload(submitted?.payload).turn as Record<string, unknown>;
       assert.equal(turn.sessionId, "session-1");
       assert.equal((turn.workspace as Record<string, unknown>).workspaceId, "workspace-a");
-      assert.equal(submitted?.payload.profileId, "resolved-profile-a");
-      assert.equal((submitted?.metadata?.profile as TuiProfile | undefined)?.id, "kestrel");
+      assert.equal(requireConversationMessageSubmitPayload(submitted?.payload).profileId, "resolved-profile-a");
+      assert.equal(
+        (submitted?.metadata as { profile?: TuiProfile } | undefined)?.profile?.id,
+        "kestrel",
+      );
       const currentA = harness.uiStore.getState().sessions.find(
         (session) => session.sessionId === "session-1",
       );
@@ -3803,7 +3831,7 @@ test("TuiRunController applies queued response and response-loss recovery to the
       const harness = createRunHarness({
         sendCommand: async (type, payload) => {
           if (type === "conversation.message.submit") {
-            submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+            submittedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
             submissionStartedResolve?.();
             return await new Promise<RunnerEvent>((resolve, reject) => {
               releaseSubmission = resolve;
@@ -3896,7 +3924,7 @@ test("TuiRunController applies a direct queued terminal to the submitting sessio
     scripted: true,
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
-      submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+      submittedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       submissionStartedResolve?.();
       return await new Promise<RunnerEvent>((resolve) => {
         releaseSubmission = resolve;
@@ -3964,7 +3992,7 @@ test("TuiRunController installs exact direct queued lifecycle ownership for wait
       const harness = createRunHarness({
         sendCommand: async (type, payload) => {
           assert.equal(type, "conversation.message.submit");
-          submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+          submittedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
           const base = {
             sessionId: "session-1",
             threadId: "thread-main:session-1",
@@ -4038,7 +4066,7 @@ test("TuiRunController applies direct queued waiting, failed, and cancelled resp
         scripted: true,
         sendCommand: async (type, payload) => {
           assert.equal(type, "conversation.message.submit");
-          submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+          submittedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
           const owner = harness.uiStore.getState().sessions.find(
             (session) => session.sessionId === "session-1",
           )!;
@@ -4115,7 +4143,7 @@ test("TuiRunController response-loss recovery installs exact active, waiting, an
       const harness = createRunHarness({
         sendCommand: async (type, payload) => {
           if (type === "conversation.message.submit") {
-            submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+            submittedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
             throw new Error("response lost");
           }
           if (type === "operator.thread") {
@@ -4138,7 +4166,7 @@ test("TuiRunController response-loss recovery installs exact active, waiting, an
                   },
                   childThreads: [],
                   childBlockerChain: [],
-                  activeRun: terminal ? undefined : { runId: submittedRunId, status },
+                  activeRun: terminal ? undefined : { runId: submittedRunId!, status },
                   conversationTurns: terminal ? [{
                     turnId: `turn-${status.toLowerCase()}`,
                     threadId,
@@ -4222,7 +4250,7 @@ test("TuiRunController requires exact routed terminal evidence for direct and re
           },
           sendCommand: async (type, payload) => {
             if (type === "conversation.message.submit") {
-              submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+              submittedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
               harness.controller.onRunnerEvent(makeRunnerEvent({
                 type: "run.started",
                 sessionId: "session-1",
@@ -4277,12 +4305,13 @@ test("TuiRunController requires exact routed terminal evidence for direct and re
                     childThreads: [],
                     childBlockerChain: [],
                     activeRun: mismatch === "running-only"
-                      ? { runId: submittedRunId, status: "RUNNING" as const }
+                      ? { runId: submittedRunId!, status: "RUNNING" as const }
                       : undefined,
                     conversationMessageRoutes: [{
                       messageId,
                       disposition: "started" as const,
-                      runId: submittedRunId,
+                      runId: submittedRunId!,
+                      createdAt: "2026-08-29T00:00:00.000Z",
                     }],
                     conversationTurns: mismatch === "running-only"
                       ? []
@@ -4334,7 +4363,7 @@ test("TuiRunController validates direct and response-loss terminals after pre-ro
           recoverTerminalMessages: async () => { recoveryCount += 1; },
           sendCommand: async (type, payload) => {
             if (type === "conversation.message.submit") {
-              submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+              submittedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
               harness.controller.onRunnerEvent(makeRunnerEvent({
                 type: "run.started",
                 sessionId: "session-1",
@@ -4400,6 +4429,7 @@ test("TuiRunController validates direct and response-loss terminals after pre-ro
                       messageId,
                       disposition: "started",
                       runId: submittedRunId,
+                      createdAt: "2026-08-29T00:00:00.000Z",
                     }],
                     conversationTurns: [{
                       turnId: `turn-pre-route-${responseKind}-${outcome.toLowerCase()}`,
@@ -4457,7 +4487,7 @@ test("TuiRunController response-loss terminal recovery preserves a newer accepte
     },
     sendCommand: async (type, payload) => {
       if (type === "conversation.message.submit") {
-        submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+        submittedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
         const state = harness.uiStore.getState();
         const owner = state.sessions.find((session) => session.sessionId === "session-1")!;
         const newer = {
@@ -4556,7 +4586,7 @@ test("TuiRunController delayed direct queue outcomes preserve a newer accepted r
         },
         sendCommand: async (type, payload) => {
           assert.equal(type, "conversation.message.submit");
-          submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+          submittedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
           dispatchedResolve?.();
           return await new Promise<RunnerEvent>((resolve) => { release = resolve; });
         },
@@ -4643,7 +4673,7 @@ test("TuiRunController delayed routed queue outcomes preserve a newer accepted r
         },
         sendCommand: async (type, payload) => {
           assert.equal(type, "conversation.message.submit");
-          submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+          submittedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
           dispatchedResolve?.();
           return await new Promise<RunnerEvent>((resolve) => { release = resolve; });
         },
@@ -4757,7 +4787,8 @@ test("TuiRunController keeps newer visible state when an older completed respons
               conversationMessageRoutes: [{
                 messageId: "message-older-failed-output",
                 disposition: "started",
-                runId: submittedRunId,
+                runId: submittedRunId!,
+                createdAt: "2026-08-29T00:00:00.000Z",
               }],
               conversationTurns: [{
                 turnId: "turn-older-failed-output",
@@ -4778,7 +4809,7 @@ test("TuiRunController keeps newer visible state when an older completed respons
         });
       }
       assert.equal(type, "conversation.message.submit");
-      submittedRunId = String((payload.turn as Record<string, unknown>).runId);
+      submittedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       dispatchedResolve?.();
       return await new Promise<RunnerEvent>((resolve) => { release = resolve; });
     },
@@ -4892,7 +4923,8 @@ test("TuiRunController publishes no queued terminal output before durable owners
       label: "Run",
       text: "queued",
       visible: true,
-      updatedAt: "2026-05-14T00:00:02.000Z",
+      timestamp: "2026-05-14T00:00:02.000Z",
+      status: "active",
     }],
   });
 
@@ -4938,7 +4970,7 @@ test("TuiRunController publishes no routed or direct queue response before its r
           sendCommand: async (type, payload) => {
             if (type === "operator.thread") throw new Error("reconciliation unavailable");
             assert.equal(type, "conversation.message.submit");
-            reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+            reservedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
             if (responseKind === "direct") {
               return makeRunnerEvent({
                 type: "run.completed",
@@ -4956,7 +4988,7 @@ test("TuiRunController publishes no routed or direct queue response before its r
               payload: {
                 sessionId: "session-1",
                 threadId,
-                messageId: String(payload.messageId),
+                messageId: String(requireConversationMessageSubmitPayload(payload).messageId),
                 disposition: "started",
                 runId: reservedRunId,
                 view: {
@@ -4966,7 +4998,7 @@ test("TuiRunController publishes no routed or direct queue response before its r
                     ...turn,
                     rootRunId: reservedRunId!,
                     activeRunId: reservedRunId,
-                    sourceMessageId: String(payload.messageId),
+                    sourceMessageId: String(requireConversationMessageSubmitPayload(payload).messageId),
                   })),
                 },
               },
@@ -4997,13 +5029,16 @@ test("TuiRunController rejects a result-less failed response with the wrong top-
   const harness = createRunHarness({
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
-      reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+      reservedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return makeRunnerEvent({
         type: "run.failed",
         sessionId: "session-wrong",
         threadId: "thread-main:session-1",
         runId: reservedRunId,
-        payload: { error: { code: "RUN_FAILED", message: "wrong session" } },
+        payload: {
+          result: undefined as never,
+          error: { code: "RUN_FAILED", message: "wrong session" },
+        },
       });
     },
   });
@@ -5030,13 +5065,16 @@ test("TuiRunController treats an exact result-less queued failure as preaccept r
     },
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
-      reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+      reservedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return makeRunnerEvent({
         type: "run.failed",
         sessionId: "session-1",
         threadId,
         runId: reservedRunId,
-        payload: { error: { code: "RUN_START_REJECTED", message: "rejected before acceptance" } },
+        payload: {
+          result: undefined as never,
+          error: { code: "RUN_START_REJECTED", message: "rejected before acceptance" },
+        },
       });
     },
   });
@@ -5070,13 +5108,14 @@ test("TuiRunController does not treat a result-less checkpoint failure as accept
     sendCommand: async (type, payload) => {
       commands.push(type);
       assert.equal(type, "conversation.message.submit");
-      reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+      reservedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return makeRunnerEvent({
         type: "run.failed",
         sessionId: "session-1",
         threadId,
         runId: reservedRunId,
         payload: {
+          result: undefined as never,
           error: {
             code: "CONTEXT_CHECKPOINT_PENDING",
             message: "checkpoint was rejected before run acceptance",
@@ -5141,7 +5180,7 @@ test("TuiRunController rejects a response after its captured owner is deleted", 
   const harness = createRunHarness({
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
-      reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+      reservedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       dispatchedResolve?.();
       return await new Promise<RunnerEvent>((resolve) => { release = resolve; });
     },
@@ -5193,14 +5232,14 @@ test("TuiRunController rejects ownership when deletion occurs during awaited vie
     },
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       deleteDuringInstall = true;
       return makeRunnerEvent({
         type: "conversation.message.routed",
         payload: {
           sessionId: "session-1",
           threadId: "thread-main:session-1",
-          messageId: String(payload.messageId),
+          messageId: String(requireConversationMessageSubmitPayload(payload).messageId),
           disposition: "replied",
           runId,
           view: {
@@ -5247,9 +5286,9 @@ test("TuiRunController rejects ownership when deletion occurs during response pe
         payload: {
           sessionId: "session-1",
           threadId: "thread-main:session-1",
-          messageId: String(payload.messageId),
+          messageId: String(requireConversationMessageSubmitPayload(payload).messageId),
           disposition: "queued",
-          followUpId: `follow-up:${String(payload.messageId)}`,
+          followUpId: `follow-up:${String(requireConversationMessageSubmitPayload(payload).messageId)}`,
           view: makeConversationView({ active: true }),
         },
       });
@@ -5330,8 +5369,8 @@ test("TuiRunController exactly settles an indeterminate queue journal before rel
             });
           }
           assert.equal(type, "conversation.message.submit");
-          const messageId = String(payload.messageId);
-          const runId = String((payload.turn as Record<string, unknown>).runId);
+          const messageId = String(requireConversationMessageSubmitPayload(payload).messageId);
+          const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
           submittedMessages.push(messageId);
           return makeRunnerEvent({
             type: "conversation.message.routed",
@@ -5426,13 +5465,13 @@ test("TuiRunController settles mixed indeterminate records from their current no
         });
       }
       assert.equal(type, "conversation.message.submit");
-      q3RunId = String((payload.turn as Record<string, unknown>).runId);
+      q3RunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return makeRunnerEvent({
         type: "conversation.message.routed",
         payload: {
           sessionId: "session-1",
           threadId,
-          messageId: String(payload.messageId),
+          messageId: String(requireConversationMessageSubmitPayload(payload).messageId),
           disposition: "queued",
           runId: q3RunId,
           followUpId: "follow-up:mixed-q3",
@@ -5480,13 +5519,13 @@ test("TuiRunController reconstructs an indeterminate queue barrier after restart
         });
       }
       assert.equal(type, "conversation.message.submit");
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return makeRunnerEvent({
         type: "conversation.message.routed",
         payload: {
           sessionId: "session-1",
           threadId,
-          messageId: String(payload.messageId),
+          messageId: String(requireConversationMessageSubmitPayload(payload).messageId),
           disposition: "queued",
           runId,
           view: makeConversationView({ active: true }),
@@ -5552,7 +5591,7 @@ test("TuiRunController applies a delayed fresh terminal to captured A after focu
   const harness = createRunHarness({
     sendCommand: async (type, payload) => {
       assert.equal(type, "conversation.message.submit");
-      reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+      reservedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       dispatchedResolve?.();
       return await new Promise<RunnerEvent>((resolve) => { release = resolve; });
     },
@@ -5601,7 +5640,7 @@ test("TuiRunController recovers a fresh submission on captured A after focus mov
   harness = createRunHarness({
     sendCommand: async (type, payload) => {
       if (type === "conversation.message.submit") {
-        reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+        reservedRunId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
         const owner = harness.uiStore.getState().activeSession;
         const visible: TuiSessionMeta = {
           ...owner,
@@ -5724,7 +5763,6 @@ test("TuiRunController applies a delayed operator-control reply to captured A af
       sessionId: "session-1",
       threadId: "thread-main:session-1",
       disposition: "accepted",
-      requestId,
       runId: "run-reply-focus",
       view: {
         ...makeConversationView({ active: true }),
@@ -5865,6 +5903,7 @@ test("TuiRunController settles pre-route queued start and terminal before a dela
                     messageId,
                     disposition: "started",
                     runId,
+                    createdAt: "2026-08-29T00:00:00.000Z",
                   }],
                   conversationTurns: [{
                     turnId: `turn-pre-route:${eventType}`,
@@ -5885,7 +5924,7 @@ test("TuiRunController settles pre-route queued start and terminal before a dela
             });
           }
           assert.equal(type, "conversation.message.submit");
-          runId = String((payload.turn as Record<string, unknown>).runId);
+          runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
           dispatchedResolve?.();
           return await new Promise<RunnerEvent>((resolve) => { releaseRoute = resolve; });
         },
@@ -5983,7 +6022,7 @@ test("TuiRunController settles an exact pending queued terminal before its route
         },
         sendCommand: async (type, payload) => {
           assert.equal(type, "conversation.message.submit");
-          runId = String((payload.turn as Record<string, unknown>).runId);
+          runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
           dispatchedResolve?.();
           return await new Promise<RunnerEvent>((resolve) => { releaseRoute = resolve; });
         },
@@ -6283,7 +6322,7 @@ test("TuiRunController excludes the exact optimistic message from submitted mode
     submittedMessage: "next task",
   }), true);
 
-  const turn = harness.commands[0]?.payload.turn as { history?: Array<{ text: string }> } | undefined;
+  const turn = requireConversationMessageSubmitPayload(harness.commands[0]?.payload).turn as { history?: Array<{ text: string }> } | undefined;
   assert.equal(turn?.history?.some((line) => line.text === "next task"), false);
   assert.equal(turn?.history?.some((line) => line.text === "prior"), true);
 });
@@ -6383,7 +6422,7 @@ test("TuiRunController falls back to authoritative conversation routing when a l
   });
 
   assert.equal(harness.commands[0]?.type, "conversation.message.submit");
-  assert.equal((harness.commands[0]?.payload.turn as Record<string, unknown>).message, "continue");
+  assert.equal((requireConversationMessageSubmitPayload(harness.commands[0]?.payload).turn as Record<string, unknown>).message, "continue");
   assert.equal(harness.uiStore.getState().activeSession.pendingWaitFor, undefined);
 });
 
@@ -6392,7 +6431,7 @@ test("TuiRunController emits an explicit terminal marker for scripted completion
   const harness = createRunHarness({
     scripted: true,
     sendCommand: async (_type, payload) => {
-      runId = String((payload.turn as Record<string, unknown>).runId);
+      runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       const view = makeConversationView({ active: true });
       return makeRunnerEvent({
         type: "conversation.message.routed",
@@ -6453,7 +6492,7 @@ test("TuiRunController tags and retains only runtime waiting prompts on continua
     sendCommand: async (type, payload) => {
       harness.commands.push({ type, payload: payload as unknown as Record<string, unknown> });
       callCount += 1;
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       runIds.push(runId);
       return makeRunnerEvent({
         type: "run.completed",
@@ -6509,7 +6548,7 @@ test("TuiRunController tags and retains only runtime waiting prompts on continua
   });
 
   await harness.controller.startActiveTurn({ submittedMessage: "Use this one" });
-  const resumedTurn = harness.commands[1]?.payload.turn as Record<string, unknown>;
+  const resumedTurn = requireConversationMessageSubmitPayload(harness.commands[1]?.payload).turn as Record<string, unknown>;
   assert.deepEqual(resumedTurn.history, [
     {
       role: "user",
@@ -6609,7 +6648,7 @@ test("TuiRunController forceFreshTurn sends user.message and clears pending wait
   });
 
   assert.equal(harness.commands[0]?.type, "conversation.message.submit");
-  const turn = harness.commands[0]?.payload.turn as Record<string, unknown>;
+  const turn = requireConversationMessageSubmitPayload(harness.commands[0]?.payload).turn as Record<string, unknown>;
   assert.equal(turn.eventType, undefined);
   assert.equal(turn.message, "stop editing copy and inspect the rendered app");
   assert.equal(turn.resumeBlockedRun, undefined);
@@ -6757,7 +6796,7 @@ test("TuiRunController recovers compact context checkpoints and retries the subm
         });
       }
       if (commands.filter((command) => command.type === "conversation.message.submit").length === 1) {
-        const runId = String((payload.turn as Record<string, unknown>).runId);
+        const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
         return makeRunnerEvent({
           type: "run.failed",
           commandId: "command-checkpoint",
@@ -6776,7 +6815,7 @@ test("TuiRunController recovers compact context checkpoints and retries the subm
           },
         });
       }
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return makeRunnerEvent({
         type: "run.completed",
         commandId: "command-retry",
@@ -6799,7 +6838,7 @@ test("TuiRunController recovers compact context checkpoints and retries the subm
   });
 
   assert.equal(commands[0]?.type, "conversation.message.submit");
-  assert.equal((commands[0]?.payload.turn as Record<string, unknown>).eventType, undefined);
+  assert.equal((requireConversationMessageSubmitPayload(commands[0]?.payload).turn as Record<string, unknown>).eventType, undefined);
   assert.equal(commands[1]?.type, "operator.control");
   assert.deepEqual(commands[1]?.payload, {
     action: "resolve_context_checkpoint",
@@ -6809,8 +6848,8 @@ test("TuiRunController recovers compact context checkpoints and retries the subm
   });
   assert.equal((commands[1]?.metadata?.profile as { id?: string } | undefined)?.id, "kestrel");
   assert.equal(commands[2]?.type, "conversation.message.submit");
-  assert.equal((commands[2]?.payload.turn as Record<string, unknown>).eventType, undefined);
-  assert.equal((commands[2]?.payload.turn as Record<string, unknown>).resumeBlockedRun, undefined);
+  assert.equal((requireConversationMessageSubmitPayload(commands[2]?.payload).turn as Record<string, unknown>).eventType, undefined);
+  assert.equal((requireConversationMessageSubmitPayload(commands[2]?.payload).turn as Record<string, unknown>).resumeBlockedRun, undefined);
   assert.equal(harness.uiStore.getState().errorOverlay, undefined);
   assert.match(harness.history.find((line) => line.role === "system")?.text ?? "", /Compacted context and continued/u);
 });
@@ -6835,8 +6874,8 @@ test("TuiRunController gives a queued checkpoint retry fresh identity across lat
       }
       assert.equal(type, "conversation.message.submit");
       submissionCount += 1;
-      const runId = String((payload.turn as Record<string, unknown>).runId);
-      submissionIdentities.push({ messageId: String(payload.messageId), runId });
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
+      submissionIdentities.push({ messageId: String(requireConversationMessageSubmitPayload(payload).messageId), runId });
       if (submissionCount === 1) {
         return makeRunnerEvent({
           type: "run.failed",
@@ -6871,10 +6910,10 @@ test("TuiRunController gives a queued checkpoint retry fresh identity across lat
         payload: {
           sessionId: "session-1",
           threadId: "thread-main:session-1",
-          messageId: String(payload.messageId),
+          messageId: String(requireConversationMessageSubmitPayload(payload).messageId),
           disposition: "queued",
           runId,
-          followUpId: `follow-up:${String(payload.messageId)}`,
+          followUpId: `follow-up:${String(requireConversationMessageSubmitPayload(payload).messageId)}`,
           view: makeConversationView({ active: true }),
         },
       });
@@ -6941,10 +6980,21 @@ test("TuiRunController keeps checkpoint recovery bound to captured A after focus
     resolveWorkspaceForSession: async (session) => {
       resolvedWorkspaces.push(session.sessionId);
       return {
-        binding: "active",
-        workspaceId: "workspace-a",
-        root: "/workspace/a",
-        runtimeContext: { root: "/workspace/a" },
+        rootPath: "/workspace/a",
+        manifest: { workspaceId: "workspace-a" },
+        registryEntry: {
+          workspaceId: "workspace-a",
+          rootPath: "/workspace/a",
+          automationEnabled: false,
+          discoveredAt: "2026-08-29T00:00:00.000Z",
+          updatedAt: "2026-08-29T00:00:00.000Z",
+        },
+        runtimeContext: {
+          workspaceId: "workspace-a",
+          workspaceRoot: "/workspace/a",
+          appRoot: "/workspace/a",
+          commands: {},
+        },
       } as ResolvedWorkspace;
     },
     beforeSetSessionState: async (sessionId, patch) => {
@@ -6963,7 +7013,7 @@ test("TuiRunController keeps checkpoint recovery bound to captured A after focus
       }
       assert.equal(type, "conversation.message.submit");
       submissionCount += 1;
-      const turn = payload.turn as Record<string, unknown>;
+      const turn = requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>;
       submittedSessions.push(String(turn.sessionId));
       const runId = String(turn.runId);
       if (submissionCount === 1) {
@@ -7022,7 +7072,7 @@ test("TuiRunController keeps checkpoint recovery bound to captured A after focus
 test("TuiRunController does not auto-recover shape-changing context checkpoints", async () => {
   const harness = createRunHarness({
     sendCommand: async (_type, payload) => {
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return makeRunnerEvent({
         type: "run.failed",
         commandId: "command-checkpoint",
@@ -7064,7 +7114,7 @@ test("TuiRunController attempts context checkpoint recovery only once", async ()
           },
         });
       }
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       return makeRunnerEvent({
         type: "run.failed",
         commandId: "command-checkpoint",
@@ -7098,7 +7148,7 @@ test("TuiRunController gives direct run failures a stable terminal identity", as
   let controller: TuiRunController | undefined;
   const harness = createRunHarness({
     sendCommand: async (_type, payload) => {
-      const runId = String((payload.turn as Record<string, unknown>).runId);
+      const runId = String((requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown>).runId);
       controller!.onRunnerEvent(makeRunnerEvent({
         type: "run.started",
         commandId: "command-stable-failure",
@@ -7229,7 +7279,7 @@ test("TuiRunController rejects run A claiming reserved message B after restart a
     },
     sendCommand: async (type, payload) => {
       if (type === "conversation.message.submit") {
-        dispatchedReservation = (payload.turn as Record<string, unknown> | undefined)?.runId as string | undefined;
+        dispatchedReservation = (requireConversationMessageSubmitPayload(payload).turn as Record<string, unknown> | undefined)?.runId as string | undefined;
         return makeRunnerEvent({
           type: "run.completed",
           sessionId: "session-1",

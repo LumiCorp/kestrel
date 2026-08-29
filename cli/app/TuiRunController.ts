@@ -6,7 +6,11 @@ import type {
   TuiProfile,
   TuiSessionMeta,
 } from "../contracts.js";
-import type { RunnerEvent, SessionDescribedEventPayload } from "../protocol/contracts.js";
+import type {
+  RunnerCommandMetadata,
+  RunnerEvent,
+  SessionDescribedEventPayload,
+} from "../protocol/contracts.js";
 import { randomUUID } from "node:crypto";
 import {
   buildWaitingSystemText,
@@ -93,7 +97,7 @@ interface CapturedSubmissionOwner {
   sessionId: string;
   profile: TuiProfile;
   transcript: TranscriptLine[];
-  runnerMetadata: Record<string, unknown>;
+  runnerMetadata: RunnerCommandMetadata;
 }
 
 interface QueueSettlementLease {
@@ -835,8 +839,8 @@ export class TuiRunController {
         const responseSession = readSubmittingSession();
         const alreadyAcceptedQueueSubmission = queueSubmission
           && responseSession?.acceptedRunId === reservedRunId
-          && responseSession.acceptedRunMessageId === submissionMessageId
-          && responseSession.acceptedRunThreadId === threadId;
+          && responseSession?.acceptedRunMessageId === submissionMessageId
+          && responseSession?.acceptedRunThreadId === threadId;
         const alreadyTerminalQueueSubmission = queueSubmission
           && responseSession?.terminalQueuedRuns?.some((terminal) =>
             terminal.runId === reservedRunId
@@ -2150,6 +2154,7 @@ export class TuiRunController {
           && recoveredView.thread.sessionId === submittingSessionId
           && recoveredView.thread.threadId === threadId
           && recoveredRoute !== undefined
+          && recoveredRouteRunId !== undefined
           && exactRecoveredRoute
         ) {
           if (await this.installConversationView(recoveredView) === false) return false;
@@ -2566,8 +2571,10 @@ export class TuiRunController {
       && event.sessionId !== undefined
       && event.runId !== undefined
     ) {
+      const eventSessionId = event.sessionId;
+      const eventRunId = event.runId;
       const session = this.context.uiStore.getState().sessions.find(
-        (candidate) => candidate.sessionId === event.sessionId,
+        (candidate) => candidate.sessionId === eventSessionId,
       );
       const exactForegroundStart = session?.delegation === undefined
         && event.threadId !== undefined
@@ -2639,25 +2646,31 @@ export class TuiRunController {
       ) return;
       if (exactBackgroundStart) {
         this.applySharedActivityEvent(event);
-        this.observedActiveRunBySession.set(event.sessionId, event.runId);
-        const acceptedRuns = this.acceptedRunSourceMessageBySession.get(event.sessionId) ?? new Map();
-        acceptedRuns.set(event.runId, event.payload.sourceMessageId);
-        this.acceptedRunSourceMessageBySession.set(event.sessionId, acceptedRuns);
+        this.observedActiveRunBySession.set(eventSessionId, eventRunId);
+        const acceptedRuns = this.acceptedRunSourceMessageBySession.get(eventSessionId) ?? new Map();
+        acceptedRuns.set(eventRunId, event.payload.sourceMessageId);
+        this.acceptedRunSourceMessageBySession.set(eventSessionId, acceptedRuns);
       }
-      if (exactForegroundStart || exactQueuedForegroundStart || exactAcceptedForegroundStart) {
-        void this.runQueueJournalTransaction(event.sessionId, async () => {
+      if (
+        (exactForegroundStart || exactQueuedForegroundStart || exactAcceptedForegroundStart)
+        && event.threadId !== undefined
+        && event.payload.sourceMessageId !== undefined
+      ) {
+        const eventThreadId = event.threadId;
+        const sourceMessageId = event.payload.sourceMessageId;
+        void this.runQueueJournalTransaction(eventSessionId, async () => {
           const accepted = await this.context.syncForegroundSessionProgress({
-            sessionId: event.sessionId,
-            threadId: event.threadId!,
-            runId: event.runId,
-            messageId: event.payload.sourceMessageId!,
+            sessionId: eventSessionId,
+            threadId: eventThreadId,
+            runId: eventRunId,
+            messageId: sourceMessageId,
           });
           if (accepted === false) return;
           this.applySharedActivityEvent(event);
-          this.observedActiveRunBySession.set(event.sessionId, event.runId);
-          const acceptedRuns = this.acceptedRunSourceMessageBySession.get(event.sessionId) ?? new Map();
-          acceptedRuns.set(event.runId, event.payload.sourceMessageId);
-          this.acceptedRunSourceMessageBySession.set(event.sessionId, acceptedRuns);
+          this.observedActiveRunBySession.set(eventSessionId, eventRunId);
+          const acceptedRuns = this.acceptedRunSourceMessageBySession.get(eventSessionId) ?? new Map();
+          acceptedRuns.set(eventRunId, sourceMessageId);
+          this.acceptedRunSourceMessageBySession.set(eventSessionId, acceptedRuns);
         });
       }
       if (exactBackgroundStart) {
@@ -3979,7 +3992,10 @@ function hasExactQueuedRunEvidence(
   ) ?? [];
   if (matchingRoutes.length !== 1) return false;
   if (candidate.status === "COMPLETED" || candidate.status === "FAILED") {
-    return hasExactQueuedTerminalTurn(view, candidate);
+    return hasExactQueuedTerminalTurn(view, {
+      ...candidate,
+      status: candidate.status,
+    });
   }
   return view.activeRun?.runId === candidate.runId
     && view.activeRun.status === candidate.status;
