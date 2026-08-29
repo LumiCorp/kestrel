@@ -62,7 +62,7 @@ Therefore, resolving a developer profile and passing its immutable profile ID to
 
 ### Exact incident
 
-`default-tmp-3` is bound to `/Users/gregasher/Projects/tmp` and stores the Kestrel authoring profile, but no environment identity. Its runtime history records the safe CLI assembly, `code.execute`, and no `dev.shell.run`. The agent ran Bash in the isolated container and reported that Node package managers were absent.
+`default-tmp-3` is bound to a local temporary workspace and stores the Kestrel authoring profile, but no environment identity. Its runtime history records the safe CLI assembly, `code.execute`, and no `dev.shell.run`. The agent ran Bash in the isolated container and reported that Node package managers were absent.
 
 The first wrong component was the TUI selection flow. Local Core's safe default and the Docker executor behaved as specified. The agent's explanation was also wrong because the model-visible code-tool contract did not make the project-shell distinction strong enough.
 
@@ -181,7 +181,7 @@ If a started legacy session has no persisted identity and no recoverable runtime
 
 The TUI compares persisted and runtime environment identity on resume. A mismatch is a consistency failure that must be surfaced; neither side silently wins and no automatic assembly change occurs.
 
-For `default-tmp-3`, the runtime identity is `cli_safe_local`. It remains a Safe sandbox session. The immediate product path to npm and pnpm is a new Developer workspace session in `/Users/gregasher/Projects/tmp`.
+For `default-tmp-3`, the runtime identity is `cli_safe_local`. It remains a Safe sandbox session. The immediate product path to npm and pnpm is a new Developer workspace session bound to that same local workspace.
 
 ### Model-visible tool distinction
 
