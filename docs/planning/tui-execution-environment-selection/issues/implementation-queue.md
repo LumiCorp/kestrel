@@ -4,7 +4,7 @@ This queue contains the original two-ticket product delivery. Move each issue be
 
 ## Ready
 
-None.
+- [Let users choose and understand the TUI execution environment](02-expose-environment-controls-and-language.md)
 
 ## In progress
 
@@ -12,15 +12,15 @@ None.
 
 ## Blocked
 
-- [Let users choose and understand the TUI execution environment](02-expose-environment-controls-and-language.md) — blocked by [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md)
+None.
 
 ## Implemented
 
-- [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md)
+None.
 
 ## Done
 
-None.
+- [Bind every TUI session to one exact execution environment](01-bind-tui-sessions-to-exact-environments.md)
 
 ## Scope note
 
