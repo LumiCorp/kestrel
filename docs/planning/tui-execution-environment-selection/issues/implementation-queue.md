@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Serialize session-file authority](27-serialize-session-file-authority.md)
+None.
 
 ## In progress
 
@@ -16,6 +16,7 @@ None.
 
 ## Implemented
 
+- [Serialize session-file authority](27-serialize-session-file-authority.md)
 - [Unify durable queue publication](26-unify-durable-queue-publication.md)
 - [Commit queue authority before publication](25-commit-queue-authority-before-publication.md)
 - [Persist accepted queue order authority](24-persist-accepted-queue-order-authority.md)

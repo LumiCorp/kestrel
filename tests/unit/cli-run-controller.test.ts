@@ -658,7 +658,7 @@ function createRunHarness(input: {
       } = terminalInput;
       const state = uiStore.getState();
       const session = state.sessions.find((candidate) => candidate.sessionId === sessionId);
-      if (session === undefined || session.delegation !== undefined) return false;
+      if (session === undefined) return false;
       const reservation = session.queuedRunReservations?.find((candidate) =>
         candidate.runId === runId && candidate.threadId === threadId
       );
@@ -776,6 +776,16 @@ function createRunHarness(input: {
               ...(settledGraph.terminalQueuedRuns ?? []),
               { ...orderedEvidence, status: terminalStatus },
             ],
+        ...(session.delegation === undefined
+          ? {}
+          : {
+              delegation: {
+                ...session.delegation,
+                status: result.output.status === "COMPLETED"
+                  ? "COMPLETED" as const
+                  : "FAILED" as const,
+              },
+            }),
       };
       uiStore.patch({
         sessions: state.sessions.map((candidate) =>
@@ -4556,6 +4566,44 @@ test("TuiRunController rejects a result-less failed response with the wrong top-
   assert.equal(session.pendingRunMessageId, "message-wrong-resultless");
   assert.notEqual(session.lastRunStatus, "FAILED");
   assert.equal(session.terminalQueuedRuns, undefined);
+});
+
+test("TuiRunController treats an exact result-less queued failure as preaccept rejection", async () => {
+  let reservedRunId: string | undefined;
+  const threadId = "thread-main:session-1";
+  const harness = createRunHarness({
+    activeSessionPatch: {
+      acceptedRunId: "run-r0",
+      acceptedRunMessageId: "message-r0",
+      acceptedRunThreadId: threadId,
+    },
+    sendCommand: async (type, payload) => {
+      assert.equal(type, "conversation.message.submit");
+      reservedRunId = String((payload.turn as Record<string, unknown>).runId);
+      return makeRunnerEvent({
+        type: "run.failed",
+        sessionId: "session-1",
+        threadId,
+        runId: reservedRunId,
+        payload: { error: { code: "RUN_START_REJECTED", message: "rejected before acceptance" } },
+      });
+    },
+  });
+  installActiveConversationView(harness.controller);
+  harness.uiStore.patch({ running: true });
+
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId: "message-resultless-queued",
+    submittedMessage: "queue then reject",
+    queueRequested: true,
+  }), false);
+  const session = harness.uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-r0");
+  assert.equal(session.acceptedRunMessageId, "message-r0");
+  assert.equal(session.pendingQueueSubmissions?.some((item) => item.runId === reservedRunId) ?? false, false);
+  assert.equal(session.queuedRunReservations?.some((item) => item.runId === reservedRunId) ?? false, false);
+  assert.equal(session.terminalQueuedRuns?.some((item) => item.runId === reservedRunId) ?? false, false);
+  assert.equal(harness.history.some((line) => line.output?.runId === reservedRunId), false);
 });
 
 test("TuiRunController prevents dispatch when the captured queue owner is deleted after its barrier", async () => {

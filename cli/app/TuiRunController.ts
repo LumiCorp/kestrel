@@ -1331,7 +1331,8 @@ export class TuiRunController {
         const result = response.payload.result;
         const failure = resolveRunFailureSummary(response.payload);
         const resultRunId = result?.output.runId ?? response.runId;
-        requestAccepted = resultRunId !== undefined
+        requestAccepted = result !== undefined
+          && resultRunId !== undefined
           && (
             exactPendingQueueSubmission !== undefined
             || exactAlreadyAcceptedSubmission
@@ -1397,11 +1398,13 @@ export class TuiRunController {
         if (recovery.recovered) {
           return true;
         }
-        const settledQueueGraph = settlePendingQueueGraph("FAILED");
+        const settledQueueGraph = settlePendingQueueGraph(
+          result === undefined ? undefined : "FAILED",
+        );
         await setResponseSessionState({
           started: pendingSession.started || requestAccepted,
           updatedAt: new Date().toISOString(),
-          ...(responseCanInstallCurrentLifecycle
+          ...(responseCanInstallCurrentLifecycle && requestAccepted
             ? { pendingWaitFor: undefined, lastRunStatus: "FAILED" as const }
             : {}),
           pendingManualCompaction: false,
@@ -1456,7 +1459,11 @@ export class TuiRunController {
             ...(failure.message !== undefined ? { message: failure.message } : {}),
           },
         );
-        if (submittingSessionIsActive() && responseCanInstallCurrentLifecycle) {
+        if (
+          submittingSessionIsActive()
+          && responseCanInstallCurrentLifecycle
+          && (queueSubmission === false || requestAccepted)
+        ) {
           this.context.uiStore.patch({
             running: false,
             statusLine: this.context.withMcpSummary("failed"),
@@ -3375,7 +3382,7 @@ export class TuiRunController {
     const session = this.context.uiStore.getState().sessions.find(
       (candidate) => candidate.sessionId === sessionId,
     );
-    if (session === undefined || session.delegation !== undefined) return false;
+    if (session === undefined) return false;
     return findQueuedRunReservation(session.queuedRunReservations, runId, threadId) !== undefined
       || session.pendingQueueSubmissions?.some(
         (candidate) => candidate.runId === runId && candidate.threadId === threadId,

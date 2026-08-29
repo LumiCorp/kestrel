@@ -279,6 +279,7 @@ export class App {
   };
   private bootstrapHintShown = false;
   private transcriptAppendQueue: Promise<void> = Promise.resolve();
+  private sessionsFileCommitTail: Promise<void> = Promise.resolve();
   private readonly queueSessionCommitTailBySession = new Map<string, Promise<void>>();
   private startTaskJourney: StartTaskJourneyState | undefined;
   private childMissionJourney: ChildMissionJourneyState | undefined;
@@ -3466,7 +3467,7 @@ export class App {
           ...(current.queuedRunReservations ?? []),
           ...(current.terminalQueuedRuns ?? []),
         ].find((record) => record.runId === exactRunId);
-    await this.updateAcceptedBackgroundSession({
+    const committed = await this.updateAcceptedBackgroundSession({
       ...current.delegation,
       status: nextStatus,
       errorCode: undefined,
@@ -3498,7 +3499,7 @@ export class App {
           }
         : {}),
     });
-    if (runtimeStatus === "COMPLETED" || runtimeStatus === "FAILED") {
+    if (committed && (runtimeStatus === "COMPLETED" || runtimeStatus === "FAILED")) {
       const accepted = this.sessionsFile.sessions.find((item) => item.sessionId === payload.sessionId);
       if (accepted !== undefined) {
         await this.recoverTerminalMessages(accepted).catch(() => undefined);
@@ -4245,39 +4246,41 @@ export class App {
     const previous = this.queueSessionCommitTailBySession.get(sessionId) ?? Promise.resolve();
     let committed: TuiSessionMeta | undefined;
     const operation = previous.catch(() => undefined).then(async () => {
-      const sourceFile = this.sessionsFile;
-      const sourceSession = sourceFile.sessions.find((session) => session.sessionId === sessionId);
-      if (sourceSession === undefined) return;
-      const projectedSession = mutation(sourceSession);
-      if (projectedSession === undefined) return;
-      const activeSessionName = sourceFile.activeSessionName;
-      let privateSnapshot = this.sessionStore.upsert(sourceFile, projectedSession);
-      if (sourceSession.name !== activeSessionName) {
-        privateSnapshot = { ...privateSnapshot, activeSessionName };
-      }
-      try {
-        await this.sessionStore.save(privateSnapshot);
-      } catch (error) {
-        this.recordPersistenceFailure("sessions.queue_commit", error);
-        return;
-      }
-      const currentFile = this.sessionsFile;
-      const currentSession = currentFile.sessions.find((session) => session.sessionId === sessionId);
-      if (currentSession !== sourceSession) return;
-      const currentActiveSessionName = currentFile.activeSessionName;
-      let publishedFile = this.sessionStore.upsert(currentFile, projectedSession);
-      if (sourceSession.name !== currentActiveSessionName) {
-        publishedFile = { ...publishedFile, activeSessionName: currentActiveSessionName };
-      }
-      this.sessionsFile = publishedFile;
-      const state = this.uiStore.getState();
-      this.uiStore.patch({
-        sessions: publishedFile.sessions,
-        ...(state.activeSession.sessionId === sessionId
-          ? { activeSession: projectedSession }
-          : {}),
+      await this.coordinateSessionsFileCommit(async () => {
+        const sourceFile = this.sessionsFile;
+        const sourceSession = sourceFile.sessions.find((session) => session.sessionId === sessionId);
+        if (sourceSession === undefined) return;
+        const projectedSession = mutation(sourceSession);
+        if (projectedSession === undefined) return;
+        const activeSessionName = sourceFile.activeSessionName;
+        let privateSnapshot = this.sessionStore.upsert(sourceFile, projectedSession);
+        if (sourceSession.name !== activeSessionName) {
+          privateSnapshot = { ...privateSnapshot, activeSessionName };
+        }
+        try {
+          await this.sessionStore.save(privateSnapshot);
+        } catch (error) {
+          this.recordPersistenceFailure("sessions.queue_commit", error);
+          return;
+        }
+        const currentFile = this.sessionsFile;
+        const currentSession = currentFile.sessions.find((session) => session.sessionId === sessionId);
+        if (currentSession !== sourceSession) return;
+        const currentActiveSessionName = currentFile.activeSessionName;
+        let publishedFile = this.sessionStore.upsert(currentFile, projectedSession);
+        if (sourceSession.name !== currentActiveSessionName) {
+          publishedFile = { ...publishedFile, activeSessionName: currentActiveSessionName };
+        }
+        this.sessionsFile = publishedFile;
+        const state = this.uiStore.getState();
+        this.uiStore.patch({
+          sessions: publishedFile.sessions,
+          ...(state.activeSession.sessionId === sessionId
+            ? { activeSession: projectedSession }
+            : {}),
+        });
+        committed = projectedSession;
       });
-      committed = projectedSession;
     });
     const tail = operation.then(() => undefined, () => undefined);
     this.queueSessionCommitTailBySession.set(sessionId, tail);
@@ -5424,7 +5427,7 @@ export class App {
     const initialSession = initialPersistedSession === undefined
       ? undefined
       : { ...initialPersistedSession, ...normalizeTuiQueueGraph(initialPersistedSession) };
-    if (initialSession === undefined || initialSession.delegation !== undefined) return false;
+    if (initialSession === undefined) return false;
     const initialActiveProfile = this.uiStore.getState().activeProfile;
     const loadedProfiles = input.result.operatorAffordance !== undefined
       && initialSession.profileId !== initialActiveProfile.id
@@ -5434,7 +5437,7 @@ export class App {
     const session = persistedSession === undefined
       ? undefined
       : { ...persistedSession, ...normalizeTuiQueueGraph(persistedSession) };
-    if (session === undefined || session.delegation !== undefined) return false;
+    if (session === undefined) return false;
     const currentActiveProfile = this.uiStore.getState().activeProfile;
     const owningProfile = input.result.operatorAffordance === undefined
       ? undefined
@@ -5473,6 +5476,7 @@ export class App {
           status: terminalStatus,
         })
       );
+    if (terminalStatus !== undefined && hasExactTerminalAuthority === false) return false;
     let currentQueueGraph = normalizeTuiQueueGraph(session);
     let orderedEvidence = queuedEvidence;
     if (
@@ -5564,6 +5568,23 @@ export class App {
             }),
           }
         : {}),
+      ...(session.delegation === undefined
+        ? {}
+        : {
+            delegation: {
+              ...session.delegation,
+              status: input.result.output.status === "COMPLETED"
+                ? "COMPLETED" as const
+                : input.result.output.status === "WAITING"
+                  ? "WAITING" as const
+                  : "FAILED" as const,
+              errorCode: undefined,
+              errorMessage: input.result.output.status === "FAILED"
+                ? input.result.output.errors[0]?.message
+                : undefined,
+              updatedAt: new Date().toISOString(),
+            },
+          }),
       updatedAt: new Date().toISOString(),
     };
     if (await this.commitProjectedSession(accepted, persistedSession) === false) return false;
@@ -5611,7 +5632,7 @@ export class App {
     if (session.acceptedRunId === input.runId && status === "RUNNING") return;
     if (session.acceptedRunId === input.runId && status === "WAITING") return;
     const nextStatus = input.status ?? "RUNNING";
-    await this.updateAcceptedBackgroundSession({
+    const committed = await this.updateAcceptedBackgroundSession({
       ...session.delegation,
       status: nextStatus,
       errorCode: undefined,
@@ -5641,7 +5662,7 @@ export class App {
           ? "WAITING"
           : undefined,
     });
-    if (nextStatus === "COMPLETED" || nextStatus === "FAILED") {
+    if (committed && (nextStatus === "COMPLETED" || nextStatus === "FAILED")) {
       const accepted = this.sessionsFile.sessions.find((item) => item.sessionId === input.sessionId);
       if (accepted !== undefined) {
         await this.recoverTerminalMessages(accepted).catch(() => undefined);
@@ -5653,21 +5674,36 @@ export class App {
     task: DelegationTaskMeta,
     appendStartedHistory?: boolean,
     patch: Partial<TuiSessionMeta> = {},
-  ): Promise<void> {
+  ): Promise<boolean> {
     const existing = this.sessionsFile.sessions.find(
       (item) => item.sessionId === task.childSessionId,
     );
+    if (existing === undefined) return false;
     const shouldAppendStartedHistory = appendStartedHistory ?? existing?.started !== true;
-    await this.updateTaskSessionFromMeta(task, patch);
-    if (shouldAppendStartedHistory === false) {
-      return;
-    }
-    const accepted = this.sessionsFile.sessions.find(
-      (item) => item.sessionId === task.childSessionId,
+    const accepted = await this.commitQueueSessionMutation(task.childSessionId, (current) =>
+      current !== existing
+        ? undefined
+        : {
+            ...current,
+            profileId: task.profileId,
+            updatedAt: task.updatedAt,
+            started: true,
+            ...patch,
+            delegation: task,
+            lastRunStatus:
+              task.status === "FAILED"
+                ? "FAILED"
+                : task.status === "COMPLETED"
+                  ? "COMPLETED"
+                  : task.status === "WAITING"
+                    ? "WAITING"
+                    : task.status === "RUNNING" || task.status === "RECOVERING"
+                      ? undefined
+                      : current.lastRunStatus,
+          }
     );
-    if (accepted === undefined) {
-      return;
-    }
+    if (accepted === undefined) return false;
+    if (shouldAppendStartedHistory === false) return true;
     await this.appendSessionHistoryLine(
       accepted,
       "system",
@@ -5683,6 +5719,7 @@ export class App {
       undefined,
       `delegation-launched:${task.taskId}`,
     );
+    return true;
   }
 
   private async syncBackgroundSessionResult(
@@ -5877,7 +5914,7 @@ export class App {
       const created = this.createSessionMeta(initialLaunch, resolvedProfile, selectedWorkspace);
       this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, created);
       this.sessionsFile = this.sessionStore.setActive(this.sessionsFile, created.name);
-      await this.sessionStore.save(this.sessionsFile);
+      await this.saveSessionsFile({ requireSessionSave: true });
       this.startupNotices.push(`Started fresh session '${created.name}'.`);
       return {
         profile: resolvedProfile,
@@ -5952,7 +5989,7 @@ export class App {
         });
         const created = this.createSessionMeta(startupLaunch, resolvedProfile, selectedWorkspace);
         this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, created);
-        await this.sessionStore.save(this.sessionsFile);
+        await this.saveSessionsFile({ requireSessionSave: true });
         this.startupNotices.push(
           `Started new session '${created.name}' because launch workspace '${selectedWorkspace.manifest.workspaceId}' differed from restored session workspace '${boundWorkspace.manifest.workspaceId}'.`,
         );
@@ -6013,7 +6050,7 @@ export class App {
       if (requestedSession !== undefined) {
         this.sessionsFile = this.sessionStore.setActive(this.sessionsFile, requestedSession.name);
       }
-      await this.sessionStore.save(this.sessionsFile);
+      await this.saveSessionsFile({ requireSessionSave: true });
       return {
         profile: resolvedProfile,
         session: patched,
@@ -6035,7 +6072,7 @@ export class App {
     });
     const created = this.createSessionMeta(initialLaunch, resolvedProfile, selectedWorkspace);
     this.sessionsFile = this.sessionStore.upsert(this.sessionsFile, created);
-    await this.sessionStore.save(this.sessionsFile);
+    await this.saveSessionsFile({ requireSessionSave: true });
     return {
       profile: resolvedProfile,
       session: created,
@@ -6277,11 +6314,21 @@ export class App {
     requireSessionSave?: boolean | undefined;
   } = {}): Promise<void> {
     try {
-      await this.sessionStore.save(this.sessionsFile);
+      await this.coordinateSessionsFileCommit(async () => {
+        const snapshot = this.sessionsFile;
+        await this.sessionStore.save(snapshot);
+      });
     } catch (error) {
       this.recordPersistenceFailure("sessions.save", error);
       if (options.requireSessionSave === true) throw error;
     }
+  }
+
+  private async coordinateSessionsFileCommit<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.sessionsFileCommitTail;
+    const current = previous.catch(() => undefined).then(operation);
+    this.sessionsFileCommitTail = current.then(() => undefined, () => undefined);
+    return await current;
   }
 
   private async saveProfiles(profiles: TuiProfile[]): Promise<void> {
@@ -6640,7 +6687,12 @@ function reconcileExactQueuedLifecycle(
         view,
         session.acceptedRunId,
       );
+      const acceptedPredecessorConflictsWithActive =
+        session.acceptedRunPredecessorId !== undefined
+        && session.acceptedRunPredecessorId !== durableAcceptedQueuePredecessorId(activeIdentity);
       const acceptedTerminal = persistedAcceptedTerminal ?? (
+        acceptedPredecessorConflictsWithActive === false
+        &&
         (acceptedTerminalStatus === "COMPLETED" || acceptedTerminalStatus === "FAILED")
         && hasExactQueuedTerminalTurn(view, {
           runId: session.acceptedRunId,
