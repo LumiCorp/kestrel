@@ -72,7 +72,11 @@ import { normalizeSubmittedLine } from "./submitInput.js";
 import { OperatorController, type OperatorControlApplyAction } from "./OperatorController.js";
 import { PaletteController, type PaletteCommand } from "./PaletteController.js";
 import { SessionController } from "./SessionController.js";
-import { bootstrapTuiApp, runSplashDatabasePreflight } from "./TuiBootstrap.js";
+import {
+  bootstrapTuiApp,
+  resolveProfileForStartup as resolveSharedProfileForStartup,
+  runSplashDatabasePreflight,
+} from "./TuiBootstrap.js";
 import { TuiCommandRouter } from "./TuiCommandRouter.js";
 import type { TuiAppContext, TuiAppOptions } from "./TuiAppContext.js";
 import {
@@ -6021,7 +6025,7 @@ export class App {
 
     const resolvedProfile = await this.resolveProfileForStartup({
       profiles,
-      session: activeSession,
+      session: startupWorkspaceConflict ? undefined : activeSession,
       workspace: selectedWorkspace,
     });
 
@@ -6140,52 +6144,15 @@ export class App {
     session?: TuiSessionMeta | undefined;
     workspace?: ResolvedWorkspace | undefined;
   }): Promise<TuiProfile> {
-    if (this.options.profileId !== undefined) {
-      const explicit = this.profileStore.findById(input.profiles, this.options.profileId);
-      if (explicit === undefined) {
-        throw new Error(`Profile '${this.options.profileId}' not found`);
-      }
-      return explicit;
-    }
-
-    if (input.session !== undefined) {
-      const sessionProfile = this.profileStore.findById(input.profiles, input.session.profileId);
-      if (sessionProfile !== undefined) {
-        return sessionProfile;
-      }
-      this.startupNotices.push(
-        `Session profile '${input.session.profileId}' not found. Falling back to defaults.`,
-      );
-    }
-
-    const settingsProfileId = this.runtimeSettings.defaults.profileId;
-    if (settingsProfileId !== undefined) {
-      const settingsProfile = this.profileStore.findById(input.profiles, settingsProfileId);
-      if (settingsProfile !== undefined) {
-        return this.applyRuntimeSettingsProfileDefaults(settingsProfile);
-      }
-      this.startupNotices.push(
-        `Setup default profile '${settingsProfileId}' not found. Falling back to configured default profile.`,
-      );
-    }
-
-    return this.applyRuntimeSettingsProfileDefaults(this.profileStore.getDefault(input.profiles));
-  }
-
-  private applyRuntimeSettingsProfileDefaults(profile: TuiProfile): TuiProfile {
-    const defaults = this.runtimeSettings.defaults;
-    return {
-      ...profile,
-      ...(defaults.approvalPolicyPackId !== undefined
-        ? { approvalPolicyPackId: defaults.approvalPolicyPackId }
-        : {}),
-      ...(defaults.minimalMode === true
-        ? {
-            defaultInteractionMode: "plan" as const,
-            defaultActSubmode: "safe" as const,
-          }
-        : {}),
-    };
+    return resolveSharedProfileForStartup({
+      options: this.options,
+      profiles: input.profiles,
+      runtimeSettings: this.runtimeSettings,
+      profileStore: this.profileStore,
+      ...(input.session !== undefined ? { session: input.session } : {}),
+      ...(input.workspace !== undefined ? { workspace: input.workspace } : {}),
+      startupNotices: this.startupNotices,
+    });
   }
 
   private async resolveWorkspaceForSession(

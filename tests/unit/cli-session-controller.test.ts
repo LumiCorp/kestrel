@@ -11,6 +11,7 @@ import {
   readTuiEnvironmentIdentityFailure,
   TuiEnvironmentIdentityError,
 } from "../../cli/session/TuiExecutionEnvironment.js";
+import { TuiAuthoringProfileError } from "../../cli/session/TuiAuthoringProfile.js";
 
 
 function makeSession(input: Partial<TuiSessionMeta> & { name: string; sessionId: string }): TuiSessionMeta {
@@ -228,6 +229,73 @@ test("SessionController fails closed when a started target cannot be described",
     (error: unknown) =>
       error instanceof TuiEnvironmentIdentityError
       && error.code === "TUI_ENVIRONMENT_UNKNOWN",
+  );
+  assert.equal(changedActiveSession, false);
+});
+
+test("SessionController fails closed when a started target's authoring profile is unavailable", async () => {
+  const activeProfile: TuiProfile = {
+    id: "active-profile",
+    label: "Active profile",
+    agent: "kestrel",
+    sessionPrefix: "active",
+  };
+  const main = makeSession({
+    name: "main",
+    sessionId: "s-main",
+    profileId: activeProfile.id,
+  });
+  const target = makeSession({
+    name: "target",
+    sessionId: "s-target",
+    profileId: "missing-authoring-profile",
+    environmentPresetId: "cli_dev_local",
+  });
+  let sessionsFile: SessionsFile = {
+    version: 5,
+    activeSessionName: main.name,
+    sessions: [main, target],
+  };
+  let changedActiveSession = false;
+  const context = {
+    uiStore: { getState: () => ({ activeProfile, activeSession: main }) },
+    profileStore: {
+      load: async () => [activeProfile],
+      findById: (profiles: TuiProfile[], profileId: string) =>
+        profiles.find((profile) => profile.id === profileId),
+    },
+    sessionStore: {
+      resolveSelector: () => ({ status: "matched", session: target }),
+      findByName: () => target,
+      setActive: (file: SessionsFile) => {
+        changedActiveSession = true;
+        return file;
+      },
+    },
+    getSessionsFile: () => sessionsFile,
+    setSessionsFile: (next: SessionsFile) => { sessionsFile = next; },
+    client: {
+      sendCommand: async () => ({
+        type: "session.described",
+        payload: {
+          sessionId: target.sessionId,
+          version: 1,
+          activeAssembly: {
+            mode: "explicit",
+            environmentPresetId: "cli_dev_local",
+          },
+        },
+      }),
+    },
+    syncSessionFromDescribePayload: async () => {},
+  } as unknown as SessionControllerContext;
+
+  await assert.rejects(
+    new SessionController(context).switchSession(target.name),
+    (error: unknown) =>
+      error instanceof TuiAuthoringProfileError
+      && error.sessionId === target.sessionId
+      && error.profileId === target.profileId,
   );
   assert.equal(changedActiveSession, false);
 });

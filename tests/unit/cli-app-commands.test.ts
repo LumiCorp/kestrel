@@ -13,6 +13,7 @@ import { App, terminalMessageRecoveryThreadId } from "../../cli/app/App.js";
 import {
   bootstrapTuiApp,
   deriveStartupPersistedUiState,
+  resolveProfileForStartup,
   runSplashDatabasePreflight,
 } from "../../cli/app/TuiBootstrap.js";
 import { applyLocalCoreShellEnvironment, formatCliLocalCoreStatus } from "../../cli/localCoreShell.js";
@@ -30,6 +31,7 @@ import { DelegationReviewView } from "../../cli/ink/views/DelegationReviewView.j
 import { SessionsView } from "../../cli/ink/views/SessionsView.js";
 import { TasksView } from "../../cli/ink/views/TasksView.js";
 import { SessionStore } from "../../cli/session/SessionStore.js";
+import { TuiAuthoringProfileError } from "../../cli/session/TuiAuthoringProfile.js";
 import {
   exactTuiQueueTailRunId,
   normalizeTuiQueueGraph,
@@ -38,7 +40,7 @@ import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { initializeWorkspaceAtRoot } from "../../cli/workspace/WorkspaceResolver.js";
 import type { PaletteCommand } from "../../cli/app/PaletteController.js";
 import type { InkAppController } from "../../cli/ink/AppRoot.js";
-import type { TuiSessionMeta } from "../../cli/contracts.js";
+import type { TuiProfile, TuiSessionMeta } from "../../cli/contracts.js";
 import type { OperatorDelegationWorkspaceSnapshot } from "../../src/operatorShell.js";
 import type { LocalCoreStatus } from "../../src/localCore/contracts.js";
 import { startLocalCoreApiServer } from "../../src/localCore/api.js";
@@ -54,6 +56,74 @@ test("Local Core platform parsing accepts exact Node platform values", () => {
 
 test("TUI recovery resolves the canonical main thread for a session", () => {
   assert.equal(terminalMessageRecoveryThreadId("session-1"), "thread-main:session-1");
+});
+
+test("startup preserves a started session's authoring profile over an explicit profile", async () => {
+  const authoringProfile: TuiProfile = {
+    id: "authoring-profile",
+    label: "Authoring profile",
+    agent: "kestrel",
+    sessionPrefix: "authoring",
+  };
+  const explicitProfile: TuiProfile = {
+    id: "explicit-profile",
+    label: "Explicit profile",
+    agent: "kestrel",
+    sessionPrefix: "explicit",
+  };
+  const session: TuiSessionMeta = {
+    name: "started-session",
+    sessionId: "session-started",
+    profileId: authoringProfile.id,
+    createdAt: "2026-08-29T00:00:00.000Z",
+    updatedAt: "2026-08-29T00:00:00.000Z",
+    started: true,
+  };
+  const profileStore = new ProfileStore(path.join(os.tmpdir(), "tui-authoring-profile-test"));
+
+  const resolved = await resolveProfileForStartup({
+    options: { cwd: process.cwd(), profileId: explicitProfile.id },
+    profiles: [authoringProfile, explicitProfile],
+    runtimeSettings: { version: 1, defaults: {} },
+    profileStore,
+    session,
+    startupNotices: [],
+  });
+
+  assert.equal(resolved.id, authoringProfile.id);
+});
+
+test("startup fails closed when a started session's authoring profile is unavailable", async () => {
+  const availableProfile: TuiProfile = {
+    id: "available-profile",
+    label: "Available profile",
+    agent: "kestrel",
+    sessionPrefix: "available",
+  };
+  const session: TuiSessionMeta = {
+    name: "started-session",
+    sessionId: "session-started",
+    profileId: "missing-authoring-profile",
+    createdAt: "2026-08-29T00:00:00.000Z",
+    updatedAt: "2026-08-29T00:00:00.000Z",
+    started: true,
+  };
+  const profileStore = new ProfileStore(path.join(os.tmpdir(), "tui-missing-authoring-profile-test"));
+
+  await assert.rejects(
+    resolveProfileForStartup({
+      options: { cwd: process.cwd(), profileId: availableProfile.id },
+      profiles: [availableProfile],
+      runtimeSettings: { version: 1, defaults: {} },
+      profileStore,
+      session,
+      startupNotices: [],
+    }),
+    (error: unknown) =>
+      error instanceof TuiAuthoringProfileError
+      && error.sessionId === session.sessionId
+      && error.profileId === session.profileId,
+  );
 });
 
 async function createAppHarness(input: {
@@ -7752,11 +7822,12 @@ test("startup resolves a unique session id fragment to the matching session", as
   const appState = app as unknown as Record<string, unknown>;
   const sessionStore = appState.sessionStore as SessionStore;
   const profiles = await (appState.profileStore as ProfileStore).load();
+  const activeProfile = (appState.uiStore as UiStore).getState().activeProfile;
   const now = new Date().toISOString();
   const targetSession: TuiSessionMeta = {
     name: "session-1783373851798",
     sessionId: "reference-session-1783373851798-1783373851801",
-    profileId: "reference",
+    profileId: activeProfile.id,
     createdAt: now,
     updatedAt: now,
     started: true,

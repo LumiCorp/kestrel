@@ -26,6 +26,7 @@ import {
   TuiEnvironmentIdentityError,
 } from "../session/TuiExecutionEnvironment.js";
 import type { ConversationActivityItem } from "@kestrel-agents/conversation";
+import { resolveStartedSessionAuthoringProfile } from "../session/TuiAuthoringProfile.js";
 
 export interface CreateSessionOptions {
   launch: OperatorResolvedStartTask;
@@ -270,8 +271,14 @@ export class SessionController {
     }
 
     const profiles = await this.context.profileStore.load();
+    const startedSessionProfile = resolveStartedSessionAuthoringProfile({
+      session: target,
+      profiles,
+      profileStore: this.context.profileStore,
+    });
     const resolvedWorkspace = await this.context.resolveWorkspaceForSession(resolvedTarget);
     const profile =
+      startedSessionProfile ??
       this.context.profileStore.findById(profiles, resolvedTarget.profileId) ??
       this.context.uiStore.getState().activeProfile;
     this.context.setActiveWorkspace(resolvedWorkspace);
