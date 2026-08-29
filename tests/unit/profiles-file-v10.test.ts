@@ -99,7 +99,7 @@ test("ProfilesFileV10 strictly contains one canonical profile and environment bi
   assert.equal(parsed.profile.reasoning.request.mode, "summary");
   assert.equal(
     parsed.profile.delegation.maxConcurrentChildSessions,
-    3,
+    undefined,
   );
   assert.deepEqual(Object.keys(parsed.environmentBindings), [
     "cli_safe_local",

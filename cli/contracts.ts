@@ -171,6 +171,7 @@ export interface ResolvedWorkspace {
 export interface DelegationPolicyConfig {
   /** Gates model-visible collaborator dialogs; legacy spawn/delegate tools remain internal. */
   allowAgentSpawn?: boolean | undefined;
+  /** @deprecated Retained for ProfilesFileV10 compatibility; child-session breadth is unlimited. */
   maxConcurrentChildSessions?: number | undefined;
   maxDepth?: number | undefined;
 }

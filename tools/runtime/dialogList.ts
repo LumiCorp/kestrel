@@ -5,8 +5,8 @@ import { parseObjectInput } from "../helpers.js";
 export const dialogListTool: SharedToolModule = {
   definition: {
     name: "dialog.list",
-    description: "See the named collaborators in this task and what each one is doing. Use this when you need a dialog ID, have forgotten who is working, or need to find a collaborator after earlier messages are no longer in your context. This does not send a message or start work.",
-    inputSchema: { type: "object", properties: { status: { type: "string", enum: ["open", "closed", "all"], default: "all", description: "Open, closed, or all collaborators." }, cursor: { type: "string", description: "Continue a prior list page." }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50, description: "The maximum collaborators to return." } }, additionalProperties: false },
+    description: "See the named collaborators in this task and what each one is doing. Omit cursor on the first call. To continue, copy the non-empty nextCursor returned by the same dialog.list filter; never invent a cursor or send an empty value. This does not send a message or start work.",
+    inputSchema: { type: "object", properties: { status: { type: "string", enum: ["open", "closed", "all"], default: "all", description: "Open, closed, or all collaborators." }, cursor: { type: "string", minLength: 1, description: "The exact nextCursor returned by a prior dialog.list call with the same status filter." }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50, description: "The maximum collaborators to return." } }, additionalProperties: false },
     capability: { freshnessClass: "runtime", latencyClass: "low", costClass: "free", executionClass: "external_side_effect", allowedInteractionModes: ["chat", "plan", "build"], capabilityClasses: ["runtime.dialog"], approvalCapabilities: ["delegation.control"] },
     presentation: { displayName: "List Dialogs", aliases: ["list collaborators"], keywords: ["dialog", "list"], provider: "kestrel", toolFamily: "runtime" },
   },

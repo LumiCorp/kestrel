@@ -3452,6 +3452,56 @@ test("dialog.open validates its minimal name and message contract", async () => 
   );
 });
 
+test("dialog cursor schemas reject empty and ambiguous pagination inputs", async () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["dialog.read", "dialog.list"],
+    context: {
+      dialogService: {
+        async open() { throw new Error("not called"); },
+        async send() { throw new Error("not called"); },
+        async read() { throw new Error("not called"); },
+        async list() { throw new Error("not called"); },
+        async close() { throw new Error("not called"); },
+      },
+    },
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+  });
+  await registry.refresh();
+
+  assert.deepEqual(
+    await validateToolInput(registry, "dialog.read", { dialogId: "dialog-1" }),
+    { dialogId: "dialog-1" },
+  );
+  assert.deepEqual(
+    await validateToolInput(registry, "dialog.read", {
+      dialogId: "dialog-1",
+      afterCursor: "cursor-1",
+    }),
+    { dialogId: "dialog-1", afterCursor: "cursor-1" },
+  );
+  await assert.rejects(
+    () => validateToolInput(registry, "dialog.read", { dialogId: "dialog-1", afterCursor: "" }),
+    /Invalid dialog\.read/u,
+  );
+  await assert.rejects(
+    () => validateToolInput(registry, "dialog.read", {
+      dialogId: "dialog-1",
+      afterCursor: "cursor-1",
+      beforeCursor: "cursor-2",
+    }),
+    /Invalid dialog\.read/u,
+  );
+  await assert.rejects(
+    () => validateToolInput(registry, "dialog.list", { cursor: "" }),
+    /Invalid dialog\.list/u,
+  );
+});
+
 test("dialog.open uses active thread identity and forbids nested dialogs", async () => {
   const requests: unknown[] = [];
   const now = new Date().toISOString();

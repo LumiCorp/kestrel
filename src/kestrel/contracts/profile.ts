@@ -69,7 +69,8 @@ export interface KestrelProfileDefinitionV1 {
   delegation: {
     allowAgentSpawn: true;
     allowNestedCollaborators: false;
-    maxConcurrentChildSessions: number;
+    /** @deprecated Compatibility-only; child-session breadth is unlimited. */
+    maxConcurrentChildSessions?: number | undefined;
     maxDepth: number;
   };
 }
@@ -214,7 +215,7 @@ const delegationSchema = z
   .object({
     allowAgentSpawn: z.literal(true),
     allowNestedCollaborators: z.literal(false),
-    maxConcurrentChildSessions: positiveSafeInteger,
+    maxConcurrentChildSessions: positiveSafeInteger.optional(),
     maxDepth: positiveSafeInteger,
   })
   .strict();
