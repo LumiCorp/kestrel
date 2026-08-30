@@ -2,8 +2,12 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { EnvironmentGatewayConfigV3 } from "@lumi/kestrel-environment-auth";
 import type { EnvironmentGatewayConfigClient } from "./gateway-config.js";
+import type {
+  HostedBrowserEgressRegistry,
+  HostedBrowserGatewayAuthorityV1,
+} from "./browser-egress.js";
 
-const MAX_APP_REQUEST_BYTES = 2 * 1024 * 1024;
+export const MAX_APP_RELAY_SERIALIZED_BYTES = 20 * 1024 * 1024;
 const BROWSER_RECEIPT_TTL_MS = 35_000;
 const MAX_BROWSER_RECEIPTS = 128;
 export const APP_RELAY_REQUEST_TIMEOUT_MS = 30_000;
@@ -63,6 +67,7 @@ export async function handleAppRelay(input: {
   fetchImpl?: typeof fetch | undefined;
   browserWorkerFetchImpl?: typeof fetch | undefined;
   requestTimeoutMs?: number | undefined;
+  browserEgress?: HostedBrowserEgressRegistry | undefined;
 }) {
   const startedAt = Date.now();
   const pathname = new URL(
@@ -164,6 +169,7 @@ export async function handleAppRelay(input: {
         workerFetchImpl: input.browserWorkerFetchImpl,
         runId,
         workspaceId: scope.workspaceId,
+        browserEgress: input.browserEgress,
       });
       return;
     }
@@ -180,6 +186,7 @@ export async function handleAppRelay(input: {
         workerFetchImpl: input.browserWorkerFetchImpl,
         runId,
         workspaceId: scope.workspaceId,
+        browserEgress: input.browserEgress,
       });
       return;
     }
@@ -196,6 +203,7 @@ export async function handleAppRelay(input: {
         workerFetchImpl: input.browserWorkerFetchImpl,
         runId,
         workspaceId: scope.workspaceId,
+        browserEgress: input.browserEgress,
       });
       return;
     }
@@ -210,6 +218,7 @@ export async function handleAppRelay(input: {
         signal: relayAbort.signal,
         fetchImpl: input.fetchImpl,
         workerFetchImpl: input.browserWorkerFetchImpl,
+        browserEgress: input.browserEgress,
       });
       return;
     }
@@ -261,15 +270,15 @@ export async function handleAppRelay(input: {
         return;
       }
     }
-    input.response.writeHead(upstream.status, responseHeaders(upstream.headers));
-    if (upstream.body) {
-      for await (const chunk of upstream.body) {
-        if (!input.response.write(Buffer.from(chunk))) {
-          await new Promise<void>((resolve) => input.response.once("drain", resolve));
-        }
-      }
+    let upstreamBytes: Buffer;
+    try {
+      upstreamBytes = await readBoundedResponseBytes(upstream);
+    } catch {
+      writeError(input.response, 413, "APP_RELAY_BODY_TOO_LARGE");
+      return;
     }
-    input.response.end();
+    input.response.writeHead(upstream.status, responseHeaders(upstream.headers));
+    input.response.end(upstreamBytes);
     logRelay("environment.app_relay.completed", {
       runId,
       workspaceId: scope?.workspaceId ?? "unknown",
@@ -497,6 +506,7 @@ async function handleBrowserAcceptRelay(input: {
   workerFetchImpl?: typeof fetch | undefined;
   runId: string;
   workspaceId: string;
+  browserEgress?: HostedBrowserEgressRegistry | undefined;
 }) {
   pruneBrowserReceipts();
   if (!(input.body instanceof Buffer || input.body instanceof Uint8Array)) {
@@ -549,6 +559,14 @@ async function handleBrowserAcceptRelay(input: {
     browserRelayReceipts.set(receiptId, retained);
   }
   const instruction = retained.instruction;
+  let gatewayProxy: unknown;
+  try {
+    gatewayProxy = await gatewayProxyForAccept(input.browserEgress, instruction);
+  } catch {
+    browserRelayReceipts.delete(receiptId);
+    writeError(input.response, 503, "BROWSER_SERVICE_UNAVAILABLE");
+    return;
+  }
   let workerResponse: Response;
   try {
     workerResponse = await callPrivateBrowserWorker({
@@ -559,6 +577,7 @@ async function handleBrowserAcceptRelay(input: {
         prepared: instruction.prepared,
         authority: instruction.authority,
         session: instruction.session,
+        ...(gatewayProxy ? { gatewayProxy } : {}),
       },
       signal: input.signal,
       fetchImpl: input.workerFetchImpl,
@@ -569,6 +588,9 @@ async function handleBrowserAcceptRelay(input: {
   }
   if (!workerResponse.ok) {
     browserRelayReceipts.delete(receiptId);
+    if (instruction.operation === "browser.open") {
+      await input.browserEgress?.close(instruction.sessionId).catch(() => {});
+    }
     if (await isKnownBrowserOutcomeResponse(workerResponse)) {
       return writeFetchResponse(input.response, workerResponse);
     }
@@ -678,6 +700,7 @@ async function handleBrowserInvokeRelay(input: {
   workerFetchImpl?: typeof fetch | undefined;
   runId: string;
   workspaceId: string;
+  browserEgress?: HostedBrowserEgressRegistry | undefined;
 }) {
   let publicBody: Record<string, unknown>;
   let publicReceipt: Record<string, unknown>;
@@ -784,6 +807,7 @@ async function handleBrowserInvokeRelay(input: {
   } catch {
     browserRelayReceipts.delete(receiptId);
     await notifyBrowserUnknown(input, publicBody, privateReceipt).catch(() => {});
+    await input.browserEgress?.close(retained.instruction.sessionId).catch(() => {});
     writeError(input.response, 409, "BROWSER_ACTION_OUTCOME_UNKNOWN");
     return;
   }
@@ -793,26 +817,44 @@ async function handleBrowserInvokeRelay(input: {
       return writeFetchResponse(input.response, worker);
     }
     await notifyBrowserUnknown(input, publicBody, privateReceipt).catch(() => {});
+    await input.browserEgress?.close(retained.instruction.sessionId).catch(() => {});
     writeError(input.response, 409, "BROWSER_ACTION_OUTCOME_UNKNOWN");
     return;
   }
   let completedOutput: unknown;
   try {
     const output = await readBoundedWorkerJson(worker);
+    const completionBody = Buffer.from(JSON.stringify({
+      ...publicBody,
+      receipt: privateReceipt,
+      output,
+    }));
+    if (completionBody.byteLength > MAX_APP_RELAY_SERIALIZED_BYTES) {
+      browserRelayReceipts.delete(receiptId);
+      await cancelPrivateBrowserOperation(
+        input,
+        retained.instruction,
+        "BROWSER_ARTIFACT_TOO_LARGE",
+      ).catch(() => {});
+      writeJson(input.response, 413, {
+        error: {
+          code: "BROWSER_ARTIFACT_TOO_LARGE",
+          details: { browserOutcomeKnown: true },
+        },
+      });
+      return;
+    }
     const completed = await requestControlPlane({
       ...input,
       upstreamPath: input.upstreamPath.replace(/\/invoke$/u, "/complete"),
-      body: Buffer.from(JSON.stringify({
-        ...publicBody,
-        receipt: privateReceipt,
-        output,
-      })),
+      body: completionBody,
     });
     if (!completed.ok) throw new Error("Browser completion was refused.");
     completedOutput = await readBoundedWorkerJson(completed);
   } catch {
     browserRelayReceipts.delete(receiptId);
     await notifyBrowserUnknown(input, publicBody, privateReceipt).catch(() => {});
+    await input.browserEgress?.close(retained.instruction.sessionId).catch(() => {});
     writeError(input.response, 409, "BROWSER_ACTION_OUTCOME_UNKNOWN");
     return;
   }
@@ -879,17 +921,25 @@ async function handleBrowserCommitRelay(
     writeError(input.response, 409, "BROWSER_ACTION_OUTCOME_UNKNOWN");
     return;
   }
+  if (retained.instruction.operation === "browser.close") {
+    await input.browserEgress?.close(retained.instruction.sessionId);
+  }
   writeJson(input.response, 200, { committed: true });
 }
 
 async function cancelPrivateBrowserOperation(
   input: Parameters<typeof handleBrowserInvokeRelay>[0],
   instruction: BrowserPrivateInstruction,
+  reason?: "BROWSER_ARTIFACT_TOO_LARGE",
 ) {
   await callPrivateBrowserWorker({
     instruction,
     action: "cancel",
-    body: { capability: instruction.capability, operationId: instruction.operationId },
+    body: {
+      capability: instruction.capability,
+      operationId: instruction.operationId,
+      ...(reason ? { reason } : {}),
+    },
     signal: AbortSignal.timeout(3_000),
     fetchImpl: input.workerFetchImpl,
   });
@@ -918,10 +968,18 @@ async function handleBrowserAdoptRelay(input: {
   signal: AbortSignal;
   fetchImpl?: typeof fetch | undefined;
   workerFetchImpl?: typeof fetch | undefined;
+  browserEgress?: HostedBrowserEgressRegistry | undefined;
 }) {
   const upstream = await requestControlPlane({ ...input });
   if (!upstream.ok) return writeFetchResponse(input.response, upstream);
   const instruction = parseBrowserRevisionInstruction(await upstream.json());
+  const gatewayAdoption = input.browserEgress
+    ? await input.browserEgress.adopt({
+        sessionId: instruction.sessionId,
+        generation: instruction.generation,
+        authority: instruction.authority as HostedBrowserGatewayAuthorityV1,
+      })
+    : undefined;
   const worker = await callPrivateBrowserWorker({
     instruction: {
       version: "hosted_browser_relay_instruction_v1",
@@ -934,7 +992,16 @@ async function handleBrowserAdoptRelay(input: {
       machine: instruction.machine,
     },
     action: "revision",
-    body: instruction,
+    body: {
+      ...instruction,
+      ...(gatewayAdoption
+        ? {
+            gatewayProxy: gatewayAdoption.binding,
+            gatewayClosedUnauthorizedConnections:
+              gatewayAdoption.closedUnauthorizedConnections,
+          }
+        : {}),
+    },
     signal: input.signal,
     fetchImpl: input.workerFetchImpl,
   });
@@ -943,6 +1010,15 @@ async function handleBrowserAdoptRelay(input: {
     return;
   }
   const adopted = requireRecord(await readBoundedWorkerJson(worker));
+  if (
+    gatewayAdoption &&
+    adopted.closedUnauthorizedConnections !==
+      gatewayAdoption.closedUnauthorizedConnections
+  ) {
+    await input.browserEgress?.close(instruction.sessionId).catch(() => {});
+    writeError(input.response, 503, "BROWSER_SERVICE_UNAVAILABLE");
+    return;
+  }
   const completed = await requestControlPlane({
     ...input,
     upstreamPath: input.upstreamPath.replace(/\/adopt$/u, "/adopt-complete"),
@@ -956,11 +1032,11 @@ async function handleBrowserAdoptRelay(input: {
 
 async function readBoundedWorkerJson(response: Response): Promise<unknown> {
   const declared = Number(response.headers.get("content-length") ?? "0");
-  if (Number.isFinite(declared) && declared > MAX_APP_REQUEST_BYTES) {
+  if (Number.isFinite(declared) && declared > MAX_APP_RELAY_SERIALIZED_BYTES) {
     throw new Error("Browser worker response is too large.");
   }
   const bytes = await response.arrayBuffer();
-  if (bytes.byteLength > MAX_APP_REQUEST_BYTES) {
+  if (bytes.byteLength > MAX_APP_RELAY_SERIALIZED_BYTES) {
     throw new Error("Browser worker response is too large.");
   }
   return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
@@ -1058,6 +1134,46 @@ function parseBrowserPrivateInstruction(
   };
 }
 
+async function gatewayProxyForAccept(
+  registry: HostedBrowserEgressRegistry | undefined,
+  instruction: BrowserPrivateInstruction,
+) {
+  if (!registry) return undefined;
+  const authority = instruction.authority as
+    | HostedBrowserGatewayAuthorityV1
+    | undefined;
+  if (!authority) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+  if (instruction.session !== undefined) {
+    const session = instruction.session;
+    if (
+      session.sessionId !== instruction.sessionId ||
+      session.generation !== instruction.generation ||
+      typeof session.threadId !== "string" ||
+      (session.mode !== "qa" && session.mode !== "operator") ||
+      typeof session.hardExpiresAt !== "string"
+    ) throw new Error("BROWSER_SESSION_LOST");
+    return registry.install({
+      threadId: session.threadId,
+      sessionId: instruction.sessionId,
+      generation: instruction.generation,
+      mode: session.mode,
+      authority,
+      hardExpiresAt: session.hardExpiresAt,
+    });
+  }
+  if (instruction.operation === "browser.request_grant") {
+    return registry.requireSession({
+      sessionId: instruction.sessionId,
+      generation: instruction.generation,
+    });
+  }
+  return registry.require({
+    sessionId: instruction.sessionId,
+    generation: instruction.generation,
+    authority,
+  });
+}
+
 async function isKnownBrowserOutcomeResponse(response: Response): Promise<boolean> {
   try {
     const payload = requireRecord(await response.clone().json());
@@ -1129,16 +1245,47 @@ function pruneBrowserReceipts() {
 }
 
 async function writeFetchResponse(response: ServerResponse, upstream: Response) {
-  response.writeHead(upstream.status, responseHeaders(upstream.headers));
-  response.end(Buffer.from(await upstream.arrayBuffer()));
+  try {
+    const bytes = await readBoundedResponseBytes(upstream);
+    response.writeHead(upstream.status, responseHeaders(upstream.headers));
+    response.end(bytes);
+  } catch {
+    writeError(response, 413, "APP_RELAY_BODY_TOO_LARGE");
+  }
+}
+
+async function readBoundedResponseBytes(upstream: Response): Promise<Buffer> {
+  const declared = Number(upstream.headers.get("content-length") ?? "0");
+  if (
+    Number.isFinite(declared) &&
+    declared > MAX_APP_RELAY_SERIALIZED_BYTES
+  ) throw new Error("response too large");
+  if (!upstream.body) return Buffer.alloc(0);
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of upstream.body) {
+    const buffer = Buffer.from(chunk);
+    total += buffer.byteLength;
+    if (total > MAX_APP_RELAY_SERIALIZED_BYTES) {
+      await upstream.body.cancel().catch(() => {});
+      throw new Error("response too large");
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks, total);
 }
 
 function writeJson(response: ServerResponse, status: number, value: unknown) {
+  const serialized = Buffer.from(JSON.stringify(value));
+  if (serialized.byteLength > MAX_APP_RELAY_SERIALIZED_BYTES) {
+    writeError(response, 413, "APP_RELAY_BODY_TOO_LARGE");
+    return;
+  }
   response.writeHead(status, {
     "cache-control": "no-store",
     "content-type": "application/json",
   });
-  response.end(JSON.stringify(value));
+  response.end(serialized);
 }
 
 async function hasErrorCode(response: Response, code: string) {
@@ -1163,7 +1310,7 @@ async function readBoundedBody(request: IncomingMessage) {
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += buffer.length;
-    if (length > MAX_APP_REQUEST_BYTES) throw new Error("body too large");
+    if (length > MAX_APP_RELAY_SERIALIZED_BYTES) throw new Error("body too large");
     chunks.push(buffer);
   }
   return Buffer.concat(chunks);

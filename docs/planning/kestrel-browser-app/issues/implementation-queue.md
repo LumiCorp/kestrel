@@ -4,21 +4,22 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md)
+- [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
+- [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
 
 ## In progress
 
-- [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md)
+None.
 
 ## Blocked
 
-- [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — blocked by [the Desktop browser host](03-run-safe-browser-sessions-on-desktop.md)
-- [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — blocked by [the hosted browser host](05-run-safe-browser-sessions-in-kestrel-one.md)
-- [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md) — blocked by the [Desktop](03-run-safe-browser-sessions-on-desktop.md) and [hosted](05-run-safe-browser-sessions-in-kestrel-one.md) transfer hooks
-- [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md) — blocked by the [Desktop](03-run-safe-browser-sessions-on-desktop.md) and [hosted](05-run-safe-browser-sessions-in-kestrel-one.md) interception hooks
+None.
 
 ## Implemented
 
+- [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — implementation, focused contracts, portable validation, and a real local worker-image smoke are green; the exact published image, live Fly session canary, and direct-egress namespace proof remain before `Done`
+- [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — implementation, focused contracts, typechecks, and portable validation are green; signed packaged viewer evidence and the native passkey-chooser canary remain before `Done`
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 
 ## Done

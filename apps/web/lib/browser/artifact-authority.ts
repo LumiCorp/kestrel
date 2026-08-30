@@ -177,6 +177,55 @@ export class HostedBrowserArtifactAuthority {
     return uploaded;
   }
 
+  /**
+   * Canonicalizes screenshot bytes already carried by the bounded App relay.
+   * This follows the same draft -> ready, single-use authority path as the
+   * direct upload route; the relay never becomes a second artifact store.
+   */
+  async canonicalizeRelayedScreenshot(input: {
+    origin: HostedBrowserOriginAuthority;
+    sessionId: string;
+    generation: number;
+    callId: string;
+    bytes: Uint8Array;
+    sha256: string;
+  }): Promise<BrowserAuthorizedArtifactV1> {
+    const instruction = await this.prepareScreenshotUpload({
+      origin: input.origin,
+      sessionId: input.sessionId,
+      generation: input.generation,
+      callId: input.callId,
+      byteLength: input.bytes.byteLength,
+      sha256: input.sha256,
+    });
+    const copied = Uint8Array.from(input.bytes);
+    await this.upload({
+      token: instruction.capability,
+      fileId: instruction.artifactId,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(copied);
+          controller.close();
+        },
+      }),
+      contentLength: copied.byteLength,
+    });
+    const authorized = await this.authorize({
+      version: "browser_artifact_authorization_v1",
+      runId: input.origin.runId,
+      threadId: input.origin.threadId,
+      callId: input.callId,
+      toolName: "browser.capture",
+      sessionId: input.sessionId,
+      artifactId: instruction.artifactId,
+      artifactKind: "browser-screenshot",
+      origin: input.origin,
+      generation: input.generation,
+    });
+    if (!authorized) throw new Error("BROWSER_ARTIFACT_AUTHORITY_INVALID");
+    return authorized;
+  }
+
   async authorize(input: BrowserArtifactAuthorizationRequestV1 & {
     origin: HostedBrowserOriginAuthority;
     generation: number;

@@ -37,6 +37,6 @@ Add IPC, main-frame authorization, renderer, process, and Chromium tests. Send u
 - Principal change, App disablement, close, expiry, and engine loss terminate viewer authority without silently resuming the agent.
 - Focused coverage and required validation gates pass.
 
-## Depends on
+## Integration basis
 
-- [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md)
+- Build against the reviewed implementation contract from [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md). Final completion still requires the combined packaged Desktop evidence.

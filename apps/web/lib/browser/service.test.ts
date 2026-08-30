@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 
 import { defaultToolCatalog } from "../../../../tools/catalog.js";
@@ -319,6 +319,125 @@ test("hosted artifact authorization binds the stored generation", async () => {
   assert.equal(fixture.authorizedArtifacts[0]?.origin.runId, "run-1");
 });
 
+test("hosted capture canonicalizes relayed PNG bytes into Thread artifact authority", async () => {
+  const fixture = serviceFixture("ready", "allow");
+  const prepared = preparedCapture();
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const sha256 = createHash("sha256").update(png).digest("hex");
+  const result = await fixture.service.completeAcceptedOperation(
+    prepared,
+    { threadId: "thread-1", projectId: "project-1" },
+    acceptedReceipt(
+      prepared.callId,
+      fixture.session.sessionId,
+      now,
+      new Date(now.getTime() + 30_000),
+      "browser.capture",
+    ),
+    {
+      version: "hosted_browser_worker_result_v1",
+      output: {
+        version: "browser_tool_result_v1",
+        operation: "browser.capture",
+        sessionId: fixture.session.sessionId,
+        generation: 1,
+        artifact: {
+          version: "browser_authorized_artifact_v1",
+          id: "file-worker-private",
+          title: "Browser screenshot",
+          kind: "browser-screenshot",
+          mediaType: "image/png",
+          bytes: png.byteLength,
+          sha256,
+        },
+        normalizedOrigin: "https://example.com",
+        capturedAt: now.toISOString(),
+        boundary: "untrusted_browser_content",
+      },
+      screenshot: {
+        mediaType: "image/png",
+        byteLength: png.byteLength,
+        sha256,
+        base64: png.toString("base64"),
+      },
+    },
+  ) as { artifact: { id: string; url: string } };
+  assert.equal(result.artifact.id, "file-browser-authorized");
+  assert.equal(result.artifact.url, "/api/files/file-browser-authorized/content");
+  assert.equal(fixture.canonicalizedArtifacts[0]?.bytes.toString("hex"), png.toString("hex"));
+  assert.equal(fixture.touches, 1);
+});
+
+test("hosted capture rejects a relayed screenshot whose bytes do not match its digest", async () => {
+  const fixture = serviceFixture("ready", "allow");
+  const prepared = preparedCapture();
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  await assert.rejects(
+    fixture.service.completeAcceptedOperation(
+      prepared,
+      { threadId: "thread-1", projectId: "project-1" },
+      acceptedReceipt(
+        prepared.callId,
+        fixture.session.sessionId,
+        now,
+        new Date(now.getTime() + 30_000),
+        "browser.capture",
+      ),
+      {
+        version: "hosted_browser_worker_result_v1",
+        output: {},
+        screenshot: {
+          mediaType: "image/png",
+          byteLength: png.byteLength,
+          sha256: "0".repeat(64),
+          base64: png.toString("base64"),
+        },
+      },
+    ),
+    (error: unknown) => readCode(error) === "BROWSER_ENGINE_FAILURE",
+  );
+  assert.equal(fixture.canonicalizedArtifacts.length, 0);
+});
+
+test("hosted capture authenticates the operation before storing relayed bytes", async () => {
+  const fixture = serviceFixture("ready", "allow");
+  const prepared = preparedCapture();
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const sha256 = createHash("sha256").update(png).digest("hex");
+  const receipt = acceptedReceipt(
+    prepared.callId,
+    fixture.session.sessionId,
+    now,
+    new Date(now.getTime() + 30_000),
+    "browser.capture",
+  );
+  await assert.rejects(
+    fixture.service.completeAcceptedOperation(
+      prepared,
+      { threadId: "thread-1", projectId: "project-1" },
+      {
+        ...receipt,
+        instruction: {
+          ...receipt.instruction,
+          capability: `${receipt.instruction.capability}-forged`,
+        },
+      },
+      {
+        version: "hosted_browser_worker_result_v1",
+        output: {},
+        screenshot: {
+          mediaType: "image/png",
+          byteLength: png.byteLength,
+          sha256,
+          base64: png.toString("base64"),
+        },
+      },
+    ),
+    (error: unknown) => readCode(error) === "BROWSER_ENGINE_FAILURE",
+  );
+  assert.equal(fixture.canonicalizedArtifacts.length, 0);
+});
+
 function serviceFixture(
   state: "opening" | "ready",
   decision: "allow" | "deny",
@@ -364,6 +483,7 @@ function serviceFixture(
     generation: number;
     origin: typeof origin;
   }> = [];
+  const canonicalizedArtifacts: Array<{ bytes: Buffer; sha256: string }> = [];
   const service = new HostedBrowserService({
     store: {
       async resolveOrigin() { return origin; },
@@ -475,6 +595,22 @@ function serviceFixture(
           sha256: "a".repeat(64),
         };
       },
+      async canonicalizeRelayedScreenshot(input) {
+        canonicalizedArtifacts.push({
+          bytes: Buffer.from(input.bytes),
+          sha256: input.sha256,
+        });
+        return {
+          version: "browser_authorized_artifact_v1",
+          id: "file-browser-authorized",
+          title: "Browser screenshot",
+          kind: "browser-screenshot",
+          url: "/api/files/file-browser-authorized/content",
+          mediaType: "image/png",
+          bytes: input.bytes.byteLength,
+          sha256: input.sha256,
+        };
+      },
     },
     metrics: { emit() {} },
     capabilityPrivateKeyPem: privateKeyPem,
@@ -497,6 +633,7 @@ function serviceFixture(
     get touches() { return touches; },
     preparedArtifacts,
     authorizedArtifacts,
+    canonicalizedArtifacts,
     stateTransitions,
   };
 }
@@ -561,6 +698,7 @@ function acceptedReceipt(
   sessionId: string,
   capabilityNow = now,
   expiresAt = new Date(now.getTime() + 30_000),
+  operation = "browser.open",
 ): HostedBrowserRelayAcceptanceV1 {
   const capability = issueHostedBrowserOperationCapability({
     privateKeyPem,
@@ -586,7 +724,7 @@ function acceptedReceipt(
       version: "hosted_browser_relay_instruction_v1",
       phase: "accept",
       operationId,
-      operation: "browser.open",
+      operation,
       sessionId,
       generation: 1,
       capability,

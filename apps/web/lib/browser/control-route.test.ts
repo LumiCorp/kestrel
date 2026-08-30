@@ -27,7 +27,7 @@ const ticket = {
   },
 } as EnvironmentExecutionTicket;
 
-test("Browser control rejects a declared body above the direct 2 MiB limit", async () => {
+test("Browser control rejects a declared body above the exact 20 MiB limit", async () => {
   const response = await handleHostedBrowserControl({
     request: new Request("https://one.example.test/control", {
       method: "POST",

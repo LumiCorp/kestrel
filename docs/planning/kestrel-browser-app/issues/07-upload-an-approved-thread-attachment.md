@@ -38,7 +38,6 @@ Add shared, Desktop, hosted, process, PostgreSQL, Chromium, approval, and cleanu
 - Failed staging cleanup cannot delete outside the owned transfer scope.
 - Both hosts pass one shared upload contract suite and required validation gates.
 
-## Depends on
+## Integration basis
 
-- [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md)
-- [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md)
+- Build against the reviewed contracts from [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) and [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md). Final completion still requires both hosts' transfer and release evidence.

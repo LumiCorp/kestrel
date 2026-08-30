@@ -37,6 +37,6 @@ Add route, ticket, WebSocket, authorization, worker, PostgreSQL, web viewer, and
 - Kestrel One Mobile exposes no browser viewer or takeover control.
 - Focused coverage and required validation gates pass.
 
-## Depends on
+## Integration basis
 
-- [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md)
+- Build against the reviewed implementation contract from [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md). Final completion still requires the combined live hosted evidence.

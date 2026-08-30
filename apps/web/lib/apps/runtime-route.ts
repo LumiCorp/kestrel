@@ -18,7 +18,7 @@ import {
   markAppConnectionHealthy,
 } from "./runtime";
 
-const MAX_PROXY_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_PROXY_BODY_BYTES = 20 * 1024 * 1024;
 
 export async function handleAppRuntimeRequest(input: {
   request: Request;

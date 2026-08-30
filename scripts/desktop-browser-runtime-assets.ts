@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -9,7 +9,6 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
-  renameSync,
   readFileSync,
   readSync,
   readlinkSync,
@@ -24,16 +23,19 @@ import {
   DESKTOP_BROWSER_RUNTIME_TARGET,
   getDesktopBrowserRuntimeRelease,
 } from "../src/browser/runtimeReleaseManifest.js";
+import {
+  ensureVerifiedBrowserRuntimeSourceAsset,
+  stageBrowserRuntimeSourceAssets,
+  type BrowserRuntimeSourceAssetSpec,
+} from "./browser-runtime-source-assets.js";
 
 export const DESKTOP_BROWSER_RUNTIME_RECEIPT_NAME =
   "kestrel-browser-runtime.json" as const;
 export const DESKTOP_BROWSER_RUNTIME_RECEIPT_VERSION =
   "desktop_browser_runtime_receipt_v1" as const;
 
-export interface DesktopBrowserRuntimeAssetSpec {
-  url: string;
-  sha256: string;
-  sourceFileName: string;
+export interface DesktopBrowserRuntimeAssetSpec
+  extends BrowserRuntimeSourceAssetSpec {
   executableRelativePath: string;
   archiveRoot?: string | undefined;
   excludedRuntimeRelativePaths?: readonly string[] | undefined;
@@ -128,19 +130,15 @@ export function prepareDesktopBrowserRuntimeAssets(
 ): string {
   const spec = desktopBrowserRuntimeSpec();
   const desktopRoot = path.join(repoRoot, "apps", "desktop");
-  const sourceRoot = path.join(
-    desktopRoot,
-    "resources",
-    "browser-runtime-sources",
-    spec.target,
-  );
   const runtimeRoot = path.join(desktopRoot, ".desktop-browser-runtime");
   const extractionRoot = `${runtimeRoot}.extracting`;
-  const engineSource = path.join(sourceRoot, spec.engine.sourceFileName);
-  const chromeSource = path.join(sourceRoot, spec.chrome.sourceFileName);
-
-  ensureVerifiedSourceAsset(engineSource, spec.engine, options.download);
-  ensureVerifiedSourceAsset(chromeSource, spec.chrome, options.download);
+  const stagedSources = stageBrowserRuntimeSourceAssets(
+    repoRoot,
+    spec.target,
+    options,
+  );
+  const engineSource = stagedSources.enginePath;
+  const chromeSource = stagedSources.chromePath;
   if (spec.chrome.archiveRoot === undefined) {
     throw new Error("Desktop Chrome release must declare its exact archive root.");
   }
@@ -334,51 +332,9 @@ export function desktopBrowserRuntimeExecutablePaths(runtimeRoot: string): {
 export function ensureVerifiedSourceAsset(
   filePath: string,
   asset: DesktopBrowserRuntimeAssetSpec,
-  download: (url: string, destinationPath: string) => void = downloadPinnedSourceAsset,
+  download?: ((url: string, destinationPath: string) => void) | undefined,
 ): void {
-  if (existsSync(filePath) && lstatSync(filePath).isFile() && hashFile(filePath) === asset.sha256) {
-    return;
-  }
-  if (new URL(asset.url).protocol !== "https:") {
-    throw new Error(`Pinned Desktop Browser source asset must use HTTPS: ${asset.url}`);
-  }
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  const temporaryPath = path.join(
-    path.dirname(filePath),
-    `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.download`,
-  );
-  try {
-    download(asset.url, temporaryPath);
-    if (!existsSync(temporaryPath) || !lstatSync(temporaryPath).isFile()) {
-      throw new Error(`Pinned Desktop Browser source download produced no regular file: ${asset.url}`);
-    }
-    const actual = hashFile(temporaryPath);
-    if (actual !== asset.sha256) {
-      throw new Error(
-        `Pinned Desktop Browser source asset digest mismatch for ${asset.url}: expected ${asset.sha256}, received ${actual}`,
-      );
-    }
-    renameSync(temporaryPath, filePath);
-  } finally {
-    rmSync(temporaryPath, { force: true });
-  }
-}
-
-function downloadPinnedSourceAsset(url: string, destinationPath: string): void {
-  execFileSync(
-    "/usr/bin/curl",
-    [
-      "--fail",
-      "--location",
-      "--proto", "=https",
-      "--proto-redir", "=https",
-      "--silent",
-      "--show-error",
-      "--output", destinationPath,
-      url,
-    ],
-    { stdio: "inherit" },
-  );
+  ensureVerifiedBrowserRuntimeSourceAsset(filePath, asset, download);
 }
 
 function removeExcludedRuntimePaths(

@@ -212,7 +212,7 @@ const validOutputs: Record<
   "browser.request_takeover": {
     ...commonOperationOutput("browser.request_takeover"),
     outcome: "takeover_requested",
-    state: "human_control",
+    state: "ready",
   },
   "browser.close": {
     version: "browser_tool_result_v1",

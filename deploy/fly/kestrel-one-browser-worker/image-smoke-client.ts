@@ -34,7 +34,7 @@ const IDENTITY = Object.freeze({
 const RUN_ID = "browser-image-smoke-run";
 const RUNTIME_SESSION_ID = "browser-image-smoke-runtime-session";
 const PREVIEW_ID = "browser-image-smoke-preview";
-const QA_DESTINATION = "http://localhost:43106/";
+const QA_DESTINATION = "http://browser-smoke-preview.internal:43106/";
 const QA_TARGET = canonicalizeTrustedBrowserQaTarget(QA_DESTINATION);
 const POLICY_REVISION = hashCanonical({
   purpose: "hosted-browser-image-smoke",
@@ -134,12 +134,30 @@ export async function runHostedBrowserImageSmokeControl(input: {
     privateKeyPem: input.privateKeyPem,
     now,
   });
+  const gatewayProxy = {
+    version: "hosted_browser_gateway_proxy_binding_v1",
+    proxyServer: "http://browser-smoke-gateway.internal:43107",
+    username: "kestrel-browser-smoke",
+    password: "kestrel-browser-smoke-secret",
+    threadId: IDENTITY.threadId,
+    sessionId: IDENTITY.sessionId,
+    generation: IDENTITY.generation,
+    effectiveAllowlistRevision,
+    chromiumFlags: [
+      "--proxy-server=http://browser-smoke-gateway.internal:43107",
+      "--proxy-bypass-list=<-loopback>",
+      "--disable-quic",
+      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+      "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    ],
+  } as const;
   await requireAcceptance(
     await postJson(fetchImpl, `${baseUrl}/v1/operations/accept`, {
       capability: openCapability,
       prepared: openPrepared,
       authority,
       session: openingSession,
+      gatewayProxy,
     }),
     openPrepared.callId,
   );
@@ -192,6 +210,7 @@ export async function runHostedBrowserImageSmokeControl(input: {
       prepared: closePrepared,
       authority,
       session: readySession,
+      gatewayProxy,
     }),
     closePrepared.callId,
   );

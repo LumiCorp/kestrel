@@ -61,7 +61,9 @@ import type {
 } from "../desktopShell/contracts.js";
 import {
   DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
+  DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
   DESKTOP_UI_STATE_MAX_BYTES,
+  parseDesktopBrowserViewerInputRequest,
   parseDesktopUiStateV1,
 } from "../desktopShell/contracts.js";
 import { parseDesktopBrowserPersonalDomains } from "../desktopShell/browserPersonalDomains.js";
@@ -1501,6 +1503,107 @@ async function handleRequest(input: {
               }),
       });
       return;
+    }
+
+    if (method === "POST" && url.pathname.startsWith("/v1/browser/viewer/")) {
+      const service = input.desktopBrowserService;
+      if (service === undefined) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "DESKTOP_BROWSER_UNAVAILABLE",
+          "The Desktop Browser viewer is unavailable.",
+        );
+      }
+      const action = url.pathname.slice("/v1/browser/viewer/".length);
+      const body = parseDesktopBrowserViewerApiBody(
+        await readJsonBody(input.request),
+        action,
+      );
+      if (action === "connect") {
+        writeJson(input.response, 200, {
+          ok: true,
+          viewer: await service.connectViewer(body),
+        });
+        return;
+      }
+      const exact = requireExactDesktopBrowserViewerApiBody(body);
+      if (action === "frame") {
+        writeJson(input.response, 200, {
+          ok: true,
+          frame: await service.readViewerFrame(exact),
+        });
+        return;
+      }
+      if (action === "accept") {
+        writeJson(input.response, 200, {
+          ok: true,
+          viewer: await service.acceptViewerTakeover(exact),
+        });
+        return;
+      }
+      if (action === "renew") {
+        const leaseId = requireDesktopBrowserViewerApiText(
+          body.leaseId,
+          "leaseId",
+        );
+        writeJson(input.response, 200, {
+          ok: true,
+          viewer: await service.renewViewerInputLease({ ...exact, leaseId }),
+        });
+        return;
+      }
+      if (action === "input") {
+        const parsedInput = parseDesktopBrowserViewerInputRequest({
+          version: DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
+          threadId: exact.threadId,
+          projectId: exact.projectId,
+          sessionId: exact.sessionId,
+          generation: exact.generation,
+          connectionId: exact.connectionId,
+          leaseId: body.leaseId,
+          input: body.viewerInput,
+        });
+        writeJson(input.response, 200, {
+          ok: true,
+          viewer: await service.sendViewerInput({
+            ...exact,
+            leaseId: parsedInput.leaseId,
+            viewerInput: parsedInput.input,
+          }),
+        });
+        return;
+      }
+      if (action === "return") {
+        const leaseId = requireDesktopBrowserViewerApiText(
+          body.leaseId,
+          "leaseId",
+        );
+        writeJson(input.response, 200, {
+          ok: true,
+          viewer: await service.returnViewerControl({ ...exact, leaseId }),
+        });
+        return;
+      }
+      if (action === "disconnect") {
+        await service.disconnectViewer(exact);
+        writeJson(input.response, 200, { ok: true });
+        return;
+      }
+      if (action === "authority-lost") {
+        await service.loseViewerAuthority(exact);
+        writeJson(input.response, 200, { ok: true });
+        return;
+      }
+      if (action === "close") {
+        await service.closeViewerSession(exact);
+        writeJson(input.response, 200, { ok: true });
+        return;
+      }
+      throw new LocalCoreApiRequestError(
+        404,
+        "DESKTOP_BROWSER_VIEWER_ACTION_INVALID",
+        "The Desktop Browser viewer action is invalid.",
+      );
     }
 
     if (method === "GET" && url.pathname === "/v1/status") {
@@ -3189,6 +3292,127 @@ function requireObjectBody(
     throw new Error(`${label} must be an object.`);
   }
   return value as Record<string, unknown>;
+}
+
+interface DesktopBrowserViewerApiBody {
+  principalId: string;
+  threadId: string;
+  projectId: string;
+  sessionId?: string | undefined;
+  generation?: number | undefined;
+  connectionId?: string | undefined;
+  leaseId?: unknown;
+  viewerInput?: unknown;
+}
+
+function parseDesktopBrowserViewerApiBody(
+  value: unknown,
+  action: string,
+): DesktopBrowserViewerApiBody {
+  const body = requireObjectBody(value, "Desktop Browser viewer request");
+  const allowed = new Set([
+    "principalId",
+    "threadId",
+    "projectId",
+    ...(action === "connect"
+      ? []
+      : ["sessionId", "generation", "connectionId"]),
+    ...(action === "renew" || action === "return" || action === "input"
+      ? ["leaseId"]
+      : []),
+    ...(action === "input" ? ["viewerInput"] : []),
+  ]);
+  if (Object.keys(body).some((key) => !allowed.has(key))) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "DESKTOP_BROWSER_VIEWER_INVALID",
+      "Desktop Browser viewer request fields are invalid.",
+    );
+  }
+  const principalId = requireDesktopBrowserViewerApiText(
+    body.principalId,
+    "principalId",
+  );
+  const threadId = requireDesktopBrowserViewerApiText(body.threadId, "threadId");
+  const projectId = requireDesktopBrowserViewerApiText(
+    body.projectId,
+    "projectId",
+  );
+  const sessionId =
+    body.sessionId === undefined
+      ? undefined
+      : requireDesktopBrowserViewerApiText(body.sessionId, "sessionId");
+  const connectionId =
+    body.connectionId === undefined
+      ? undefined
+      : requireDesktopBrowserViewerApiText(body.connectionId, "connectionId");
+  const generation = body.generation;
+  if (
+    generation !== undefined &&
+    (!Number.isSafeInteger(generation) || (generation as number) < 1)
+  ) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "DESKTOP_BROWSER_VIEWER_INVALID",
+      "Desktop Browser viewer generation is invalid.",
+    );
+  }
+  return {
+    principalId,
+    threadId,
+    projectId,
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(generation === undefined ? {} : { generation: generation as number }),
+    ...(connectionId === undefined ? {} : { connectionId }),
+    ...(body.leaseId === undefined ? {} : { leaseId: body.leaseId }),
+    ...(body.viewerInput === undefined ? {} : { viewerInput: body.viewerInput }),
+  };
+}
+
+function requireExactDesktopBrowserViewerApiBody(
+  body: DesktopBrowserViewerApiBody,
+): DesktopBrowserViewerApiBody & {
+  sessionId: string;
+  generation: number;
+  connectionId: string;
+} {
+  if (
+    body.sessionId === undefined ||
+    body.generation === undefined ||
+    body.connectionId === undefined
+  ) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "DESKTOP_BROWSER_VIEWER_INVALID",
+      "Desktop Browser viewer exact identity is incomplete.",
+    );
+  }
+  return {
+    ...body,
+    sessionId: body.sessionId,
+    generation: body.generation,
+    connectionId: body.connectionId,
+  };
+}
+
+function requireDesktopBrowserViewerApiText(
+  value: unknown,
+  label: string,
+): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 512 ||
+    value !== value.trim() ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "DESKTOP_BROWSER_VIEWER_INVALID",
+      `Desktop Browser viewer ${label} is invalid.`,
+    );
+  }
+  return value;
 }
 
 function normalizeRequiredIntegerField(value: unknown, field: string): number {

@@ -127,6 +127,14 @@ export interface HostedBrowserArtifactPort {
       generation: number;
     },
   ): Promise<BrowserAuthorizedArtifactV1 | undefined>;
+  canonicalizeRelayedScreenshot(input: {
+    origin: HostedBrowserOriginAuthority;
+    sessionId: string;
+    generation: number;
+    callId: string;
+    bytes: Uint8Array;
+    sha256: string;
+  }): Promise<BrowserAuthorizedArtifactV1>;
 }
 
 export interface HostedBrowserMetricPort {
@@ -405,6 +413,47 @@ export class HostedBrowserService implements BrowserServicePort {
     if (!sameBrowserIdentity(storedOrigin, origin)) {
       throw this.#failure("BROWSER_SESSION_LOST");
     }
+    try {
+      if (operation === "browser.capture") {
+        verifyHostedBrowserOperationCapability({
+          token: instruction.capability,
+          publicKeyPem: createPublicKey(this.options.capabilityPrivateKeyPem)
+            .export({ type: "spki", format: "pem" })
+            .toString(),
+          now: this.#now(),
+          allowExpired: true,
+          expected: {
+            version: HOSTED_BROWSER_CAPABILITY_VERSION,
+            organizationId: origin.organizationId,
+            environmentId: origin.environmentId,
+            projectId: origin.projectId,
+            userId: origin.userId,
+            threadId: origin.threadId,
+            sessionId: instruction.sessionId,
+            generation: instruction.generation,
+            operationId: instruction.operationId,
+            effectiveAllowlistRevision:
+              record.session.effectiveAllowlistRevision,
+          },
+        });
+        output = await this.#canonicalizeRelayedScreenshot({
+          output,
+          origin,
+          session: record.session,
+          callId: prepared.callId,
+        });
+      } else if (isHostedBrowserWorkerResultEnvelope(output)) {
+        throw this.#failure("BROWSER_ENGINE_FAILURE");
+      }
+    } catch {
+      await this.#terminate(
+        record.session,
+        record.resource,
+        "failed",
+        "BROWSER_ENGINE_FAILURE",
+      );
+      throw this.#failure("BROWSER_ENGINE_FAILURE");
+    }
     const resultRevision = operation === "browser.request_grant" &&
         output && typeof output === "object" && !Array.isArray(output) &&
         typeof (output as Record<string, unknown>).effectiveAllowlistRevision === "string"
@@ -535,6 +584,40 @@ export class HostedBrowserService implements BrowserServicePort {
       );
     }
     return validatedOutput;
+  }
+
+  async #canonicalizeRelayedScreenshot(input: {
+    output: unknown;
+    origin: HostedBrowserOriginAuthority;
+    session: BrowserSessionV1;
+    callId: string;
+  }): Promise<unknown> {
+    const envelope = parseHostedBrowserScreenshotEnvelope(input.output);
+    const bytes = Buffer.from(envelope.screenshot.base64, "base64");
+    if (
+      bytes.byteLength !== envelope.screenshot.byteLength ||
+      createHash("sha256").update(bytes).digest("hex") !==
+        envelope.screenshot.sha256 ||
+      bytes.byteLength < 8 ||
+      !bytes.subarray(0, 8).equals(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      )
+    ) {
+      throw this.#failure("BROWSER_ENGINE_FAILURE");
+    }
+    const artifact = await this.options.artifacts.canonicalizeRelayedScreenshot({
+      origin: input.origin,
+      sessionId: input.session.sessionId,
+      generation: input.session.generation,
+      callId: input.callId,
+      bytes,
+      sha256: envelope.screenshot.sha256,
+    });
+    const { version: _artifactAuthorityVersion, ...artifactOutput } = artifact;
+    return {
+      ...envelope.output,
+      artifact: artifactOutput,
+    };
   }
 
   async markAcceptedOperationUnknown(
@@ -1207,6 +1290,73 @@ function sameBrowserIdentity(
     left.threadId === right.threadId &&
     left.userId === right.userId
   );
+}
+
+type HostedBrowserScreenshotEnvelopeV1 = {
+  version: "hosted_browser_worker_result_v1";
+  output: Record<string, unknown>;
+  screenshot: {
+    mediaType: "image/png";
+    byteLength: number;
+    sha256: string;
+    base64: string;
+  };
+};
+
+function isHostedBrowserWorkerResultEnvelope(
+  value: unknown,
+): value is Record<string, unknown> {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      (value as Record<string, unknown>).version ===
+        "hosted_browser_worker_result_v1",
+  );
+}
+
+function parseHostedBrowserScreenshotEnvelope(
+  value: unknown,
+): HostedBrowserScreenshotEnvelopeV1 {
+  if (!isHostedBrowserWorkerResultEnvelope(value)) {
+    throw new Error("BROWSER_ENGINE_FAILURE");
+  }
+  const output = value.output;
+  const screenshot = value.screenshot;
+  if (
+    !output ||
+    typeof output !== "object" ||
+    Array.isArray(output) ||
+    !screenshot ||
+    typeof screenshot !== "object" ||
+    Array.isArray(screenshot)
+  ) {
+    throw new Error("BROWSER_ENGINE_FAILURE");
+  }
+  const record = screenshot as Record<string, unknown>;
+  if (
+    record.mediaType !== "image/png" ||
+    !Number.isSafeInteger(record.byteLength) ||
+    Number(record.byteLength) < 1 ||
+    typeof record.sha256 !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(record.sha256) ||
+    typeof record.base64 !== "string" ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
+      record.base64,
+    )
+  ) {
+    throw new Error("BROWSER_ENGINE_FAILURE");
+  }
+  return {
+    version: "hosted_browser_worker_result_v1",
+    output: output as Record<string, unknown>,
+    screenshot: {
+      mediaType: "image/png",
+      byteLength: record.byteLength as number,
+      sha256: record.sha256,
+      base64: record.base64,
+    },
+  };
 }
 
 function readPreviewLeaseId(input: Record<string, unknown>): string | undefined {

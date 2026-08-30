@@ -143,6 +143,8 @@
     "ecosystem:release-check": "pnpm run packages:release-check && pnpm run ecosystem:e2e && pnpm run ecosystem:next-fixture",
     "desktop:dev": "pnpm --filter @kestrel/desktop dev",
     "desktop:build": "pnpm --filter @kestrel/desktop build",
+    "browser:runtime:stage:desktop": "node --import tsx scripts/stage-browser-runtime-sources.ts darwin-arm64",
+    "browser:runtime:stage:hosted": "node --import tsx scripts/stage-browser-runtime-sources.ts linux-x64",
     "desktop:package:dir": "pnpm --filter @kestrel/desktop package:dir",
     "desktop:package:preflight": "node --import tsx scripts/check-desktop-package.ts",
     "desktop:package": "pnpm --filter @kestrel/desktop package",

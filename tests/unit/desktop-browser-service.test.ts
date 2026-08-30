@@ -26,6 +26,7 @@ import {
   assertDesktopBrowserOwnedDaemonArtifacts,
   buildAgentBrowserCliInvocation,
   desktopBrowserDaemonCommandMatches,
+  desktopBrowserZombieCommandMatches,
   denyAgentBrowserDownloads,
   installAgentBrowserDownloadInterception,
   spawnAndCollect,
@@ -34,6 +35,7 @@ import {
   type DesktopBrowserEngineAdapter,
   type DesktopBrowserEngineInvocation,
   type DesktopBrowserMetric,
+  type DesktopBrowserViewerEventV1,
 } from "../../src/localCore/desktopBrowserService.js";
 import { LocalCoreBrowserAuthorityCriticalSection } from "../../src/localCore/api.js";
 import { LocalCoreDesktopBrowserAuthorityResolver } from "../../src/localCore/desktopBrowserAuthority.js";
@@ -46,6 +48,7 @@ import type {
   BrowserOperationLifecycleV1,
   BrowserSessionV1,
 } from "../../src/browser/contracts.js";
+import type { DesktopBrowserViewerStateV1 } from "../../src/desktopShell/contracts.js";
 import type { PreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
 import type {
   CreateLocalCoreBrowserEgressProxyInput,
@@ -251,6 +254,276 @@ test("same QA open is idempotent and a conflicting open requires close", async (
     hasCode("BROWSER_SESSION_CONFLICT"),
   );
   await fixture.service.close();
+});
+
+test("Desktop takeover stays pending until viewer acceptance and blocks the agent only during human control", async () => {
+  const viewerEvents: DesktopBrowserViewerEventV1[] = [];
+  const fixture = await createFixture({ viewerEvents });
+  const sessionId = await openSession(fixture.service);
+  const takeoverLifecycle = createLifecycle();
+  const takeover = asRecord(
+    await fixture.service.execute(
+      prepared("browser.request_takeover", {
+        sessionId,
+        reason: "Authentication requires the signed-in person.",
+      }),
+      takeoverLifecycle,
+    ),
+  );
+  assert.equal(takeover.state, "ready");
+  assert.equal(takeover.outcome, "takeover_requested");
+  assert.deepEqual(takeoverLifecycle.events, ["ack", "persist"]);
+
+  const beforeAcceptance = createLifecycle();
+  await fixture.service.execute(
+    prepared("browser.snapshot", { sessionId }),
+    beforeAcceptance,
+  );
+  assert.deepEqual(beforeAcceptance.events, ["ack", "persist"]);
+
+  const viewer = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  assert.equal(viewer.sessionState, "ready");
+  assert.equal(viewer.takeoverRequested, true);
+  const frame = await fixture.service.readViewerFrame({
+    ...viewer,
+    principalId: "desktop-main-1",
+  });
+  assert.equal(frame.mediaType, "image/png");
+  assert.equal(frame.sequence, 1);
+
+  const accepted = requireAvailableViewer(
+    await fixture.service.acceptViewerTakeover({
+      ...viewer,
+      principalId: "desktop-main-1",
+    }),
+  );
+  assert.equal(accepted.sessionState, "human_control");
+  assert.ok(accepted.inputLeaseId);
+  const blockedLifecycle = createLifecycle();
+  await assert.rejects(
+    fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      blockedLifecycle,
+    ),
+    hasCode("BROWSER_HUMAN_CONTROL_ACTIVE"),
+  );
+  assert.deepEqual(blockedLifecycle.events, []);
+
+  const sentinel = "viewer-secret-password-9Y!mfa-734921";
+  const afterInput = await fixture.service.sendViewerInput({
+    ...viewer,
+    principalId: "desktop-main-1",
+    leaseId: accepted.inputLeaseId!,
+    viewerInput: {
+      version: "desktop_browser_viewer_input_v1",
+      kind: "keyboard",
+      phase: "down",
+      key: "Unidentified",
+      text: sentinel,
+    },
+  });
+  assert.equal(afterInput.sessionState, "human_control");
+  assert.equal(
+    (fixture.engine.viewerInputs[0] as { text: string }).text,
+    sentinel,
+  );
+  assert.doesNotMatch(JSON.stringify(afterInput), new RegExp(sentinel, "u"));
+  assert.doesNotMatch(JSON.stringify(viewerEvents), new RegExp(sentinel, "u"));
+  assert.doesNotMatch(
+    await readFile(path.join(fixture.homePath, "browser", "sessions.json"), "utf8"),
+    new RegExp(sentinel, "u"),
+  );
+
+  const returned = await fixture.service.returnViewerControl({
+    ...viewer,
+    principalId: "desktop-main-1",
+    leaseId: accepted.inputLeaseId!,
+  });
+  assert.equal(returned.sessionState, "ready");
+  const afterReturn = createLifecycle();
+  await fixture.service.execute(
+    prepared("browser.snapshot", { sessionId }),
+    afterReturn,
+  );
+  assert.deepEqual(afterReturn.events, ["ack", "persist"]);
+  assert.deepEqual(
+    viewerEvents.map((event) => event.name),
+    ["request", "acceptance", "lease_issue", "return"],
+  );
+  await fixture.service.close();
+});
+
+test("Desktop human control survives disconnect and lease expiry until an authorized reconnect explicitly returns it", async () => {
+  let now = new Date("2026-08-29T12:00:00.000Z");
+  const viewerEvents: DesktopBrowserViewerEventV1[] = [];
+  const fixture = await createFixture({ now: () => now, viewerEvents });
+  const sessionId = await openSession(fixture.service);
+  await fixture.service.execute(
+    prepared("browser.request_takeover", {
+      sessionId,
+      reason: "Authentication required.",
+    }),
+    createLifecycle(),
+  );
+  const first = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  const accepted = requireAvailableViewer(
+    await fixture.service.acceptViewerTakeover({
+      ...first,
+      principalId: "desktop-main-1",
+    }),
+  );
+  await assert.rejects(
+    fixture.service.connectViewer({
+      principalId: "wrong-renderer",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+    hasCode("BROWSER_SESSION_CONFLICT"),
+  );
+  now = new Date(now.getTime() + 31_000);
+  await assert.rejects(
+    fixture.service.sendViewerInput({
+      ...first,
+      principalId: "desktop-main-1",
+      leaseId: accepted.inputLeaseId!,
+      viewerInput: {
+        version: "desktop_browser_viewer_input_v1",
+        kind: "pointer",
+        phase: "down",
+        x: 4,
+        y: 8,
+        button: "left",
+      },
+    }),
+    hasCode("BROWSER_HUMAN_CONTROL_ACTIVE"),
+  );
+  await assert.rejects(
+    fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      createLifecycle(),
+    ),
+    hasCode("BROWSER_HUMAN_CONTROL_ACTIVE"),
+  );
+  await fixture.service.disconnectViewer({
+    ...first,
+    principalId: "desktop-main-1",
+  });
+  await assert.rejects(
+    fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      createLifecycle(),
+    ),
+    hasCode("BROWSER_HUMAN_CONTROL_ACTIVE"),
+  );
+
+  const reconnected = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  assert.equal(reconnected.sessionState, "human_control");
+  const replacement = requireAvailableViewer(
+    await fixture.service.acceptViewerTakeover({
+      ...reconnected,
+      principalId: "desktop-main-1",
+    }),
+  );
+  assert.notEqual(replacement.inputLeaseId, accepted.inputLeaseId);
+  now = new Date(now.getTime() + 1_000);
+  const renewed = await fixture.service.renewViewerInputLease({
+    ...reconnected,
+    principalId: "desktop-main-1",
+    leaseId: replacement.inputLeaseId!,
+  });
+  assert.ok(
+    Date.parse(renewed.inputLeaseExpiresAt!) >
+      Date.parse(replacement.inputLeaseExpiresAt!),
+  );
+  await fixture.service.returnViewerControl({
+    ...reconnected,
+    principalId: "desktop-main-1",
+    leaseId: replacement.inputLeaseId!,
+  });
+  assert.ok(viewerEvents.some((event) => event.name === "expiry"));
+  assert.ok(viewerEvents.some((event) => event.name === "disconnect"));
+  assert.ok(viewerEvents.some((event) => event.name === "lease_renewal"));
+  await fixture.service.close();
+});
+
+test("Desktop viewer authority loss and engine loss terminate human control instead of resuming the agent", async () => {
+  const fixture = await createFixture();
+  const sessionId = await openSession(fixture.service);
+  await fixture.service.execute(
+    prepared("browser.request_takeover", {
+      sessionId,
+      reason: "Authentication required.",
+    }),
+    createLifecycle(),
+  );
+  const viewer = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  await fixture.service.acceptViewerTakeover({
+    ...viewer,
+    principalId: "desktop-main-1",
+  });
+  fixture.engine.triggerLoss();
+  await waitFor(async () => fixture.engine.closed.length === 1);
+  assert.equal(
+    (await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    })).available,
+    false,
+  );
+
+  const second = await createFixture();
+  const secondSession = await openSession(second.service);
+  await second.service.execute(
+    prepared("browser.request_takeover", {
+      sessionId: secondSession,
+      reason: "Authentication required.",
+    }),
+    createLifecycle(),
+  );
+  const secondViewer = requireAvailableViewer(
+    await second.service.connectViewer({
+      principalId: "desktop-main-2",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  await second.service.loseViewerAuthority({
+    ...secondViewer,
+    principalId: "desktop-main-2",
+  });
+  assert.equal(second.engine.closed.length, 1);
+  await assert.rejects(
+    second.service.execute(
+      prepared("browser.snapshot", { sessionId: secondSession }),
+      createLifecycle(),
+    ),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
 });
 
 test("operator open reuses the Thread Session across allowed destinations", async () => {
@@ -2510,6 +2783,23 @@ test(
   },
 );
 
+test("daemon cleanup accepts only the exact exited agent-browser zombie identity", () => {
+  assert.equal(
+    desktopBrowserZombieCommandMatches(
+      "[agent-browser] <defunct>",
+      "/bundle/agent-browser",
+    ),
+    true,
+  );
+  assert.equal(
+    desktopBrowserZombieCommandMatches(
+      "[different-process] <defunct>",
+      "/bundle/agent-browser",
+    ),
+    false,
+  );
+});
+
 test("daemon ownership requires exact executable identity and contained real sidecar artifacts", async (t) => {
   assert.equal(
     desktopBrowserDaemonCommandMatches(
@@ -2794,6 +3084,18 @@ test("agent-browser launch uses explicit assets, empty Kestrel state, and keeps 
   assert.equal(built.env.AGENT_BROWSER_PROXY_USERNAME, "proxy-user");
   assert.equal(built.env.AGENT_BROWSER_PROXY_PASSWORD, "proxy-secret");
   assert.equal(built.env.AGENT_BROWSER_SOCKET_DIR, invocation.socketPath);
+  assert.equal(built.env.TMPDIR, invocation.socketPath);
+  assert.equal(
+    Buffer.byteLength(
+      path.join(
+        "/tmp/kestrel-browser-4294967295",
+        "0123456789abcdef",
+        "org.chromium.Chromium.123456",
+        "SingletonSocket",
+      ),
+    ) <= 107,
+    true,
+  );
   assert.equal(built.env.HOME, "/runtime/config");
   assert.equal(built.env.PATH, "");
   assert.equal(built.args.includes("install"), false);
@@ -3084,6 +3386,7 @@ async function createFixture(
     randomId?: (() => string) | undefined;
     authorityResolver?: DesktopBrowserAuthorityResolver | undefined;
     metrics?: DesktopBrowserMetric[] | undefined;
+    viewerEvents?: DesktopBrowserViewerEventV1[] | undefined;
     uploadStream?: {
       open(input: {
         threadId: string;
@@ -3150,6 +3453,14 @@ async function createFixture(
         : {
             record(metric) {
               input.metrics!.push(metric);
+            },
+          },
+    viewerEvents:
+      input.viewerEvents === undefined
+        ? undefined
+        : {
+            record(event) {
+              input.viewerEvents!.push(event);
             },
           },
     now: input.now,
@@ -3238,6 +3549,9 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
   commandPaused?: (() => void) | undefined;
   resumeCommand?: Promise<void> | undefined;
   screenshotBytes?: number | undefined;
+  readonly viewerInputs: unknown[] = [];
+  viewerFrameBase64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xk1vAAAAAElFTkSuQmCC";
 
   constructor(
     input: {
@@ -3399,6 +3713,17 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
       throw error;
     }
     this.closed.push(input);
+  }
+
+  async captureViewerFrame() {
+    return {
+      mediaType: "image/png" as const,
+      dataBase64: this.viewerFrameBase64,
+    };
+  }
+
+  async dispatchViewerInput(input: { viewerInput: unknown }): Promise<void> {
+    this.viewerInputs.push(structuredClone(input.viewerInput));
   }
 
   emitDownload(): void {
@@ -3717,6 +4042,26 @@ function asRecord(value: unknown): Record<string, unknown> {
   assert.notEqual(value, null);
   assert.equal(Array.isArray(value), false);
   return value as Record<string, unknown>;
+}
+
+function requireAvailableViewer(
+  viewer: DesktopBrowserViewerStateV1,
+): DesktopBrowserViewerStateV1 & {
+  available: true;
+  sessionId: string;
+  generation: number;
+  connectionId: string;
+} {
+  assert.equal(viewer.available, true);
+  assert.equal(typeof viewer.sessionId, "string");
+  assert.equal(typeof viewer.generation, "number");
+  assert.equal(typeof viewer.connectionId, "string");
+  return viewer as DesktopBrowserViewerStateV1 & {
+    available: true;
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+  };
 }
 
 function hasCode(code: string) {

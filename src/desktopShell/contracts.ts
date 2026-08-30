@@ -62,6 +62,329 @@ export const DESKTOP_BROWSER_PERSONAL_DOMAIN_RECORD_VERSION =
   "desktop_browser_personal_domain_record_v1" as const;
 export const DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION =
   "desktop_browser_personal_domain_provenance_v1" as const;
+export const DESKTOP_BROWSER_VIEWER_REQUEST_VERSION =
+  "desktop_browser_viewer_request_v1" as const;
+export const DESKTOP_BROWSER_VIEWER_STATE_VERSION =
+  "desktop_browser_viewer_state_v1" as const;
+export const DESKTOP_BROWSER_VIEWER_FRAME_VERSION =
+  "desktop_browser_viewer_frame_v1" as const;
+export const DESKTOP_BROWSER_VIEWER_INPUT_VERSION =
+  "desktop_browser_viewer_input_v1" as const;
+
+export interface DesktopBrowserViewerBindingV1 {
+  version: typeof DESKTOP_BROWSER_VIEWER_REQUEST_VERSION;
+  threadId: string;
+  projectId: string;
+  sessionId?: string | undefined;
+  generation?: number | undefined;
+  connectionId?: string | undefined;
+}
+
+export interface DesktopBrowserViewerStateV1 {
+  version: typeof DESKTOP_BROWSER_VIEWER_STATE_VERSION;
+  available: boolean;
+  threadId: string;
+  projectId: string;
+  sessionId?: string | undefined;
+  generation?: number | undefined;
+  connectionId?: string | undefined;
+  sessionState?: "ready" | "human_control" | undefined;
+  takeoverRequested?: boolean | undefined;
+  inputLeaseId?: string | undefined;
+  inputLeaseExpiresAt?: string | undefined;
+}
+
+export interface DesktopBrowserViewerFrameV1 {
+  version: typeof DESKTOP_BROWSER_VIEWER_FRAME_VERSION;
+  sessionId: string;
+  generation: number;
+  sequence: number;
+  capturedAt: string;
+  mediaType: "image/png";
+  dataBase64: string;
+}
+
+export type DesktopBrowserViewerInputV1 =
+  | {
+      version: typeof DESKTOP_BROWSER_VIEWER_INPUT_VERSION;
+      kind: "pointer";
+      phase: "move" | "down" | "up";
+      x: number;
+      y: number;
+      button?: "none" | "left" | "middle" | "right" | undefined;
+      modifiers?: Array<"alt" | "control" | "meta" | "shift"> | undefined;
+    }
+  | {
+      version: typeof DESKTOP_BROWSER_VIEWER_INPUT_VERSION;
+      kind: "keyboard";
+      phase: "down" | "up";
+      key: string;
+      code?: string | undefined;
+      text?: string | undefined;
+      modifiers?: Array<"alt" | "control" | "meta" | "shift"> | undefined;
+    };
+
+export interface DesktopBrowserViewerInputRequestV1
+  extends DesktopBrowserViewerBindingV1 {
+  leaseId: string;
+  input: DesktopBrowserViewerInputV1;
+}
+
+export interface DesktopBrowserViewerLeaseRequestV1
+  extends DesktopBrowserViewerBindingV1 {
+  leaseId: string;
+}
+
+export function parseDesktopBrowserViewerBinding(
+  value: unknown,
+): DesktopBrowserViewerBindingV1 {
+  const input = parseDesktopBrowserViewerRecord(value);
+  const allowed = new Set([
+    "version",
+    "threadId",
+    "projectId",
+    "sessionId",
+    "generation",
+    "connectionId",
+  ]);
+  rejectDesktopBrowserViewerKeys(input, allowed);
+  if (input.version !== DESKTOP_BROWSER_VIEWER_REQUEST_VERSION) {
+    throw new Error("Desktop Browser viewer request version is invalid.");
+  }
+  const threadId = requireDesktopBrowserViewerText(input.threadId, "threadId");
+  const projectId = requireDesktopBrowserViewerText(input.projectId, "projectId");
+  const sessionId = optionalDesktopBrowserViewerText(input.sessionId, "sessionId");
+  const connectionId = optionalDesktopBrowserViewerText(
+    input.connectionId,
+    "connectionId",
+  );
+  const generation = optionalDesktopBrowserViewerGeneration(input.generation);
+  if (
+    (sessionId === undefined) !== (generation === undefined) ||
+    (connectionId !== undefined && sessionId === undefined)
+  ) {
+    throw new Error("Desktop Browser viewer identity is incomplete.");
+  }
+  return {
+    version: DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
+    threadId,
+    projectId,
+    ...(sessionId === undefined ? {} : { sessionId, generation }),
+    ...(connectionId === undefined ? {} : { connectionId }),
+  };
+}
+
+export function parseDesktopBrowserViewerInputRequest(
+  value: unknown,
+): DesktopBrowserViewerInputRequestV1 {
+  const input = parseDesktopBrowserViewerRecord(value);
+  rejectDesktopBrowserViewerKeys(
+    input,
+    new Set([
+      "version",
+      "threadId",
+      "projectId",
+      "sessionId",
+      "generation",
+      "connectionId",
+      "leaseId",
+      "input",
+    ]),
+  );
+  const binding = parseDesktopBrowserViewerBinding({
+    version: input.version,
+    threadId: input.threadId,
+    projectId: input.projectId,
+    sessionId: input.sessionId,
+    generation: input.generation,
+    connectionId: input.connectionId,
+  });
+  if (binding.connectionId === undefined) {
+    throw new Error("Desktop Browser viewer connection is required.");
+  }
+  const leaseId = requireDesktopBrowserViewerText(input.leaseId, "leaseId");
+  const viewerInput = parseDesktopBrowserViewerRecord(input.input);
+  const version = viewerInput.version;
+  if (version !== DESKTOP_BROWSER_VIEWER_INPUT_VERSION) {
+    throw new Error("Desktop Browser viewer input version is invalid.");
+  }
+  const kind = viewerInput.kind;
+  const modifiers = parseDesktopBrowserViewerModifiers(viewerInput.modifiers);
+  if (kind === "pointer") {
+    rejectDesktopBrowserViewerKeys(
+      viewerInput,
+      new Set(["version", "kind", "phase", "x", "y", "button", "modifiers"]),
+    );
+    if (
+      viewerInput.phase !== "move" &&
+      viewerInput.phase !== "down" &&
+      viewerInput.phase !== "up"
+    ) {
+      throw new Error("Desktop Browser pointer phase is invalid.");
+    }
+    if (
+      typeof viewerInput.x !== "number" ||
+      !Number.isFinite(viewerInput.x) ||
+      viewerInput.x < 0 ||
+      typeof viewerInput.y !== "number" ||
+      !Number.isFinite(viewerInput.y) ||
+      viewerInput.y < 0
+    ) {
+      throw new Error("Desktop Browser pointer coordinates are invalid.");
+    }
+    const button = viewerInput.button;
+    if (
+      button !== undefined &&
+      button !== "none" &&
+      button !== "left" &&
+      button !== "middle" &&
+      button !== "right"
+    ) {
+      throw new Error("Desktop Browser pointer button is invalid.");
+    }
+    return {
+      ...binding,
+      leaseId,
+      input: {
+        version,
+        kind,
+        phase: viewerInput.phase,
+        x: viewerInput.x,
+        y: viewerInput.y,
+        ...(button === undefined ? {} : { button }),
+        ...(modifiers === undefined ? {} : { modifiers }),
+      },
+    };
+  }
+  if (kind !== "keyboard") {
+    throw new Error("Desktop Browser viewer input kind is invalid.");
+  }
+  rejectDesktopBrowserViewerKeys(
+    viewerInput,
+    new Set(["version", "kind", "phase", "key", "code", "text", "modifiers"]),
+  );
+  if (viewerInput.phase !== "down" && viewerInput.phase !== "up") {
+    throw new Error("Desktop Browser keyboard phase is invalid.");
+  }
+  const key = requireDesktopBrowserViewerText(viewerInput.key, "input.key", 128);
+  const code = optionalDesktopBrowserViewerText(viewerInput.code, "input.code", 128);
+  const text = optionalDesktopBrowserViewerText(viewerInput.text, "input.text", 8_192);
+  return {
+    ...binding,
+    leaseId,
+    input: {
+      version,
+      kind,
+      phase: viewerInput.phase,
+      key,
+      ...(code === undefined ? {} : { code }),
+      ...(text === undefined ? {} : { text }),
+      ...(modifiers === undefined ? {} : { modifiers }),
+    },
+  };
+}
+
+export function parseDesktopBrowserViewerLeaseRequest(
+  value: unknown,
+): DesktopBrowserViewerLeaseRequestV1 {
+  const input = parseDesktopBrowserViewerRecord(value);
+  rejectDesktopBrowserViewerKeys(
+    input,
+    new Set([
+      "version",
+      "threadId",
+      "projectId",
+      "sessionId",
+      "generation",
+      "connectionId",
+      "leaseId",
+    ]),
+  );
+  const binding = parseDesktopBrowserViewerBinding({
+    version: input.version,
+    threadId: input.threadId,
+    projectId: input.projectId,
+    sessionId: input.sessionId,
+    generation: input.generation,
+    connectionId: input.connectionId,
+  });
+  if (binding.connectionId === undefined) {
+    throw new Error("Desktop Browser viewer connection is required.");
+  }
+  return {
+    ...binding,
+    leaseId: requireDesktopBrowserViewerText(input.leaseId, "leaseId"),
+  };
+}
+
+function parseDesktopBrowserViewerRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Desktop Browser viewer request must be an object.");
+  }
+  return value as Record<string, unknown>;
+}
+
+function rejectDesktopBrowserViewerKeys(
+  input: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+): void {
+  const unsupported = Object.keys(input).find((key) => !allowed.has(key));
+  if (unsupported !== undefined) {
+    throw new Error("Desktop Browser viewer request contains an unsupported field.");
+  }
+}
+
+function requireDesktopBrowserViewerText(
+  value: unknown,
+  label: string,
+  maximumLength = 512,
+): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > maximumLength ||
+    value !== value.trim() ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw new Error(`Desktop Browser viewer ${label} is invalid.`);
+  }
+  return value;
+}
+
+function optionalDesktopBrowserViewerText(
+  value: unknown,
+  label: string,
+  maximumLength = 512,
+): string | undefined {
+  return value === undefined
+    ? undefined
+    : requireDesktopBrowserViewerText(value, label, maximumLength);
+}
+
+function optionalDesktopBrowserViewerGeneration(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new Error("Desktop Browser viewer generation is invalid.");
+  }
+  return value as number;
+}
+
+function parseDesktopBrowserViewerModifiers(
+  value: unknown,
+): Array<"alt" | "control" | "meta" | "shift"> | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 4) {
+    throw new Error("Desktop Browser viewer modifiers are invalid.");
+  }
+  const allowed = new Set(["alt", "control", "meta", "shift"]);
+  if (
+    value.some((entry) => typeof entry !== "string" || !allowed.has(entry)) ||
+    new Set(value).size !== value.length
+  ) {
+    throw new Error("Desktop Browser viewer modifiers are invalid.");
+  }
+  return value as Array<"alt" | "control" | "meta" | "shift">;
+}
 
 export interface DesktopBrowserPersonalDomainProvenanceV1 {
   version: typeof DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION;
@@ -211,6 +534,7 @@ export type DesktopBridgeCapabilityId =
   | "workspace_validation"
   | "workspace_git"
   | "attachments"
+  | "browser_viewer"
   | "operator_control"
   | "external_open"
   | "link_preview"
@@ -226,7 +550,7 @@ export interface DesktopBridgeInfo {
   capabilities: DesktopBridgeCapabilityId[];
 }
 
-export const DESKTOP_BRIDGE_VERSION = "8";
+export const DESKTOP_BRIDGE_VERSION = "9";
 
 export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "app_info",
@@ -259,6 +583,7 @@ export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "workspace_validation",
   "workspace_git",
   "attachments",
+  "browser_viewer",
   "operator_control",
   "external_open",
   "link_preview",

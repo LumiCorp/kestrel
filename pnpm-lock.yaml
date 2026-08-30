@@ -386,6 +386,9 @@ importers:
 
   apps/environment-router:
     dependencies:
+      '@kestrel/mcp-security':
+        specifier: workspace:*
+        version: link:../../packages/mcp-security
       '@lumi/kestrel-environment-auth':
         specifier: workspace:*
         version: link:../../packages/environment-auth

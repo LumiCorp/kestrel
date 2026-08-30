@@ -40,7 +40,6 @@ Add shared, Desktop, hosted, PostgreSQL, object-storage, process, Chromium, arti
 - Promoted files render through existing authorized web and mobile projections without mobile quarantine or takeover access.
 - Both hosts pass one shared download contract suite and required validation gates.
 
-## Depends on
+## Integration basis
 
-- [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md)
-- [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md)
+- Build against the reviewed contracts from [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) and [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md). Final completion still requires both hosts' interception and release evidence.

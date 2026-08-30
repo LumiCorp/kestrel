@@ -14,32 +14,62 @@ import {
 } from "../../src/browser/runtimeReleaseManifest.js";
 
 test("hosted Browser image build is pinned, nonroot, compiled, and runtime-fetch free", async () => {
-  const [dockerfile, metadataSource, smoke, imageCatalogSource] =
-    await Promise.all([
-      readFile("deploy/fly/kestrel-one-browser-worker/Dockerfile", "utf8"),
-      readFile(
-        "deploy/fly/kestrel-one-browser-worker/image-build.json",
-        "utf8",
-      ),
-      readFile("deploy/fly/kestrel-one-browser-worker/smoke.sh", "utf8"),
-      readFile("deploy/fly/image-catalog.json", "utf8"),
-    ]);
+  const [
+    dockerfile,
+    metadataSource,
+    smoke,
+    imageCatalogSource,
+    packageSource,
+    stagingReadme,
+  ] = await Promise.all([
+    readFile("deploy/fly/kestrel-one-browser-worker/Dockerfile", "utf8"),
+    readFile("deploy/fly/kestrel-one-browser-worker/image-build.json", "utf8"),
+    readFile("deploy/fly/kestrel-one-browser-worker/smoke.sh", "utf8"),
+    readFile("deploy/fly/image-catalog.json", "utf8"),
+    readFile("package.json", "utf8"),
+    readFile(
+      "deploy/fly/kestrel-one-browser-worker/runtime/linux-x64/README.md",
+      "utf8",
+    ),
+  ]);
   const metadata = JSON.parse(metadataSource) as Record<string, unknown>;
   const imageCatalog = JSON.parse(imageCatalogSource) as {
-    images: Array<{ role: string }>;
+    images: Array<{
+      role: string;
+      repository: string;
+      dockerfile: string;
+      prepare: string;
+      smoke: string;
+      rollout: string;
+    }>;
   };
   const hostedRelease = BROWSER_RUNTIME_RELEASE_MANIFEST.targets["linux-x64"];
 
   assert.equal(metadata.repository, HOSTED_BROWSER_WORKER_IMAGE_REPOSITORY);
   assert.equal(metadata.runtimeTarget, "linux-x64");
   assert.equal(
-    metadata.publicationStatus,
-    "blocked_pending_signed_runtime_assets",
+    metadata.runtimeStagingCommand,
+    "pnpm run browser:runtime:stage:hosted",
   );
-  assert.equal(
-    imageCatalog.images.some((image) => image.role === "hosted-browser-worker"),
-    false,
-    "unsigned hosted Browser runtime assets must not enter the production publisher",
+  assert.equal("publicationStatus" in metadata, false);
+  assert.match(packageSource, /"browser:runtime:stage:hosted"/u);
+  assert.match(stagingReadme, /exact upstream HTTPS URLs/u);
+  assert.doesNotMatch(
+    `${metadataSource}\n${stagingReadme}`,
+    /blocked_pending_signed_runtime_assets|trusted hosted Browser release key|signature receipt format/u,
+  );
+  assert.deepEqual(
+    imageCatalog.images.find((image) => image.role === "browser-worker"),
+    {
+      role: "browser-worker",
+      publisher: "fly",
+      repository: HOSTED_BROWSER_WORKER_IMAGE_REPOSITORY,
+      app: "kestrel-one-browser-worker",
+      dockerfile: "deploy/fly/kestrel-one-browser-worker/Dockerfile",
+      prepare: "browser:runtime:stage:hosted",
+      smoke: "deploy/fly/kestrel-one-browser-worker/smoke.sh",
+      rollout: "session",
+    },
   );
   assert.match(dockerfile, /^FROM node:22-bookworm-slim@sha256:[a-f0-9]{64}/mu);
   assert.match(dockerfile, /pnpm run build/u);
@@ -54,11 +84,24 @@ test("hosted Browser image build is pinned, nonroot, compiled, and runtime-fetch
   assert.match(dockerfile, new RegExp(hostedRelease.chrome.sha256, "u"));
   assert.doesNotMatch(dockerfile, /\bcurl\b|\bwget\b|agent-browser install/u);
   assert.match(smoke, /docker network create --internal/u);
+  const workerRun = smoke.slice(
+    smoke.indexOf('worker_container="$(docker run --detach'),
+    smoke.indexOf("# Docker does not publish host ports"),
+  );
+  assert.doesNotMatch(workerRun, /--publish/u);
+  assert.match(smoke, /credential-free TCP relay/u);
+  assert.match(smoke, /--network bridge/u);
+  assert.match(smoke, /docker network connect "\$network_name"/u);
+  assert.match(smoke, /--platform linux\/amd64/u);
+  assert.match(smoke, /chrome="\$\{chrome%/u);
   assert.match(
     smoke,
     /docker run --detach[\s\S]*?--read-only[\s\S]*?--tmpfs \/tmp:rw,noexec,nosuid[\s\S]*?"\$image"\)/u,
   );
   assert.match(smoke, /image-smoke-client\.ts" run/u);
+  assert.match(smoke, /close retained its owned runtime\/profile/u);
+  assert.match(smoke, /close retained its owned daemon/u);
+  assert.match(smoke, /!match\[1\]\.startsWith\("Z"\)/u);
   assert.match(smoke, /image-smoke-client\.ts" revision/u);
   assert.match(
     smoke,

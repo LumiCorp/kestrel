@@ -1102,3 +1102,61 @@
     transition: none;
   }
 }
+.browser-viewer {
+  display: grid;
+  gap: 8px;
+  margin: 12px 20px 0;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-raised);
+}
+
+.browser-viewer > header,
+.browser-viewer > header > div,
+.browser-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.browser-viewer > header {
+  justify-content: space-between;
+}
+
+.browser-viewer > header > div:first-child {
+  align-items: baseline;
+}
+
+.browser-viewer > header span,
+.browser-viewer > p,
+.browser-viewer-unavailable {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.browser-viewer-frame {
+  min-height: 180px;
+  max-height: 480px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 7px;
+  background: #090b0c;
+  outline: none;
+}
+
+.browser-viewer-frame-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.browser-viewer-frame img {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  user-select: none;
+}
+
+.browser-viewer-frame-input img {
+  cursor: crosshair;
+}

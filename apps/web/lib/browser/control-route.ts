@@ -10,7 +10,7 @@ import {
 import { parsePreparedToolCallV1 } from "../../../../src/kestrel/contracts/tool-invocation.js";
 import type { HostedBrowserService } from "./service";
 
-export const HOSTED_BROWSER_CONTROL_MAX_REQUEST_BYTES = 2 * 1024 * 1024;
+export const HOSTED_BROWSER_CONTROL_MAX_REQUEST_BYTES = 20 * 1024 * 1024;
 
 type ServiceResolver = (input: {
   ticket: EnvironmentExecutionTicket;

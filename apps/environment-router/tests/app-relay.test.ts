@@ -7,8 +7,13 @@ import { ENVIRONMENT_GATEWAY_CONFIG_VERSION } from "@lumi/kestrel-environment-au
 import {
   handleAppRelay,
   isAllowedAppRequest,
+  MAX_APP_RELAY_SERIALIZED_BYTES,
 } from "../src/app-relay.js";
 import { EnvironmentGatewayConfigClient } from "../src/gateway-config.js";
+
+test("ordinary App relay uses the settled 20 MiB serialized payload ceiling", () => {
+  assert.equal(MAX_APP_RELAY_SERIALIZED_BYTES, 20 * 1024 * 1024);
+});
 
 test("app relay refreshes expired execution tickets and enforces workspace and path scope", async () => {
   const observed: Array<Record<string, unknown>> = [];

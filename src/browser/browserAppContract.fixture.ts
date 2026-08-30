@@ -832,7 +832,7 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
           sessionId: stringId("Active Browser Session ID."),
           generation: { type: "integer", minimum: 1 },
           outcome: constString("takeover_requested"),
-          state: constString("human_control"),
+          state: constString("ready"),
         },
         ["version", "operation", "sessionId", "generation", "outcome", "state"],
       ),

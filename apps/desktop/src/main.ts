@@ -44,6 +44,9 @@ import {
   parseDesktopCapabilityConfigurationInput,
   parseDesktopBrowserPersonalDomainListRequest,
   parseDesktopBrowserPersonalDomainRevokeRequest,
+  parseDesktopBrowserViewerBinding,
+  parseDesktopBrowserViewerInputRequest,
+  parseDesktopBrowserViewerLeaseRequest,
   parseDesktopProviderModelCatalogRequest,
   parseDesktopMcpServerMutationInput,
   parseDesktopRendererSettingsUpdate,
@@ -118,6 +121,8 @@ import {
 import type { DatabaseUrlSource } from "../../../src/runtime/databasePreflight.js";
 import type {
   DesktopBootState,
+  DesktopBrowserViewerBindingV1,
+  DesktopBrowserViewerStateV1,
   DesktopLaunchState,
   DesktopOnboardingDraftInput,
   DesktopOnboardingProviderInput,
@@ -409,6 +414,17 @@ let databaseStatus: DesktopDatabaseStatus = {
 let desktopSettings: DesktopSettings = createDefaultDesktopSettings();
 let browserPersonalDomainService:
   | DesktopBrowserPersonalDomainService
+  | undefined;
+let desktopBrowserViewerPrincipal:
+  | {
+      senderId: number;
+      principalId: string;
+      threadId: string;
+      projectId: string;
+      sessionId: string;
+      generation: number;
+      connectionId: string;
+    }
   | undefined;
 const desktopBrowserPersonalRevisionAdoptionCoordinator: DesktopBrowserPersonalRevisionAdoptionCoordinator =
   {
@@ -1017,6 +1033,7 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
   );
   ensureMediaPermissionHandler(window);
   window.on("closed", () => {
+    void loseCurrentDesktopBrowserViewerAuthority(window.webContents.id);
     clearDesktopRendererBootstrapTimeout();
     if (mainWindow === window) {
       mainWindow = undefined;
@@ -1032,6 +1049,7 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
     },
   );
   window.webContents.on("render-process-gone", () => {
+    void loseCurrentDesktopBrowserViewerAuthority(window.webContents.id);
     if (desktopAppQuitting || rendererFallbackActive) {
       return;
     }
@@ -1046,6 +1064,7 @@ async function loadDesktopRenderer(
   window: BrowserWindow,
   config: ReturnType<typeof resolveDesktopPathConfig>,
 ): Promise<void> {
+  await loseCurrentDesktopBrowserViewerAuthority(window.webContents.id);
   rendererBootstrapGeneration += 1;
   const generation = rendererBootstrapGeneration;
   rendererFallbackActive = false;
@@ -1372,6 +1391,141 @@ function requireCurrentMainWindowIpcSender(
     });
   }
   return window;
+}
+
+function desktopBrowserViewerPrincipalId(senderId: number): string {
+  return `desktop-main-${senderId}-${rendererBootstrapGeneration}`;
+}
+
+function exactDesktopBrowserViewerBinding(
+  request: DesktopBrowserViewerBindingV1,
+): asserts request is DesktopBrowserViewerBindingV1 & {
+  sessionId: string;
+  generation: number;
+  connectionId: string;
+} {
+  if (
+    request.sessionId === undefined ||
+    request.generation === undefined ||
+    request.connectionId === undefined
+  ) {
+    throw createDesktopError({
+      code: "desktop.browser_viewer_identity_invalid",
+      message: "The Browser viewer identity is incomplete.",
+    });
+  }
+}
+
+function requireCurrentDesktopBrowserViewerPrincipal(
+  event: IpcMainInvokeEvent,
+  request: DesktopBrowserViewerBindingV1,
+): NonNullable<typeof desktopBrowserViewerPrincipal> {
+  requireCurrentMainWindowIpcSender(event);
+  assertDesktopBrowserViewerAppEnabled();
+  exactDesktopBrowserViewerBinding(request);
+  const principal = desktopBrowserViewerPrincipal;
+  if (
+    principal === undefined ||
+    principal.senderId !== event.sender.id ||
+    principal.principalId !== desktopBrowserViewerPrincipalId(event.sender.id) ||
+    principal.threadId !== request.threadId ||
+    principal.projectId !== request.projectId ||
+    principal.sessionId !== request.sessionId ||
+    principal.generation !== request.generation ||
+    principal.connectionId !== request.connectionId
+  ) {
+    throw createDesktopError({
+      code: "desktop.browser_viewer_unauthorized",
+      message: "The Browser viewer is not authorized for this window.",
+    });
+  }
+  return principal;
+}
+
+function assertDesktopBrowserViewerAppEnabled(): void {
+  if (
+    !getEffectiveDesktopEnabledAppIds(desktopSettings).includes(
+      "built_in.browser",
+    )
+  ) {
+    void loseCurrentDesktopBrowserViewerAuthority();
+    throw createDesktopError({
+      code: "desktop.browser_viewer_app_disabled",
+      message: "The Browser App is disabled.",
+    });
+  }
+}
+
+function localCoreDesktopBrowserViewerIdentity(
+  principal: NonNullable<typeof desktopBrowserViewerPrincipal>,
+) {
+  return {
+    principalId: principal.principalId,
+    threadId: principal.threadId,
+    projectId: principal.projectId,
+    sessionId: principal.sessionId,
+    generation: principal.generation,
+    connectionId: principal.connectionId,
+  };
+}
+
+async function loseCurrentDesktopBrowserViewerAuthority(
+  expectedSenderId?: number,
+): Promise<void> {
+  const principal = desktopBrowserViewerPrincipal;
+  if (
+    principal === undefined ||
+    (expectedSenderId !== undefined && principal.senderId !== expectedSenderId)
+  ) {
+    return;
+  }
+  desktopBrowserViewerPrincipal = undefined;
+  try {
+    await requireLocalCoreConnectionManager().executeOnce(async (client) =>
+      await client.loseDesktopBrowserViewerAuthority(
+        localCoreDesktopBrowserViewerIdentity(principal),
+      ),
+    );
+  } catch {
+    // Renderer loss is best-effort here; Local Core also destroys sessions on
+    // account, policy, engine, and process authority loss.
+  }
+}
+
+function desktopBrowserViewerLeaseId(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 512 ||
+    value !== value.trim()
+  ) {
+    throw createDesktopError({
+      code: "desktop.browser_viewer_lease_invalid",
+      message: "The Browser input lease is invalid.",
+    });
+  }
+  return value;
+}
+
+async function requireAvailableDesktopBrowserViewerThread(
+  runnerTransport: DesktopRunnerControlTransport,
+  threadId: string,
+): Promise<void> {
+  const authority = await inspectDesktopThreadAuthority({
+    inspect: async () =>
+      await getDesktopOperatorThread({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        threadId,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  });
+  if (authority.status === "missing") {
+    await loseCurrentDesktopBrowserViewerAuthority();
+    throw createDesktopError({
+      code: "desktop.browser_viewer_thread_unavailable",
+      message: "The Browser viewer Thread is unavailable.",
+    });
+  }
 }
 
 function registerBootIpcHandlers(): void {
@@ -1724,6 +1878,193 @@ function registerIpcHandlers(
     async (_event, input: unknown) => {
       const request = parseDesktopBrowserPersonalDomainRevokeRequest(input);
       return await requireBrowserPersonalDomainService().revoke(request);
+    },
+  );
+  ipcMain.handle(
+    "desktop:browser-viewer-connect",
+    async (event, input: unknown) => {
+      requireCurrentMainWindowIpcSender(event);
+      assertDesktopBrowserViewerAppEnabled();
+      const request = parseDesktopBrowserViewerBinding(input);
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      if (
+        request.sessionId !== undefined ||
+        request.generation !== undefined ||
+        request.connectionId !== undefined
+      ) {
+        throw createDesktopError({
+          code: "desktop.browser_viewer_connect_invalid",
+          message: "Browser viewer connection starts from a Thread and Project.",
+        });
+      }
+      const current = desktopBrowserViewerPrincipal;
+      if (
+        current !== undefined &&
+        (current.senderId !== event.sender.id ||
+          current.threadId !== request.threadId ||
+          current.projectId !== request.projectId)
+      ) {
+        await loseCurrentDesktopBrowserViewerAuthority(current.senderId);
+      }
+      const principalId = desktopBrowserViewerPrincipalId(event.sender.id);
+      const viewer = await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.connectDesktopBrowserViewer({
+            principalId,
+            threadId: request.threadId,
+            projectId: request.projectId,
+          }),
+      );
+      if (
+        viewer.available &&
+        viewer.sessionId !== undefined &&
+        viewer.generation !== undefined &&
+        viewer.connectionId !== undefined
+      ) {
+        desktopBrowserViewerPrincipal = {
+          senderId: event.sender.id,
+          principalId,
+          threadId: request.threadId,
+          projectId: request.projectId,
+          sessionId: viewer.sessionId,
+          generation: viewer.generation,
+          connectionId: viewer.connectionId,
+        };
+      }
+      return viewer;
+    },
+  );
+  ipcMain.handle(
+    "desktop:browser-viewer-frame",
+    async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerBinding(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.readDesktopBrowserViewerFrame(
+            localCoreDesktopBrowserViewerIdentity(principal),
+          ),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:browser-viewer-accept",
+    async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerBinding(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.acceptDesktopBrowserTakeover(
+            localCoreDesktopBrowserViewerIdentity(principal),
+          ),
+      );
+    },
+  );
+  for (const [channel, action] of [
+    ["desktop:browser-viewer-renew", "renew"],
+    ["desktop:browser-viewer-return", "return"],
+  ] as const) {
+    ipcMain.handle(channel, async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerLeaseRequest(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      const exact = {
+        ...localCoreDesktopBrowserViewerIdentity(principal),
+        leaseId: desktopBrowserViewerLeaseId(request.leaseId),
+      };
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          action === "renew"
+            ? await client.renewDesktopBrowserInputLease(exact)
+            : await client.returnDesktopBrowserControl(exact),
+      );
+    });
+  }
+  ipcMain.handle(
+    "desktop:browser-viewer-input",
+    async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerInputRequest(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.sendDesktopBrowserViewerInput({
+            ...localCoreDesktopBrowserViewerIdentity(principal),
+            leaseId: request.leaseId,
+            viewerInput: request.input,
+          }),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:browser-viewer-disconnect",
+    async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerBinding(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      desktopBrowserViewerPrincipal = undefined;
+      await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.disconnectDesktopBrowserViewer(
+            localCoreDesktopBrowserViewerIdentity(principal),
+          ),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:browser-viewer-close",
+    async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerBinding(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      desktopBrowserViewerPrincipal = undefined;
+      await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.closeDesktopBrowserViewerSession(
+            localCoreDesktopBrowserViewerIdentity(principal),
+          ),
+      );
     },
   );
   ipcMain.handle(

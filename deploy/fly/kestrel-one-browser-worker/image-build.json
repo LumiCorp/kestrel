@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "role": "hosted-browser-worker",
+  "role": "browser-worker",
   "repository": "registry.fly.io/kestrel-one-browser-worker",
   "platform": "linux/amd64",
   "dockerfile": "deploy/fly/kestrel-one-browser-worker/Dockerfile",
@@ -9,6 +9,7 @@
   "runtimeManifest": "src/browser/runtimeReleaseManifest.ts",
   "runtimeTarget": "linux-x64",
   "runtimeStagingDirectory": "deploy/fly/kestrel-one-browser-worker/runtime/linux-x64",
-  "entrypoint": "/app/dist/src/browser/hostedWorkerMain.js",
-  "publicationStatus": "blocked_pending_signed_runtime_assets"
+  "runtimeStagingCommand": "pnpm run browser:runtime:stage:hosted",
+  "runtimeVerification": "Dockerfile SHA-256 checks plus deploy/fly/kestrel-one-browser-worker/smoke.sh",
+  "entrypoint": "/app/dist/src/browser/hostedWorkerMain.js"
 }

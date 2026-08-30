@@ -55,6 +55,13 @@ import {
   type LocalCoreBrowserEgressProxy,
 } from "./browserEgressProxy.js";
 import type { DesktopProjectRunRegistry } from "./desktopProjectRuns.js";
+import {
+  DESKTOP_BROWSER_VIEWER_FRAME_VERSION,
+  DESKTOP_BROWSER_VIEWER_STATE_VERSION,
+  type DesktopBrowserViewerFrameV1,
+  type DesktopBrowserViewerInputV1,
+  type DesktopBrowserViewerStateV1,
+} from "../desktopShell/contracts.js";
 
 const LEDGER_VERSION = "desktop_browser_sessions_v1" as const;
 const IDLE_TTL_MS = 30 * 60 * 1000;
@@ -71,6 +78,8 @@ const AGENT_BROWSER_SHUTDOWN_TIMEOUT_MS = 5_000;
 const MAX_BROWSER_TABS = 100;
 const DESKTOP_BROWSER_SESSION_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+const DESKTOP_BROWSER_INPUT_LEASE_MS = 30_000;
+const DESKTOP_BROWSER_VIEWER_FRAME_MAX_BYTES = 20 * 1024 * 1024;
 
 export interface DesktopBrowserAuthorityResolutionInput {
   runId: string;
@@ -158,6 +167,14 @@ export interface DesktopBrowserEngineAdapter {
     input: DesktopBrowserEngineInvocation,
     onLost: () => void,
   ): () => void;
+  captureViewerFrame?(
+    input: DesktopBrowserEngineInvocation,
+  ): Promise<{ mediaType: "image/png"; dataBase64: string }>;
+  dispatchViewerInput?(
+    input: DesktopBrowserEngineInvocation & {
+      viewerInput: DesktopBrowserViewerInputV1;
+    },
+  ): Promise<void>;
 }
 
 export type DesktopBrowserMetricName =
@@ -185,6 +202,33 @@ export interface DesktopBrowserMetric {
 
 export interface DesktopBrowserMetricSink {
   record(metric: DesktopBrowserMetric): void;
+}
+
+export type DesktopBrowserViewerEventName =
+  | "request"
+  | "acceptance"
+  | "lease_issue"
+  | "lease_renewal"
+  | "disconnect"
+  | "return"
+  | "rejection"
+  | "expiry"
+  | "authorization_loss"
+  | "cleanup";
+
+export interface DesktopBrowserViewerEventV1 {
+  version: "desktop_browser_viewer_event_v1";
+  name: DesktopBrowserViewerEventName;
+  at: string;
+  sessionId: string;
+  generation: number;
+  threadId: string;
+  projectId: string;
+  reason?: string | undefined;
+}
+
+export interface DesktopBrowserViewerEventSink {
+  record(event: DesktopBrowserViewerEventV1): void;
 }
 
 export interface DesktopBrowserEngineInvocation {
@@ -218,6 +262,7 @@ export interface DesktopBrowserServiceOptions {
     | undefined;
   uploadStream?: DesktopBrowserUploadStreamHook | undefined;
   metrics?: DesktopBrowserMetricSink | undefined;
+  viewerEvents?: DesktopBrowserViewerEventSink | undefined;
   now?: (() => Date) | undefined;
   randomId?: (() => string) | undefined;
   scheduleExpiry?: boolean | undefined;
@@ -273,9 +318,26 @@ interface ActiveDesktopBrowserRuntime {
   interceptedDownloads: DesktopBrowserInterceptedDownload[];
   interceptedDownloadCount: number;
   authorityResolutionDepth: number;
+  takeoverRequested: boolean;
+  viewerConnections: Map<string, DesktopBrowserViewerConnection>;
+  activeInputLease?: DesktopBrowserInputLease | undefined;
+  viewerFrameSequence: number;
   terminationRequested?: BrowserSessionV1["terminalReason"] | undefined;
   stopWatchingEngine?: (() => void) | undefined;
   expiryTimer?: ReturnType<typeof setTimeout> | undefined;
+}
+
+interface DesktopBrowserViewerConnection {
+  connectionId: string;
+  principalId: string;
+  projectId: string;
+  connectedAt: string;
+}
+
+interface DesktopBrowserInputLease {
+  leaseId: string;
+  connectionId: string;
+  expiresAt: string;
 }
 
 interface BrowserContinuation {
@@ -389,6 +451,285 @@ export class DesktopBrowserService implements BrowserServicePort {
     );
     await this.#closeAuthorityCandidates(candidates);
     return candidates.length;
+  }
+
+  async connectViewer(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+  }): Promise<DesktopBrowserViewerStateV1> {
+    await this.#requireInitialized();
+    return await this.#serialize(async () => {
+      const principalId = requireText(input.principalId, "viewer principalId");
+      const threadId = requireText(input.threadId, "viewer threadId");
+      const projectId = requireText(input.projectId, "viewer projectId");
+      const matches = [...this.#active.values()].filter(
+        (runtime) => runtime.session.threadId === threadId,
+      );
+      if (matches.length === 0) {
+        return {
+          version: DESKTOP_BROWSER_VIEWER_STATE_VERSION,
+          available: false,
+          threadId,
+          projectId,
+        };
+      }
+      if (matches.length !== 1) {
+        throw browserFailure(
+          "BROWSER_SESSION_CONFLICT",
+          "The Thread has conflicting Browser Sessions.",
+        );
+      }
+      const runtime = matches[0]!;
+      await this.#assertViewerAuthority(runtime, projectId);
+      const conflicting = [...runtime.viewerConnections.values()].find(
+        (connection) => connection.principalId !== principalId,
+      );
+      if (conflicting !== undefined) {
+        this.#viewerEvent(runtime, "rejection", "principal_conflict");
+        throw browserFailure(
+          "BROWSER_SESSION_CONFLICT",
+          "The Browser viewer is already bound to another principal.",
+        );
+      }
+      let connection = [...runtime.viewerConnections.values()].find(
+        (candidate) => candidate.principalId === principalId,
+      );
+      if (connection === undefined) {
+        connection = {
+          connectionId: `browser-viewer-${this.#id()}`,
+          principalId,
+          projectId,
+          connectedAt: this.#now().toISOString(),
+        };
+        runtime.viewerConnections.set(connection.connectionId, connection);
+      }
+      return this.#viewerState(runtime, connection);
+    });
+  }
+
+  async readViewerFrame(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+  }): Promise<DesktopBrowserViewerFrameV1> {
+    const { runtime } = await this.#requireViewerConnection(input);
+    const capture = this.#engine.captureViewerFrame;
+    if (capture === undefined) {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "The Browser engine does not support transient viewer frames.",
+      );
+    }
+    let captured: { mediaType: "image/png"; dataBase64: string };
+    try {
+      captured = await capture.call(this.#engine, runtime.engine);
+    } catch (error) {
+      if (isEngineLost(error)) {
+        await this.#loseRuntime(runtime);
+      }
+      throw normalizeBrowserHostFailure(error, {
+        toolName: "browser.snapshot",
+        dispatchAcknowledged: true,
+        effectful: false,
+      });
+    }
+    this.#assertViewerRuntimeCurrent(runtime, input.generation);
+    runtime.viewerFrameSequence += 1;
+    return {
+      version: DESKTOP_BROWSER_VIEWER_FRAME_VERSION,
+      sessionId: runtime.session.sessionId,
+      generation: runtime.session.generation,
+      sequence: runtime.viewerFrameSequence,
+      capturedAt: this.#now().toISOString(),
+      mediaType: captured.mediaType,
+      dataBase64: captured.dataBase64,
+    };
+  }
+
+  async acceptViewerTakeover(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+  }): Promise<DesktopBrowserViewerStateV1> {
+    return await this.#serialize(async () => {
+      const { runtime, connection } = await this.#requireViewerConnection(input);
+      this.#expireViewerLease(runtime);
+      const activeLease = runtime.activeInputLease;
+      if (
+        activeLease !== undefined &&
+        activeLease.connectionId !== connection.connectionId
+      ) {
+        this.#viewerEvent(runtime, "rejection", "lease_conflict");
+        throw browserFailure(
+          "BROWSER_SESSION_CONFLICT",
+          "Another viewer connection holds Browser input control.",
+        );
+      }
+      if (runtime.session.state === "ready" && !runtime.takeoverRequested) {
+        this.#viewerEvent(runtime, "rejection", "request_missing");
+        throw browserFailure(
+          "BROWSER_SERVICE_UNAVAILABLE",
+          "The agent has not requested Browser takeover.",
+        );
+      }
+      if (runtime.session.state === "ready") {
+        runtime.session.state = "human_control";
+        runtime.takeoverRequested = false;
+        this.#viewerEvent(runtime, "acceptance");
+      } else if (runtime.session.state !== "human_control") {
+        throw browserFailure(
+          "BROWSER_SESSION_LOST",
+          "The Browser Session cannot enter human control.",
+        );
+      }
+      if (activeLease === undefined) {
+        runtime.activeInputLease = {
+          leaseId: `browser-lease-${this.#id()}`,
+          connectionId: connection.connectionId,
+          expiresAt: new Date(
+            this.#now().getTime() + DESKTOP_BROWSER_INPUT_LEASE_MS,
+          ).toISOString(),
+        };
+        this.#viewerEvent(runtime, "lease_issue");
+      }
+      this.#touch(runtime);
+      await this.#persist();
+      return this.#viewerState(runtime, connection);
+    });
+  }
+
+  async renewViewerInputLease(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+    leaseId: string;
+  }): Promise<DesktopBrowserViewerStateV1> {
+    return await this.#serialize(async () => {
+      const { runtime, connection } = await this.#requireViewerConnection(input);
+      const lease = this.#requireViewerLease(runtime, connection, input.leaseId);
+      lease.expiresAt = new Date(
+        this.#now().getTime() + DESKTOP_BROWSER_INPUT_LEASE_MS,
+      ).toISOString();
+      this.#viewerEvent(runtime, "lease_renewal");
+      return this.#viewerState(runtime, connection);
+    });
+  }
+
+  async sendViewerInput(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+    leaseId: string;
+    viewerInput: DesktopBrowserViewerInputV1;
+  }): Promise<DesktopBrowserViewerStateV1> {
+    return await this.#serialize(async () => {
+      const { runtime, connection } = await this.#requireViewerConnection(input);
+      this.#requireViewerLease(runtime, connection, input.leaseId);
+      const dispatch = this.#engine.dispatchViewerInput;
+      if (dispatch === undefined) {
+        throw browserFailure(
+          "BROWSER_SERVICE_UNAVAILABLE",
+          "The Browser engine does not support typed viewer input.",
+        );
+      }
+      try {
+        await dispatch.call(this.#engine, {
+          ...runtime.engine,
+          viewerInput: input.viewerInput,
+        });
+      } catch (error) {
+        if (isEngineLost(error)) {
+          await this.#loseRuntime(runtime, true);
+        }
+        throw normalizeBrowserHostFailure(error, {
+          toolName: "browser.request_takeover",
+          dispatchAcknowledged: true,
+          effectful: true,
+        });
+      }
+      this.#assertViewerRuntimeCurrent(runtime, input.generation);
+      this.#touch(runtime);
+      await this.#persist();
+      return this.#viewerState(runtime, connection);
+    });
+  }
+
+  async returnViewerControl(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+    leaseId: string;
+  }): Promise<DesktopBrowserViewerStateV1> {
+    return await this.#serialize(async () => {
+      const { runtime, connection } = await this.#requireViewerConnection(input);
+      this.#requireViewerLease(runtime, connection, input.leaseId);
+      runtime.activeInputLease = undefined;
+      runtime.takeoverRequested = false;
+      runtime.session.state = "ready";
+      this.#touch(runtime);
+      await this.#persist();
+      this.#viewerEvent(runtime, "return");
+      return this.#viewerState(runtime, connection);
+    });
+  }
+
+  async disconnectViewer(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+  }): Promise<void> {
+    await this.#serialize(async () => {
+      const { runtime, connection } = await this.#requireViewerConnection(input);
+      runtime.viewerConnections.delete(connection.connectionId);
+      if (runtime.activeInputLease?.connectionId === connection.connectionId) {
+        runtime.activeInputLease = undefined;
+      }
+      this.#viewerEvent(runtime, "disconnect");
+    });
+  }
+
+  async loseViewerAuthority(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+  }): Promise<void> {
+    const { runtime } = await this.#requireViewerConnection(input);
+    this.#viewerEvent(runtime, "authorization_loss", "principal_changed");
+    await this.#requestTermination(runtime, "lost", "BROWSER_SESSION_LOST");
+  }
+
+  async closeViewerSession(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+  }): Promise<void> {
+    const { runtime } = await this.#requireViewerConnection(input);
+    await this.#requestTermination(runtime, "closed", "closed_by_user");
   }
 
   async resolvePolicy(input: {
@@ -1038,6 +1379,9 @@ export class DesktopBrowserService implements BrowserServicePort {
         interceptedDownloads: [],
         interceptedDownloadCount: 0,
         authorityResolutionDepth: 0,
+        takeoverRequested: false,
+        viewerConnections: new Map(),
+        viewerFrameSequence: 0,
       };
       this.#active.set(sessionId, runtime);
       const activeRuntime = runtime;
@@ -1174,6 +1518,13 @@ export class DesktopBrowserService implements BrowserServicePort {
     lifecycle: BrowserOperationLifecycleV1,
   ): Promise<unknown> {
     const operation = prepared.activation.descriptor.toolId;
+    if (runtime.session.state === "human_control") {
+      throw browserFailure(
+        "BROWSER_HUMAN_CONTROL_ACTIVE",
+        "The Browser Session is under human control.",
+        { browserOutcomeKnown: true, effectDispatched: false },
+      );
+    }
     await this.#assertUsable(runtime, operation === "browser.close");
     if (operation === "browser.close") {
       const acceptedOperation = await this.#engine.acceptOperation({
@@ -1210,10 +1561,24 @@ export class DesktopBrowserService implements BrowserServicePort {
       );
     }
     if (operation === "browser.request_takeover") {
-      throw browserFailure(
-        "BROWSER_SERVICE_UNAVAILABLE",
-        "Browser takeover is not available until the Desktop viewer is installed.",
+      await this.#refreshAuthorityBeforeDispatch(
+        runtime,
+        prepared,
+        lifecycle.authority.projectId,
       );
+      await lifecycle.acknowledgeDispatch();
+      runtime.takeoverRequested = true;
+      this.#touch(runtime);
+      await this.#persist();
+      this.#viewerEvent(runtime, "request");
+      const output = browserOutput(operation, {
+        sessionId: runtime.session.sessionId,
+        generation: runtime.session.generation,
+        outcome: "takeover_requested",
+        state: "ready",
+      });
+      await lifecycle.persistCompletedResult(output);
+      return output;
     }
     if (operation === "browser.request_grant") {
       return await this.#requestGrant(runtime, prepared, lifecycle);
@@ -2394,6 +2759,241 @@ export class DesktopBrowserService implements BrowserServicePort {
     return authority;
   }
 
+  async #requireViewerConnection(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+  }): Promise<{
+    runtime: ActiveDesktopBrowserRuntime;
+    connection: DesktopBrowserViewerConnection;
+  }> {
+    const runtime = this.#requireRuntime(
+      requireText(input.sessionId, "viewer sessionId"),
+      requireText(input.threadId, "viewer threadId"),
+    );
+    this.#assertViewerRuntimeCurrent(runtime, input.generation);
+    await this.#assertViewerAuthority(runtime, input.projectId);
+    const connection = runtime.viewerConnections.get(
+      requireText(input.connectionId, "viewer connectionId"),
+    );
+    if (
+      connection === undefined ||
+      connection.principalId !== input.principalId ||
+      connection.projectId !== input.projectId
+    ) {
+      this.#viewerEvent(runtime, "rejection", "connection_identity");
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser viewer connection is unavailable.",
+      );
+    }
+    return { runtime, connection };
+  }
+
+  async #assertViewerAuthority(
+    runtime: ActiveDesktopBrowserRuntime,
+    projectId: string,
+  ): Promise<void> {
+    if (runtime.authority.projectId !== projectId) {
+      this.#viewerEvent(runtime, "rejection", "project_identity");
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser viewer belongs to another Project.",
+      );
+    }
+    this.#assertViewerSessionState(runtime);
+    if (runtime.session.mode === "qa") {
+      const qa = runtime.qaRunAuthority;
+      if (qa === undefined) {
+        await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST");
+        throw browserFailure(
+          "BROWSER_SESSION_LOST",
+          "The Browser viewer QA authority is unavailable.",
+        );
+      }
+      try {
+        const resolved = this.#options.projectRunRegistry.resolvePreviewUrl({
+          runId: qa.runId,
+          urlId: qa.urlId,
+        });
+        if (
+          resolved.url !== runtime.destination ||
+          resolved.run.projectPath !== qa.projectRoot
+        ) {
+          throw new Error("QA authority changed");
+        }
+        return;
+      } catch {
+        this.#viewerEvent(runtime, "authorization_loss", "qa_authority_changed");
+        await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST");
+        throw browserFailure(
+          "BROWSER_SESSION_LOST",
+          "The Browser viewer QA authority changed.",
+        );
+      }
+    }
+    const current = await this.#resolveCurrentAuthority(
+      runtime,
+      {
+        runId: "desktop-browser-viewer",
+        threadId: runtime.session.threadId,
+        projectId,
+        mode: runtime.session.mode,
+        destination: runtime.destination,
+      },
+      true,
+    );
+    if (
+      current.userId !== runtime.authority.userId ||
+      current.environmentId !== runtime.authority.environmentId ||
+      current.projectId !== runtime.authority.projectId ||
+      current.effectiveAllowlistRevision !==
+        runtime.session.effectiveAllowlistRevision
+    ) {
+      this.#viewerEvent(runtime, "authorization_loss", "authority_changed");
+      await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST");
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser viewer authority changed.",
+      );
+    }
+  }
+
+  #assertViewerSessionState(runtime: ActiveDesktopBrowserRuntime): void {
+    if (
+      runtime.terminationRequested !== undefined ||
+      (runtime.session.state !== "ready" &&
+        runtime.session.state !== "human_control")
+    ) {
+      throw browserFailure(
+        runtime.session.state === "expired"
+          ? "BROWSER_SESSION_EXPIRED"
+          : "BROWSER_SESSION_LOST",
+        "The Browser Session is unavailable to the viewer.",
+      );
+    }
+    const now = this.#now().getTime();
+    if (
+      now >= Date.parse(runtime.session.idleExpiresAt) ||
+      now >= Date.parse(runtime.session.hardExpiresAt)
+    ) {
+      this.#viewerEvent(runtime, "expiry", "session_expired");
+      void this.#requestTermination(
+        runtime,
+        "expired",
+        "BROWSER_SESSION_EXPIRED",
+      ).catch(() => undefined);
+      throw browserFailure(
+        "BROWSER_SESSION_EXPIRED",
+        "The Browser Session expired.",
+      );
+    }
+  }
+
+  #assertViewerRuntimeCurrent(
+    runtime: ActiveDesktopBrowserRuntime,
+    generation: number,
+  ): void {
+    if (
+      !Number.isSafeInteger(generation) ||
+      generation < 1 ||
+      runtime.session.generation !== generation ||
+      this.#active.get(runtime.session.sessionId) !== runtime
+    ) {
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser viewer generation is no longer active.",
+      );
+    }
+    this.#assertViewerSessionState(runtime);
+  }
+
+  #expireViewerLease(runtime: ActiveDesktopBrowserRuntime): void {
+    const lease = runtime.activeInputLease;
+    if (
+      lease !== undefined &&
+      this.#now().getTime() >= Date.parse(lease.expiresAt)
+    ) {
+      runtime.activeInputLease = undefined;
+      this.#viewerEvent(runtime, "expiry", "input_lease");
+    }
+  }
+
+  #requireViewerLease(
+    runtime: ActiveDesktopBrowserRuntime,
+    connection: DesktopBrowserViewerConnection,
+    leaseId: string,
+  ): DesktopBrowserInputLease {
+    this.#expireViewerLease(runtime);
+    const lease = runtime.activeInputLease;
+    if (
+      runtime.session.state !== "human_control" ||
+      lease === undefined ||
+      lease.connectionId !== connection.connectionId ||
+      lease.leaseId !== leaseId
+    ) {
+      this.#viewerEvent(runtime, "rejection", "input_lease");
+      throw browserFailure(
+        "BROWSER_HUMAN_CONTROL_ACTIVE",
+        "The Browser input lease is unavailable.",
+      );
+    }
+    return lease;
+  }
+
+  #viewerState(
+    runtime: ActiveDesktopBrowserRuntime,
+    connection: DesktopBrowserViewerConnection,
+  ): DesktopBrowserViewerStateV1 {
+    this.#expireViewerLease(runtime);
+    const lease =
+      runtime.activeInputLease?.connectionId === connection.connectionId
+        ? runtime.activeInputLease
+        : undefined;
+    return {
+      version: DESKTOP_BROWSER_VIEWER_STATE_VERSION,
+      available: true,
+      threadId: runtime.session.threadId,
+      projectId: connection.projectId,
+      sessionId: runtime.session.sessionId,
+      generation: runtime.session.generation,
+      connectionId: connection.connectionId,
+      sessionState:
+        runtime.session.state === "human_control" ? "human_control" : "ready",
+      takeoverRequested: runtime.takeoverRequested,
+      ...(lease === undefined
+        ? {}
+        : {
+            inputLeaseId: lease.leaseId,
+            inputLeaseExpiresAt: lease.expiresAt,
+          }),
+    };
+  }
+
+  #viewerEvent(
+    runtime: ActiveDesktopBrowserRuntime,
+    name: DesktopBrowserViewerEventName,
+    reason?: string,
+  ): void {
+    try {
+      this.#options.viewerEvents?.record({
+        version: "desktop_browser_viewer_event_v1",
+        name,
+        at: this.#now().toISOString(),
+        sessionId: runtime.session.sessionId,
+        generation: runtime.session.generation,
+        threadId: runtime.session.threadId,
+        projectId: runtime.authority.projectId ?? "desktop-local",
+        ...(reason === undefined ? {} : { reason }),
+      });
+    } catch {
+      // Metadata-only viewer evidence must never change Browser behavior.
+    }
+  }
+
   async #resolveCurrentAuthority(
     runtime: ActiveDesktopBrowserRuntime,
     input: DesktopBrowserAuthorityResolutionInput,
@@ -2719,6 +3319,10 @@ export class DesktopBrowserService implements BrowserServicePort {
     runtime.terminationRequested = terminalReason;
     runtime.session.state = state;
     runtime.session.terminalReason = terminalReason;
+    runtime.activeInputLease = undefined;
+    runtime.takeoverRequested = false;
+    runtime.viewerConnections.clear();
+    this.#viewerEvent(runtime, "cleanup", terminalReason);
     if (!alreadyTerminal) {
       runtime.session.updatedAt = this.#now().toISOString();
     }
@@ -2807,7 +3411,8 @@ export class DesktopBrowserService implements BrowserServicePort {
         void (async () => {
           if (
             this.#active.get(runtime.session.sessionId) !== runtime ||
-            runtime.session.state !== "ready"
+            (runtime.session.state !== "ready" &&
+              runtime.session.state !== "human_control")
           )
             return;
           this.#metric("browser_engine_crash", {
@@ -3140,6 +3745,35 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     return await this.#run(input, input.command);
   }
 
+  async captureViewerFrame(
+    input: DesktopBrowserEngineInvocation,
+  ): Promise<{ mediaType: "image/png"; dataBase64: string }> {
+    const result = await this.#run(input, ["screenshot", "--base64"]);
+    return {
+      mediaType: "image/png",
+      dataBase64: extractTransientPngBase64(result.stdout),
+    };
+  }
+
+  async dispatchViewerInput(
+    input: DesktopBrowserEngineInvocation & {
+      viewerInput: DesktopBrowserViewerInputV1;
+    },
+  ): Promise<void> {
+    const cdp = await this.#run(input, ["get", "cdp-url"]);
+    const tabs = parseTabs((await this.#run(input, ["tab", "--json"])).stdout);
+    await sendBrowserPageCdpCommand(
+      extractScalar(cdp.stdout, "cdpUrl"),
+      tabs.activeTabId,
+      input.viewerInput.kind === "pointer"
+        ? "Input.dispatchMouseEvent"
+        : "Input.dispatchKeyEvent",
+      input.viewerInput.kind === "pointer"
+        ? viewerPointerCdpParameters(input.viewerInput)
+        : viewerKeyboardCdpParameters(input.viewerInput),
+    );
+  }
+
   async close(
     input: DesktopBrowserEngineInvocation & {
       acceptedOperation?: DesktopBrowserAcceptedOperation | undefined;
@@ -3365,7 +3999,7 @@ function sanitizedAgentBrowserEnvironment(
 ): NodeJS.ProcessEnv {
   return {
     HOME: input.configPath,
-    TMPDIR: input.runtimePath,
+    TMPDIR: input.socketPath,
     XDG_CONFIG_HOME: input.configPath,
     XDG_CACHE_HOME: input.configPath,
     AGENT_BROWSER_SESSION: input.sessionId,
@@ -3648,6 +4282,193 @@ async function sendBrowserCdpCommand(
   });
 }
 
+async function sendBrowserPageCdpCommand(
+  cdpUrl: string,
+  targetId: string,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<void> {
+  const parsed = parseLocalBrowserCdpUrl(cdpUrl);
+  await new Promise<void>((resolve, reject) => {
+    const socket = new WebSocket(parsed.toString());
+    let settled = false;
+    let sessionId: string | undefined;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.close();
+      if (error === undefined) resolve();
+      else reject(error);
+    };
+    const timer = setTimeout(() => {
+      finish(
+        new Error(
+          "BROWSER_ENGINE_TIMEOUT: Browser viewer input was not acknowledged.",
+        ),
+      );
+    }, 5_000);
+    socket.once("open", () => {
+      socket.send(
+        JSON.stringify({
+          id: 1,
+          method: "Target.attachToTarget",
+          params: { targetId, flatten: true },
+        }),
+      );
+    });
+    socket.once("error", () => {
+      finish(
+        new Error(
+          "BROWSER_ENGINE_FAILURE: Browser viewer input connection failed.",
+        ),
+      );
+    });
+    socket.once("close", () => {
+      if (!settled) {
+        finish(
+          new Error(
+            "BROWSER_ENGINE_FAILURE: Browser viewer input connection closed.",
+          ),
+        );
+      }
+    });
+    socket.on("message", (raw) => {
+      let response: Record<string, unknown>;
+      try {
+        response = JSON.parse(raw.toString()) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      if (response.id === 1) {
+        if (response.error !== undefined) {
+          finish(
+            new Error(
+              "BROWSER_ENGINE_FAILURE: Browser viewer target attachment failed.",
+            ),
+          );
+          return;
+        }
+        const result =
+          typeof response.result === "object" &&
+          response.result !== null &&
+          !Array.isArray(response.result)
+            ? (response.result as Record<string, unknown>)
+            : undefined;
+        sessionId =
+          typeof result?.sessionId === "string" ? result.sessionId : undefined;
+        if (sessionId === undefined) {
+          finish(
+            new Error(
+              "BROWSER_ENGINE_FAILURE: Browser viewer target attachment was invalid.",
+            ),
+          );
+          return;
+        }
+        socket.send(
+          JSON.stringify({ id: 2, sessionId, method, params }),
+        );
+        return;
+      }
+      if (response.id !== 2) return;
+      if (response.error !== undefined) {
+        finish(
+          new Error(
+            "BROWSER_ENGINE_FAILURE: Browser rejected typed viewer input.",
+          ),
+        );
+        return;
+      }
+      finish();
+    });
+  });
+}
+
+function viewerPointerCdpParameters(
+  input: Extract<DesktopBrowserViewerInputV1, { kind: "pointer" }>,
+): Record<string, unknown> {
+  return {
+    type:
+      input.phase === "move"
+        ? "mouseMoved"
+        : input.phase === "down"
+          ? "mousePressed"
+          : "mouseReleased",
+    x: input.x,
+    y: input.y,
+    button: input.button ?? (input.phase === "move" ? "none" : "left"),
+    modifiers: viewerModifierMask(input.modifiers),
+    clickCount: input.phase === "move" ? 0 : 1,
+  };
+}
+
+function viewerKeyboardCdpParameters(
+  input: Extract<DesktopBrowserViewerInputV1, { kind: "keyboard" }>,
+): Record<string, unknown> {
+  return {
+    type: input.phase === "down" ? "keyDown" : "keyUp",
+    key: input.key,
+    ...(input.code === undefined ? {} : { code: input.code }),
+    ...(input.phase !== "down" || input.text === undefined
+      ? {}
+      : { text: input.text }),
+    modifiers: viewerModifierMask(input.modifiers),
+  };
+}
+
+function viewerModifierMask(
+  modifiers: DesktopBrowserViewerInputV1["modifiers"],
+): number {
+  return (modifiers?.includes("alt") ? 1 : 0) |
+    (modifiers?.includes("control") ? 2 : 0) |
+    (modifiers?.includes("meta") ? 4 : 0) |
+    (modifiers?.includes("shift") ? 8 : 0);
+}
+
+function extractTransientPngBase64(stdout: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser viewer frame output was invalid.",
+    );
+  }
+  const encoded = findExactBase64Field(parsed);
+  if (encoded === undefined) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser viewer frame was unavailable.",
+    );
+  }
+  const bytes = Buffer.from(encoded, "base64");
+  if (
+    bytes.byteLength === 0 ||
+    bytes.byteLength > DESKTOP_BROWSER_VIEWER_FRAME_MAX_BYTES ||
+    !bytes.subarray(0, 8).equals(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    ) ||
+    bytes.toString("base64") !== encoded.replace(/\s/gu, "")
+  ) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser viewer frame failed validation.",
+    );
+  }
+  return encoded.replace(/\s/gu, "");
+}
+
+function findExactBase64Field(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of ["base64", "dataBase64", "data"]) {
+    if (typeof record[key] === "string" && record[key].length > 0) {
+      return record[key] as string;
+    }
+  }
+  return findExactBase64Field(record.data) ?? findExactBase64Field(record.result);
+}
+
 export async function spawnAndCollect(input: {
   executable: string;
   args: string[];
@@ -3773,21 +4594,28 @@ async function terminateOwnedLaunchProcessGroup(
 
 async function inspectProcessCommand(
   pid: number,
-): Promise<{ state: "absent" } | { state: "present"; command: string }> {
+): Promise<
+  | { state: "absent" }
+  | { state: "zombie"; command: string }
+  | { state: "present"; command: string }
+> {
   try {
     const result = await spawnAndCollect({
       executable: "/bin/ps",
-      args: ["-p", String(pid), "-o", "command="],
+      args: ["-p", String(pid), "-o", "state=,command="],
       cwd: "/",
       env: { PATH: "/usr/bin:/bin", LANG: "C", NODE_ENV: "production" },
       timeoutMs: 2_000,
     });
-    const command = result.stdout.trim();
-    if (command.length === 0) {
+    const process = result.stdout.match(/^\s*(\S+)\s+(.+?)\s*$/u);
+    if (process === null) {
       throw new Error(
         "BROWSER_ENGINE_FAILURE: process inspection returned no command identity.",
       );
     }
+    const state = process[1] ?? "";
+    const command = process[2] ?? "";
+    if (state.startsWith("Z")) return { state: "zombie", command };
     return { state: "present", command };
   } catch (error) {
     // BSD ps documents exit 1 for a selection that matched no process. Every
@@ -3811,7 +4639,7 @@ async function inspectProcessCommand(
 
 async function readProcessCommand(pid: number): Promise<string> {
   const inspection = await inspectProcessCommand(pid);
-  if (inspection.state === "absent") {
+  if (inspection.state === "absent" || inspection.state === "zombie") {
     throw new Error(
       "BROWSER_SESSION_LOST: agent-browser daemon process is absent.",
     );
@@ -3826,6 +4654,17 @@ async function terminateOwnedProcessTree(input: {
 }): Promise<void> {
   const initialInspection = await inspectProcessCommand(input.pid);
   if (initialInspection.state === "absent") return;
+  if (initialInspection.state === "zombie") {
+    if (
+      desktopBrowserZombieCommandMatches(
+        initialInspection.command,
+        input.engineExecutablePath,
+      )
+    ) return;
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser daemon identity changed before cleanup.",
+    );
+  }
   const command = initialInspection.command;
   if (
     !desktopBrowserDaemonCommandMatches(command, input.engineExecutablePath)
@@ -3880,6 +4719,17 @@ async function terminateOwnedProcessTree(input: {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const inspection = await inspectProcessCommand(input.pid);
     if (inspection.state === "absent") return;
+    if (inspection.state === "zombie") {
+      if (
+        desktopBrowserZombieCommandMatches(
+          inspection.command,
+          input.engineExecutablePath,
+        )
+      ) return;
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: agent-browser daemon identity changed during cleanup.",
+      );
+    }
     if (
       !desktopBrowserDaemonCommandMatches(
         inspection.command,
@@ -3902,6 +4752,13 @@ export function desktopBrowserDaemonCommandMatches(
   engineExecutablePath: string,
 ): boolean {
   return command.trim() === engineExecutablePath;
+}
+
+export function desktopBrowserZombieCommandMatches(
+  command: string,
+  engineExecutablePath: string,
+): boolean {
+  return command.trim() === `[${path.basename(engineExecutablePath)}] <defunct>`;
 }
 
 export async function assertDesktopBrowserOwnedDaemonArtifacts(

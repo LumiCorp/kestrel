@@ -1,4 +1,5 @@
-import { rm } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { readFile, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import {
@@ -19,13 +20,22 @@ import {
 import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
 import { verifyHostedBrowserCapabilitySignature } from "./hostedCapability.js";
 import { DesktopBrowserService } from "../localCore/desktopBrowserService.js";
+import type { DesktopAttachmentMetadata } from "../localCore/desktopAttachments.js";
+import {
+  LOCAL_CORE_BROWSER_EGRESS_LAUNCH_BINDING_VERSION,
+  LOCAL_CORE_BROWSER_EGRESS_PROXY_VERSION,
+  type LocalCoreBrowserEgressLaunchBindingV1,
+  type LocalCoreBrowserEgressProxy,
+} from "../localCore/browserEgressProxy.js";
 
-const MAX_CONTROL_BYTES = 2 * 1024 * 1024;
+export const HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES = 20 * 1024 * 1024;
+export const HOSTED_BROWSER_WORKER_HOME_PATH = "/tmp/kb";
 type AcceptedOperation = {
   prepared: PreparedToolCallV1;
   identityHash: string;
   capability: string;
   authority: BrowserEffectiveDomainAuthorityV1;
+  gatewayProxy?: HostedBrowserGatewayProxyBindingV1 | undefined;
   session?: BrowserSessionV1 | undefined;
   deadline: ReturnType<typeof setTimeout>;
   execution: Promise<unknown>;
@@ -57,11 +67,24 @@ export type HostedBrowserWorkerConfig = {
   port: number;
 };
 
+type HostedBrowserGatewayProxyBindingV1 = {
+  version: "hosted_browser_gateway_proxy_binding_v1";
+  proxyServer: string;
+  username: string;
+  password: string;
+  threadId: string;
+  sessionId: string;
+  generation: number;
+  effectiveAllowlistRevision: string;
+  chromiumFlags: readonly string[];
+};
+
 export interface HostedBrowserWorkerEngine {
   execute(input: {
     prepared: PreparedToolCallV1;
     authority: BrowserEffectiveDomainAuthorityV1;
     session?: BrowserSessionV1 | undefined;
+    gatewayProxy?: HostedBrowserGatewayProxyBindingV1 | undefined;
   }, lifecycle: {
     acknowledgeDispatch(): Promise<void>;
     persistCompletedResult(output: unknown): Promise<void>;
@@ -69,6 +92,8 @@ export interface HostedBrowserWorkerEngine {
   adopt(input: {
     authority: BrowserEffectiveDomainAuthorityV1;
     cause: "personal_grant" | "personal_revocation";
+    gatewayProxy?: HostedBrowserGatewayProxyBindingV1 | undefined;
+    gatewayClosedUnauthorizedConnections?: number | undefined;
   }): Promise<number>;
   destroy(): Promise<void>;
 }
@@ -107,6 +132,10 @@ export function startHostedBrowserWorker(input: {
         const record = requireRecord(body);
         const prepared = parsePreparedToolCallV1(record.prepared);
         const authority = requireAuthority(record.authority);
+        const gatewayProxy = record.gatewayProxy === undefined
+          ? undefined
+          : requireGatewayProxyBinding(record.gatewayProxy);
+        const operation = prepared.activation.descriptor.toolId;
         const capability = requiredString(record.capability);
         const claims = verifyHostedBrowserCapabilitySignature({
           token: capability,
@@ -125,9 +154,15 @@ export function startHostedBrowserWorker(input: {
             authority.effectiveAllowlistRevision ||
           authority.environmentId !== config.environmentId ||
           authority.projectId !== config.projectId ||
-          authority.userId !== config.userId
+          authority.userId !== config.userId ||
+          (gatewayProxy !== undefined &&
+            (gatewayProxy.threadId !== config.threadId ||
+              gatewayProxy.sessionId !== config.sessionId ||
+              gatewayProxy.generation !== config.generation ||
+              (operation !== "browser.request_grant" &&
+                gatewayProxy.effectiveAllowlistRevision !==
+                  authority.effectiveAllowlistRevision)))
         ) throw new Error("BROWSER_ENGINE_FAILURE");
-        const operation = prepared.activation.descriptor.toolId;
         if (
           authority.effectiveAllowlistRevision !== installedAllowlistRevision &&
           operation !== "browser.request_grant"
@@ -141,7 +176,12 @@ export function startHostedBrowserWorker(input: {
             session.threadId !== config.threadId)) {
           throw new Error("BROWSER_SESSION_LOST");
         }
-        const identityHash = hashCanonical({ prepared, authority, session: session ?? null });
+        const identityHash = hashCanonical({
+          prepared,
+          authority,
+          session: session ?? null,
+          gatewayProxy: gatewayProxy ?? null,
+        });
         const duplicate = accepted.get(prepared.callId);
         if (duplicate) {
           if (
@@ -167,6 +207,7 @@ export function startHostedBrowserWorker(input: {
           identityHash,
           capability,
           authority,
+          gatewayProxy,
           session,
           deadline,
         };
@@ -280,18 +321,22 @@ export function startHostedBrowserWorker(input: {
         const record = requireRecord(body);
         const operationId = requiredString(record.operationId);
         const capability = requiredString(record.capability);
+        const reason = record.reason === "BROWSER_ARTIFACT_TOO_LARGE"
+          ? record.reason
+          : "BROWSER_DESTINATION_BLOCKED";
         const operation = accepted.get(operationId);
         if (
           !operation ||
           operation.capability !== capability ||
           (operation.phase !== "accepted" &&
-            operation.phase !== "pre_dispatch_result")
+            operation.phase !== "pre_dispatch_result" &&
+            operation.phase !== "invoked")
         ) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
         accepted.delete(operationId);
         if (operation.phase === "accepted") {
           operation.cancelInvoke(knownWorkerFailure("BROWSER_DESTINATION_BLOCKED"));
         } else {
-          operation.cancelCommit(knownWorkerFailure("BROWSER_DESTINATION_BLOCKED"));
+          operation.cancelCommit(knownWorkerFailure(reason));
         }
         await operation.execution.catch(() => {});
         clearTimeout(operation.deadline);
@@ -302,6 +347,15 @@ export function startHostedBrowserWorker(input: {
         const authority = requireAuthority(record.authority);
         const revision = requiredString(record.revision);
         const capability = requiredString(record.capability);
+        const gatewayProxy = record.gatewayProxy === undefined
+          ? undefined
+          : requireGatewayProxyBinding(record.gatewayProxy);
+        const gatewayClosedUnauthorizedConnections =
+          record.gatewayClosedUnauthorizedConnections === undefined
+            ? undefined
+            : requiredNonNegativeInteger(
+                record.gatewayClosedUnauthorizedConnections,
+              );
         const claims = verifyHostedBrowserCapabilitySignature({
           token: capability,
           publicKeyPem: config.capabilityPublicKeyPem,
@@ -322,6 +376,11 @@ export function startHostedBrowserWorker(input: {
           authority.projectId !== config.projectId ||
           authority.userId !== config.userId ||
           authority.effectiveAllowlistRevision !== revision ||
+          (gatewayProxy !== undefined &&
+            (gatewayProxy.sessionId !== config.sessionId ||
+              gatewayProxy.generation !== config.generation ||
+              gatewayProxy.threadId !== config.threadId ||
+              gatewayProxy.effectiveAllowlistRevision !== revision)) ||
           (record.cause !== "personal_grant" &&
             record.cause !== "personal_revocation")
         ) throw new Error("BROWSER_SESSION_LOST");
@@ -334,6 +393,8 @@ export function startHostedBrowserWorker(input: {
           closedUnauthorizedConnections = await engine.adopt({
             authority,
             cause: record.cause,
+            gatewayProxy,
+            gatewayClosedUnauthorizedConnections,
           });
           installedAllowlistRevision = revision;
         } finally {
@@ -407,22 +468,27 @@ class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
   #authority: BrowserEffectiveDomainAuthorityV1 | undefined;
   #session: BrowserSessionV1 | undefined;
   #service: DesktopBrowserService | undefined;
+  readonly #screenshots = new HostedRelayScreenshotStore();
+  #gatewayProxy: HostedBrowserGatewayProxyBindingV1 | undefined;
+  #remoteProxy: RemoteGatewayBrowserProxy | undefined;
 
   constructor(config: HostedBrowserWorkerConfig) {
     this.#config = config;
-    this.#runtimeRoot = path.join("/tmp", `kestrel-browser-${config.sessionId}`);
+    this.#runtimeRoot = HOSTED_BROWSER_WORKER_HOME_PATH;
   }
 
   async execute(input: {
     prepared: PreparedToolCallV1;
     authority: BrowserEffectiveDomainAuthorityV1;
     session?: BrowserSessionV1 | undefined;
+    gatewayProxy?: HostedBrowserGatewayProxyBindingV1 | undefined;
   }, lifecycle: {
     acknowledgeDispatch(): Promise<void>;
     persistCompletedResult(output: unknown): Promise<void>;
   }): Promise<unknown> {
     this.#authority = input.authority;
     const operation = input.prepared.activation.descriptor.toolId;
+    this.#installGatewayProxy(input.gatewayProxy, input.authority, operation);
     if (
       operation === "browser.upload" ||
       operation === "browser.download" ||
@@ -450,16 +516,39 @@ class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
         projectRoot,
       },
       acknowledgeDispatch: lifecycle.acknowledgeDispatch,
-      persistCompletedResult: lifecycle.persistCompletedResult,
+      persistCompletedResult: async (output) => {
+        const relayed = operation === "browser.capture"
+          ? this.#screenshots.projectCaptureResult(output)
+          : output;
+        const encoded = Buffer.from(JSON.stringify(relayed));
+        if (encoded.byteLength > HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES) {
+          throw knownWorkerFailure("BROWSER_ARTIFACT_TOO_LARGE");
+        }
+        await lifecycle.persistCompletedResult(relayed);
+      },
     });
   }
 
   async adopt(input: {
     authority: BrowserEffectiveDomainAuthorityV1;
     cause: "personal_grant" | "personal_revocation";
+    gatewayProxy?: HostedBrowserGatewayProxyBindingV1 | undefined;
+    gatewayClosedUnauthorizedConnections?: number | undefined;
   }): Promise<number> {
     this.#authority = input.authority;
     if (!this.#service || !this.#session) throw new Error("BROWSER_SESSION_LOST");
+    if (!input.gatewayProxy || input.gatewayClosedUnauthorizedConnections === undefined) {
+      throw new Error("BROWSER_SESSION_LOST");
+    }
+    this.#installGatewayProxy(
+      input.gatewayProxy,
+      input.authority,
+      "browser.request_grant",
+    );
+    this.#remoteProxy?.setGatewayAdoption(
+      input.gatewayProxy,
+      input.gatewayClosedUnauthorizedConnections,
+    );
     const receipt = await this.#service.adoptAllowlistRevision({
       version: "browser_allowlist_adoption_v1",
       runId: `hosted-session-${this.#session.sessionId}`,
@@ -477,6 +566,7 @@ class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
   }
 
   #createService(session: BrowserSessionV1): DesktopBrowserService {
+    if (!this.#remoteProxy) throw new Error("BROWSER_SESSION_LOST");
     return new DesktopBrowserService({
       homePath: this.#runtimeRoot,
       engineExecutablePath: this.#config.engineExecutablePath,
@@ -516,7 +606,9 @@ class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
           };
         },
       },
+      createProxy: async () => this.#remoteProxy!,
       scheduleExpiry: false,
+      attachmentStore: this.#screenshots,
       writeLedger: async () => {},
     });
   }
@@ -524,6 +616,170 @@ class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
   #requireAuthority(): BrowserEffectiveDomainAuthorityV1 {
     if (!this.#authority) throw new Error("BROWSER_SESSION_LOST");
     return this.#authority;
+  }
+
+  #installGatewayProxy(
+    next: HostedBrowserGatewayProxyBindingV1 | undefined,
+    authority: BrowserEffectiveDomainAuthorityV1,
+    operation: string,
+  ): void {
+    if (!next) throw new Error("BROWSER_SESSION_LOST");
+    if (
+      next.sessionId !== this.#config.sessionId ||
+      next.generation !== this.#config.generation ||
+      next.threadId !== this.#config.threadId ||
+      (operation !== "browser.request_grant" &&
+        next.effectiveAllowlistRevision !==
+          authority.effectiveAllowlistRevision)
+    ) throw new Error("BROWSER_SESSION_LOST");
+    if (this.#gatewayProxy) assertSameGatewayProxy(this.#gatewayProxy, next);
+    this.#gatewayProxy = next;
+    this.#remoteProxy ??= new RemoteGatewayBrowserProxy(next);
+    if (
+      operation === "browser.request_grant" &&
+      next.effectiveAllowlistRevision !==
+        authority.effectiveAllowlistRevision
+    ) {
+      this.#remoteProxy.stageRequestGrantRevision(
+        authority.effectiveAllowlistRevision,
+      );
+    }
+  }
+}
+
+class RemoteGatewayBrowserProxy implements LocalCoreBrowserEgressProxy {
+  readonly version = LOCAL_CORE_BROWSER_EGRESS_PROXY_VERSION;
+  #binding: HostedBrowserGatewayProxyBindingV1;
+  #adoption: {
+    binding: HostedBrowserGatewayProxyBindingV1;
+    closed: number;
+  } | undefined;
+
+  constructor(binding: HostedBrowserGatewayProxyBindingV1) {
+    this.#binding = binding;
+  }
+
+  get launchBinding(): LocalCoreBrowserEgressLaunchBindingV1 {
+    return projectGatewayLaunchBinding(this.#binding);
+  }
+
+  setGatewayAdoption(binding: HostedBrowserGatewayProxyBindingV1, closed: number) {
+    assertSameGatewayProxy(this.#binding, binding);
+    this.#adoption = { binding, closed };
+  }
+
+  stageRequestGrantRevision(revision: string) {
+    this.#adoption = {
+      binding: { ...this.#binding, effectiveAllowlistRevision: revision },
+      closed: 0,
+    };
+  }
+
+  async adoptAuthority(binding: {
+    threadId: string;
+    sessionId: string;
+    generation: number;
+    authority: BrowserEffectiveDomainAuthorityV1;
+  }) {
+    const adoption = this.#adoption;
+    if (
+      !adoption ||
+      binding.threadId !== adoption.binding.threadId ||
+      binding.sessionId !== adoption.binding.sessionId ||
+      binding.generation !== adoption.binding.generation ||
+      binding.authority.effectiveAllowlistRevision !==
+        adoption.binding.effectiveAllowlistRevision
+    ) throw new Error("BROWSER_SESSION_LOST");
+    this.#binding = adoption.binding;
+    this.#adoption = undefined;
+    return {
+      receipt: {
+        version: "browser_allowlist_adoption_receipt_v1" as const,
+        sessionId: binding.sessionId,
+        effectiveAllowlistRevision:
+          binding.authority.effectiveAllowlistRevision,
+        closedUnauthorizedConnections: adoption.closed,
+      },
+      launchBinding: this.launchBinding,
+    };
+  }
+
+  async close() {}
+}
+
+class HostedRelayScreenshotStore {
+  readonly #metadata = new Map<string, DesktopAttachmentMetadata>();
+  readonly #bytes = new Map<string, Buffer>();
+
+  async importPath(input: {
+    threadId: string;
+    filename: string;
+    sourcePath: string;
+    mimeType?: string | undefined;
+    now?: Date | undefined;
+  }): Promise<DesktopAttachmentMetadata> {
+    const bytes = await readFile(input.sourcePath);
+    if (
+      input.mimeType !== "image/png" ||
+      bytes.byteLength < 8 ||
+      !bytes.subarray(0, 8).equals(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      )
+    ) throw knownWorkerFailure("BROWSER_ENGINE_FAILURE");
+    const fileId = `file-worker-${randomUUID()}`;
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const metadata: DesktopAttachmentMetadata = {
+      fileId,
+      attachmentId: fileId,
+      threadId: input.threadId,
+      filename: input.filename,
+      mimeType: "image/png",
+      declaredMimeType: "image/png",
+      detectedMimeType: "image/png",
+      sizeBytes: bytes.byteLength,
+      sha256,
+      kind: "image",
+      lifecycleState: "ready",
+      representationStatus: "native_image",
+      createdAt: (input.now ?? new Date()).toISOString(),
+    };
+    this.#metadata.set(fileId, metadata);
+    this.#bytes.set(fileId, bytes);
+    return metadata;
+  }
+
+  async list(threadId: string): Promise<DesktopAttachmentMetadata[]> {
+    return [...this.#metadata.values()].filter(
+      (metadata) => metadata.threadId === threadId,
+    );
+  }
+
+  projectCaptureResult(output: unknown): unknown {
+    const record = requireRecord(output);
+    const artifact = requireRecord(record.artifact);
+    const fileId = requiredString(artifact.id);
+    const metadata = this.#metadata.get(fileId);
+    const bytes = this.#bytes.get(fileId);
+    if (
+      !metadata ||
+      !bytes ||
+      artifact.kind !== "browser-screenshot" ||
+      artifact.mediaType !== "image/png" ||
+      artifact.bytes !== metadata.sizeBytes ||
+      artifact.sha256 !== metadata.sha256
+    ) throw knownWorkerFailure("BROWSER_ENGINE_FAILURE");
+    this.#metadata.delete(fileId);
+    this.#bytes.delete(fileId);
+    return {
+      version: "hosted_browser_worker_result_v1",
+      output: record,
+      screenshot: {
+        mediaType: "image/png",
+        byteLength: bytes.byteLength,
+        sha256: metadata.sha256,
+        base64: bytes.toString("base64"),
+      },
+    };
   }
 }
 
@@ -620,7 +876,9 @@ async function readJson(request: IncomingMessage) {
   for await (const chunk of request) {
     const buffer = Buffer.from(chunk);
     bytes += buffer.byteLength;
-    if (bytes > MAX_CONTROL_BYTES) throw new Error("BROWSER_ENGINE_FAILURE");
+    if (bytes > HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES) {
+      throw new Error("BROWSER_ARTIFACT_TOO_LARGE");
+    }
     chunks.push(buffer);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
@@ -632,6 +890,87 @@ function requireAuthority(value: unknown): BrowserEffectiveDomainAuthorityV1 {
     throw new Error("BROWSER_DESTINATION_BLOCKED");
   }
   return value as BrowserEffectiveDomainAuthorityV1;
+}
+
+function requireGatewayProxyBinding(
+  value: unknown,
+): HostedBrowserGatewayProxyBindingV1 {
+  const record = requireRecord(value);
+  const chromiumFlags = record.chromiumFlags;
+  if (
+    record.version !== "hosted_browser_gateway_proxy_binding_v1" ||
+    typeof record.proxyServer !== "string" ||
+    !record.proxyServer.startsWith("http://") ||
+    typeof record.username !== "string" ||
+    typeof record.password !== "string" ||
+    typeof record.threadId !== "string" ||
+    typeof record.sessionId !== "string" ||
+    !Number.isSafeInteger(record.generation) ||
+    typeof record.effectiveAllowlistRevision !== "string" ||
+    !Array.isArray(chromiumFlags) ||
+    chromiumFlags.some((flag) => typeof flag !== "string")
+  ) throw new Error("BROWSER_ENGINE_FAILURE");
+  const url = new URL(record.proxyServer);
+  if (
+    url.protocol !== "http:" ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash ||
+    !url.port ||
+    !url.hostname.endsWith(".internal")
+  ) throw new Error("BROWSER_ENGINE_FAILURE");
+  return {
+    version: "hosted_browser_gateway_proxy_binding_v1",
+    proxyServer: record.proxyServer,
+    username: requiredString(record.username),
+    password: requiredString(record.password),
+    threadId: requiredString(record.threadId),
+    sessionId: requiredString(record.sessionId),
+    generation: record.generation as number,
+    effectiveAllowlistRevision:
+      requiredString(record.effectiveAllowlistRevision),
+    chromiumFlags: chromiumFlags as string[],
+  };
+}
+
+function assertSameGatewayProxy(
+  current: HostedBrowserGatewayProxyBindingV1,
+  next: HostedBrowserGatewayProxyBindingV1,
+) {
+  if (
+    current.proxyServer !== next.proxyServer ||
+    current.username !== next.username ||
+    current.password !== next.password ||
+    current.threadId !== next.threadId ||
+    current.sessionId !== next.sessionId ||
+    current.generation !== next.generation ||
+    JSON.stringify(current.chromiumFlags) !== JSON.stringify(next.chromiumFlags)
+  ) throw new Error("BROWSER_SESSION_LOST");
+}
+
+function projectGatewayLaunchBinding(
+  input: HostedBrowserGatewayProxyBindingV1,
+): LocalCoreBrowserEgressLaunchBindingV1 {
+  return {
+    version: LOCAL_CORE_BROWSER_EGRESS_LAUNCH_BINDING_VERSION,
+    proxyServer: input.proxyServer,
+    username: input.username,
+    password: input.password,
+    threadId: input.threadId,
+    sessionId: input.sessionId,
+    generation: input.generation,
+    effectiveAllowlistRevision: input.effectiveAllowlistRevision,
+    chromiumFlags: input.chromiumFlags,
+  };
+}
+
+function requiredNonNegativeInteger(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw new Error("BROWSER_ENGINE_FAILURE");
+  }
+  return Number(value);
 }
 
 function requireRecord(value: unknown): Record<string, unknown> {
@@ -676,8 +1015,22 @@ function knownWorkerFailure(code: string) {
 }
 
 function writeJson(response: ServerResponse, status: number, value: unknown) {
+  const serialized = Buffer.from(JSON.stringify(value));
+  if (serialized.byteLength > HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES) {
+    response.writeHead(413, {
+      "cache-control": "no-store",
+      "content-type": "application/json",
+    });
+    response.end(JSON.stringify({
+      error: {
+        code: "BROWSER_ARTIFACT_TOO_LARGE",
+        details: { browserOutcomeKnown: true },
+      },
+    }));
+    return;
+  }
   response.writeHead(status, { "cache-control": "no-store", "content-type": "application/json" });
-  response.end(JSON.stringify(value));
+  response.end(serialized);
 }
 
 function writeError(

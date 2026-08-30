@@ -7,6 +7,12 @@ import type {
   DesktopBrowserPersonalDomainRecordV1,
   DesktopBrowserPersonalDomainRevokeRequest,
   DesktopBrowserPersonalDomainsV1,
+  DesktopBrowserViewerBindingV1,
+  DesktopBrowserViewerFrameV1,
+  DesktopBrowserViewerInputRequestV1,
+  DesktopBrowserViewerInputV1,
+  DesktopBrowserViewerLeaseRequestV1,
+  DesktopBrowserViewerStateV1,
   DesktopBootState,
   DesktopLaunchState,
   DesktopOnboardingDraftInput,
@@ -134,6 +140,10 @@ export {
   DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION,
   DESKTOP_BROWSER_PERSONAL_DOMAIN_RECORD_VERSION,
   DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
+  DESKTOP_BROWSER_VIEWER_FRAME_VERSION,
+  DESKTOP_BROWSER_VIEWER_INPUT_VERSION,
+  DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
+  DESKTOP_BROWSER_VIEWER_STATE_VERSION,
   DESKTOP_BRIDGE_CAPABILITIES,
   DESKTOP_BRIDGE_VERSION,
   DESKTOP_LEGACY_UI_STORAGE_KEYS,
@@ -142,6 +152,9 @@ export {
   DESKTOP_UI_STATE_VERSION,
   parseDesktopBrowserPersonalDomainListRequest,
   parseDesktopBrowserPersonalDomainRevokeRequest,
+  parseDesktopBrowserViewerBinding,
+  parseDesktopBrowserViewerInputRequest,
+  parseDesktopBrowserViewerLeaseRequest,
   parseDesktopProviderModelCatalogRequest,
 } from "../../../src/desktopShell/contracts.js";
 export type {
@@ -153,6 +166,12 @@ export type {
   DesktopBrowserPersonalDomainRecordV1,
   DesktopBrowserPersonalDomainRevokeRequest,
   DesktopBrowserPersonalDomainsV1,
+  DesktopBrowserViewerBindingV1,
+  DesktopBrowserViewerFrameV1,
+  DesktopBrowserViewerInputRequestV1,
+  DesktopBrowserViewerInputV1,
+  DesktopBrowserViewerLeaseRequestV1,
+  DesktopBrowserViewerStateV1,
   DesktopCapabilityPackId,
   DesktopCredentialedModelProvider,
   DesktopBridgeCapabilityId,
@@ -519,6 +538,30 @@ export interface DesktopBridge {
   revokeBrowserPersonalDomain(
     input: DesktopBrowserPersonalDomainRevokeRequest,
   ): Promise<DesktopBrowserPersonalDomainProjectionV1>;
+  connectBrowserViewer(
+    input: DesktopBrowserViewerBindingV1,
+  ): Promise<DesktopBrowserViewerStateV1>;
+  readBrowserViewerFrame(
+    input: DesktopBrowserViewerBindingV1,
+  ): Promise<DesktopBrowserViewerFrameV1>;
+  acceptBrowserTakeover(
+    input: DesktopBrowserViewerBindingV1,
+  ): Promise<DesktopBrowserViewerStateV1>;
+  renewBrowserInputLease(
+    input: DesktopBrowserViewerBindingV1 & { leaseId: string },
+  ): Promise<DesktopBrowserViewerStateV1>;
+  sendBrowserViewerInput(
+    input: DesktopBrowserViewerInputRequestV1,
+  ): Promise<DesktopBrowserViewerStateV1>;
+  returnBrowserControl(
+    input: DesktopBrowserViewerBindingV1 & { leaseId: string },
+  ): Promise<DesktopBrowserViewerStateV1>;
+  disconnectBrowserViewer(
+    input: DesktopBrowserViewerBindingV1,
+  ): Promise<void>;
+  closeBrowserViewerSession(
+    input: DesktopBrowserViewerBindingV1,
+  ): Promise<void>;
   startKestrelOneAuthorization(input: {
     baseUrl: string;
   }): Promise<KestrelOneAuthorizationSessionView>;

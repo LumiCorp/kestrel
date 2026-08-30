@@ -69,12 +69,7 @@ test("local publication builds one amd64 image, smokes it, then pushes", () => {
 
 test("hosted approval image publication has no protocol selector", () => {
   assert.deepEqual(
-    parsePublishProductionImageArgs([
-      "--role",
-      "turn-worker",
-      "--tag",
-      tag,
-    ]),
+    parsePublishProductionImageArgs(["--role", "turn-worker", "--tag", tag]),
     { role: "turn-worker", tag },
   );
   assert.throws(() =>
@@ -86,6 +81,84 @@ test("hosted approval image publication has no protocol selector", () => {
       "--approval-protocol",
       "v4",
     ]),
+  );
+});
+
+test("Browser worker publishes normally but cannot use the fixed-Machine updater", async () => {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const result = await publishProductionImage(
+    ["--role", "browser-worker", "--tag", tag],
+    (command, args) => {
+      calls.push({ command, args });
+      return {
+        status: 0,
+        stdout:
+          command === "docker" && args[0] === "image"
+            ? `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}\n`
+            : "",
+      };
+    },
+    {},
+  );
+
+  assert.equal(
+    result.digestImage,
+    `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
+  );
+  assert.deepEqual(
+    calls.map(({ command, args }) => `${command} ${args[0]}`),
+    [
+      "pnpm run",
+      "docker buildx",
+      "bash deploy/fly/kestrel-one-browser-worker/smoke.sh",
+      "docker push",
+      "docker image",
+    ],
+  );
+  assert.match(
+    calls[1]!.args.join(" "),
+    /deploy\/fly\/kestrel-one-browser-worker\/Dockerfile/u,
+  );
+  assert.deepEqual(calls[0], {
+    command: "pnpm",
+    args: ["run", "browser:runtime:stage:hosted"],
+  });
+  assert.throws(
+    () =>
+      parseFlyMachineDeploymentArgs([
+        "--role",
+        "browser-worker",
+        "--machine",
+        "abc123",
+        "--tag",
+        tag,
+      ]),
+    /not a directly deployed Fly Machine role/u,
+  );
+});
+
+test("Browser worker catalog contract requires session rollout and verified asset staging", async () => {
+  const catalog = JSON.parse(
+    await readFile("deploy/fly/image-catalog.json", "utf8"),
+  ) as {
+    images: Array<{ role: string; rollout: string; prepare?: string }>;
+  };
+  assert.doesNotThrow(() => flyImageCatalogSchema.parse(catalog));
+
+  const wrongRollout = structuredClone(catalog);
+  wrongRollout.images.find(({ role }) => role === "browser-worker")!.rollout =
+    "global-app";
+  assert.throws(
+    () => flyImageCatalogSchema.parse(wrongRollout),
+    /Browser worker must use session rollout/u,
+  );
+
+  const missingPrepare = structuredClone(catalog);
+  delete missingPrepare.images.find(({ role }) => role === "browser-worker")!
+    .prepare;
+  assert.throws(
+    () => flyImageCatalogSchema.parse(missingPrepare),
+    /verified runtime staging/u,
   );
 });
 
@@ -115,13 +188,17 @@ test("attachment-owning image publication requires the live signed canary enviro
 });
 
 test("attachment-owning image smokes gate publication on exact-build canary evidence", async () => {
-  const [turnWorkerSmoke, workspaceRuntimeSmoke, workspaceDockerfile, turnWorkerDockerfile] =
-    await Promise.all([
-      readFile("deploy/fly/kestrel-one-turn-worker/smoke.sh", "utf8"),
-      readFile("apps/workspace-runtime/scripts/image-smoke.sh", "utf8"),
-      readFile("apps/workspace-runtime/Dockerfile", "utf8"),
-      readFile("deploy/fly/kestrel-one-turn-worker/Dockerfile", "utf8"),
-    ]);
+  const [
+    turnWorkerSmoke,
+    workspaceRuntimeSmoke,
+    workspaceDockerfile,
+    turnWorkerDockerfile,
+  ] = await Promise.all([
+    readFile("deploy/fly/kestrel-one-turn-worker/smoke.sh", "utf8"),
+    readFile("apps/workspace-runtime/scripts/image-smoke.sh", "utf8"),
+    readFile("apps/workspace-runtime/Dockerfile", "utf8"),
+    readFile("deploy/fly/kestrel-one-turn-worker/Dockerfile", "utf8"),
+  ]);
   for (const source of [turnWorkerSmoke, workspaceRuntimeSmoke]) {
     assert.match(source, /KESTREL_ONE_APP_URL/u);
     assert.match(source, /KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY/u);
@@ -685,6 +762,7 @@ test("every production image role has a live-proof rollout overlay", async () =>
     "turn-worker": "deploy/fly/kestrel-one-turn-worker/ROLLOUT.md",
     "control-worker": "deploy/fly/kestrel-one-control-worker/ROLLOUT.md",
     "runpod-worker": "deploy/fly/kestrel-one-runpod-worker/ROLLOUT.md",
+    "browser-worker": "deploy/fly/kestrel-one-browser-worker/ROLLOUT.md",
   };
   const rolloutEntries = await Promise.all(
     Object.entries(rolloutByRole).map(

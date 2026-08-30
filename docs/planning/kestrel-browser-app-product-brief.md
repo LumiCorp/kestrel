@@ -328,8 +328,10 @@ returns the existing exact result when Kestrel has a completed result.
   remembered domains, lifecycle, takeover, and artifacts.
 - Worker authority must be short-lived and scoped to the tenant, Thread,
   Browser Session, operation, allowlist revision, and deadline.
-- The ordinary hosted App relay may carry bounded control requests but must not
-  carry live frames or large artifacts.
+- The ordinary hosted App relay may carry serialized control requests and
+  screenshot results up to 20 MiB. It must reject larger payloads without
+  compression, retry, or a fallback transport. It must not carry live frames,
+  attachment uploads, or quarantined downloads.
 - Live frames must use authenticated Kestrel routes and short-lived viewer
   tickets. Raw worker addresses and credentials must never reach clients.
 - Worker loss must mark the session lost and destroy the execution environment.
@@ -362,8 +364,10 @@ returns the existing exact result when Kestrel has a completed result.
 
 - The browser engine and Chrome must be pinned in a checked-in release manifest
   with source URLs and SHA-256 digests for each supported platform.
-- Build and release must fail closed when an asset is missing, unsigned, or has
-  the wrong digest.
+- Build and release must fail closed when an upstream asset is missing or has
+  the wrong checked-in digest. The final Kestrel Desktop package and hosted OCI
+  image must carry the repository's normal signing and release evidence; v1
+  does not require a separate upstream asset-signature receipt system.
 - Duplicate delivery of a completed browser operation must return the recorded
   exact result.
 - A timeout after dispatch must produce `BROWSER_ACTION_OUTCOME_UNKNOWN` and

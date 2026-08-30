@@ -23,6 +23,7 @@ const flyRoles = [
   "turn-worker",
   "control-worker",
   "runpod-worker",
+  "browser-worker",
 ];
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -206,6 +207,34 @@ test("rejects mutable production images", () => {
   assert.throws(
     () => validateUnifiedReleaseEvidence(evidence),
     /image is mutable/u,
+  );
+});
+
+test("binds Browser worker evidence to the approved image repository", () => {
+  const evidence = asCutover(baselineEvidence());
+  evidence.targets.production = true;
+  evidence.production = productionSection();
+  const browser = evidence.production.fly.find(
+    ({ role }) => role === "browser-worker",
+  );
+  assert.ok(browser);
+  browser.image = `registry.fly.io/not-kestrel-browser@sha256:${checksum}`;
+  assert.throws(
+    () => validateUnifiedReleaseEvidence(evidence),
+    /browser-worker image must use registry\.fly\.io\/kestrel-one-browser-worker/u,
+  );
+});
+
+test("requires session-scoped Browser worker canary evidence", () => {
+  const evidence = asCutover(baselineEvidence());
+  evidence.targets.production = true;
+  evidence.production = productionSection();
+  evidence.production.canaries = evidence.production.canaries.filter(
+    ({ name }) => name !== "browser-worker-session",
+  );
+  assert.throws(
+    () => validateUnifiedReleaseEvidence(evidence),
+    /Browser worker session canary evidence is required/u,
   );
 });
 
@@ -406,12 +435,20 @@ function productionSection() {
     migrations: { preflightStatus: "passed", applied: ["0001_release"] },
     fly: flyRoles.map((role) => ({
       role,
-      image: `registry.fly.io/kestrel-one@sha256:${checksum}`,
+      image:
+        role === "browser-worker"
+          ? `registry.fly.io/kestrel-one-browser-worker@sha256:${checksum}`
+          : `registry.fly.io/kestrel-one@sha256:${checksum}`,
       smoke: { status: "passed", completedAt: timestamp },
     })),
     canaries: [
       { name: "kestrel-one-hosted", status: "passed", completedAt: timestamp },
       { name: "docs-production", status: "passed", completedAt: timestamp },
+      {
+        name: "browser-worker-session",
+        status: "passed",
+        completedAt: timestamp,
+      },
     ],
   };
 }

@@ -7,6 +7,9 @@ import {
 
 import {
   parseDesktopUiStateV1,
+  type DesktopBrowserViewerFrameV1,
+  type DesktopBrowserViewerInputV1,
+  type DesktopBrowserViewerStateV1,
   type DesktopUiStateSyncResult,
   type DesktopUiStateV1,
   type DesktopManagedProjectRun,
@@ -90,6 +93,15 @@ export interface LocalCoreClientOptions {
   socketPath: string;
   token: string;
   timeoutMs?: number | undefined;
+}
+
+export interface DesktopBrowserViewerApiIdentity {
+  principalId: string;
+  threadId: string;
+  projectId: string;
+  sessionId: string;
+  generation: number;
+  connectionId: string;
 }
 
 export class LocalCoreClient {
@@ -229,6 +241,85 @@ export class LocalCoreClient {
       "adoption",
       "Desktop Browser personal revision adoption",
     );
+  }
+
+  async connectDesktopBrowserViewer(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+  }): Promise<DesktopBrowserViewerStateV1> {
+    return readObjectField(
+      await this.post("/v1/browser/viewer/connect", input),
+      "viewer",
+      "Desktop Browser viewer state",
+    );
+  }
+
+  async readDesktopBrowserViewerFrame(input: DesktopBrowserViewerApiIdentity): Promise<DesktopBrowserViewerFrameV1> {
+    return readObjectField(
+      await this.post("/v1/browser/viewer/frame", input),
+      "frame",
+      "Desktop Browser viewer frame",
+    );
+  }
+
+  async acceptDesktopBrowserTakeover(input: DesktopBrowserViewerApiIdentity): Promise<DesktopBrowserViewerStateV1> {
+    return readObjectField(
+      await this.post("/v1/browser/viewer/accept", input),
+      "viewer",
+      "Desktop Browser viewer state",
+    );
+  }
+
+  async renewDesktopBrowserInputLease(
+    input: DesktopBrowserViewerApiIdentity & { leaseId: string },
+  ): Promise<DesktopBrowserViewerStateV1> {
+    return readObjectField(
+      await this.post("/v1/browser/viewer/renew", input),
+      "viewer",
+      "Desktop Browser viewer state",
+    );
+  }
+
+  async sendDesktopBrowserViewerInput(
+    input: DesktopBrowserViewerApiIdentity & {
+      leaseId: string;
+      viewerInput: DesktopBrowserViewerInputV1;
+    },
+  ): Promise<DesktopBrowserViewerStateV1> {
+    return readObjectField(
+      await this.post("/v1/browser/viewer/input", input),
+      "viewer",
+      "Desktop Browser viewer state",
+    );
+  }
+
+  async returnDesktopBrowserControl(
+    input: DesktopBrowserViewerApiIdentity & { leaseId: string },
+  ): Promise<DesktopBrowserViewerStateV1> {
+    return readObjectField(
+      await this.post("/v1/browser/viewer/return", input),
+      "viewer",
+      "Desktop Browser viewer state",
+    );
+  }
+
+  async disconnectDesktopBrowserViewer(
+    input: DesktopBrowserViewerApiIdentity,
+  ): Promise<void> {
+    await this.post("/v1/browser/viewer/disconnect", input);
+  }
+
+  async loseDesktopBrowserViewerAuthority(
+    input: DesktopBrowserViewerApiIdentity,
+  ): Promise<void> {
+    await this.post("/v1/browser/viewer/authority-lost", input);
+  }
+
+  async closeDesktopBrowserViewerSession(
+    input: DesktopBrowserViewerApiIdentity,
+  ): Promise<void> {
+    await this.post("/v1/browser/viewer/close", input);
   }
 
   async startKestrelOneAuthorization(input: {

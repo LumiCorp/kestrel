@@ -16,6 +16,8 @@ import {
   issueHostedBrowserOperationCapability,
 } from "../../src/browser/hostedCapability.js";
 import {
+  HOSTED_BROWSER_WORKER_HOME_PATH,
+  HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES,
   hostedBrowserWorkerConfigFromEnv,
   startHostedBrowserWorker,
   type HostedBrowserWorkerEngine,
@@ -48,6 +50,14 @@ const authority: BrowserEffectiveDomainAuthorityV1 = {
   qaTarget: null,
   effectiveAllowlistRevision: "revision-1",
 };
+
+test("hosted worker uses the settled 20 MiB serialized payload ceiling", () => {
+  assert.equal(HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES, 20 * 1024 * 1024);
+});
+
+test("hosted worker uses one short fixed worker-local home root", () => {
+  assert.equal(HOSTED_BROWSER_WORKER_HOME_PATH, "/tmp/kb");
+});
 
 test("hosted worker measures exact installed engine and Chrome revisions", async () => {
   const calls: Array<{ executablePath: string; args: readonly string[] }> = [];
