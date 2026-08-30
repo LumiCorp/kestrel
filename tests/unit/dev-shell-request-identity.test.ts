@@ -173,6 +173,35 @@ test("matching current identity authorizes one cooperative shutdown", async () =
   }
 });
 
+test("maintenance failure degrades developer-shell health with recovery evidence", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dev-shell-maintenance-health-"));
+  const binding = { driver: "sqlite" as const, revision: "binding-current" };
+  const service = new LocalDevShellService(root, { storeBinding: binding }) as any;
+  const supervisor = {
+    ...createRecordingSupervisor([]),
+    getMaintenanceFailure: () => new Error("sensitive store detail"),
+  };
+  const server = http.createServer((request, response) => {
+    void handleRequest(supervisor as any, binding, request, response);
+  });
+  await listen(server, service.socketPath);
+  try {
+    await assert.rejects(
+      service.performRequest("GET", "/health"),
+      (error: unknown) => {
+        const failure = error as Error & { code?: string; details?: Record<string, unknown> };
+        assert.equal(failure.code, "DEV_SHELL_SERVICE_UNAVAILABLE");
+        assert.equal(failure.details?.failureReason, "maintenance_failed");
+        assert.equal(failure.details?.failurePhase, "service_maintenance");
+        assert.doesNotMatch(JSON.stringify(failure), /sensitive store detail/u);
+        return true;
+      },
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
 test("a shutting-down service rejects health and command dispatch", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "dev-shell-shutdown-reject-"));
   const binding = { driver: "sqlite" as const, revision: "binding-current" };

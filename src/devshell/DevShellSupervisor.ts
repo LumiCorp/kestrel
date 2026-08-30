@@ -89,6 +89,8 @@ export class DevShellSupervisor {
   private readonly deliveredOffsets = new Map<string, number>();
   private readonly deliveredTerminalResults = new Set<string>();
   private readonly idleInterval: NodeJS.Timeout;
+  private maintenanceFailure: unknown;
+  private maintenanceSweep: Promise<void> | undefined;
 
   constructor(
     private readonly store: DevShellProcessStore,
@@ -96,7 +98,7 @@ export class DevShellSupervisor {
     private readonly now: () => Date = () => new Date(),
   ) {
     this.idleInterval = setInterval(() => {
-      void this.expireIdleProcesses();
+      void this.runIdleMaintenance();
     }, 30_000);
     this.idleInterval.unref();
   }
@@ -1161,6 +1163,30 @@ export class DevShellSupervisor {
 
   hasActiveProcesses(): boolean {
     return this.processes.size > 0;
+  }
+
+  getMaintenanceFailure(): unknown {
+    return this.maintenanceFailure;
+  }
+
+  private runIdleMaintenance(): Promise<void> {
+    if (this.maintenanceSweep !== undefined) {
+      return this.maintenanceSweep;
+    }
+    const sweep = this.expireIdleProcesses().then(
+      () => {
+        this.maintenanceFailure = undefined;
+      },
+      (error: unknown) => {
+        this.maintenanceFailure = error;
+      },
+    ).finally(() => {
+      if (this.maintenanceSweep === sweep) {
+        this.maintenanceSweep = undefined;
+      }
+    });
+    this.maintenanceSweep = sweep;
+    return sweep;
   }
 
   private async expireIdleProcesses(): Promise<void> {

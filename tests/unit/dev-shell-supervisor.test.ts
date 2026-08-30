@@ -1297,6 +1297,47 @@ test("DevShellSupervisor expires an orphaned provisional preview lease after ten
   }
 });
 
+test("idle maintenance owns store failures and clears them after a successful retry", async () => {
+  let now = new Date("2026-08-14T12:00:00.000Z");
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-maintenance-failure-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const store = new FaultInjectingDevShellStore();
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"), () => now);
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+  await supervisor.initialize();
+  try {
+    const started = await supervisor.startProcess({ workspaceRoot, command: "sleep 30", yieldTimeMs: 10 });
+    const processId = started.processId!;
+    await supervisor.retainProcess({
+      processId,
+      leaseId: "workspace-preview:maintenance",
+      kind: "workspace_preview",
+      expiresAt: "2026-08-14T12:01:00.000Z",
+    });
+    now = new Date("2026-08-14T12:01:00.000Z");
+    store.failNextUpsert("before");
+
+    await (supervisor as unknown as { runIdleMaintenance(): Promise<void> }).runIdleMaintenance();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+    assert.match((supervisor.getMaintenanceFailure() as Error).message, /injected promotion persistence failure/u);
+    assert.equal(supervisor.hasActiveProcesses(), true);
+
+    await (supervisor as unknown as { runIdleMaintenance(): Promise<void> }).runIdleMaintenance();
+    assert.equal(supervisor.getMaintenanceFailure(), undefined);
+    assert.equal((await store.getProcess(processId))?.status, "STOPPED");
+  } finally {
+    process.off("unhandledRejection", onUnhandledRejection);
+    await supervisor.close();
+  }
+});
+
 test("InMemoryDevShellStore deep clones source-write guard results", async () => {
   const store = new InMemoryDevShellStore();
   const now = new Date().toISOString();

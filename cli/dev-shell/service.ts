@@ -270,6 +270,23 @@ export async function handleRequest(
       writeJson(response, 503, { error: "service_shutting_down" });
       return;
     }
+    const maintenanceFailure = supervisor.getMaintenanceFailure?.();
+    if (maintenanceFailure !== undefined) {
+      writeJson(response, 503, {
+        error: asRuntimeError(createRuntimeFailure(
+          "DEV_SHELL_SERVICE_UNAVAILABLE",
+          "Developer shell service maintenance failed and requires recovery.",
+          {
+            subsystem: "dev_shell",
+            failureReason: "maintenance_failed",
+            failurePhase: "service_maintenance",
+            nextSuggestedAction:
+              "The command did not run. Retry after the developer-shell storage service is healthy.",
+          },
+        )),
+      });
+      return;
+    }
     writeJson(response, 200, createHealthPayload(storeBinding));
     return;
   }
