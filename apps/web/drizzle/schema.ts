@@ -5383,6 +5383,149 @@ export const rememberedToolApprovals = pgTable(
   ],
 );
 
+/** Monotonic personal Browser policy revision scoped to one user and Environment. */
+export const browserPersonalDomainRevisionSets = pgTable(
+  "browser_personal_domain_revision_sets",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.organizationId, table.environmentId, table.userId],
+      name: "browser_personal_domain_revision_sets_pk",
+    }),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "browser_personal_domain_revision_sets_environment_fk",
+    }).onDelete("cascade"),
+    check(
+      "browser_personal_domain_revision_sets_revision_check",
+      sql`${table.revision} >= 0`,
+    ),
+  ],
+);
+
+/** Current allow-or-revoke state for one person's canonical public Browser domain. */
+export const browserPersonalDomains = pgTable(
+  "browser_personal_domains",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    canonicalDomain: text("canonical_domain").notNull(),
+    scheme: text("scheme", { enum: ["https"] })
+      .notNull()
+      .default("https"),
+    includeSubdomains: boolean("include_subdomains").notNull().default(true),
+    port: integer("port").notNull().default(443),
+    status: text("status", { enum: ["active", "revoked"] })
+      .notNull()
+      .default("active"),
+    personalRevision: integer("personal_revision").notNull(),
+    approvalId: text("approval_id").notNull(),
+    sourceInteractionId: text("source_interaction_id").references(
+      () => threadInteractions.id,
+      { onDelete: "set null" },
+    ),
+    sourcePreparedInvocationId: text("source_prepared_invocation_id").notNull(),
+    approvalAuthorityRevision: text("approval_authority_revision").notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedByUserId: text("revoked_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("browser_personal_domains_identity_idx").on(
+      table.organizationId,
+      table.environmentId,
+      table.userId,
+      table.canonicalDomain,
+    ),
+    index("browser_personal_domains_active_lookup_idx").on(
+      table.organizationId,
+      table.environmentId,
+      table.userId,
+      table.status,
+      table.canonicalDomain,
+    ),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "browser_personal_domains_environment_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId, table.userId],
+      foreignColumns: [
+        browserPersonalDomainRevisionSets.organizationId,
+        browserPersonalDomainRevisionSets.environmentId,
+        browserPersonalDomainRevisionSets.userId,
+      ],
+      name: "browser_personal_domains_revision_set_fk",
+    }).onDelete("cascade"),
+    check(
+      "browser_personal_domains_canonical_domain_check",
+      sql`${table.canonicalDomain} <> ''
+        and ${table.canonicalDomain} = btrim(${table.canonicalDomain})
+        and ${table.canonicalDomain} = lower(${table.canonicalDomain})
+        and left(${table.canonicalDomain}, 1) <> '.'
+        and right(${table.canonicalDomain}, 1) <> '.'
+        and ${table.canonicalDomain} !~ '[/:*[:space:]]'`,
+    ),
+    check(
+      "browser_personal_domains_public_authority_check",
+      sql`${table.scheme} = 'https'
+        and ${table.includeSubdomains} = true
+        and ${table.port} = 443`,
+    ),
+    check(
+      "browser_personal_domains_revision_check",
+      sql`${table.personalRevision} > 0`,
+    ),
+    check(
+      "browser_personal_domains_lifecycle_check",
+      sql`(
+        (${table.status} = 'active' and ${table.revokedAt} is null and ${table.revokedByUserId} is null)
+        or
+        (${table.status} = 'revoked' and ${table.revokedAt} is not null)
+      )`,
+    ),
+  ],
+);
+
 export const environmentCapabilitySubjectRestrictions = pgTable(
   "environment_capability_subject_restrictions",
   {

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { logAdminEvent } from "@/lib/admin/logs";
-import { projectAppCapabilityPolicySchema } from "@/lib/apps/contracts";
+import {
+  browserProjectAppCapabilityPolicySchema,
+  projectAppCapabilityPolicySchema,
+} from "@/lib/apps/contracts";
 import { saveProjectAppCapabilityPolicy } from "@/lib/apps/project-service";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
@@ -10,7 +13,7 @@ export async function PUT(
   request: Request,
   context: {
     params: Promise<{ id: string; appKey: string; capabilityKey: string }>;
-  }
+  },
 ) {
   try {
     const { organizationId, session } = await requireActiveOrganization();
@@ -23,7 +26,14 @@ export async function PUT(
     });
     const appKey = decodeURIComponent(params.appKey);
     const capabilityKey = decodeURIComponent(params.capabilityKey);
-    const input = projectAppCapabilityPolicySchema.parse(await request.json());
+    const payload = await request.json();
+    const isBrowserDomainPolicy =
+      appKey === "built_in.browser" && capabilityKey === "request_grant";
+    const browserInput = isBrowserDomainPolicy
+      ? browserProjectAppCapabilityPolicySchema.parse(payload)
+      : null;
+    const input =
+      browserInput ?? projectAppCapabilityPolicySchema.parse(payload);
     const policy = await saveProjectAppCapabilityPolicy({
       organizationId,
       projectId: params.id,
@@ -32,6 +42,7 @@ export async function PUT(
       actorUserId: session.user.id,
       enabled: input.enabled,
       approvalMode: input.approvalMode,
+      ...(browserInput ? { browserSettings: browserInput.settings } : {}),
     });
     await logAdminEvent({
       organizationId,

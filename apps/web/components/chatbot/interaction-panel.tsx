@@ -79,7 +79,10 @@ export function InteractionPanel({
             recoveryOptionId as RunnerStructuredReviewOptionId
           )
         : interaction.kind === "approval"
-        ? decision === "remember_approval"
+        ? isBrowserDomainGrantInteraction(interaction) &&
+          decision === "approve_once"
+          ? "Allow and remember"
+          : decision === "remember_approval"
           ? "Remember approval"
           : decision === "approve_once"
             ? "Approve once"
@@ -548,7 +551,9 @@ export function InteractionPanel({
                           size="sm"
                           variant="outline"
                         >
-                          Allow once
+                          {isBrowserDomainGrantInteraction(interaction)
+                            ? "Allow and remember"
+                            : "Allow once"}
                         </Button>
                       ) : null}
                       {isRememberApprovalEligible(interaction) ? (
@@ -747,12 +752,25 @@ function isRememberApprovalEligible(
   interaction: ThreadInteractionView,
 ): boolean {
   if (!isHostedV4Approval(interaction)) return false;
+  if (isBrowserDomainGrantInteraction(interaction)) return false;
   const approval = readRecord(interaction.requestEnvelope.approval);
   const presentation = readRecord(approval?.presentation);
   const presentationPolicy = readRecord(presentation?.policy);
   return presentationPolicy?.rememberApprovalEligible === true &&
     interaction.approvalPolicy?.rememberApprovalEligible === true &&
     isCurrentHostedApprovalActionable(interaction);
+}
+
+function isBrowserDomainGrantInteraction(
+  interaction: ThreadInteractionView,
+): boolean {
+  if (!isHostedV4Approval(interaction)) return false;
+  const approval = readRecord(interaction.requestEnvelope.approval);
+  const presentation = readRecord(approval?.presentation);
+  const grant = readRecord(presentation?.browserDomainGrant);
+  return approval?.toolName === "browser.request_grant" &&
+    grant?.version === "browser_domain_grant_approval_v1" &&
+    grant.actionLabel === "Allow and remember";
 }
 
 function isCurrentHostedApprovalActionable(

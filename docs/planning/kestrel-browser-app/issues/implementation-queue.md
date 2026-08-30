@@ -8,7 +8,7 @@ None.
 
 ## In progress
 
-- [Allow and remember personal browser domains](02-allow-and-remember-personal-browser-domains.md)
+None.
 
 ## Blocked
 
@@ -21,7 +21,7 @@ None.
 
 ## Implemented
 
-None.
+- [Allow and remember personal browser domains](02-allow-and-remember-personal-browser-domains.md)
 
 ## Done
 

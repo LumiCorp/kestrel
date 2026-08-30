@@ -151,6 +151,51 @@ test("unknown tools receive a conservative redacted fallback", () => {
   assert.match(presentation.summary, /Sensitive request data is hidden/u);
 });
 
+test("Browser domain grants expose one canonical allow-and-remember decision", () => {
+  const presentation = buildToolApprovalPresentation({
+    toolName: "browser.request_grant",
+    effectiveInput: {
+      sessionId: "browser-session-1",
+      destination:
+        "https://tenant.docs.example.com/private/path?token=secret#fragment",
+    },
+    disposition: {
+      mode: "ask",
+      reasonCode: "environment_policy",
+      authority: { kind: "hosted_app_policy", revision: "browser-policy-7" },
+    },
+  });
+
+  assert.equal(presentation.title, "Allow this Browser domain");
+  assert.deepEqual(presentation.browserDomainGrant, {
+    version: "browser_domain_grant_approval_v1",
+    sessionId: "browser-session-1",
+    canonicalDomain: "example.com",
+    scheme: "https",
+    scope: "apex_and_subdomains",
+    includeSubdomains: true,
+    port: 443,
+    ownerEffect: "requesting_person",
+    environmentEffect: "future_eligible_projects_in_environment",
+    sessionEffect: "immediate",
+    actionLabel: "Allow and remember",
+  });
+  assert.equal(presentation.policy.rememberApprovalEligible, false);
+  assert.match(JSON.stringify(presentation), /Apex and subdomains/u);
+  assert.doesNotMatch(JSON.stringify(presentation), /private|token|secret|fragment/u);
+  assert.throws(
+    () =>
+      buildToolApprovalPresentation({
+        toolName: "browser.request_grant",
+        effectiveInput: {
+          sessionId: "browser-session-1",
+          destination: "http://example.com",
+        },
+      }),
+    /HTTPS/u,
+  );
+});
+
 test("Workspace file-share approval names every selected path and public-link control", () => {
   const presentation = buildToolApprovalPresentation({
     toolName: "workspace.files.share",

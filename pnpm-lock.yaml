@@ -79,6 +79,9 @@ importers:
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
+      tldts:
+        specifier: 6.1.86
+        version: 6.1.86
       tsx:
         specifier: ^4.19.3
         version: 4.21.0

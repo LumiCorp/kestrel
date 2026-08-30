@@ -49,9 +49,21 @@ test("Environment App details do not carry approval-return behavior", () => {
 test("Environment capability switches show their current on or off state", () => {
   const environmentDetail = read("components/apps/environment-apps-panel.tsx");
 
+  assert.match(environmentDetail, /capability\.enabled \? "On" : "Off"/u);
   assert.match(
     environmentDetail,
-    /capability\.enabled \? "On" : "Off"/u,
+    /aria-label=\{`Enable \$\{capability\.displayName\}`\}/u,
   );
-  assert.match(environmentDetail, /aria-label=\{`Enable \$\{capability\.displayName\}`\}/u);
+});
+
+test("Browser Environment settings expose only the policy ceiling", () => {
+  const environmentDetail = read("components/apps/environment-apps-panel.tsx");
+  assert.match(environmentDetail, /Browser authority ceiling/u);
+  assert.match(environmentDetail, /Environment domains/u);
+  assert.match(environmentDetail, /Blocked public domains/u);
+  assert.match(
+    environmentDetail,
+    /Personal remembered domains[\s\S]*visible only to the person/u,
+  );
+  assert.doesNotMatch(environmentDetail, /listHostedBrowserPersonalDomains/u);
 });

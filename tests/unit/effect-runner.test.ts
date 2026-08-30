@@ -523,6 +523,13 @@ test("registered Browser dispatch capability distinguishes claimed from dispatch
     async authorizeArtifact() {
       return undefined;
     },
+    async adoptAllowlistRevision(input) {
+      return {
+        version: "browser_allowlist_adoption_receipt_v1",
+        sessionId: input.sessionId,
+        effectiveAllowlistRevision: input.effectiveAllowlistRevision,
+      };
+    },
   } as BrowserServicePort;
   const gateway = new UnifiedToolRegistry({
     allowlist: ["browser.close"],

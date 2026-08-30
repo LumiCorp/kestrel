@@ -42,6 +42,8 @@ import {
   DESKTOP_UI_STATE_VERSION,
   parseDesktopLegacyUiStateEntries,
   parseDesktopCapabilityConfigurationInput,
+  parseDesktopBrowserPersonalDomainListRequest,
+  parseDesktopBrowserPersonalDomainRevokeRequest,
   parseDesktopProviderModelCatalogRequest,
   parseDesktopMcpServerMutationInput,
   parseDesktopRendererSettingsUpdate,
@@ -207,6 +209,10 @@ import {
   normalizeDesktopSettings,
   preserveDesktopProjectRegistrationIds,
 } from "./settingsStore.js";
+import {
+  DesktopBrowserPersonalDomainService,
+  type DesktopBrowserPersonalDomainRememberRequest,
+} from "./browserPersonalDomainService.js";
 import {
   createCoreOwnedDesktopDatabaseController,
   type DesktopDatabaseController,
@@ -401,6 +407,7 @@ let databaseStatus: DesktopDatabaseStatus = {
   running: false,
 };
 let desktopSettings: DesktopSettings = createDefaultDesktopSettings();
+let browserPersonalDomainService: DesktopBrowserPersonalDomainService | undefined;
 const linkPreviewService = new LinkPreviewService();
 
 function resolveAuthoritativeDesktopExecutionSelection(
@@ -1665,6 +1672,19 @@ async function buildCurrentDesktopSupportBundle() {
 function registerIpcHandlers(
   runnerTransport: DesktopRunnerControlTransport,
 ): void {
+  browserPersonalDomainService ??= new DesktopBrowserPersonalDomainService({
+    resolveAccount: async () =>
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.kestrelOneAccount(),
+      ),
+    readSettings: () => desktopSettings,
+    persistSettings: async (settings) => {
+      await saveDesktopCoreSettings({
+        ...desktopSettings,
+        browserPersonalDomains: settings.browserPersonalDomains,
+      });
+    },
+  });
   ipcMain.handle(
     "desktop:get-settings",
     async () => await readDesktopRendererSettings(),
@@ -1675,6 +1695,22 @@ function registerIpcHandlers(
       await requireLocalCoreConnectionManager().executeIdempotent(
         async (client) => await client.kestrelOneAccount(),
       ),
+  );
+  ipcMain.handle(
+    "desktop:list-browser-personal-domains",
+    async (_event, input: unknown) => {
+      const request = parseDesktopBrowserPersonalDomainListRequest(input);
+      return await requireBrowserPersonalDomainService().list(
+        request.environmentId,
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:revoke-browser-personal-domain",
+    async (_event, input: unknown) => {
+      const request = parseDesktopBrowserPersonalDomainRevokeRequest(input);
+      return await requireBrowserPersonalDomainService().revoke(request);
+    },
   );
   ipcMain.handle(
     "desktop:start-kestrel-one-authorization",
@@ -1704,8 +1740,11 @@ function registerIpcHandlers(
   ipcMain.handle(
     "desktop:sign-out-kestrel-one-account",
     async () =>
-      await requireLocalCoreConnectionManager().executeOnce(
-        async (client) => await client.signOutKestrelOneAccount(),
+      await requireBrowserPersonalDomainService().signOut(
+        async () =>
+          await requireLocalCoreConnectionManager().executeOnce(
+            async (client) => await client.signOutKestrelOneAccount(),
+          ),
       ),
   );
   ipcMain.handle(
@@ -4379,6 +4418,20 @@ function registerIpcHandlers(
           context: DESKTOP_RUNNER_REQUEST_CONTEXT,
         }),
     );
+}
+
+function requireBrowserPersonalDomainService(): DesktopBrowserPersonalDomainService {
+  if (browserPersonalDomainService === undefined) {
+    throw new Error("Desktop Browser personal-domain service is unavailable.");
+  }
+  return browserPersonalDomainService;
+}
+
+/** Trusted main-process entrypoint for the eventual Browser approval effect. */
+export async function rememberBrowserPersonalDomainForCurrentAccount(
+  input: DesktopBrowserPersonalDomainRememberRequest,
+) {
+  return await requireBrowserPersonalDomainService().remember(input);
 }
 
 async function openProjectRunPreviewWindow(

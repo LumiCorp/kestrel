@@ -680,6 +680,13 @@
       "when": 1787950800000,
       "tag": "0096_resend_managed_domains_public_aliases",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1787954400000,
+      "tag": "0097_browser_personal_domains",
+      "breakpoints": true
     }
   ]
 }

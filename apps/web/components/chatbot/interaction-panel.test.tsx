@@ -203,6 +203,63 @@ test("strict V4 approval cards advertise exact decisions", () => {
   assert.doesNotMatch(html, />Deny</u);
 });
 
+test("Browser grant cards expose one Allow and remember action", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        prompt: "Review this action before it runs.",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v4",
+          approval: {
+            toolName: "browser.request_grant",
+            presentation: {
+              title: "Allow this Browser domain",
+              summary: "Allow this HTTPS apex and its subdomains now and remember it.",
+              fields: [
+                { label: "Domain", value: "example.com" },
+                { label: "Scope", value: "Apex and subdomains" },
+                { label: "Port", value: "443 (HTTPS)" },
+                { label: "Applies to", value: "You in this Environment" },
+              ],
+              policy: { rememberApprovalEligible: true },
+              browserDomainGrant: {
+                version: "browser_domain_grant_approval_v1",
+                actionLabel: "Allow and remember",
+              },
+            },
+          },
+        },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "built_in.browser",
+          capabilityKey: "request_grant",
+          capabilityDisplayName: "Request a Browser domain",
+          environmentApprovalMode: "ask",
+          projectApprovalMode: "ask",
+          minimumApprovalMode: "ask",
+          rememberApprovalEligible: true,
+          reasonCode: "environment_policy",
+          canEditProject: false,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Allow and remember</u);
+  assert.equal(html.match(/>Allow and remember/g)?.length, 1);
+  assert.doesNotMatch(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
+  assert.match(html, /example\.com/u);
+  assert.match(html, /Apex and subdomains/u);
+  assert.match(html, /You in this Environment/u);
+});
+
 test("a strict hosted card with missing current authority exposes only Decline", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel

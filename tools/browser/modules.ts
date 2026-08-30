@@ -4,9 +4,11 @@ import {
 } from "../../src/kestrel/contracts/tool-contract.js";
 import type { ToolExecutionClass } from "../../src/mode/contracts.js";
 import {
+  BROWSER_ALLOWLIST_ADOPTION_VERSION,
   BROWSER_CONTRACT_VERSION,
   BROWSER_POLICY_RESOLUTION_VERSION,
   BROWSER_TOOL_NAMES,
+  adoptBrowserAllowlistRevision,
   browserArtifactAuthorizationRequest,
   browserArtifactPresentation,
   browserFailure,
@@ -238,6 +240,33 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           toolName: contract.toolId,
         } as const;
         const browserService = requireBrowserServicePort(context.browserService);
+        let adoptedAllowlistRevision: string | undefined;
+        const adoptGrantAllowlist = async (output: unknown): Promise<void> => {
+          if (contract.toolId !== "browser.request_grant") return;
+          const result = output as Record<string, unknown>;
+          if (
+            (result.outcome !== "granted" &&
+              result.outcome !== "already_allowed") ||
+            typeof result.sessionId !== "string" ||
+            typeof result.effectiveAllowlistRevision !== "string"
+          ) {
+            return;
+          }
+          if (
+            adoptedAllowlistRevision === result.effectiveAllowlistRevision
+          ) {
+            return;
+          }
+          await adoptBrowserAllowlistRevision(browserService, {
+            version: BROWSER_ALLOWLIST_ADOPTION_VERSION,
+            runId: runtime.runId,
+            threadId,
+            sessionId: result.sessionId,
+            effectiveAllowlistRevision: result.effectiveAllowlistRevision,
+            cause: "personal_grant",
+          });
+          adoptedAllowlistRevision = result.effectiveAllowlistRevision;
+        };
         let acceptedRawCanonical: string | undefined;
         let acceptedCanonical: string | undefined;
         let acceptedOutput: unknown;
@@ -299,12 +328,14 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
               dispatchAcknowledged = true;
             },
             async persistCompletedResult(rawOutput) {
-              await context.persistCompletedCapabilityResult?.(
-                await acceptOutput(rawOutput),
-              );
+              const accepted = await acceptOutput(rawOutput);
+              await adoptGrantAllowlist(accepted);
+              await context.persistCompletedCapabilityResult?.(accepted);
             },
           });
-          return await acceptOutput(output);
+          const accepted = await acceptOutput(output);
+          await adoptGrantAllowlist(accepted);
+          return accepted;
         } catch (error) {
           throw normalizeBrowserHostFailure(error, {
             toolName: contract.toolId,

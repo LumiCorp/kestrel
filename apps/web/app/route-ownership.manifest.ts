@@ -790,6 +790,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/apps/browser/personal-domains/route.ts",
+    "/api/apps/browser/personal-domains",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/apps/[appKey]/installation/route.ts",
     "/api/apps/:appKey/installation",
     "apps",

@@ -49,6 +49,122 @@ import {
 } from "./configuration.js";
 import type { ResolvedProviderModelCatalog } from "../profile/modelCatalogDiscovery.js";
 import { getDesktopStandardAppConnection } from "./standardAppConnections.js";
+import type {
+  BrowserPersonalDomainAuthorityV1,
+  BrowserPublicDomainAuthorityV1,
+} from "../browser/domainAuthority.js";
+
+export const DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION =
+  "desktop_browser_personal_domains_v1" as const;
+export const DESKTOP_BROWSER_PERSONAL_DOMAIN_PARTITION_VERSION =
+  "desktop_browser_personal_domain_partition_v1" as const;
+export const DESKTOP_BROWSER_PERSONAL_DOMAIN_RECORD_VERSION =
+  "desktop_browser_personal_domain_record_v1" as const;
+export const DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION =
+  "desktop_browser_personal_domain_provenance_v1" as const;
+
+export interface DesktopBrowserPersonalDomainProvenanceV1 {
+  version: typeof DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION;
+  source: "browser.request_grant";
+  approvalId: string;
+  approvedAt: string;
+}
+
+export interface DesktopBrowserPersonalDomainRecordV1 {
+  version: typeof DESKTOP_BROWSER_PERSONAL_DOMAIN_RECORD_VERSION;
+  authority: BrowserPublicDomainAuthorityV1;
+  state: "active" | "revoked";
+  provenance: DesktopBrowserPersonalDomainProvenanceV1;
+  createdAt: string;
+  updatedAt: string;
+  revokedAt?: string | undefined;
+}
+
+export interface DesktopBrowserPersonalDomainPartitionV1 {
+  version: typeof DESKTOP_BROWSER_PERSONAL_DOMAIN_PARTITION_VERSION;
+  accountId: string;
+  environmentId: string;
+  revision: number;
+  domains: DesktopBrowserPersonalDomainRecordV1[];
+}
+
+export interface DesktopBrowserPersonalDomainsV1 {
+  version: typeof DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION;
+  partitions: DesktopBrowserPersonalDomainPartitionV1[];
+}
+
+/** Safe projection for exactly one authenticated account and Environment. */
+export interface DesktopBrowserPersonalDomainProjectionV1 {
+  accountId: string;
+  environmentId: string;
+  revision: number;
+  authority: BrowserPersonalDomainAuthorityV1;
+  domains: DesktopBrowserPersonalDomainRecordV1[];
+}
+
+export interface DesktopBrowserPersonalDomainListRequest {
+  environmentId: string;
+}
+
+export interface DesktopBrowserPersonalDomainRevokeRequest {
+  environmentId: string;
+  canonicalDomain: string;
+}
+
+export function parseDesktopBrowserPersonalDomainListRequest(
+  value: unknown,
+): DesktopBrowserPersonalDomainListRequest {
+  const input = parseDesktopBrowserPersonalDomainRequestRecord(value);
+  rejectDesktopBrowserPersonalDomainRequestKeys(input, ["environmentId"]);
+  return {
+    environmentId: parseRequiredDesktopString(
+      input.environmentId,
+      "environmentId",
+    ),
+  };
+}
+
+export function parseDesktopBrowserPersonalDomainRevokeRequest(
+  value: unknown,
+): DesktopBrowserPersonalDomainRevokeRequest {
+  const input = parseDesktopBrowserPersonalDomainRequestRecord(value);
+  rejectDesktopBrowserPersonalDomainRequestKeys(input, [
+    "environmentId",
+    "canonicalDomain",
+  ]);
+  return {
+    environmentId: parseRequiredDesktopString(
+      input.environmentId,
+      "environmentId",
+    ),
+    canonicalDomain: parseRequiredDesktopString(
+      input.canonicalDomain,
+      "canonicalDomain",
+    ),
+  };
+}
+
+function parseDesktopBrowserPersonalDomainRequestRecord(
+  value: unknown,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Desktop Browser personal-domain request must be an object.");
+  }
+  return value as Record<string, unknown>;
+}
+
+function rejectDesktopBrowserPersonalDomainRequestKeys(
+  input: Record<string, unknown>,
+  supported: readonly string[],
+): void {
+  const supportedKeys = new Set(supported);
+  const unsupported = Object.keys(input).find((key) => !supportedKeys.has(key));
+  if (unsupported !== undefined) {
+    throw new Error(
+      `Desktop Browser personal-domain request includes unsupported field '${unsupported}'.`,
+    );
+  }
+}
 
 export type DesktopRuntimeHealthState = "healthy" | "degraded" | "blocked";
 export type DesktopRuntimeConnectionState =
@@ -2051,6 +2167,8 @@ export interface DesktopSettings {
   defaultModelConfigurationId: string;
   defaultEnabledBuiltInAppIds: string[];
   appearanceTheme: DesktopAppearanceTheme;
+  /** Main-process state. Never include this unpartitioned value in renderer settings. */
+  browserPersonalDomains: DesktopBrowserPersonalDomainsV1;
 }
 
 export interface DesktopProviderReadiness {

@@ -1,5 +1,12 @@
 import type {
   DesktopBridgeInfo,
+  DesktopBrowserPersonalDomainPartitionV1,
+  DesktopBrowserPersonalDomainListRequest,
+  DesktopBrowserPersonalDomainProjectionV1,
+  DesktopBrowserPersonalDomainProvenanceV1,
+  DesktopBrowserPersonalDomainRecordV1,
+  DesktopBrowserPersonalDomainRevokeRequest,
+  DesktopBrowserPersonalDomainsV1,
   DesktopBootState,
   DesktopLaunchState,
   DesktopOnboardingDraftInput,
@@ -123,16 +130,29 @@ import type {
   WorkspaceSkillSource,
 } from "../../../src/skills/contracts.js";
 export {
+  DESKTOP_BROWSER_PERSONAL_DOMAIN_PARTITION_VERSION,
+  DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION,
+  DESKTOP_BROWSER_PERSONAL_DOMAIN_RECORD_VERSION,
+  DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
   DESKTOP_BRIDGE_CAPABILITIES,
   DESKTOP_BRIDGE_VERSION,
   DESKTOP_LEGACY_UI_STORAGE_KEYS,
   DESKTOP_UI_STATE_SOURCE,
   DESKTOP_UI_STATE_RENDERER_SOURCE,
   DESKTOP_UI_STATE_VERSION,
+  parseDesktopBrowserPersonalDomainListRequest,
+  parseDesktopBrowserPersonalDomainRevokeRequest,
   parseDesktopProviderModelCatalogRequest,
 } from "../../../src/desktopShell/contracts.js";
 export type {
   DesktopAttachmentMetadata,
+  DesktopBrowserPersonalDomainPartitionV1,
+  DesktopBrowserPersonalDomainListRequest,
+  DesktopBrowserPersonalDomainProjectionV1,
+  DesktopBrowserPersonalDomainProvenanceV1,
+  DesktopBrowserPersonalDomainRecordV1,
+  DesktopBrowserPersonalDomainRevokeRequest,
+  DesktopBrowserPersonalDomainsV1,
   DesktopCapabilityPackId,
   DesktopCredentialedModelProvider,
   DesktopBridgeCapabilityId,
@@ -493,6 +513,12 @@ export interface DesktopBridge {
   ): Promise<DesktopCapabilityConfigurationResult>;
   getSettings(): Promise<DesktopRendererSettings>;
   getKestrelOneAccount(): Promise<KestrelOneAccountStatus>;
+  listBrowserPersonalDomains(
+    input: DesktopBrowserPersonalDomainListRequest,
+  ): Promise<DesktopBrowserPersonalDomainProjectionV1>;
+  revokeBrowserPersonalDomain(
+    input: DesktopBrowserPersonalDomainRevokeRequest,
+  ): Promise<DesktopBrowserPersonalDomainProjectionV1>;
   startKestrelOneAuthorization(input: {
     baseUrl: string;
   }): Promise<KestrelOneAuthorizationSessionView>;

@@ -53,6 +53,7 @@ export { DevShellSupervisor } from "./devshell/DevShellSupervisor.js";
 export * from "./clientCapabilities.js";
 export * from "./browser/contracts.js";
 export * from "./browser/browserAppContract.fixture.js";
+export * from "./browser/domainAuthority.js";
 export * from "./browser/runtimeReleaseManifest.js";
 export * from "./governance/index.js";
 export * from "../models/index.js";

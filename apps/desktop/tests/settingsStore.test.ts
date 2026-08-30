@@ -340,7 +340,7 @@ test("active Local Core settings normalization discards retired workflow IDs", (
   assert.equal(restored.plugins.some((plugin) => plugin.id.startsWith("workflow.")), false);
 });
 
-test("the first schema-12 write preserves pre-v12 settings exactly once", async () => {
+test("the first schema-13 write preserves pre-v12 settings exactly once", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-backup-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
   const backupPath = desktopPreV12SettingsBackupPath(settingsPath);
@@ -364,14 +364,14 @@ test("the first schema-12 write preserves pre-v12 settings exactly once", async 
 
   assert.equal(await readFile(backupPath, "utf8"), original);
   assert.equal((await stat(backupPath)).mode & 0o777, 0o600);
-  assert.match(await readFile(settingsPath, "utf8"), /"version": 12/u);
+  assert.match(await readFile(settingsPath, "utf8"), /"version": 13/u);
 
   await writeFile(settingsPath, `${JSON.stringify({ version: 10, selectedProvider: "openai" })}\n`, "utf8");
   await writeDesktopSettings(settingsPath, await readDesktopSettings(settingsPath));
   assert.equal(await readFile(backupPath, "utf8"), original);
 });
 
-test("schema-12 migration aborts when the pre-v12 backup path is unusable", async () => {
+test("schema-13 migration aborts when the pre-v12 backup path is unusable", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-backup-failure-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
   const original = `${JSON.stringify({ version: 10, selectedProvider: "openrouter" })}\n`;
@@ -563,7 +563,7 @@ test(
     assert.equal(restored.openaiModel, "gpt-5.4-2026-03-05");
     assert.equal(restored.tavilyApiKey, undefined);
     assert.deepEqual(restored.projects, saved.projects);
-    assert.match(raw, /"version": 12/u);
+    assert.match(raw, /"version": 13/u);
     assert.match(raw, /"selectedProvider": "openai"/u);
     assert.match(raw, /"databaseMode": "default"/u);
     assert.equal(raw.includes("openai-key"), false);
@@ -605,7 +605,7 @@ test(
     assert.equal(saved.databaseUrl, undefined);
     assert.equal(restored.databaseMode, "external");
     assert.equal(restored.databaseUrl, undefined);
-    assert.match(raw, /"version": 12/u);
+    assert.match(raw, /"version": 13/u);
     assert.match(raw, /"databaseMode": "external"/u);
     assert.equal(raw.includes("user:password"), false);
   },

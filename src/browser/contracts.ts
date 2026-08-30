@@ -18,6 +18,10 @@ export const BROWSER_ARTIFACT_AUTHORIZATION_VERSION =
   "browser_artifact_authorization_v1" as const;
 export const BROWSER_AUTHORIZED_ARTIFACT_VERSION =
   "browser_authorized_artifact_v1" as const;
+export const BROWSER_ALLOWLIST_ADOPTION_VERSION =
+  "browser_allowlist_adoption_v1" as const;
+export const BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION =
+  "browser_allowlist_adoption_receipt_v1" as const;
 
 export const BROWSER_TOOL_NAMES = [
   "browser.open",
@@ -106,6 +110,24 @@ export interface BrowserServicePort {
   authorizeArtifact(
     input: BrowserArtifactAuthorizationRequestV1,
   ): Promise<BrowserAuthorizedArtifactV1 | undefined>;
+  adoptAllowlistRevision(
+    input: BrowserAllowlistAdoptionRequestV1,
+  ): Promise<BrowserAllowlistAdoptionReceiptV1>;
+}
+
+export interface BrowserAllowlistAdoptionRequestV1 {
+  version: typeof BROWSER_ALLOWLIST_ADOPTION_VERSION;
+  runId: string;
+  threadId: string;
+  sessionId: string;
+  effectiveAllowlistRevision: string;
+  cause: "personal_grant" | "personal_revocation";
+}
+
+export interface BrowserAllowlistAdoptionReceiptV1 {
+  version: typeof BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION;
+  sessionId: string;
+  effectiveAllowlistRevision: string;
 }
 
 export interface BrowserResultExecutionAuthorityV1 {
@@ -161,7 +183,8 @@ export function isConformingBrowserServicePort(
     value?.version === BROWSER_SERVICE_PORT_VERSION &&
     typeof value.resolvePolicy === "function" &&
     typeof value.execute === "function" &&
-    typeof value.authorizeArtifact === "function"
+    typeof value.authorizeArtifact === "function" &&
+    typeof value.adoptAllowlistRevision === "function"
   );
 }
 
@@ -194,6 +217,97 @@ export function parseBrowserPolicyResolutionV1(
       "BrowserPolicyResolutionV1.policyRevision",
     ),
   };
+}
+
+export function parseBrowserAllowlistAdoptionReceiptV1(
+  value: unknown,
+): BrowserAllowlistAdoptionReceiptV1 {
+  const record = requireRecord(value, "BrowserAllowlistAdoptionReceiptV1");
+  rejectUnknown(
+    record,
+    new Set(["version", "sessionId", "effectiveAllowlistRevision"]),
+    "BrowserAllowlistAdoptionReceiptV1",
+  );
+  if (record.version !== BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION) {
+    throw new Error(
+      `BrowserAllowlistAdoptionReceiptV1.version must be '${BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION}'.`,
+    );
+  }
+  return {
+    version: BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION,
+    sessionId: requireString(
+      record.sessionId,
+      "BrowserAllowlistAdoptionReceiptV1.sessionId",
+    ),
+    effectiveAllowlistRevision: requireString(
+      record.effectiveAllowlistRevision,
+      "BrowserAllowlistAdoptionReceiptV1.effectiveAllowlistRevision",
+    ),
+  };
+}
+
+export function parseBrowserAllowlistAdoptionRequestV1(
+  value: unknown,
+): BrowserAllowlistAdoptionRequestV1 {
+  const record = requireRecord(value, "BrowserAllowlistAdoptionRequestV1");
+  rejectUnknown(
+    record,
+    new Set([
+      "version",
+      "runId",
+      "threadId",
+      "sessionId",
+      "effectiveAllowlistRevision",
+      "cause",
+    ]),
+    "BrowserAllowlistAdoptionRequestV1",
+  );
+  if (record.version !== BROWSER_ALLOWLIST_ADOPTION_VERSION) {
+    throw new Error(
+      `BrowserAllowlistAdoptionRequestV1.version must be '${BROWSER_ALLOWLIST_ADOPTION_VERSION}'.`,
+    );
+  }
+  if (record.cause !== "personal_grant" && record.cause !== "personal_revocation") {
+    throw new Error("BrowserAllowlistAdoptionRequestV1.cause is invalid.");
+  }
+  return {
+    version: BROWSER_ALLOWLIST_ADOPTION_VERSION,
+    runId: requireString(record.runId, "BrowserAllowlistAdoptionRequestV1.runId"),
+    threadId: requireString(
+      record.threadId,
+      "BrowserAllowlistAdoptionRequestV1.threadId",
+    ),
+    sessionId: requireString(
+      record.sessionId,
+      "BrowserAllowlistAdoptionRequestV1.sessionId",
+    ),
+    effectiveAllowlistRevision: requireString(
+      record.effectiveAllowlistRevision,
+      "BrowserAllowlistAdoptionRequestV1.effectiveAllowlistRevision",
+    ),
+    cause: record.cause,
+  };
+}
+
+export async function adoptBrowserAllowlistRevision(
+  port: BrowserServicePort,
+  input: BrowserAllowlistAdoptionRequestV1,
+): Promise<BrowserAllowlistAdoptionReceiptV1> {
+  const request = parseBrowserAllowlistAdoptionRequestV1(input);
+  const receipt = parseBrowserAllowlistAdoptionReceiptV1(
+    await port.adoptAllowlistRevision(request),
+  );
+  if (
+    receipt.sessionId !== request.sessionId ||
+    receipt.effectiveAllowlistRevision !== request.effectiveAllowlistRevision
+  ) {
+    throw browserFailure(
+      "BROWSER_SERVICE_UNAVAILABLE",
+      "The Browser host did not confirm the requested allowlist revision.",
+      { recoverable: true },
+    );
+  }
+  return receipt;
 }
 
 export function requireBrowserServicePort(

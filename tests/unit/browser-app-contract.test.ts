@@ -496,6 +496,9 @@ test("Browser tools remain unavailable until a conforming host port is active", 
     async authorizeArtifact() {
       return undefined;
     },
+    async adoptAllowlistRevision(input) {
+      return allowlistAdoptionReceipt(input);
+    },
   };
   const available = new UnifiedToolRegistry({
     allowlist: [...BROWSER_TOOL_NAMES],
@@ -556,6 +559,9 @@ test("fake Browser port receives the exact prepared call and conditional effect 
     },
     async authorizeArtifact() {
       return undefined;
+    },
+    async adoptAllowlistRevision(input) {
+      return allowlistAdoptionReceipt(input);
     },
   };
   const registry = new UnifiedToolRegistry({
@@ -690,6 +696,9 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
         bytes: 100,
         sha256: "a".repeat(64),
       });
+    },
+    async adoptAllowlistRevision(input) {
+      return allowlistAdoptionReceipt(input);
     },
   };
   const registry = new UnifiedToolRegistry({
@@ -893,6 +902,9 @@ test("Desktop and hosted Browser preparation resolve all grant branches before d
       },
       async authorizeArtifact() {
         return undefined;
+      },
+      async adoptAllowlistRevision(input) {
+        return allowlistAdoptionReceipt(input);
       },
     };
     const registry = new UnifiedToolRegistry({
@@ -1143,6 +1155,94 @@ test("Browser destructive operations persist their exact normalized result befor
   assert.equal(result.outcome.kind, "success");
   if (result.outcome.kind !== "success") assert.fail("expected success");
   assert.deepEqual(result.outcome.rawOutput, output);
+});
+
+test("Browser grants adopt the effective allowlist revision before persistence or success", async () => {
+  for (const outcome of ["granted", "already_allowed"] as const) {
+    const ordering: string[] = [];
+    const output = {
+      version: "browser_tool_result_v1" as const,
+      operation: "browser.request_grant" as const,
+      outcome,
+      sessionId: "browser-session-1",
+      canonicalWildcard: "*.example.com",
+      effectiveAllowlistRevision: `allowlist-${outcome}`,
+    };
+    const port: BrowserServicePort = {
+      ...passiveBrowserPort(),
+      async execute(_prepared, lifecycle) {
+        await lifecycle.acknowledgeDispatch();
+        await lifecycle.persistCompletedResult(output);
+        ordering.push("cleanup");
+        return output;
+      },
+      async adoptAllowlistRevision(input) {
+        ordering.push("adopt");
+        return allowlistAdoptionReceipt(input);
+      },
+    };
+    const registry = new UnifiedToolRegistry({
+      allowlist: ["browser.request_grant"],
+      context: { browserService: port },
+    });
+    const { prepared, runContext } = await prepareBrowserCall(
+      registry,
+      "browser.request_grant",
+      {
+        sessionId: "browser-session-1",
+        destination: "https://example.com",
+      },
+    );
+    const result = await registry.executePreparedToolCall(prepared, {
+      runContext,
+      async persistCompletedCapabilityResult() {
+        ordering.push("persist");
+      },
+    });
+    assert.deepEqual(ordering, ["adopt", "persist", "cleanup"]);
+    assert.equal(result.outcome.kind, "success");
+  }
+
+  let persisted = false;
+  const failingPort: BrowserServicePort = {
+    ...passiveBrowserPort(),
+    async execute(_prepared, lifecycle) {
+      const output = {
+        version: "browser_tool_result_v1" as const,
+        operation: "browser.request_grant" as const,
+        outcome: "granted" as const,
+        sessionId: "browser-session-1",
+        canonicalWildcard: "*.example.com",
+        effectiveAllowlistRevision: "allowlist-rejected",
+      };
+      await lifecycle.acknowledgeDispatch();
+      await lifecycle.persistCompletedResult(output);
+      return output;
+    },
+    async adoptAllowlistRevision() {
+      throw new Error("allowlist adoption unavailable");
+    },
+  };
+  const failingRegistry = new UnifiedToolRegistry({
+    allowlist: ["browser.request_grant"],
+    context: { browserService: failingPort },
+  });
+  const { prepared, runContext } = await prepareBrowserCall(
+    failingRegistry,
+    "browser.request_grant",
+    {
+      sessionId: "browser-session-1",
+      destination: "https://example.com",
+    },
+  );
+  const failed = await failingRegistry.executePreparedToolCall(prepared, {
+    runContext,
+    async persistCompletedCapabilityResult() {
+      persisted = true;
+    },
+  });
+  assert.equal(persisted, false);
+  assert.equal(failed.outcome.kind, "failure");
 });
 
 test("Browser results cannot cross prepared session or Thread authority", async () => {
@@ -1471,6 +1571,19 @@ function passiveBrowserPort(): BrowserServicePort {
     async authorizeArtifact(input) {
       return authorizedArtifactFor(input);
     },
+    async adoptAllowlistRevision(input) {
+      return allowlistAdoptionReceipt(input);
+    },
+  };
+}
+
+function allowlistAdoptionReceipt(
+  input: Parameters<BrowserServicePort["adoptAllowlistRevision"]>[0],
+) {
+  return {
+    version: "browser_allowlist_adoption_receipt_v1" as const,
+    sessionId: input.sessionId,
+    effectiveAllowlistRevision: input.effectiveAllowlistRevision,
   };
 }
 

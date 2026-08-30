@@ -48,6 +48,11 @@ import {
   validateAppApprovalDecisionEligibilityInTransaction,
 } from "@/lib/apps/app-operation-approvals";
 import { hashAppApprovalAuthority } from "@/lib/apps/app-operation-approval-contract";
+import {
+  createOrReactivateHostedBrowserPersonalDomainInTransaction,
+  HostedBrowserDomainError,
+  resolveHostedBrowserPublicGrantDecision,
+} from "@/lib/apps/browser-domain-service";
 import { resolveEffectiveProjectAppAccess } from "@/lib/apps/project-service";
 import { resolveKestrelOneToolCapability } from "@/lib/agent/kestrel-tool-profile";
 import { meterPersistedModelMessages } from "@/lib/costs/metering";
@@ -81,6 +86,10 @@ import {
   schedulePreparedApprovalCleanupInTransaction,
   type PreparedApprovalCleanupV1,
 } from "@/lib/turns/prepared-approval-cleanup";
+import {
+  BROWSER_QA_DOMAIN_AUTHORITY_VERSION,
+  canonicalizePublicBrowserDestination,
+} from "../../../../src/browser/domainAuthority.js";
 
 export type TurnTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
@@ -2295,6 +2304,9 @@ export async function resolveDurableRuntimeInteraction(input: {
       );
     }
     const requestEnvelopeRecord = readPlainRecord(interaction.requestEnvelope);
+    const rawApprovalEnvelope = readPlainRecord(requestEnvelopeRecord?.approval);
+    const isBrowserDomainGrantApproval =
+      rawApprovalEnvelope?.toolName === "browser.request_grant";
     const rawHostedApprovalVersion = requestEnvelopeRecord?.version;
     const isRawPreparedApproval =
       interaction.kind === "approval" &&
@@ -2317,6 +2329,12 @@ export async function resolveDurableRuntimeInteraction(input: {
       }
     }
     const decision = input.decision;
+    if (isBrowserDomainGrantApproval && decision === "remember_approval") {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "Browser domain approvals use Allow and remember, not the thread approval action.",
+      );
+    }
     if (
       hostedApproval !== null &&
       (hostedApproval.approval.requestingActor.actorType !== "end_user" ||
@@ -2478,6 +2496,19 @@ export async function resolveDurableRuntimeInteraction(input: {
         "The hosted approval requesting actor does not match authenticated durable authority.",
       );
     }
+    const browserDomainGrant = hostedApproval && decision === "approve_once"
+      ? parseBrowserDomainGrantApproval(hostedApproval)
+      : null;
+    if (
+      browserDomainGrant !== null &&
+      turn.authorUserId !== input.userId &&
+      decision !== "decline"
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Browser domain approval does not belong to the waiting turn author.",
+      );
+    }
     const now = new Date();
     const responseMessage = interaction.kind === "approval"
       ? input.decision === "remember_approval"
@@ -2554,6 +2585,142 @@ export async function resolveDurableRuntimeInteraction(input: {
           preparedApprovalCleanup = preparedApprovalCleanupFailure(
             "EXTERNAL_APPROVAL_EXPIRED",
           );
+        }
+        if (
+          browserDomainGrant !== null &&
+          decision === "approve_once" &&
+          preparedApprovalCleanup === null
+        ) {
+          if (!accessibleThread.projectId || !turn.requestedEnvironmentId) {
+            preparedApprovalCleanup = preparedApprovalCleanupFailure(
+              "EXTERNAL_APPROVAL_POLICY_CHANGED",
+            );
+          } else {
+            try {
+              const [lockedEnvironmentGrant] = await tx
+                .select({
+                  environmentId:
+                    schema.environmentAppCapabilityGrants.environmentId,
+                })
+                .from(schema.environmentAppCapabilityGrants)
+                .where(
+                  and(
+                    eq(
+                      schema.environmentAppCapabilityGrants.environmentId,
+                      turn.requestedEnvironmentId,
+                    ),
+                    eq(
+                      schema.environmentAppCapabilityGrants.appKey,
+                      "built_in.browser",
+                    ),
+                    eq(
+                      schema.environmentAppCapabilityGrants.capabilityKey,
+                      "request_grant",
+                    ),
+                  ),
+                )
+                .limit(1)
+                .for("update");
+              const [lockedProjectApp] = await tx
+                .select({ projectId: schema.projectApps.projectId })
+                .from(schema.projectApps)
+                .where(
+                  and(
+                    eq(
+                      schema.projectApps.projectId,
+                      accessibleThread.projectId,
+                    ),
+                    eq(schema.projectApps.appKey, "built_in.browser"),
+                  ),
+                )
+                .limit(1)
+                .for("update");
+              const [lockedProjectPolicy] = await tx
+                .select({ projectId: schema.projectAppCapabilityPolicies.projectId })
+                .from(schema.projectAppCapabilityPolicies)
+                .where(
+                  and(
+                    eq(
+                      schema.projectAppCapabilityPolicies.projectId,
+                      accessibleThread.projectId,
+                    ),
+                    eq(
+                      schema.projectAppCapabilityPolicies.appKey,
+                      "built_in.browser",
+                    ),
+                    eq(
+                      schema.projectAppCapabilityPolicies.capabilityKey,
+                      "request_grant",
+                    ),
+                  ),
+                )
+                .limit(1)
+                .for("update");
+              if (
+                !lockedEnvironmentGrant ||
+                !lockedProjectApp ||
+                !lockedProjectPolicy
+              ) {
+                preparedApprovalCleanup = preparedApprovalCleanupFailure(
+                  "EXTERNAL_APPROVAL_POLICY_CHANGED",
+                );
+              } else {
+                const currentDecision =
+                  await resolveHostedBrowserPublicGrantDecision(
+                    {
+                      organizationId: input.organizationId,
+                      projectId: accessibleThread.projectId,
+                      environmentId: turn.requestedEnvironmentId,
+                      userId: input.userId,
+                      destination: `https://${browserDomainGrant.canonicalDomain}`,
+                      qa: {
+                        version: BROWSER_QA_DOMAIN_AUTHORITY_VERSION,
+                        revision: "hosted-browser-public-grant-v1",
+                        target: null,
+                      },
+                    },
+                    tx as unknown as typeof knowledgeDb,
+                  );
+                if (
+                  currentDecision.authority.canonicalDomain !==
+                  browserDomainGrant.canonicalDomain
+                ) {
+                  preparedApprovalCleanup = preparedApprovalCleanupFailure(
+                    "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+                  );
+                } else if (currentDecision.decision === "blocked") {
+                  preparedApprovalCleanup = preparedApprovalCleanupFailure(
+                    "EXTERNAL_APPROVAL_POLICY_CHANGED",
+                  );
+                } else if (currentDecision.decision === "approval_required") {
+                  await createOrReactivateHostedBrowserPersonalDomainInTransaction(
+                    tx,
+                    {
+                      organizationId: input.organizationId,
+                      environmentId: turn.requestedEnvironmentId,
+                      userId: input.userId,
+                      destination: `https://${browserDomainGrant.canonicalDomain}`,
+                      approvalId: interaction.requestId,
+                      sourceInteractionId: interaction.id,
+                      sourcePreparedInvocationId:
+                        browserDomainGrant.preparedInvocationId,
+                      approvalAuthorityRevision:
+                        browserDomainGrant.approvalAuthorityRevision,
+                      now,
+                    },
+                  );
+                }
+              }
+            } catch (error) {
+              if (error instanceof HostedBrowserDomainError) {
+                preparedApprovalCleanup = preparedApprovalCleanupFailure(
+                  "EXTERNAL_APPROVAL_POLICY_CHANGED",
+                );
+              } else {
+                throw error;
+              }
+            }
+          }
         }
         if (
           decision === "remember_approval" &&
@@ -3721,6 +3888,84 @@ function parseHostedPreparedApprovalInteraction(
       "The hosted prepared approval contract is invalid.",
     );
   }
+}
+
+type HostedPreparedApprovalInteraction = NonNullable<
+  ReturnType<typeof parseRunnerHostedToolApprovalInteractionV4>
+>;
+
+function parseBrowserDomainGrantApproval(
+  approval: HostedPreparedApprovalInteraction,
+): {
+  sessionId: string;
+  canonicalDomain: string;
+  scope: "apex_and_subdomains";
+  preparedInvocationId: string;
+  approvalAuthorityRevision: string;
+} | null {
+  if (approval.approval.toolName !== "browser.request_grant") return null;
+  if (
+    approval.approval.stableToolIdentity.toolId !== "browser.request_grant" ||
+    approval.approval.preparedInvocationId.length === 0
+  ) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The Browser domain approval does not match its prepared tool identity.",
+    );
+  }
+  const presentation = readPlainRecord(approval.approval.presentation);
+  const grant = readPlainRecord(presentation?.browserDomainGrant);
+  const expectedKeys = [
+    "actionLabel", "canonicalDomain", "environmentEffect",
+    "includeSubdomains", "ownerEffect", "port", "scheme", "scope",
+    "sessionEffect", "sessionId", "version",
+  ];
+  if (
+    grant === null ||
+    Object.keys(grant).sort().join("\n") !== expectedKeys.join("\n") ||
+    grant.version !== "browser_domain_grant_approval_v1" ||
+    typeof grant.sessionId !== "string" ||
+    grant.sessionId.trim().length === 0 ||
+    typeof grant.canonicalDomain !== "string" ||
+    grant.scheme !== "https" ||
+    grant.scope !== "apex_and_subdomains" ||
+    grant.includeSubdomains !== true ||
+    grant.port !== 443 ||
+    grant.ownerEffect !== "requesting_person" ||
+    grant.environmentEffect !== "future_eligible_projects_in_environment" ||
+    grant.sessionEffect !== "immediate" ||
+    grant.actionLabel !== "Allow and remember"
+  ) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The Browser domain approval presentation is invalid.",
+    );
+  }
+  let canonical;
+  try {
+    canonical = canonicalizePublicBrowserDestination(
+      `https://${grant.canonicalDomain}`,
+    );
+  } catch {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The Browser domain approval presentation is invalid.",
+    );
+  }
+  if (canonical.canonicalDomain !== grant.canonicalDomain) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The Browser domain approval presentation is not canonical.",
+    );
+  }
+  return {
+    sessionId: grant.sessionId,
+    canonicalDomain: canonical.canonicalDomain,
+    scope: "apex_and_subdomains",
+    preparedInvocationId: approval.approval.preparedInvocationId,
+    approvalAuthorityRevision:
+      approval.approval.stableToolIdentity.approvalAuthorityRevision,
+  };
 }
 
 function readPlainRecord(value: unknown): Record<string, unknown> | null {

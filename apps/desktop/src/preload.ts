@@ -110,6 +110,12 @@ const desktopBridge: DesktopBridge = {
   getKestrelOneAccount() {
     return ipcRenderer.invoke("desktop:get-kestrel-one-account");
   },
+  listBrowserPersonalDomains(input) {
+    return ipcRenderer.invoke("desktop:list-browser-personal-domains", input);
+  },
+  revokeBrowserPersonalDomain(input) {
+    return ipcRenderer.invoke("desktop:revoke-browser-personal-domain", input);
+  },
   startKestrelOneAuthorization(input) {
     return ipcRenderer.invoke("desktop:start-kestrel-one-authorization", input);
   },

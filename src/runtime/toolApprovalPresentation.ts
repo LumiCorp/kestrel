@@ -3,6 +3,21 @@ import type {
   ToolApprovalReasonCode,
 } from "../mode/contracts.js";
 import { isRememberApprovalEligibleV1 } from "../mode/contracts.js";
+import { canonicalizePublicBrowserDestination } from "../browser/domainAuthority.js";
+
+export interface BrowserDomainGrantApprovalPresentationV1 {
+  version: "browser_domain_grant_approval_v1";
+  sessionId: string;
+  canonicalDomain: string;
+  scheme: "https";
+  scope: "apex_and_subdomains";
+  includeSubdomains: true;
+  port: 443;
+  ownerEffect: "requesting_person";
+  environmentEffect: "future_eligible_projects_in_environment";
+  sessionEffect: "immediate";
+  actionLabel: "Allow and remember";
+}
 
 export interface ToolApprovalPresentationV1 {
   title: string;
@@ -17,6 +32,7 @@ export interface ToolApprovalPresentationV1 {
     authorityRevision: string;
     rememberApprovalEligible: boolean;
   };
+  browserDomainGrant?: BrowserDomainGrantApprovalPresentationV1 | undefined;
 }
 
 type Presenter = {
@@ -328,6 +344,47 @@ export function buildToolApprovalPresentation(input: {
       revision: "legacy-external-confirm",
     },
   };
+  if (input.toolName === "browser.request_grant") {
+    const sessionId = readNonEmptyString(record?.sessionId, "sessionId");
+    const destination = readNonEmptyString(record?.destination, "destination");
+    const authority = canonicalizePublicBrowserDestination(destination);
+    const browserDomainGrant: BrowserDomainGrantApprovalPresentationV1 = {
+      version: "browser_domain_grant_approval_v1",
+      sessionId,
+      canonicalDomain: authority.canonicalDomain,
+      scheme: authority.scheme,
+      scope: "apex_and_subdomains",
+      includeSubdomains: authority.includeSubdomains,
+      port: authority.port,
+      ownerEffect: "requesting_person",
+      environmentEffect: "future_eligible_projects_in_environment",
+      sessionEffect: "immediate",
+      actionLabel: "Allow and remember",
+    };
+    return {
+      title: "Allow this Browser domain",
+      summary:
+        "Allow this HTTPS apex and its subdomains now and remember it for your eligible Projects in this Environment.",
+      fields: [
+        { label: "Domain", value: authority.canonicalDomain },
+        { label: "Scope", value: "Apex and subdomains" },
+        { label: "Port", value: "443 (HTTPS)" },
+        { label: "Applies to", value: "You in this Environment" },
+      ],
+      warnings: [
+        "This takes effect in the current Browser Session and future eligible Projects in this Environment.",
+      ],
+      policy: {
+        mode: "ask",
+        reasonCode: disposition.reasonCode,
+        explanation: approvalReasonExplanation(disposition.reasonCode),
+        authorityKind: disposition.authority.kind,
+        authorityRevision: disposition.authority.revision,
+        rememberApprovalEligible: false,
+      },
+      browserDomainGrant,
+    };
+  }
   const fields =
     presenterDefinition === undefined || record === null
       ? []
@@ -413,6 +470,13 @@ function readRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function readNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`browser.request_grant ${field} is required.`);
+  }
+  return value.trim();
 }
 
 function readPath(record: Record<string, unknown>, path: string): unknown {

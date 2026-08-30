@@ -42,6 +42,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import type {
   AppConnectionSummary,
+  BrowserEnvironmentAppSettings,
   EnvironmentAppCapability,
   EnvironmentAppConfiguration,
 } from "@/lib/apps/types";
@@ -357,7 +358,11 @@ function CapabilityRow({
   const [saving, setSaving] = useState(false);
 
   async function save(
-    patch: Partial<Pick<EnvironmentAppCapability, "enabled" | "approvalMode">>,
+    patch: Partial<
+      Pick<EnvironmentAppCapability, "enabled" | "approvalMode">
+    > & {
+      settings?: unknown;
+    },
   ) {
     const next = { ...capability, ...patch };
     setSaving(true);
@@ -372,6 +377,14 @@ function CapabilityRow({
             approvalMode: next.enabled ? next.approvalMode : "deny",
             loggingMode: next.loggingMode,
             rateLimitMode: next.rateLimitMode,
+            ...(capability.browserSettings
+              ? {
+                  settings:
+                    patch.settings ??
+                    next.browserSettings ??
+                    capability.browserSettings,
+                }
+              : {}),
           }),
         },
       );
@@ -379,6 +392,7 @@ function CapabilityRow({
         grant?: {
           enabled: boolean;
           approvalMode: EnvironmentAppCapability["approvalMode"];
+          settings?: BrowserEnvironmentAppSettings;
         };
         error?: string;
       }>(response);
@@ -390,6 +404,7 @@ function CapabilityRow({
         enabled: body.grant.enabled,
         approvalMode: body.grant.approvalMode,
         inheritedDefault: false,
+        browserSettings: body.grant.settings ?? next.browserSettings ?? null,
       });
     } catch (error) {
       toast.error(message(error, "Capability could not be updated."));
@@ -460,6 +475,143 @@ function CapabilityRow({
           }
         />
       </div>
+      {capability.browserSettings ? (
+        <BrowserEnvironmentPolicyEditor
+          disabled={saving}
+          onSave={(settings) => void save({ settings })}
+          settings={capability.browserSettings}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+const DOMAIN_LIST_SEPARATOR = /[\n,]/u;
+function parseDomainList(value: string) {
+  return value
+    .split(DOMAIN_LIST_SEPARATOR)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+type BrowserEnvironmentSettingsInput = Omit<
+  BrowserEnvironmentAppSettings,
+  "configuredPublicDomains" | "blockedPublicDomains"
+> & {
+  configuredPublicDomains: string[];
+  blockedPublicDomains: string[];
+};
+
+function BrowserEnvironmentPolicyEditor({
+  settings,
+  disabled,
+  onSave,
+}: {
+  settings: BrowserEnvironmentAppSettings;
+  disabled: boolean;
+  onSave: (settings: BrowserEnvironmentSettingsInput) => void;
+}) {
+  const [enabledModes, setEnabledModes] = useState([...settings.enabledModes]);
+  const [personalGrantsEnabled, setPersonalGrantsEnabled] = useState(
+    settings.personalGrantsEnabled,
+  );
+  const [configuredDomains, setConfiguredDomains] = useState(
+    settings.configuredPublicDomains
+      .map((domain) => domain.canonicalDomain)
+      .join("\n"),
+  );
+  const [blockedDomains, setBlockedDomains] = useState(
+    settings.blockedPublicDomains
+      .map((domain) => domain.canonicalDomain)
+      .join("\n"),
+  );
+  const toggleMode = (mode: "qa" | "operator", enabled: boolean) =>
+    setEnabledModes((current) =>
+      enabled
+        ? [...new Set([...current, mode])]
+        : current.filter((candidate) => candidate !== mode),
+    );
+  return (
+    <div className="col-span-full mt-2 space-y-4 border-t pt-4">
+      <div>
+        <p className="font-medium text-sm">Browser authority ceiling</p>
+        <p className="mt-1 text-muted-foreground text-xs">
+          Configure public Environment authority. Personal remembered domains
+          remain visible only to the person who allowed them.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {(["qa", "operator"] as const).map((mode) => (
+          <div className="flex items-center justify-between gap-3" key={mode}>
+            <Label htmlFor={`browser-environment-mode-${mode}`}>
+              {mode === "qa" ? "QA mode" : "Operator mode"}
+            </Label>
+            <Switch
+              checked={enabledModes.includes(mode)}
+              disabled={disabled}
+              id={`browser-environment-mode-${mode}`}
+              onCheckedChange={(checked) => toggleMode(mode, checked)}
+            />
+          </div>
+        ))}
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor="browser-environment-personal-grants">
+            Personal grants
+          </Label>
+          <Switch
+            checked={personalGrantsEnabled}
+            disabled={disabled || !enabledModes.includes("operator")}
+            id="browser-environment-personal-grants"
+            onCheckedChange={setPersonalGrantsEnabled}
+          />
+        </div>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="browser-environment-configured-domains">
+            Environment domains
+          </Label>
+          <Input
+            disabled={disabled}
+            id="browser-environment-configured-domains"
+            onChange={(event) => setConfiguredDomains(event.target.value)}
+            placeholder="example.com, docs.example.org"
+            value={configuredDomains}
+          />
+          <p className="text-muted-foreground text-xs">
+            Each entry allows the canonical apex and its subdomains.
+          </p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="browser-environment-blocked-domains">
+            Blocked public domains
+          </Label>
+          <Input
+            disabled={disabled}
+            id="browser-environment-blocked-domains"
+            onChange={(event) => setBlockedDomains(event.target.value)}
+            placeholder="restricted.example.com"
+            value={blockedDomains}
+          />
+        </div>
+      </div>
+      <Button
+        disabled={disabled}
+        onClick={() =>
+          onSave({
+            enabledModes,
+            personalGrantsEnabled:
+              enabledModes.includes("operator") && personalGrantsEnabled,
+            configuredPublicDomains: parseDomainList(configuredDomains),
+            blockedPublicDomains: parseDomainList(blockedDomains),
+          })
+        }
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        Save Browser policy
+      </Button>
     </div>
   );
 }

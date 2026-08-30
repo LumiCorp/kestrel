@@ -38,8 +38,18 @@ import {
   selectDesktopStandardAppTools,
 } from "../../../src/desktopShell/standardAppConnections.js";
 import type { McpServerConfig } from "../../../src/mcp/contracts.js";
+import {
+  BROWSER_PERSONAL_DOMAIN_AUTHORITY_VERSION,
+  BROWSER_PUBLIC_DOMAIN_AUTHORITY_VERSION,
+  canonicalizePublicBrowserDestination,
+  type BrowserPublicDomainAuthorityV1,
+} from "../../../src/browser/domainAuthority.js";
 import { KESTREL_STANDARD_APP_MANIFESTS } from "@kestrel-agents/protocol";
 import type {
+  DesktopBrowserPersonalDomainPartitionV1,
+  DesktopBrowserPersonalDomainProjectionV1,
+  DesktopBrowserPersonalDomainRecordV1,
+  DesktopBrowserPersonalDomainsV1,
   DesktopCapabilityPackId,
   DesktopDatabaseMode,
   DesktopModelProvider,
@@ -48,6 +58,12 @@ import type {
   DesktopPluginInstallation,
   DesktopSettings,
 } from "./contracts.js";
+import {
+  DESKTOP_BROWSER_PERSONAL_DOMAIN_PARTITION_VERSION,
+  DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION,
+  DESKTOP_BROWSER_PERSONAL_DOMAIN_RECORD_VERSION,
+  DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
+} from "../../../src/desktopShell/contracts.js";
 
 export { buildDesktopModelEnvironment } from "../../../src/desktopShell/modelEnvironment.js";
 
@@ -98,6 +114,7 @@ type DesktopSettingsFileBase = {
   defaultEnabledBuiltInAppIds?: string[] | undefined;
   appearanceTheme?: DesktopSettings["appearanceTheme"] | undefined;
   projectTombstones?: DesktopSettings["projectTombstones"] | undefined;
+  browserPersonalDomains?: DesktopSettings["browserPersonalDomains"] | undefined;
 };
 
 type DesktopSettingsInput = Partial<DesktopSettings> & {
@@ -176,6 +193,15 @@ type DesktopSettingsFileV12 = DesktopSettingsFileBase & {
   projects?: DesktopProjectRegistration[] | undefined;
 };
 
+type DesktopSettingsFileV13 = DesktopSettingsFileBase & {
+  version: 13;
+  plugins?: DesktopPluginInstallation[] | undefined;
+  presetId?: DesktopSettings["presetId"] | undefined;
+  capabilityPacks?: DesktopSettings["capabilityPacks"] | undefined;
+  projects?: DesktopProjectRegistration[] | undefined;
+  browserPersonalDomains: DesktopBrowserPersonalDomainsV1;
+};
+
 const LEGACY_SETUP_COMPLETED_AT = "1970-01-01T00:00:00.000Z";
 const LEGACY_PROVIDER_SELECTION_COMPLETED_AT = "1970-01-01T00:00:00.000Z";
 const DESKTOP_SAFE_CAPABILITY_PACKS: DesktopCapabilityPackId[] = [
@@ -226,6 +252,7 @@ export function createDefaultDesktopSettings(
     defaultModelConfigurationId: DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID,
     defaultEnabledBuiltInAppIds: [...DESKTOP_DEFAULT_ENABLED_APP_IDS],
     appearanceTheme: "system",
+    browserPersonalDomains: createEmptyDesktopBrowserPersonalDomains(),
   };
 }
 
@@ -430,6 +457,9 @@ export function normalizeDesktopSettings(
     settings?.appearanceTheme === "dark"
       ? settings.appearanceTheme
       : "system";
+  const browserPersonalDomains = normalizeDesktopBrowserPersonalDomains(
+    settings?.browserPersonalDomains,
+  );
 
   const requestedCapabilityPacks =
     isLegacyGeneratedDesktopSelection({
@@ -506,6 +536,7 @@ export function normalizeDesktopSettings(
     defaultModelConfigurationId,
     defaultEnabledBuiltInAppIds,
     appearanceTheme,
+    browserPersonalDomains,
   };
 }
 
@@ -665,7 +696,8 @@ export async function readDesktopSettings(
       parsed.version !== 9 &&
       parsed.version !== 10 &&
       parsed.version !== 11 &&
-      parsed.version !== 12
+      parsed.version !== 12 &&
+      parsed.version !== 13
     ) {
       return createDefaultDesktopSettings();
     }
@@ -802,7 +834,7 @@ export async function readDesktopSettings(
         ? parsed.setupCompletedAt
         : undefined;
     const desktopOnboarding =
-      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12)
+      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12 || parsed.version === 13)
         ? normalizeDesktopOnboardingRecord(parsed.desktopOnboarding)
         : undefined;
     const advancedWorkspaceEnabled =
@@ -811,11 +843,11 @@ export async function readDesktopSettings(
         ? parsed.advancedWorkspaceEnabled
         : undefined;
     const modelConfigurations =
-      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12) && Array.isArray(parsed.modelConfigurations)
+      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12 || parsed.version === 13) && Array.isArray(parsed.modelConfigurations)
         ? parsed.modelConfigurations
         : undefined;
     const defaultModelConfigurationId =
-      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12) &&
+      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12 || parsed.version === 13) &&
       typeof parsed.defaultModelConfigurationId === "string"
         ? parsed.defaultModelConfigurationId
         : undefined;
@@ -824,13 +856,13 @@ export async function readDesktopSettings(
         ? parsed.defaultEnabledAppIds.flatMap((entry) => typeof entry === "string" ? [entry] : [])
         : [];
     const defaultEnabledBuiltInAppIds =
-      (parsed.version === 11 || parsed.version === 12) && Array.isArray(parsed.defaultEnabledBuiltInAppIds)
+      (parsed.version === 11 || parsed.version === 12 || parsed.version === 13) && Array.isArray(parsed.defaultEnabledBuiltInAppIds)
         ? parsed.defaultEnabledBuiltInAppIds
         : parsed.version === 10
           ? filterDesktopBuiltInAppIds(legacyDefaultAppIds)
           : undefined;
     const appearanceTheme =
-      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12) &&
+      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12 || parsed.version === 13) &&
       (parsed.appearanceTheme === "system" ||
         parsed.appearanceTheme === "light" ||
         parsed.appearanceTheme === "dark")
@@ -868,6 +900,15 @@ export async function readDesktopSettings(
     const capabilityVerifications = normalizeCapabilityVerifications(
       parsed.capabilityVerifications,
     );
+    if (parsed.version === 13 && !("browserPersonalDomains" in parsed)) {
+      throw new Error(
+        "Desktop schema 13 requires Browser personal-domain settings.",
+      );
+    }
+    const browserPersonalDomains =
+      parsed.version === 13
+        ? normalizeDesktopBrowserPersonalDomains(parsed.browserPersonalDomains)
+        : createEmptyDesktopBrowserPersonalDomains();
     return normalizeDesktopSettings(
       {
         ...(presetId !== undefined ? { presetId } : {}),
@@ -926,10 +967,11 @@ export async function readDesktopSettings(
           : {}),
         ...(defaultEnabledBuiltInAppIds !== undefined ? { defaultEnabledBuiltInAppIds } : {}),
         ...(appearanceTheme !== undefined ? { appearanceTheme } : {}),
+        browserPersonalDomains,
       },
       {
         backfillProviderSelection:
-          parsed.version !== 9 && parsed.version !== 10 && parsed.version !== 11 && parsed.version !== 12,
+          parsed.version !== 9 && parsed.version !== 10 && parsed.version !== 11 && parsed.version !== 12 && parsed.version !== 13,
       },
     );
   } catch {
@@ -942,8 +984,8 @@ export async function writeDesktopSettings(
   settings: DesktopSettings,
 ): Promise<DesktopSettings> {
   const normalized = normalizeDesktopSettings(settings);
-  const payload: DesktopSettingsFileV12 = {
-    version: 12,
+  const payload: DesktopSettingsFileV13 = {
+    version: 13,
     selectedProvider: normalized.selectedProvider,
     databaseMode: normalized.databaseMode,
     presetId: normalized.presetId,
@@ -1043,6 +1085,7 @@ export async function writeDesktopSettings(
     defaultModelConfigurationId: normalized.defaultModelConfigurationId,
     defaultEnabledBuiltInAppIds: normalized.defaultEnabledBuiltInAppIds,
     appearanceTheme: normalized.appearanceTheme,
+    browserPersonalDomains: normalized.browserPersonalDomains,
   };
   await mkdir(path.dirname(settingsPath), { recursive: true });
   await preservePreV12SettingsBackup(settingsPath);
@@ -1060,6 +1103,486 @@ export async function writeDesktopSettings(
     ...sanitized
   } = normalized;
   return sanitized;
+}
+
+export interface DesktopBrowserPersonalDomainScope {
+  /** Must come from LocalCoreKestrelOneAccountManager.account().projection.account.id. */
+  accountId: string;
+  /** Must be the Environment selected for the current signed-in account. */
+  environmentId: string;
+}
+
+export interface RememberDesktopBrowserPersonalDomainInput
+  extends DesktopBrowserPersonalDomainScope {
+  destination: string;
+  approvalId: string;
+  approvedAt: string;
+}
+
+export interface RevokeDesktopBrowserPersonalDomainInput
+  extends DesktopBrowserPersonalDomainScope {
+  canonicalDomain: string;
+  revokedAt: string;
+}
+
+export type DesktopBrowserPersonalDomainMutationResult = {
+  settings: DesktopSettings;
+  projection: DesktopBrowserPersonalDomainProjectionV1;
+  disposition: "created" | "reactivated" | "revoked" | "unchanged";
+};
+
+export function createEmptyDesktopBrowserPersonalDomains(): DesktopBrowserPersonalDomainsV1 {
+  return {
+    version: DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
+    partitions: [],
+  };
+}
+
+/**
+ * Returns only the caller's exact account and Environment partition. Callers
+ * must obtain both IDs from trusted signed-in account state for every read.
+ */
+export function projectDesktopBrowserPersonalDomains(
+  settings: Pick<DesktopSettings, "browserPersonalDomains">,
+  scope: DesktopBrowserPersonalDomainScope,
+): DesktopBrowserPersonalDomainProjectionV1 {
+  const { accountId, environmentId } = parseDesktopBrowserScope(scope);
+  const partition = settings.browserPersonalDomains.partitions.find(
+    (candidate) =>
+      candidate.accountId === accountId &&
+      candidate.environmentId === environmentId,
+  );
+  const revision = partition?.revision ?? 0;
+  const domains = (partition?.domains ?? []).map(cloneDesktopBrowserDomainRecord);
+  return {
+    accountId,
+    environmentId,
+    revision,
+    authority: {
+      version: BROWSER_PERSONAL_DOMAIN_AUTHORITY_VERSION,
+      userId: accountId,
+      environmentId,
+      revision: String(revision),
+      activeDomains: domains
+        .filter((record) => record.state === "active")
+        .map((record) => ({ ...record.authority })),
+    },
+    domains,
+  };
+}
+
+/** Idempotently creates or reactivates one canonical personal grant. */
+export function rememberDesktopBrowserPersonalDomain(
+  settings: DesktopSettings,
+  input: RememberDesktopBrowserPersonalDomainInput,
+): DesktopBrowserPersonalDomainMutationResult {
+  const scope = parseDesktopBrowserScope(input);
+  const approvalId = requireDesktopBrowserText(input.approvalId, "approvalId");
+  const approvedAt = requireDesktopBrowserTimestamp(input.approvedAt, "approvedAt");
+  const authority = canonicalizePublicBrowserDestination(input.destination);
+  const existingPartition = settings.browserPersonalDomains.partitions.find(
+    (partition) => partitionMatchesScope(partition, scope),
+  );
+  const existingRecord = existingPartition?.domains.find(
+    (record) => record.authority.canonicalDomain === authority.canonicalDomain,
+  );
+  if (existingRecord?.state === "active") {
+    return {
+      settings,
+      projection: projectDesktopBrowserPersonalDomains(settings, scope),
+      disposition: "unchanged",
+    };
+  }
+  if (
+    existingRecord !== undefined &&
+    Date.parse(approvedAt) < Date.parse(existingRecord.updatedAt)
+  ) {
+    throw new Error("approvedAt cannot precede the domain's current state.");
+  }
+
+  const nextRecord: DesktopBrowserPersonalDomainRecordV1 = {
+    version: DESKTOP_BROWSER_PERSONAL_DOMAIN_RECORD_VERSION,
+    authority,
+    state: "active",
+    provenance: {
+      version: DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION,
+      source: "browser.request_grant",
+      approvalId,
+      approvedAt,
+    },
+    createdAt: existingRecord?.createdAt ?? approvedAt,
+    updatedAt: approvedAt,
+  };
+  const nextSettings = replaceDesktopBrowserPartition(
+    settings,
+    scope,
+    nextPartition(
+      existingPartition,
+      scope,
+      upsertDesktopBrowserDomain(existingPartition?.domains ?? [], nextRecord),
+    ),
+  );
+  return {
+    settings: nextSettings,
+    projection: projectDesktopBrowserPersonalDomains(nextSettings, scope),
+    disposition: existingRecord === undefined ? "created" : "reactivated",
+  };
+}
+
+/** Idempotently revokes only one domain in the caller's exact partition. */
+export function revokeDesktopBrowserPersonalDomain(
+  settings: DesktopSettings,
+  input: RevokeDesktopBrowserPersonalDomainInput,
+): DesktopBrowserPersonalDomainMutationResult {
+  const scope = parseDesktopBrowserScope(input);
+  const revokedAt = requireDesktopBrowserTimestamp(input.revokedAt, "revokedAt");
+  const authority = canonicalizePublicBrowserDestination(
+    `https://${requireDesktopBrowserText(input.canonicalDomain, "canonicalDomain")}`,
+  );
+  if (authority.canonicalDomain !== input.canonicalDomain) {
+    throw new Error("canonicalDomain must already be canonical.");
+  }
+  const existingPartition = settings.browserPersonalDomains.partitions.find(
+    (partition) => partitionMatchesScope(partition, scope),
+  );
+  const existingRecord = existingPartition?.domains.find(
+    (record) => record.authority.canonicalDomain === authority.canonicalDomain,
+  );
+  if (existingRecord === undefined || existingRecord.state === "revoked") {
+    return {
+      settings,
+      projection: projectDesktopBrowserPersonalDomains(settings, scope),
+      disposition: "unchanged",
+    };
+  }
+  if (Date.parse(revokedAt) < Date.parse(existingRecord.updatedAt)) {
+    throw new Error("revokedAt cannot precede the domain's current state.");
+  }
+  const nextRecord: DesktopBrowserPersonalDomainRecordV1 = {
+    ...cloneDesktopBrowserDomainRecord(existingRecord),
+    state: "revoked",
+    updatedAt: revokedAt,
+    revokedAt,
+  };
+  const nextSettings = replaceDesktopBrowserPartition(
+    settings,
+    scope,
+    nextPartition(
+      existingPartition,
+      scope,
+      upsertDesktopBrowserDomain(existingPartition?.domains ?? [], nextRecord),
+    ),
+  );
+  return {
+    settings: nextSettings,
+    projection: projectDesktopBrowserPersonalDomains(nextSettings, scope),
+    disposition: "revoked",
+  };
+}
+
+function normalizeDesktopBrowserPersonalDomains(
+  value: DesktopBrowserPersonalDomainsV1 | unknown | undefined,
+): DesktopBrowserPersonalDomainsV1 {
+  if (value === undefined) return createEmptyDesktopBrowserPersonalDomains();
+  const root = requireDesktopBrowserRecord(value, "browserPersonalDomains");
+  requireExactDesktopBrowserKeys(
+    root,
+    ["version", "partitions"],
+    "browserPersonalDomains",
+  );
+  if (root.version !== DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION) {
+    throw new Error("Desktop Browser personal-domain settings version is invalid.");
+  }
+  if (!Array.isArray(root.partitions)) {
+    throw new Error("browserPersonalDomains.partitions must be an array.");
+  }
+  const partitionKeys = new Set<string>();
+  const partitions = root.partitions.map((entry, partitionIndex) => {
+    const label = `browserPersonalDomains.partitions[${partitionIndex}]`;
+    const partition = requireDesktopBrowserRecord(entry, label);
+    requireExactDesktopBrowserKeys(
+      partition,
+      ["version", "accountId", "environmentId", "revision", "domains"],
+      label,
+    );
+    if (partition.version !== DESKTOP_BROWSER_PERSONAL_DOMAIN_PARTITION_VERSION) {
+      throw new Error(`${label}.version is invalid.`);
+    }
+    const accountId = requireDesktopBrowserText(partition.accountId, `${label}.accountId`);
+    const environmentId = requireDesktopBrowserText(
+      partition.environmentId,
+      `${label}.environmentId`,
+    );
+    const partitionKey = `${accountId}\u0000${environmentId}`;
+    if (partitionKeys.has(partitionKey)) {
+      throw new Error("Desktop Browser personal-domain partitions must be unique.");
+    }
+    partitionKeys.add(partitionKey);
+    if (
+      typeof partition.revision !== "number" ||
+      !Number.isSafeInteger(partition.revision) ||
+      partition.revision < 0
+    ) {
+      throw new Error(`${label}.revision must be a non-negative safe integer.`);
+    }
+    if (!Array.isArray(partition.domains)) {
+      throw new Error(`${label}.domains must be an array.`);
+    }
+    const domainKeys = new Set<string>();
+    const domains = partition.domains.map((domain, domainIndex) => {
+      const parsed = parseDesktopBrowserDomainRecord(
+        domain,
+        `${label}.domains[${domainIndex}]`,
+      );
+      if (domainKeys.has(parsed.authority.canonicalDomain)) {
+        throw new Error(`${label}.domains must contain unique canonical domains.`);
+      }
+      domainKeys.add(parsed.authority.canonicalDomain);
+      return parsed;
+    });
+    return {
+      version: DESKTOP_BROWSER_PERSONAL_DOMAIN_PARTITION_VERSION,
+      accountId,
+      environmentId,
+      revision: partition.revision,
+      domains: domains.sort(compareDesktopBrowserDomainRecords),
+    } satisfies DesktopBrowserPersonalDomainPartitionV1;
+  });
+  return {
+    version: DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
+    partitions: partitions.sort(compareDesktopBrowserPartitions),
+  };
+}
+
+function parseDesktopBrowserDomainRecord(
+  value: unknown,
+  label: string,
+): DesktopBrowserPersonalDomainRecordV1 {
+  const record = requireDesktopBrowserRecord(value, label);
+  const allowedKeys = [
+    "version",
+    "authority",
+    "state",
+    "provenance",
+    "createdAt",
+    "updatedAt",
+    ...(record.state === "revoked" ? ["revokedAt"] : []),
+  ];
+  requireExactDesktopBrowserKeys(record, allowedKeys, label);
+  if (record.version !== DESKTOP_BROWSER_PERSONAL_DOMAIN_RECORD_VERSION) {
+    throw new Error(`${label}.version is invalid.`);
+  }
+  if (record.state !== "active" && record.state !== "revoked") {
+    throw new Error(`${label}.state is invalid.`);
+  }
+  const authorityRecord = requireDesktopBrowserRecord(record.authority, `${label}.authority`);
+  requireExactDesktopBrowserKeys(
+    authorityRecord,
+    ["version", "scheme", "canonicalDomain", "includeSubdomains", "port"],
+    `${label}.authority`,
+  );
+  if (
+    authorityRecord.version !== BROWSER_PUBLIC_DOMAIN_AUTHORITY_VERSION ||
+    authorityRecord.scheme !== "https" ||
+    authorityRecord.includeSubdomains !== true ||
+    authorityRecord.port !== 443
+  ) {
+    throw new Error(`${label}.authority is invalid.`);
+  }
+  const canonicalDomain = requireDesktopBrowserText(
+    authorityRecord.canonicalDomain,
+    `${label}.authority.canonicalDomain`,
+  );
+  const canonical = canonicalizePublicBrowserDestination(`https://${canonicalDomain}`);
+  if (canonical.canonicalDomain !== canonicalDomain) {
+    throw new Error(`${label}.authority.canonicalDomain is not canonical.`);
+  }
+  const provenanceRecord = requireDesktopBrowserRecord(
+    record.provenance,
+    `${label}.provenance`,
+  );
+  requireExactDesktopBrowserKeys(
+    provenanceRecord,
+    ["version", "source", "approvalId", "approvedAt"],
+    `${label}.provenance`,
+  );
+  if (
+    provenanceRecord.version !== DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION ||
+    provenanceRecord.source !== "browser.request_grant"
+  ) {
+    throw new Error(`${label}.provenance is invalid.`);
+  }
+  const createdAt = requireDesktopBrowserTimestamp(record.createdAt, `${label}.createdAt`);
+  const updatedAt = requireDesktopBrowserTimestamp(record.updatedAt, `${label}.updatedAt`);
+  const approvedAt = requireDesktopBrowserTimestamp(
+    provenanceRecord.approvedAt,
+    `${label}.provenance.approvedAt`,
+  );
+  if (Date.parse(updatedAt) < Date.parse(createdAt) || Date.parse(updatedAt) < Date.parse(approvedAt)) {
+    throw new Error(`${label} timestamps are out of order.`);
+  }
+  const revokedAt = record.state === "revoked"
+    ? requireDesktopBrowserTimestamp(record.revokedAt, `${label}.revokedAt`)
+    : undefined;
+  if (revokedAt !== undefined && revokedAt !== updatedAt) {
+    throw new Error(`${label}.revokedAt must equal updatedAt.`);
+  }
+  return {
+    version: DESKTOP_BROWSER_PERSONAL_DOMAIN_RECORD_VERSION,
+    authority: canonical,
+    state: record.state,
+    provenance: {
+      version: DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION,
+      source: "browser.request_grant",
+      approvalId: requireDesktopBrowserText(
+        provenanceRecord.approvalId,
+        `${label}.provenance.approvalId`,
+      ),
+      approvedAt,
+    },
+    createdAt,
+    updatedAt,
+    ...(revokedAt !== undefined ? { revokedAt } : {}),
+  };
+}
+
+function parseDesktopBrowserScope(
+  value: DesktopBrowserPersonalDomainScope,
+): DesktopBrowserPersonalDomainScope {
+  return {
+    accountId: requireDesktopBrowserText(value.accountId, "accountId"),
+    environmentId: requireDesktopBrowserText(value.environmentId, "environmentId"),
+  };
+}
+
+function replaceDesktopBrowserPartition(
+  settings: DesktopSettings,
+  scope: DesktopBrowserPersonalDomainScope,
+  replacement: DesktopBrowserPersonalDomainPartitionV1,
+): DesktopSettings {
+  return {
+    ...settings,
+    browserPersonalDomains: {
+      version: DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
+      partitions: [
+        ...settings.browserPersonalDomains.partitions.filter(
+          (partition) => !partitionMatchesScope(partition, scope),
+        ),
+        replacement,
+      ].sort(compareDesktopBrowserPartitions),
+    },
+  };
+}
+
+function nextPartition(
+  existing: DesktopBrowserPersonalDomainPartitionV1 | undefined,
+  scope: DesktopBrowserPersonalDomainScope,
+  domains: DesktopBrowserPersonalDomainRecordV1[],
+): DesktopBrowserPersonalDomainPartitionV1 {
+  const revision = (existing?.revision ?? 0) + 1;
+  if (!Number.isSafeInteger(revision)) {
+    throw new Error("Desktop Browser personal-domain revision is exhausted.");
+  }
+  return {
+    version: DESKTOP_BROWSER_PERSONAL_DOMAIN_PARTITION_VERSION,
+    accountId: scope.accountId,
+    environmentId: scope.environmentId,
+    revision,
+    domains: domains.sort(compareDesktopBrowserDomainRecords),
+  };
+}
+
+function upsertDesktopBrowserDomain(
+  records: readonly DesktopBrowserPersonalDomainRecordV1[],
+  replacement: DesktopBrowserPersonalDomainRecordV1,
+): DesktopBrowserPersonalDomainRecordV1[] {
+  return [
+    ...records
+      .filter(
+        (record) =>
+          record.authority.canonicalDomain !== replacement.authority.canonicalDomain,
+      )
+      .map(cloneDesktopBrowserDomainRecord),
+    cloneDesktopBrowserDomainRecord(replacement),
+  ];
+}
+
+function cloneDesktopBrowserDomainRecord(
+  record: DesktopBrowserPersonalDomainRecordV1,
+): DesktopBrowserPersonalDomainRecordV1 {
+  return {
+    ...record,
+    authority: { ...record.authority },
+    provenance: { ...record.provenance },
+  };
+}
+
+function partitionMatchesScope(
+  partition: DesktopBrowserPersonalDomainPartitionV1,
+  scope: DesktopBrowserPersonalDomainScope,
+): boolean {
+  return (
+    partition.accountId === scope.accountId &&
+    partition.environmentId === scope.environmentId
+  );
+}
+
+function compareDesktopBrowserPartitions(
+  left: DesktopBrowserPersonalDomainPartitionV1,
+  right: DesktopBrowserPersonalDomainPartitionV1,
+): number {
+  return (
+    left.accountId.localeCompare(right.accountId) ||
+    left.environmentId.localeCompare(right.environmentId)
+  );
+}
+
+function compareDesktopBrowserDomainRecords(
+  left: DesktopBrowserPersonalDomainRecordV1,
+  right: DesktopBrowserPersonalDomainRecordV1,
+): number {
+  return left.authority.canonicalDomain.localeCompare(
+    right.authority.canonicalDomain,
+  );
+}
+
+function requireDesktopBrowserRecord(
+  value: unknown,
+  label: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireExactDesktopBrowserKeys(
+  record: Record<string, unknown>,
+  expected: readonly string[],
+  label: string,
+): void {
+  const expectedKeys = new Set(expected);
+  const unexpected = Object.keys(record).find((key) => !expectedKeys.has(key));
+  const missing = expected.find((key) => !(key in record));
+  if (unexpected !== undefined || missing !== undefined) {
+    throw new Error(`${label} has invalid fields.`);
+  }
+}
+
+function requireDesktopBrowserText(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim().length === 0 || value !== value.trim()) {
+    throw new Error(`${label} must be a non-empty canonical string.`);
+  }
+  return value;
+}
+
+function requireDesktopBrowserTimestamp(value: unknown, label: string): string {
+  const timestamp = requireDesktopBrowserText(value, label);
+  const parsed = new Date(timestamp);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== timestamp) {
+    throw new Error(`${label} must be a canonical ISO timestamp.`);
+  }
+  return timestamp;
 }
 
 async function preservePreV12SettingsBackup(settingsPath: string): Promise<void> {
