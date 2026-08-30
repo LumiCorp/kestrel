@@ -113,9 +113,7 @@ async function runService(): Promise<void> {
     await new Promise<void>((resolve) => drainWaiters.add(resolve));
   };
   const server = http.createServer((request, response) => {
-    const isShutdownRequest =
-      request.method === "POST" &&
-      new URL(request.url ?? "/", "http://unix").pathname === "/service/shutdown";
+    const isShutdownRequest = isServiceShutdownRequest(request);
     const endRequest = beginRequest(isShutdownRequest);
     if (endRequest === undefined) {
       writeJson(response, 503, { error: "service_shutting_down" });
@@ -198,6 +196,15 @@ async function runService(): Promise<void> {
     clearInterval(ownerWatch);
     void shutdown().finally(() => process.exit(0));
   });
+}
+
+function isServiceShutdownRequest(request: http.IncomingMessage): boolean {
+  if (request.method !== "POST") return false;
+  try {
+    return new URL(request.url ?? "/", "http://unix").pathname === "/service/shutdown";
+  } catch {
+    return false;
+  }
 }
 
 async function acceptBootstrapAuthority(): Promise<{

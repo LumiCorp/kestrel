@@ -86,3 +86,4 @@ Use focused regression tests at the owning seams. Include a real smoke path for 
 - [Stabilize standalone binding revisions](15-stabilize-standalone-binding-revisions.md)
 - [Make endpoint removal prove cleanup completion](16-make-endpoint-removal-prove-cleanup.md)
 - [Drain in-flight requests before service cleanup](17-drain-inflight-requests-before-cleanup.md)
+- [Keep malformed request targets inside the service error boundary](18-keep-malformed-targets-inside-error-boundary.md)

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import http from "node:http";
 import { createRequire } from "node:module";
+import net from "node:net";
 import { lstat, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -219,6 +220,54 @@ test("a partially delivered authenticated command cannot dispatch after shutdown
     assert.match(delayed.body, /service_shutting_down/u);
     await assert.rejects(readFile(markerPath, "utf8"), /ENOENT/u);
   } finally {
+    await service.close();
+  }
+});
+
+test("a malformed request target cannot escape the service request error boundary", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "ldss-malformed-target-"));
+  const service = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-current" },
+    startupTimeoutMs: 10_000,
+    pollIntervalMs: 10,
+  });
+  let processId: string | undefined;
+  try {
+    const started = await service.startProcess({
+      workspaceRoot: baseDir,
+      command: `${JSON.stringify(process.execPath)} -e 'setInterval(()=>{},1000)'`,
+      yieldTimeMs: 100,
+    });
+    if (started.processId === undefined) throw new Error("missing supervised process id");
+    const startedProcessId = started.processId;
+    processId = startedProcessId;
+
+    const response = await new Promise<string>((resolve, reject) => {
+      const socket = net.createConnection(service.socketPath);
+      let received = "";
+      socket.setEncoding("utf8");
+      socket.once("connect", () => {
+        socket.write("GET //[ HTTP/1.1\r\nHost: unix\r\nConnection: close\r\n\r\n");
+      });
+      socket.on("data", (chunk: string) => { received += chunk; });
+      socket.once("end", () => resolve(received));
+      socket.once("error", reject);
+    });
+    assert.match(response, /^HTTP\/1\.1 500 /u);
+
+    const stopped = await service.stopProcess({ processId: startedProcessId, waitMs: 2_000 });
+    assert.equal(stopped.status, "STOPPED");
+    processId = undefined;
+    const health = await service.runCommand({
+      workspaceRoot: baseDir,
+      command: "printf healthy",
+      timeoutMs: 2_000,
+    });
+    assert.equal(health.text, "healthy");
+  } finally {
+    if (processId !== undefined) {
+      await service.stopProcess({ processId, waitMs: 2_000 }).catch(() => {});
+    }
     await service.close();
   }
 });
