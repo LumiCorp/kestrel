@@ -4,6 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
+- [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
 
@@ -11,6 +12,11 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Blocked
 
+- [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — blocked on issues 06a-06e and the live Vercel/PostgreSQL/combined hosted proof
+- [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — blocked on issue 06a
+- [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md) — blocked on issue 06b
+- [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — blocked on issue 06c
+- [Prove hosted passkey takeover](06e-prove-hosted-passkey-takeover.md) — blocked on issue 06d and the client-side WebAuthn delivery boundary
 - [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — implementation is review-clean; blocked only on issue 04c's signed platform-authenticator canary
 - [Complete native authentication takeover](04c-complete-native-authentication-takeover.md) — code path is review-clean; blocked on signed platform-authenticator canary
 - [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — blocked on issues 05a-05g and the remaining live Fly canaries
@@ -18,7 +24,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Implemented
 
-- [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — focused Vercel route, Web, Router, worker, Desktop compatibility, production build, and secret/mobile sentinel coverage are green; awaiting independent review and live Vercel/PostgreSQL/combined hosted proof
 - [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 
