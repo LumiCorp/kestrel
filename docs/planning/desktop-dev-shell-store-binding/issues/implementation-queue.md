@@ -42,6 +42,7 @@ None.
 - [Serialize startup evidence and own settlement failure](24-serialize-startup-evidence-and-own-settlement-failure.md)
 - [Retain every child through failed supervisor close](25-retain-every-child-through-failed-close.md)
 - [Preserve initial persistence failure priority](26-preserve-initial-persistence-failure-priority.md)
+- [Do not re-signal dead retained children](27-do-not-resignal-dead-retained-children.md)
 
 ## Done
 

@@ -140,11 +140,13 @@ export class DevShellSupervisor {
         clearTimeout(process.wallTimeout);
       }
       process.stopRequested = true;
-      signalProcessTree(process.child, "SIGTERM");
-      await waitForProcessExit(process.child, 1000);
       if (isProcessRunning(process.child)) {
-        signalProcessTree(process.child, "SIGKILL");
-        await waitForProcessExit(process.child, 500);
+        signalProcessTree(process.child, "SIGTERM");
+        await waitForProcessExit(process.child, 1000);
+        if (isProcessRunning(process.child)) {
+          signalProcessTree(process.child, "SIGKILL");
+          await waitForProcessExit(process.child, 500);
+        }
       }
       await process.settlement;
     }));

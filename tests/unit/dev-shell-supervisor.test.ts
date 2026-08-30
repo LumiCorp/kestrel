@@ -1990,7 +1990,18 @@ test("close retains failed ownership while terminating every captured child", as
     assert.equal(isPidRunning(firstPid), false);
     assert.equal(isPidRunning(secondPid), false);
     assert.equal(supervisor.hasActiveProcesses(), true);
-    await assert.rejects(supervisor.close(), /first terminal process write failed/u);
+    const originalKill = process.kill;
+    const signalAttempts: Array<{ pid: number; signal?: NodeJS.Signals | number | undefined }> = [];
+    try {
+      (process as any).kill = (pid: number, signal?: NodeJS.Signals | number) => {
+        signalAttempts.push({ pid, signal });
+        return originalKill(pid, signal as any);
+      };
+      await assert.rejects(supervisor.close(), /first terminal process write failed/u);
+    } finally {
+      (process as any).kill = originalKill;
+    }
+    assert.deepEqual(signalAttempts, []);
   } finally {
     await Promise.allSettled([supervisor.close()]);
   }
