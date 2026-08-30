@@ -426,6 +426,16 @@ export class DevShellSupervisor {
     options.shutdownSignal?.addEventListener("abort", stopStartingProcess, { once: true });
     try {
       await this.persistLiveProcessRecord(running);
+    } catch (error) {
+      running.forcedFailureReason = "Developer shell could not persist the initial process record.";
+      signalProcessTree(running.child, "SIGTERM");
+      await waitForProcessExit(running.child, 1000);
+      if (isProcessRunning(running.child)) {
+        signalProcessTree(running.child, "SIGKILL");
+        await waitForProcessExit(running.child, 500);
+      }
+      await running.settlement;
+      throw error;
     } finally {
       options.shutdownSignal?.removeEventListener("abort", stopStartingProcess);
       if (shutdownKillTimer !== undefined) clearTimeout(shutdownKillTimer);

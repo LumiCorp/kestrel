@@ -1818,6 +1818,39 @@ test("shutdown abort terminates a child while its initial process record is pend
   }
 });
 
+test("an initial process persistence failure terminates and settles the inaccessible child", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-start-failure-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  const childPidPath = path.join(workspaceRootPath, "child.pid");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const store = new FailingInitialDevShellStore();
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"));
+  await supervisor.initialize();
+  try {
+    const startPromise = supervisor.startProcess({
+      workspaceRoot,
+      command: `${JSON.stringify(process.execPath)} -e 'const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(childPidPath)},String(process.pid));setInterval(()=>{},1000)'`,
+      yieldTimeMs: 50,
+    });
+    await store.initialWriteStarted;
+    await waitForFile(childPidPath, 1000);
+    const childPid = Number.parseInt((await readFile(childPidPath, "utf8")).trim(), 10);
+    store.failInitialWrite();
+    await assert.rejects(startPromise, /initial process write failed/u);
+    await waitForPidExit(childPid, 2_000);
+    assert.equal(isPidRunning(childPid), false);
+    assert.equal(supervisor.hasActiveProcesses(), false);
+    const records = await store.listProcesses();
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.status, "FAILED");
+    assert.match(records[0]?.failureReason ?? "", /initial process record/u);
+  } finally {
+    store.failInitialWrite();
+    await supervisor.close();
+  }
+});
+
 async function createSupervisor(now?: () => Date): Promise<{
   supervisor: DevShellSupervisor;
   workspaceRoot: string;
@@ -1899,6 +1932,48 @@ class BlockingInitialDevShellStore implements DevShellProcessStore {
       this.blocked = true;
       this.resolveInitialWriteStarted();
       await this.initialWriteReleased;
+    }
+    await this.delegate.upsertProcess(record);
+  }
+
+  getProcess(processId: string): Promise<DevShellProcessRecord | null> {
+    return this.delegate.getProcess(processId);
+  }
+
+  listProcesses(input?: {
+    status?: DevShellProcessStatus[] | undefined;
+  }): Promise<DevShellProcessRecord[]> {
+    return this.delegate.listProcesses(input);
+  }
+}
+
+class FailingInitialDevShellStore implements DevShellProcessStore {
+  private readonly delegate = new InMemoryDevShellStore();
+  private failed = false;
+  readonly initialWriteStarted: Promise<void>;
+  private readonly initialWriteFailureReleased: Promise<void>;
+  private resolveInitialWriteStarted!: () => void;
+  private resolveInitialWriteFailureReleased!: () => void;
+
+  constructor() {
+    this.initialWriteStarted = new Promise((resolve) => {
+      this.resolveInitialWriteStarted = resolve;
+    });
+    this.initialWriteFailureReleased = new Promise((resolve) => {
+      this.resolveInitialWriteFailureReleased = resolve;
+    });
+  }
+
+  failInitialWrite(): void {
+    this.resolveInitialWriteFailureReleased();
+  }
+
+  async upsertProcess(record: DevShellProcessRecord): Promise<void> {
+    if (record.status === "RUNNING" && this.failed === false) {
+      this.failed = true;
+      this.resolveInitialWriteStarted();
+      await this.initialWriteFailureReleased;
+      throw new Error("initial process write failed");
     }
     await this.delegate.upsertProcess(record);
   }

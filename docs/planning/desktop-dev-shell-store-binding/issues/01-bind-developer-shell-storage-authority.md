@@ -91,3 +91,4 @@ Use focused regression tests at the owning seams. Include a real smoke path for 
 - [Align the supervisor environment regression with private control stripping](20-align-supervisor-environment-regression.md)
 - [Await child settlement before service cleanup completes](21-await-child-settlement-before-cleanup.md)
 - [Terminate a starting child when shutdown interrupts initial persistence](22-terminate-starting-child-on-shutdown.md)
+- [Clean up children after initial process persistence failure](23-cleanup-child-after-initial-persistence-failure.md)
