@@ -138,7 +138,7 @@ depend on an expired user ticket granting a new action.
   `KESTREL_ENVIRONMENT_DB_TEST_URL` is not configured.
 - Per the repair-turn instruction, `pnpm validate:process` was not rerun.
 
-### Remaining product-policy blocker: simultaneous durable-store rejection
+### Settled product policy: simultaneous durable-store rejection
 
 The only server-authoritative durable owners available to Web are the Redis
 cleanup-pending record and the PostgreSQL Browser Session terminal CAS. Viewer
@@ -162,11 +162,19 @@ Clearing the weak marker would be unsafe for the first history; terminalizing it
 would change the settled policy for proven ordinary cleanup in the second.
 Worker-local retirement cannot resolve this durable control-plane ambiguity.
 
-Resolving this requires a product-policy choice: conservatively terminalize any
-orphaned live marker after reload, require one of the two durable stores to
-accept the authority-loss write before treating the observation as complete, or
-authorize a new durable event owner. No third store or recovery protocol is
-introduced by Issue 06b.
+The Redis cleanup-pending record and PostgreSQL terminal CAS remain the complete
+durability boundary. The request that observes authority loss succeeds only
+after at least one of those existing stores accepts the authority-loss write.
+If both writes reject, that request fails and must not claim durable convergence.
+No third journal, inferred history bit, or conservative terminalization of an
+ordinary orphaned `human_control` Session is introduced.
+
+After process restart, recovery evaluates current access and only acts on state
+that is actually durable. If access is still denied, the ordinary
+authority-loss path retries the existing writes. If access has been restored
+and no authority-loss write was durably recorded, the Session follows its
+current stored state and may reconnect. This deliberately does not reconstruct
+an observation that both authoritative stores failed to record.
 
 ### Capacity-independent authority-loss repair evidence
 
