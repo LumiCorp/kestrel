@@ -133,12 +133,18 @@ export function startHostedBrowserWorker(input: {
   const engine = input.engine ?? new AgentBrowserHostedWorkerEngine(config);
   const accepted = new Map<string, AcceptedOperation>();
   let terminating = false;
+  const terminationStarted = deferred<void>();
   let revisionInstalling = false;
-  let viewerFrameInFlight = false;
+  let viewerFrameSettlement: Promise<void> | undefined;
   let installedAllowlistRevision = config.effectiveAllowlistRevision;
-  const loseControl = async () => {
-    if (terminating) return;
+  const beginTermination = () => {
+    if (terminating) return false;
     terminating = true;
+    terminationStarted.resolve();
+    return true;
+  };
+  const loseControl = async () => {
+    if (!beginTermination()) return;
     for (const operation of accepted.values()) {
       clearTimeout(operation.deadline);
       operation.cancelInvoke(new Error("BROWSER_ACTION_OUTCOME_UNKNOWN"));
@@ -153,9 +159,15 @@ export function startHostedBrowserWorker(input: {
     try {
       if (request.method !== "POST") return writeError(response, 404, "BROWSER_ENGINE_FAILURE");
       const pathname = new URL(request.url ?? "/", "http://worker.internal").pathname;
+      if (terminating && pathname !== "/v1/viewer-cleanup") {
+        throw new Error("BROWSER_SESSION_LOST");
+      }
       const body = await readJson(request);
+      if (terminating && pathname !== "/v1/viewer-cleanup") {
+        throw new Error("BROWSER_SESSION_LOST");
+      }
       if (pathname === "/v1/operations/accept") {
-        if (revisionInstalling || viewerFrameInFlight) {
+        if (revisionInstalling) {
           throw new Error("BROWSER_ENGINE_FAILURE");
         }
         const record = requireRecord(body);
@@ -205,6 +217,12 @@ export function startHostedBrowserWorker(input: {
             session.threadId !== config.threadId)) {
           throw new Error("BROWSER_SESSION_LOST");
         }
+        const pendingFrame = viewerFrameSettlement;
+        if (pendingFrame) {
+          await Promise.race([pendingFrame, terminationStarted.promise]);
+          if (terminating) throw new Error("BROWSER_SESSION_LOST");
+          if (revisionInstalling) throw new Error("BROWSER_ENGINE_FAILURE");
+        }
         const identityHash = hashCanonical({
           prepared,
           authority,
@@ -217,7 +235,9 @@ export function startHostedBrowserWorker(input: {
             duplicate.capability !== capability ||
             duplicate.identityHash !== identityHash
           ) throw new Error("BROWSER_ENGINE_FAILURE");
-          return writeJson(response, 200, await duplicate.acceptOutcome);
+          const outcome = await duplicate.acceptOutcome;
+          if (terminating) throw new Error("BROWSER_SESSION_LOST");
+          return writeJson(response, 200, outcome);
         }
         if (accepted.size !== 0) throw new Error("BROWSER_ENGINE_FAILURE");
         const delay = Math.max(1, new Date(claims.expiresAt).getTime() - Date.now());
@@ -297,6 +317,7 @@ export function startHostedBrowserWorker(input: {
         accepted.set(prepared.callId, acceptedOperation);
         try {
           const outcome = await acceptOutcome;
+          if (terminating) throw new Error("BROWSER_SESSION_LOST");
           if (
             isCompletionBeforeDispatchResponse(outcome) &&
             !dispatchAcknowledged
@@ -328,6 +349,7 @@ export function startHostedBrowserWorker(input: {
         return writeJson(response, 200, output);
       }
       if (pathname === "/v1/operations/commit") {
+        if (terminating) throw new Error("BROWSER_SESSION_LOST");
         const record = requireRecord(body);
         const operationId = requiredString(record.operationId);
         const capability = requiredString(record.capability);
@@ -344,6 +366,7 @@ export function startHostedBrowserWorker(input: {
         operation.commit();
         try {
           await operation.execution;
+          if (terminating) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
         } finally {
           accepted.delete(operationId);
           clearTimeout(operation.deadline);
@@ -374,6 +397,7 @@ export function startHostedBrowserWorker(input: {
         }
         try {
           await operation.execution.catch(() => {});
+          if (terminating) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
         } finally {
           accepted.delete(operationId);
           clearTimeout(operation.deadline);
@@ -422,7 +446,12 @@ export function startHostedBrowserWorker(input: {
           (record.cause !== "personal_grant" &&
             record.cause !== "personal_revocation")
         ) throw new Error("BROWSER_SESSION_LOST");
-        if (accepted.size !== 0 || revisionInstalling || viewerFrameInFlight) {
+        if (
+          terminating ||
+          accepted.size !== 0 ||
+          revisionInstalling ||
+          viewerFrameSettlement !== undefined
+        ) {
           throw new Error("BROWSER_ENGINE_FAILURE");
         }
         revisionInstalling = true;
@@ -434,6 +463,7 @@ export function startHostedBrowserWorker(input: {
             gatewayProxy,
             gatewayClosedUnauthorizedConnections,
           });
+          if (terminating) throw new Error("BROWSER_SESSION_LOST");
           installedAllowlistRevision = revision;
         } finally {
           revisionInstalling = false;
@@ -468,7 +498,9 @@ export function startHostedBrowserWorker(input: {
           throw knownWorkerFailure(HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED);
         }
         if (
-          (accepted.size !== 0 || revisionInstalling || viewerFrameInFlight) &&
+          (accepted.size !== 0 ||
+            revisionInstalling ||
+            viewerFrameSettlement !== undefined) &&
           action === "frame"
         ) {
           throw knownWorkerFailure(HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE);
@@ -491,13 +523,21 @@ export function startHostedBrowserWorker(input: {
             : { viewerInput: requireViewerInput(record.viewerInput) }),
         };
         if (action !== "frame") {
-          return writeJson(response, 200, await engine.viewer(viewerInput));
+          const output = await engine.viewer(viewerInput);
+          if (terminating) throw new Error("BROWSER_SESSION_LOST");
+          return writeJson(response, 200, output);
         }
-        viewerFrameInFlight = true;
+        const frameSettlement = deferred<void>();
+        viewerFrameSettlement = frameSettlement.promise;
         try {
-          return writeJson(response, 200, await engine.viewer(viewerInput));
+          const output = await engine.viewer(viewerInput);
+          if (terminating) throw new Error("BROWSER_SESSION_LOST");
+          return writeJson(response, 200, output);
         } finally {
-          viewerFrameInFlight = false;
+          if (viewerFrameSettlement === frameSettlement.promise) {
+            viewerFrameSettlement = undefined;
+          }
+          frameSettlement.resolve();
         }
       }
       if (pathname === "/v1/viewer-cleanup") {
@@ -555,11 +595,11 @@ export function startHostedBrowserWorker(input: {
   return {
     server,
     async close() {
-      terminating = true;
+      beginTermination();
       for (const operation of accepted.values()) {
         clearTimeout(operation.deadline);
-      operation.cancelInvoke(new Error("BROWSER_ACTION_OUTCOME_UNKNOWN"));
-      operation.cancelCommit(new Error("BROWSER_ACTION_OUTCOME_UNKNOWN"));
+        operation.cancelInvoke(new Error("BROWSER_ACTION_OUTCOME_UNKNOWN"));
+        operation.cancelCommit(new Error("BROWSER_ACTION_OUTCOME_UNKNOWN"));
       }
       accepted.clear();
       await engine.destroy();

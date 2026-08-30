@@ -994,7 +994,7 @@ test("hosted worker reports transient frame unavailability while an agent operat
   await worker.close();
 });
 
-test("hosted worker reserves a slow frame before accepting an agent operation", async () => {
+test("hosted worker lets a valid agent operation wait for one slow frame to settle", async () => {
   const prepared = preparedNavigate();
   const capability = operationCapabilityFor(prepared, "revision-1");
   let frameStartedResolve!: () => void;
@@ -1045,24 +1045,191 @@ test("hosted worker reserves a slow frame before accepting an agent operation", 
   });
   await frameStarted;
 
-  const blocked = await request("/v1/operations/accept", {
+  let acceptanceSettled = false;
+  const accepted = request("/v1/operations/accept", {
     capability,
     prepared,
     authority,
   });
-  assert.equal(blocked.status, 400);
+  void accepted.then(() => {
+    acceptanceSettled = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(acceptanceSettled, false);
   assert.equal(operationExecutions, 0);
 
   releaseFrameResolve();
   assert.equal((await frame).status, 200);
-  const accepted = await request("/v1/operations/accept", {
-    capability,
+  assert.equal((await accepted).status, 200);
+  assert.equal(operationExecutions, 1);
+  await worker.close();
+});
+
+test("hosted worker termination rejects delayed and new work while exact cleanup remains available", async () => {
+  let frameStartedResolve!: () => void;
+  const frameStarted = new Promise<void>((resolve) => {
+    frameStartedResolve = resolve;
+  });
+  let releaseFrameResolve!: () => void;
+  const releaseFrame = new Promise<void>((resolve) => {
+    releaseFrameResolve = resolve;
+  });
+  let destroyStartedResolve!: () => void;
+  const destroyStarted = new Promise<void>((resolve) => {
+    destroyStartedResolve = resolve;
+  });
+  let releaseDestroyResolve!: () => void;
+  const releaseDestroy = new Promise<void>((resolve) => {
+    releaseDestroyResolve = resolve;
+  });
+  let operationExecutions = 0;
+  let revisionInstalls = 0;
+  const viewerActions: string[] = [];
+  const cleaned: string[] = [];
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async execute() {
+        operationExecutions += 1;
+        throw new Error("operation must not be admitted during termination");
+      },
+      async adopt() {
+        revisionInstalls += 1;
+        return 0;
+      },
+      async viewer(input) {
+        viewerActions.push(input.action);
+        assert.equal(input.action, "frame");
+        frameStartedResolve();
+        await releaseFrame;
+        return {
+          version: "desktop_browser_viewer_frame_v1",
+          sessionId: "browser-session-1",
+          generation: 1,
+          sequence: 1,
+          capturedAt: new Date().toISOString(),
+          mediaType: "image/png",
+          dataBase64: "iVBORw0KGgo=",
+        };
+      },
+      async viewerCleanup(claims) {
+        cleaned.push(`${claims.purpose}:${claims.connectionId}`);
+      },
+      async destroy() {
+        destroyStartedResolve();
+        await releaseDestroy;
+      },
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const request = (path: string, body: unknown) => fetch(
+    `http://[::1]:${port}${path}`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+  );
+  const ticket = viewerTicket("user-1");
+  const delayedFrame = request("/v1/viewer", {
+    ticket,
+    action: "frame",
+    connectionId: "connection-1",
+  });
+  await frameStarted;
+  const prepared = preparedNavigate();
+  const delayedAcceptance = request("/v1/operations/accept", {
+    capability: operationCapabilityFor(prepared, "revision-1"),
     prepared,
     authority,
   });
-  assert.equal(accepted.status, 200);
-  assert.equal(operationExecutions, 1);
-  await worker.close();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(operationExecutions, 0);
+
+  const closing = worker.close();
+  await destroyStarted;
+  const delayedOperationResponse = await delayedAcceptance;
+  assert.equal(delayedOperationResponse.status, 400);
+  assert.equal(
+    ((await delayedOperationResponse.json()) as { error: { code: string } }).error.code,
+    "BROWSER_SESSION_LOST",
+  );
+  releaseFrameResolve();
+  const delayedResponse = await delayedFrame;
+  assert.equal(delayedResponse.status, 400);
+  assert.equal(
+    ((await delayedResponse.json()) as { error: { code: string } }).error.code,
+    "BROWSER_SESSION_LOST",
+  );
+
+  const nextAuthority = {
+    ...authority,
+    effectiveAllowlistRevision: "revision-2",
+  };
+  const rejected = await Promise.all([
+    request("/v1/viewer", {
+      ticket,
+      action: "frame",
+      connectionId: "connection-1",
+    }),
+    request("/v1/viewer", {
+      ticket,
+      action: "input",
+      connectionId: "connection-1",
+      leaseId: "lease-1",
+      viewerInput: {
+        version: "desktop_browser_viewer_input_v1",
+        kind: "keyboard",
+        phase: "down",
+        key: "x",
+        text: "x",
+      },
+    }),
+    request("/v1/viewer", {
+      ticket,
+      action: "connect",
+      connectionId: "connection-1",
+    }),
+    request("/v1/operations/accept", {
+      capability: operationCapabilityFor(prepared, "revision-1"),
+      prepared,
+      authority,
+    }),
+    request("/v1/operations/revision", {
+      sessionId: "browser-session-1",
+      generation: 1,
+      revision: "revision-2",
+      cause: "personal_revocation",
+      authority: nextAuthority,
+      capability: revisionCapabilityFor("revision-2"),
+    }),
+  ]);
+  for (const response of rejected) {
+    assert.equal(response.status, 400);
+    assert.equal(
+      ((await response.json()) as { error: { code: string } }).error.code,
+      "BROWSER_SESSION_LOST",
+    );
+  }
+  assert.deepEqual(viewerActions, ["frame"]);
+  assert.equal(operationExecutions, 0);
+  assert.equal(revisionInstalls, 0);
+
+  const cleanupConnectionId = "termination-cleanup";
+  const cleanup = await request("/v1/viewer-cleanup", {
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+    sessionId: "browser-session-1",
+    generation: 1,
+    connectionId: cleanupConnectionId,
+    purpose: "disconnect",
+    cleanupCapability: viewerCleanupCapability(cleanupConnectionId),
+  });
+  assert.equal(cleanup.status, 200);
+  assert.deepEqual(cleaned, [`disconnect:${cleanupConnectionId}`]);
+
+  releaseDestroyResolve();
+  await closing;
 });
 
 test("hosted worker cleanup requires a fixed-key capability bound to exact connection and purpose", async () => {

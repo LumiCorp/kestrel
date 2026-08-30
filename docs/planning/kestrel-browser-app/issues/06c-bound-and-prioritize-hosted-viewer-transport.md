@@ -96,13 +96,17 @@ or input authority.
 - Authority revalidation is single-flight. Repeated interval ticks cannot start
   another authorization read until the current read settles.
 - Hosted worker engine ownership is symmetric: accepted agent operations make
-  frames transiently unavailable, and an in-flight frame reserves the engine
-  against new operation acceptance or authority revision until capture settles.
+  frames transiently unavailable, while valid agent operation acceptance waits
+  for the one in-flight observation to settle and then reserves the engine.
+  Termination wakes that wait and fail-closes all viewer, operation, and revision
+  admission immediately; exact fixed-key viewer cleanup remains available for
+  lifecycle convergence.
 - The client pins Project together with Session, generation, and connection.
   Shared parsing now rejects structurally invalid Base64, invalid padding, and
   nonzero unused pad bits without decoding or allocating a second frame buffer.
 - The final exact protocol, Vercel route, Web lifecycle/client, Router, worker,
-  and Browser Session command passes 106 tests. Root and Environment Router
-  TypeScript, scoped Web/shared-protocol lint, and `git diff --check` pass. Web
-  typecheck reaches only the pre-existing runtime-profile and hosted personal
-  OAuth test errors already recorded by the Browser viewer work.
+  and Browser Session command passes 107 tests. Root and Environment Router
+  TypeScript and `git diff --check` pass. Scoped worker lint reaches six
+  pre-existing diagnostics outside the final repair hunks. Web typecheck reaches
+  only the pre-existing runtime-profile and hosted personal OAuth test errors
+  already recorded by the Browser viewer work.

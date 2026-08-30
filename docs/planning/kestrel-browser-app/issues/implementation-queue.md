@@ -23,7 +23,7 @@ None.
 
 ## Implemented
 
-- [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md) — independent-review repairs pass 106 focused tests
+- [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md) — final worker-admission repairs pass 107 focused tests
 - [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — remaining review findings are assigned to the existing 06b lifecycle and 06c scheduling owners
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)
 - [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)
