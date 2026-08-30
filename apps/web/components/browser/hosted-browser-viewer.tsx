@@ -19,18 +19,14 @@ import type {
   DesktopBrowserViewerStateV1,
 } from "../../../../src/desktopShell/contracts";
 import {
+  classifyHostedBrowserViewerAvailabilityResponse,
   hostedBrowserViewerCleanupUnknownPresentation,
+  type HostedBrowserViewerAvailability,
   type HostedBrowserViewerCleanupUnknownPresentation,
 } from "./hosted-browser-viewer-presentation";
 
-type Availability = {
-  available: boolean;
-  sessionState?: string;
-  cleanupPending?: boolean;
-};
-
 export function HostedBrowserViewer({ threadId }: { threadId: string }) {
-  const [availability, setAvailability] = useState<Availability>({ available: false });
+  const [availability, setAvailability] = useState<HostedBrowserViewerAvailability>({ available: false });
   const [state, setState] = useState<DesktopBrowserViewerStateV1 | null>(null);
   const [frame, setFrame] = useState<DesktopBrowserViewerFrameV1 | null>(null);
   const [transportState, setTransportState] = useState<"closed" | "connecting" | "open">("closed");
@@ -46,9 +42,12 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
         const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/browser-viewer`, {
           cache: "no-store",
         });
-        if (!response.ok) return;
-        const value = (await response.json()) as Availability;
+        const result = await classifyHostedBrowserViewerAvailabilityResponse(response);
+        if (result.kind === "transient") return;
         if (!cancelled) {
+          const value = result.kind === "unavailable"
+            ? { available: false }
+            : result.availability;
           setAvailability(value);
           setCleanupUnknown(value.cleanupPending
             ? hostedBrowserViewerCleanupUnknownPresentation(

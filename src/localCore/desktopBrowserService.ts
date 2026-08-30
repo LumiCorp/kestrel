@@ -34,6 +34,7 @@ import {
   type BrowserSessionV1,
 } from "../browser/contracts.js";
 import { resolveBrowserToolExecutionClass } from "../browser/browserAppContract.fixture.js";
+import { HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED } from "../browser/hostedViewer.js";
 import {
   BROWSER_EFFECTIVE_DOMAIN_AUTHORITY_VERSION,
   BROWSER_QA_TARGET_VERSION,
@@ -1015,12 +1016,17 @@ export class DesktopBrowserService implements BrowserServicePort {
     connectionId: string;
   }): Promise<void> {
     await this.#requireInitialized();
-    const active = this.#active.get(input.sessionId);
+    const sessionId = requireText(input.sessionId, "viewer sessionId");
+    const threadId = requireText(input.threadId, "viewer threadId");
+    const projectId = requireText(input.projectId, "viewer projectId");
+    const principalId = requireText(input.principalId, "viewer principalId");
+    const connectionId = requireText(input.connectionId, "viewer connectionId");
+    const active = this.#active.get(sessionId);
     if (active === undefined) {
       const terminal = this.#sessions.find(
         (session) =>
-          session.sessionId === input.sessionId &&
-          session.threadId === input.threadId &&
+          session.sessionId === sessionId &&
+          session.threadId === threadId &&
           session.generation === input.generation &&
           TERMINAL_STATES.has(session.state),
       );
@@ -1028,15 +1034,26 @@ export class DesktopBrowserService implements BrowserServicePort {
     }
     if (
       active !== undefined &&
-      active.session.threadId === input.threadId &&
+      active.session.threadId === threadId &&
       active.session.generation === input.generation &&
-      active.authority.projectId === input.projectId &&
-      !active.viewerConnections.has(
-        requireText(input.connectionId, "viewer connectionId"),
-      )
+      active.authority.projectId === projectId
     ) {
-      requireText(input.principalId, "viewer principalId");
       this.#assertViewerSessionState(active);
+      const selected = active.viewerConnections.get(connectionId);
+      const principalMatches = selected
+        ? selected.principalId === principalId && selected.projectId === projectId
+        : active.viewerConnections.size === 0 ||
+          [...active.viewerConnections.values()].some((connection) =>
+            connection.principalId === principalId &&
+            connection.projectId === projectId);
+      if (!principalMatches) {
+        throw browserFailure(
+          "BROWSER_SESSION_LOST",
+          "The Browser viewer authority identity is no longer current.",
+        );
+      }
+      this.#viewerEvent(active, "authorization_loss", "principal_changed");
+      await this.#requestTermination(active, "lost", "BROWSER_SESSION_LOST");
       return;
     }
     const { runtime } = await this.#requireViewerConnection(input);
@@ -3263,6 +3280,19 @@ export class DesktopBrowserService implements BrowserServicePort {
     connection: DesktopBrowserViewerConnection,
     leaseId: string,
   ): Promise<DesktopBrowserInputLease> {
+    const exactLease = runtime.activeInputLease;
+    if (
+      runtime.session.state === "human_control" &&
+      exactLease?.connectionId === connection.connectionId &&
+      exactLease.leaseId === leaseId &&
+      this.#now().getTime() >= Date.parse(exactLease.expiresAt)
+    ) {
+      await this.#expireViewerLease(runtime);
+      throw Object.assign(
+        new Error(HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED),
+        { code: HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED },
+      );
+    }
     await this.#expireViewerLease(runtime);
     const lease = runtime.activeInputLease;
     if (

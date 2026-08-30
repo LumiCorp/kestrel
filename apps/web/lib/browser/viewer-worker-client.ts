@@ -53,6 +53,7 @@ export interface HostedBrowserViewerWorkerPort {
   }): Promise<DesktopBrowserViewerStateV1 | DesktopBrowserViewerFrameV1 | null>;
   cleanup(input: HostedBrowserViewerCleanupScopeV1 & {
     routerUrl: string;
+    purpose: "disconnect" | "authority_loss";
   }): Promise<void>;
 }
 
@@ -165,6 +166,7 @@ export class HostedBrowserViewerWorkerClient
 
   async cleanup(input: HostedBrowserViewerCleanupScopeV1 & {
     routerUrl: string;
+    purpose: "disconnect" | "authority_loss";
   }): Promise<void> {
     if (
       !(
@@ -183,6 +185,7 @@ export class HostedBrowserViewerWorkerClient
         version: HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION,
         audience: HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE,
         action: "cleanup",
+        purpose: input.purpose,
         organizationId: input.organizationId,
         environmentId: input.environmentId,
         projectId: input.projectId,
@@ -212,6 +215,7 @@ export class HostedBrowserViewerWorkerClient
         generation: input.generation,
         connectionId: input.connectionId,
         operation,
+        purpose: input.purpose,
         cleanupCapability,
         machine: { appName: input.appName, machineId: input.machineId },
       },

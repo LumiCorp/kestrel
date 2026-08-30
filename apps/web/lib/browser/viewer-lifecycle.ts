@@ -6,9 +6,20 @@ export async function composeHostedBrowserViewerLifecycle(input: {
   createReady(): Promise<HostedBrowserViewerLifecyclePort>;
   createCleanupSafe(): HostedBrowserViewerLifecyclePort;
 }): Promise<HostedBrowserViewerLifecyclePort> {
-  return input.environmentReady
-    ? await input.createReady()
-    : input.createCleanupSafe();
+  const cleanupSafe = input.createCleanupSafe();
+  return {
+    async terminateViewerSession(termination) {
+      if (termination.reason === "BROWSER_SESSION_LOST") {
+        await cleanupSafe.terminateViewerSession(termination);
+        return;
+      }
+      if (!input.environmentReady) {
+        throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+      }
+      const ready = await input.createReady();
+      await ready.terminateViewerSession(termination);
+    },
+  };
 }
 
 export function createCleanupSafeHostedBrowserViewerLifecycle(input: {

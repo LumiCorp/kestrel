@@ -21,6 +21,7 @@ import {
 import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
 import { verifyHostedBrowserCapabilitySignature } from "./hostedCapability.js";
 import {
+  HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED,
   verifyHostedBrowserViewerCleanupCapability,
   verifyHostedBrowserViewerTicket,
   type HostedBrowserViewerCleanupCapabilityV1,
@@ -434,6 +435,7 @@ export function startHostedBrowserWorker(input: {
         const claims = verifyHostedBrowserViewerTicket({
           token: requiredString(record.ticket),
           publicKeyPem: config.capabilityPublicKeyPem,
+          allowExpired: true,
         });
         if (
           claims.organizationId !== config.organizationId ||
@@ -442,14 +444,18 @@ export function startHostedBrowserWorker(input: {
           claims.actorId !== config.userId ||
           claims.threadId !== config.threadId ||
           claims.sessionId !== config.sessionId ||
-          claims.generation !== config.generation ||
-          revisionInstalling ||
-          accepted.size !== 0
+          claims.generation !== config.generation
         ) throw new Error("BROWSER_SESSION_LOST");
         const action = requireViewerAction(record.action);
         const connectionId = requireViewerConnectionId(record.connectionId);
         if (connectionId !== claims.connectionId) {
           throw new Error("BROWSER_SESSION_LOST");
+        }
+        if (Date.parse(claims.expiresAt) <= Date.now()) {
+          throw knownWorkerFailure(HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED);
+        }
+        if (revisionInstalling || accepted.size !== 0) {
+          throw new Error("BROWSER_ENGINE_FAILURE");
         }
         if (!engine.viewer) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
         return writeJson(response, 200, await engine.viewer({
@@ -475,6 +481,7 @@ export function startHostedBrowserWorker(input: {
           "sessionId",
           "generation",
           "connectionId",
+          "purpose",
           "cleanupCapability",
         ])) throw new Error("BROWSER_SESSION_LOST");
         const claims = verifyHostedBrowserViewerCleanupCapability({
@@ -490,6 +497,7 @@ export function startHostedBrowserWorker(input: {
           claims.sessionId !== config.sessionId ||
           claims.generation !== config.generation ||
           claims.connectionId !== requiredString(record.connectionId) ||
+          claims.purpose !== record.purpose ||
           claims.organizationId !== requiredString(record.organizationId) ||
           claims.environmentId !== requiredString(record.environmentId) ||
           claims.projectId !== requiredString(record.projectId) ||
@@ -584,6 +592,10 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     timer: ReturnType<typeof setTimeout>;
     claims: HostedBrowserViewerTicketClaimsV1;
   }>();
+  readonly #expiredViewerConnections = new Map<
+    string,
+    HostedBrowserViewerTicketClaimsV1
+  >();
   #authority: BrowserEffectiveDomainAuthorityV1 | undefined;
   #session: BrowserSessionV1 | undefined;
   #service: DesktopBrowserService | undefined;
@@ -708,11 +720,16 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       if (connectionId !== input.claims.connectionId) {
         throw new Error("BROWSER_SESSION_LOST");
       }
+      this.#expiredViewerConnections.delete(connectionId);
       const state = await service.connectViewer({ ...binding, connectionId });
       this.#scheduleViewerExpiry(input.claims, state);
       return state;
     }
     const connectionId = requiredString(input.connectionId);
+    const expired = this.#expiredViewerConnections.get(connectionId);
+    if (expired && sameViewerTicketIdentity(expired, input.claims)) {
+      throw knownWorkerFailure(HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED);
+    }
     const connected = { ...binding, connectionId };
     if (input.action === "frame") return service.readViewerFrame(connected);
     if (input.action === "accept") {
@@ -757,14 +774,19 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   ): Promise<void> {
     const service = this.#service;
     if (!(service && this.#session)) return;
-    await service.cleanupViewerConnection({
+    const exact = {
       principalId: claims.actorId,
       threadId: claims.threadId,
       projectId: claims.projectId,
       sessionId: claims.sessionId,
       generation: claims.generation,
       connectionId: claims.connectionId,
-    });
+    };
+    if (claims.purpose === "authority_loss") {
+      await service.loseViewerAuthority(exact);
+    } else {
+      await service.cleanupViewerConnection(exact);
+    }
     this.#clearViewerExpiry(claims.connectionId);
   }
 
@@ -773,6 +795,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       this.#clearTimeout(entry.timer);
     }
     this.#viewerExpiries.clear();
+    this.#expiredViewerConnections.clear();
     await this.#service?.close().catch(() => {});
     await rm(this.#runtimeRoot, { recursive: true, force: true });
   }
@@ -813,6 +836,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       });
       if (this.#viewerExpiries.get(claims.connectionId) === entry) {
         this.#viewerExpiries.delete(claims.connectionId);
+        this.#expiredViewerConnections.set(claims.connectionId, claims);
       }
     } catch {
       if (this.#viewerExpiries.get(claims.connectionId) !== entry) return;
@@ -1293,6 +1317,21 @@ function requireViewerAction(value: unknown) {
     value !== "close"
   ) throw new Error("BROWSER_SESSION_LOST");
   return value;
+}
+
+function sameViewerTicketIdentity(
+  left: HostedBrowserViewerTicketClaimsV1,
+  right: HostedBrowserViewerTicketClaimsV1,
+): boolean {
+  return left.organizationId === right.organizationId &&
+    left.environmentId === right.environmentId &&
+    left.projectId === right.projectId &&
+    left.threadId === right.threadId &&
+    left.sessionId === right.sessionId &&
+    left.generation === right.generation &&
+    left.actorId === right.actorId &&
+    left.connectionId === right.connectionId &&
+    left.nonce === right.nonce;
 }
 
 function requireViewerInput(value: unknown): DesktopBrowserViewerInputV1 {

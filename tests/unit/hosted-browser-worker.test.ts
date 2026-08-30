@@ -926,6 +926,17 @@ test("hosted worker viewer channel accepts only the exact signed actor and forwa
     action: "connect",
     connectionId: "connection-1",
   })).status, 400);
+  const expiredAt = new Date(Date.now() - 61_000);
+  const expired = await request({
+    ticket: viewerTicket("user-1", "expired-connection", expiredAt),
+    action: "close",
+    connectionId: "expired-connection",
+  });
+  assert.equal(expired.status, 400);
+  assert.equal(
+    ((await expired.json()) as { error: { code: string } }).error.code,
+    "BROWSER_VIEWER_AUTHORITY_EXPIRED",
+  );
   assert.deepEqual(calls.at(-1), {
     action: "connect",
     connectionId: "connection-exact",
@@ -934,14 +945,16 @@ test("hosted worker viewer channel accepts only the exact signed actor and forwa
   await worker.close();
 });
 
-test("hosted worker cleanup requires a fixed-key capability bound to the exact connection", async () => {
+test("hosted worker cleanup requires a fixed-key capability bound to exact connection and purpose", async () => {
   const cleaned: string[] = [];
   const worker = startHostedBrowserWorker({
     config: workerConfig(),
     engine: {
       async execute() { throw new Error("not called"); },
       async adopt() { return 0; },
-      async viewerCleanup(claims) { cleaned.push(claims.connectionId); },
+      async viewerCleanup(claims) {
+        cleaned.push(`${claims.purpose}:${claims.connectionId}`);
+      },
       async destroy() {},
     },
   });
@@ -965,9 +978,10 @@ test("hosted worker cleanup requires a fixed-key capability bound to the exact c
     sessionId: "browser-session-1",
     generation: 1,
     connectionId: "connection-cleanup-1",
+    purpose: "disconnect",
     cleanupCapability: exact,
   })).status, 200);
-  assert.deepEqual(cleaned, ["connection-cleanup-1"]);
+  assert.deepEqual(cleaned, ["disconnect:connection-cleanup-1"]);
   assert.equal((await request({
     organizationId: "org-1",
     environmentId: "env-1",
@@ -977,6 +991,7 @@ test("hosted worker cleanup requires a fixed-key capability bound to the exact c
     sessionId: "browser-session-1",
     generation: 1,
     connectionId: "connection-other",
+    purpose: "disconnect",
     cleanupCapability: exact,
   })).status, 400);
   assert.equal((await request({
@@ -988,9 +1003,30 @@ test("hosted worker cleanup requires a fixed-key capability bound to the exact c
     sessionId: "browser-session-1",
     generation: 1,
     connectionId: "connection-cleanup-1",
+    purpose: "disconnect",
     cleanupCapability: "unsigned",
   })).status, 400);
-  assert.deepEqual(cleaned, ["connection-cleanup-1"]);
+  assert.deepEqual(cleaned, ["disconnect:connection-cleanup-1"]);
+  const authorityLoss = viewerCleanupCapability(
+    "connection-cleanup-1",
+    "authority_loss",
+  );
+  assert.equal((await request({
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+    sessionId: "browser-session-1",
+    generation: 1,
+    connectionId: "connection-cleanup-1",
+    purpose: "authority_loss",
+    cleanupCapability: authorityLoss,
+  })).status, 200);
+  assert.deepEqual(cleaned, [
+    "disconnect:connection-cleanup-1",
+    "authority_loss:connection-cleanup-1",
+  ]);
   await worker.close();
 });
 
@@ -1167,6 +1203,14 @@ test("hosted worker lease expiry retries exact cleanup until the worker proves r
   retry.handler();
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(cleanupCalls, 2);
+  await assert.rejects(
+    engine.viewer({
+      action: "frame",
+      claims,
+      connectionId: claims.connectionId,
+    }),
+    hasBrowserCode("BROWSER_VIEWER_AUTHORITY_EXPIRED"),
+  );
   await engine.destroy();
 });
 
@@ -1359,8 +1403,11 @@ function revisionCapabilityFor(revision: string) {
   });
 }
 
-function viewerTicket(actorId: string, connectionId = "connection-1") {
-  const now = new Date();
+function viewerTicket(
+  actorId: string,
+  connectionId = "connection-1",
+  now = new Date(),
+) {
   return issueHostedBrowserViewerTicket({
     privateKeyPem,
     now,
@@ -1368,7 +1415,10 @@ function viewerTicket(actorId: string, connectionId = "connection-1") {
   });
 }
 
-function viewerCleanupCapability(connectionId: string) {
+function viewerCleanupCapability(
+  connectionId: string,
+  purpose: "disconnect" | "authority_loss" = "disconnect",
+) {
   const now = new Date();
   return issueHostedBrowserViewerCleanupCapability({
     privateKeyPem,
@@ -1377,6 +1427,7 @@ function viewerCleanupCapability(connectionId: string) {
       version: HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION,
       audience: HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE,
       action: "cleanup",
+      purpose,
       organizationId: "org-1",
       environmentId: "env-1",
       projectId: "project-1",

@@ -13,7 +13,10 @@ import {
   createCleanupSafeHostedBrowserViewerLifecycle,
 } from "./viewer-lifecycle";
 import { RedisHostedBrowserViewerTicketStore } from "./viewer-transient-store";
-import { HostedBrowserViewerWorkerClient } from "./viewer-worker-client";
+import {
+  HostedBrowserViewerWorkerClient,
+  type HostedBrowserViewerWorkerPort,
+} from "./viewer-worker-client";
 
 export async function resolveHostedBrowserViewerService(input: {
   organizationId: string;
@@ -43,12 +46,14 @@ export async function resolveHostedBrowserViewerService(input: {
     pending.scope.generation === active.session.generation &&
     pending.scope.machineId === active.resource.machineId,
   );
+  const requestMatchesOriginActor =
+    origin.organizationId === input.organizationId &&
+    origin.threadId === input.threadId &&
+    origin.userId === input.actorId;
   if (
     origin.organizationId !== input.organizationId ||
     origin.threadId !== input.threadId ||
-    (!pendingMatchesOrigin &&
-      (requestAccess?.thread.projectId !== origin.projectId ||
-        origin.userId !== input.actorId))
+    !(requestMatchesOriginActor || pendingMatchesOrigin)
   ) throw new Error("BROWSER_SESSION_LOST");
   const environment = await knowledgeDb.query.environments.findFirst({
     where: and(
@@ -57,22 +62,24 @@ export async function resolveHostedBrowserViewerService(input: {
     ),
     columns: { provider: true, status: true, flyAppName: true, routerUrl: true },
   });
-  if (
-    !environment ||
-    environment.provider !== "fly" ||
-    !environment.flyAppName ||
-    !environment.routerUrl
-  ) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
-  const environmentReady = environment.status === "ready";
+  const workerRouteUsable = Boolean(
+    environment?.provider === "fly" &&
+    environment.flyAppName &&
+    environment.routerUrl,
+  );
+  const environmentReady = workerRouteUsable && environment?.status === "ready";
   const pendingMatchesEnvironment = pendingMatchesOrigin &&
-    pending?.scope.appName === environment.flyAppName;
-  if (!(environmentReady || pendingMatchesEnvironment)) {
+    pending?.scope.appName === environment?.flyAppName;
+  const workerCleanupUsable = workerRouteUsable &&
+    (requestMatchesOriginActor || !pending || pendingMatchesEnvironment);
+  const cleanupBypass = requestMatchesOriginActor || pendingMatchesOrigin;
+  if (!(environmentReady || cleanupBypass)) {
     throw new Error("BROWSER_SERVICE_UNAVAILABLE");
   }
   const requestAuthorized = environmentReady &&
     requestAccess?.thread.projectId === origin.projectId &&
     origin.userId === input.actorId;
-  if (!(requestAuthorized || pendingMatchesEnvironment)) {
+  if (!(requestAuthorized || cleanupBypass)) {
     throw new Error("BROWSER_SESSION_LOST");
   }
   const privateKeyPem = required("KESTREL_BROWSER_CAPABILITY_PRIVATE_KEY");
@@ -80,7 +87,7 @@ export async function resolveHostedBrowserViewerService(input: {
     .export({ type: "spki", format: "pem" })
     .toString();
   const lifecycle = await composeHostedBrowserViewerLifecycle({
-    environmentReady,
+    environmentReady: requestAuthorized,
     createReady: () => resolveHostedBrowserServiceForAuthority({
       organizationId: origin.organizationId,
       environmentId: origin.environmentId,
@@ -96,19 +103,27 @@ export async function resolveHostedBrowserViewerService(input: {
     }),
   });
   const policy = new HostedBrowserPolicy(store);
+  const appName = workerRouteUsable
+    ? environment!.flyAppName!
+    : pending?.scope.appName ?? "browser-unavailable";
+  const routerUrl = workerRouteUsable
+    ? environment!.routerUrl!
+    : "https://browser-viewer-unavailable.invalid";
   return new HostedBrowserViewerService({
     store,
     lifecycle,
     tickets,
-    worker: new HostedBrowserViewerWorkerClient({
-      environmentPrivateKeyPem: required("KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY"),
-      viewerPublicKeyPem,
-      viewerPrivateKeyPem: privateKeyPem,
-    }),
+    worker: workerCleanupUsable
+      ? new HostedBrowserViewerWorkerClient({
+          environmentPrivateKeyPem: required("KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY"),
+          viewerPublicKeyPem,
+          viewerPrivateKeyPem: privateKeyPem,
+        })
+      : unavailableViewerWorker(),
     privateKeyPem,
     publicKeyPem: viewerPublicKeyPem,
-    appName: environment.flyAppName,
-    routerUrl: environment.routerUrl,
+    appName,
+    routerUrl,
     requestAuthorized,
     access: {
       async authorize(authority) {
@@ -122,8 +137,8 @@ export async function resolveHostedBrowserViewerService(input: {
         if (
           currentEnvironment?.status !== "ready" ||
           currentEnvironment.provider !== "fly" ||
-          currentEnvironment.flyAppName !== environment.flyAppName ||
-          currentEnvironment.routerUrl !== environment.routerUrl
+          currentEnvironment.flyAppName !== appName ||
+          currentEnvironment.routerUrl !== routerUrl
         ) return false;
         const access = await getThreadAccessForUser(
           authority.threadId,
@@ -158,6 +173,13 @@ export async function resolveHostedBrowserViewerService(input: {
       },
     },
   });
+}
+
+function unavailableViewerWorker(): HostedBrowserViewerWorkerPort {
+  return {
+    async invoke() { throw new Error("BROWSER_SERVICE_UNAVAILABLE"); },
+    async cleanup() { throw new Error("BROWSER_SERVICE_UNAVAILABLE"); },
+  };
 }
 
 function required(name: string) {

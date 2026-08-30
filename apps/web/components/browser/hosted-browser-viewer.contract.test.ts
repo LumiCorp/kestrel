@@ -46,7 +46,8 @@ test("web viewer exposes acceptance, typed input, reconnect, explicit return, an
   assert.match(component, /hosted-browser-viewer-cleanup-unknown/u);
   assert.match(component, /value\.cleanupPending/u);
   assert.match(component, /if \(availability\.cleanupPending\) return/u);
-  assert.match(component, /if \(!response\.ok\) return/u);
+  assert.match(component, /result\.kind === "transient"/u);
+  assert.match(component, /result\.kind === "unavailable"/u);
   assert.doesNotMatch(component, /catch \{\s*if \(!cancelled\) setAvailability/u);
 });
 
@@ -55,13 +56,16 @@ test("cleanup reconciliation bypass is exact and cannot expose viewer status aft
   const service = read("lib/browser/viewer-service.ts");
   assert.match(composition, /pending\.scope\.runId === origin\.runId/u);
   assert.match(composition, /pending\.scope\.actorId === origin\.userId/u);
-  assert.match(composition, /pending\?\.scope\.appName === environment\.flyAppName/u);
+  assert.match(composition, /pending\?\.scope\.appName === environment\?\.flyAppName/u);
+  assert.match(composition, /origin\.userId === input\.actorId/u);
+  assert.match(composition, /requestMatchesOriginActor \|\| pendingMatchesOrigin/u);
+  assert.match(composition, /unavailableViewerWorker/u);
   assert.match(composition, /currentEnvironment\?\.status !== "ready"/u);
-  assert.match(composition, /currentEnvironment\.flyAppName !== environment\.flyAppName/u);
+  assert.match(composition, /currentEnvironment\.flyAppName !== appName/u);
   assert.match(composition, /composeHostedBrowserViewerLifecycle/u);
   assert.match(composition, /createCleanupSafe: \(\) => createCleanupSafeHostedBrowserViewerLifecycle/u);
   assert.match(composition, /requestAuthorized,/u);
-  assert.match(service, /if \(this\.options\.requestAuthorized === false\)/u);
+  assert.match(service, /this\.options\.requestAuthorized === false/u);
   assert.match(service, /throw new Error\("BROWSER_SESSION_LOST"\)/u);
 });
 

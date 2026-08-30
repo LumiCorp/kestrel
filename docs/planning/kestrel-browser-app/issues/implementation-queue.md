@@ -4,17 +4,17 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
 
 ## In progress
 
-_None._
+None.
 
 ## Blocked
 
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — blocked on issues 06a-06e and the live Vercel/PostgreSQL/combined hosted proof
+- [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md) — blocked on issue 06b
 - [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — blocked on issue 06c
 - [Prove hosted passkey takeover](06e-prove-hosted-passkey-takeover.md) — blocked on issue 06d and the client-side WebAuthn delivery boundary
 - [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — implementation is review-clean; blocked only on issue 04c's signed platform-authenticator canary
@@ -24,7 +24,7 @@ _None._
 
 ## Implemented
 
-- [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — independent-review cleanup convergence repairs and focused gates are recorded in the issue
+- [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — second-review authority-expiry, disconnected-access, and durable fail-close ownership repairs implemented; awaiting independent review
 - [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — remaining review findings are assigned to the existing 06b lifecycle and 06c scheduling owners
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)
 - [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)

@@ -6,6 +6,34 @@ export type HostedBrowserViewerCleanupUnknownPresentation = {
   instruction: string;
 };
 
+export type HostedBrowserViewerAvailability = {
+  available: boolean;
+  sessionState?: string;
+  cleanupPending?: boolean;
+};
+
+export async function classifyHostedBrowserViewerAvailabilityResponse(
+  response: Response,
+): Promise<
+  | { kind: "authoritative"; availability: HostedBrowserViewerAvailability }
+  | { kind: "unavailable" }
+  | { kind: "transient" }
+> {
+  if (response.ok) {
+    return {
+      kind: "authoritative",
+      availability: await response.json() as HostedBrowserViewerAvailability,
+    };
+  }
+  if (response.status !== 404) return { kind: "transient" };
+  const body = await response.json().catch(() => null) as
+    | { error?: { code?: unknown } }
+    | null;
+  return body?.error?.code === "BROWSER_SESSION_LOST"
+    ? { kind: "unavailable" }
+    : { kind: "transient" };
+}
+
 export function hostedBrowserViewerCleanupUnknownPresentation(
   code: string,
 ): HostedBrowserViewerCleanupUnknownPresentation | null {

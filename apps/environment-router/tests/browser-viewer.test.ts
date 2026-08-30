@@ -148,6 +148,7 @@ function viewerRequest(input?: {
 function viewerCleanupRequest(input?: {
   connectionId?: string;
   capabilityConnectionId?: string;
+  purpose?: "disconnect" | "authority_loss";
   nowSeconds?: number;
 }) {
   const issuedAt = input?.nowSeconds ?? 1000;
@@ -159,6 +160,7 @@ function viewerCleanupRequest(input?: {
       version: "hosted_browser_viewer_cleanup_capability_v1",
       audience: "kestrel-one-browser-viewer-cleanup",
       action: "cleanup",
+      purpose: input?.purpose ?? "disconnect",
       organizationId: "org-1",
       environmentId: "env-1",
       projectId: "project-1",
@@ -186,6 +188,7 @@ function viewerCleanupRequest(input?: {
       generation: 3,
       connectionId,
       operation: "viewer.cleanup",
+      purpose: input?.purpose ?? "disconnect",
       cleanupCapability,
       machine: { appName: "environment-app", machineId: "machine-1" },
     },
@@ -264,10 +267,12 @@ test("browser viewer cleanup forwards only the worker-verifiable exact capabilit
         "generation",
         "organizationId",
         "projectId",
+        "purpose",
         "sessionId",
         "threadId",
       ]);
       assert.equal(forwarded.connectionId, "connection-1");
+      assert.equal(forwarded.purpose, "disconnect");
       assert.equal(typeof forwarded.cleanupCapability, "string");
       assert.equal("viewerTicket" in forwarded, false);
       return new Response("null", { status: 200 });

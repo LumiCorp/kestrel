@@ -54,6 +54,7 @@ type BrowserViewerCleanupEnvelope = {
     generation: number;
     connectionId: string;
     operation: "viewer.cleanup";
+    purpose: "disconnect" | "authority_loss";
     cleanupCapability: string;
     machine: { appName: string; machineId: string };
   };
@@ -102,6 +103,7 @@ export async function handleBrowserViewerControl(input: {
       sessionId: envelope.instruction.sessionId,
       generation: envelope.instruction.generation,
       connectionId: envelope.instruction.connectionId,
+      purpose: envelope.instruction.purpose,
       cleanupCapability: envelope.instruction.cleanupCapability,
     };
   } else {
@@ -364,6 +366,7 @@ function parseCleanupEnvelope(value: unknown): BrowserViewerCleanupEnvelope {
       "generation",
       "connectionId",
       "operation",
+      "purpose",
       "cleanupCapability",
       "machine",
     ]) ||
@@ -383,6 +386,8 @@ function parseCleanupEnvelope(value: unknown): BrowserViewerCleanupEnvelope {
     Number(instruction.generation) < 1 ||
     !text(instruction.connectionId) ||
     instruction.operation !== "viewer.cleanup" ||
+    (instruction.purpose !== "disconnect" &&
+      instruction.purpose !== "authority_loss") ||
     !text(instruction.cleanupCapability, 16 * 1024) ||
     typeof machine.appName !== "string" ||
     !/^[a-z0-9][a-z0-9-]{0,62}$/u.test(machine.appName) ||

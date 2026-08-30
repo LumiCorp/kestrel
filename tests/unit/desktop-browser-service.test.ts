@@ -545,7 +545,7 @@ test("Desktop human control survives disconnect and lease expiry until an author
         button: "left",
       },
     }),
-    hasCode("BROWSER_HUMAN_CONTROL_ACTIVE"),
+    hasCode("BROWSER_VIEWER_AUTHORITY_EXPIRED"),
   );
   await assert.rejects(
     fixture.service.execute(
@@ -1044,7 +1044,7 @@ test("a crash-restored exact disconnect record is idempotent without changing it
   );
 
   await assert.doesNotReject(
-    fixture.service.loseViewerAuthority({
+    fixture.service.cleanupViewerConnection({
       ...retired,
       principalId: "desktop-main-1",
     }),
@@ -1058,6 +1058,39 @@ test("a crash-restored exact disconnect record is idempotent without changing it
   assert.equal(stillCurrent.connectionId, replacement.connectionId);
   assert.equal(fixture.engine.closed.length, 0);
   await assert.rejects(
+    fixture.service.cleanupViewerConnection({
+      ...retired,
+      principalId: "desktop-main-1",
+      generation: retired.generation + 1,
+    }),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
+  await fixture.service.close();
+});
+
+test("authority loss terminalizes the exact Session even after disconnect and replacement", async () => {
+  const fixture = await createFixture();
+  await openSession(fixture.service);
+  const retired = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  await fixture.service.cleanupViewerConnection({
+    ...retired,
+    principalId: "desktop-main-1",
+  });
+  const replacement = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+
+  await assert.rejects(
     fixture.service.loseViewerAuthority({
       ...retired,
       principalId: "desktop-main-1",
@@ -1065,6 +1098,22 @@ test("a crash-restored exact disconnect record is idempotent without changing it
     }),
     hasCode("BROWSER_SESSION_LOST"),
   );
+  assert.equal(fixture.engine.closed.length, 0);
+  assert.equal(requireAvailableViewer(await fixture.service.connectViewer({
+    ...replacement,
+    principalId: "desktop-main-1",
+  })).connectionId, replacement.connectionId);
+
+  await fixture.service.loseViewerAuthority({
+    ...retired,
+    principalId: "desktop-main-1",
+  });
+
+  assert.equal(fixture.engine.closed.length, 1);
+  assert.equal((await fixture.service.connectViewer({
+    ...replacement,
+    principalId: "desktop-main-1",
+  })).available, false);
   await fixture.service.close();
 });
 

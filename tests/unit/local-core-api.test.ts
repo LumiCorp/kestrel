@@ -278,15 +278,22 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
         }),
         localCoreBrowserLifecycle(fixture),
       );
+      const returnedConnection = requirePackagedViewerBinding(
+        await fixture.service.connectViewer({
+          principalId: fixture.principalId,
+          threadId: fixture.threadId,
+          projectId: fixture.projectId,
+        }),
+      );
       const acceptedAgain = requirePackagedViewerBinding(
         await fixture.service.acceptViewerTakeover({
-          ...connection,
+          ...returnedConnection,
           principalId: fixture.principalId,
         }),
       );
       assert.ok(acceptedAgain.leaseId);
       await fixture.service.disconnectViewer({
-        ...connection,
+        ...returnedConnection,
         principalId: fixture.principalId,
       });
       const reconnected = requirePackagedViewerBinding(

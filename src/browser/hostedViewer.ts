@@ -18,6 +18,8 @@ export const HOSTED_BROWSER_VIEWER_TICKET_VERSION =
 export const HOSTED_BROWSER_VIEWER_AUDIENCE =
   "kestrel-one-browser-viewer" as const;
 export const HOSTED_BROWSER_VIEWER_TICKET_TTL_MS = 60_000;
+export const HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED =
+  "BROWSER_VIEWER_AUTHORITY_EXPIRED" as const;
 export const HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION =
   "hosted_browser_viewer_cleanup_capability_v1" as const;
 export const HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE =
@@ -43,6 +45,7 @@ export interface HostedBrowserViewerCleanupCapabilityV1 {
   version: typeof HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION;
   audience: typeof HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE;
   action: "cleanup";
+  purpose: "disconnect" | "authority_loss";
   organizationId: string;
   environmentId: string;
   projectId: string;
@@ -115,6 +118,7 @@ export function verifyHostedBrowserViewerTicket(input: {
   token: string;
   publicKeyPem: string;
   now?: Date | undefined;
+  allowExpired?: boolean | undefined;
 }): HostedBrowserViewerTicketClaimsV1 {
   const [payload, signature, extra] = input.token.split(".");
   if (!(payload && signature) || extra !== undefined) throw new Error("BROWSER_SESSION_LOST");
@@ -129,7 +133,7 @@ export function verifyHostedBrowserViewerTicket(input: {
   } catch {
     throw new Error("BROWSER_SESSION_LOST");
   }
-  validateClaims(claims, input.now ?? new Date());
+  validateClaims(claims, input.now ?? new Date(), input.allowExpired ?? false);
   return claims;
 }
 
@@ -153,7 +157,11 @@ export function parseHostedBrowserViewerClientMessage(value: unknown): HostedBro
   throw new Error("BROWSER_SESSION_LOST");
 }
 
-function validateClaims(value: unknown, now: Date): asserts value is HostedBrowserViewerTicketClaimsV1 {
+function validateClaims(
+  value: unknown,
+  now: Date,
+  allowExpired = false,
+): asserts value is HostedBrowserViewerTicketClaimsV1 {
   const claims = requireRecord(value);
   if (!exactKeys(claims, ["version", "audience", "organizationId", "environmentId", "projectId", "threadId", "sessionId", "generation", "actorId", "connectionId", "nonce", "issuedAt", "expiresAt"]) ||
     claims.version !== HOSTED_BROWSER_VIEWER_TICKET_VERSION ||
@@ -166,7 +174,7 @@ function validateClaims(value: unknown, now: Date): asserts value is HostedBrows
   }
   const issuedAt = Date.parse(claims.issuedAt as string);
   const expiresAt = Date.parse(claims.expiresAt as string);
-  if (!(Number.isFinite(issuedAt) && Number.isFinite(expiresAt) ) || expiresAt - issuedAt !== HOSTED_BROWSER_VIEWER_TICKET_TTL_MS || issuedAt > now.getTime() + 5000 || expiresAt <= now.getTime()) {
+  if (!(Number.isFinite(issuedAt) && Number.isFinite(expiresAt) ) || expiresAt - issuedAt !== HOSTED_BROWSER_VIEWER_TICKET_TTL_MS || issuedAt > now.getTime() + 5000 || (!allowExpired && expiresAt <= now.getTime())) {
     throw new Error("BROWSER_SESSION_LOST");
   }
 }
@@ -199,6 +207,7 @@ function validateCleanupClaims(
       "version",
       "audience",
       "action",
+      "purpose",
       "organizationId",
       "environmentId",
       "projectId",
@@ -214,6 +223,7 @@ function validateCleanupClaims(
     claims.version !== HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION ||
     claims.audience !== HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE ||
     claims.action !== "cleanup" ||
+    (claims.purpose !== "disconnect" && claims.purpose !== "authority_loss") ||
     !Number.isSafeInteger(claims.generation) ||
     Number(claims.generation) < 1
   ) {
@@ -253,6 +263,7 @@ function canonicalCleanupClaims(
     version: HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION,
     audience: HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE,
     action: "cleanup",
+    purpose: claims.purpose,
     organizationId: claims.organizationId,
     environmentId: claims.environmentId,
     projectId: claims.projectId,

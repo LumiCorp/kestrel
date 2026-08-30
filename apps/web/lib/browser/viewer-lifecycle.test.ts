@@ -79,6 +79,31 @@ test("non-ready Environment composition never invokes ready-only lifecycle const
   assert.equal(cleanupCalls, 1);
 });
 
+test("authority loss never invokes ready-only lifecycle construction", async () => {
+  let readyConstructionCalls = 0;
+  let cleanupCalls = 0;
+  const lifecycle = await composeHostedBrowserViewerLifecycle({
+    environmentReady: true,
+    async createReady() {
+      readyConstructionCalls += 1;
+      throw new Error("ready-only composition must not run for authority loss");
+    },
+    createCleanupSafe() {
+      return {
+        async terminateViewerSession() { cleanupCalls += 1; },
+      };
+    },
+  });
+
+  await lifecycle.terminateViewerSession({
+    sessionId: "session-1",
+    generation: 1,
+    reason: "BROWSER_SESSION_LOST",
+  });
+  assert.equal(readyConstructionCalls, 0);
+  assert.equal(cleanupCalls, 1);
+});
+
 test("cleanup-safe lifecycle rejects a different durable authority before terminalization", async () => {
   let terminalCalls = 0;
   const lifecycle = createCleanupSafeHostedBrowserViewerLifecycle({
