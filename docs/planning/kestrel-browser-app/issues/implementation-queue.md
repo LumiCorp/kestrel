@@ -4,6 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
+- [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
 
@@ -12,7 +13,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 ## Blocked
 
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — blocked on issues 06a-06e and the live Vercel/PostgreSQL/combined hosted proof
-- [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — blocked on issue 06a1
+- [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — blocked on issue 06a2
 - [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md) — blocked on issue 06b
 - [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — blocked on issue 06c
 - [Prove hosted passkey takeover](06e-prove-hosted-passkey-takeover.md) — blocked on issue 06d and the client-side WebAuthn delivery boundary
