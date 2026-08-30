@@ -1171,6 +1171,7 @@ test("hosted worker lease expiry retries exact cleanup until the worker proves r
     now: () => now,
     setTimeout: fakeSetTimeout,
     clearTimeout: fakeClearTimeout,
+    viewerRetirementLimit: 1,
     createDesktopBrowserService() {
       return fakeService as unknown as DesktopBrowserService;
     },
@@ -1186,6 +1187,13 @@ test("hosted worker lease expiry retries exact cleanup until the worker proves r
   );
   const claims = viewerClaims("user-1", "expiry-connection", now);
   await engine.viewer({ action: "connect", claims, connectionId: claims.connectionId });
+  await assert.rejects(
+    engine.viewerCleanup(
+      viewerCleanupClaims("unadmitted-cleanup", "disconnect", now),
+    ),
+    hasBrowserCode("BROWSER_SERVICE_UNAVAILABLE"),
+  );
+  assert.equal(cleanupCalls, 0);
   await engine.viewer({ action: "accept", claims, connectionId: claims.connectionId });
   const leaseTimer = timers.find((timer) => timer.delay === 5_000);
   assert.ok(leaseTimer);

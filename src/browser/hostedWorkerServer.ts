@@ -909,11 +909,16 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   ): void {
     this.#pruneViewerRetirements();
     const identity = viewerConnectionIdentity(claims);
-    const admitted = this.#viewerAdmissions.delete(identity);
+    const admitted = this.#viewerAdmissions.has(identity);
     if (this.#retiredViewerConnections.has(identity)) return;
-    if (!admitted && this.#retiredViewerConnections.size >= this.#viewerRetirementLimit) {
+    if (
+      !admitted &&
+      this.#retiredViewerConnections.size + this.#viewerAdmissions.size >=
+        this.#viewerRetirementLimit
+    ) {
       throw new Error("BROWSER_SERVICE_UNAVAILABLE");
     }
+    if (admitted) this.#viewerAdmissions.delete(identity);
     this.#retiredViewerConnections.set(identity, { expiresAt: claims.expiresAt });
   }
 

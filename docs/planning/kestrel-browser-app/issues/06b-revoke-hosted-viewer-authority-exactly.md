@@ -180,6 +180,10 @@ introduced by Issue 06b.
   failed first cleanup therefore rejects frame, input, and replayed connect
   authority throughout the retry window while the independent exact cleanup
   timer continues to convergence.
+- Ordinary accounting enforces `retired + admitted <= limit`: an unadmitted
+  cleanup cannot consume capacity reserved by a live admission, while expiry
+  converts that admission to retirement without changing the total count or
+  suppressing its cleanup retry.
 - The focused hosted worker command passes 21 tests, including full-capacity
   emergency cleanup, wrong-principal replacement safety, signed-expiry release,
   ordinary delayed replay, and admission-bound coverage.
