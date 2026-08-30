@@ -904,9 +904,11 @@ export class DesktopBrowserService implements BrowserServicePort {
       runtime.takeoverRequested = false;
       runtime.session.state = "ready";
       this.#touch(runtime);
+      const returned = this.#viewerState(runtime, connection);
+      runtime.viewerConnections.delete(connection.connectionId);
       await this.#persist();
       this.#viewerEvent(runtime, "return");
-      return this.#viewerState(runtime, connection);
+      return returned;
     });
   }
 
@@ -935,6 +937,72 @@ export class DesktopBrowserService implements BrowserServicePort {
         runtime.activeInputLease = undefined;
       }
       this.#viewerEvent(runtime, "disconnect");
+    });
+  }
+
+  async cleanupViewerConnection(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+  }): Promise<void> {
+    await this.#requireInitialized();
+    await this.#serialize(async () => {
+      const sessionId = requireText(input.sessionId, "viewer sessionId");
+      const threadId = requireText(input.threadId, "viewer threadId");
+      const projectId = requireText(input.projectId, "viewer projectId");
+      const principalId = requireText(input.principalId, "viewer principalId");
+      const connectionId = requireText(input.connectionId, "viewer connectionId");
+      const runtime = this.#active.get(sessionId);
+      if (
+        runtime === undefined ||
+        runtime.session.threadId !== threadId ||
+        runtime.session.generation !== input.generation ||
+        runtime.authority.projectId !== projectId
+      ) {
+        const terminal = this.#sessions.find(
+          (session) =>
+            session.sessionId === sessionId &&
+            session.threadId === threadId &&
+            session.generation === input.generation &&
+            TERMINAL_STATES.has(session.state),
+        );
+        if (terminal !== undefined || runtime === undefined) return;
+        throw browserFailure(
+          "BROWSER_SESSION_LOST",
+          "The Browser viewer cleanup identity is no longer current.",
+        );
+      }
+      const connection = runtime.viewerConnections.get(connectionId);
+      if (connection === undefined) return;
+      if (
+        connection.principalId !== principalId ||
+        connection.projectId !== projectId
+      ) {
+        throw browserFailure(
+          "BROWSER_SESSION_LOST",
+          "The Browser viewer cleanup identity does not match the connection.",
+        );
+      }
+      if (runtime.activeInputLease?.connectionId === connectionId) {
+        try {
+          await this.#revokeNativeHandoff(runtime);
+        } catch (error) {
+          await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
+            () => undefined,
+          );
+          throw normalizeBrowserHostFailure(error, {
+            toolName: "browser.request_takeover",
+            dispatchAcknowledged: true,
+            effectful: true,
+          });
+        }
+        runtime.activeInputLease = undefined;
+      }
+      runtime.viewerConnections.delete(connectionId);
+      this.#viewerEvent(runtime, "cleanup");
     });
   }
 

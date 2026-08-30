@@ -83,7 +83,8 @@ test("authorization loss during frame delivery closes the Browser Session instea
   fixture.accessAllowed = false;
   await assert.rejects(connection.frame(), /BROWSER_SESSION_LOST/u);
   assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
-  assert.equal(fixture.session.state, "human_control");
+  assert.equal(fixture.session.state, "lost");
+  assert.equal(fixture.liveConnections.size, 0);
 });
 
 test("worker loss during viewing closes the Browser Session instead of restoring agent control", async () => {
@@ -94,7 +95,7 @@ test("worker loss during viewing closes the Browser Session instead of restoring
   fixture.workerLost = true;
   await assert.rejects(connection.frame(), /BROWSER_ENGINE_FAILURE/u);
   assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
-  assert.equal(fixture.session.state, "human_control");
+  assert.equal(fixture.session.state, "lost");
 });
 
 test("an uncertain connect releases the exact preselected connection without closing the Browser Session", async () => {
@@ -114,7 +115,7 @@ test("an uncertain connect releases the exact preselected connection without clo
   assert.deepEqual(fixture.terminations, []);
   assert.equal(fixture.workerCalls.length, 2);
   assert.equal(fixture.workerCalls[0]?.action, "connect");
-  assert.equal(fixture.workerCalls[1]?.action, "disconnect");
+  assert.equal(fixture.workerCalls[1]?.action, "cleanup");
   assert.equal(
     fixture.workerCalls[1]?.connectionId,
     fixture.workerCalls[0]?.connectionId,
@@ -213,9 +214,10 @@ test("an invalid connect state carries an exact disconnect and fail-close retry"
   fixture.terminationFailure = undefined;
   assert.equal(await unknown?.retryCleanup(), true);
   assert.equal(fixture.liveConnections.size, 0);
+  assert.equal(fixture.session.state, "lost");
   assert.deepEqual(
     fixture.workerCalls.map((call) => call.action),
-    ["connect", "disconnect", "disconnect"],
+    ["connect", "cleanup", "cleanup"],
   );
 });
 
@@ -299,6 +301,156 @@ test("dispatch fail-close uncertainty carries a real durable retry", async () =>
   assert.equal(await unknown?.retryCleanup(), true);
 });
 
+test("explicit return removes exact worker authority before durable ready", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  await connection.dispatch({
+    version: "hosted_browser_viewer_route_v1",
+    type: "accept_takeover",
+  });
+  const returned = await connection.dispatch({
+    version: "hosted_browser_viewer_route_v1",
+    type: "return_control",
+    leaseId: connection.state.inputLeaseId!,
+  });
+
+  assert.deepEqual(returned, {
+    version: "hosted_browser_viewer_route_v1",
+    type: "closed",
+    reason: "returned_to_agent",
+  });
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.equal(fixture.session.state, "ready");
+  assert.equal(connection.revoked, true);
+});
+
+test("failed established disconnect remains cleanup-pending and blocks ticket mint across service calls", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  fixture.disconnectLost = true;
+  fixture.terminationFailure = "before_terminal";
+
+  await assert.rejects(
+    connection.disconnect(),
+    (error: unknown) => error instanceof HostedBrowserViewerOutcomeUnknownError,
+  );
+  assert.equal(fixture.cleanupPending?.scope.connectionId, connection.claims.connectionId);
+  assert.deepEqual(
+    await fixture.service.status({
+      organizationId: "org-1",
+      actorId: "user-1",
+      threadId: "thread-1",
+    }),
+    {
+      version: "hosted_browser_viewer_route_v1",
+      available: false,
+      cleanupPending: true,
+    },
+  );
+  await assert.rejects(
+    fixture.service.mintTicket({
+      organizationId: "org-1",
+      actorId: "user-1",
+      threadId: "thread-1",
+    }),
+    /BROWSER_ACTION_OUTCOME_UNKNOWN/u,
+  );
+
+  fixture.disconnectLost = false;
+  fixture.terminationFailure = undefined;
+  const changedActorStatus = await fixture.service.status({
+    organizationId: "org-1",
+    actorId: "replacement-user",
+    threadId: "thread-1",
+  });
+  assert.equal(changedActorStatus.available, false);
+  assert.equal(fixture.cleanupPending, null);
+  assert.equal(fixture.liveConnections.size, 0);
+});
+
+test("cleanup-marker failure falls back to durable exact Session fail-close", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  fixture.disconnectLost = true;
+  fixture.cleanupMarkerFailure = true;
+
+  await connection.disconnect();
+
+  assert.equal(fixture.session.state, "lost");
+  assert.ok(fixture.resource.cleanupRequestedAt);
+  assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
+  assert.equal(fixture.cleanupPending, null);
+});
+
+test("a malformed worker frame revokes exact viewer authority before fail-close", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  fixture.invalidFrame = true;
+
+  await assert.rejects(connection.frame(), /BROWSER_SESSION_LOST/u);
+
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.equal(fixture.session.state, "lost");
+  assert.ok(fixture.workerCalls.some((call) => call.action === "cleanup"));
+});
+
+test("a response-lost established disconnect stays pending until an idempotent cleanup proves release", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  fixture.cleanupResponseLost = true;
+
+  await assert.rejects(
+    connection.disconnect(),
+    (error: unknown) => error instanceof HostedBrowserViewerOutcomeUnknownError,
+  );
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.ok(fixture.cleanupPending);
+  assert.equal(
+    fixture.evidence.filter((entry) =>
+      JSON.stringify(entry).includes("browser_viewer_disconnected")).length,
+    0,
+  );
+
+  fixture.cleanupResponseLost = false;
+  const status = await fixture.service.status({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  assert.equal(status.available, true);
+  assert.equal(fixture.cleanupPending, null);
+  assert.equal(
+    fixture.evidence.filter((entry) =>
+      JSON.stringify(entry).includes("browser_viewer_disconnected")).length,
+    1,
+  );
+});
+
 function createFixture() {
   const currentNow = new Date("2026-08-30T12:00:00.000Z");
   const session: BrowserSessionV1 = {
@@ -328,6 +480,9 @@ function createFixture() {
     cleanupConfirmedAt: null,
   };
   const ticketValues = new Map<string, string>();
+  let cleanupPending: Awaited<ReturnType<HostedBrowserViewerTicketStorePort["readCleanupPending"]>> = null;
+  let cleanupMarkerFailure = false;
+  let cleanupResponseLost = false;
   const tickets: HostedBrowserViewerTicketStorePort = {
     async issue(input) { ticketValues.set(input.nonce, input.token); },
     async consume(input) {
@@ -336,6 +491,24 @@ function createFixture() {
       return true;
     },
     async revoke(nonce) { ticketValues.delete(nonce); },
+    async readCleanupPending(threadId) {
+      return cleanupPending?.scope.threadId === threadId ? cleanupPending : null;
+    },
+    async markCleanupPending(input) {
+      if (cleanupMarkerFailure) throw new Error("redis unavailable");
+      if (cleanupPending && cleanupPending.scope.connectionId !== input.scope.connectionId) {
+        throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+      }
+      cleanupPending = input;
+    },
+    async clearCleanupPending(input) {
+      if (
+        cleanupPending?.scope.threadId === input.threadId &&
+        cleanupPending.scope.sessionId === input.sessionId &&
+        cleanupPending.scope.generation === input.generation &&
+        cleanupPending.scope.connectionId === input.connectionId
+      ) cleanupPending = null;
+    },
   };
   const workerInputs: Array<{ text?: string }> = [];
   const workerCalls: Array<{ action: string; connectionId?: string }> = [];
@@ -344,6 +517,7 @@ function createFixture() {
   let connectResponseLost = false;
   let disconnectLost = false;
   let invalidConnectState = false;
+  let invalidFrame = false;
   let terminationFailure: "before_terminal" | "after_terminal" | undefined;
   let workerState = viewerState("ready", true);
   const worker: HostedBrowserViewerWorkerPort = {
@@ -373,7 +547,7 @@ function createFixture() {
       }
       if (input.action === "frame") return {
         version: "desktop_browser_viewer_frame_v1",
-        sessionId: "session-1",
+        sessionId: invalidFrame ? "identity-drifted" : "session-1",
         generation: 1,
         sequence: 1,
         capturedAt: currentNow.toISOString(),
@@ -395,6 +569,7 @@ function createFixture() {
       }
       if (input.action === "renew") return workerState;
       if (input.action === "return") {
+        liveConnections.delete(input.connectionId!);
         workerState = viewerState(
           "ready",
           false,
@@ -404,6 +579,12 @@ function createFixture() {
         return workerState;
       }
       return null;
+    },
+    async cleanup(input) {
+      workerCalls.push({ action: "cleanup", connectionId: input.connectionId });
+      if (workerLost || disconnectLost) throw new Error("BROWSER_ENGINE_FAILURE");
+      liveConnections.delete(input.connectionId);
+      if (cleanupResponseLost) throw new Error("BROWSER_ENGINE_FAILURE");
     },
   };
   const evidence: unknown[] = [];
@@ -427,8 +608,15 @@ function createFixture() {
     set disconnectLost(value) { disconnectLost = value; },
     get invalidConnectState() { return invalidConnectState; },
     set invalidConnectState(value) { invalidConnectState = value; },
+    get invalidFrame() { return invalidFrame; },
+    set invalidFrame(value) { invalidFrame = value; },
     get terminationFailure() { return terminationFailure; },
     set terminationFailure(value) { terminationFailure = value; },
+    get cleanupPending() { return cleanupPending; },
+    get cleanupMarkerFailure() { return cleanupMarkerFailure; },
+    set cleanupMarkerFailure(value) { cleanupMarkerFailure = value; },
+    get cleanupResponseLost() { return cleanupResponseLost; },
+    set cleanupResponseLost(value) { cleanupResponseLost = value; },
     service: undefined as unknown as HostedBrowserViewerService,
   };
   fixture.service = new HostedBrowserViewerService({
@@ -459,6 +647,10 @@ function createFixture() {
           resource.cleanupRequestedAt = currentNow;
           throw new Error("machine cleanup unavailable");
         }
+        session.state = input.reason === "closed_by_user" ? "closed" : "lost";
+        session.terminalReason = input.reason;
+        session.updatedAt = currentNow.toISOString();
+        resource.cleanupRequestedAt = currentNow;
       },
     },
     access: { async authorize() { return fixture.accessAllowed; } },

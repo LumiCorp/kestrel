@@ -105,9 +105,9 @@ test("an outcome-unknown frame is typed and its retry survives socket send failu
   const controller = attach(socket, async () => connection.value, timers);
 
   socket.emitMessage();
-  await waitFor(() => timers.intervalHandlers.length === 1);
+  await waitFor(() => timers.intervalHandlers.length === 2);
   socket.sendThrows = true;
-  timers.intervalHandlers[0]?.();
+  timers.intervalHandlers[1]?.();
   await waitFor(() => socket.closeCalls === 1);
   await controller.whenClosed();
 
@@ -123,25 +123,81 @@ test("concurrent close and error events share one settlement and one exact disco
   const controller = attach(socket, async () => connection.value, timers);
 
   socket.emitMessage();
-  await waitFor(() => timers.intervalHandlers.length === 1);
+  await waitFor(() => timers.intervalHandlers.length === 2);
   socket.emitClose();
   socket.emitError();
   await controller.whenClosed();
 
   assert.equal(connection.disconnects, 1);
   assert.equal(socket.closeCalls, 1);
-  assert.equal(timers.clearedIntervals, 1);
+  assert.equal(timers.clearedIntervals, 2);
   assert.equal(timers.clearedTimeouts, 1);
+});
+
+test("explicit return closes the socket and frame authority immediately", async () => {
+  const socket = new FakeSocket();
+  const connection = fakeConnection();
+  const timers = fakeTimers();
+  connection.dispatch = async () => ({
+    version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+    type: "closed",
+    reason: "returned_to_agent",
+  });
+  let messages = 0;
+  const controller = attach(
+    socket,
+    async () => connection.value,
+    timers,
+    () => messages++ === 0
+      ? authenticateMessage()
+      : {
+          version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+          type: "return_control",
+          leaseId: "lease-1",
+        },
+  );
+
+  socket.emitMessage();
+  await waitFor(() => timers.intervalHandlers.length === 2);
+  socket.emitMessage();
+  await waitFor(() => socket.closeCalls === 1);
+  await controller.whenClosed();
+
+  assert.equal(connection.disconnects, 1);
+  assert.equal(timers.clearedIntervals, 2);
+  assert.equal(timers.clearedTimeouts, 1);
+});
+
+test("authority revalidation continues independently of frame capture", async () => {
+  const socket = new FakeSocket();
+  const connection = fakeConnection();
+  const timers = fakeTimers();
+  let revalidations = 0;
+  connection.revalidate = async () => {
+    revalidations += 1;
+    throw new Error("BROWSER_SESSION_LOST");
+  };
+  const controller = attach(socket, async () => connection.value, timers);
+
+  socket.emitMessage();
+  await waitFor(() => timers.intervalHandlers.length === 2);
+  timers.intervalHandlers[0]?.();
+  await waitFor(() => socket.closeCalls === 1);
+  await controller.whenClosed();
+
+  assert.equal(revalidations, 1);
+  assert.equal(connection.disconnects, 1);
 });
 
 function attach(
   socket: FakeSocket,
   connect: () => Promise<HostedBrowserViewerConnection>,
   timers = fakeTimers(),
+  parseMessage: Parameters<typeof attachHostedBrowserViewerSocket>[0]["parseMessage"] = () => authenticateMessage(),
 ) {
   return attachHostedBrowserViewerSocket({
     socket: socket as unknown as Parameters<typeof attachHostedBrowserViewerSocket>[0]["socket"],
-    parseMessage: () => authenticateMessage(),
+    parseMessage,
     connect,
     timers,
   });
@@ -157,7 +213,7 @@ function authenticateMessage(): HostedBrowserViewerClientMessageV1 {
 
 function fakeConnection() {
   let disconnects = 0;
-  let frame = async () => ({
+  let frame: HostedBrowserViewerConnection["frame"] = async () => ({
     version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
     type: "frame" as const,
     frame: {
@@ -170,6 +226,12 @@ function fakeConnection() {
       dataBase64: "iVBORw0KGgo=",
     },
   });
+  let dispatch: HostedBrowserViewerConnection["dispatch"] = async () => ({
+    version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+    type: "state" as const,
+    state: value.state,
+  });
+  let revalidate: HostedBrowserViewerConnection["revalidate"] = async () => {};
   const value = {
     claims: {
       version: "hosted_browser_viewer_ticket_v1" as const,
@@ -198,17 +260,16 @@ function fakeConnection() {
       takeoverRequested: false,
     },
     async disconnect() { disconnects += 1; },
-    dispatch: async () => ({
-      version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
-      type: "state" as const,
-      state: value.state,
-    }),
+    revalidate: () => revalidate(),
+    dispatch: (message: HostedBrowserViewerClientMessageV1) => dispatch(message),
     frame: () => frame(),
   } as unknown as HostedBrowserViewerConnection;
   return {
     value,
     get disconnects() { return disconnects; },
     set frame(next: typeof frame) { frame = next; },
+    set dispatch(next: typeof dispatch) { dispatch = next; },
+    set revalidate(next: typeof revalidate) { revalidate = next; },
   };
 }
 

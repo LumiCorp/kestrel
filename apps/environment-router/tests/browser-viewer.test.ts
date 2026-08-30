@@ -10,8 +10,12 @@ import {
   ENVIRONMENT_TOOL_CREDENTIAL_VERSION,
   signEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
-import { issueHostedBrowserViewerTicket } from "../../../src/browser/hostedViewer.js";
 import {
+  issueHostedBrowserViewerCleanupCapability,
+  issueHostedBrowserViewerTicket,
+} from "../../../src/browser/hostedViewer.js";
+import {
+  authorizeBrowserViewerCleanup,
   authorizeBrowserViewerControl,
   handleBrowserViewerControl,
   readBoundedBrowserViewerWorkerBody,
@@ -140,6 +144,137 @@ function viewerRequest(input?: {
   });
   return { body, token };
 }
+
+function viewerCleanupRequest(input?: {
+  connectionId?: string;
+  capabilityConnectionId?: string;
+  nowSeconds?: number;
+}) {
+  const issuedAt = input?.nowSeconds ?? 1000;
+  const connectionId = input?.connectionId ?? "connection-1";
+  const cleanupCapability = issueHostedBrowserViewerCleanupCapability({
+    privateKeyPem: viewerPrivateKey,
+    now: new Date(issuedAt * 1000),
+    claims: {
+      version: "hosted_browser_viewer_cleanup_capability_v1",
+      audience: "kestrel-one-browser-viewer-cleanup",
+      action: "cleanup",
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      threadId: "thread-1",
+      sessionId: "browser-session-1",
+      generation: 3,
+      actorId: "user-1",
+      connectionId: input?.capabilityConnectionId ?? connectionId,
+      nonce: "cleanup-nonce-1",
+      issuedAt: new Date(issuedAt * 1000).toISOString(),
+      expiresAt: new Date((issuedAt + 60) * 1000).toISOString(),
+    },
+  });
+  const envelope = {
+    version: "hosted_browser_viewer_cleanup_router_envelope_v1",
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    userId: "user-1",
+    threadId: "thread-1",
+    runId: "run-1",
+    instruction: {
+      version: "hosted_browser_viewer_cleanup_instruction_v1",
+      sessionId: "browser-session-1",
+      generation: 3,
+      connectionId,
+      operation: "viewer.cleanup",
+      cleanupCapability,
+      machine: { appName: "environment-app", machineId: "machine-1" },
+    },
+  };
+  const body = Buffer.from(JSON.stringify(envelope));
+  const token = signEnvironmentToolCredential({
+    privateKey: environmentPrivateKey,
+    ticket: {
+      version: ENVIRONMENT_TOOL_CREDENTIAL_VERSION,
+      audience: ENVIRONMENT_TOOL_CREDENTIAL_AUDIENCE,
+      organizationId: "org-1",
+      environmentId: "env-1",
+      workspaceId: "browser:browser-session-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      actorId: "user-1",
+      agentId: "kestrel-control-plane",
+      providerKey: "built_in.browser",
+      resourceId: "browser-session-1",
+      capability: "browser.viewer.cleanup",
+      operation: "viewer.cleanup",
+      operationBinding: `sha256:${createHash("sha256").update(body).digest("base64url")}`,
+      issuedAt,
+      expiresAt: issuedAt + 60,
+      nonce: "cleanup-environment-nonce-1",
+    },
+  });
+  return { body, token };
+}
+
+test("browser viewer cleanup uses a separate body-bound control-plane credential", () => {
+  const valid = viewerCleanupRequest();
+  assert.equal(authorizeBrowserViewerCleanup({
+    authorization: `Bearer ${valid.token}`,
+    body: valid.body,
+    publicKey: environmentPublicKey,
+    environmentId: "env-1",
+    expectedAppName: "environment-app",
+    now: 1030,
+  }).instruction.connectionId, "connection-1");
+
+  const changed = Buffer.from(
+    valid.body.toString("utf8").replace("connection-1", "connection-other"),
+  );
+  assert.throws(() => authorizeBrowserViewerCleanup({
+    authorization: `Bearer ${valid.token}`,
+    body: changed,
+    publicKey: environmentPublicKey,
+    environmentId: "env-1",
+    expectedAppName: "environment-app",
+    now: 1030,
+  }));
+});
+
+test("browser viewer cleanup forwards only the worker-verifiable exact capability", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const input = viewerCleanupRequest({ nowSeconds: now });
+  const capture = responseCapture();
+  await handleBrowserViewerControl({
+    request: incoming(input.body, input.token),
+    response: capture.response,
+    publicKey: environmentPublicKey,
+    environmentId: "env-1",
+    expectedAppName: "environment-app",
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      assert.equal(
+        String(url),
+        "http://machine-1.vm.environment-app.internal:43105/v1/viewer-cleanup",
+      );
+      const forwarded = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      assert.deepEqual(Object.keys(forwarded).sort(), [
+        "actorId",
+        "cleanupCapability",
+        "connectionId",
+        "environmentId",
+        "generation",
+        "organizationId",
+        "projectId",
+        "sessionId",
+        "threadId",
+      ]);
+      assert.equal(forwarded.connectionId, "connection-1");
+      assert.equal(typeof forwarded.cleanupCapability, "string");
+      assert.equal("viewerTicket" in forwarded, false);
+      return new Response("null", { status: 200 });
+    }) as typeof fetch,
+  });
+  assert.equal(capture.status, 200);
+});
 
 test("browser viewer control binds exact environment, actor, session, operation, and viewer-ticket scope", () => {
   const valid = viewerRequest();

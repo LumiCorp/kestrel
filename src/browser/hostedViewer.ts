@@ -18,6 +18,10 @@ export const HOSTED_BROWSER_VIEWER_TICKET_VERSION =
 export const HOSTED_BROWSER_VIEWER_AUDIENCE =
   "kestrel-one-browser-viewer" as const;
 export const HOSTED_BROWSER_VIEWER_TICKET_TTL_MS = 60_000;
+export const HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION =
+  "hosted_browser_viewer_cleanup_capability_v1" as const;
+export const HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE =
+  "kestrel-one-browser-viewer-cleanup" as const;
 
 export interface HostedBrowserViewerTicketClaimsV1 {
   version: typeof HOSTED_BROWSER_VIEWER_TICKET_VERSION;
@@ -33,6 +37,66 @@ export interface HostedBrowserViewerTicketClaimsV1 {
   nonce: string;
   issuedAt: string;
   expiresAt: string;
+}
+
+export interface HostedBrowserViewerCleanupCapabilityV1 {
+  version: typeof HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION;
+  audience: typeof HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE;
+  action: "cleanup";
+  organizationId: string;
+  environmentId: string;
+  projectId: string;
+  threadId: string;
+  sessionId: string;
+  generation: number;
+  actorId: string;
+  connectionId: string;
+  nonce: string;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+export function issueHostedBrowserViewerCleanupCapability(input: {
+  claims: HostedBrowserViewerCleanupCapabilityV1;
+  privateKeyPem: string;
+  now?: Date | undefined;
+}): string {
+  validateCleanupClaims(input.claims, input.now ?? new Date());
+  const payload = Buffer.from(
+    JSON.stringify(canonicalCleanupClaims(input.claims)),
+    "utf8",
+  ).toString("base64url");
+  const key = createPrivateKey(input.privateKeyPem);
+  if (key.asymmetricKeyType !== "ed25519") {
+    throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+  }
+  return `${payload}.${sign(null, Buffer.from(payload), key).toString("base64url")}`;
+}
+
+export function verifyHostedBrowserViewerCleanupCapability(input: {
+  token: string;
+  publicKeyPem: string;
+  now?: Date | undefined;
+}): HostedBrowserViewerCleanupCapabilityV1 {
+  const [payload, signature, extra] = input.token.split(".");
+  if (!(payload && signature) || extra !== undefined) {
+    throw new Error("BROWSER_SESSION_LOST");
+  }
+  const key = createPublicKey(input.publicKeyPem);
+  if (
+    key.asymmetricKeyType !== "ed25519" ||
+    !verify(null, Buffer.from(payload), key, Buffer.from(signature, "base64url"))
+  ) {
+    throw new Error("BROWSER_SESSION_LOST");
+  }
+  let claims: unknown;
+  try {
+    claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("BROWSER_SESSION_LOST");
+  }
+  validateCleanupClaims(claims, input.now ?? new Date());
+  return claims;
 }
 
 export function issueHostedBrowserViewerTicket(input: {
@@ -111,6 +175,84 @@ function canonicalClaims(claims: HostedBrowserViewerTicketClaimsV1): HostedBrows
   return {
     version: HOSTED_BROWSER_VIEWER_TICKET_VERSION,
     audience: HOSTED_BROWSER_VIEWER_AUDIENCE,
+    organizationId: claims.organizationId,
+    environmentId: claims.environmentId,
+    projectId: claims.projectId,
+    threadId: claims.threadId,
+    sessionId: claims.sessionId,
+    generation: claims.generation,
+    actorId: claims.actorId,
+    connectionId: claims.connectionId,
+    nonce: claims.nonce,
+    issuedAt: claims.issuedAt,
+    expiresAt: claims.expiresAt,
+  };
+}
+
+function validateCleanupClaims(
+  value: unknown,
+  now: Date,
+): asserts value is HostedBrowserViewerCleanupCapabilityV1 {
+  const claims = requireRecord(value);
+  if (
+    !exactKeys(claims, [
+      "version",
+      "audience",
+      "action",
+      "organizationId",
+      "environmentId",
+      "projectId",
+      "threadId",
+      "sessionId",
+      "generation",
+      "actorId",
+      "connectionId",
+      "nonce",
+      "issuedAt",
+      "expiresAt",
+    ]) ||
+    claims.version !== HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION ||
+    claims.audience !== HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE ||
+    claims.action !== "cleanup" ||
+    !Number.isSafeInteger(claims.generation) ||
+    Number(claims.generation) < 1
+  ) {
+    throw new Error("BROWSER_SESSION_LOST");
+  }
+  for (const field of [
+    "organizationId",
+    "environmentId",
+    "projectId",
+    "threadId",
+    "sessionId",
+    "actorId",
+    "connectionId",
+    "nonce",
+    "issuedAt",
+    "expiresAt",
+  ] as const) {
+    if (!text(claims[field])) throw new Error("BROWSER_SESSION_LOST");
+  }
+  const issuedAt = Date.parse(claims.issuedAt as string);
+  const expiresAt = Date.parse(claims.expiresAt as string);
+  if (
+    !Number.isFinite(issuedAt) ||
+    !Number.isFinite(expiresAt) ||
+    expiresAt - issuedAt !== HOSTED_BROWSER_VIEWER_TICKET_TTL_MS ||
+    issuedAt > now.getTime() + 5000 ||
+    expiresAt <= now.getTime()
+  ) {
+    throw new Error("BROWSER_SESSION_LOST");
+  }
+}
+
+function canonicalCleanupClaims(
+  claims: HostedBrowserViewerCleanupCapabilityV1,
+): HostedBrowserViewerCleanupCapabilityV1 {
+  return {
+    version: HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION,
+    audience: HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE,
+    action: "cleanup",
     organizationId: claims.organizationId,
     environmentId: claims.environmentId,
     projectId: claims.projectId,

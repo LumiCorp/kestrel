@@ -21,7 +21,9 @@ import {
 import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
 import { verifyHostedBrowserCapabilitySignature } from "./hostedCapability.js";
 import {
+  verifyHostedBrowserViewerCleanupCapability,
   verifyHostedBrowserViewerTicket,
+  type HostedBrowserViewerCleanupCapabilityV1,
   type HostedBrowserViewerTicketClaimsV1,
 } from "./hostedViewer.js";
 import {
@@ -116,6 +118,7 @@ export interface HostedBrowserWorkerEngine {
     leaseId?: string | undefined;
     viewerInput?: DesktopBrowserViewerInputV1 | undefined;
   }): Promise<DesktopBrowserViewerStateV1 | DesktopBrowserViewerFrameV1 | null>;
+  viewerCleanup?(claims: HostedBrowserViewerCleanupCapabilityV1): Promise<void>;
   destroy(): Promise<void>;
 }
 
@@ -461,6 +464,44 @@ export function startHostedBrowserWorker(input: {
             : { viewerInput: requireViewerInput(record.viewerInput) }),
         }));
       }
+      if (pathname === "/v1/viewer-cleanup") {
+        const record = requireRecord(body);
+        if (!hasExactKeys(record, [
+          "organizationId",
+          "environmentId",
+          "projectId",
+          "actorId",
+          "threadId",
+          "sessionId",
+          "generation",
+          "connectionId",
+          "cleanupCapability",
+        ])) throw new Error("BROWSER_SESSION_LOST");
+        const claims = verifyHostedBrowserViewerCleanupCapability({
+          token: requiredString(record.cleanupCapability),
+          publicKeyPem: config.capabilityPublicKeyPem,
+        });
+        if (
+          claims.organizationId !== config.organizationId ||
+          claims.environmentId !== config.environmentId ||
+          claims.projectId !== config.projectId ||
+          claims.actorId !== config.userId ||
+          claims.threadId !== config.threadId ||
+          claims.sessionId !== config.sessionId ||
+          claims.generation !== config.generation ||
+          claims.connectionId !== requiredString(record.connectionId) ||
+          claims.organizationId !== requiredString(record.organizationId) ||
+          claims.environmentId !== requiredString(record.environmentId) ||
+          claims.projectId !== requiredString(record.projectId) ||
+          claims.actorId !== requiredString(record.actorId) ||
+          claims.threadId !== requiredString(record.threadId) ||
+          claims.sessionId !== requiredString(record.sessionId) ||
+          claims.generation !== record.generation
+        ) throw new Error("BROWSER_SESSION_LOST");
+        if (!engine.viewerCleanup) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+        await engine.viewerCleanup(claims);
+        return writeJson(response, 200, null);
+      }
       return writeError(response, 404, "BROWSER_ENGINE_FAILURE");
     } catch (error) {
       const code = readCode(error);
@@ -525,6 +566,9 @@ export type AgentBrowserHostedWorkerEngineOptions = {
   createDesktopBrowserService?:
     | ((options: ConstructorParameters<typeof DesktopBrowserService>[0]) => DesktopBrowserService)
     | undefined;
+  now?: (() => Date) | undefined;
+  setTimeout?: typeof setTimeout | undefined;
+  clearTimeout?: typeof clearTimeout | undefined;
 };
 
 export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
@@ -533,6 +577,13 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   readonly #createDesktopBrowserService: (
     options: ConstructorParameters<typeof DesktopBrowserService>[0],
   ) => DesktopBrowserService;
+  readonly #now: () => Date;
+  readonly #setTimeout: typeof setTimeout;
+  readonly #clearTimeout: typeof clearTimeout;
+  readonly #viewerExpiries = new Map<string, {
+    timer: ReturnType<typeof setTimeout>;
+    claims: HostedBrowserViewerTicketClaimsV1;
+  }>();
   #authority: BrowserEffectiveDomainAuthorityV1 | undefined;
   #session: BrowserSessionV1 | undefined;
   #service: DesktopBrowserService | undefined;
@@ -549,6 +600,9 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     this.#createDesktopBrowserService =
       options.createDesktopBrowserService ??
       ((serviceOptions) => new DesktopBrowserService(serviceOptions));
+    this.#now = options.now ?? (() => new Date());
+    this.#setTimeout = options.setTimeout ?? setTimeout;
+    this.#clearTimeout = options.clearTimeout ?? clearTimeout;
   }
 
   async execute(input: {
@@ -654,38 +708,126 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       if (connectionId !== input.claims.connectionId) {
         throw new Error("BROWSER_SESSION_LOST");
       }
-      return service.connectViewer({ ...binding, connectionId });
+      const state = await service.connectViewer({ ...binding, connectionId });
+      this.#scheduleViewerExpiry(input.claims, state);
+      return state;
     }
     const connectionId = requiredString(input.connectionId);
     const connected = { ...binding, connectionId };
     if (input.action === "frame") return service.readViewerFrame(connected);
-    if (input.action === "accept") return service.acceptViewerTakeover(connected);
+    if (input.action === "accept") {
+      const state = await service.acceptViewerTakeover(connected);
+      this.#scheduleViewerExpiry(input.claims, state);
+      return state;
+    }
     if (input.action === "disconnect") {
-      await service.disconnectViewer(connected);
+      await service.cleanupViewerConnection(connected);
+      this.#clearViewerExpiry(connectionId);
       return null;
     }
     if (input.action === "close") {
       await service.closeViewerSession(connected);
+      this.#clearViewerExpiry(connectionId);
       return null;
     }
     const leaseId = requiredString(input.leaseId);
     if (input.action === "renew") {
-      return service.renewViewerInputLease({ ...connected, leaseId });
+      const state = await service.renewViewerInputLease({ ...connected, leaseId });
+      this.#scheduleViewerExpiry(input.claims, state);
+      return state;
     }
     if (input.action === "return") {
-      return service.returnViewerControl({ ...connected, leaseId });
+      const state = await service.returnViewerControl({ ...connected, leaseId });
+      await service.cleanupViewerConnection(connected);
+      this.#clearViewerExpiry(connectionId);
+      return state;
     }
     if (!input.viewerInput) throw new Error("BROWSER_SESSION_LOST");
-    return service.sendViewerInput({
+    const state = await service.sendViewerInput({
       ...connected,
       leaseId,
       viewerInput: input.viewerInput,
     });
+    this.#scheduleViewerExpiry(input.claims, state);
+    return state;
+  }
+
+  async viewerCleanup(
+    claims: HostedBrowserViewerCleanupCapabilityV1,
+  ): Promise<void> {
+    const service = this.#service;
+    if (!(service && this.#session)) return;
+    await service.cleanupViewerConnection({
+      principalId: claims.actorId,
+      threadId: claims.threadId,
+      projectId: claims.projectId,
+      sessionId: claims.sessionId,
+      generation: claims.generation,
+      connectionId: claims.connectionId,
+    });
+    this.#clearViewerExpiry(claims.connectionId);
   }
 
   async destroy(): Promise<void> {
+    for (const entry of this.#viewerExpiries.values()) {
+      this.#clearTimeout(entry.timer);
+    }
+    this.#viewerExpiries.clear();
     await this.#service?.close().catch(() => {});
     await rm(this.#runtimeRoot, { recursive: true, force: true });
+  }
+
+  #scheduleViewerExpiry(
+    claims: HostedBrowserViewerTicketClaimsV1,
+    state?: DesktopBrowserViewerStateV1,
+  ): void {
+    this.#clearViewerExpiry(claims.connectionId);
+    const expiresAt = Math.min(
+      Date.parse(claims.expiresAt),
+      state?.inputLeaseExpiresAt
+        ? Date.parse(state.inputLeaseExpiresAt)
+        : Number.POSITIVE_INFINITY,
+    );
+    const delay = Math.max(1, expiresAt - this.#now().getTime());
+    const timer = this.#setTimeout(
+      () => void this.#expireViewerConnection(claims),
+      delay,
+    );
+    timer.unref?.();
+    this.#viewerExpiries.set(claims.connectionId, { timer, claims });
+  }
+
+  async #expireViewerConnection(
+    claims: HostedBrowserViewerTicketClaimsV1,
+  ): Promise<void> {
+    const entry = this.#viewerExpiries.get(claims.connectionId);
+    if (!entry || entry.claims !== claims) return;
+    try {
+      await this.#service?.cleanupViewerConnection({
+        principalId: claims.actorId,
+        threadId: claims.threadId,
+        projectId: claims.projectId,
+        sessionId: claims.sessionId,
+        generation: claims.generation,
+        connectionId: claims.connectionId,
+      });
+      if (this.#viewerExpiries.get(claims.connectionId) === entry) {
+        this.#viewerExpiries.delete(claims.connectionId);
+      }
+    } catch {
+      if (this.#viewerExpiries.get(claims.connectionId) !== entry) return;
+      entry.timer = this.#setTimeout(
+        () => void this.#expireViewerConnection(claims),
+        1_000,
+      );
+      entry.timer.unref?.();
+    }
+  }
+
+  #clearViewerExpiry(connectionId: string): void {
+    const entry = this.#viewerExpiries.get(connectionId);
+    if (entry) this.#clearTimeout(entry.timer);
+    this.#viewerExpiries.delete(connectionId);
   }
 
   #createService(session: BrowserSessionV1): DesktopBrowserService {
@@ -1120,6 +1262,15 @@ function requireRecord(value: unknown): Record<string, unknown> {
 function requiredString(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) throw new Error("BROWSER_ENGINE_FAILURE");
   return value.trim();
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const expected = new Set(keys);
+  return Object.keys(value).length === expected.size &&
+    Object.keys(value).every((key) => expected.has(key));
 }
 
 function requireViewerConnectionId(value: unknown): string {

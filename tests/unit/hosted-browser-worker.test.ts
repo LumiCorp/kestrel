@@ -35,7 +35,10 @@ import {
 import type { BrowserEffectiveDomainAuthorityV1 } from "../../src/browser/domainAuthority.js";
 import {
   HOSTED_BROWSER_VIEWER_AUDIENCE,
+  HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE,
+  HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION,
   HOSTED_BROWSER_VIEWER_TICKET_VERSION,
+  issueHostedBrowserViewerCleanupCapability,
   issueHostedBrowserViewerTicket,
 } from "../../src/browser/hostedViewer.js";
 import {
@@ -931,6 +934,66 @@ test("hosted worker viewer channel accepts only the exact signed actor and forwa
   await worker.close();
 });
 
+test("hosted worker cleanup requires a fixed-key capability bound to the exact connection", async () => {
+  const cleaned: string[] = [];
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async execute() { throw new Error("not called"); },
+      async adopt() { return 0; },
+      async viewerCleanup(claims) { cleaned.push(claims.connectionId); },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const request = (body: unknown) => fetch(
+    `http://[::1]:${port}/v1/viewer-cleanup`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  const exact = viewerCleanupCapability("connection-cleanup-1");
+  assert.equal((await request({
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+    sessionId: "browser-session-1",
+    generation: 1,
+    connectionId: "connection-cleanup-1",
+    cleanupCapability: exact,
+  })).status, 200);
+  assert.deepEqual(cleaned, ["connection-cleanup-1"]);
+  assert.equal((await request({
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+    sessionId: "browser-session-1",
+    generation: 1,
+    connectionId: "connection-other",
+    cleanupCapability: exact,
+  })).status, 400);
+  assert.equal((await request({
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+    sessionId: "browser-session-1",
+    generation: 1,
+    connectionId: "connection-cleanup-1",
+    cleanupCapability: "unsigned",
+  })).status, 400);
+  assert.deepEqual(cleaned, ["connection-cleanup-1"]);
+  await worker.close();
+});
+
 test("AgentBrowserHostedWorkerEngine fail-closes a retained viewer before accepting a different proposed connection", async (t) => {
   const homePath = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-hosted-viewer-composition-"),
@@ -1019,6 +1082,91 @@ test("AgentBrowserHostedWorkerEngine fail-closes a retained viewer before accept
     }),
     hasBrowserCode("BROWSER_SESSION_LOST"),
   );
+  await engine.destroy();
+});
+
+test("hosted worker lease expiry retries exact cleanup until the worker proves release", async () => {
+  const now = new Date("2026-08-30T12:00:00.000Z");
+  const timers: Array<{ handler: () => void; delay: number; cleared: boolean }> = [];
+  let cleanupCalls = 0;
+  const fakeService = {
+    async initialize() {},
+    async execute() { return null; },
+    async connectViewer(input: { connectionId: string }) {
+      return {
+        version: "desktop_browser_viewer_state_v1" as const,
+        available: true,
+        threadId: "thread-1",
+        projectId: "project-1",
+        sessionId: "browser-session-1",
+        generation: 1,
+        connectionId: input.connectionId,
+        sessionState: "ready" as const,
+        takeoverRequested: true,
+      };
+    },
+    async acceptViewerTakeover(input: { connectionId: string }) {
+      return {
+        version: "desktop_browser_viewer_state_v1" as const,
+        available: true,
+        threadId: "thread-1",
+        projectId: "project-1",
+        sessionId: "browser-session-1",
+        generation: 1,
+        connectionId: input.connectionId,
+        sessionState: "human_control" as const,
+        takeoverRequested: false,
+        inputLeaseId: "lease-1",
+        inputLeaseExpiresAt: new Date(now.getTime() + 5_000).toISOString(),
+        nativeHandoffActive: false,
+      };
+    },
+    async cleanupViewerConnection() {
+      cleanupCalls += 1;
+      if (cleanupCalls === 1) throw new Error("transient cleanup failure");
+    },
+    async close() {},
+  };
+  const fakeSetTimeout = ((handler: () => void, delay?: number) => {
+    const record = { handler, delay: delay ?? 0, cleared: false };
+    timers.push(record);
+    return { unref() {} } as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  const fakeClearTimeout = ((_handle: ReturnType<typeof setTimeout>) => {
+    const active = [...timers].reverse().find((timer) => !timer.cleared);
+    if (active) active.cleared = true;
+  }) as typeof clearTimeout;
+  const config = workerConfig();
+  const engine = new AgentBrowserHostedWorkerEngine(config, {
+    now: () => now,
+    setTimeout: fakeSetTimeout,
+    clearTimeout: fakeClearTimeout,
+    createDesktopBrowserService() {
+      return fakeService as unknown as DesktopBrowserService;
+    },
+  });
+  await engine.execute(
+    {
+      prepared: preparedOpen(),
+      authority,
+      session: openingHostedSession(),
+      gatewayProxy: hostedGatewayProxy(config),
+    },
+    { async acknowledgeDispatch() {}, async persistCompletedResult() {} },
+  );
+  const claims = viewerClaims("user-1", "expiry-connection", now);
+  await engine.viewer({ action: "connect", claims, connectionId: claims.connectionId });
+  await engine.viewer({ action: "accept", claims, connectionId: claims.connectionId });
+  const leaseTimer = timers.find((timer) => timer.delay === 5_000);
+  assert.ok(leaseTimer);
+  leaseTimer.handler();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(cleanupCalls, 1);
+  const retry = timers.find((timer) => timer.delay === 1_000 && !timer.cleared);
+  assert.ok(retry);
+  retry.handler();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(cleanupCalls, 2);
   await engine.destroy();
 });
 
@@ -1217,6 +1365,30 @@ function viewerTicket(actorId: string, connectionId = "connection-1") {
     privateKeyPem,
     now,
     claims: viewerClaims(actorId, connectionId, now),
+  });
+}
+
+function viewerCleanupCapability(connectionId: string) {
+  const now = new Date();
+  return issueHostedBrowserViewerCleanupCapability({
+    privateKeyPem,
+    now,
+    claims: {
+      version: HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION,
+      audience: HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE,
+      action: "cleanup",
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      threadId: "thread-1",
+      sessionId: "browser-session-1",
+      generation: 1,
+      actorId: "user-1",
+      connectionId,
+      nonce: `viewer-cleanup-${connectionId}`,
+      issuedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    },
   });
 }
 

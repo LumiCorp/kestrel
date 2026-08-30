@@ -17,13 +17,30 @@ export async function resolveHostedBrowserViewerService(input: {
   threadId: string;
 }) {
   const store = new HostedBrowserStore();
-  const active = await store.readActiveForThread(input.threadId);
+  const tickets = new RedisHostedBrowserViewerTicketStore();
+  const pending = await tickets.readCleanupPending(input.threadId);
+  const active = await store.readActiveForThread(input.threadId) ??
+    (pending ? await store.read(pending.scope.sessionId) : null);
   if (!active?.resource) throw new Error("BROWSER_SESSION_LOST");
   const origin = await store.resolveCurrentOrigin(active.session.sessionId);
+  const requestAccess = await getThreadAccessForUser(
+    input.threadId,
+    input.actorId,
+    input.organizationId,
+  );
   if (
     origin.organizationId !== input.organizationId ||
-    origin.userId !== input.actorId ||
-    origin.threadId !== input.threadId
+    origin.threadId !== input.threadId ||
+    requestAccess?.thread.projectId !== origin.projectId ||
+    (origin.userId !== input.actorId &&
+      !(
+        pending?.scope.organizationId === origin.organizationId &&
+        pending.scope.environmentId === origin.environmentId &&
+        pending.scope.projectId === origin.projectId &&
+        pending.scope.threadId === origin.threadId &&
+        pending.scope.sessionId === active.session.sessionId &&
+        pending.scope.generation === active.session.generation
+      ))
   ) throw new Error("BROWSER_SESSION_LOST");
   const environment = await knowledgeDb.query.environments.findFirst({
     where: and(
@@ -52,10 +69,11 @@ export async function resolveHostedBrowserViewerService(input: {
   return new HostedBrowserViewerService({
     store,
     lifecycle,
-    tickets: new RedisHostedBrowserViewerTicketStore(),
+    tickets,
     worker: new HostedBrowserViewerWorkerClient({
       environmentPrivateKeyPem: required("KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY"),
       viewerPublicKeyPem,
+      viewerPrivateKeyPem: privateKeyPem,
     }),
     privateKeyPem,
     publicKeyPem: viewerPublicKeyPem,

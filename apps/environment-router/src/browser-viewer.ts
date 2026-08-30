@@ -40,6 +40,25 @@ type BrowserViewerEnvelope = {
   };
 };
 
+type BrowserViewerCleanupEnvelope = {
+  version: "hosted_browser_viewer_cleanup_router_envelope_v1";
+  organizationId: string;
+  environmentId: string;
+  projectId: string;
+  userId: string;
+  threadId: string;
+  runId: string;
+  instruction: {
+    version: "hosted_browser_viewer_cleanup_instruction_v1";
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+    operation: "viewer.cleanup";
+    cleanupCapability: string;
+    machine: { appName: string; machineId: string };
+  };
+};
+
 export async function handleBrowserViewerControl(input: {
   request: IncomingMessage;
   response: ServerResponse;
@@ -48,39 +67,64 @@ export async function handleBrowserViewerControl(input: {
   expectedAppName: string;
   fetchImpl?: typeof fetch | undefined;
 }) {
-  let envelope: BrowserViewerEnvelope;
+  let envelope: BrowserViewerEnvelope | BrowserViewerCleanupEnvelope;
   try {
     const body = await readBoundedRequestBody(input.request);
-    envelope = authorizeBrowserViewerControl({
+    const parsed = JSON.parse(body.toString("utf8")) as { version?: unknown };
+    envelope = parsed.version === "hosted_browser_viewer_cleanup_router_envelope_v1"
+      ? authorizeBrowserViewerCleanup({
+          authorization: input.request.headers.authorization,
+          body,
+          publicKey: input.publicKey,
+          environmentId: input.environmentId,
+          expectedAppName: input.expectedAppName,
+        })
+      : authorizeBrowserViewerControl({
       authorization: input.request.headers.authorization,
       body,
       publicKey: input.publicKey,
       environmentId: input.environmentId,
       expectedAppName: input.expectedAppName,
-    });
+        });
   } catch {
     return writeError(input.response, 403, "BROWSER_VIEWER_CONTROL_DENIED");
   }
 
+  const cleanup = envelope.version === "hosted_browser_viewer_cleanup_router_envelope_v1";
+  let workerRequest: Record<string, unknown>;
+  if (envelope.version === "hosted_browser_viewer_cleanup_router_envelope_v1") {
+    workerRequest = {
+      organizationId: envelope.organizationId,
+      environmentId: envelope.environmentId,
+      projectId: envelope.projectId,
+      actorId: envelope.userId,
+      threadId: envelope.threadId,
+      sessionId: envelope.instruction.sessionId,
+      generation: envelope.instruction.generation,
+      connectionId: envelope.instruction.connectionId,
+      cleanupCapability: envelope.instruction.cleanupCapability,
+    };
+  } else {
+    workerRequest = {
+      ticket: envelope.instruction.viewerTicket,
+      action: envelope.instruction.action,
+      ...(envelope.instruction.connectionId === undefined
+        ? {}
+        : { connectionId: envelope.instruction.connectionId }),
+      ...(envelope.instruction.leaseId === undefined
+        ? {}
+        : { leaseId: envelope.instruction.leaseId }),
+      ...(envelope.instruction.viewerInput === undefined
+        ? {}
+        : { viewerInput: envelope.instruction.viewerInput }),
+    };
+  }
   const instruction = envelope.instruction;
-  const workerRequest = {
-    ticket: instruction.viewerTicket,
-    action: instruction.action,
-    ...(instruction.connectionId === undefined
-      ? {}
-      : { connectionId: instruction.connectionId }),
-    ...(instruction.leaseId === undefined
-      ? {}
-      : { leaseId: instruction.leaseId }),
-    ...(instruction.viewerInput === undefined
-      ? {}
-      : { viewerInput: instruction.viewerInput }),
-  };
   let worker: Response;
   try {
     worker = await (input.fetchImpl ?? fetch)(
       new URL(
-        `http://${instruction.machine.machineId}.vm.${instruction.machine.appName}.internal:43105/v1/viewer`,
+        `http://${instruction.machine.machineId}.vm.${instruction.machine.appName}.internal:43105/${cleanup ? "v1/viewer-cleanup" : "v1/viewer"}`,
       ),
       {
         method: "POST",
@@ -108,6 +152,46 @@ export async function handleBrowserViewerControl(input: {
     "content-type": "application/json",
   });
   input.response.end(responseBody);
+}
+
+export function authorizeBrowserViewerCleanup(input: {
+  authorization: string | undefined;
+  body: Buffer;
+  publicKey: string;
+  environmentId: string;
+  expectedAppName: string;
+  now?: number | undefined;
+}): BrowserViewerCleanupEnvelope {
+  const token = input.authorization?.match(/^Bearer ([^\s]+)$/u)?.[1];
+  if (!token) throw new Error("Browser viewer cleanup credential is required.");
+  const credential = verifyEnvironmentToolCredential({
+    token,
+    publicKey: input.publicKey,
+    ...(input.now === undefined ? {} : { now: input.now }),
+  });
+  const envelope = parseCleanupEnvelope(JSON.parse(input.body.toString("utf8")));
+  const instruction = envelope.instruction;
+  const bodyBinding = `sha256:${createHash("sha256").update(input.body).digest("base64url")}`;
+  if (
+    credential.organizationId !== envelope.organizationId ||
+    credential.environmentId !== input.environmentId ||
+    credential.environmentId !== envelope.environmentId ||
+    credential.workspaceId !== `browser:${instruction.sessionId}` ||
+    credential.threadId !== envelope.threadId ||
+    credential.runId !== envelope.runId ||
+    credential.actorId !== envelope.userId ||
+    credential.agentId !== "kestrel-control-plane" ||
+    credential.providerKey !== "built_in.browser" ||
+    credential.resourceId !== instruction.sessionId ||
+    credential.capability !== "browser.viewer.cleanup" ||
+    credential.operation !== "viewer.cleanup" ||
+    credential.operationBinding !== bodyBinding ||
+    instruction.operation !== "viewer.cleanup" ||
+    instruction.machine.appName !== input.expectedAppName
+  ) {
+    throw new Error("Browser viewer cleanup credential scope is invalid.");
+  }
+  return envelope;
 }
 
 export function authorizeBrowserViewerControl(input: {
@@ -257,6 +341,57 @@ function parseEnvelope(value: unknown): BrowserViewerEnvelope {
     throw new Error("Browser viewer request is invalid.");
   }
   return value as BrowserViewerEnvelope;
+}
+
+function parseCleanupEnvelope(value: unknown): BrowserViewerCleanupEnvelope {
+  const envelope = record(value);
+  const instruction = record(envelope.instruction);
+  const machine = record(instruction.machine);
+  if (
+    !exactKeys(envelope, [
+      "version",
+      "organizationId",
+      "environmentId",
+      "projectId",
+      "userId",
+      "threadId",
+      "runId",
+      "instruction",
+    ]) ||
+    !exactKeys(instruction, [
+      "version",
+      "sessionId",
+      "generation",
+      "connectionId",
+      "operation",
+      "cleanupCapability",
+      "machine",
+    ]) ||
+    !exactKeys(machine, ["appName", "machineId"]) ||
+    envelope.version !== "hosted_browser_viewer_cleanup_router_envelope_v1" ||
+    !texts(envelope, [
+      "organizationId",
+      "environmentId",
+      "projectId",
+      "userId",
+      "threadId",
+      "runId",
+    ]) ||
+    instruction.version !== "hosted_browser_viewer_cleanup_instruction_v1" ||
+    !text(instruction.sessionId) ||
+    !Number.isSafeInteger(instruction.generation) ||
+    Number(instruction.generation) < 1 ||
+    !text(instruction.connectionId) ||
+    instruction.operation !== "viewer.cleanup" ||
+    !text(instruction.cleanupCapability, 16 * 1024) ||
+    typeof machine.appName !== "string" ||
+    !/^[a-z0-9][a-z0-9-]{0,62}$/u.test(machine.appName) ||
+    typeof machine.machineId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(machine.machineId)
+  ) {
+    throw new Error("Browser viewer cleanup request is invalid.");
+  }
+  return value as BrowserViewerCleanupEnvelope;
 }
 
 function verifyViewerTicket(token: string, publicKeyPem: string, now?: number) {

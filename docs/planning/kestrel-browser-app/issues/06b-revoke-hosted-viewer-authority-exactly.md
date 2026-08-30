@@ -68,3 +68,18 @@ depend on an expired user ticket granting a new action.
 ## Depends on
 
 [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md).
+
+## Implementation evidence
+
+- Focused Web lifecycle, socket, status, and UI contracts pass: 30 tests.
+- Focused Environment Router and hosted worker contracts pass: 26 tests.
+- Focused Local Core Browser service contracts pass: 84 tests.
+- Root and Environment Router typechecks pass. The Web typecheck reaches only
+  pre-existing unrelated runtime-profile and hosted OAuth test errors.
+- Scoped Web lint and `git diff --check` pass.
+- The PostgreSQL lifecycle test was not run because
+  `KESTREL_ENVIRONMENT_DB_TEST_URL` is not configured in this worktree.
+- `pnpm validate:process` completed shared/root and Workspace Runtime builds,
+  packed-consumer preparation, and its first TUI PTY journey. It then emitted no
+  output for 50 seconds during the remaining PTY journeys and was interrupted;
+  this broad gate is inconclusive rather than passing.

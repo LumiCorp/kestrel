@@ -605,6 +605,59 @@ test("Desktop human control survives disconnect and lease expiry until an author
   await fixture.service.close();
 });
 
+test("exact control-plane viewer cleanup preserves human control and cannot revoke a replacement", async () => {
+  const fixture = await createFixture({ nativeAuthenticationHandoff: false });
+  const sessionId = await openSession(fixture.service);
+  await fixture.service.execute(
+    prepared("browser.request_takeover", {
+      sessionId,
+      reason: "Authentication required.",
+    }),
+    createLifecycle(),
+  );
+  const retired = requireAvailableViewer(await fixture.service.connectViewer({
+    principalId: "hosted-actor-1",
+    threadId: "thread-1",
+    projectId: "project-1",
+    sessionId,
+    generation: 1,
+    connectionId: "hosted-cleanup-1",
+  }));
+  await fixture.service.acceptViewerTakeover({
+    ...retired,
+    principalId: "hosted-actor-1",
+  });
+  await fixture.service.cleanupViewerConnection({
+    ...retired,
+    principalId: "hosted-actor-1",
+  });
+  await assert.rejects(
+    fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      createLifecycle(),
+    ),
+    hasCode("BROWSER_HUMAN_CONTROL_ACTIVE"),
+  );
+  const replacement = requireAvailableViewer(await fixture.service.connectViewer({
+    principalId: "hosted-actor-1",
+    threadId: "thread-1",
+    projectId: "project-1",
+    sessionId,
+    generation: 1,
+    connectionId: "hosted-cleanup-2",
+  }));
+  await fixture.service.cleanupViewerConnection({
+    ...retired,
+    principalId: "hosted-actor-1",
+  });
+  const stillCurrent = requireAvailableViewer(await fixture.service.connectViewer({
+    ...replacement,
+    principalId: "hosted-actor-1",
+  }));
+  assert.equal(stillCurrent.connectionId, replacement.connectionId);
+  await fixture.service.close();
+});
+
 test("Desktop native handoff fails closed when presentation or revocation cannot be proven", async () => {
   const presentation = await createFixture();
   const sessionId = await openSession(presentation.service);

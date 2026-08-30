@@ -44,6 +44,8 @@ test("web viewer exposes acceptance, typed input, reconnect, explicit return, an
   assert.doesNotMatch(component, /localStorage|sessionStorage/u);
   assert.match(component, /hostedBrowserViewerCleanupUnknownPresentation/u);
   assert.match(component, /hosted-browser-viewer-cleanup-unknown/u);
+  assert.match(component, /value\.cleanupPending/u);
+  assert.match(component, /if \(availability\.cleanupPending\) return/u);
 });
 
 test("Kestrel One Mobile has no Browser viewer route, socket, or takeover action", () => {

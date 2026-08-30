@@ -10,6 +10,7 @@ import {
 } from "./viewer-service";
 
 const DEFAULT_FRAME_INTERVAL_MS = 750;
+const DEFAULT_AUTHORITY_REVALIDATION_INTERVAL_MS = 2000;
 
 type ViewerSocket = Pick<WebSocket, "close" | "on" | "readyState" | "send">;
 type TimerHandle = ReturnType<typeof setTimeout>;
@@ -28,6 +29,7 @@ export function attachHostedBrowserViewerSocket(input: {
   parseMessage(data: WebSocket.RawData): HostedBrowserViewerClientMessageV1;
   connect(ticket: string): Promise<HostedBrowserViewerConnection>;
   frameIntervalMs?: number | undefined;
+  authorityRevalidationIntervalMs?: number | undefined;
   timers?: {
     setInterval(handler: () => void, delay: number): TimerHandle;
     clearInterval(handle: TimerHandle): void;
@@ -46,6 +48,7 @@ export function attachHostedBrowserViewerSocket(input: {
   let cleanupRetry: (() => Promise<boolean>) | undefined;
   let frameTimer: TimerHandle | undefined;
   let authorityTimer: TimerHandle | undefined;
+  let authorityPollTimer: TimerHandle | undefined;
   let closeIntent: { code: number; reason: string } | undefined;
   let closeSettlement: Promise<void> | undefined;
   let tail: Promise<void> = Promise.resolve();
@@ -53,8 +56,10 @@ export function attachHostedBrowserViewerSocket(input: {
   const clearTimers = () => {
     if (frameTimer) timers.clearInterval(frameTimer);
     if (authorityTimer) timers.clearTimeout(authorityTimer);
+    if (authorityPollTimer) timers.clearInterval(authorityPollTimer);
     frameTimer = undefined;
     authorityTimer = undefined;
+    authorityPollTimer = undefined;
   };
 
   const settleClose = async (waitForQueuedWork: Promise<void> | undefined) => {
@@ -175,6 +180,20 @@ export function attachHostedBrowserViewerSocket(input: {
     }, input.frameIntervalMs ?? DEFAULT_FRAME_INTERVAL_MS);
   };
 
+  const startAuthorityRevalidation = () => {
+    if (closeIntent || authorityPollTimer) return;
+    authorityPollTimer = timers.setInterval(() => {
+      void (async () => {
+        if (!connection || closeIntent) return;
+        try {
+          await connection.revalidate();
+        } catch (error) {
+          await fail(error, "viewer authorization failed");
+        }
+      })();
+    }, input.authorityRevalidationIntervalMs ?? DEFAULT_AUTHORITY_REVALIDATION_INTERVAL_MS);
+  };
+
   input.socket.on("message", (data) => {
     enqueue(async () => {
       if (closeIntent) return;
@@ -208,6 +227,7 @@ export function attachHostedBrowserViewerSocket(input: {
           });
           if (!(sent && !closeIntent)) return;
           scheduleConnectionExpiry();
+          startAuthorityRevalidation();
           startFrames();
           return;
         }

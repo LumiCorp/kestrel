@@ -6,11 +6,18 @@ import {
   ENVIRONMENT_TOOL_CREDENTIAL_VERSION,
   signEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
+import {
+  HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE,
+  HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION,
+  HOSTED_BROWSER_VIEWER_TICKET_TTL_MS,
+  issueHostedBrowserViewerCleanupCapability,
+} from "../../../../src/browser/hostedViewer.js";
 import type {
   DesktopBrowserViewerFrameV1,
   DesktopBrowserViewerInputV1,
   DesktopBrowserViewerStateV1,
 } from "../../../../src/desktopShell/contracts.js";
+import type { HostedBrowserViewerCleanupScopeV1 } from "./viewer-transient-store";
 
 const MAX_VIEWER_RESPONSE_BYTES = 28 * 1024 * 1024;
 const VIEWER_REQUEST_TIMEOUT_MS = 15_000;
@@ -44,6 +51,9 @@ export interface HostedBrowserViewerWorkerPort {
     leaseId?: string | undefined;
     viewerInput?: DesktopBrowserViewerInputV1 | undefined;
   }): Promise<DesktopBrowserViewerStateV1 | DesktopBrowserViewerFrameV1 | null>;
+  cleanup(input: HostedBrowserViewerCleanupScopeV1 & {
+    routerUrl: string;
+  }): Promise<void>;
 }
 
 export class HostedBrowserViewerWorkerClient
@@ -51,6 +61,7 @@ export class HostedBrowserViewerWorkerClient
   constructor(private readonly options: {
     environmentPrivateKeyPem: string;
     viewerPublicKeyPem: string;
+    viewerPrivateKeyPem: string;
     fetchImpl?: typeof fetch | undefined;
   }) {}
 
@@ -150,6 +161,105 @@ export class HostedBrowserViewerWorkerClient
       | DesktopBrowserViewerStateV1
       | DesktopBrowserViewerFrameV1
       | null;
+  }
+
+  async cleanup(input: HostedBrowserViewerCleanupScopeV1 & {
+    routerUrl: string;
+  }): Promise<void> {
+    if (
+      !(
+        /^[a-z0-9][a-z0-9-]{0,62}$/u.test(input.appName) &&
+        /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(input.machineId)
+      )
+    ) {
+      throw new Error("BROWSER_SESSION_LOST");
+    }
+    const operation = "viewer.cleanup";
+    const now = new Date();
+    const cleanupCapability = issueHostedBrowserViewerCleanupCapability({
+      privateKeyPem: this.options.viewerPrivateKeyPem,
+      now,
+      claims: {
+        version: HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION,
+        audience: HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE,
+        action: "cleanup",
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        projectId: input.projectId,
+        threadId: input.threadId,
+        sessionId: input.sessionId,
+        generation: input.generation,
+        actorId: input.actorId,
+        connectionId: input.connectionId,
+        nonce: randomUUID(),
+        issuedAt: now.toISOString(),
+        expiresAt: new Date(
+          now.getTime() + HOSTED_BROWSER_VIEWER_TICKET_TTL_MS,
+        ).toISOString(),
+      },
+    });
+    const envelope = {
+      version: "hosted_browser_viewer_cleanup_router_envelope_v1" as const,
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      projectId: input.projectId,
+      userId: input.actorId,
+      threadId: input.threadId,
+      runId: input.runId,
+      instruction: {
+        version: "hosted_browser_viewer_cleanup_instruction_v1" as const,
+        sessionId: input.sessionId,
+        generation: input.generation,
+        connectionId: input.connectionId,
+        operation,
+        cleanupCapability,
+        machine: { appName: input.appName, machineId: input.machineId },
+      },
+    };
+    const body = JSON.stringify(envelope);
+    const issuedAt = Math.floor(now.getTime() / 1000);
+    const token = signEnvironmentToolCredential({
+      privateKey: this.options.environmentPrivateKeyPem,
+      ticket: {
+        version: ENVIRONMENT_TOOL_CREDENTIAL_VERSION,
+        audience: ENVIRONMENT_TOOL_CREDENTIAL_AUDIENCE,
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: `browser:${input.sessionId}`,
+        threadId: input.threadId,
+        runId: input.runId,
+        actorId: input.actorId,
+        agentId: "kestrel-control-plane",
+        providerKey: "built_in.browser",
+        resourceId: input.sessionId,
+        capability: "browser.viewer.cleanup",
+        operation,
+        operationBinding: `sha256:${createHash("sha256").update(body).digest("base64url")}`,
+        issuedAt,
+        expiresAt: issuedAt + 60,
+        nonce: randomUUID(),
+      },
+    });
+    const response = await (this.options.fetchImpl ?? fetch)(
+      new URL("/internal/browser/viewer", input.routerUrl),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body,
+        cache: "no-store",
+        redirect: "error",
+        signal: AbortSignal.timeout(VIEWER_REQUEST_TIMEOUT_MS),
+      },
+    );
+    if (!response.ok) throw new Error(await readWorkerError(response));
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > 1024) throw new Error("BROWSER_ENGINE_FAILURE");
+    if (new TextDecoder().decode(bytes) !== "null") {
+      throw new Error("BROWSER_ENGINE_FAILURE");
+    }
   }
 }
 

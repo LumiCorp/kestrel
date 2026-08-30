@@ -26,6 +26,7 @@ import {
 type Availability = {
   available: boolean;
   sessionState?: string;
+  cleanupPending?: boolean;
 };
 
 export function HostedBrowserViewer({ threadId }: { threadId: string }) {
@@ -46,7 +47,14 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
           cache: "no-store",
         });
         const value = response.ok ? (await response.json()) as Availability : { available: false };
-        if (!cancelled) setAvailability(value);
+        if (!cancelled) {
+          setAvailability(value);
+          setCleanupUnknown(value.cleanupPending
+            ? hostedBrowserViewerCleanupUnknownPresentation(
+                "BROWSER_ACTION_OUTCOME_UNKNOWN",
+              )
+            : null);
+        }
       } catch {
         if (!cancelled) setAvailability({ available: false });
       }
@@ -62,6 +70,7 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
   useEffect(() => () => socketRef.current?.close(1000, "viewer unmounted"), []);
 
   const connect = useCallback(async () => {
+    if (availability.cleanupPending) return;
     socketRef.current?.close(1000, "viewer reconnecting");
     setTransportState("connecting");
     setFrame(null);
@@ -104,7 +113,7 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
       setState(null);
       setFrame(null);
     });
-  }, [threadId]);
+  }, [availability.cleanupPending, threadId]);
 
   useEffect(() => {
     if (!(state?.inputLeaseId && transportState === "open")) return;
