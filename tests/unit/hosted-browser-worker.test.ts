@@ -1293,6 +1293,80 @@ test("hosted worker retires exact viewer identities, protects replacements, and 
   await engine.destroy();
 });
 
+test("authority loss bypasses a full exact-retirement map and blocks replacement until signed expiry", async () => {
+  let now = new Date("2026-08-30T12:00:00.000Z");
+  let authorityLossCalls = 0;
+  const fakeService = {
+    async initialize() {},
+    async execute() { return null; },
+    async connectViewer(input: { connectionId: string }) {
+      return {
+        version: "desktop_browser_viewer_state_v1" as const,
+        available: true,
+        threadId: "thread-1",
+        projectId: "project-1",
+        sessionId: "browser-session-1",
+        generation: 1,
+        connectionId: input.connectionId,
+        sessionState: "ready" as const,
+        takeoverRequested: true,
+      };
+    },
+    async cleanupViewerConnection() {},
+    async loseViewerAuthority() { authorityLossCalls += 1; },
+    async close() {},
+  };
+  const config = workerConfig();
+  const engine = new AgentBrowserHostedWorkerEngine(config, {
+    now: () => now,
+    viewerRetirementLimit: 2,
+    createDesktopBrowserService() {
+      return fakeService as unknown as DesktopBrowserService;
+    },
+  });
+  await engine.viewerCleanup(viewerCleanupClaims("already-retired", "disconnect", now));
+  await engine.execute(
+    {
+      prepared: preparedOpen(),
+      authority,
+      session: openingHostedSession(),
+      gatewayProxy: hostedGatewayProxy(config),
+    },
+    { async acknowledgeDispatch() {}, async persistCompletedResult() {} },
+  );
+  const live = viewerClaims("user-1", "live-at-capacity", now);
+  await engine.viewer({ action: "connect", claims: live, connectionId: live.connectionId });
+
+  await engine.viewerCleanup(viewerCleanupClaims("authority-loss", "authority_loss", now));
+  assert.equal(authorityLossCalls, 1);
+  const replacement = viewerClaims("user-1", "replacement-before-expiry", now);
+  await assert.rejects(
+    engine.viewer({
+      action: "connect",
+      claims: replacement,
+      connectionId: replacement.connectionId,
+    }),
+    hasBrowserCode("BROWSER_SESSION_LOST"),
+  );
+  await assert.rejects(
+    engine.viewerCleanup({
+      ...viewerCleanupClaims("wrong-principal", "authority_loss", now),
+      actorId: "other-user",
+    }),
+    hasBrowserCode("BROWSER_SESSION_LOST"),
+  );
+  assert.equal(authorityLossCalls, 1);
+
+  now = new Date(now.getTime() + 61_000);
+  const afterExpiry = viewerClaims("user-1", "replacement-after-expiry", now);
+  await engine.viewer({
+    action: "connect",
+    claims: afterExpiry,
+    connectionId: afterExpiry.connectionId,
+  });
+  await engine.destroy();
+});
+
 function preparedNavigate() {
   const descriptor = defaultToolCatalog.getDescriptorRef("browser.navigate");
   assert.ok(descriptor);

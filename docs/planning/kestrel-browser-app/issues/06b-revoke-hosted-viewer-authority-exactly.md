@@ -138,6 +138,48 @@ depend on an expired user ticket granting a new action.
   `KESTREL_ENVIRONMENT_DB_TEST_URL` is not configured.
 - Per the repair-turn instruction, `pnpm validate:process` was not rerun.
 
+### Remaining product-policy blocker: simultaneous durable-store rejection
+
+The only server-authoritative durable owners available to Web are the Redis
+cleanup-pending record and the PostgreSQL Browser Session terminal CAS. Viewer
+evidence is a metadata sink rather than a recovery store, and the hosted Local
+Core journal is worker-local, so neither can establish control-plane convergence
+after a worker disappears.
+
+If Redis rejects an `authority_loss` promotion/write at the same time that
+PostgreSQL rejects terminalization, the observed event writes zero durable bits:
+
+- with a retained live marker, Redis still contains the earlier
+  `connect_unknown` record, which is byte-for-byte identical to ordinary Web
+  loss before any authority-loss observation;
+- after a proven clean disconnect, Redis has no marker and PostgreSQL still has
+  the active Session, which is byte-for-byte identical to a request where no
+  authority-loss observation occurred.
+
+After access is restored, a new Web process therefore cannot distinguish the
+authority-loss history from the ordinary history using either existing store.
+Clearing the weak marker would be unsafe for the first history; terminalizing it
+would change the settled policy for proven ordinary cleanup in the second.
+Worker-local retirement cannot resolve this durable control-plane ambiguity.
+
+Resolving this requires a product-policy choice: conservatively terminalize any
+orphaned live marker after reload, require one of the two durable stores to
+accept the authority-loss write before treating the observation as complete, or
+authorize a new durable event owner. No third store or recovery protocol is
+introduced by Issue 06b.
+
+### Capacity-independent authority-loss repair evidence
+
+- Worker authority loss now uses a separate Session/principal-wide retirement
+  state rather than consuming the bounded exact-connection retirement map.
+- It retires all admitted identities, invokes `loseViewerAuthority` even when
+  ordinary retirement capacity is full, rejects replacement connects until the
+  latest signed authority expiry, and preserves the existing bounded/no-eviction
+  rules for ordinary identities.
+- The focused hosted worker command passes 21 tests, including full-capacity
+  emergency cleanup, wrong-principal replacement safety, signed-expiry release,
+  ordinary delayed replay, and admission-bound coverage.
+
 ### Final independent-review repair evidence
 
 - The exact focused Web lifecycle, retained-marker, authorized-replacement,
@@ -153,11 +195,12 @@ depend on an expired user ticket granting a new action.
   using expiry as an identity failure. A real Web-shaped Router-to-worker test
   proves exact ticket and worker-lease expiry remain the typed pre-effect
   `BROWSER_VIEWER_AUTHORITY_EXPIRED` result rather than generic unavailability.
-- The exact Router, ticket, and worker command passes 32 tests. Worker cleanup
+- The exact Router, ticket, and worker command passes 33 tests. Worker cleanup
   retires exact connection identities even before worker service construction;
-  disconnect, expiry, return, close, and authority loss retire before success.
-  Retirement persists through signed expiry, rejects delayed replay, protects a
-  replacement identity, and fails closed at the explicit 4,096-entry bound.
+  disconnect, expiry, return, and close retire before success. Session-wide
+  authority loss uses its independent retirement state and cannot be blocked by
+  the explicit 4,096-entry ordinary-identity bound. Retirement persists through
+  signed expiry, rejects delayed replay, and protects replacement identity.
 - The exact Local Core Browser service command passes 85 tests, including exact
   principal enforcement for Session-wide authority loss. Two packaged Local
   Core composition regressions also pass.

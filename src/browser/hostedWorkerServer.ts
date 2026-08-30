@@ -598,6 +598,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   readonly #viewerAdmissions = new Map<string, HostedBrowserViewerTicketClaimsV1>();
   readonly #retiredViewerConnections = new Map<string, { expiresAt: string }>();
   readonly #viewerRetirementLimit: number;
+  #retiredViewerAuthorityExpiresAt = 0;
   #authority: BrowserEffectiveDomainAuthorityV1 | undefined;
   #session: BrowserSessionV1 | undefined;
   #service: DesktopBrowserService | undefined;
@@ -730,6 +731,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       this.#pruneViewerRetirements();
       const identity = viewerConnectionIdentity(input.claims);
       if (
+        this.#retiredViewerAuthorityExpiresAt > this.#now().getTime() ||
         this.#retiredViewerConnections.has(identity) ||
         this.#viewerAdmissions.has(identity)
       ) throw new Error("BROWSER_SESSION_LOST");
@@ -751,6 +753,9 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     const connectionId = requiredString(input.connectionId);
     this.#pruneViewerRetirements();
     const identity = viewerConnectionIdentity(input.claims);
+    if (this.#retiredViewerAuthorityExpiresAt > this.#now().getTime()) {
+      throw new Error("BROWSER_SESSION_LOST");
+    }
     if (this.#retiredViewerConnections.has(identity)) {
       throw knownWorkerFailure(HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED);
     }
@@ -817,12 +822,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       connectionId: claims.connectionId,
     };
     if (claims.purpose === "authority_loss") {
-      for (const admitted of [...this.#viewerAdmissions.values()]) {
-        if (sameViewerPrincipal(admitted, claims)) {
-          this.#retireViewerConnection(admitted);
-        }
-      }
-      this.#retireViewerConnection(claims);
+      this.#retireViewerAuthority(claims);
     } else {
       this.#retireViewerConnection(claims);
     }
@@ -843,6 +843,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     this.#viewerExpiries.clear();
     this.#viewerAdmissions.clear();
     this.#retiredViewerConnections.clear();
+    this.#retiredViewerAuthorityExpiresAt = 0;
     await this.#service?.close().catch(() => {});
     await rm(this.#runtimeRoot, { recursive: true, force: true });
   }
@@ -916,8 +917,31 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     this.#retiredViewerConnections.set(identity, { expiresAt: claims.expiresAt });
   }
 
+  #retireViewerAuthority(
+    claims: Pick<HostedBrowserViewerTicketClaimsV1,
+      "organizationId" | "environmentId" | "projectId" | "threadId" |
+      "sessionId" | "generation" | "actorId" | "expiresAt">,
+  ): void {
+    let expiresAt = Date.parse(claims.expiresAt);
+    for (const admitted of this.#viewerAdmissions.values()) {
+      if (!sameViewerPrincipal(admitted, claims)) {
+        throw new Error("BROWSER_SESSION_LOST");
+      }
+      expiresAt = Math.max(expiresAt, Date.parse(admitted.expiresAt));
+      this.#clearViewerExpiry(admitted.connectionId);
+    }
+    this.#viewerAdmissions.clear();
+    this.#retiredViewerAuthorityExpiresAt = Math.max(
+      this.#retiredViewerAuthorityExpiresAt,
+      expiresAt,
+    );
+  }
+
   #pruneViewerRetirements(): void {
     const now = this.#now().getTime();
+    if (this.#retiredViewerAuthorityExpiresAt <= now) {
+      this.#retiredViewerAuthorityExpiresAt = 0;
+    }
     for (const [identity, retired] of this.#retiredViewerConnections) {
       if (Date.parse(retired.expiresAt) <= now) {
         this.#retiredViewerConnections.delete(identity);
