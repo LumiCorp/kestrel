@@ -4,8 +4,14 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
+- [Prove packaged viewer evidence wiring](04d-prove-packaged-viewer-evidence-wiring.md)
 - [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md)
 - [Complete native authentication takeover](04c-complete-native-authentication-takeover.md)
+- [Reserve Gateway work before DNS](05c-reserve-gateway-work-before-dns.md)
+- [Proxy authorized QA WebSockets](05d-proxy-authorized-qa-websockets.md)
+- [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md)
+- [Revoke egress after uncertain Browser close](05f-revoke-egress-after-uncertain-close.md)
+- [Enforce Gateway connection timeouts](05g-enforce-gateway-connection-timeouts.md)
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
@@ -16,14 +22,14 @@ None.
 
 ## Blocked
 
-- [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — review found missing production lifecycle evidence, lost authority cleanup after transient Local Core failure, and no native authentication handoff; blocked on issues 04a-04c
-- [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — review found unenforced direct-egress denial and an in-flight revocation race; blocked on issues 05a-05b
+- [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — review found missing packaged lifecycle-evidence proof, lost authority cleanup after transient Local Core failure, and no native authentication handoff; blocked on issues 04a-04d
+- [Wire Desktop viewer lifecycle evidence](04a-wire-desktop-viewer-lifecycle-evidence.md) — review found that the direct sink test does not prove packaged service wiring; blocked on issue 04d
+- [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — blocked on issues 05a-05g and the remaining live Fly canaries
+- [Enforce Gateway-only Browser worker egress](05a-enforce-gateway-only-worker-egress.md) — review found an inbound reverse-channel bypass; blocked on issue 05e and live Fly proof
+- [Close the in-flight Gateway revocation race](05b-close-inflight-gateway-revocation-race.md) — review found pre-DNS lifecycle, plain QA WebSocket, and inert timeout gaps; blocked on issues 05c, 05d, and 05g
 
 ## Implemented
 
-- [Wire Desktop viewer lifecycle evidence](04a-wire-desktop-viewer-lifecycle-evidence.md) — packaged composition and metadata-only durable evidence coverage are green; independent review remains before `Done`
-- [Enforce Gateway-only Browser worker egress](05a-enforce-gateway-only-worker-egress.md) — the exact-IP/port nftables ceiling and routed local image smoke are green; live Fly init capability and real preview/public HTTPS canaries remain before `Done`
-- [Close the in-flight Gateway revocation race](05b-close-inflight-gateway-revocation-race.md) — revocation-visible reservations and delayed HTTP/CONNECT interleavings are green; independent review remains before `Done`
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 
 ## Done
