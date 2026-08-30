@@ -73,6 +73,28 @@ test("standalone compatibility resolves legacy storage once", () => {
   assert.deepEqual(missing, { missingDatabaseUrl: true });
 });
 
+test("standalone compatibility reuses revisions only for identical store authority", () => {
+  const first = resolveLegacyDevShellStoreBinding({
+    KESTREL_STORE_DRIVER: "postgres",
+    DATABASE_URL: "postgres://kestrel.example/control-a",
+  });
+  const matching = resolveLegacyDevShellStoreBinding({
+    KESTREL_STORE_DRIVER: "postgres",
+    DATABASE_URL: "postgres://kestrel.example/control-a",
+  });
+  const changed = resolveLegacyDevShellStoreBinding({
+    KESTREL_STORE_DRIVER: "postgres",
+    DATABASE_URL: "postgres://kestrel.example/control-b",
+  });
+
+  assert.equal(first.binding?.revision, matching.binding?.revision);
+  assert.notEqual(first.binding?.revision, changed.binding?.revision);
+  assert.doesNotMatch(
+    first.binding?.revision ?? "",
+    /kestrel\.example|control-a/u,
+  );
+});
+
 test("standalone compatibility applies injected environment before settings defaults", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "dev-shell-binding-precedence-"));
   await writeFile(
@@ -154,6 +176,13 @@ test("developer-shell binding values are removed from command environments", () 
     [DEV_SHELL_STORE_DRIVER_ENV]: "postgres",
     [DEV_SHELL_STORE_DATABASE_URL_ENV]: "postgres://secret.example/control",
     [DEV_SHELL_STORE_BINDING_REVISION_ENV]: "binding-secret",
+    KESTREL_DEV_SHELL_AUTHORITY_PATH: "/private/control/authority",
+    KESTREL_DEV_SHELL_AUTHORITY_TOKEN: "authority-secret",
+    KESTREL_DEV_SHELL_OWNER_PID: "123",
+    KESTREL_DEV_SHELL_OWNER_KIND: "ks",
+    KESTREL_DEV_SHELL_SOCKET_PATH: "/private/control/socket",
+    KESTREL_DEV_SHELL_LOG_PATH: "/private/control/log",
+    KESTREL_DEV_SHELL_STATUS_PATH: "/private/control/status",
   };
 
   const environment = agentChildEnvironment(source);
@@ -161,4 +190,11 @@ test("developer-shell binding values are removed from command environments", () 
   assert.equal(environment[DEV_SHELL_STORE_DRIVER_ENV], undefined);
   assert.equal(environment[DEV_SHELL_STORE_DATABASE_URL_ENV], undefined);
   assert.equal(environment[DEV_SHELL_STORE_BINDING_REVISION_ENV], undefined);
+  assert.equal(environment.KESTREL_DEV_SHELL_AUTHORITY_PATH, undefined);
+  assert.equal(environment.KESTREL_DEV_SHELL_AUTHORITY_TOKEN, undefined);
+  assert.equal(environment.KESTREL_DEV_SHELL_OWNER_PID, undefined);
+  assert.equal(environment.KESTREL_DEV_SHELL_OWNER_KIND, undefined);
+  assert.equal(environment.KESTREL_DEV_SHELL_SOCKET_PATH, undefined);
+  assert.equal(environment.KESTREL_DEV_SHELL_LOG_PATH, undefined);
+  assert.equal(environment.KESTREL_DEV_SHELL_STATUS_PATH, undefined);
 });

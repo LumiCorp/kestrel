@@ -27,15 +27,42 @@ test("standalone LocalDevShellService uses its SQLite settings store while inher
       startupTimeoutMs: 30_000,
       pollIntervalMs: 25,
     });
-
-    const result = await service.runCommand({
-      workspaceRoot: baseDir,
-      command: "printf \\\"$DATABASE_URL\\\"",
-      envMode: "inherit",
-      timeoutMs: 2_000,
+    const matchingService = new LocalDevShellService(baseDir, {
+      env: {
+        ...process.env,
+        KESTREL_HOME: runtimeHome,
+        KESTREL_STORE_DRIVER: undefined,
+        DATABASE_URL: "postgres://application.example/workspace",
+      },
+      startupTimeoutMs: 30_000,
+      pollIntervalMs: 25,
     });
-    await service.close();
-    console.log(JSON.stringify({ status: result.status, text: result.text }));
+
+    let processId;
+    try {
+      const started = await service.startProcess({
+        workspaceRoot: baseDir,
+        command: "sleep 30",
+        yieldTimeMs: 100,
+      });
+      processId = started.processId;
+      const result = await matchingService.runCommand({
+        workspaceRoot: baseDir,
+        command: "printf \\\"$DATABASE_URL\\\"",
+        envMode: "inherit",
+        timeoutMs: 2_000,
+      });
+      if (processId === undefined) throw new Error("standalone process did not start");
+      const active = await matchingService.readProcess({ processId, waitMs: 0 });
+      await matchingService.stopProcess({ processId, waitMs: 2_000 });
+      processId = undefined;
+      console.log(JSON.stringify({ status: result.status, text: result.text, activeStatus: active.status }));
+    } finally {
+      if (processId !== undefined) {
+        await matchingService.stopProcess({ processId, waitMs: 2_000 }).catch(() => {});
+      }
+      await Promise.all([service.close(), matchingService.close()]);
+    }
   `;
 
   const env: NodeJS.ProcessEnv = { ...process.env, KESTREL_STORE_DRIVER: "sqlite" };
@@ -46,9 +73,10 @@ test("standalone LocalDevShellService uses its SQLite settings store while inher
   });
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  const payload = JSON.parse(result.stdout.trim()) as { status: string; text: string };
+  const payload = JSON.parse(result.stdout.trim()) as { status: string; text: string; activeStatus: string };
   assert.equal(payload.status, "COMPLETED");
   assert.equal(payload.text, "postgres://application.example/workspace");
+  assert.equal(payload.activeStatus, "RUNNING");
 });
 
 test("LocalDevShellService recovers a real supervisor from a corrupt sqlite store", async () => {
@@ -172,7 +200,7 @@ test("PGlite Local Core binding serves a static site despite a dead application 
     try {
       const environment = await service.runCommand({
         workspaceRoot: root,
-        command: "printf '%s\\n%s\\n%s\\n%s' \\\"$DATABASE_URL\\\" \\\"$KESTREL_DEV_SHELL_STORE_DRIVER\\\" \\\"$KESTREL_DEV_SHELL_STORE_DATABASE_URL\\\" \\\"$KESTREL_DEV_SHELL_STORE_BINDING_REVISION\\\"",
+        command: "env",
         envMode: "inherit",
         timeoutMs: 2_000,
       });
@@ -242,10 +270,11 @@ test("PGlite Local Core binding serves a static site despite a dead application 
     status: string;
     log: string;
   };
-  assert.equal(
+  assert.match(
     payload.environment,
-    "postgres://application:secret@127.0.0.1:1/workspace\n\n\n",
+    /^DATABASE_URL=postgres:\/\/application:secret@127\.0\.0\.1:1\/workspace$/mu,
   );
+  assert.doesNotMatch(payload.environment, /^KESTREL_DEV_SHELL_/mu);
   assert.equal(payload.health.storeDriver, "sqlite");
   assert.equal(payload.health.storeBindingRevision, "static-proof-binding");
   assert.equal(payload.body, "kestrel static proof");

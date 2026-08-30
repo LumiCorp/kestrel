@@ -10,7 +10,11 @@ type FaultHook = (phase: DevShellBootstrapAuthorityFaultPhase) => void | Promise
 interface Owner { pid: number; token: string; evidence: string }
 interface NormalState { kind: "normal"; owner: Owner }
 interface ClaimedState { kind: "claimed"; owner: Owner; claimant: Owner; claimEntry: string; nextOwner?: Owner | undefined }
-type State = { kind: "missing" } | { kind: "invalid" } | NormalState | ClaimedState;
+type State = { kind: "missing" } | { kind: "invalid" } | { kind: "transient" } | NormalState | ClaimedState;
+type OwnerReadResult =
+  | { kind: "owner"; owner: Owner }
+  | { kind: "invalid" }
+  | { kind: "transient" };
 
 export interface DevShellBootstrapAuthorityLease {
   readonly ownerPid: number;
@@ -47,6 +51,10 @@ export async function acquireDevShellBootstrapAuthority(input: {
       continue;
     }
     if (state.kind === "invalid") return { status: "unavailable", reason: "invalid_owner_evidence" };
+    if (state.kind === "transient") {
+      if (Date.now() >= deadline) return { status: "unavailable", reason: "wait_timeout" };
+      await wait(input.pollIntervalMs); continue;
+    }
     if (state.kind === "claimed") {
       if (!isPidRunning(state.claimant.pid)) {
         await recoverClaim(input.authorityPath, state, claimant);
@@ -117,6 +125,11 @@ async function transfer(authorityPath: string, expected: Owner, next: Owner, hoo
 async function release(authorityPath: string, expected: Owner, hook?: FaultHook): Promise<boolean> {
   const state = await readState(authorityPath);
   if (state.kind === "missing") return true;
+  if (state.kind === "claimed") {
+    return state.claimant.evidence === expected.evidence
+      ? quarantine(authorityPath, expected, hook)
+      : false;
+  }
   if (state.kind !== "normal" || state.owner.evidence !== expected.evidence) return false;
   if (!(await claim(authorityPath, expected, expected))) return false;
   await hook?.("cleanup_claimed");
@@ -154,8 +167,7 @@ async function quarantine(authorityPath: string, claimant: Owner, hook?: FaultHo
 }
 
 async function readState(authorityPath: string): Promise<State> {
-  const first = await readStateOnce(authorityPath);
-  return first.kind === "invalid" ? readStateOnce(authorityPath) : first;
+  return readStateOnce(authorityPath);
 }
 
 async function readStateOnce(authorityPath: string): Promise<State> {
@@ -164,27 +176,48 @@ async function readStateOnce(authorityPath: string): Promise<State> {
     const entries = await readdir(authorityPath);
     const claims = entries.filter((entry) => entry.startsWith("claim--"));
     if (entries.length === 1 && entries[0] === OWNER_ENTRY) {
-      const owner = await readOwner(path.join(authorityPath, OWNER_ENTRY));
-      return owner ? { kind: "normal", owner } : { kind: "invalid" };
+      const result = await readOwner(path.join(authorityPath, OWNER_ENTRY));
+      return result.kind === "owner"
+        ? { kind: "normal", owner: result.owner }
+        : result;
     }
     if (claims.length === 1 && entries.every((entry) => entry === claims[0] || entry === NEXT_OWNER_ENTRY)) {
       const claimant = parseClaimName(claims[0]!);
-      const owner = await readOwner(path.join(authorityPath, claims[0]!));
-      const nextOwner = entries.includes(NEXT_OWNER_ENTRY) ? await readOwner(path.join(authorityPath, NEXT_OWNER_ENTRY)) : undefined;
-      if (!claimant || !owner || (entries.includes(NEXT_OWNER_ENTRY) && !nextOwner)) return { kind: "invalid" };
-      return { kind: "claimed", owner, claimant, claimEntry: claims[0]!, ...(nextOwner ? { nextOwner } : {}) };
+      const ownerResult = await readOwner(path.join(authorityPath, claims[0]!));
+      const nextOwnerResult = entries.includes(NEXT_OWNER_ENTRY)
+        ? await readOwner(path.join(authorityPath, NEXT_OWNER_ENTRY))
+        : undefined;
+      if (ownerResult.kind === "transient" || nextOwnerResult?.kind === "transient") {
+        return { kind: "transient" };
+      }
+      if (!claimant || ownerResult.kind !== "owner" || nextOwnerResult?.kind === "invalid") {
+        return { kind: "invalid" };
+      }
+      return {
+        kind: "claimed",
+        owner: ownerResult.owner,
+        claimant,
+        claimEntry: claims[0]!,
+        ...(nextOwnerResult?.kind === "owner" ? { nextOwner: nextOwnerResult.owner } : {}),
+      };
     }
     return { kind: "invalid" };
   } catch (error) { return code(error) === "ENOENT" ? { kind: "missing" } : { kind: "invalid" }; }
 }
 
-async function readOwner(entryPath: string): Promise<Owner | undefined> {
+async function readOwner(entryPath: string): Promise<OwnerReadResult> {
   try {
     const [stats, evidence] = await Promise.all([lstat(entryPath), readlink(entryPath)]);
-    if (!stats.isSymbolicLink()) return undefined;
+    if (!stats.isSymbolicLink()) return { kind: "invalid" };
     const parsed = parseDevShellBootstrapAuthorityEvidence(evidence);
-    return parsed ? { ...parsed, evidence } : undefined;
-  } catch { return undefined; }
+    return parsed
+      ? { kind: "owner", owner: { ...parsed, evidence } }
+      : { kind: "invalid" };
+  } catch (error) {
+    return code(error) === "ENOENT"
+      ? { kind: "transient" }
+      : { kind: "invalid" };
+  }
 }
 function createOwner(pid: number, token: string): Owner | undefined {
   const evidence = `${AUTHORITY_VERSION}:${pid}:${token}`;

@@ -11,7 +11,7 @@ import { LocalDevShellService } from "../../src/devshell/LocalDevShellService.js
 import { DEV_SHELL_SERVICE_PROTOCOL_VERSION } from "../../src/devshell/contracts.js";
 import { acquireDevShellBootstrapAuthority } from "../../src/devshell/bootstrapAuthority.js";
 
-test("two real simultaneous cold requests share one SQLite service", async () => {
+test("a cross-instance high-contention cold burst shares one SQLite service", async () => {
   const baseDir = await mkdtemp(
     path.join(os.tmpdir(), "local-dev-shell-real-concurrent-"),
   );
@@ -27,29 +27,109 @@ test("two real simultaneous cold requests share one SQLite service", async () =>
     startupTimeoutMs: 10_000,
     pollIntervalMs: 10,
   };
-  const firstService = new LocalDevShellService(baseDir, options);
-  const secondService = new LocalDevShellService(baseDir, options);
+  const services = Array.from(
+    { length: 12 },
+    () => new LocalDevShellService(baseDir, options),
+  );
 
   try {
-    const [first, second] = await Promise.all([
-      firstService.runCommand({
+    const results = await Promise.all(
+      services.map((service, index) => service.runCommand({
         workspaceRoot: baseDir,
-        command: "printf first",
+        command: `printf request-${index}`,
         timeoutMs: 2_000,
-      }),
-      secondService.runCommand({
-        workspaceRoot: baseDir,
-        command: "printf second",
-        timeoutMs: 2_000,
-      }),
-    ]);
+      })),
+    );
 
-    assert.equal(first.status, "COMPLETED");
-    assert.equal(first.text, "first");
-    assert.equal(second.status, "COMPLETED");
-    assert.equal(second.text, "second");
+    results.forEach((result, index) => {
+      assert.equal(result.status, "COMPLETED");
+      assert.equal(result.text, `request-${index}`);
+    });
   } finally {
-    await Promise.allSettled([firstService.close(), secondService.close()]);
+    await Promise.allSettled(services.map((service) => service.close()));
+  }
+});
+
+test("one fresh LocalDevShellService completes 20 simultaneous real cold requests", async () => {
+  const baseDir = await mkdtemp(
+    path.join(os.tmpdir(), "lds-one-burst-"),
+  );
+  const service = new LocalDevShellService(baseDir, {
+    env: {
+      ...process.env,
+      KESTREL_HOME: path.join(baseDir, "home"),
+      KESTREL_STORE_DRIVER: "sqlite",
+      DATABASE_URL: undefined,
+    },
+    storeBinding: { driver: "sqlite", revision: "binding-shared" },
+    startupTimeoutMs: 10_000,
+    pollIntervalMs: 10,
+  }) as any;
+  const spawnService = service.spawnService.bind(service);
+  let spawnCount = 0;
+  service.spawnService = async (...args: unknown[]) => {
+    spawnCount += 1;
+    return spawnService(...args);
+  };
+
+  try {
+    const results = await Promise.allSettled(
+      Array.from({ length: 20 }, (_, index) => service.runCommand({
+        workspaceRoot: baseDir,
+        command: `printf one-client-${index}`,
+        timeoutMs: 2_000,
+      })),
+    );
+
+    assert.equal(spawnCount, 1);
+    results.forEach((result, index) => {
+      assert.equal(
+        result.status,
+        "fulfilled",
+        result.status === "rejected"
+          ? `request ${index} rejected: ${String(result.reason)}`
+          : undefined,
+      );
+      if (result.status === "fulfilled") {
+        assert.equal(result.value.status, "COMPLETED");
+        assert.equal(result.value.text, `one-client-${index}`);
+      }
+    });
+  } finally {
+    await service.close();
+  }
+});
+
+test("spawnService leaves no live child after transfer or handshake failure", async () => {
+  for (const failure of ["transfer", "handshake"] as const) {
+    const baseDir = await mkdtemp(
+      path.join(os.tmpdir(), `local-dev-shell-${failure}-failure-`),
+    );
+    const service = new LocalDevShellService(baseDir, {
+      storeBinding: { driver: "sqlite", revision: "binding-shared" },
+      startupTimeoutMs: 2_000,
+      pollIntervalMs: 5,
+    }) as any;
+    let childPid: number | undefined;
+    const authorityLease = {
+      ownerPid: process.pid,
+      ownerToken: "parent-owner",
+      async transferTo(input: { ownerPid: number }) {
+        childPid = input.ownerPid;
+        if (failure === "transfer") throw new Error("injected transfer failure");
+        return true;
+      },
+    };
+
+    await assert.rejects(
+      service.spawnService(authorityLease),
+      failure === "transfer"
+        ? /injected transfer failure/u
+        : /authority handoff|exited during authority handoff/u,
+    );
+    assert.ok(childPid !== undefined);
+    await waitForPidExit(childPid, 2_000);
+    assert.equal(isPidRunning(childPid), false, failure);
   }
 });
 
@@ -185,6 +265,50 @@ test("one LocalDevShellService serializes its own simultaneous cold requests", a
   assert.equal(first.status, "COMPLETED");
   assert.equal(second.status, "COMPLETED");
   assert.equal(spawnCount, 1);
+});
+
+test("one LocalDevShellService retries after a failed shared bootstrap", async () => {
+  const baseDir = await mkdtemp(
+    path.join(os.tmpdir(), "local-dev-shell-one-client-retry-"),
+  );
+  const binding = { driver: "sqlite" as const, revision: "binding-shared" };
+  const service = new LocalDevShellService(baseDir, {
+    storeBinding: binding,
+    startupTimeoutMs: 500,
+    pollIntervalMs: 2,
+  }) as any;
+  let health: Record<string, unknown> | undefined;
+  let spawnCount = 0;
+
+  service.performRequest = async (method: string, pathname: string) => {
+    if (method === "GET" && pathname === "/health") {
+      if (health === undefined) throw new Error("not ready");
+      return health;
+    }
+    if (method === "POST" && pathname === "/shell/run") {
+      return completedRunResult("recovered");
+    }
+    throw new Error(`unexpected request ${method} ${pathname}`);
+  };
+  service.spawnService = async () => {
+    spawnCount += 1;
+    if (spawnCount === 1) throw new Error("first bootstrap failed");
+    health = compatibleHealth(binding);
+    return fakeRunningChild();
+  };
+
+  await assert.rejects(
+    service.runCommand({ workspaceRoot: ".", command: "echo fail" }),
+    /first bootstrap failed/u,
+  );
+  const recovered = await service.runCommand({
+    workspaceRoot: ".",
+    command: "echo recovered",
+  });
+
+  assert.equal(spawnCount, 2);
+  assert.equal(recovered.status, "COMPLETED");
+  assert.equal(recovered.text, "recovered");
 });
 
 test("LocalDevShellService serializes competing-binding replacements", async () => {
@@ -388,4 +512,11 @@ async function waitForExit(child: ChildProcess): Promise<void> {
 
 function isPidRunning(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+async function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline && isPidRunning(pid)) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }

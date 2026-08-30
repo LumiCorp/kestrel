@@ -79,3 +79,8 @@ Use focused regression tests at the owning seams. Include a real smoke path for 
 - [Use cooperative service shutdown instead of numeric PID signaling](08-use-cooperative-service-shutdown.md)
 - [Parse bootstrap authority evidence strictly](09-parse-authority-evidence-strictly.md)
 - [Serialize same-client bootstrap attempts](10-serialize-same-client-bootstrap-attempts.md)
+- [Recover failed authority transfer](11-recover-failed-authority-transfer.md)
+- [Tolerate transient authority snapshots](12-tolerate-transient-authority-snapshots.md)
+- [Bind shutdown completion to the proven endpoint](13-bind-shutdown-completion-to-endpoint.md)
+- [Strip developer-shell control environment from commands](14-strip-dev-shell-control-environment.md)
+- [Stabilize standalone binding revisions](15-stabilize-standalone-binding-revisions.md)

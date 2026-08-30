@@ -24,6 +24,8 @@ export interface LegacyDevShellStoreBindingResolution {
   missingDatabaseUrl: boolean;
 }
 
+const legacyBindingRevisions = new Map<string, string>();
+
 export function createDevShellStoreBindingRevision(): string {
   return `dev-shell:${randomUUID()}`;
 }
@@ -35,20 +37,35 @@ export function resolveLegacyDevShellStoreBinding(
     effectiveDriver: driver,
     databaseUrl,
   } = resolveStoreDriverSelection({}, env);
-  const revision = createDevShellStoreBindingRevision();
   if (driver === "postgres") {
     if (databaseUrl === undefined) {
       return { missingDatabaseUrl: true };
     }
+    const revision = resolveLegacyBindingRevision(driver, databaseUrl);
     return {
       missingDatabaseUrl: false,
       binding: { revision, driver, databaseUrl },
     };
   }
+  const revision = resolveLegacyBindingRevision(driver);
   return {
     missingDatabaseUrl: false,
     binding: { revision, driver },
   };
+}
+
+function resolveLegacyBindingRevision(
+  driver: "sqlite" | "postgres",
+  databaseUrl?: string | undefined,
+): string {
+  const authorityKey = driver === "postgres"
+    ? `${driver}\0${databaseUrl ?? ""}`
+    : driver;
+  const existing = legacyBindingRevisions.get(authorityKey);
+  if (existing !== undefined) return existing;
+  const revision = createDevShellStoreBindingRevision();
+  legacyBindingRevisions.set(authorityKey, revision);
+  return revision;
 }
 
 export function buildDevShellStoreBindingEnvironment(

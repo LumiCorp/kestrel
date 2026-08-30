@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -905,6 +905,48 @@ test("LocalDevShellService never signals a PID when the cooperative shutdown end
     if (isChildRunning(child)) {
       child.kill("SIGKILL");
       await waitForChildExit(child, 1_000);
+    }
+  }
+});
+
+test("LocalDevShellService completes cooperative replacement when the proven endpoint disappears but its PID remains live", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-reused-shutdown-pid-"));
+  const service = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-current" },
+  }) as any;
+  const reusedPidProcess = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  try {
+    assert.ok(reusedPidProcess.pid !== undefined);
+    await writeFile(service.socketPath, "captured socket", "utf8");
+    await writeFile(service.bootstrapStatusPath, JSON.stringify({
+      status: "ready",
+      pid: reusedPidProcess.pid,
+      socketPath: service.socketPath,
+    }), "utf8");
+    service.performRequest = async (_method: string, pathname: string) => {
+      if (pathname !== "/service/shutdown") throw new Error("unexpected request");
+      await rm(service.socketPath);
+      return { status: "shutting_down" };
+    };
+
+    await service.stopIncompatibleService({
+      ok: true,
+      serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+      servicePid: reusedPidProcess.pid,
+      storeDriver: "sqlite",
+      storeBindingRevision: "binding-stale",
+      capabilities: {
+        processWriteAndRead: true,
+        processRetentionLeases: true,
+        processRetentionPromotion: true,
+      },
+    });
+
+    assert.equal(isChildRunning(reusedPidProcess), true);
+  } finally {
+    if (isChildRunning(reusedPidProcess)) {
+      reusedPidProcess.kill("SIGKILL");
+      await waitForChildExit(reusedPidProcess, 1_000);
     }
   }
 });

@@ -193,6 +193,84 @@ test("authority publication and cleanup recover after process death", async () =
   }
 });
 
+test("an exact claimant can release its own incomplete authority transfer", async () => {
+  for (const phase of ["transfer_claimed", "transfer_prepared"] as const) {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), `dev-shell-authority-release-${phase}-`),
+    );
+    const authorityPath = path.join(root, "bootstrap-authority");
+    const acquired = await acquireDevShellBootstrapAuthority({
+      authorityPath,
+      ownerToken: "transfer-owner",
+      timeoutMs: 100,
+      pollIntervalMs: 2,
+    });
+    assert.equal(acquired.status, "acquired");
+    if (acquired.status !== "acquired") continue;
+
+    await assert.rejects(
+      acquired.lease.transferTo({
+        ownerPid: 2_147_483_647,
+        ownerToken: "blocked-child",
+        faultHook(observed) {
+          if (observed === phase) throw new Error(`injected ${phase}`);
+        },
+      }),
+      new RegExp(`injected ${phase}`, "u"),
+    );
+    assert.equal(await acquired.lease.release(), true, phase);
+
+    const recovered = await acquireDevShellBootstrapAuthority({
+      authorityPath,
+      ownerToken: "recovery-owner",
+      timeoutMs: 100,
+      pollIntervalMs: 2,
+    });
+    assert.equal(recovered.status, "acquired", phase);
+    if (recovered.status === "acquired") await recovered.lease.release();
+  }
+});
+
+test("authority transfer claims recover after claimant process death", async () => {
+  for (const phase of ["transfer_claimed", "transfer_prepared"] as const) {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), `dev-shell-authority-crash-${phase}-`),
+    );
+    const authorityPath = path.join(root, "bootstrap-authority");
+    const moduleUrl = pathToFileURL(
+      path.resolve("src/devshell/bootstrapAuthority.ts"),
+    ).href;
+    const tsxImport = createRequire(import.meta.url).resolve("tsx");
+    const childScript = `
+      import { acquireDevShellBootstrapAuthority } from ${JSON.stringify(moduleUrl)};
+      const result = await acquireDevShellBootstrapAuthority({
+        authorityPath: ${JSON.stringify(authorityPath)}, ownerToken: "crashing-owner",
+        timeoutMs: 1000, pollIntervalMs: 2,
+      });
+      if (result.status !== "acquired") process.exit(2);
+      await result.lease.transferTo({
+        ownerPid: 2147483647, ownerToken: "blocked-child",
+        faultHook(observed) { if (observed === ${JSON.stringify(phase)}) process.kill(process.pid, "SIGKILL"); },
+      });
+    `;
+    const child = spawn(
+      process.execPath,
+      ["--import", tsxImport, "--input-type=module", "-e", childScript],
+      { stdio: "ignore" },
+    );
+    await waitForExit(child);
+
+    const recovered = await acquireDevShellBootstrapAuthority({
+      authorityPath,
+      ownerToken: "recovery-owner",
+      timeoutMs: 500,
+      pollIntervalMs: 2,
+    });
+    assert.equal(recovered.status, "acquired", phase);
+    if (recovered.status === "acquired") await recovered.lease.release();
+  }
+});
+
 test("malformed authority evidence is rejected canonically and preserved", async () => {
   const malformed = [
     "kestrel-dev-shell-bootstrap-v2:2147483647junk:token",

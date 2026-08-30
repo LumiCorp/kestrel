@@ -128,6 +128,7 @@ export class LocalDevShellService implements DevShellServicePort {
   private readonly storeBinding: DevShellStoreBinding | undefined;
   private readonly missingStoreDatabaseUrl: boolean;
   private readonly bootstrapAuthorityPath: string;
+  private ensureServicePromise: Promise<void> | undefined;
   private ownedChild: ChildProcess | undefined;
 
   constructor(
@@ -407,6 +408,21 @@ export class LocalDevShellService implements DevShellServicePort {
   }
 
   private async ensureService(): Promise<void> {
+    if (this.ensureServicePromise !== undefined) {
+      return this.ensureServicePromise;
+    }
+    const pending = this.ensureServiceOnce();
+    this.ensureServicePromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (this.ensureServicePromise === pending) {
+        this.ensureServicePromise = undefined;
+      }
+    }
+  }
+
+  private async ensureServiceOnce(): Promise<void> {
     const health = await this.tryReadHealth();
     if (isCompatibleDevShellHealth(health, this.storeBinding)) {
       return;
@@ -599,10 +615,15 @@ export class LocalDevShellService implements DevShellServicePort {
     }
 
     const deadline = Date.now() + INCOMPATIBLE_SERVICE_SHUTDOWN_TIMEOUT_MS;
-    while (Date.now() < deadline && isPidRunning(pid)) {
+    let currentSocketIdentity = await readDevShellSocketIdentity(this.socketPath);
+    while (
+      Date.now() < deadline &&
+      isSameDevShellSocketIdentity(currentSocketIdentity, socketIdentity)
+    ) {
       await this.wait(50);
+      currentSocketIdentity = await readDevShellSocketIdentity(this.socketPath);
     }
-    if (isPidRunning(pid)) {
+    if (isSameDevShellSocketIdentity(currentSocketIdentity, socketIdentity)) {
       throw await this.createUnavailableFailure(
         "incompatible_service_shutdown_timeout",
         "Developer shell did not replace an incompatible service because its shutdown did not complete.",
@@ -717,15 +738,14 @@ export class LocalDevShellService implements DevShellServicePort {
         if (child.pid === undefined) {
           throw new Error("Developer shell child did not publish a process identity.");
         }
-        const transferred = await authorityLease.transferTo({
-          ownerPid: child.pid,
-          ownerToken: childAuthorityToken,
-        });
-        if (transferred === false) {
-          child.kill("SIGKILL");
-          throw new Error("Developer shell bootstrap authority handoff failed.");
-        }
         try {
+          const transferred = await authorityLease.transferTo({
+            ownerPid: child.pid,
+            ownerToken: childAuthorityToken,
+          });
+          if (transferred === false) {
+            throw new Error("Developer shell bootstrap authority handoff failed.");
+          }
           await completeChildAuthorityHandoff(
             child,
             childAuthorityToken,
@@ -1151,6 +1171,15 @@ function isPidRunning(pid: number): boolean {
   } catch (error) {
     return readNodeErrorCode(error) === "EPERM";
   }
+}
+
+function isSameDevShellSocketIdentity(
+  current: { device: number; inode: number } | undefined,
+  expected: { device: number; inode: number },
+): boolean {
+  return current !== undefined &&
+    current.device === expected.device &&
+    current.inode === expected.inode;
 }
 
 async function waitForChildProcessExit(child: ChildProcess, timeoutMs: number): Promise<void> {
