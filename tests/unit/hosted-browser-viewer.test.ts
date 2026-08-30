@@ -23,6 +23,7 @@ const claims = {
   sessionId: "session-1",
   generation: 3,
   actorId: "user-1",
+  connectionId: "connection-1",
   nonce: "nonce-browser-viewer-1",
   issuedAt: now.toISOString(),
   expiresAt: new Date(now.getTime() + 60_000).toISOString(),

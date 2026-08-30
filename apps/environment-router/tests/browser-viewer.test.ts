@@ -48,9 +48,17 @@ function viewerRequest(input?: {
   ticketProjectId?: string;
   environmentId?: string;
   appName?: string;
+  action?: "connect" | "input";
+  ticketConnectionId?: string;
+  instructionConnectionId?: string | undefined;
+  omitInstructionConnection?: boolean;
 }) {
   const issuedAt = input?.nowSeconds ?? 1000;
   const environmentId = input?.environmentId ?? "env-1";
+  const action = input?.action ?? "input";
+  const ticketConnectionId = input?.ticketConnectionId ?? "connection-1";
+  const instructionConnectionId =
+    input?.instructionConnectionId ?? "connection-1";
   const viewerTicket = issueHostedBrowserViewerTicket({
     privateKeyPem: viewerPrivateKey,
     now: new Date(issuedAt * 1000),
@@ -64,6 +72,7 @@ function viewerRequest(input?: {
       sessionId: "browser-session-1",
       generation: 3,
       actorId: "user-1",
+      connectionId: ticketConnectionId,
       nonce: "viewer-nonce-1",
       issuedAt: new Date(issuedAt * 1000).toISOString(),
       expiresAt: new Date((issuedAt + 60) * 1000).toISOString(),
@@ -82,22 +91,28 @@ function viewerRequest(input?: {
       version: "hosted_browser_viewer_instruction_v1",
       sessionId: "browser-session-1",
       generation: 3,
-      action: "input",
-      operation: "viewer.input",
+      action,
+      operation: `viewer.${action}`,
       viewerTicket,
       machine: {
         appName: input?.appName ?? "environment-app",
         machineId: "machine-1",
       },
-      connectionId: "connection-1",
-      leaseId: "lease-1",
-      viewerInput: {
-        version: "desktop_browser_viewer_input_v1",
-        kind: "keyboard",
-        phase: "down",
-        key: "x",
-        text: "x",
-      },
+      ...(input?.omitInstructionConnection
+        ? {}
+        : { connectionId: instructionConnectionId }),
+      ...(action === "input"
+        ? {
+            leaseId: "lease-1",
+            viewerInput: {
+              version: "desktop_browser_viewer_input_v1",
+              kind: "keyboard",
+              phase: "down",
+              key: "x",
+              text: "x",
+            },
+          }
+        : {}),
     },
   };
   const body = Buffer.from(JSON.stringify(envelope));
@@ -116,7 +131,7 @@ function viewerRequest(input?: {
       providerKey: "built_in.browser",
       resourceId: "browser-session-1",
       capability: "browser.viewer.control",
-      operation: "viewer.input",
+      operation: `viewer.${action}`,
       operationBinding: `sha256:${createHash("sha256").update(body).digest("base64url")}`,
       issuedAt,
       expiresAt: issuedAt + 60,
@@ -162,6 +177,39 @@ test("browser viewer control binds exact environment, actor, session, operation,
       authorizeBrowserViewerControl({
         authorization: `Bearer ${scoped.token}`,
         body: scoped.body,
+        publicKey: environmentPublicKey,
+        environmentId: "env-1",
+        expectedAppName: "environment-app",
+        now: 1030,
+      }),
+    );
+  }
+});
+
+test("browser viewer connect requires the exact connection selected by its signed ticket", () => {
+  const exact = viewerRequest({ action: "connect" });
+  assert.doesNotThrow(() =>
+    authorizeBrowserViewerControl({
+      authorization: `Bearer ${exact.token}`,
+      body: exact.body,
+      publicKey: environmentPublicKey,
+      environmentId: "env-1",
+      expectedAppName: "environment-app",
+      now: 1030,
+    }),
+  );
+
+  for (const rejected of [
+    viewerRequest({
+      action: "connect",
+      instructionConnectionId: "connection-other",
+    }),
+    viewerRequest({ action: "connect", omitInstructionConnection: true }),
+  ]) {
+    assert.throws(() =>
+      authorizeBrowserViewerControl({
+        authorization: `Bearer ${rejected.token}`,
+        body: rejected.body,
         publicKey: environmentPublicKey,
         environmentId: "env-1",
         expectedAppName: "environment-app",

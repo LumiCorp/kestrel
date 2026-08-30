@@ -20,6 +20,15 @@ test("only the originating actor gets a one-use viewer ticket and can accept, re
   const issued = await fixture.service.mintTicket({ organizationId: "org-1", actorId: "user-1", threadId: "thread-1" });
   assert.equal(issued.route, "/api/threads/thread-1/browser-viewer/v1");
   const connection = await fixture.service.connect(issued.ticket);
+  assert.match(
+    connection.claims.connectionId,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  );
+  assert.notEqual(connection.claims.connectionId, connection.claims.nonce);
+  assert.equal(
+    fixture.workerCalls[0]?.connectionId,
+    connection.claims.connectionId,
+  );
   await assert.rejects(fixture.service.connect(issued.ticket), /BROWSER_SESSION_LOST/u);
   assert.equal(connection.state.takeoverRequested, true);
 
@@ -84,6 +93,64 @@ test("worker loss during viewing closes the Browser Session instead of restoring
   assert.equal(fixture.session.state, "human_control");
 });
 
+test("an uncertain connect releases the exact preselected connection without closing the Browser Session", async () => {
+  const fixture = createFixture();
+  fixture.connectResponseLost = true;
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+
+  await assert.rejects(
+    fixture.service.connect(issued.ticket),
+    /BROWSER_ENGINE_FAILURE/u,
+  );
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.deepEqual(fixture.terminations, []);
+  assert.equal(fixture.workerCalls.length, 2);
+  assert.equal(fixture.workerCalls[0]?.action, "connect");
+  assert.equal(fixture.workerCalls[1]?.action, "disconnect");
+  assert.equal(
+    fixture.workerCalls[1]?.connectionId,
+    fixture.workerCalls[0]?.connectionId,
+  );
+});
+
+test("unknown exact cleanup after an uncertain connect fail-closes once", async () => {
+  const fixture = createFixture();
+  fixture.connectResponseLost = true;
+  fixture.disconnectLost = true;
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+
+  await assert.rejects(
+    fixture.service.connect(issued.ticket),
+    /BROWSER_ENGINE_FAILURE/u,
+  );
+  assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
+});
+
+test("an invalid connect state releases the exact connection and fail-closes once", async () => {
+  const fixture = createFixture();
+  fixture.invalidConnectState = true;
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+
+  await assert.rejects(
+    fixture.service.connect(issued.ticket),
+    /BROWSER_SESSION_LOST/u,
+  );
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
+});
+
 function createFixture() {
   const currentNow = new Date("2026-08-30T12:00:00.000Z");
   const session: BrowserSessionV1 = {
@@ -123,12 +190,38 @@ function createFixture() {
     async revoke(nonce) { ticketValues.delete(nonce); },
   };
   const workerInputs: Array<{ text?: string }> = [];
+  const workerCalls: Array<{ action: string; connectionId?: string }> = [];
+  const liveConnections = new Set<string>();
   let workerLost = false;
+  let connectResponseLost = false;
+  let disconnectLost = false;
+  let invalidConnectState = false;
   let workerState = viewerState("ready", true);
   const worker: HostedBrowserViewerWorkerPort = {
     async invoke(input) {
+      workerCalls.push({
+        action: input.action,
+        ...(input.connectionId === undefined
+          ? {}
+          : { connectionId: input.connectionId }),
+      });
       if (workerLost) throw new Error("BROWSER_ENGINE_FAILURE");
-      if (input.action === "connect") return workerState;
+      if (input.action === "connect") {
+        liveConnections.add(input.connectionId!);
+        workerState = {
+          ...workerState,
+          connectionId: invalidConnectState
+            ? "identity-drifted"
+            : input.connectionId!,
+        };
+        if (connectResponseLost) throw new Error("BROWSER_ENGINE_FAILURE");
+        return workerState;
+      }
+      if (input.action === "disconnect") {
+        if (disconnectLost) throw new Error("BROWSER_ENGINE_FAILURE");
+        liveConnections.delete(input.connectionId!);
+        return null;
+      }
       if (input.action === "frame") return {
         version: "desktop_browser_viewer_frame_v1",
         sessionId: "session-1",
@@ -139,7 +232,12 @@ function createFixture() {
         dataBase64: "iVBORw0KGgo=",
       };
       if (input.action === "accept") {
-        workerState = viewerState("human_control", false, "lease-1");
+        workerState = viewerState(
+          "human_control",
+          false,
+          "lease-1",
+          workerState.connectionId,
+        );
         return workerState;
       }
       if (input.action === "input") {
@@ -148,7 +246,12 @@ function createFixture() {
       }
       if (input.action === "renew") return workerState;
       if (input.action === "return") {
-        workerState = viewerState("ready", false);
+        workerState = viewerState(
+          "ready",
+          false,
+          undefined,
+          workerState.connectionId,
+        );
         return workerState;
       }
       return null;
@@ -161,11 +264,19 @@ function createFixture() {
     workerInputs,
     evidence,
     terminations,
+    workerCalls,
+    liveConnections,
     accessAllowed: true,
     get workerState() { return workerState; },
     set workerState(value) { workerState = value; },
     get workerLost() { return workerLost; },
     set workerLost(value) { workerLost = value; },
+    get connectResponseLost() { return connectResponseLost; },
+    set connectResponseLost(value) { connectResponseLost = value; },
+    get disconnectLost() { return disconnectLost; },
+    set disconnectLost(value) { disconnectLost = value; },
+    get invalidConnectState() { return invalidConnectState; },
+    set invalidConnectState(value) { invalidConnectState = value; },
     service: undefined as unknown as HostedBrowserViewerService,
   };
   fixture.service = new HostedBrowserViewerService({
@@ -203,6 +314,7 @@ function viewerState(
   sessionState: "ready" | "human_control",
   takeoverRequested: boolean,
   inputLeaseId?: string,
+  connectionId = "connection-1",
 ) {
   return {
     version: "desktop_browser_viewer_state_v1" as const,
@@ -211,7 +323,7 @@ function viewerState(
     projectId: "project-1",
     sessionId: "session-1",
     generation: 1,
-    connectionId: "connection-1",
+    connectionId,
     sessionState,
     takeoverRequested,
     ...(inputLeaseId ? {

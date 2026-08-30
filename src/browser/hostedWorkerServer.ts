@@ -444,13 +444,15 @@ export function startHostedBrowserWorker(input: {
           accepted.size !== 0
         ) throw new Error("BROWSER_SESSION_LOST");
         const action = requireViewerAction(record.action);
+        const connectionId = requireViewerConnectionId(record.connectionId);
+        if (connectionId !== claims.connectionId) {
+          throw new Error("BROWSER_SESSION_LOST");
+        }
         if (!engine.viewer) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
         return writeJson(response, 200, await engine.viewer({
           action,
           claims,
-          ...(record.connectionId === undefined
-            ? {}
-            : { connectionId: requiredString(record.connectionId) }),
+          connectionId,
           ...(record.leaseId === undefined
             ? {}
             : { leaseId: requiredString(record.leaseId) }),
@@ -519,9 +521,18 @@ export function hostedBrowserWorkerConfigFromEnv(
   });
 }
 
-class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
+export type AgentBrowserHostedWorkerEngineOptions = {
+  createDesktopBrowserService?:
+    | ((options: ConstructorParameters<typeof DesktopBrowserService>[0]) => DesktopBrowserService)
+    | undefined;
+};
+
+export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
   readonly #config: HostedBrowserWorkerConfig;
   readonly #runtimeRoot: string;
+  readonly #createDesktopBrowserService: (
+    options: ConstructorParameters<typeof DesktopBrowserService>[0],
+  ) => DesktopBrowserService;
   #authority: BrowserEffectiveDomainAuthorityV1 | undefined;
   #session: BrowserSessionV1 | undefined;
   #service: DesktopBrowserService | undefined;
@@ -529,9 +540,15 @@ class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
   #gatewayProxy: HostedBrowserGatewayProxyBindingV1 | undefined;
   #remoteProxy: RemoteGatewayBrowserProxy | undefined;
 
-  constructor(config: HostedBrowserWorkerConfig) {
+  constructor(
+    config: HostedBrowserWorkerConfig,
+    options: AgentBrowserHostedWorkerEngineOptions = {},
+  ) {
     this.#config = config;
     this.#runtimeRoot = HOSTED_BROWSER_WORKER_HOME_PATH;
+    this.#createDesktopBrowserService =
+      options.createDesktopBrowserService ??
+      ((serviceOptions) => new DesktopBrowserService(serviceOptions));
   }
 
   async execute(input: {
@@ -633,7 +650,11 @@ class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
       generation: input.claims.generation,
     };
     if (input.action === "connect") {
-      return service.connectViewer(binding);
+      const connectionId = requireViewerConnectionId(input.connectionId);
+      if (connectionId !== input.claims.connectionId) {
+        throw new Error("BROWSER_SESSION_LOST");
+      }
+      return service.connectViewer({ ...binding, connectionId });
     }
     const connectionId = requiredString(input.connectionId);
     const connected = { ...binding, connectionId };
@@ -669,7 +690,7 @@ class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
 
   #createService(session: BrowserSessionV1): DesktopBrowserService {
     if (!this.#remoteProxy) throw new Error("BROWSER_SESSION_LOST");
-    return new DesktopBrowserService({
+    return this.#createDesktopBrowserService({
       homePath: this.#runtimeRoot,
       engineExecutablePath: this.#config.engineExecutablePath,
       chromeExecutablePath: this.#config.chromeExecutablePath,
@@ -1099,6 +1120,14 @@ function requireRecord(value: unknown): Record<string, unknown> {
 function requiredString(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) throw new Error("BROWSER_ENGINE_FAILURE");
   return value.trim();
+}
+
+function requireViewerConnectionId(value: unknown): string {
+  try {
+    return requiredString(value);
+  } catch {
+    throw new Error("BROWSER_SESSION_LOST");
+  }
 }
 
 function requireViewerAction(value: unknown) {

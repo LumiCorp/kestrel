@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
 import { generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { defaultToolCatalog } from "../../tools/catalog.js";
@@ -18,6 +21,7 @@ import {
 import {
   HOSTED_BROWSER_WORKER_HOME_PATH,
   HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES,
+  AgentBrowserHostedWorkerEngine,
   hostedBrowserWorkerConfigFromEnv,
   startHostedBrowserWorker,
   type HostedBrowserWorkerEngine,
@@ -34,6 +38,12 @@ import {
   HOSTED_BROWSER_VIEWER_TICKET_VERSION,
   issueHostedBrowserViewerTicket,
 } from "../../src/browser/hostedViewer.js";
+import {
+  DesktopBrowserService,
+  type DesktopBrowserAcceptedOperation,
+  type DesktopBrowserEngineAdapter,
+} from "../../src/localCore/desktopBrowserService.js";
+import type { BrowserSessionV1 } from "../../src/browser/contracts.js";
 
 const keys = generateKeyPairSync("ed25519");
 const privateKeyPem = keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
@@ -829,7 +839,7 @@ test("failed revision installation clears its barrier for a later exact accept",
 });
 
 test("hosted worker viewer channel accepts only the exact signed actor and forwards typed input", async () => {
-  const calls: Array<{ action: string; text?: string }> = [];
+  const calls: Array<{ action: string; connectionId?: string; text?: string }> = [];
   const worker = startHostedBrowserWorker({
     config: workerConfig(),
     engine: {
@@ -839,7 +849,13 @@ test("hosted worker viewer channel accepts only the exact signed actor and forwa
         const text = input.viewerInput?.kind === "keyboard"
           ? input.viewerInput.text
           : undefined;
-        calls.push({ action: input.action, ...(text === undefined ? {} : { text }) });
+        calls.push({
+          action: input.action,
+          ...(input.connectionId === undefined
+            ? {}
+            : { connectionId: input.connectionId }),
+          ...(text === undefined ? {} : { text }),
+        });
         return input.action === "input"
           ? {
               version: "desktop_browser_viewer_state_v1",
@@ -883,10 +899,122 @@ test("hosted worker viewer channel accepts only the exact signed actor and forwa
     },
   });
   assert.equal(result.status, 200);
-  assert.deepEqual(calls, [{ action: "input", text: secret }]);
-  assert.equal((await request({ ticket: viewerTicket("other"), action: "connect" })).status, 400);
-  assert.equal(calls.length, 1);
+  assert.deepEqual(calls, [{
+    action: "input",
+    connectionId: "connection-1",
+    text: secret,
+  }]);
+  assert.equal((await request({
+    ticket: viewerTicket("user-1", "connection-exact"),
+    action: "connect",
+    connectionId: "connection-exact",
+  })).status, 200);
+  assert.equal((await request({
+    ticket: viewerTicket("user-1", "connection-ticket"),
+    action: "connect",
+    connectionId: "connection-drifted",
+  })).status, 400);
+  assert.equal((await request({
+    ticket: viewerTicket("user-1", "connection-missing"),
+    action: "connect",
+  })).status, 400);
+  assert.equal((await request({
+    ticket: viewerTicket("other"),
+    action: "connect",
+    connectionId: "connection-1",
+  })).status, 400);
+  assert.deepEqual(calls.at(-1), {
+    action: "connect",
+    connectionId: "connection-exact",
+  });
+  assert.equal(calls.length, 2);
   await worker.close();
+});
+
+test("AgentBrowserHostedWorkerEngine composes with DesktopBrowserService for one exact idempotent hosted viewer connection", async (t) => {
+  const homePath = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-hosted-viewer-composition-"),
+  );
+  t.after(async () => {
+    await rm(homePath, { recursive: true, force: true });
+  });
+  const adapter: DesktopBrowserEngineAdapter = {
+    async acceptOperation(input) {
+      return {
+        sessionId: input.sessionId,
+        operationId: input.operationId,
+        grantGeneration: input.grantGeneration,
+        acceptanceToken: `${input.operationId}:${input.grantGeneration}`,
+      };
+    },
+    releaseOperation(_operation: DesktopBrowserAcceptedOperation) {},
+    async open() {},
+    async command() { throw new Error("not used"); },
+    async close() {},
+    async captureViewerFrame() {
+      return { mediaType: "image/png", dataBase64: "iVBORw0KGgo=" };
+    },
+  };
+  const config = workerConfig();
+  const engine = new AgentBrowserHostedWorkerEngine(config, {
+    createDesktopBrowserService(options) {
+      return new DesktopBrowserService({
+        ...options,
+        homePath,
+        engine: adapter,
+        nativeAuthenticationHandoff: false,
+      });
+    },
+  });
+  const session = openingHostedSession();
+  await engine.execute(
+    {
+      prepared: preparedOpen(),
+      authority,
+      session,
+      gatewayProxy: hostedGatewayProxy(config),
+    },
+    {
+      async acknowledgeDispatch() {},
+      async persistCompletedResult() {},
+    },
+  );
+  const connectionId = "hosted-composed-connection-1";
+  const claims = viewerClaims("user-1", connectionId);
+
+  const first = await engine.viewer({
+    action: "connect",
+    claims,
+    connectionId,
+  });
+  const duplicate = await engine.viewer({
+    action: "connect",
+    claims,
+    connectionId,
+  });
+  assert.deepEqual(duplicate, first);
+  assert.equal(
+    (first as { connectionId?: string }).connectionId,
+    connectionId,
+  );
+
+  await assert.rejects(
+    engine.viewer({
+      action: "connect",
+      claims: viewerClaims("user-1", "cross-ticket-connection"),
+      connectionId: "cross-ticket-connection",
+    }),
+    hasBrowserCode("BROWSER_SESSION_LOST"),
+  );
+  await assert.rejects(
+    engine.viewer({
+      action: "connect",
+      claims,
+    }),
+    hasBrowserCode("BROWSER_SESSION_LOST"),
+  );
+  await engine.viewer({ action: "close", claims, connectionId });
+  await engine.destroy();
 });
 
 function preparedNavigate() {
@@ -909,6 +1037,38 @@ function preparedNavigate() {
       generation: 1,
       kind: "url",
       url: "https://example.com/next",
+    },
+    policy: {
+      decision: "allow",
+      policyRevision: hashCanonical({ revision: 1 }),
+      reasonCode: "environment_policy",
+    },
+    preparedAt: new Date().toISOString(),
+  });
+}
+
+function preparedOpen() {
+  const descriptor = defaultToolCatalog.getDescriptorRef("browser.open");
+  assert.ok(descriptor);
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "hosted-worker-composition-test",
+    scopeFingerprint: fingerprintToolScopeV1({ hostedBrowserWorker: true }),
+  });
+  return parsePreparedToolCallV1({
+    version: "v1",
+    runId: "run-1",
+    sessionId: "runtime-session-1",
+    callId: "call-open-composition",
+    activation,
+    origin: {
+      kind: "trusted_runtime",
+      producerId: "test",
+      adapterId: "test",
+    },
+    effectiveInput: {
+      mode: "operator",
+      target: { kind: "public_url", url: "https://example.com/" },
     },
     policy: {
       decision: "allow",
@@ -971,6 +1131,40 @@ function workerConfig() {
   };
 }
 
+function openingHostedSession(): BrowserSessionV1 {
+  const now = new Date().toISOString();
+  return {
+    version: "browser_session_v1",
+    sessionId: "browser-session-1",
+    threadId: "thread-1",
+    mode: "operator",
+    state: "opening",
+    engineRevision: "v0.35.0",
+    generation: 1,
+    effectiveAllowlistRevision: "revision-1",
+    createdAt: now,
+    updatedAt: now,
+    lastActivityAt: now,
+    idleExpiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+    hardExpiresAt: new Date(Date.now() + 8 * 60 * 60_000).toISOString(),
+  };
+}
+
+function hostedGatewayProxy(config: ReturnType<typeof workerConfig>) {
+  const proxyServer = `http://${config.gatewayHost}:${config.gatewayPort}`;
+  return {
+    version: "hosted_browser_gateway_proxy_binding_v1" as const,
+    proxyServer,
+    username: "viewer-composition-user",
+    password: "viewer-composition-password",
+    threadId: config.threadId,
+    sessionId: config.sessionId,
+    generation: config.generation,
+    effectiveAllowlistRevision: config.effectiveAllowlistRevision,
+    chromiumFlags: [`--proxy-server=${proxyServer}`],
+  };
+}
+
 function operationCapabilityFor(
   prepared: ReturnType<typeof preparedNavigate>,
   revision: string,
@@ -1012,24 +1206,44 @@ function revisionCapabilityFor(revision: string) {
   });
 }
 
-function viewerTicket(actorId: string) {
+function viewerTicket(actorId: string, connectionId = "connection-1") {
   const now = new Date();
   return issueHostedBrowserViewerTicket({
     privateKeyPem,
     now,
-    claims: {
-      version: HOSTED_BROWSER_VIEWER_TICKET_VERSION,
-      audience: HOSTED_BROWSER_VIEWER_AUDIENCE,
-      organizationId: "org-1",
-      environmentId: "env-1",
-      projectId: "project-1",
-      threadId: "thread-1",
-      sessionId: "browser-session-1",
-      generation: 1,
-      actorId,
-      nonce: `viewer-ticket-${actorId}`,
-      issuedAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
-    },
+    claims: viewerClaims(actorId, connectionId, now),
   });
+}
+
+function viewerClaims(
+  actorId: string,
+  connectionId: string,
+  now = new Date(),
+) {
+  return {
+    version: HOSTED_BROWSER_VIEWER_TICKET_VERSION,
+    audience: HOSTED_BROWSER_VIEWER_AUDIENCE,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    threadId: "thread-1",
+    sessionId: "browser-session-1",
+    generation: 1,
+    actorId,
+    connectionId,
+    nonce: `viewer-ticket-${actorId}-${connectionId}`,
+    issuedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+  } as const;
+}
+
+function hasBrowserCode(code: string) {
+  return (error: unknown) =>
+    Boolean(
+      error &&
+        typeof error === "object" &&
+        (("code" in error &&
+          (error as { code?: unknown }).code === code) ||
+          (error instanceof Error && error.message === code)),
+    );
 }

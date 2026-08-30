@@ -156,7 +156,8 @@ export function authorizeBrowserViewerControl(input: {
     viewerClaims.threadId !== envelope.threadId ||
     viewerClaims.sessionId !== instruction.sessionId ||
     viewerClaims.generation !== instruction.generation ||
-    viewerClaims.actorId !== envelope.userId
+    viewerClaims.actorId !== envelope.userId ||
+    viewerClaims.connectionId !== instruction.connectionId
   ) {
     throw new Error("Browser viewer credential scope is invalid.");
   }
@@ -206,7 +207,7 @@ function parseEnvelope(value: unknown): BrowserViewerEnvelope {
   ];
   const actionKeys =
     action === "connect"
-      ? baseInstructionKeys
+      ? [...baseInstructionKeys, "connectionId"]
       : action === "frame" ||
           action === "accept" ||
           action === "disconnect" ||
@@ -287,6 +288,7 @@ function verifyViewerTicket(token: string, publicKeyPem: string, now?: number) {
       "sessionId",
       "generation",
       "actorId",
+      "connectionId",
       "nonce",
       "issuedAt",
       "expiresAt",
@@ -300,6 +302,7 @@ function verifyViewerTicket(token: string, publicKeyPem: string, now?: number) {
       "threadId",
       "sessionId",
       "actorId",
+      "connectionId",
       "nonce",
       "issuedAt",
       "expiresAt",
@@ -322,6 +325,7 @@ function verifyViewerTicket(token: string, publicKeyPem: string, now?: number) {
     sessionId: string;
     generation: number;
     actorId: string;
+    connectionId: string;
   };
 }
 

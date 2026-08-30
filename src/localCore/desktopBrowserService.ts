@@ -545,10 +545,18 @@ export class DesktopBrowserService implements BrowserServicePort {
         input.generation !== undefined ||
         input.connectionId !== undefined;
       if (expectedIdentityPresent) {
-        const expectedConnection =
+        const exactIdentityPresent =
+          input.sessionId !== undefined &&
+          input.generation !== undefined &&
+          input.connectionId !== undefined;
+        const expectedConnectionId =
           input.connectionId === undefined
             ? undefined
-            : runtime.viewerConnections.get(input.connectionId);
+            : requireText(input.connectionId, "viewer connectionId");
+        const expectedConnection =
+          expectedConnectionId === undefined
+            ? undefined
+            : runtime.viewerConnections.get(expectedConnectionId);
         const expectedSessionTerminal =
           input.sessionId !== undefined &&
           input.generation !== undefined &&
@@ -569,11 +577,31 @@ export class DesktopBrowserService implements BrowserServicePort {
           };
         }
         if (
-          input.sessionId === undefined ||
-          input.generation === undefined ||
-          input.connectionId === undefined ||
+          !exactIdentityPresent ||
           runtime.session.sessionId !== input.sessionId ||
-          runtime.session.generation !== input.generation ||
+          runtime.session.generation !== input.generation
+        ) {
+          this.#viewerEvent(runtime, "rejection", "connection_identity");
+          throw browserFailure(
+            "BROWSER_SESSION_LOST",
+            "The Browser viewer expected identity is no longer current.",
+          );
+        }
+        if (
+          expectedConnection === undefined &&
+          runtime.viewerConnections.size === 0
+        ) {
+          const proposed = {
+            connectionId: expectedConnectionId!,
+            principalId,
+            projectId,
+            connectedAt: this.#now().toISOString(),
+          };
+          runtime.viewerConnections.set(proposed.connectionId, proposed);
+          await this.#expireViewerLease(runtime);
+          return this.#viewerState(runtime, proposed);
+        }
+        if (
           expectedConnection?.principalId !== principalId ||
           expectedConnection.projectId !== projectId
         ) {

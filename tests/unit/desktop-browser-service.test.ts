@@ -435,6 +435,61 @@ test("hosted viewer takeover accepts typed input without native Desktop handoff"
   await fixture.service.close();
 });
 
+test("a fully bound proposed hosted viewer connection is created once and exact duplicate delivery is idempotent", async () => {
+  const fixture = await createFixture({ nativeAuthenticationHandoff: false });
+  const sessionId = await openSession(fixture.service);
+  const exact = {
+    principalId: "hosted-actor-1",
+    threadId: "thread-1",
+    projectId: "project-1",
+    sessionId,
+    generation: 1,
+    connectionId: "hosted-connection-1",
+  };
+
+  const first = requireAvailableViewer(
+    await fixture.service.connectViewer(exact),
+  );
+  const duplicate = requireAvailableViewer(
+    await fixture.service.connectViewer(exact),
+  );
+  assert.deepEqual(duplicate, first);
+
+  await assert.rejects(
+    fixture.service.connectViewer({
+      ...exact,
+      principalId: "other-hosted-actor",
+    }),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
+  await assert.rejects(
+    fixture.service.connectViewer({
+      ...exact,
+      connectionId: "cross-ticket-connection",
+    }),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
+  await assert.rejects(
+    fixture.service.connectViewer({
+      principalId: exact.principalId,
+      threadId: exact.threadId,
+      projectId: exact.projectId,
+      sessionId,
+    }),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
+  await assert.rejects(
+    fixture.service.connectViewer({ ...exact, generation: 2 }),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
+
+  const stillExact = requireAvailableViewer(
+    await fixture.service.connectViewer(exact),
+  );
+  assert.equal(stillExact.connectionId, exact.connectionId);
+  await fixture.service.close();
+});
+
 test("Desktop human control survives disconnect and lease expiry until an authorized reconnect explicitly returns it", async () => {
   let now = new Date("2026-08-29T12:00:00.000Z");
   const viewerEvents: DesktopBrowserViewerEventV1[] = [];

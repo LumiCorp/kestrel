@@ -29,6 +29,7 @@ export interface HostedBrowserViewerTicketClaimsV1 {
   sessionId: string;
   generation: number;
   actorId: string;
+  connectionId: string;
   nonce: string;
   issuedAt: string;
   expiresAt: string;
@@ -90,13 +91,13 @@ export function parseHostedBrowserViewerClientMessage(value: unknown): HostedBro
 
 function validateClaims(value: unknown, now: Date): asserts value is HostedBrowserViewerTicketClaimsV1 {
   const claims = requireRecord(value);
-  if (!exactKeys(claims, ["version", "audience", "organizationId", "environmentId", "projectId", "threadId", "sessionId", "generation", "actorId", "nonce", "issuedAt", "expiresAt"]) ||
+  if (!exactKeys(claims, ["version", "audience", "organizationId", "environmentId", "projectId", "threadId", "sessionId", "generation", "actorId", "connectionId", "nonce", "issuedAt", "expiresAt"]) ||
     claims.version !== HOSTED_BROWSER_VIEWER_TICKET_VERSION ||
     claims.audience !== HOSTED_BROWSER_VIEWER_AUDIENCE ||
     !Number.isSafeInteger(claims.generation) || Number(claims.generation) < 1) {
     throw new Error("BROWSER_SESSION_LOST");
   }
-  for (const field of ["organizationId", "environmentId", "projectId", "threadId", "sessionId", "actorId", "nonce", "issuedAt", "expiresAt"] as const) {
+  for (const field of ["organizationId", "environmentId", "projectId", "threadId", "sessionId", "actorId", "connectionId", "nonce", "issuedAt", "expiresAt"] as const) {
     if (!text(claims[field])) throw new Error("BROWSER_SESSION_LOST");
   }
   const issuedAt = Date.parse(claims.issuedAt as string);
@@ -117,6 +118,7 @@ function canonicalClaims(claims: HostedBrowserViewerTicketClaimsV1): HostedBrows
     sessionId: claims.sessionId,
     generation: claims.generation,
     actorId: claims.actorId,
+    connectionId: claims.connectionId,
     nonce: claims.nonce,
     issuedAt: claims.issuedAt,
     expiresAt: claims.expiresAt,

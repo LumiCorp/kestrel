@@ -113,6 +113,7 @@ export class HostedBrowserViewerService {
       sessionId: authority.session.sessionId,
       generation: authority.session.generation,
       actorId: authority.origin.userId,
+      connectionId: randomUUID(),
       nonce: randomUUID(),
       issuedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + HOSTED_BROWSER_VIEWER_TICKET_TTL_MS).toISOString(),
@@ -150,8 +151,25 @@ export class HostedBrowserViewerService {
       await this.#failClosed(claims);
       throw new Error("BROWSER_SESSION_LOST");
     }
-    const state = await this.#worker(authority, token, "connect");
+    let state: Awaited<ReturnType<HostedBrowserViewerWorkerPort["invoke"]>>;
+    try {
+      state = await this.#worker(
+        authority,
+        token,
+        "connect",
+        claims.connectionId,
+      );
+    } catch (error) {
+      const released = await this.#releaseUncertainConnect(
+        authority,
+        token,
+        claims,
+      );
+      if (!released) await this.#failClosed(claims);
+      throw error;
+    }
     if (!(isViewerState(state) && sameViewerState(state, claims))) {
+      await this.#releaseUncertainConnect(authority, token, claims);
       await this.#failClosed(claims);
       throw new Error("BROWSER_SESSION_LOST");
     }
@@ -350,6 +368,26 @@ export class HostedBrowserViewerService {
     this.#evidence("authority_lost", claims);
   }
 
+  async #releaseUncertainConnect(
+    authority: AuthorizedViewer,
+    ticket: string,
+    claims: HostedBrowserViewerTicketClaimsV1,
+  ): Promise<boolean> {
+    try {
+      const result = await this.#worker(
+        authority,
+        ticket,
+        "disconnect",
+        claims.connectionId,
+      );
+      if (result !== null) return false;
+      this.#evidence("uncertain_connect_released", claims);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   #evidence(name: string, claims: Pick<HostedBrowserViewerTicketClaimsV1, "sessionId" | "generation" | "threadId" | "actorId">) {
     this.options.evidence.emit(`browser_viewer_${name}`, {
       sessionId: claims.sessionId,
@@ -397,7 +435,7 @@ function isViewerFrame(value: unknown): value is DesktopBrowserViewerFrameV1 {
   return Boolean(value && typeof value === "object" && (value as { version?: unknown }).version === "desktop_browser_viewer_frame_v1");
 }
 function sameViewerState(state: DesktopBrowserViewerStateV1, claims: HostedBrowserViewerTicketClaimsV1) {
-  return state.available === true && state.threadId === claims.threadId && state.projectId === claims.projectId && state.sessionId === claims.sessionId && state.generation === claims.generation && typeof state.connectionId === "string";
+  return state.available === true && state.threadId === claims.threadId && state.projectId === claims.projectId && state.sessionId === claims.sessionId && state.generation === claims.generation && state.connectionId === claims.connectionId;
 }
 function sameViewerFrame(frame: DesktopBrowserViewerFrameV1, claims: HostedBrowserViewerTicketClaimsV1) {
   return frame.sessionId === claims.sessionId && frame.generation === claims.generation && frame.mediaType === "image/png";
