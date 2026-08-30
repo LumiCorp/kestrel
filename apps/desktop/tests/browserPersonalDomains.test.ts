@@ -279,6 +279,7 @@ test("Desktop Browser service denies signed-out reads and mutations", async () =
       persisted += 1;
       settings = next;
     },
+    adoptionCoordinator: noActiveDesktopBrowserSessions(),
   });
 
   await assert.rejects(
@@ -317,6 +318,7 @@ test("Desktop Browser service re-resolves account and Environment authority on e
     persistSettings: async (next) => {
       settings = next;
     },
+    adoptionCoordinator: noActiveDesktopBrowserSessions(),
   });
 
   await service.remember({
@@ -368,6 +370,7 @@ test("Desktop Browser service aborts a mutation when the account switches before
       persisted += 1;
       settings = next;
     },
+    adoptionCoordinator: noActiveDesktopBrowserSessions(),
   });
 
   await assert.rejects(
@@ -383,12 +386,153 @@ test("Desktop Browser service aborts a mutation when the account switches before
   assert.deepEqual(settings.browserPersonalDomains.partitions, []);
 });
 
+test("Desktop Browser service persists before adoption and waits for exact revision confirmation", async () => {
+  let settings = createDefaultDesktopSettings();
+  const operations: string[] = [];
+  let releaseAdoption: (() => void) | undefined;
+  let resolved = false;
+  const service = new DesktopBrowserPersonalDomainService({
+    resolveAccount: async () => signedInAccount(ACCOUNT_A, [ENVIRONMENT_A]),
+    readSettings: () => settings,
+    persistSettings: async (next) => {
+      operations.push("persist:1");
+      settings = next;
+    },
+    adoptionCoordinator: {
+      async adoptPersonalRevision(input) {
+        operations.push(`adopt:${input.personalRevision}`);
+        await new Promise<void>((resolve) => {
+          releaseAdoption = resolve;
+        });
+        return {
+          personalRevision: input.personalRevision,
+          closedUnauthorizedConnections: 0,
+        };
+      },
+    },
+  });
+
+  const remembering = service.remember({
+    environmentId: ENVIRONMENT_A,
+    destination: "https://example.com",
+    approvalId: "approval-ordered",
+    approvedAt: "2026-08-29T12:00:00.000Z",
+  }).then((result) => {
+    resolved = true;
+    return result;
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(operations, ["persist:1", "adopt:1"]);
+  assert.equal(resolved, false);
+  releaseAdoption?.();
+  assert.equal((await remembering).revision, 1);
+  assert.equal(resolved, true);
+});
+
+test("Desktop Browser remember and revoke fail closed on adoption failure and retry an unchanged revision", async () => {
+  let settings = createDefaultDesktopSettings();
+  let failAdoption = true;
+  const adoptedRevisions: number[] = [];
+  const service = new DesktopBrowserPersonalDomainService({
+    resolveAccount: async () => signedInAccount(ACCOUNT_A, [ENVIRONMENT_A]),
+    readSettings: () => settings,
+    persistSettings: async (next) => {
+      settings = next;
+    },
+    adoptionCoordinator: {
+      async adoptPersonalRevision(input) {
+        adoptedRevisions.push(input.personalRevision);
+        if (failAdoption) throw new Error("desktop Browser host unavailable");
+        return {
+          personalRevision: input.personalRevision,
+          closedUnauthorizedConnections: 0,
+        };
+      },
+    },
+  });
+  const request = {
+    environmentId: ENVIRONMENT_A,
+    destination: "https://example.com",
+    approvalId: "approval-retry",
+    approvedAt: "2026-08-29T12:00:00.000Z",
+  };
+
+  await assert.rejects(service.remember(request), /host unavailable/u);
+  assert.equal(
+    projectDesktopBrowserPersonalDomains(settings, {
+      accountId: ACCOUNT_A,
+      environmentId: ENVIRONMENT_A,
+    }).revision,
+    1,
+  );
+  failAdoption = false;
+  assert.equal((await service.remember(request)).revision, 1);
+  failAdoption = true;
+  const revocation = {
+    environmentId: ENVIRONMENT_A,
+    canonicalDomain: "example.com",
+    revokedAt: "2026-08-29T12:01:00.000Z",
+  };
+  await assert.rejects(service.revoke(revocation), /host unavailable/u);
+  assert.equal(
+    projectDesktopBrowserPersonalDomains(settings, {
+      accountId: ACCOUNT_A,
+      environmentId: ENVIRONMENT_A,
+    }).revision,
+    2,
+  );
+  failAdoption = false;
+  assert.equal((await service.revoke(revocation)).revision, 2);
+  assert.deepEqual(adoptedRevisions, [1, 1, 2, 2]);
+});
+
+test("Desktop Browser service rejects mismatched or malformed revision confirmations", async () => {
+  for (const confirmation of [
+    { personalRevision: 0, closedUnauthorizedConnections: 0 },
+    {
+      personalRevision: 1,
+      closedUnauthorizedConnections: undefined as unknown as number,
+    },
+    { personalRevision: 1, closedUnauthorizedConnections: -1 },
+    { personalRevision: 1, closedUnauthorizedConnections: 0.5 },
+    {
+      personalRevision: 1,
+      closedUnauthorizedConnections: Number.MAX_SAFE_INTEGER + 1,
+    },
+  ]) {
+    let settings = createDefaultDesktopSettings();
+    const service = new DesktopBrowserPersonalDomainService({
+      resolveAccount: async () => signedInAccount(ACCOUNT_A, [ENVIRONMENT_A]),
+      readSettings: () => settings,
+      persistSettings: async (next) => {
+        settings = next;
+      },
+      adoptionCoordinator: {
+        async adoptPersonalRevision() {
+          return confirmation;
+        },
+      },
+    });
+    await assert.rejects(
+      service.remember({
+        environmentId: ENVIRONMENT_A,
+        destination: "https://example.com",
+        approvalId: "approval-invalid-confirmation",
+        approvedAt: "2026-08-29T12:00:00.000Z",
+      }),
+      /did not confirm the exact personal-domain revision/u,
+    );
+  }
+});
+
 test("Desktop Browser service serializes sign-out ahead of later reads", async () => {
   let account: KestrelOneAccountStatus = signedInAccount(ACCOUNT_A, [ENVIRONMENT_A]);
   const service = new DesktopBrowserPersonalDomainService({
     resolveAccount: async () => account,
     readSettings: () => createDefaultDesktopSettings(),
     persistSettings: async () => undefined,
+    adoptionCoordinator: noActiveDesktopBrowserSessions(),
   });
   const signedOut = service.signOut(async () => {
     account = { status: "signed_out" };
@@ -423,6 +567,21 @@ function signedInAccount(
         role: "owner",
       })),
       threads: [],
+    },
+  };
+}
+
+function noActiveDesktopBrowserSessions() {
+  return {
+    async adoptPersonalRevision(input: {
+      accountId: string;
+      environmentId: string;
+      personalRevision: number;
+    }) {
+      return {
+        personalRevision: input.personalRevision,
+        closedUnauthorizedConnections: 0,
+      };
     },
   };
 }

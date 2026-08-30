@@ -193,10 +193,14 @@ test("hosted Browser grants publish only the allow-and-remember approval action"
           browserDomainGrant: {
             version: "browser_domain_grant_approval_v1",
             canonicalDomain: "example.com",
+            requestingActorId: "person-stable-id-1",
+            environmentId: "environment-stable-id-1",
             scope: "apex_and_subdomains",
             port: 443,
             actionLabel: "Allow and remember",
           },
+          requestingPersonDisplayName: "Unrelated Person Name",
+          requestingPersonEmail: "unrelated-person@example.test",
         },
       },
     },
@@ -221,7 +225,11 @@ test("hosted Browser grants publish only the allow-and-remember approval action"
   assert.equal(dto.title, "Allow this Browser domain?");
   assert.match(dto.prompt, /example\.com/u);
   assert.match(dto.prompt, /apex and subdomains/u);
+  assert.match(dto.prompt, /person-stable-id-1/u);
+  assert.match(dto.prompt, /environment-stable-id-1/u);
   assert.doesNotMatch(JSON.stringify(dto), /remember_approval/u);
+  assert.doesNotMatch(JSON.stringify(dto), /Unrelated Person Name/u);
+  assert.doesNotMatch(JSON.stringify(dto), /unrelated-person@example\.test/u);
 });
 
 test("hosted V4 Project Ask First publishes Remember Approval", () => {

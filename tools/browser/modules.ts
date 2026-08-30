@@ -176,6 +176,17 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
                   effectiveInput: input,
                 }),
               );
+              if (
+                contract.toolId === "browser.request_grant" &&
+                resolution.decision === "approval_required" &&
+                resolution.sessionMode !== "operator"
+              ) {
+                throw browserFailure(
+                  "BROWSER_DESTINATION_BLOCKED",
+                  "QA Browser Sessions cannot create personal public-domain grants.",
+                  { recoverable: false, operation: contract.toolId },
+                );
+              }
               return {
                 decision: resolution.decision,
                 policyRevision: resolution.policyRevision,

@@ -22,6 +22,7 @@ export interface HostedBrowserAllowlistAdoptionCoordinator {
     adoptedSessions: readonly {
       sessionId: string;
       effectiveRevision: string;
+      closedUnauthorizedConnections: number;
     }[];
   }>;
 }
@@ -105,8 +106,13 @@ export async function revokePersonalBrowserDomainForSignedInUser(
     confirmation.personalRevision !== mutation.personalRevision ||
     confirmation.adoptedSessions.some(
       (session) =>
+        typeof session.sessionId !== "string" ||
         session.sessionId.trim().length === 0 ||
-        session.effectiveRevision.trim().length === 0,
+        typeof session.effectiveRevision !== "string" ||
+        session.effectiveRevision.trim().length === 0 ||
+        typeof session.closedUnauthorizedConnections !== "number" ||
+        !Number.isSafeInteger(session.closedUnauthorizedConnections) ||
+        session.closedUnauthorizedConnections < 0,
     )
   ) {
     throw new HostedBrowserPersonalDomainAccessError(

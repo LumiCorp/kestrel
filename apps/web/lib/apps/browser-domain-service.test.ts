@@ -29,6 +29,7 @@ const qa = {
   revision: "qa-none",
   target: null,
 };
+const agentId = "kestrel-one";
 
 test("hosted Browser settings parsers enforce exact canonical authority", () => {
   assert.equal(HOSTED_BROWSER_DOMAIN_POLICY_CAPABILITY_KEY, "request_grant");
@@ -37,13 +38,13 @@ test("hosted Browser settings parsers enforce exact canonical authority", () => 
       enabledModes: ["operator", "qa"],
       personalGrantsEnabled: true,
       configuredPublicDomains: [publicDomain("example.com")],
-      blockedPublicDomains: [publicDomain("blocked.example")],
+      blockedPublicDomains: [publicDomain("example.net")],
     }),
     {
       enabledModes: ["operator", "qa"],
       personalGrantsEnabled: true,
       configuredPublicDomains: [publicDomain("example.com")],
-      blockedPublicDomains: [publicDomain("blocked.example")],
+      blockedPublicDomains: [publicDomain("example.net")],
     },
   );
   assert.deepEqual(
@@ -93,6 +94,7 @@ test("a Project without an enabled Browser App has no effective domain authority
       environmentId: "environment-a",
       projectId: "project-disabled",
       userId: "user-a",
+      agentId,
       qa,
     },
     database as never,
@@ -102,7 +104,7 @@ test("a Project without an enabled Browser App has no effective domain authority
   assert.equal(authority.personalGrantsEnabled, false);
 });
 
-test("Project settings may narrow but cannot exceed the Environment ceiling", async () => {
+test("stale broader Project settings resolve through the current Environment ceiling", async () => {
   const database = fakeAuthorityDatabase({
     projectId: "project-expanding",
     projectSettings: {
@@ -111,19 +113,19 @@ test("Project settings may narrow but cannot exceed the Environment ceiling", as
       blockedPublicDomains: [],
     },
   });
-  await assert.rejects(
-    resolveHostedBrowserDomainAuthority(
-      {
-        organizationId: "org-a",
-        environmentId: "environment-a",
-        projectId: "project-expanding",
-        userId: "user-a",
-        qa,
-      },
-      database as never,
-    ),
-    /only narrow Environment modes/u,
+  const authority = await resolveHostedBrowserDomainAuthority(
+    {
+      organizationId: "org-a",
+      environmentId: "environment-a",
+      projectId: "project-expanding",
+      userId: "user-a",
+      agentId,
+      qa,
+    },
+    database as never,
   );
+  assert.deepEqual(authority.enabledModes, ["operator"]);
+  assert.equal(authority.personalGrantsEnabled, true);
 });
 
 test("hosted authority reads reuse one personal grant across Projects while preserving narrowing", async () => {
@@ -147,6 +149,7 @@ test("hosted authority reads reuse one personal grant across Projects while pres
     organizationId: "org-a",
     environmentId: "environment-a",
     userId: "user-a",
+    agentId,
     qa,
   };
   const first = await resolveHostedBrowserDomainAuthority(
@@ -159,11 +162,11 @@ test("hosted authority reads reuse one personal grant across Projects while pres
   );
   assert.deepEqual(
     first.publicDomains.map((entry) => entry.canonicalDomain),
-    ["environment.example", "example.com"],
+    ["environment.net", "example.com"],
   );
   assert.deepEqual(
     narrowed.publicDomains.map((entry) => entry.canonicalDomain),
-    ["environment.example"],
+    ["environment.net"],
   );
   assert.equal(first.personalGrantsEnabled, true);
   assert.equal(narrowed.personalGrantsEnabled, true);
@@ -175,8 +178,8 @@ test("hosted grant decisions apply Environment ceiling before requesting approva
     environmentSettings: {
       enabledModes: ["operator"],
       personalGrantsEnabled: true,
-      configuredPublicDomains: [publicDomain("environment.example")],
-      blockedPublicDomains: [publicDomain("forbidden.example")],
+      configuredPublicDomains: [publicDomain("environment.net")],
+      blockedPublicDomains: [publicDomain("example.org")],
     },
   });
   const base = {
@@ -184,12 +187,17 @@ test("hosted grant decisions apply Environment ceiling before requesting approva
     environmentId: "environment-a",
     projectId: "project-a",
     userId: "user-a",
+    agentId,
     qa,
   };
   assert.equal(
     (
       await resolveHostedBrowserPublicGrantDecision(
-        { ...base, destination: "https://a.example.com/private?q=secret" },
+        {
+          ...base,
+          destination: "https://a.example.com/private?q=secret",
+          sessionMode: "operator",
+        },
         database as never,
       )
     ).decision,
@@ -198,7 +206,11 @@ test("hosted grant decisions apply Environment ceiling before requesting approva
   assert.equal(
     (
       await resolveHostedBrowserPublicGrantDecision(
-        { ...base, destination: "https://forbidden.example/path" },
+        {
+          ...base,
+          destination: "https://forbidden.example.org/path",
+          sessionMode: "operator",
+        },
         database as never,
       )
     ).decision,
@@ -207,12 +219,45 @@ test("hosted grant decisions apply Environment ceiling before requesting approva
   assert.equal(
     (
       await resolveHostedBrowserPublicGrantDecision(
-        { ...base, destination: "https://new.example.net/path" },
+        {
+          ...base,
+          destination: "https://new.example.net/path",
+          sessionMode: "operator",
+        },
         database as never,
       )
     ).decision,
     "approval_required",
   );
+});
+
+test("actor or hosted-agent denial removes Browser grant authority", async () => {
+  for (const subjectType of ["actor", "agent"] as const) {
+    const database = fakeAuthorityDatabase({
+      projectId: "project-a",
+      subjectRestrictions: [{
+        subjectType,
+        subjectId: subjectType === "actor" ? "user-a" : agentId,
+        enabled: false,
+        approvalMode: "deny",
+        updatedAt: new Date("2026-08-29T12:05:00.000Z"),
+      }],
+    });
+    const decision = await resolveHostedBrowserPublicGrantDecision(
+      {
+        organizationId: "org-a",
+        environmentId: "environment-a",
+        projectId: "project-a",
+        userId: "user-a",
+        agentId,
+        qa,
+        destination: "https://new.example.net/path",
+        sessionMode: "operator",
+      },
+      database as never,
+    );
+    assert.equal(decision.decision, "blocked", subjectType);
+  }
 });
 
 test("personal list projection is exact-user scoped and excludes durable provenance", async () => {
@@ -279,6 +324,7 @@ test("authority reads reject a Project outside the exact Environment scope", asy
         environmentId: "environment-a",
         projectId: "project-from-another-environment",
         userId: "user-a",
+        agentId,
         qa,
       },
       database as never,
@@ -297,13 +343,20 @@ function fakeAuthorityDatabase(input: {
     typeof parseHostedBrowserEnvironmentSettings
   >;
   projectSettings?: ReturnType<typeof parseHostedBrowserProjectSettings>;
+  subjectRestrictions?: readonly {
+    subjectType: "actor" | "agent";
+    subjectId: string;
+    enabled: boolean;
+    approvalMode: "auto" | "ask" | "deny";
+    updatedAt: Date;
+  }[];
 }) {
   const environmentSettings =
     input.environmentSettings ??
     parseHostedBrowserEnvironmentSettings({
       enabledModes: ["operator"],
       personalGrantsEnabled: true,
-      configuredPublicDomains: [publicDomain("environment.example")],
+      configuredPublicDomains: [publicDomain("environment.net")],
       blockedPublicDomains: [],
     });
   const projectSettings =
@@ -357,6 +410,9 @@ function fakeAuthorityDatabase(input: {
             port: 443,
           },
         ],
+      },
+      environmentCapabilitySubjectRestrictions: {
+        findMany: async () => input.subjectRestrictions ?? [],
       },
     },
   };

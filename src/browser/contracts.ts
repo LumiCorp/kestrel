@@ -128,6 +128,7 @@ export interface BrowserAllowlistAdoptionReceiptV1 {
   version: typeof BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION;
   sessionId: string;
   effectiveAllowlistRevision: string;
+  closedUnauthorizedConnections: number;
 }
 
 export interface BrowserResultExecutionAuthorityV1 {
@@ -165,6 +166,7 @@ export interface BrowserPolicyResolutionV1 {
   version: typeof BROWSER_POLICY_RESOLUTION_VERSION;
   decision: "allow" | "deny" | "approval_required";
   policyRevision: string;
+  sessionMode: BrowserMode;
 }
 
 export interface BrowserOperationLifecycleV1 {
@@ -194,7 +196,7 @@ export function parseBrowserPolicyResolutionV1(
   const record = requireRecord(value, "BrowserPolicyResolutionV1");
   rejectUnknown(
     record,
-    new Set(["version", "decision", "policyRevision"]),
+    new Set(["version", "decision", "policyRevision", "sessionMode"]),
     "BrowserPolicyResolutionV1",
   );
   if (record.version !== BROWSER_POLICY_RESOLUTION_VERSION) {
@@ -209,6 +211,9 @@ export function parseBrowserPolicyResolutionV1(
   ) {
     throw new Error("BrowserPolicyResolutionV1.decision is invalid.");
   }
+  if (record.sessionMode !== "qa" && record.sessionMode !== "operator") {
+    throw new Error("BrowserPolicyResolutionV1.sessionMode is invalid.");
+  }
   return {
     version: BROWSER_POLICY_RESOLUTION_VERSION,
     decision: record.decision,
@@ -216,6 +221,7 @@ export function parseBrowserPolicyResolutionV1(
       record.policyRevision,
       "BrowserPolicyResolutionV1.policyRevision",
     ),
+    sessionMode: record.sessionMode,
   };
 }
 
@@ -225,7 +231,12 @@ export function parseBrowserAllowlistAdoptionReceiptV1(
   const record = requireRecord(value, "BrowserAllowlistAdoptionReceiptV1");
   rejectUnknown(
     record,
-    new Set(["version", "sessionId", "effectiveAllowlistRevision"]),
+    new Set([
+      "version",
+      "sessionId",
+      "effectiveAllowlistRevision",
+      "closedUnauthorizedConnections",
+    ]),
     "BrowserAllowlistAdoptionReceiptV1",
   );
   if (record.version !== BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION) {
@@ -242,6 +253,10 @@ export function parseBrowserAllowlistAdoptionReceiptV1(
     effectiveAllowlistRevision: requireString(
       record.effectiveAllowlistRevision,
       "BrowserAllowlistAdoptionReceiptV1.effectiveAllowlistRevision",
+    ),
+    closedUnauthorizedConnections: requireNonNegativeSafeInteger(
+      record.closedUnauthorizedConnections,
+      "BrowserAllowlistAdoptionReceiptV1.closedUnauthorizedConnections",
     ),
   };
 }
@@ -1077,6 +1092,17 @@ function requireString(value: unknown, label: string): string {
     throw new Error(`${label} must be a non-empty string.`);
   }
   return value.trim();
+}
+
+function requireNonNegativeSafeInteger(value: unknown, label: string): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0
+  ) {
+    throw new Error(`${label} must be a non-negative safe integer.`);
+  }
+  return value;
 }
 
 function requireTimestamp(value: unknown, label: string): string {

@@ -115,7 +115,9 @@ export function canonicalizePublicBrowserDestination(
     throw invalidDestination("Public Browser destinations must use HTTPS.");
   }
   if (parsed.username !== "" || parsed.password !== "") {
-    throw invalidDestination("Public Browser destinations cannot contain credentials.");
+    throw invalidDestination(
+      "Public Browser destinations cannot contain credentials.",
+    );
   }
   if (parsed.port !== "" && parsed.port !== "443") {
     throw invalidDestination("Public Browser destinations must use port 443.");
@@ -123,13 +125,22 @@ export function canonicalizePublicBrowserDestination(
 
   const hostname = normalizeHostname(parsed.hostname);
   if (isIpLiteral(hostname)) {
-    throw invalidDestination("Public Browser grants cannot target an IP literal.");
+    throw invalidDestination(
+      "Public Browser grants cannot target an IP literal.",
+    );
   }
   if (isReservedHostname(hostname)) {
-    throw invalidDestination("The destination is local, private, metadata, or reserved.");
+    throw invalidDestination(
+      "The destination is local, private, metadata, or reserved.",
+    );
   }
 
   const result = parseDomain(hostname, { allowPrivateDomains: true });
+  if (result.isIcann !== true && result.isPrivate !== true) {
+    throw invalidDestination(
+      "Destination must use a recognized ICANN or private Public Suffix List suffix.",
+    );
+  }
   const canonicalDomain = result.domain?.toLowerCase();
   if (canonicalDomain === undefined || canonicalDomain === "") {
     throw invalidDestination(
@@ -139,7 +150,9 @@ export function canonicalizePublicBrowserDestination(
     );
   }
   if (isReservedHostname(canonicalDomain)) {
-    throw invalidDestination("The destination is local, private, metadata, or reserved.");
+    throw invalidDestination(
+      "The destination is local, private, metadata, or reserved.",
+    );
   }
 
   return {
@@ -152,13 +165,17 @@ export function canonicalizePublicBrowserDestination(
 }
 
 /** Canonicalizes a trusted QA origin without converting it into public authority. */
-export function canonicalizeTrustedBrowserQaTarget(destination: string): BrowserQaTargetV1 {
+export function canonicalizeTrustedBrowserQaTarget(
+  destination: string,
+): BrowserQaTargetV1 {
   const raw = nonEmptyString(destination, "destination");
   let parsed: URL;
   try {
     parsed = new URL(raw);
   } catch {
-    throw new Error("Trusted Browser QA target must be an absolute HTTP or HTTPS URL.");
+    throw new Error(
+      "Trusted Browser QA target must be an absolute HTTP or HTTPS URL.",
+    );
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Trusted Browser QA target must use HTTP or HTTPS.");
@@ -167,7 +184,12 @@ export function canonicalizeTrustedBrowserQaTarget(destination: string): Browser
     throw new Error("Trusted Browser QA target cannot contain credentials.");
   }
   const hostname = normalizeHostname(parsed.hostname);
-  const port = parsed.port === "" ? (parsed.protocol === "https:" ? 443 : 80) : Number(parsed.port);
+  const port =
+    parsed.port === ""
+      ? parsed.protocol === "https:"
+        ? 443
+        : 80
+      : Number(parsed.port);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new Error("Trusted Browser QA target port is invalid.");
   }
@@ -252,15 +274,26 @@ export function effectiveBrowserAuthorityAllowsPublicDestination(
 export function resolveBrowserPublicGrantDecision(
   input: BrowserDomainAuthorityInputV1,
   destination: string,
+  sessionMode: BrowserMode,
 ): BrowserPublicGrantDecisionV1 {
+  if (sessionMode !== "qa" && sessionMode !== "operator") {
+    throw new Error("Browser grant sessionMode must be qa or operator.");
+  }
   const authority = canonicalizePublicBrowserDestination(destination);
   const effective = resolveEffectiveBrowserDomainAuthority(input);
   const key = domainKey(authority);
-  const decision = effective.publicDomains.some((entry) => domainKey(entry) === key)
+  const decision = effective.publicDomains.some(
+    (entry) => domainKey(entry) === key,
+  )
     ? "already_allowed"
-    : !effective.personalGrantsEnabled ||
-        input.environment.blockedPublicDomains.some((entry) => domainKey(entry) === key) ||
-        input.project.blockedPublicDomains.some((entry) => domainKey(entry) === key)
+    : sessionMode !== "operator" ||
+        !effective.personalGrantsEnabled ||
+        input.environment.blockedPublicDomains.some(
+          (entry) => domainKey(entry) === key,
+        ) ||
+        input.project.blockedPublicDomains.some(
+          (entry) => domainKey(entry) === key,
+        )
       ? "blocked"
       : "approval_required";
   return {
@@ -279,13 +312,17 @@ export function assertPublicBrowserResolvedAddresses(
   addresses: readonly string[],
 ): void {
   if (addresses.length === 0) {
-    throw invalidDestination("Destination did not resolve to a public network address.");
+    throw invalidDestination(
+      "Destination did not resolve to a public network address.",
+    );
   }
   for (const address of addresses) {
     const family = isIP(address);
     if (
       family === 0 ||
-      RESERVED_NETWORKS.check(address, family === 4 ? "ipv4" : "ipv6")
+      (family === 4
+        ? RESERVED_IPV4_NETWORKS.check(address, "ipv4")
+        : RESERVED_IPV6_NETWORKS.check(address, "ipv6"))
     ) {
       throw invalidDestination(
         "Destination resolved to a private, local, link-local, metadata, or reserved address.",
@@ -295,36 +332,57 @@ export function assertPublicBrowserResolvedAddresses(
 }
 
 function validateAuthorityInput(input: BrowserDomainAuthorityInputV1): void {
-  exactKeys(input as unknown, ["environment", "project", "personal", "qa"], "BrowserDomainAuthorityInputV1");
+  exactKeys(
+    input as unknown,
+    ["environment", "project", "personal", "qa"],
+    "BrowserDomainAuthorityInputV1",
+  );
   const environment = input.environment;
-  exactKeys(environment, [
-    "version",
-    "environmentId",
-    "revision",
-    "enabledModes",
-    "personalGrantsEnabled",
-    "configuredPublicDomains",
-    "blockedPublicDomains",
-  ], "BrowserEnvironmentDomainAuthorityV1");
+  exactKeys(
+    environment,
+    [
+      "version",
+      "environmentId",
+      "revision",
+      "enabledModes",
+      "personalGrantsEnabled",
+      "configuredPublicDomains",
+      "blockedPublicDomains",
+    ],
+    "BrowserEnvironmentDomainAuthorityV1",
+  );
   if (environment.version !== BROWSER_ENVIRONMENT_DOMAIN_AUTHORITY_VERSION) {
     throw new Error("Browser Environment authority version is invalid.");
   }
   nonEmptyString(environment.environmentId, "environment.environmentId");
   nonEmptyString(environment.revision, "environment.revision");
-  booleanValue(environment.personalGrantsEnabled, "environment.personalGrantsEnabled");
+  booleanValue(
+    environment.personalGrantsEnabled,
+    "environment.personalGrantsEnabled",
+  );
   validateModes(environment.enabledModes, "environment.enabledModes");
-  validateDomainSet(environment.configuredPublicDomains, "environment.configuredPublicDomains");
-  validateDomainSet(environment.blockedPublicDomains, "environment.blockedPublicDomains");
+  validateDomainSet(
+    environment.configuredPublicDomains,
+    "environment.configuredPublicDomains",
+  );
+  validateDomainSet(
+    environment.blockedPublicDomains,
+    "environment.blockedPublicDomains",
+  );
 
   const project = input.project;
-  exactKeys(project, [
-    "version",
-    "projectId",
-    "revision",
-    "enabledModes",
-    "personalGrantsEnabled",
-    "blockedPublicDomains",
-  ], "BrowserProjectDomainAuthorityV1");
+  exactKeys(
+    project,
+    [
+      "version",
+      "projectId",
+      "revision",
+      "enabledModes",
+      "personalGrantsEnabled",
+      "blockedPublicDomains",
+    ],
+    "BrowserProjectDomainAuthorityV1",
+  );
   if (project.version !== BROWSER_PROJECT_DOMAIN_AUTHORITY_VERSION) {
     throw new Error("Browser Project authority version is invalid.");
   }
@@ -332,16 +390,16 @@ function validateAuthorityInput(input: BrowserDomainAuthorityInputV1): void {
   nonEmptyString(project.revision, "project.revision");
   booleanValue(project.personalGrantsEnabled, "project.personalGrantsEnabled");
   validateModes(project.enabledModes, "project.enabledModes");
-  validateDomainSet(project.blockedPublicDomains, "project.blockedPublicDomains");
-  if (project.enabledModes.some((mode) => !environment.enabledModes.includes(mode))) {
-    throw new Error("Project Browser modes may only narrow Environment modes.");
-  }
-  if (project.personalGrantsEnabled && !environment.personalGrantsEnabled) {
-    throw new Error("Project policy cannot enable personal grants above its Environment ceiling.");
-  }
-
+  validateDomainSet(
+    project.blockedPublicDomains,
+    "project.blockedPublicDomains",
+  );
   const personal = input.personal;
-  exactKeys(personal, ["version", "userId", "environmentId", "revision", "activeDomains"], "BrowserPersonalDomainAuthorityV1");
+  exactKeys(
+    personal,
+    ["version", "userId", "environmentId", "revision", "activeDomains"],
+    "BrowserPersonalDomainAuthorityV1",
+  );
   if (personal.version !== BROWSER_PERSONAL_DOMAIN_AUTHORITY_VERSION) {
     throw new Error("Browser personal authority version is invalid.");
   }
@@ -349,12 +407,18 @@ function validateAuthorityInput(input: BrowserDomainAuthorityInputV1): void {
   nonEmptyString(personal.environmentId, "personal.environmentId");
   nonEmptyString(personal.revision, "personal.revision");
   if (personal.environmentId !== environment.environmentId) {
-    throw new Error("Personal Browser authority belongs to a different Environment.");
+    throw new Error(
+      "Personal Browser authority belongs to a different Environment.",
+    );
   }
   validateDomainSet(personal.activeDomains, "personal.activeDomains");
 
   const qa = input.qa;
-  exactKeys(qa, ["version", "revision", "target"], "BrowserQaDomainAuthorityV1");
+  exactKeys(
+    qa,
+    ["version", "revision", "target"],
+    "BrowserQaDomainAuthorityV1",
+  );
   if (qa.version !== BROWSER_QA_DOMAIN_AUTHORITY_VERSION) {
     throw new Error("Browser QA authority version is invalid.");
   }
@@ -363,36 +427,68 @@ function validateAuthorityInput(input: BrowserDomainAuthorityInputV1): void {
 }
 
 function validateModes(modes: readonly BrowserMode[], field: string): void {
-  if (!Array.isArray(modes) || modes.some((mode) => mode !== "qa" && mode !== "operator")) {
+  if (
+    !Array.isArray(modes) ||
+    modes.some((mode) => mode !== "qa" && mode !== "operator")
+  ) {
     throw new Error(`${field} must contain only qa or operator.`);
   }
-  if (new Set(modes).size !== modes.length) throw new Error(`${field} cannot contain duplicates.`);
+  if (new Set(modes).size !== modes.length)
+    throw new Error(`${field} cannot contain duplicates.`);
 }
 
-function validateDomainSet(domains: readonly BrowserPublicDomainAuthorityV1[], field: string): void {
+function validateDomainSet(
+  domains: readonly BrowserPublicDomainAuthorityV1[],
+  field: string,
+): void {
   if (!Array.isArray(domains)) throw new Error(`${field} must be an array.`);
-  for (const [index, domain] of domains.entries()) validatePublicDomain(domain, `${field}[${index}]`);
-  if (new Set(domains.map(domainKey)).size !== domains.length) throw new Error(`${field} cannot contain duplicates.`);
+  for (const [index, domain] of domains.entries())
+    validatePublicDomain(domain, `${field}[${index}]`);
+  if (new Set(domains.map(domainKey)).size !== domains.length)
+    throw new Error(`${field} cannot contain duplicates.`);
 }
 
-function validatePublicDomain(domain: BrowserPublicDomainAuthorityV1, field: string): void {
-  exactKeys(domain, ["version", "scheme", "canonicalDomain", "includeSubdomains", "port"], field);
+function validatePublicDomain(
+  domain: BrowserPublicDomainAuthorityV1,
+  field: string,
+): void {
+  exactKeys(
+    domain,
+    ["version", "scheme", "canonicalDomain", "includeSubdomains", "port"],
+    field,
+  );
   if (
     domain.version !== BROWSER_PUBLIC_DOMAIN_AUTHORITY_VERSION ||
     domain.scheme !== "https" ||
     domain.includeSubdomains !== true ||
     domain.port !== 443
-  ) throw new Error(`${field} is not canonical Browser public authority.`);
-  const canonical = canonicalizePublicBrowserDestination(`https://${domain.canonicalDomain}`);
-  if (canonical.canonicalDomain !== domain.canonicalDomain) throw new Error(`${field}.canonicalDomain is not canonical.`);
+  )
+    throw new Error(`${field} is not canonical Browser public authority.`);
+  const canonical = canonicalizePublicBrowserDestination(
+    `https://${domain.canonicalDomain}`,
+  );
+  if (canonical.canonicalDomain !== domain.canonicalDomain)
+    throw new Error(`${field}.canonicalDomain is not canonical.`);
 }
 
 function validateQaTarget(target: BrowserQaTargetV1): void {
-  exactKeys(target, ["version", "scheme", "hostname", "port"], "BrowserQaTargetV1");
-  if (target.version !== BROWSER_QA_TARGET_VERSION) throw new Error("Browser QA target version is invalid.");
-  if (target.scheme !== "http" && target.scheme !== "https") throw new Error("Browser QA target scheme is invalid.");
-  if (normalizeHostname(target.hostname) !== target.hostname) throw new Error("Browser QA target hostname is not canonical.");
-  if (!Number.isSafeInteger(target.port) || target.port < 1 || target.port > 65_535) throw new Error("Browser QA target port is invalid.");
+  exactKeys(
+    target,
+    ["version", "scheme", "hostname", "port"],
+    "BrowserQaTargetV1",
+  );
+  if (target.version !== BROWSER_QA_TARGET_VERSION)
+    throw new Error("Browser QA target version is invalid.");
+  if (target.scheme !== "http" && target.scheme !== "https")
+    throw new Error("Browser QA target scheme is invalid.");
+  if (normalizeHostname(target.hostname) !== target.hostname)
+    throw new Error("Browser QA target hostname is not canonical.");
+  if (
+    !Number.isSafeInteger(target.port) ||
+    target.port < 1 ||
+    target.port > 65_535
+  )
+    throw new Error("Browser QA target port is invalid.");
 }
 
 function canonicalEnvironment(value: BrowserEnvironmentDomainAuthorityV1) {
@@ -417,13 +513,20 @@ function canonicalPersonal(value: BrowserPersonalDomainAuthorityV1) {
 }
 
 function canonicalQa(value: BrowserQaDomainAuthorityV1) {
-  return { ...value, target: value.target === null ? null : { ...value.target } };
+  return {
+    ...value,
+    target: value.target === null ? null : { ...value.target },
+  };
 }
 
-function uniqueSortedDomains(domains: readonly BrowserPublicDomainAuthorityV1[]): BrowserPublicDomainAuthorityV1[] {
+function uniqueSortedDomains(
+  domains: readonly BrowserPublicDomainAuthorityV1[],
+): BrowserPublicDomainAuthorityV1[] {
   const byKey = new Map<string, BrowserPublicDomainAuthorityV1>();
   for (const domain of domains) byKey.set(domainKey(domain), domain);
-  return [...byKey.values()].sort((left, right) => compareStrings(domainKey(left), domainKey(right)));
+  return [...byKey.values()].sort((left, right) =>
+    compareStrings(domainKey(left), domainKey(right)),
+  );
 }
 
 function domainKey(domain: BrowserPublicDomainAuthorityV1): string {
@@ -436,8 +539,10 @@ function normalizeHostname(value: string): string {
     withoutTrailingDot.startsWith("[") && withoutTrailingDot.endsWith("]")
       ? withoutTrailingDot.slice(1, -1)
       : withoutTrailingDot;
-  const normalized = isIP(unbracketed) === 0 ? domainToASCII(unbracketed) : unbracketed;
-  if (normalized === "" || normalized.length > 253) throw new Error("Browser destination hostname is invalid.");
+  const normalized =
+    isIP(unbracketed) === 0 ? domainToASCII(unbracketed) : unbracketed;
+  if (normalized === "" || normalized.length > 253)
+    throw new Error("Browser destination hostname is invalid.");
   return normalized;
 }
 
@@ -447,19 +552,16 @@ function isIpLiteral(hostname: string): boolean {
 
 function isReservedHostname(hostname: string): boolean {
   return (
-    hostname === "localhost" ||
     hostname === "metadata" ||
     hostname === "metadata.google.internal" ||
-    hostname.endsWith(".localhost") ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".localdomain") ||
-    hostname.endsWith(".lan") ||
-    hostname.endsWith(".home") ||
-    hostname.endsWith(".internal") ||
-    hostname.endsWith(".invalid") ||
-    hostname.endsWith(".test") ||
-    hostname.endsWith(".onion")
+    RESERVED_HOSTNAME_FAMILIES.some((family) =>
+      hostnameBelongsToFamily(hostname, family),
+    )
   );
+}
+
+function hostnameBelongsToFamily(hostname: string, family: string): boolean {
+  return hostname === family || hostname.endsWith(`.${family}`);
 }
 
 function invalidDestination(message: string): Error {
@@ -467,26 +569,36 @@ function invalidDestination(message: string): Error {
 }
 
 function nonEmptyString(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.trim() === "") throw new Error(`${field} must be a non-empty string.`);
+  if (typeof value !== "string" || value.trim() === "")
+    throw new Error(`${field} must be a non-empty string.`);
   return value;
 }
 
 function booleanValue(value: unknown, field: string): asserts value is boolean {
-  if (typeof value !== "boolean") throw new Error(`${field} must be a boolean.`);
+  if (typeof value !== "boolean")
+    throw new Error(`${field} must be a boolean.`);
 }
 
-function exactKeys(value: unknown, allowed: readonly string[], type: string): void {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${type} must be an object.`);
+function exactKeys(
+  value: unknown,
+  allowed: readonly string[],
+  type: string,
+): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new Error(`${type} must be an object.`);
   const allowedSet = new Set(allowed);
   const unknown = Object.keys(value).filter((key) => !allowedSet.has(key));
-  if (unknown.length > 0) throw new Error(`${type} contains unknown fields: ${unknown.sort(compareStrings).join(", ")}.`);
+  if (unknown.length > 0)
+    throw new Error(
+      `${type} contains unknown fields: ${unknown.sort(compareStrings).join(", ")}.`,
+    );
 }
 
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-const RESERVED_NETWORKS = new BlockList();
+const RESERVED_IPV4_NETWORKS = new BlockList();
 for (const [network, prefix] of [
   ["0.0.0.0", 8],
   ["10.0.0.0", 8],
@@ -504,20 +616,41 @@ for (const [network, prefix] of [
   ["224.0.0.0", 4],
   ["240.0.0.0", 4],
 ] as const) {
-  RESERVED_NETWORKS.addSubnet(network, prefix, "ipv4");
+  RESERVED_IPV4_NETWORKS.addSubnet(network, prefix, "ipv4");
 }
+const RESERVED_IPV6_NETWORKS = new BlockList();
 for (const [network, prefix] of [
   ["::", 128],
   ["::1", 128],
+  ["::ffff:0:0", 96],
   ["64:ff9b::", 96],
   ["64:ff9b:1::", 48],
   ["100::", 64],
-  ["2001:2::", 48],
+  ["100:0:0:1::", 64],
+  ["2001::", 23],
   ["2001:db8::", 32],
   ["2002::", 16],
+  ["2620:4f:8000::", 48],
+  ["3fff::", 20],
+  ["5f00::", 16],
   ["fc00::", 7],
   ["fe80::", 10],
+  ["fec0::", 10],
   ["ff00::", 8],
 ] as const) {
-  RESERVED_NETWORKS.addSubnet(network, prefix, "ipv6");
+  RESERVED_IPV6_NETWORKS.addSubnet(network, prefix, "ipv6");
 }
+
+const RESERVED_HOSTNAME_FAMILIES = [
+  "localhost",
+  "local",
+  "localdomain",
+  "lan",
+  "home",
+  "home.arpa",
+  "internal",
+  "invalid",
+  "test",
+  "example",
+  "onion",
+] as const;

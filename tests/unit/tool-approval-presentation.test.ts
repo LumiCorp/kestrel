@@ -164,12 +164,17 @@ test("Browser domain grants expose one canonical allow-and-remember decision", (
       reasonCode: "environment_policy",
       authority: { kind: "hosted_app_policy", revision: "browser-policy-7" },
     },
+    hostedApprovalScope: {
+      requestingActorId: "user-7",
+      environmentId: "environment-3",
+    },
   });
 
   assert.equal(presentation.title, "Allow this Browser domain");
   assert.deepEqual(presentation.browserDomainGrant, {
     version: "browser_domain_grant_approval_v1",
     sessionId: "browser-session-1",
+    sessionMode: "operator",
     canonicalDomain: "example.com",
     scheme: "https",
     scope: "apex_and_subdomains",
@@ -179,9 +184,14 @@ test("Browser domain grants expose one canonical allow-and-remember decision", (
     environmentEffect: "future_eligible_projects_in_environment",
     sessionEffect: "immediate",
     actionLabel: "Allow and remember",
+    requestingActorId: "user-7",
+    environmentId: "environment-3",
+    approvalAuthorityRevision: "browser-policy-7",
   });
   assert.equal(presentation.policy.rememberApprovalEligible, false);
   assert.match(JSON.stringify(presentation), /Apex and subdomains/u);
+  assert.match(JSON.stringify(presentation), /user-7/u);
+  assert.match(JSON.stringify(presentation), /environment-3/u);
   assert.doesNotMatch(JSON.stringify(presentation), /private|token|secret|fragment/u);
   assert.throws(
     () =>

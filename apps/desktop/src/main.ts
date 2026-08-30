@@ -212,6 +212,7 @@ import {
 import {
   DesktopBrowserPersonalDomainService,
   type DesktopBrowserPersonalDomainRememberRequest,
+  type DesktopBrowserPersonalRevisionAdoptionCoordinator,
 } from "./browserPersonalDomainService.js";
 import {
   createCoreOwnedDesktopDatabaseController,
@@ -408,6 +409,19 @@ let databaseStatus: DesktopDatabaseStatus = {
 };
 let desktopSettings: DesktopSettings = createDefaultDesktopSettings();
 let browserPersonalDomainService: DesktopBrowserPersonalDomainService | undefined;
+/**
+ * Main owns the truthful pre-host state: Desktop cannot have an active Browser
+ * Session until Issue 03 supplies and wires the real session coordinator.
+ */
+const noActiveDesktopBrowserSessionsPersonalRevisionAdoptionCoordinator:
+  DesktopBrowserPersonalRevisionAdoptionCoordinator = {
+  async adoptPersonalRevision(input) {
+    return {
+      personalRevision: input.personalRevision,
+      closedUnauthorizedConnections: 0,
+    };
+  },
+};
 const linkPreviewService = new LinkPreviewService();
 
 function resolveAuthoritativeDesktopExecutionSelection(
@@ -1684,6 +1698,8 @@ function registerIpcHandlers(
         browserPersonalDomains: settings.browserPersonalDomains,
       });
     },
+    adoptionCoordinator:
+      noActiveDesktopBrowserSessionsPersonalRevisionAdoptionCoordinator,
   });
   ipcMain.handle(
     "desktop:get-settings",

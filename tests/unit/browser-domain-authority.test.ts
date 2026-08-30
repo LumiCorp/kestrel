@@ -45,12 +45,23 @@ test("public Browser destinations canonicalize to one HTTPS registrable apex", (
     "https://deep.shop.example.com/account?token=discarded#discarded",
   );
   assert.equal(example.canonicalDomain, "example.com");
-  assert.equal(browserPublicDomainAllowsHostname(example, "example.com."), true);
-  assert.equal(browserPublicDomainAllowsHostname(example, "a.b.example.com"), true);
-  assert.equal(browserPublicDomainAllowsHostname(example, "notexample.com"), false);
+  assert.equal(
+    browserPublicDomainAllowsHostname(example, "example.com."),
+    true,
+  );
+  assert.equal(
+    browserPublicDomainAllowsHostname(example, "a.b.example.com"),
+    true,
+  );
+  assert.equal(
+    browserPublicDomainAllowsHostname(example, "notexample.com"),
+    false,
+  );
   assert.equal(
     effectiveBrowserAuthorityAllowsPublicDestination(
-      resolveEffectiveBrowserDomainAuthority(authorityInput({ configured: [example] })),
+      resolveEffectiveBrowserDomainAuthority(
+        authorityInput({ configured: [example] }),
+      ),
       "https://other.example.com/new/path?not-authority=1",
     ),
     true,
@@ -62,8 +73,14 @@ test("the private PSL tenant boundary never grants a sibling tenant", () => {
     "https://preview.team-one.vercel.app/build/1",
   );
   assert.equal(tenant.canonicalDomain, "team-one.vercel.app");
-  assert.equal(browserPublicDomainAllowsHostname(tenant, "api.team-one.vercel.app"), true);
-  assert.equal(browserPublicDomainAllowsHostname(tenant, "team-two.vercel.app"), false);
+  assert.equal(
+    browserPublicDomainAllowsHostname(tenant, "api.team-one.vercel.app"),
+    true,
+  );
+  assert.equal(
+    browserPublicDomainAllowsHostname(tenant, "team-two.vercel.app"),
+    false,
+  );
 });
 
 test("public Browser grants fail closed for non-public or non-HTTPS authority", () => {
@@ -79,6 +96,9 @@ test("public Browser grants fail closed for non-public or non-HTTPS authority", 
     "https://169.254.169.254/latest/meta-data",
     "https://metadata.google.internal",
     "https://service.local",
+    "https://service.example",
+    "https://foo.home.arpa",
+    "https://service.invalidtld",
     "file:///etc/passwd",
     "example.com",
   ]) {
@@ -102,7 +122,15 @@ test("DNS authority rejects rebinding into private, metadata, or reserved networ
     ["::1"],
     ["fd00::1"],
     ["fe80::1"],
+    ["fec0::1"],
     ["::ffff:127.0.0.1"],
+    ["64:ff9b::1"],
+    ["100::1"],
+    ["100:0:0:1::1"],
+    ["2001:1::1"],
+    ["2620:4f:8000::1"],
+    ["3fff::1"],
+    ["5f00::1"],
     ["not-an-address"],
     ["1.1.1.1", "10.0.0.8"],
   ]) {
@@ -115,20 +143,29 @@ test("DNS authority rejects rebinding into private, metadata, or reserved networ
 });
 
 test("trusted QA authority stays one exact target and never becomes public authority", () => {
-  assert.deepEqual(canonicalizeTrustedBrowserQaTarget("http://LOCALHOST.:4317/path?q=1"), {
-    version: "browser_qa_target_v1",
-    scheme: "http",
-    hostname: "localhost",
-    port: 4317,
-  });
-  assert.deepEqual(canonicalizeTrustedBrowserQaTarget("https://preview.example.com/path"), {
-    version: "browser_qa_target_v1",
-    scheme: "https",
-    hostname: "preview.example.com",
-    port: 443,
-  });
+  assert.deepEqual(
+    canonicalizeTrustedBrowserQaTarget("http://LOCALHOST.:4317/path?q=1"),
+    {
+      version: "browser_qa_target_v1",
+      scheme: "http",
+      hostname: "localhost",
+      port: 4317,
+    },
+  );
+  assert.deepEqual(
+    canonicalizeTrustedBrowserQaTarget("https://preview.example.com/path"),
+    {
+      version: "browser_qa_target_v1",
+      scheme: "https",
+      hostname: "preview.example.com",
+      port: 443,
+    },
+  );
   assert.throws(
-    () => canonicalizeTrustedBrowserQaTarget("https://person:secret@localhost:4317"),
+    () =>
+      canonicalizeTrustedBrowserQaTarget(
+        "https://person:secret@localhost:4317",
+      ),
     /cannot contain credentials/u,
   );
 });
@@ -150,12 +187,19 @@ test("effective authority applies Environment ceiling and Project narrowing", ()
   assert.equal(effective.personalGrantsEnabled, true);
   assert.deepEqual(effective.qaTarget, input.qa.target);
   assert.equal(
-    resolveBrowserPublicGrantDecision(input, "https://www.configured.example.com/path")
-      .decision,
+    resolveBrowserPublicGrantDecision(
+      input,
+      "https://www.configured.example.com/path",
+      "operator",
+    ).decision,
     "already_allowed",
   );
   assert.deepEqual(
-    resolveBrowserPublicGrantDecision(input, "https://new.example.edu/path"),
+    resolveBrowserPublicGrantDecision(
+      input,
+      "https://new.example.edu/path",
+      "operator",
+    ),
     {
       version: BROWSER_PUBLIC_GRANT_DECISION_VERSION,
       decision: "approval_required",
@@ -164,7 +208,11 @@ test("effective authority applies Environment ceiling and Project narrowing", ()
     },
   );
   assert.equal(
-    resolveBrowserPublicGrantDecision(input, "https://blocked.example.org/path").decision,
+    resolveBrowserPublicGrantDecision(
+      input,
+      "https://blocked.example.org/path",
+      "operator",
+    ).decision,
     "blocked",
   );
 
@@ -180,27 +228,72 @@ test("effective authority applies Environment ceiling and Project narrowing", ()
   assert.deepEqual(narrowed.publicDomains, []);
   assert.equal(narrowed.personalGrantsEnabled, false);
   assert.equal(
-    resolveBrowserPublicGrantDecision(narrowedInput(input, configured), "https://new.example.edu")
-      .decision,
+    resolveBrowserPublicGrantDecision(
+      narrowedInput(input, configured),
+      "https://new.example.edu",
+      "operator",
+    ).decision,
     "blocked",
   );
 
-  assert.throws(
-    () =>
-      resolveEffectiveBrowserDomainAuthority({
-        ...input,
-        environment: { ...input.environment, enabledModes: ["operator"] },
-        project: { ...input.project, enabledModes: ["qa", "operator"] },
-      }),
-    /only narrow Environment modes/u,
+  const staleModes = resolveEffectiveBrowserDomainAuthority({
+    ...input,
+    environment: { ...input.environment, enabledModes: ["operator"] },
+    project: { ...input.project, enabledModes: ["qa", "operator"] },
+  });
+  assert.deepEqual(staleModes.enabledModes, ["operator"]);
+  assert.equal(staleModes.qaTarget, null);
+
+  const stalePersonalGrantCeiling = resolveEffectiveBrowserDomainAuthority({
+    ...input,
+    environment: { ...input.environment, personalGrantsEnabled: false },
+    project: { ...input.project, personalGrantsEnabled: true },
+  });
+  assert.equal(stalePersonalGrantCeiling.personalGrantsEnabled, false);
+  assert.deepEqual(
+    stalePersonalGrantCeiling.publicDomains.map(
+      (entry) => entry.canonicalDomain,
+    ),
+    ["example.com"],
+  );
+});
+
+test("only an active operator session may create a personal public-domain grant", () => {
+  const input = authorityInput();
+
+  assert.equal(
+    resolveBrowserPublicGrantDecision(input, "https://new.example.edu", "qa")
+      .decision,
+    "blocked",
+  );
+  assert.equal(
+    resolveBrowserPublicGrantDecision(
+      input,
+      "https://new.example.edu",
+      "operator",
+    ).decision,
+    "approval_required",
+  );
+
+  const configured = authorityInput({
+    configured: [publicDomain("configured.example.com")],
+  });
+  assert.equal(
+    resolveBrowserPublicGrantDecision(
+      configured,
+      "https://configured.example.com",
+      "qa",
+    ).decision,
+    "already_allowed",
   );
   assert.throws(
     () =>
-      resolveEffectiveBrowserDomainAuthority({
-        ...input,
-        environment: { ...input.environment, personalGrantsEnabled: false },
-      }),
-    /cannot enable personal grants/u,
+      resolveBrowserPublicGrantDecision(
+        input,
+        "https://new.example.edu",
+        "invalid" as "operator",
+      ),
+    /sessionMode must be qa or operator/u,
   );
 });
 
@@ -209,7 +302,11 @@ test("personal authority reuses across Projects but remains user and Environment
   const first = authorityInput({ personal: [remembered] });
   const second = {
     ...first,
-    project: { ...first.project, projectId: "project-2", revision: "project-2-policy" },
+    project: {
+      ...first.project,
+      projectId: "project-2",
+      revision: "project-2-policy",
+    },
   };
   const firstEffective = resolveEffectiveBrowserDomainAuthority(first);
   const secondEffective = resolveEffectiveBrowserDomainAuthority(second);
@@ -241,22 +338,31 @@ test("personal authority reuses across Projects but remains user and Environment
 
 test("effective revision fingerprints every authoritative input deterministically", () => {
   const input = authorityInput({
-    configured: [publicDomain("alpha.example.com"), publicDomain("beta.example.net")],
+    configured: [
+      publicDomain("alpha.example.com"),
+      publicDomain("beta.example.net"),
+    ],
     personal: [publicDomain("remembered.example.org")],
   });
-  const base = resolveEffectiveBrowserDomainAuthority(input).effectiveAllowlistRevision;
+  const base =
+    resolveEffectiveBrowserDomainAuthority(input).effectiveAllowlistRevision;
   const reordered = resolveEffectiveBrowserDomainAuthority({
     ...input,
     environment: {
       ...input.environment,
       enabledModes: ["operator", "qa"],
-      configuredPublicDomains: [...input.environment.configuredPublicDomains].reverse(),
+      configuredPublicDomains: [
+        ...input.environment.configuredPublicDomains,
+      ].reverse(),
     },
   }).effectiveAllowlistRevision;
   assert.equal(base, reordered);
 
   const variants: BrowserDomainAuthorityInputV1[] = [
-    { ...input, environment: { ...input.environment, revision: "environment-policy-2" } },
+    {
+      ...input,
+      environment: { ...input.environment, revision: "environment-policy-2" },
+    },
     { ...input, project: { ...input.project, revision: "project-policy-2" } },
     { ...input, personal: { ...input.personal, revision: "personal-2" } },
     { ...input, qa: { ...input.qa, revision: "qa-2" } },
@@ -264,7 +370,8 @@ test("effective revision fingerprints every authoritative input deterministicall
   ];
   for (const variant of variants) {
     assert.notEqual(
-      resolveEffectiveBrowserDomainAuthority(variant).effectiveAllowlistRevision,
+      resolveEffectiveBrowserDomainAuthority(variant)
+        .effectiveAllowlistRevision,
       base,
     );
   }
@@ -278,6 +385,7 @@ test("BrowserServicePort requires and confirms exact allowlist revision adoption
       version: BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION,
       sessionId: input.sessionId,
       effectiveAllowlistRevision: input.effectiveAllowlistRevision,
+      closedUnauthorizedConnections: 0,
     };
   });
   assert.equal(isConformingBrowserServicePort(port), true);
@@ -298,7 +406,8 @@ test("BrowserServicePort requires and confirms exact allowlist revision adoption
     cause: "personal_grant" as const,
   };
   assert.equal(
-    (await adoptBrowserAllowlistRevision(port, request)).effectiveAllowlistRevision,
+    (await adoptBrowserAllowlistRevision(port, request))
+      .effectiveAllowlistRevision,
     request.effectiveAllowlistRevision,
   );
   assert.deepEqual(adopted, [request.effectiveAllowlistRevision]);
@@ -309,14 +418,97 @@ test("BrowserServicePort requires and confirms exact allowlist revision adoption
         version: BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION,
         sessionId: input.sessionId,
         effectiveAllowlistRevision: "stale-revision",
+        closedUnauthorizedConnections: 0,
       })),
       request,
     ),
     (error: unknown) =>
       error instanceof Error &&
       "code" in error &&
-      (error as Error & { code?: string }).code === "BROWSER_SERVICE_UNAVAILABLE",
+      (error as Error & { code?: string }).code ===
+        "BROWSER_SERVICE_UNAVAILABLE",
   );
+
+  for (const closedUnauthorizedConnections of [
+    undefined as unknown as number,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ]) {
+    await assert.rejects(
+      adoptBrowserAllowlistRevision(
+        browserPort(async (input) => ({
+          version: BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION,
+          sessionId: input.sessionId,
+          effectiveAllowlistRevision: input.effectiveAllowlistRevision,
+          closedUnauthorizedConnections,
+        })),
+        request,
+      ),
+      /closedUnauthorizedConnections must be a non-negative safe integer/u,
+    );
+  }
+});
+
+test("Browser allowlist revocation closes unauthorized live connections before adoption succeeds", async () => {
+  const events: string[] = [];
+  const connections = [
+    {
+      id: "revoked-connection",
+      canonicalDomain: "example.net",
+      open: true,
+    },
+    {
+      id: "retained-connection",
+      canonicalDomain: "example.com",
+      open: true,
+    },
+  ];
+  const authorityByRevision = new Map([
+    ["sha256:after-revocation", new Set(["example.com"])],
+  ]);
+  const port = browserPort(async (input) => {
+    const allowedDomains = authorityByRevision.get(
+      input.effectiveAllowlistRevision,
+    );
+    assert.ok(allowedDomains, "the fake host must know the adopted revision");
+
+    let closedUnauthorizedConnections = 0;
+    for (const connection of connections) {
+      if (connection.open && !allowedDomains.has(connection.canonicalDomain)) {
+        await Promise.resolve();
+        connection.open = false;
+        closedUnauthorizedConnections += 1;
+        events.push(`closed:${connection.id}`);
+      }
+    }
+    events.push(`adopted:${input.effectiveAllowlistRevision}`);
+    return {
+      version: BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION,
+      sessionId: input.sessionId,
+      effectiveAllowlistRevision: input.effectiveAllowlistRevision,
+      closedUnauthorizedConnections,
+    };
+  });
+
+  const receipt = await adoptBrowserAllowlistRevision(port, {
+    version: BROWSER_ALLOWLIST_ADOPTION_VERSION,
+    runId: "run-1",
+    threadId: "thread-1",
+    sessionId: "browser-session-1",
+    effectiveAllowlistRevision: "sha256:after-revocation",
+    cause: "personal_revocation",
+  });
+  events.push("success");
+
+  assert.equal(receipt.closedUnauthorizedConnections, 1);
+  assert.equal(connections[0]?.open, false);
+  assert.equal(connections[1]?.open, true);
+  assert.deepEqual(events, [
+    "closed:revoked-connection",
+    "adopted:sha256:after-revocation",
+    "success",
+  ]);
 });
 
 function publicDomain(destination: string): BrowserPublicDomainAuthorityV1 {
@@ -388,6 +580,7 @@ function browserPort(
         version: "browser_policy_resolution_v1",
         decision: "allow",
         policyRevision: "policy-1",
+        sessionMode: "operator",
       };
     },
     async execute() {

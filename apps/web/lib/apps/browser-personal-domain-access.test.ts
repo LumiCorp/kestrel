@@ -56,7 +56,11 @@ function dependencies(
       adoptPersonalDomainRevision: async (input) => ({
         personalRevision: input.personalRevision,
         adoptedSessions: [
-          { sessionId: "session-a", effectiveRevision: "effective-3" },
+          {
+            sessionId: "session-a",
+            effectiveRevision: "effective-3",
+            closedUnauthorizedConnections: 0,
+          },
         ],
       }),
     },
@@ -152,8 +156,16 @@ test("revocation resolves only after active sessions confirm the exact personal 
           return {
             personalRevision: input.personalRevision,
             adoptedSessions: [
-              { sessionId: "session-a", effectiveRevision: "effective-a-3" },
-              { sessionId: "session-b", effectiveRevision: "effective-b-3" },
+              {
+                sessionId: "session-a",
+                effectiveRevision: "effective-a-3",
+                closedUnauthorizedConnections: 1,
+              },
+              {
+                sessionId: "session-b",
+                effectiveRevision: "effective-b-3",
+                closedUnauthorizedConnections: 0,
+              },
             ],
           };
         },
@@ -232,6 +244,38 @@ test("revocation never reports success when adoption fails or confirms another r
       error instanceof HostedBrowserPersonalDomainAccessError &&
       error.code === "BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED",
   );
+});
+
+test("revocation rejects malformed unauthorized-connection closure confirmations", async () => {
+  for (const closedUnauthorizedConnections of [
+    undefined as unknown as number,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ]) {
+    await assert.rejects(
+      revokePersonalBrowserDomainForSignedInUser(
+        { ...scope, destination: "https://example.com" },
+        dependencies({
+          adoptionCoordinator: {
+            adoptPersonalDomainRevision: async () => ({
+              personalRevision: 3,
+              adoptedSessions: [
+                {
+                  sessionId: "session-a",
+                  effectiveRevision: "effective-3",
+                  closedUnauthorizedConnections,
+                },
+              ],
+            }),
+          },
+        }),
+      ),
+      (error: unknown) =>
+        error instanceof HostedBrowserPersonalDomainAccessError &&
+        error.code === "BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED",
+    );
+  }
 });
 
 test("personal Browser routes and UI expose metadata only outside admin policy surfaces", () => {

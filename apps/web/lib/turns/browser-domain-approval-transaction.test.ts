@@ -33,6 +33,11 @@ test("Browser approval revalidation and personal grant creation share the locked
     browserBoundary,
     /projectAppCapabilityPolicies[\s\S]*\.for\("update"\)/u,
   );
+  assert.match(
+    browserBoundary,
+    /environmentCapabilitySubjectRestrictions[\s\S]*\.for\("update"\)/u,
+    "actor and hosted-agent restrictions must be locked before Browser grant revalidation",
+  );
   assert.ok(
     browserBoundary.indexOf(".for(\"update\")") <
       browserBoundary.indexOf("resolveHostedBrowserPublicGrantDecision"),
@@ -49,8 +54,28 @@ test("Browser approval revalidation and personal grant creation share the locked
   assert.doesNotMatch(browserBoundary, /rememberedToolApprovals/u);
   assert.match(
     source,
+    /grant\.sessionMode !== "operator"[\s\S]*Browser domain approval presentation is invalid/u,
+    "hosted approval parsing must fail closed unless the card is operator-only",
+  );
+  assert.match(
+    browserBoundary,
+    /sessionMode: browserDomainGrant\.sessionMode/u,
+    "revalidation must use the validated Browser approval mode instead of a hardcoded value",
+  );
+  assert.doesNotMatch(
+    browserBoundary,
+    /sessionMode: "operator"/u,
+    "store revalidation must not invent operator authority",
+  );
+  assert.match(
+    source,
     /stableToolIdentity\.toolId !== "browser\.request_grant"[\s\S]*preparedInvocationId\.length === 0[\s\S]*TURN_CONFLICT/u,
     "wrong prepared identities must fail before personal authority is created",
+  );
+  assert.match(
+    source,
+    /grant\.requestingActorId !== approval\.approval\.requestingActor\.actorId[\s\S]*grant\.approvalAuthorityRevision !==[\s\S]*stableToolIdentity\.approvalAuthorityRevision/u,
+    "the Browser presentation must remain bound to the exact actor and prepared approval authority",
   );
   assert.match(
     browserBoundary,

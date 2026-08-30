@@ -488,6 +488,7 @@ test("Browser tools remain unavailable until a conforming host port is active", 
         version: "browser_policy_resolution_v1",
         decision: "allow",
         policyRevision: "browser-policy-1",
+        sessionMode: "operator",
       };
     },
     async execute() {
@@ -524,6 +525,7 @@ test("fake Browser port receives the exact prepared call and conditional effect 
             ? "approval_required"
             : "allow",
         policyRevision: `browser-policy:${destination}`,
+        sessionMode: "operator",
       };
     },
     async execute(prepared) {
@@ -667,6 +669,7 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
         version: "browser_policy_resolution_v1",
         decision: "allow",
         policyRevision: "browser-policy-1",
+        sessionMode: "operator",
       };
     },
     async execute(prepared) {
@@ -894,6 +897,7 @@ test("Desktop and hosted Browser preparation resolve all grant branches before d
               ? "deny"
               : "approval_required",
           policyRevision: `${host}:${destination}`,
+          sessionMode: "operator",
         };
       },
       async execute() {
@@ -934,9 +938,9 @@ test("Desktop and hosted Browser preparation resolve all grant branches before d
     });
     const activation = snapshot.tools[0]!;
     for (const [destination, expected] of [
-      ["https://already.example", "allow"],
-      ["https://blocked.example", "deny"],
-      ["https://new.example", "approval_required"],
+      ["https://already.example.com", "allow"],
+      ["https://blocked.example.net", "deny"],
+      ["https://new.example.org", "approval_required"],
     ] as const) {
       const inspection = await registry.inspectToolCall(
         {
@@ -964,6 +968,91 @@ test("Desktop and hosted Browser preparation resolve all grant branches before d
       );
     }
     assert.equal(dispatches, 0, host);
+  }
+});
+
+test("QA Browser policy cannot produce a personal-domain approval", async () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.request_grant"],
+    context: {
+      browserService: {
+        ...passiveBrowserPort(),
+        async resolvePolicy() {
+          return {
+            version: "browser_policy_resolution_v1",
+            decision: "approval_required",
+            policyRevision: "qa-policy-1",
+            sessionMode: "qa",
+          };
+        },
+      },
+    },
+  });
+  const runContext = {
+    runId: "qa-policy-run",
+    sessionId: "qa-policy-thread",
+    payload: {},
+    sessionState: {},
+  };
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    runContext,
+    toolNames: ["browser.request_grant"],
+  });
+
+  await assert.rejects(
+    registry.inspectToolCall(
+      {
+        activation: snapshot.tools[0]!,
+        origin: {
+          kind: "model",
+          snapshotId: snapshot.snapshotId,
+          modelToolCallId: "qa-grant-call",
+        },
+        rawInput: {
+          sessionId: "qa-browser-session",
+          destination: "https://new.example.org",
+        },
+      },
+      { runContext },
+    ),
+    (error: unknown) =>
+      error instanceof Error &&
+      "code" in error &&
+      (error as Error & { code?: string }).code ===
+        "BROWSER_DESTINATION_BLOCKED",
+  );
+});
+
+test("QA Browser upload and download still prepare their exact approval waits", async () => {
+  for (const toolName of ["browser.upload", "browser.download"] as const) {
+    let dynamicGrantPolicyCalls = 0;
+    const registry = new UnifiedToolRegistry({
+      allowlist: [toolName],
+      context: {
+        browserService: {
+          ...passiveBrowserPort(),
+          async resolvePolicy() {
+            dynamicGrantPolicyCalls += 1;
+            return {
+              version: "browser_policy_resolution_v1",
+              decision: "approval_required",
+              policyRevision: `qa-${toolName}`,
+              sessionMode: "qa",
+            };
+          },
+        },
+      },
+    });
+
+    const { prepared } = await prepareBrowserCall(
+      registry,
+      toolName,
+      validInputs[toolName],
+      { decision: "approval_required", approval: true },
+    );
+    assert.equal(prepared.policy.decision, "approval_required", toolName);
+    assert.ok(prepared.approval, toolName);
+    assert.equal(dynamicGrantPolicyCalls, 0, toolName);
   }
 });
 
@@ -1563,6 +1652,7 @@ function passiveBrowserPort(): BrowserServicePort {
         version: "browser_policy_resolution_v1",
         decision: "allow",
         policyRevision: "browser-policy-1",
+        sessionMode: "operator",
       };
     },
     async execute() {
@@ -1584,6 +1674,7 @@ function allowlistAdoptionReceipt(
     version: "browser_allowlist_adoption_receipt_v1" as const,
     sessionId: input.sessionId,
     effectiveAllowlistRevision: input.effectiveAllowlistRevision,
+    closedUnauthorizedConnections: 0,
   };
 }
 

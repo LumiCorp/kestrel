@@ -8,6 +8,7 @@ import { canonicalizePublicBrowserDestination } from "../browser/domainAuthority
 export interface BrowserDomainGrantApprovalPresentationV1 {
   version: "browser_domain_grant_approval_v1";
   sessionId: string;
+  sessionMode: "operator";
   canonicalDomain: string;
   scheme: "https";
   scope: "apex_and_subdomains";
@@ -17,6 +18,9 @@ export interface BrowserDomainGrantApprovalPresentationV1 {
   environmentEffect: "future_eligible_projects_in_environment";
   sessionEffect: "immediate";
   actionLabel: "Allow and remember";
+  requestingActorId?: string | undefined;
+  environmentId?: string | undefined;
+  approvalAuthorityRevision?: string | undefined;
 }
 
 export interface ToolApprovalPresentationV1 {
@@ -333,6 +337,10 @@ export function buildToolApprovalPresentation(input: {
   toolName: string;
   effectiveInput: unknown;
   disposition?: ToolApprovalDispositionV1 | undefined;
+  hostedApprovalScope?: {
+    requestingActorId: string;
+    environmentId: string;
+  } | undefined;
 }): ToolApprovalPresentationV1 {
   const presenterDefinition = PRESENTERS[input.toolName];
   const record = readRecord(input.effectiveInput);
@@ -351,6 +359,7 @@ export function buildToolApprovalPresentation(input: {
     const browserDomainGrant: BrowserDomainGrantApprovalPresentationV1 = {
       version: "browser_domain_grant_approval_v1",
       sessionId,
+      sessionMode: "operator",
       canonicalDomain: authority.canonicalDomain,
       scheme: authority.scheme,
       scope: "apex_and_subdomains",
@@ -360,6 +369,13 @@ export function buildToolApprovalPresentation(input: {
       environmentEffect: "future_eligible_projects_in_environment",
       sessionEffect: "immediate",
       actionLabel: "Allow and remember",
+      ...(input.hostedApprovalScope === undefined
+        ? {}
+        : {
+            requestingActorId: input.hostedApprovalScope.requestingActorId,
+            environmentId: input.hostedApprovalScope.environmentId,
+            approvalAuthorityRevision: disposition.authority.revision,
+          }),
     };
     return {
       title: "Allow this Browser domain",
@@ -369,7 +385,18 @@ export function buildToolApprovalPresentation(input: {
         { label: "Domain", value: authority.canonicalDomain },
         { label: "Scope", value: "Apex and subdomains" },
         { label: "Port", value: "443 (HTTPS)" },
-        { label: "Applies to", value: "You in this Environment" },
+        ...(input.hostedApprovalScope === undefined
+          ? [{ label: "Applies to", value: "You in this Environment" }]
+          : [
+              {
+                label: "Person",
+                value: input.hostedApprovalScope.requestingActorId,
+              },
+              {
+                label: "Environment",
+                value: input.hostedApprovalScope.environmentId,
+              },
+            ]),
       ],
       warnings: [
         "This takes effect in the current Browser Session and future eligible Projects in this Environment.",

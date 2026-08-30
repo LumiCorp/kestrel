@@ -19,11 +19,15 @@ test("hosted personal Browser grants serialize one user and Environment revision
     appService,
     projectAppService,
     browserDomains,
+    turnStore,
+    toolService,
   ] = await Promise.all([
     import("@/lib/db/runtime"),
     import("./service"),
     import("./project-service"),
     import("./browser-domain-service"),
+    import("../turns/store"),
+    import("../tools/service"),
   ]);
   const sql = postgres(databaseUrl, { max: 4 });
   const suffix = crypto.randomUUID();
@@ -39,6 +43,9 @@ test("hosted personal Browser grants serialize one user and Environment revision
   const threadId = `browser-domain-thread-${suffix}`;
   const turnId = `browser-domain-turn-${suffix}`;
   const interactionId = `browser-domain-interaction-${suffix}`;
+  const deniedApprovalThreadId = `browser-domain-denied-approval-thread-${suffix}`;
+  const qaApprovalThreadId = `browser-domain-qa-approval-thread-${suffix}`;
+  const mismatchedApprovalThreadId = `browser-domain-mismatched-approval-thread-${suffix}`;
   const now = new Date("2026-08-29T12:00:00.000Z");
   const publicDomain = (canonicalDomain: string) => ({
     version: BROWSER_PUBLIC_DOMAIN_AUTHORITY_VERSION,
@@ -50,7 +57,7 @@ test("hosted personal Browser grants serialize one user and Environment revision
   const environmentSettings = {
     enabledModes: ["operator"],
     personalGrantsEnabled: true,
-    configuredPublicDomains: [publicDomain("configured.example")],
+    configuredPublicDomains: [publicDomain("configured.com")],
     blockedPublicDomains: [],
   };
   const projectSettings = {
@@ -132,7 +139,11 @@ test("hosted personal Browser grants serialize one user and Environment revision
     await transaction`
       INSERT INTO "threads" (
         "id", "created_by_user_id", "organization_id", "project_id"
-      ) VALUES (${threadId}, ${userId}, ${organizationId}, ${projectId})
+      ) VALUES
+        (${threadId}, ${userId}, ${organizationId}, ${projectId}),
+        (${deniedApprovalThreadId}, ${userId}, ${organizationId}, NULL),
+        (${qaApprovalThreadId}, ${userId}, ${organizationId}, NULL),
+        (${mismatchedApprovalThreadId}, ${userId}, ${organizationId}, NULL)
     `;
     await transaction`
       INSERT INTO "thread_turns" (
@@ -156,12 +167,18 @@ test("hosted personal Browser grants serialize one user and Environment revision
       )
     `;
   });
+  assert.ok(
+    await toolService.getResolvedToolProvider({
+      organizationId,
+      providerKey: "built_in.browser",
+    }),
+  );
 
   const savedEnvironmentSettings = {
     enabledModes: ["operator"] as ("qa" | "operator")[],
     personalGrantsEnabled: true,
-    configuredPublicDomains: [publicDomain("configured.example")],
-    blockedPublicDomains: [publicDomain("environment-block.example")],
+    configuredPublicDomains: [publicDomain("configured.com")],
+    blockedPublicDomains: [publicDomain("example.net")],
   };
   await appService.saveEnvironmentAppCapabilityGrant({
     organizationId,
@@ -192,7 +209,7 @@ test("hosted personal Browser grants serialize one user and Environment revision
   const savedProjectSettings = {
     enabledModes: ["operator"] as ("qa" | "operator")[],
     personalGrantsEnabled: false,
-    blockedPublicDomains: [publicDomain("project-block.example")],
+    blockedPublicDomains: [publicDomain("example.org")],
   };
   await projectAppService.saveProjectAppCapabilityPolicy({
     organizationId,
@@ -329,6 +346,7 @@ test("hosted personal Browser grants serialize one user and Environment revision
     await browserDomains.resolveHostedBrowserDomainAuthority({
       ...scope,
       projectId,
+      agentId: "kestrel-one",
       qa,
     });
   assert.equal(
@@ -341,6 +359,7 @@ test("hosted personal Browser grants serialize one user and Environment revision
     await browserDomains.resolveHostedBrowserDomainAuthority({
       ...scope,
       projectId: secondProjectId,
+      agentId: "kestrel-one",
       qa,
     });
   assert.ok(
@@ -377,6 +396,288 @@ test("hosted personal Browser grants serialize one user and Environment revision
     });
   assert.equal(reactivated.changed, true);
   assert.equal(reactivated.personalRevision, 3);
+
+  async function publishBrowserGrantApproval(input: {
+    threadId: string;
+    label: string;
+    canonicalDomain: string;
+    stableAuthorityRevision: string;
+    presentedAuthorityRevision?: string | undefined;
+    sessionMode?: "qa" | "operator" | undefined;
+  }) {
+    const created = await turnStore.createDurableThreadTurn({
+      threadId: input.threadId,
+      organizationId,
+      authorUserId: userId,
+      messageId: `browser-domain-message-${input.label}-${suffix}`,
+      messageParts: [{ type: "text", text: `Open ${input.canonicalDomain}` }],
+      idempotencyKey: `browser-domain-turn-${input.label}-${suffix}`,
+      requestedEnvironmentId: environmentId,
+      source: "web",
+    });
+    assert.ok(await turnStore.claimDurableThreadTurn(created.turn.id));
+    const requestId = `browser-domain-approval-${input.label}-${suffix}`;
+    const interaction = {
+      version: "runner_hosted_tool_approval_interaction_v4" as const,
+      requestId,
+      kind: "approval" as const,
+      eventType: "user.approval" as const,
+      prompt: "Review this Browser domain before it is allowed.",
+      inputSchema: {
+        type: "object" as const,
+        additionalProperties: false as const,
+        required: ["decision"] as ["decision"],
+        properties: {
+          decision: {
+            type: "string" as const,
+            enum: ["decline", "approve_once", "remember_approval"] as [
+              "decline",
+              "approve_once",
+              "remember_approval",
+            ],
+          },
+        },
+      },
+      approval: {
+        preparedInvocationId: `browser-prepared-${input.label}-${suffix}`,
+        toolName: "browser.request_grant",
+        stableToolIdentity: {
+          version: "stable_tool_approval_identity_v1" as const,
+          toolId: "browser.request_grant",
+          descriptorContractRevision: "browser-request-grant-v1",
+          approvalAuthorityRevision: input.stableAuthorityRevision,
+        },
+        requestingActor: {
+          actorType: "end_user" as const,
+          actorId: userId,
+          tenantId: organizationId,
+        },
+        rememberedApprovalScope: { kind: "tool_identity" as const },
+        requestedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        presentation: {
+          title: "Allow this Browser domain",
+          summary: "Allow this HTTPS apex and its subdomains.",
+          fields: [
+            { label: "Domain", value: input.canonicalDomain },
+            { label: "Person", value: userId },
+            { label: "Environment", value: environmentId },
+          ],
+          warnings: [],
+          policy: {
+            mode: "ask" as const,
+            reasonCode: "environment_policy" as const,
+            explanation: "Environment policy requires approval.",
+            authorityKind: "hosted_app_policy" as const,
+            authorityRevision: input.stableAuthorityRevision,
+            rememberApprovalEligible: false,
+          },
+          browserDomainGrant: {
+            version: "browser_domain_grant_approval_v1" as const,
+            sessionId: `browser-session-${input.label}-${suffix}`,
+            sessionMode: input.sessionMode ?? "operator",
+            canonicalDomain: input.canonicalDomain,
+            scheme: "https" as const,
+            scope: "apex_and_subdomains" as const,
+            includeSubdomains: true as const,
+            port: 443 as const,
+            ownerEffect: "requesting_person" as const,
+            environmentEffect:
+              "future_eligible_projects_in_environment" as const,
+            sessionEffect: "immediate" as const,
+            actionLabel: "Allow and remember" as const,
+            requestingActorId: userId,
+            environmentId,
+            approvalAuthorityRevision:
+              input.presentedAuthorityRevision ?? input.stableAuthorityRevision,
+          },
+        },
+      },
+      source: "runtime" as const,
+      status: "pending" as const,
+    };
+    await turnStore.persistDurableAssistantOutcome({
+      turnId: created.turn.id,
+      messages: [{
+        id: `browser-domain-assistant-${input.label}-${suffix}`,
+        parts: [{
+          type: "data-kestrel-interaction",
+          id: `interaction:${requestId}`,
+          data: interaction,
+        }],
+        model: "kestrel-one",
+        source: "web",
+        projectContextRevisionId: null,
+      }],
+      interaction,
+    });
+    await sql`
+      UPDATE "threads"
+      SET "project_id" = ${secondProjectId}
+      WHERE "id" = ${input.threadId}
+    `;
+    return { requestId, turnId: created.turn.id };
+  }
+
+  const deniedApproval = await publishBrowserGrantApproval({
+    threadId: deniedApprovalThreadId,
+    label: "subject-denied",
+    canonicalDomain: "denied-example.net",
+    stableAuthorityRevision: "browser-authority-subject-denied",
+  });
+  await sql`
+    INSERT INTO "environment_capability_subject_restrictions" (
+      "id", "organization_id", "environment_id", "subject_type",
+      "subject_id", "provider_key", "capability_key", "resource_id",
+      "enabled", "approval_mode"
+    ) VALUES (
+      ${`browser-domain-restriction-${suffix}`}, ${organizationId},
+      ${environmentId}, 'actor', ${userId}, 'built_in.browser',
+      'request_grant', NULL, false, 'deny'
+    )
+  `;
+  const deniedResolution = await turnStore.resolveDurableRuntimeInteraction({
+    threadId: deniedApprovalThreadId,
+    organizationId,
+    userId,
+    requestId: deniedApproval.requestId,
+    eventType: "user.approval",
+    turnId: deniedApproval.turnId,
+    message: "Allow and remember",
+    decision: "approve_once",
+    messageId: `browser-domain-denied-response-${suffix}`,
+    source: "web",
+  });
+  assert.equal(deniedResolution.shouldDispatch, true);
+  const [deniedState] = await sql<Array<{
+    domainCount: number;
+    personalRevision: number;
+    responseEnvelope: Record<string, unknown>;
+  }>>`
+    SELECT
+      (
+        SELECT count(*)::int FROM "browser_personal_domains"
+        WHERE "organization_id" = ${organizationId}
+          AND "environment_id" = ${environmentId}
+          AND "user_id" = ${userId}
+          AND "canonical_domain" = 'denied-example.net'
+      ) AS "domainCount",
+      revision_set."revision" AS "personalRevision",
+      interaction."response_envelope" AS "responseEnvelope"
+    FROM "browser_personal_domain_revision_sets" revision_set
+    JOIN "thread_interactions" interaction
+      ON interaction."request_id" = ${deniedApproval.requestId}
+    WHERE revision_set."organization_id" = ${organizationId}
+      AND revision_set."environment_id" = ${environmentId}
+      AND revision_set."user_id" = ${userId}
+  `;
+  assert.equal(deniedState?.domainCount, 0);
+  assert.equal(deniedState?.personalRevision, 3);
+  assert.equal(
+    (
+      deniedState?.responseEnvelope.preparedApprovalCleanup as
+        | Record<string, unknown>
+        | undefined
+    )?.failureCode,
+    "EXTERNAL_APPROVAL_POLICY_CHANGED",
+  );
+
+  await sql`
+    DELETE FROM "environment_capability_subject_restrictions"
+    WHERE "organization_id" = ${organizationId}
+      AND "environment_id" = ${environmentId}
+      AND "subject_type" = 'actor'
+      AND "subject_id" = ${userId}
+      AND "provider_key" = 'built_in.browser'
+      AND "capability_key" = 'request_grant'
+  `;
+  const qaApproval = await publishBrowserGrantApproval({
+    threadId: qaApprovalThreadId,
+    label: "qa-session",
+    canonicalDomain: "qa-example.dev",
+    stableAuthorityRevision: "browser-authority-qa-session",
+    sessionMode: "qa",
+  });
+  await assert.rejects(
+    turnStore.resolveDurableRuntimeInteraction({
+      threadId: qaApprovalThreadId,
+      organizationId,
+      userId,
+      requestId: qaApproval.requestId,
+      eventType: "user.approval",
+      turnId: qaApproval.turnId,
+      message: "Allow and remember",
+      decision: "approve_once",
+      messageId: `browser-domain-qa-response-${suffix}`,
+      source: "web",
+    }),
+    /Browser domain approval presentation is invalid/u,
+  );
+  const [qaState] = await sql<Array<{
+    domainCount: number;
+    personalRevision: number;
+  }>>`
+    SELECT
+      (
+        SELECT count(*)::int FROM "browser_personal_domains"
+        WHERE "organization_id" = ${organizationId}
+          AND "environment_id" = ${environmentId}
+          AND "user_id" = ${userId}
+          AND "canonical_domain" = 'qa-example.dev'
+      ) AS "domainCount",
+      revision_set."revision" AS "personalRevision"
+    FROM "browser_personal_domain_revision_sets" revision_set
+    WHERE revision_set."organization_id" = ${organizationId}
+      AND revision_set."environment_id" = ${environmentId}
+      AND revision_set."user_id" = ${userId}
+  `;
+  assert.equal(qaState?.domainCount, 0);
+  assert.equal(qaState?.personalRevision, 3);
+
+  const mismatchedApproval = await publishBrowserGrantApproval({
+    threadId: mismatchedApprovalThreadId,
+    label: "authority-mismatch",
+    canonicalDomain: "mismatch-example.org",
+    stableAuthorityRevision: "browser-authority-current",
+    presentedAuthorityRevision: "browser-authority-forged",
+  });
+  await assert.rejects(
+    turnStore.resolveDurableRuntimeInteraction({
+      threadId: mismatchedApprovalThreadId,
+      organizationId,
+      userId,
+      requestId: mismatchedApproval.requestId,
+      eventType: "user.approval",
+      turnId: mismatchedApproval.turnId,
+      message: "Allow and remember",
+      decision: "approve_once",
+      messageId: `browser-domain-mismatched-response-${suffix}`,
+      source: "web",
+    }),
+    /Browser domain approval presentation is invalid/u,
+  );
+  const [mismatchedState] = await sql<Array<{
+    domainCount: number;
+    personalRevision: number;
+  }>>`
+    SELECT
+      (
+        SELECT count(*)::int FROM "browser_personal_domains"
+        WHERE "organization_id" = ${organizationId}
+          AND "environment_id" = ${environmentId}
+          AND "user_id" = ${userId}
+          AND "canonical_domain" = 'mismatch-example.org'
+      ) AS "domainCount",
+      "revision" AS "personalRevision"
+    FROM "browser_personal_domain_revision_sets"
+    WHERE "organization_id" = ${organizationId}
+      AND "environment_id" = ${environmentId}
+      AND "user_id" = ${userId}
+  `;
+  assert.deepEqual(mismatchedState, {
+    domainCount: 0,
+    personalRevision: 3,
+  });
 
   const [stored] = await sql<
     {

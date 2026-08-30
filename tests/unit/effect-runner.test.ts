@@ -515,6 +515,7 @@ test("registered Browser dispatch capability distinguishes claimed from dispatch
         version: "browser_policy_resolution_v1" as const,
         decision: "allow" as const,
         policyRevision: "browser-policy-1",
+        sessionMode: "operator" as const,
       };
     },
     async execute() {
@@ -528,6 +529,7 @@ test("registered Browser dispatch capability distinguishes claimed from dispatch
         version: "browser_allowlist_adoption_receipt_v1",
         sessionId: input.sessionId,
         effectiveAllowlistRevision: input.effectiveAllowlistRevision,
+        closedUnauthorizedConnections: 0,
       };
     },
   } as BrowserServicePort;

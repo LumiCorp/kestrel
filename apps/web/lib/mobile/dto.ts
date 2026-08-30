@@ -212,6 +212,10 @@ export function mobileInteractionDto(
       approval?.toolName === "browser.request_grant" &&
       browserDomainGrant?.version === "browser_domain_grant_approval_v1" &&
       typeof browserDomainGrant.canonicalDomain === "string" &&
+      typeof browserDomainGrant.requestingActorId === "string" &&
+      browserDomainGrant.requestingActorId.length > 0 &&
+      typeof browserDomainGrant.environmentId === "string" &&
+      browserDomainGrant.environmentId.length > 0 &&
       browserDomainGrant.scope === "apex_and_subdomains" &&
       browserDomainGrant.port === 443 &&
       browserDomainGrant.actionLabel === "Allow and remember";
@@ -250,7 +254,7 @@ export function mobileInteractionDto(
         : "Allow this agent request?",
       prompt:
         isBrowserDomainGrant
-          ? `Allow ${browserDomainGrant.canonicalDomain as string} (HTTPS apex and subdomains, port 443) now and remember it for your eligible Projects in this Environment.`
+          ? `Person ${browserDomainGrant.requestingActorId as string} in Environment ${browserDomainGrant.environmentId as string}: allow ${browserDomainGrant.canonicalDomain as string} (HTTPS apex and subdomains, port 443) now and remember it for eligible Projects in that Environment.`
           : prompt ??
             "The agent requested a protected operation. Review and allow or deny it.",
       fields: [],

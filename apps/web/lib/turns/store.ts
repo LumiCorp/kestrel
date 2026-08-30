@@ -51,6 +51,7 @@ import { hashAppApprovalAuthority } from "@/lib/apps/app-operation-approval-cont
 import {
   createOrReactivateHostedBrowserPersonalDomainInTransaction,
   HostedBrowserDomainError,
+  hostedBrowserAgentId,
   resolveHostedBrowserPublicGrantDecision,
 } from "@/lib/apps/browser-domain-service";
 import { resolveEffectiveProjectAppAccess } from "@/lib/apps/project-service";
@@ -2591,7 +2592,11 @@ export async function resolveDurableRuntimeInteraction(input: {
           decision === "approve_once" &&
           preparedApprovalCleanup === null
         ) {
-          if (!accessibleThread.projectId || !turn.requestedEnvironmentId) {
+          if (
+            !accessibleThread.projectId ||
+            !turn.requestedEnvironmentId ||
+            browserDomainGrant.environmentId !== turn.requestedEnvironmentId
+          ) {
             preparedApprovalCleanup = preparedApprovalCleanupFailure(
               "EXTERNAL_APPROVAL_POLICY_CHANGED",
             );
@@ -2656,6 +2661,58 @@ export async function resolveDurableRuntimeInteraction(input: {
                 )
                 .limit(1)
                 .for("update");
+              const browserAgentId = hostedBrowserAgentId();
+              await tx
+                .select({
+                  id: schema.environmentCapabilitySubjectRestrictions.id,
+                })
+                .from(schema.environmentCapabilitySubjectRestrictions)
+                .where(
+                  and(
+                    eq(
+                      schema.environmentCapabilitySubjectRestrictions.organizationId,
+                      input.organizationId,
+                    ),
+                    eq(
+                      schema.environmentCapabilitySubjectRestrictions.environmentId,
+                      turn.requestedEnvironmentId,
+                    ),
+                    eq(
+                      schema.environmentCapabilitySubjectRestrictions.providerKey,
+                      "built_in.browser",
+                    ),
+                    eq(
+                      schema.environmentCapabilitySubjectRestrictions.capabilityKey,
+                      "request_grant",
+                    ),
+                    isNull(
+                      schema.environmentCapabilitySubjectRestrictions.resourceId,
+                    ),
+                    or(
+                      and(
+                        eq(
+                          schema.environmentCapabilitySubjectRestrictions.subjectType,
+                          "actor",
+                        ),
+                        eq(
+                          schema.environmentCapabilitySubjectRestrictions.subjectId,
+                          input.userId,
+                        ),
+                      ),
+                      and(
+                        eq(
+                          schema.environmentCapabilitySubjectRestrictions.subjectType,
+                          "agent",
+                        ),
+                        eq(
+                          schema.environmentCapabilitySubjectRestrictions.subjectId,
+                          browserAgentId,
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                .for("update");
               if (
                 !lockedEnvironmentGrant ||
                 !lockedProjectApp ||
@@ -2672,7 +2729,9 @@ export async function resolveDurableRuntimeInteraction(input: {
                       projectId: accessibleThread.projectId,
                       environmentId: turn.requestedEnvironmentId,
                       userId: input.userId,
+                      agentId: browserAgentId,
                       destination: `https://${browserDomainGrant.canonicalDomain}`,
+                      sessionMode: browserDomainGrant.sessionMode,
                       qa: {
                         version: BROWSER_QA_DOMAIN_AUTHORITY_VERSION,
                         revision: "hosted-browser-public-grant-v1",
@@ -3898,7 +3957,9 @@ function parseBrowserDomainGrantApproval(
   approval: HostedPreparedApprovalInteraction,
 ): {
   sessionId: string;
+  sessionMode: "operator";
   canonicalDomain: string;
+  environmentId: string;
   scope: "apex_and_subdomains";
   preparedInvocationId: string;
   approvalAuthorityRevision: string;
@@ -3915,17 +3976,21 @@ function parseBrowserDomainGrantApproval(
   }
   const presentation = readPlainRecord(approval.approval.presentation);
   const grant = readPlainRecord(presentation?.browserDomainGrant);
+  const presentationPolicy = readPlainRecord(presentation?.policy);
   const expectedKeys = [
-    "actionLabel", "canonicalDomain", "environmentEffect",
+    "actionLabel", "approvalAuthorityRevision", "canonicalDomain",
+    "environmentEffect", "environmentId",
     "includeSubdomains", "ownerEffect", "port", "scheme", "scope",
-    "sessionEffect", "sessionId", "version",
+    "requestingActorId", "sessionEffect", "sessionId", "sessionMode", "version",
   ];
+  expectedKeys.sort();
   if (
     grant === null ||
     Object.keys(grant).sort().join("\n") !== expectedKeys.join("\n") ||
     grant.version !== "browser_domain_grant_approval_v1" ||
     typeof grant.sessionId !== "string" ||
     grant.sessionId.trim().length === 0 ||
+    grant.sessionMode !== "operator" ||
     typeof grant.canonicalDomain !== "string" ||
     grant.scheme !== "https" ||
     grant.scope !== "apex_and_subdomains" ||
@@ -3934,7 +3999,14 @@ function parseBrowserDomainGrantApproval(
     grant.ownerEffect !== "requesting_person" ||
     grant.environmentEffect !== "future_eligible_projects_in_environment" ||
     grant.sessionEffect !== "immediate" ||
-    grant.actionLabel !== "Allow and remember"
+    grant.actionLabel !== "Allow and remember" ||
+    grant.requestingActorId !== approval.approval.requestingActor.actorId ||
+    typeof grant.environmentId !== "string" ||
+    grant.environmentId.trim().length === 0 ||
+    grant.approvalAuthorityRevision !==
+      approval.approval.stableToolIdentity.approvalAuthorityRevision ||
+    presentationPolicy?.authorityRevision !==
+      approval.approval.stableToolIdentity.approvalAuthorityRevision
   ) {
     throw new DurableTurnError(
       "TURN_CONFLICT",
@@ -3960,7 +4032,9 @@ function parseBrowserDomainGrantApproval(
   }
   return {
     sessionId: grant.sessionId,
+    sessionMode: grant.sessionMode,
     canonicalDomain: canonical.canonicalDomain,
+    environmentId: grant.environmentId,
     scope: "apex_and_subdomains",
     preparedInvocationId: approval.approval.preparedInvocationId,
     approvalAuthorityRevision:

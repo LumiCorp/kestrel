@@ -345,6 +345,10 @@ export function projectHostedToolApprovalInteractionV4(input: {
   const presentation = buildToolApprovalPresentation({
     toolName: prepared.activation.descriptor.toolId,
     effectiveInput: prepared.effectiveInput,
+    hostedApprovalScope: {
+      requestingActorId: binding.requestingActor.actorId,
+      environmentId: prepared.stableAuthority.environmentId,
+    },
     disposition: {
       mode: "ask",
       reasonCode,

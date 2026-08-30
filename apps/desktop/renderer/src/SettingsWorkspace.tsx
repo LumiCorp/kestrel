@@ -186,6 +186,8 @@ export function SettingsWorkspace({
   const savingRef = useRef(false);
   const refreshVersionRef = useRef(0);
   const kestrelOneAccountRefreshVersionRef = useRef(0);
+  const browserDomainEnvironmentIdRef = useRef("");
+  const browserPersonalDomainsRequestVersionRef = useRef(0);
   const receivingSelectionVersionRef = useRef(0);
   const grouped = useMemo(
     () =>
@@ -340,14 +342,21 @@ export function SettingsWorkspace({
       kestrelOneAccount?.status !== "signed_in" ||
       browserDomainEnvironments.length === 0
     ) {
+      browserDomainEnvironmentIdRef.current = "";
+      browserPersonalDomainsRequestVersionRef.current += 1;
       setBrowserDomainEnvironmentId("");
       setBrowserPersonalDomains(undefined);
+      setBrowserPersonalDomainsBusy(false);
       return;
     }
     if (!available.has(browserDomainEnvironmentId)) {
-      setBrowserDomainEnvironmentId(
-        browserDomainEnvironments[0]?.environmentId ?? "",
-      );
+      const environmentId =
+        browserDomainEnvironments[0]?.environmentId ?? "";
+      browserDomainEnvironmentIdRef.current = environmentId;
+      browserPersonalDomainsRequestVersionRef.current += 1;
+      setBrowserDomainEnvironmentId(environmentId);
+      setBrowserPersonalDomains(undefined);
+      setBrowserPersonalDomainsBusy(false);
     }
   }, [kestrelOneAccount, browserDomainEnvironments, browserDomainEnvironmentId]);
 
@@ -359,23 +368,43 @@ export function SettingsWorkspace({
       setBrowserPersonalDomains(undefined);
       return;
     }
+    const environmentId = browserDomainEnvironmentId;
+    browserDomainEnvironmentIdRef.current = environmentId;
+    const requestVersion =
+      ++browserPersonalDomainsRequestVersionRef.current;
     let disposed = false;
     setBrowserPersonalDomainsBusy(true);
     void window.kestrelDesktop
       .listBrowserPersonalDomains({
-        environmentId: browserDomainEnvironmentId,
+        environmentId,
       })
       .then((projection) => {
-        if (!disposed) setBrowserPersonalDomains(projection);
+        if (
+          !disposed &&
+          requestVersion === browserPersonalDomainsRequestVersionRef.current &&
+          environmentId === browserDomainEnvironmentIdRef.current
+        ) {
+          setBrowserPersonalDomains(projection);
+        }
       })
       .catch((error) => {
-        if (!disposed) {
+        if (
+          !disposed &&
+          requestVersion === browserPersonalDomainsRequestVersionRef.current &&
+          environmentId === browserDomainEnvironmentIdRef.current
+        ) {
           setBrowserPersonalDomains(undefined);
           onError(errorMessage(error));
         }
       })
       .finally(() => {
-        if (!disposed) setBrowserPersonalDomainsBusy(false);
+        if (
+          !disposed &&
+          requestVersion === browserPersonalDomainsRequestVersionRef.current &&
+          environmentId === browserDomainEnvironmentIdRef.current
+        ) {
+          setBrowserPersonalDomainsBusy(false);
+        }
       });
     return () => {
       disposed = true;
@@ -567,25 +596,49 @@ export function SettingsWorkspace({
   }
 
   async function revokeBrowserPersonalDomain(
+    environmentId: string,
     canonicalDomain: string,
   ): Promise<void> {
-    if (browserDomainEnvironmentId === "") return;
+    if (
+      environmentId === "" ||
+      environmentId !== browserDomainEnvironmentIdRef.current
+    ) {
+      return;
+    }
+    const requestVersion =
+      ++browserPersonalDomainsRequestVersionRef.current;
     setBrowserPersonalDomainsBusy(true);
     onError(undefined);
     try {
       const projection =
         await window.kestrelDesktop.revokeBrowserPersonalDomain({
-          environmentId: browserDomainEnvironmentId,
+          environmentId,
           canonicalDomain,
         });
+      if (
+        requestVersion !== browserPersonalDomainsRequestVersionRef.current ||
+        environmentId !== browserDomainEnvironmentIdRef.current
+      ) {
+        return;
+      }
       setBrowserPersonalDomains(projection);
       setNotice(
         `${canonicalDomain} is no longer allowed for future Browser requests in this Environment.`,
       );
     } catch (error) {
-      onError(errorMessage(error));
+      if (
+        requestVersion === browserPersonalDomainsRequestVersionRef.current &&
+        environmentId === browserDomainEnvironmentIdRef.current
+      ) {
+        onError(errorMessage(error));
+      }
     } finally {
-      setBrowserPersonalDomainsBusy(false);
+      if (
+        requestVersion === browserPersonalDomainsRequestVersionRef.current &&
+        environmentId === browserDomainEnvironmentIdRef.current
+      ) {
+        setBrowserPersonalDomainsBusy(false);
+      }
     }
   }
 
@@ -1727,8 +1780,12 @@ export function SettingsWorkspace({
                     <select
                       value={browserDomainEnvironmentId}
                       onChange={(event) => {
-                        setBrowserDomainEnvironmentId(event.target.value);
+                        const environmentId = event.target.value;
+                        browserDomainEnvironmentIdRef.current = environmentId;
+                        browserPersonalDomainsRequestVersionRef.current += 1;
+                        setBrowserDomainEnvironmentId(environmentId);
                         setBrowserPersonalDomains(undefined);
+                        setBrowserPersonalDomainsBusy(false);
                       }}
                     >
                       {browserDomainEnvironments.map((environment) => (
@@ -1764,6 +1821,7 @@ export function SettingsWorkspace({
                             disabled={browserPersonalDomainsBusy}
                             onClick={() =>
                               void revokeBrowserPersonalDomain(
+                                browserPersonalDomains.environmentId,
                                 domain.authority.canonicalDomain,
                               )
                             }

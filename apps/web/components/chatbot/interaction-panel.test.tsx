@@ -222,13 +222,18 @@ test("Browser grant cards expose one Allow and remember action", () => {
                 { label: "Domain", value: "example.com" },
                 { label: "Scope", value: "Apex and subdomains" },
                 { label: "Port", value: "443 (HTTPS)" },
-                { label: "Applies to", value: "You in this Environment" },
+                { label: "Person", value: "person-stable-id-1" },
+                { label: "Environment", value: "environment-stable-id-1" },
               ],
               policy: { rememberApprovalEligible: true },
               browserDomainGrant: {
                 version: "browser_domain_grant_approval_v1",
+                requestingActorId: "person-stable-id-1",
+                environmentId: "environment-stable-id-1",
                 actionLabel: "Allow and remember",
               },
+              requestingPersonDisplayName: "Unrelated Person Name",
+              requestingPersonEmail: "unrelated-person@example.test",
             },
           },
         },
@@ -257,7 +262,10 @@ test("Browser grant cards expose one Allow and remember action", () => {
   assert.doesNotMatch(html, />Allow for thread</u);
   assert.match(html, /example\.com/u);
   assert.match(html, /Apex and subdomains/u);
-  assert.match(html, /You in this Environment/u);
+  assert.match(html, /person-stable-id-1/u);
+  assert.match(html, /environment-stable-id-1/u);
+  assert.doesNotMatch(html, /Unrelated Person Name/u);
+  assert.doesNotMatch(html, /unrelated-person@example\.test/u);
 });
 
 test("a strict hosted card with missing current authority exposes only Decline", () => {

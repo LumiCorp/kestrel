@@ -35,6 +35,12 @@ type BrowserDomainTransaction = Parameters<
 >[0];
 type BrowserDomainReader = Pick<typeof knowledgeDb, "query">;
 
+export const DEFAULT_HOSTED_BROWSER_AGENT_ID = "kestrel-one" as const;
+
+export function hostedBrowserAgentId(): string {
+  return process.env.KESTREL_ONE_AGENT_ID?.trim() || DEFAULT_HOSTED_BROWSER_AGENT_ID;
+}
+
 export type HostedBrowserEnvironmentSettings = BrowserEnvironmentAppSettings;
 export type HostedBrowserProjectSettings = BrowserProjectAppSettings;
 
@@ -165,11 +171,13 @@ export async function readHostedBrowserDomainAuthorityInput(
     environmentId: string;
     projectId: string;
     userId: string;
+    agentId: string;
     qa: BrowserQaDomainAuthorityV1;
   },
   database: BrowserDomainReader = knowledgeDb,
 ): Promise<BrowserDomainAuthorityInputV1> {
   requireScopeInput(input);
+  requireNonEmpty(input.agentId, "agentId");
   const [
     environment,
     project,
@@ -178,6 +186,7 @@ export async function readHostedBrowserDomainAuthorityInput(
     projectPolicy,
     revisionSet,
     domains,
+    subjectRestrictions,
   ] = await Promise.all([
     database.query.environments.findFirst({
       where: (table, { and: all, eq: equals }) =>
@@ -250,6 +259,36 @@ export async function readHostedBrowserDomainAuthorityInput(
         port: true,
       },
     }),
+    database.query.environmentCapabilitySubjectRestrictions.findMany({
+      where: (table, { and: all, eq: equals, isNull, or }) =>
+        all(
+          equals(table.organizationId, input.organizationId),
+          equals(table.environmentId, input.environmentId),
+          equals(table.providerKey, HOSTED_BROWSER_APP_KEY),
+          equals(
+            table.capabilityKey,
+            HOSTED_BROWSER_DOMAIN_POLICY_CAPABILITY_KEY,
+          ),
+          isNull(table.resourceId),
+          or(
+            all(
+              equals(table.subjectType, "actor"),
+              equals(table.subjectId, input.userId),
+            ),
+            all(
+              equals(table.subjectType, "agent"),
+              equals(table.subjectId, input.agentId),
+            ),
+          ),
+        ),
+      columns: {
+        subjectType: true,
+        subjectId: true,
+        enabled: true,
+        approvalMode: true,
+        updatedAt: true,
+      },
+    }),
   ]);
 
   if (!environment || !project) {
@@ -273,7 +312,12 @@ export async function readHostedBrowserDomainAuthorityInput(
     environmentSettings,
   );
   const environmentEnabled =
-    environmentPolicy.enabled && environmentPolicy.approvalMode !== "deny";
+    environmentPolicy.enabled &&
+    environmentPolicy.approvalMode !== "deny" &&
+    subjectRestrictions.every(
+      (restriction) =>
+        restriction.enabled && restriction.approvalMode !== "deny",
+    );
   const projectEnabled =
     environmentEnabled &&
     (projectApp?.enabled ?? false) &&
@@ -287,6 +331,19 @@ export async function readHostedBrowserDomainAuthorityInput(
       enabled: environmentEnabled,
       settings: environmentSettings,
       policyUpdatedAt: environmentPolicy.updatedAt.toISOString(),
+      subjectRestrictions: subjectRestrictions
+        .map((restriction) => ({
+          subjectType: restriction.subjectType,
+          subjectId: restriction.subjectId,
+          enabled: restriction.enabled,
+          approvalMode: restriction.approvalMode,
+          updatedAt: restriction.updatedAt.toISOString(),
+        }))
+        .sort((left, right) =>
+          `${left.subjectType}:${left.subjectId}`.localeCompare(
+            `${right.subjectType}:${right.subjectId}`,
+          ),
+        ),
     }),
     enabledModes: environmentEnabled ? environmentSettings.enabledModes : [],
     personalGrantsEnabled:
@@ -340,12 +397,14 @@ export async function resolveHostedBrowserDomainAuthority(
 export async function resolveHostedBrowserPublicGrantDecision(
   input: Parameters<typeof readHostedBrowserDomainAuthorityInput>[0] & {
     destination: string;
+    sessionMode: BrowserMode;
   },
   database: BrowserDomainReader = knowledgeDb,
 ): Promise<BrowserPublicGrantDecisionV1> {
   return resolveBrowserPublicGrantDecision(
     await readHostedBrowserDomainAuthorityInput(input, database),
     input.destination,
+    input.sessionMode,
   );
 }
 

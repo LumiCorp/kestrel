@@ -7,12 +7,30 @@ import {
   projectDesktopBrowserPersonalDomains,
   rememberDesktopBrowserPersonalDomain,
   revokeDesktopBrowserPersonalDomain,
+  type DesktopBrowserPersonalDomainMutationResult,
 } from "./settingsStore.js";
 
 export interface DesktopBrowserPersonalDomainServiceDependencies {
   resolveAccount(): Promise<KestrelOneAccountStatus>;
   readSettings(): DesktopSettings;
   persistSettings(settings: DesktopSettings): Promise<void>;
+  adoptionCoordinator: DesktopBrowserPersonalRevisionAdoptionCoordinator;
+}
+
+export interface DesktopBrowserPersonalRevisionAdoptionCoordinator {
+  /**
+   * Resolves only after every active Desktop Browser Session in the exact
+   * personal scope has installed personalRevision and closed connections that
+   * the revision no longer authorizes.
+   */
+  adoptPersonalRevision(input: {
+    accountId: string;
+    environmentId: string;
+    personalRevision: number;
+  }): Promise<{
+    personalRevision: number;
+    closedUnauthorizedConnections: number;
+  }>;
 }
 
 export interface DesktopBrowserPersonalDomainRememberRequest {
@@ -56,14 +74,7 @@ export class DesktopBrowserPersonalDomainService {
         approvalId: input.approvalId,
         approvedAt: input.approvedAt,
       });
-      if (mutation.disposition === "unchanged") return mutation.projection;
-      await this.#assertScopeUnchanged(scope);
-      await this.#dependencies.persistSettings(mutation.settings);
-      await this.#assertScopeUnchanged(scope);
-      return projectDesktopBrowserPersonalDomains(
-        this.#dependencies.readSettings(),
-        scope,
-      );
+      return await this.#persistAndAdopt(scope, mutation);
     });
   }
 
@@ -80,14 +91,7 @@ export class DesktopBrowserPersonalDomainService {
         canonicalDomain: input.canonicalDomain,
         revokedAt: input.revokedAt ?? new Date().toISOString(),
       });
-      if (mutation.disposition === "unchanged") return mutation.projection;
-      await this.#assertScopeUnchanged(scope);
-      await this.#dependencies.persistSettings(mutation.settings);
-      await this.#assertScopeUnchanged(scope);
-      return projectDesktopBrowserPersonalDomains(
-        this.#dependencies.readSettings(),
-        scope,
-      );
+      return await this.#persistAndAdopt(scope, mutation);
     });
   }
 
@@ -132,6 +136,42 @@ export class DesktopBrowserPersonalDomainService {
         "The signed-in Kestrel One account changed before Browser settings were saved.",
       );
     }
+  }
+
+  async #persistAndAdopt(
+    scope: { accountId: string; environmentId: string },
+    mutation: DesktopBrowserPersonalDomainMutationResult,
+  ): Promise<DesktopBrowserPersonalDomainProjectionV1> {
+    if (mutation.disposition !== "unchanged") {
+      await this.#assertScopeUnchanged(scope);
+      await this.#dependencies.persistSettings(mutation.settings);
+    }
+    await this.#assertScopeUnchanged(scope);
+    const confirmation =
+      await this.#dependencies.adoptionCoordinator.adoptPersonalRevision({
+        ...scope,
+        personalRevision: mutation.projection.revision,
+      });
+    if (
+      confirmation.personalRevision !== mutation.projection.revision ||
+      !Number.isSafeInteger(confirmation.closedUnauthorizedConnections) ||
+      confirmation.closedUnauthorizedConnections < 0
+    ) {
+      throw new Error(
+        "Desktop Browser Sessions did not confirm the exact personal-domain revision.",
+      );
+    }
+    await this.#assertScopeUnchanged(scope);
+    const projection = projectDesktopBrowserPersonalDomains(
+      this.#dependencies.readSettings(),
+      scope,
+    );
+    if (projection.revision !== mutation.projection.revision) {
+      throw new Error(
+        "Desktop Browser personal-domain settings changed during revision adoption.",
+      );
+    }
+    return projection;
   }
 
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
