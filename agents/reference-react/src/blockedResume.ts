@@ -18,6 +18,7 @@ export interface BlockedResumeRequest {
   interactionMode?: BlockedReplyInteractionMode;
   actSubmode?: BlockedReplyActSubmode;
   resumeBlockedRun?: true;
+  modeDisposition?: "resume" | "decline" | "clarify" | undefined;
 }
 
 export function resolveBlockedResumeRequest(
@@ -30,10 +31,12 @@ export function resolveBlockedResumeRequest(
   const waitFor = readActiveWaitState(reactState);
   const blockedModeReply =
     isUserReply === true ? resolveBlockedWaitModeReply(waitFor, currentMessage, payload?.userReplyIntent) : undefined;
+  const authoritativeModeResolution = readAuthoritativeModeResolution(payload?.modeResolution);
   const transcriptGoal = readActiveTaskGoalFromState(reactState)?.trim();
   if (
     isBlockedModeResumeSignal(reactState, event.type, payload) === false &&
-    blockedModeReply === undefined
+    blockedModeReply === undefined &&
+    authoritativeModeResolution === undefined
   ) {
     return { applyEventOverride: false };
   }
@@ -41,7 +44,18 @@ export function resolveBlockedResumeRequest(
   const priorGoal = transcriptGoal;
   const result: BlockedResumeRequest = {
     applyEventOverride: priorGoal !== undefined,
-    ...(blockedModeReply !== undefined
+    ...(authoritativeModeResolution !== undefined
+      ? {
+          interactionMode: authoritativeModeResolution.interactionMode,
+          ...(authoritativeModeResolution.actSubmode !== undefined
+            ? { actSubmode: authoritativeModeResolution.actSubmode }
+            : {}),
+          ...(authoritativeModeResolution.disposition === "resume"
+            ? { resumeBlockedRun: true as const }
+            : {}),
+          modeDisposition: authoritativeModeResolution.disposition,
+        }
+      : blockedModeReply !== undefined
       ? {
           interactionMode: blockedModeReply.interactionMode,
           ...(blockedModeReply.actSubmode !== undefined
@@ -56,6 +70,30 @@ export function resolveBlockedResumeRequest(
     result.userRequest = priorGoal;
   }
   return result;
+}
+
+function readAuthoritativeModeResolution(value: unknown): {
+  interactionMode: BlockedReplyInteractionMode;
+  actSubmode?: BlockedReplyActSubmode | undefined;
+  disposition: "resume" | "decline" | "clarify";
+} | undefined {
+  const record = asRecord(value);
+  const interactionMode = record?.interactionMode;
+  const actSubmode = record?.actSubmode;
+  const disposition = record?.disposition;
+  if (
+    record?.version !== "mode_resolution_v1" ||
+    (interactionMode !== "chat" && interactionMode !== "plan" && interactionMode !== "build") ||
+    (disposition !== "resume" && disposition !== "decline" && disposition !== "clarify") ||
+    (actSubmode !== undefined && actSubmode !== "strict" && actSubmode !== "safe" && actSubmode !== "full_auto")
+  ) {
+    return;
+  }
+  return {
+    interactionMode,
+    ...(actSubmode !== undefined ? { actSubmode } : {}),
+    disposition,
+  };
 }
 
 function isBlockedModeResumeSignal(

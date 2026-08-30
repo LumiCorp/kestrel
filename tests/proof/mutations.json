@@ -824,6 +824,15 @@
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=rejects a local external approval without its exact binding", "tests/unit/assistant-response-contract.test.ts"],
       "testFiles": ["tests/unit/assistant-response-contract.test.ts"]
+    },
+    {
+      "id": "mode-switch-capability-specific-matching",
+      "target": "agents/reference-react/src/policy/DecisionPolicy.ts",
+      "find": "    (tool) =>\n      tool.executionClass === requiredToolClass &&\n      requiredCapabilities.every((capability) => tool.capabilityClasses.includes(capability)),",
+      "replace": "    (tool) => tool.executionClass === requiredToolClass,",
+      "command": "pnpm",
+      "args": ["exec", "tsx", "--test", "--test-name-pattern=mode switch matching is capability-specific", "tests/unit/compile-intent-executable-actions.test.ts"],
+      "testFiles": ["tests/unit/compile-intent-executable-actions.test.ts"]
     }
   ]
 }

@@ -728,6 +728,9 @@ export interface SessionDescribedEventPayload {
   threadId?: string | undefined;
   currentStepAgent?: string | undefined;
   updatedAt?: string | undefined;
+  interactionMode?: import("../../src/mode/contracts.js").InteractionMode | undefined;
+  actSubmode?: import("../../src/mode/contracts.js").ActSubmode | undefined;
+  modeResolution?: import("../../src/mode/contracts.js").ModeResolutionV1 | undefined;
   waitFor?: RunCompletedEventPayload["result"]["output"]["waitFor"] | undefined;
   activeAssembly?: OperatorAssemblySummary | undefined;
   operatorInbox?: OperatorInboxSummary | undefined;
@@ -854,6 +857,7 @@ export interface OperatorControlledEventPayload {
   inbox?: OperatorInboxSnapshot | undefined;
   view?: OperatorThreadView | undefined;
   result?: RunTurnResult | undefined;
+  modeResolution?: import("../../src/mode/contracts.js").ModeResolutionV1 | undefined;
 }
 
 export interface ProfileListedEventPayload {

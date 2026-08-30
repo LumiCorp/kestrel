@@ -74,6 +74,16 @@ export interface InteractionModeResolution {
   actSubmode?: LegacyBuildSubmode | undefined;
 }
 
+export interface ModeResolutionV1 {
+  version: "mode_resolution_v1";
+  requestId: string;
+  runId: string;
+  interactionMode: InteractionMode;
+  actSubmode?: ActSubmode | undefined;
+  source: "explicit_command" | "classified_reply";
+  disposition: "resume" | "decline" | "clarify";
+}
+
 export const DEFAULT_INTERACTION_MODE: InteractionMode = "chat";
 export const DEFAULT_ACT_SUBMODE: LegacyBuildSubmode = "safe";
 const TOOL_EXECUTION_CLASSES: ToolExecutionClass[] = [

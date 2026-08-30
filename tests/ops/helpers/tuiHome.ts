@@ -10,7 +10,7 @@ export async function seedTuiHome(home: string): Promise<void> {
 
   const now = "2026-03-16T12:40:00.000Z";
   const sessions: SessionsFile = {
-    version: 4,
+    version: 6,
     activeSessionName: "ops-approval-child",
     sessions: [
       {
@@ -20,6 +20,9 @@ export async function seedTuiHome(home: string): Promise<void> {
         createdAt: now,
         updatedAt: now,
         started: true,
+        environmentPresetId: "cli_dev_local",
+        environmentShellKind: "cli",
+        effectiveAssemblyId: "bundle:kestrel:cli",
         lastRunStatus: "WAITING",
         lastMessagePreview: "Parent thread is blocked on child approval.",
         pendingWaitFor: {
@@ -53,6 +56,9 @@ export async function seedTuiHome(home: string): Promise<void> {
         createdAt: now,
         updatedAt: now,
         started: true,
+        environmentPresetId: "cli_dev_local",
+        environmentShellKind: "cli",
+        effectiveAssemblyId: "bundle:kestrel:cli",
         lastRunStatus: "WAITING",
         lastMessagePreview: "Approve child thread before continuing.",
         pendingWaitFor: {
@@ -70,6 +76,9 @@ export async function seedTuiHome(home: string): Promise<void> {
         createdAt: now,
         updatedAt: now,
         started: true,
+        environmentPresetId: "cli_dev_local",
+        environmentShellKind: "cli",
+        effectiveAssemblyId: "bundle:kestrel:cli",
         lastRunStatus: "WAITING",
         lastMessagePreview: "Switch to Build to continue.",
         pendingWaitFor: {

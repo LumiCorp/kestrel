@@ -166,25 +166,71 @@ export function validateDecisionPolicy(context: DecisionPolicyContext): string[]
 function validateModeSwitchRequestPolicy(context: DecisionPolicyContext): void {
   if (context.action.kind !== "request_mode_switch") return;
   const requiredToolClass = context.action.requiredToolClass;
-  const matchingManifestTools = context.capabilityManifest.filter(
-    (tool) => tool.executionClass === requiredToolClass,
-  );
-  if (matchingManifestTools.length === 0) {
+  const requiredCapabilities = [...new Set(
+    context.action.requiredCapabilities.map((capability) => capability.trim()).filter(Boolean),
+  )];
+  if (requiredCapabilities.length === 0) {
     throw decisionPolicyError(
-      `No configured tool uses requiredToolClass='${requiredToolClass}'. Report the concrete missing capability instead.`,
+      "A mode switch request must name at least one concrete required capability.",
       "DECISION_CAPABILITY_UNAVAILABLE",
       { requiredAction: "report_concrete_missing_capability" },
     );
   }
-  const availableNames = new Set((context.availableTools ?? []).map((tool) => tool.name));
-  if (matchingManifestTools.some((tool) => availableNames.has(tool.name))) {
+  const matchingManifestTools = context.capabilityManifest.filter(
+    (tool) =>
+      tool.executionClass === requiredToolClass &&
+      requiredCapabilities.every((capability) => tool.capabilityClasses.includes(capability)),
+  );
+  if (matchingManifestTools.length === 0) {
     throw decisionPolicyError(
-      `requiredToolClass='${requiredToolClass}' is already available in the current tool surface. Use the available tool.`,
-      "DECISION_POLICY_FAILED",
-      { requiredAction: "choose_available_tool" },
+      `No configured ${requiredToolClass} tool provides every requested capability: ${requiredCapabilities.join(", ")}. Report the concrete missing capability instead.`,
+      "DECISION_CAPABILITY_UNAVAILABLE",
+      {
+        requiredAction: "report_concrete_missing_capability",
+        requiredCapabilities,
+      },
     );
   }
-  const modeHiddenTools = matchingManifestTools.filter((tool) =>
+  const availableNames = new Set((context.availableTools ?? []).map((tool) => tool.name));
+  const visibleMatchingTool = matchingManifestTools.find((tool) => availableNames.has(tool.name));
+  if (visibleMatchingTool !== undefined) {
+    throw decisionPolicyError(
+      `The exact requested capability is already available through '${visibleMatchingTool.name}'. Retry with that tool.`,
+      "DECISION_POLICY_FAILED",
+      {
+        requiredAction: "choose_available_tool",
+        toolName: visibleMatchingTool.name,
+        requiredCapabilities,
+      },
+    );
+  }
+  const policyAllowedTools = matchingManifestTools.filter((tool) =>
+    context.executionPolicy?.toolClassPolicy?.[requiredToolClass] !== false &&
+    readBlockedApprovalCapability({
+      executionPolicy: context.executionPolicy,
+      requiredCapabilities: tool.approvalCapabilities,
+    }) === undefined
+  );
+  if (policyAllowedTools.length === 0) {
+    const blockedApprovalCapability = matchingManifestTools
+      .map((tool) => readBlockedApprovalCapability({
+        executionPolicy: context.executionPolicy,
+        requiredCapabilities: tool.approvalCapabilities,
+      }))
+      .find((capability) => capability !== undefined);
+    throw decisionPolicyError(
+      blockedApprovalCapability === undefined
+        ? `The exact requested capability is blocked by tool-class policy for '${requiredToolClass}'. Request that policy change instead of a mode switch.`
+        : `The exact requested capability requires blocked approval capability '${blockedApprovalCapability}'. Request that approval change instead of a mode switch.`,
+      "DECISION_CAPABILITY_UNAVAILABLE",
+      {
+        requiredAction: "request_policy_or_approval_change",
+        requiredCapabilities,
+        ...(blockedApprovalCapability === undefined ? { blockedToolClass: requiredToolClass } : { blockedApprovalCapability }),
+      },
+    );
+  }
+  const modeHiddenTools = policyAllowedTools.filter((tool) =>
     isToolEligibleForInteractionMode({
       interactionMode: context.interactionMode ?? "chat",
       toolClass: requiredToolClass,
@@ -194,23 +240,12 @@ function validateModeSwitchRequestPolicy(context: DecisionPolicyContext): void {
   );
   if (modeHiddenTools.length === 0) {
     throw decisionPolicyError(
-      `requiredToolClass='${requiredToolClass}' is permitted by the current mode but unavailable from the model tool surface. Request the relevant policy or capability change.`,
+      `The exact requested capability is permitted by the current mode but unavailable from the model tool surface. Request the specific tool-surface or policy correction.`,
       "DECISION_CAPABILITY_UNAVAILABLE",
-      { requiredAction: "request_policy_or_approval_change" },
-    );
-  }
-  const allModeHiddenToolsPolicyBlocked = modeHiddenTools.every((tool) =>
-    context.executionPolicy?.toolClassPolicy?.[requiredToolClass] === false ||
-    readBlockedApprovalCapability({
-      executionPolicy: context.executionPolicy,
-      requiredCapabilities: tool.approvalCapabilities,
-    }) !== undefined
-  );
-  if (allModeHiddenToolsPolicyBlocked) {
-    throw decisionPolicyError(
-      `requiredToolClass='${requiredToolClass}' is blocked by execution policy. Request the required policy or approval change instead of a mode switch.`,
-      "DECISION_CAPABILITY_UNAVAILABLE",
-      { requiredAction: "request_policy_or_approval_change" },
+      {
+        requiredAction: "request_policy_or_approval_change",
+        requiredCapabilities,
+      },
     );
   }
 }

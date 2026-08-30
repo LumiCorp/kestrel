@@ -18,6 +18,7 @@ STATUS_PREFIX = "__KESTREL_PTY_STATUS__"
 def main() -> int:
     payload, control_buffer, stdin_closed = read_initial_payload()
     command = payload["command"]
+    cwd = payload.get("cwd")
     env = payload["env"]
     steps = payload["steps"]
     abort_patterns = payload.get("abortPatterns") or []
@@ -25,6 +26,8 @@ def main() -> int:
 
     pid, master_fd = pty.fork()
     if pid == 0:
+        if cwd:
+            os.chdir(cwd)
         os.execvpe(command[0], command, env)
         raise SystemExit(1)
 
@@ -139,8 +142,10 @@ def wait_for_step(
 
     while True:
         if deadline is not None and time.monotonic() >= deadline:
+            visible = normalize_output(transcript)
             raise RuntimeError(
-                f"Timed out after {timeout_seconds} seconds waiting for {pattern!r}"
+                f"Timed out after {timeout_seconds} seconds waiting for {pattern!r}\n"
+                f"{visible[-4000:]}"
             )
         waited_pid, status = poll_child(pid)
         if waited_pid == pid:

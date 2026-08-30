@@ -58,6 +58,7 @@ export async function runTuiScenario(input: {
   steps: TuiScenarioStep[];
   abortPatterns?: TuiAbortPattern[] | undefined;
   env?: NodeJS.ProcessEnv | undefined;
+  cwd?: string | undefined;
 }): Promise<string> {
   const result = await runTuiScenarioWithSession(input);
   return result.transcript;
@@ -70,6 +71,7 @@ export async function runTuiScenarioWithSession(input: {
   steps: TuiScenarioStep[];
   abortPatterns?: TuiAbortPattern[] | undefined;
   env?: NodeJS.ProcessEnv | undefined;
+  cwd?: string | undefined;
 }): Promise<{ transcript: string; session: TuiSessionMeta }> {
   const tempDir = path.join(
     process.env.KESTREL_VALIDATION_TEMP_ROOT ?? os.tmpdir(),
@@ -95,12 +97,13 @@ export async function runTuiScenarioWithSession(input: {
         }
       : {}),
     KESTREL_CORE_IDLE_TIMEOUT_MS: "600000",
-    KESTREL_DISABLE_DOTENV: "1",
+    KESTREL_DISABLE_DOTENV: input.env?.KESTREL_DISABLE_DOTENV ?? "1",
     ...(input.databaseUrl ? { KESTREL_DB_PORT: "1" } : {}),
     OPENROUTER_API_KEY: input.env?.OPENROUTER_API_KEY ?? "ops-test-openrouter",
     TAVILY_API_KEY: input.env?.TAVILY_API_KEY ?? "ops-test-tavily",
     FORCE_COLOR: "0",
     TERM: "xterm-256color",
+    TSX_TSCONFIG_PATH: path.resolve(process.cwd(), "tsconfig.json"),
   };
   delete tuiEnvironment.CI;
   delete tuiEnvironment.NODE_V8_COVERAGE;
@@ -108,7 +111,7 @@ export async function runTuiScenarioWithSession(input: {
     command: [
       process.execPath,
       "--import",
-      "tsx",
+      path.resolve(process.cwd(), "node_modules/tsx/dist/loader.mjs"),
       path.resolve(process.cwd(), "cli/tui.ts"),
       "--scripted",
       ...(input.freshSessionName !== undefined
@@ -117,6 +120,7 @@ export async function runTuiScenarioWithSession(input: {
       "--profile",
       "kestrel",
     ],
+    cwd: input.cwd ?? process.cwd(),
     env: tuiEnvironment,
     steps: input.steps.map((step) => ({
       pattern: typeof step.waitFor === "string" ? step.waitFor : step.waitFor.source,

@@ -9673,30 +9673,53 @@ test("natural-language mode switches are forwarded for runtime intent classifica
     pendingWaitFor: {
       kind: "user",
       eventType: "user.reply",
+      interaction: {
+        version: "v1",
+        requestId: "request-natural-mode",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Switch to Build?",
+      },
       metadata: {
         reason: "planner_mode_blocked",
         requiredToolClass: "sandboxed_only",
+        requiredCapabilities: ["filesystem.write"],
       },
     },
     updatedAt: new Date().toISOString(),
   });
 
   let capturedCommandType: string | undefined;
-  let capturedTurn: Record<string, unknown> | undefined;
+  let capturedPayload: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
       if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedCommandType = type;
-      capturedTurn = payload.turn;
+      capturedPayload = payload;
       return {
-        type: "run.completed",
+        type: "operator.controlled",
+        sessionId: "session-1",
+        threadId: "thread-main:session-1",
+        runId: "run-natural-mode",
         payload: {
+          sessionId: "session-1",
+          threadId: "thread-main:session-1",
+          disposition: "completed",
+          runId: "run-natural-mode",
+          modeResolution: {
+            version: "mode_resolution_v1",
+            requestId: "request-natural-mode",
+            runId: "run-natural-mode",
+            interactionMode: "build",
+            source: "classified_reply",
+            disposition: "resume",
+          },
           result: {
             assistantText: null,
             output: {
               status: "COMPLETED",
               sessionId: "session-1",
-              runId: "run-1",
+              runId: "run-natural-mode",
               quality: {
                 citationCoverage: 1,
                 unresolvedClaims: 0,
@@ -9722,13 +9745,39 @@ test("natural-language mode switches are forwarded for runtime intent classifica
 
   await (appState.handleLine as (line: string) => Promise<void>)("switch to build");
 
-  assert.equal(capturedCommandType, "conversation.message.submit");
-  assert.equal(capturedTurn?.eventType, undefined);
-  assert.equal(capturedTurn?.message, "switch to build");
-  assert.equal(capturedTurn?.resumeBlockedRun, undefined);
+  assert.equal(capturedCommandType, "operator.control");
+  assert.equal(capturedPayload?.requestId, "request-natural-mode");
+  assert.equal(capturedPayload?.message, "switch to build");
+  assert.equal(capturedPayload?.interactionMode, undefined);
+  assert.equal((appState.uiStore as UiStore).getState().activeSession.interactionMode, "build");
 
   const rawHistory = await readFile(historyPath, "utf8");
   assert.match(rawHistory, /switch to build/u);
+});
+
+test("session description restores the Local Core interaction mode after restart", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+
+  await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+    sessionId: "session-1",
+    version: 3,
+    interactionMode: "build",
+    actSubmode: "safe",
+    modeResolution: {
+      version: "mode_resolution_v1",
+      requestId: "request-restart-mode",
+      runId: "run-restart-mode",
+      interactionMode: "build",
+      actSubmode: "safe",
+      source: "classified_reply",
+      disposition: "resume",
+    },
+  });
+
+  assert.equal(uiStore.getState().activeSession.interactionMode, "build");
+  assert.equal(uiStore.getState().activeSession.actSubmode, "safe");
 });
 
 test("mode command resumes blocked runs with an explicit resume flag", async () => {
@@ -9763,9 +9812,22 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
       capturedPayload = payload;
       return {
         type: "operator.controlled",
+        sessionId: "session-1",
+        threadId: "thread-main:session-1",
+        runId: "run-2",
         payload: {
+          sessionId: "session-1",
           threadId: "thread-main:session-1",
           disposition: "completed",
+          runId: "run-2",
+          modeResolution: {
+            version: "mode_resolution_v1",
+            requestId: "request-mode-command",
+            runId: "run-2",
+            interactionMode: "build",
+            source: "explicit_command",
+            disposition: "resume",
+          },
           result: {
             assistantText: null,
             output: {
@@ -9807,7 +9869,8 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
   assert.equal(capturedPayload?.message, "/mode build");
 
   const rawHistory = await readFile(historyPath, "utf8");
-  assert.match(rawHistory, /Mode set to Build\. Resuming blocked run\./u);
+  assert.match(rawHistory, /Mode set to Build\./u);
+  assert.doesNotMatch(rawHistory, /Resuming blocked run\./u);
 });
 
 test("mode build succeeds without a trailing submode and does not print usage", async () => {

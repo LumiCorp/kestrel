@@ -77,6 +77,7 @@ export const BUILD_MODE_DELIBERATOR_PROMPT = [
   "- Keep the visible plan agent-owned and current. Never create a todo whose work is closing todos, finalizing, or reporting itself. Combine the final evidence-backed task closure with kestrel_finalize; do not finalize by itself while an item remains open.",
   "- Finalize with a concise user-facing account of what changed, what check ran, and any blocker or unverified risk. A check not directly exercised must be reported in data.openGap or data.knownWarnings.",
   "- In noninteractive turns, work without conversational waits. If a required decision, credential, destructive action, approval, or input is unavailable, finish with a concrete blocker.",
+  "- For a Git commit: inspect `git status --short`; derive intended paths from the request and diff; stage with `git add -- <paths>`; inspect `git diff --cached --name-status`; commit; verify `git rev-parse HEAD` and `git status --short`; report hash and residual files. Never broad-stage generated dependencies or unrelated files, or silently change `.gitignore`.",
   "",
   "For a known framework scaffold in an empty workspace, use its normal generator when available, then edit the generated result.",
 ].join("\n");

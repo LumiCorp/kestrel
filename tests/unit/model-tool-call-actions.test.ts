@@ -323,9 +323,10 @@ test("switch_mode preserves the explicit requested mode without assistant progre
   assert.equal(normalized.assistantProgress, undefined);
 });
 
-test("request_mode_switch preserves the required class and user-facing reason", () => {
+test("request_mode_switch preserves the required class, capabilities, and user-facing reason", () => {
   const registry = buildModelToolAliasRegistry(workspaceTools, {
     controlToolNames: ["kestrel.request_mode_switch"],
+    modeSwitchRequiredCapabilities: ["plan.write"],
   });
   const normalized = normalizeModelToolCallsToAgentTurn({
     aliasRegistry: registry,
@@ -334,6 +335,7 @@ test("request_mode_switch preserves the required class and user-facing reason", 
       name: "kestrel_request_mode_switch",
       input: {
         requiredToolClass: "planning_write",
+        requiredCapabilities: ["plan.write"],
         reason: "I need to write the agreed session plan before implementation.",
       },
     }],
@@ -342,6 +344,7 @@ test("request_mode_switch preserves the required class and user-facing reason", 
   assert.deepEqual(normalized.action, {
     kind: "request_mode_switch",
     requiredToolClass: "planning_write",
+    requiredCapabilities: ["plan.write"],
     reason: "I need to write the agreed session plan before implementation.",
   });
   assert.equal(normalized.assistantProgress, undefined);

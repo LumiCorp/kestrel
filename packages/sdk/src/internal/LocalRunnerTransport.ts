@@ -5,6 +5,7 @@ import {
   isRunnerExpectedResponseEvent,
   isRunnerStreamingCommandType,
   parseRunnerCommandV2,
+  RUNNER_RUN_STREAM_EVENT_TYPES,
 } from "@kestrel-agents/protocol";
 
 import type {
@@ -168,7 +169,7 @@ export class LocalRunnerTransport implements ProtocolTransport {
 
   private async dispatch(command: RunnerCommand, controller: AbortController): Promise<void> {
     try {
-      const streaming = isRunnerStreamingCommandType(command.type);
+      const streaming = requiresStreamingTransport(command);
       const response = await this.openRequest({
         method: "POST",
         path: `${LOCAL_CORE_RUNTIME_V2_PREFIX}${streaming ? "/commands/stream" : "/commands"}`,
@@ -180,12 +181,14 @@ export class LocalRunnerTransport implements ProtocolTransport {
       const contentType = response.headers["content-type"] ?? "";
       if (contentType.includes("text/event-stream")) {
         let streamSettled = false;
+        const acceptedOperatorControl = isAcceptedOperatorControl(command);
+        let acceptedOperatorIdentity: AcceptedOperatorControlIdentity | undefined;
         await consumeIncomingSse(response, (eventType, data) => {
           const event = parseRunnerEvent(data);
           if (event !== undefined) {
             if (
               event.commandId !== command.id
-              || isRunnerEventAllowedForCommand(command.type, event) === false
+              || isTransportEventAllowed(command, event) === false
             ) {
               streamSettled = true;
               this.emitEvent(makeSyntheticRunnerError(command.id, {
@@ -198,6 +201,40 @@ export class LocalRunnerTransport implements ProtocolTransport {
                   receivedCommandId: event.commandId ?? null,
                 },
               }));
+              return false;
+            }
+            if (acceptedOperatorControl && event.type === "operator.controlled") {
+              acceptedOperatorIdentity = readAcceptedOperatorControlIdentity(command, event);
+              if (acceptedOperatorIdentity === undefined) {
+                streamSettled = true;
+                this.emitEvent(makeSyntheticRunnerError(command.id, {
+                  code: "RUNNER_PROTOCOL_ERROR",
+                  message: "Local Core emitted operator control with mismatched request, session, thread, run, or mode-resolution identity.",
+                  details: { status },
+                }));
+                return false;
+              }
+              this.emitEvent(event);
+              return;
+            }
+            if (
+              acceptedOperatorControl
+              && RUNNER_RUN_STREAM_EVENT_TYPES.includes(event.type as never)
+              && matchesAcceptedOperatorControlRun(event, acceptedOperatorIdentity, {
+                requireCompleteIdentity: isRunTerminalEventType(event.type),
+              }) === false
+            ) {
+              streamSettled = true;
+              this.emitEvent(makeSyntheticRunnerError(command.id, {
+                code: "RUNNER_PROTOCOL_ERROR",
+                message: "Local Core emitted a resumed run event with mismatched session, thread, or run identity.",
+                details: { status, eventType: event.type },
+              }));
+              return false;
+            }
+            if (acceptedOperatorControl && isRunTerminalEventType(event.type)) {
+              streamSettled = true;
+              this.emitEvent(event);
               return false;
             }
             if (isRunnerExpectedResponseEvent(command.type, event)) {
@@ -331,6 +368,89 @@ export class LocalRunnerTransport implements ProtocolTransport {
       this.controllers.delete(commandId);
     }
   }
+}
+
+function requiresStreamingTransport(command: RunnerCommand): boolean {
+  return isRunnerStreamingCommandType(command.type)
+    || (
+      command.type === "operator.control"
+      && command.payload.completionMode === "accepted"
+    );
+}
+
+function isAcceptedOperatorControl(command: RunnerCommand): boolean {
+  return command.type === "operator.control"
+    && command.payload.completionMode === "accepted";
+}
+
+function isTransportEventAllowed(command: RunnerCommand, event: RunnerEvent): boolean {
+  return isRunnerEventAllowedForCommand(command.type, event)
+    || (
+      isAcceptedOperatorControl(command)
+      && RUNNER_RUN_STREAM_EVENT_TYPES.includes(event.type as never)
+    );
+}
+
+function isRunTerminalEventType(type: RunnerEvent["type"]): boolean {
+  return type === "run.completed" || type === "run.failed" || type === "run.cancelled";
+}
+
+interface AcceptedOperatorControlIdentity {
+  sessionId: string;
+  threadId: string;
+  runId: string;
+}
+
+function readAcceptedOperatorControlIdentity(
+  command: RunnerCommand,
+  event: Extract<RunnerEvent, { type: "operator.controlled" }>,
+): AcceptedOperatorControlIdentity | undefined {
+  if (command.type !== "operator.control") return;
+  const resultOutput = event.payload.result?.output;
+  const sessionIds = [event.sessionId, event.payload.sessionId, resultOutput?.sessionId]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const threadIds = [event.threadId, event.payload.threadId]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const runIds = [event.runId, event.payload.runId, resultOutput?.runId]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const modeResolution = event.payload.modeResolution;
+  if (
+    sessionIds.length === 0 || new Set(sessionIds).size !== 1
+    || threadIds.length === 0 || new Set(threadIds).size !== 1
+    || runIds.length === 0 || new Set(runIds).size !== 1
+    || threadIds[0] !== command.payload.threadId
+    || (
+      modeResolution !== undefined
+      && (
+        modeResolution.requestId !== command.payload.requestId
+        || modeResolution.runId !== runIds[0]
+      )
+    )
+  ) return;
+  return { sessionId: sessionIds[0]!, threadId: threadIds[0]!, runId: runIds[0]! };
+}
+
+function matchesAcceptedOperatorControlRun(
+  event: RunnerEvent,
+  identity: AcceptedOperatorControlIdentity | undefined,
+  options: { requireCompleteIdentity: boolean },
+): boolean {
+  if (identity === undefined || event.type === "operator.controlled") return false;
+  const payload = event.payload as Record<string, unknown>;
+  const result = typeof payload.result === "object" && payload.result !== null
+    ? payload.result as { output?: { sessionId?: string; runId?: string } }
+    : undefined;
+  const sessionIds = [event.sessionId, payload.sessionId, result?.output?.sessionId]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const threadIds = [event.threadId, payload.threadId]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  const runIds = [event.runId, payload.runId, result?.output?.runId]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  return runIds.length > 0
+    && (!options.requireCompleteIdentity || (sessionIds.length > 0 && threadIds.length > 0))
+    && sessionIds.every((value) => value === identity.sessionId)
+    && threadIds.every((value) => value === identity.threadId)
+    && runIds.every((value) => value === identity.runId);
 }
 
 async function readResponseBody(response: IncomingMessage): Promise<string> {

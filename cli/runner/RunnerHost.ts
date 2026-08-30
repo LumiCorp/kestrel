@@ -348,6 +348,7 @@ export interface RunnerRuntime {
           inbox?: import("../../src/orchestration/contracts.js").OperatorInboxSnapshot | undefined;
           view?: import("../../src/orchestration/contracts.js").OperatorThreadView | undefined;
           result?: RunTurnResult | undefined;
+          modeResolution?: import("../../src/mode/contracts.js").ModeResolutionV1 | undefined;
         };
         completion: Promise<RunTurnResult>;
       }>)
@@ -2054,8 +2055,12 @@ export class RunnerHost {
           this.writer.emit("run.started", {
             sessionId,
             eventType: "user.reply",
-            ...(payload.interactionMode !== undefined ? { interactionMode: payload.interactionMode } : {}),
-            ...(payload.actSubmode !== undefined ? { actSubmode: payload.actSubmode } : {}),
+            ...(execution.accepted.modeResolution?.interactionMode !== undefined
+              ? { interactionMode: execution.accepted.modeResolution.interactionMode }
+              : payload.interactionMode !== undefined ? { interactionMode: payload.interactionMode } : {}),
+            ...(execution.accepted.modeResolution?.actSubmode !== undefined
+              ? { actSubmode: execution.accepted.modeResolution.actSubmode }
+              : payload.actSubmode !== undefined ? { actSubmode: payload.actSubmode } : {}),
           }, {
             commandId,
             sessionId,

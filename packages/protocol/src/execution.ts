@@ -2206,12 +2206,25 @@ export interface RunnerPongEventPayload {
   sessionId?: string | undefined;
 }
 
+export interface RunnerModeResolutionV1 {
+  version: "mode_resolution_v1";
+  requestId: string;
+  runId: string;
+  interactionMode: "chat" | "plan" | "build";
+  actSubmode?: "strict" | "safe" | "full_auto" | undefined;
+  source: "explicit_command" | "classified_reply";
+  disposition: "resume" | "decline" | "clarify";
+}
+
 export interface SessionDescribedEventPayload extends Record<string, unknown> {
   sessionId: string;
   version: number;
   threadId?: string | undefined;
   currentStepAgent?: string | undefined;
   updatedAt?: string | undefined;
+  interactionMode?: "chat" | "plan" | "build" | undefined;
+  actSubmode?: "strict" | "safe" | "full_auto" | undefined;
+  modeResolution?: RunnerModeResolutionV1 | undefined;
   waitFor?: Record<string, unknown> | undefined;
   activeAssembly?: Record<string, unknown> | undefined;
   operatorInbox?: Record<string, unknown> | undefined;
@@ -2277,6 +2290,7 @@ export interface OperatorControlledEventPayload {
   inbox?: RunnerOperatorInboxSnapshot | undefined;
   view?: RunnerOperatorThreadView | undefined;
   result?: RunnerResultV2<RunnerRunOutput> | undefined;
+  modeResolution?: RunnerModeResolutionV1 | undefined;
 }
 
 export interface TaskUpdatedEventPayload {
@@ -3652,6 +3666,7 @@ function parseRunnerEventPayloadV2(
       validateOptionalRecord(payload.inbox, `${label}.inbox`);
       validateOptionalRecord(payload.view, `${label}.view`);
       validateOptionalRecord(payload.result, `${label}.result`);
+      validateOptionalModeResolution(payload.modeResolution, `${label}.modeResolution`);
       break;
     case "task.updated":
       requireRecord(payload.task, `${label}.task`);
@@ -4243,6 +4258,9 @@ function validateSessionDescription(
   validateOptionalNonEmptyString(session.threadId, `${label}.threadId`);
   validateOptionalNonEmptyString(session.currentStepAgent, `${label}.currentStepAgent`);
   validateOptionalNonEmptyString(session.updatedAt, `${label}.updatedAt`);
+  validateOptionalEnum(session.interactionMode, `${label}.interactionMode`, ["chat", "plan", "build"]);
+  validateOptionalEnum(session.actSubmode, `${label}.actSubmode`, ["strict", "safe", "full_auto"]);
+  validateOptionalModeResolution(session.modeResolution, `${label}.modeResolution`);
   validateOptionalRecord(session.waitFor, `${label}.waitFor`);
   validateOptionalRecord(session.activeAssembly, `${label}.activeAssembly`);
   if (session.activeAssembly !== undefined) {
@@ -4273,6 +4291,20 @@ function validateSessionDescription(
   validateOptionalNonEmptyString(session.contextPosture, `${label}.contextPosture`);
   validateOptionalNonEmptyString(session.focusedThreadId, `${label}.focusedThreadId`);
   validateOptionalRecord(session.operatorThreadView, `${label}.operatorThreadView`);
+}
+
+function validateOptionalModeResolution(value: unknown, label: string): void {
+  if (value === undefined) return;
+  const resolution = requireRecord(value, label);
+  if (resolution.version !== "mode_resolution_v1") {
+    throw new RunnerProtocolContractError(`${label}.version must be 'mode_resolution_v1'`);
+  }
+  requireNonEmptyString(resolution.requestId, `${label}.requestId`);
+  requireNonEmptyString(resolution.runId, `${label}.runId`);
+  validateEnum(resolution.interactionMode, `${label}.interactionMode`, ["chat", "plan", "build"]);
+  validateOptionalEnum(resolution.actSubmode, `${label}.actSubmode`, ["strict", "safe", "full_auto"]);
+  validateEnum(resolution.source, `${label}.source`, ["explicit_command", "classified_reply"]);
+  validateEnum(resolution.disposition, `${label}.disposition`, ["resume", "decline", "clarify"]);
 }
 
 function normalizeSessionDescription(

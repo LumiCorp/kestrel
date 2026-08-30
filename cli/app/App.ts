@@ -176,7 +176,6 @@ import {
   readExactReview,
   readExactReviewOptionIds,
   resolveExactReviewOptionId,
-  resolveBlockedWaitModeReply,
 } from "./waitForPrompt.js";
 import { projectTuiTerminalOutcome } from "./TuiConversationAdapter.js";
 import {
@@ -2522,10 +2521,6 @@ export class App {
       );
       return;
     }
-    const blockedModeReply = resolveBlockedWaitModeReply(
-      initialState.activeSession.pendingWaitFor,
-      rawLine,
-    );
     const composerPolicy = this.getRunController().getConversationComposerPolicy();
     if (
       initialState.activeSession.pendingWaitFor?.kind === "approval"
@@ -2538,41 +2533,28 @@ export class App {
     }
     this.uiStore.patch({ chatDraft: "" });
     const shouldResumeBlockedRun =
-      blockedModeReply?.resumeBlockedRun === true ||
       exactReviewOptionId !== undefined ||
-      initialState.activeSession.pendingWaitFor?.eventType === "user.reply";
+      initialState.activeSession.pendingWaitFor?.eventType === "user.reply" ||
+      initialState.activeSession.pendingRunRequestId !== undefined;
     const shouldUsePendingWait = shouldResumeBlockedRun;
     const shouldForceFreshTurn =
       initialState.activeSession.pendingWaitFor !== undefined && shouldUsePendingWait === false;
     let optimisticMessageId: string | undefined;
     const interactionTurnId = shouldResumeBlockedRun
       ? this.getRunController().resolveInteractionTurnId(
-          initialState.activeSession.pendingWaitFor?.interaction?.requestId?.trim() ?? "",
+          initialState.activeSession.pendingWaitFor?.interaction?.requestId?.trim()
+            ?? initialState.activeSession.pendingRunRequestId
+            ?? "",
         )
       : undefined;
-    if (blockedModeReply !== undefined) {
-      const nextExecutionPolicy = alignExecutionPolicyWithMode({
-        executionPolicy: initialState.activeSession.executionPolicy,
-        interactionMode: blockedModeReply.interactionMode,
-        actSubmode: blockedModeReply.actSubmode,
-      });
-      await this.setActiveSessionState({
-        interactionMode: blockedModeReply.interactionMode,
-        actSubmode: blockedModeReply.actSubmode,
-        ...(nextExecutionPolicy !== undefined ? { executionPolicy: nextExecutionPolicy } : {}),
-        updatedAt: new Date().toISOString(),
-      });
-      await this.appendHistoryLine("system", blockedModeReply.acknowledgement);
-    } else {
-      const messageId = `tui:${randomUUID()}`;
-      optimisticMessageId = messageId;
-      await this.appendHistoryLine("user", rawLine, {
-        kind: "tui.user-message.v1",
-        messageId,
-        deliveryState: "submitting",
-        ...(interactionTurnId !== undefined ? { turnId: interactionTurnId } : {}),
-      }, undefined, messageId);
-    }
+    const messageId = `tui:${randomUUID()}`;
+    optimisticMessageId = messageId;
+    await this.appendHistoryLine("user", rawLine, {
+      kind: "tui.user-message.v1",
+      messageId,
+      deliveryState: "submitting",
+      ...(interactionTurnId !== undefined ? { turnId: interactionTurnId } : {}),
+    }, undefined, messageId);
 
     const submittedMessage = this.resolveBlockedRunSubmittedMessage(
       initialState.activeSession.pendingWaitFor,
@@ -3939,10 +3921,9 @@ export class App {
     }
 
     if ((subcommand === "chat" || subcommand === "plan") && args.length === 1) {
-      const shouldResumeBlockedRun = isModeBlockedWait(state.activeSession.pendingWaitFor);
-      const acknowledgement = shouldResumeBlockedRun
-        ? `Mode set to ${formatUserFacingModeLabel({ interactionMode: subcommand })}. Resuming blocked run.`
-        : `Mode set to ${formatUserFacingModeLabel({ interactionMode: subcommand })}.`;
+      const shouldResumeBlockedRun = isModeBlockedWait(state.activeSession.pendingWaitFor)
+        || state.activeSession.pendingRunRequestId !== undefined;
+      const acknowledgement = `Mode set to ${formatUserFacingModeLabel({ interactionMode: subcommand })}.`;
       const nextExecutionPolicy = alignExecutionPolicyWithMode({
         executionPolicy: state.activeSession.executionPolicy,
         interactionMode: subcommand,
@@ -3964,7 +3945,8 @@ export class App {
         await switchMode();
         return;
       }
-      const requestId = state.activeSession.pendingWaitFor?.interaction?.requestId?.trim();
+      const requestId = state.activeSession.pendingWaitFor?.interaction?.requestId?.trim()
+        ?? state.activeSession.pendingRunRequestId;
       if (!requestId) throw new Error("The mode-blocked interaction has no authoritative request identity.");
       await this.getRunController().switchModeAndRetry({
         recommendationId: requestId,
@@ -3973,6 +3955,7 @@ export class App {
         retry: () => this.startActiveTurn({
           submittedMessage: `/mode ${subcommand}`,
           resumeBlockedRun: true,
+          requestedInteractionMode: subcommand,
         }),
       });
       return;
@@ -3982,10 +3965,9 @@ export class App {
       const label = formatUserFacingModeLabel({
         interactionMode: "build",
       });
-      const shouldResumeBlockedRun = isModeBlockedWait(state.activeSession.pendingWaitFor);
-      const acknowledgement = shouldResumeBlockedRun
-        ? `Mode set to ${label}. Resuming blocked run.`
-        : `Mode set to ${label}.`;
+      const shouldResumeBlockedRun = isModeBlockedWait(state.activeSession.pendingWaitFor)
+        || state.activeSession.pendingRunRequestId !== undefined;
+      const acknowledgement = `Mode set to ${label}.`;
       const nextExecutionPolicy = alignExecutionPolicyWithMode({
         executionPolicy: state.activeSession.executionPolicy,
         interactionMode: "build",
@@ -4006,7 +3988,8 @@ export class App {
         await switchMode();
         return;
       }
-      const requestId = state.activeSession.pendingWaitFor?.interaction?.requestId?.trim();
+      const requestId = state.activeSession.pendingWaitFor?.interaction?.requestId?.trim()
+        ?? state.activeSession.pendingRunRequestId;
       if (!requestId) throw new Error("The mode-blocked interaction has no authoritative request identity.");
       await this.getRunController().switchModeAndRetry({
         recommendationId: requestId,
@@ -4015,6 +3998,7 @@ export class App {
         retry: () => this.startActiveTurn({
           submittedMessage: formatModeSwitchCommand({ interactionMode: "build" }),
           resumeBlockedRun: true,
+          requestedInteractionMode: "build",
         }),
       });
       return;
@@ -4033,6 +4017,8 @@ export class App {
     resumeBlockedRun?: boolean | undefined;
     forceFreshTurn?: boolean | undefined;
     queueRequested?: boolean | undefined;
+    requestedInteractionMode?: "chat" | "plan" | "build" | undefined;
+    requestedActSubmode?: "strict" | "safe" | "full_auto" | undefined;
   }): Promise<boolean> {
     try {
       return await this.getRunController().startActiveTurn(input);
@@ -4463,6 +4449,13 @@ export class App {
       && recoveredRoute === undefined
       && recoveredPendingTurn === undefined;
     const queuedLifecycle = reconcileExactQueuedLifecycle(target, describedView);
+    const describedExecutionPolicy = payload.interactionMode === undefined
+      ? undefined
+      : alignExecutionPolicyWithMode({
+          executionPolicy: target.executionPolicy,
+          interactionMode: payload.interactionMode,
+          actSubmode: payload.actSubmode,
+        });
     const acceptedRunThreadBackfill = target.acceptedRunId !== undefined
       && target.acceptedRunThreadId === undefined
       && describedView !== undefined
@@ -4484,6 +4477,15 @@ export class App {
         ? { effectiveAssemblyLabel: payload.activeAssembly.label }
         : {}),
       ...(payload.updatedAt !== undefined ? { updatedAt: payload.updatedAt } : {}),
+      ...(payload.interactionMode !== undefined
+        ? {
+            interactionMode: payload.interactionMode,
+            actSubmode: payload.actSubmode,
+            ...(describedExecutionPolicy !== undefined
+              ? { executionPolicy: describedExecutionPolicy }
+              : {}),
+          }
+        : {}),
       pendingWaitFor: resolvedWaitFor,
       pendingQueueSubmissions: queuedLifecycle.pendingQueueSubmissions,
       queuedRunReservations: queuedLifecycle.queuedRunReservations,

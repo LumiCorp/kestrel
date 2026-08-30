@@ -3523,6 +3523,7 @@ test("mode switch requests compile only for configured mode-hidden tool classes"
   const action = {
     kind: "request_mode_switch" as const,
     requiredToolClass: "planning_write" as const,
+    requiredCapabilities: ["plan.write"],
     reason: "I need Plan mode to document the plan.",
   };
 
@@ -3558,10 +3559,58 @@ test("mode switch requests compile only for configured mode-hidden tool classes"
   );
 });
 
+test("mode switch matching is capability-specific when another same-class tool is visible", () => {
+  const action = {
+    kind: "request_mode_switch" as const,
+    requiredToolClass: "external_side_effect" as const,
+    requiredCapabilities: ["dev.shell"],
+    reason: "I need Build mode to create the requested commit.",
+  };
+  const manifest = [
+    {
+      name: "task.propose",
+      description: "Propose a task.",
+      capabilityClasses: ["task.propose"],
+      executionClass: "external_side_effect" as const,
+      allowedInteractionModes: ["chat" as const],
+    },
+    {
+      name: "exec_command",
+      description: "Run a workspace command.",
+      capabilityClasses: ["dev.shell"],
+      executionClass: "external_side_effect" as const,
+      approvalCapabilities: ["shell.exec"],
+      allowedInteractionModes: ["build" as const],
+    },
+  ];
+
+  const compiled = compileAgentAction({
+    phase: "deliberator",
+    interactionMode: "chat",
+    action,
+    observedCapabilities: [],
+    capabilityManifest: manifest,
+    availableTools: [{
+      name: "task.propose",
+      description: "Propose a task.",
+      inputSchema: { type: "object" },
+    }],
+  });
+
+  assert.equal(compiled.action?.kind, "request_mode_switch");
+  assert.deepEqual(
+    compiled.action?.kind === "request_mode_switch"
+      ? compiled.action.requiredCapabilities
+      : undefined,
+    ["dev.shell"],
+  );
+});
+
 test("mode switch requests distinguish policy-hidden and absent tool classes", () => {
   const action = {
     kind: "request_mode_switch" as const,
     requiredToolClass: "sandboxed_only" as const,
+    requiredCapabilities: ["filesystem.write"],
     reason: "I need Build mode to edit the workspace.",
   };
   assert.throws(

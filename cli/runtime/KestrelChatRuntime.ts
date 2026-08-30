@@ -3,6 +3,18 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import type { McpOAuthProviderFactory } from "../../src/mcp/McpClientManager.js";
+import {
+  normalizeInteractionMode,
+  type ModeResolutionV1,
+} from "../../src/mode/contracts.js";
+import {
+  isRuntimeModeBlockedRequest,
+  resolveModeBlockedReplyAtRuntime,
+} from "../../src/runtime/modeBlockedReplyResolution.js";
+import {
+  classifyUserReplyIntent,
+  type UserReplyIntent,
+} from "../../src/runtime/userReplyIntent.js";
 
 import {
   createAnthropicModelGatewayFromEnv,
@@ -263,6 +275,10 @@ interface RuntimeBootstrap {
     | ((runId: string, sessionId?: string) => void)
     | undefined;
   reasoningPolicyReady?: Promise<unknown> | undefined;
+  classifyUserReplyIntent?: ((input: {
+    reply: string;
+    waitFor: { eventType?: string | undefined; metadata?: unknown };
+  }) => Promise<UserReplyIntent>) | undefined;
 }
 
 const DEFAULT_KCHAT_GUARDRAILS: Partial<GuardrailConfig> = {
@@ -404,6 +420,9 @@ export class KestrelChatRuntime {
   private readonly prepareHostedMcpRuntime: RuntimeBootstrap["prepareHostedMcpRuntime"];
   private readonly releaseRuntimeAuthorization: RuntimeBootstrap["releaseRuntimeAuthorization"];
   private readonly reasoningPolicyReady: Promise<unknown>;
+  private readonly classifyRuntimeUserReplyIntent:
+    | RuntimeBootstrap["classifyUserReplyIntent"]
+    | undefined;
   private readonly missionControlProfileId: string;
   private readonly unsubscribeMissionControlProjects: () => void;
 
@@ -430,6 +449,7 @@ export class KestrelChatRuntime {
     );
 
     this.kestrel = bootstrap.kestrel;
+    this.classifyRuntimeUserReplyIntent = bootstrap.classifyUserReplyIntent;
     this.missionControlProfileId = profile.id;
     this.missionControlProjectService = bootstrap.missionControlProjectService;
     this.unsubscribeMissionControlProjects =
@@ -2560,6 +2580,7 @@ export class KestrelChatRuntime {
         | import("../../src/orchestration/index.js").OperatorThreadView
         | undefined;
       result?: RunTurnResult | undefined;
+      modeResolution?: ModeResolutionV1 | undefined;
     };
     completion: Promise<RunTurnResult>;
   }> {
@@ -2660,6 +2681,47 @@ export class KestrelChatRuntime {
     const message =
       input.message ?? (input.action === "reject" ? "Rejected." : "Approved.");
     const runId = input.missionControl?.runId ?? randomUUID();
+    const modeBlockedRequest = {
+      requestId,
+      runId,
+      eventType: request.eventType,
+      metadata: request.metadata,
+    };
+    let resolvedModeReply:
+      | Awaited<ReturnType<typeof resolveModeBlockedReplyAtRuntime>>
+      | undefined;
+    if (input.action === "reply" && isRuntimeModeBlockedRequest(modeBlockedRequest)) {
+      const persistedSession = await this.kestrel.getSession(status.thread.sessionId);
+      const persistedAgent = asRecord(persistedSession?.state.agent);
+      const currentMode = normalizeInteractionMode({
+        interactionMode: persistedAgent?.interactionMode,
+        actSubmode: persistedAgent?.actSubmode,
+        defaultInteractionMode: this.defaultInteractionMode,
+        defaultActSubmode: this.defaultActSubmode,
+      });
+      resolvedModeReply = await resolveModeBlockedReplyAtRuntime({
+          request: modeBlockedRequest,
+          message,
+          currentMode: currentMode.interactionMode,
+          currentActSubmode: currentMode.actSubmode,
+          explicitInteractionMode: input.interactionMode,
+          explicitActSubmode: input.actSubmode,
+          classify: () => this.classifyRuntimeUserReplyIntent?.({
+            reply: message,
+            waitFor: {
+              eventType: request.eventType,
+              metadata: request.metadata,
+            },
+          }) ?? Promise.resolve({
+            kind: "unrelated",
+            proceed: false,
+            confidence: "low",
+            reason: "runtime_classifier_unavailable",
+          }),
+      });
+    }
+    const acceptedInteractionMode = resolvedModeReply?.modeResolution.interactionMode ?? input.interactionMode;
+    const acceptedActSubmode = resolvedModeReply?.modeResolution.actSubmode ?? input.actSubmode;
 
     let resolveSubmitted!: () => void;
     const submitted = new Promise<void>((resolve) => {
@@ -2687,11 +2749,11 @@ export class KestrelChatRuntime {
         ? { recoveryOptionId: input.recoveryOptionId }
         : {}),
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
-      ...(input.interactionMode !== undefined
-        ? { interactionMode: input.interactionMode }
+      ...(acceptedInteractionMode !== undefined
+        ? { interactionMode: acceptedInteractionMode }
         : {}),
-      ...(input.actSubmode !== undefined
-        ? { actSubmode: input.actSubmode }
+      ...(acceptedActSubmode !== undefined
+        ? { actSubmode: acceptedActSubmode }
         : {}),
       ...(input.attachments !== undefined
         ? { attachments: input.attachments }
@@ -2701,6 +2763,13 @@ export class KestrelChatRuntime {
         runId,
         message,
         eventType: request.eventType,
+        ...(resolvedModeReply !== undefined
+          ? {
+              resumeBlockedRun: resolvedModeReply.modeResolution.disposition === "resume",
+              userReplyIntent: resolvedModeReply.userReplyIntent,
+              modeResolution: resolvedModeReply.modeResolution,
+            }
+          : {}),
         ...(input.recoveryOptionId !== undefined
           ? { recoveryOptionId: input.recoveryOptionId }
           : {}),
@@ -2718,6 +2787,12 @@ export class KestrelChatRuntime {
           result,
         })),
       ]);
+      if (resolvedModeReply !== undefined) {
+        await this.kestrel.persistModeResolution(
+          status.thread.sessionId,
+          resolvedModeReply.modeResolution,
+        );
+      }
       const view = await threadRuntime.getOperatorThreadView(input.threadId);
       const sessionId = view?.thread.sessionId;
       return {
@@ -2731,6 +2806,9 @@ export class KestrelChatRuntime {
               : runId,
           ...(outcome.disposition === "completed"
             ? { result: outcome.result }
+            : {}),
+          ...(resolvedModeReply !== undefined
+            ? { modeResolution: resolvedModeReply.modeResolution }
             : {}),
           ...(view !== null ? { view } : {}),
           ...(sessionId !== undefined
@@ -3856,6 +3934,12 @@ function createRuntimeWithStore(
       ? { recoverOrphanedActiveRun: recoverRuntimeAndSandboxOrphans }
       : {}),
     reasoningPolicyReady,
+    classifyUserReplyIntent: (input) => classifyUserReplyIntent({
+      reply: input.reply,
+      waitFor: input.waitFor,
+      model: profile.model,
+      useModel: (request) => modelGateway.call(request),
+    }),
     readFinalizedPayload: async (sessionId: string) => {
       const session = await kestrel.getSession(sessionId);
       return asRecord(session?.state.agent)?.finalOutput;

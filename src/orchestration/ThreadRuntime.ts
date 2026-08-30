@@ -1376,7 +1376,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
       ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
-      resumeBlockedRun: true,
+      resumeBlockedRun: input.runtimeTurn?.resumeBlockedRun ?? true,
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
       metadata: {
         requestId: resolved.request.requestId,

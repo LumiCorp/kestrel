@@ -40,6 +40,7 @@ import type { HeapDiagnosticsReporter } from "../runtime/heapDiagnostics.js";
 import type { ProviderReasoningVault } from "../runtime/ProviderReasoningVault.js";
 import type { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
 import type { EffectiveModelContractResolverV1 } from "./effective-model-contract.js";
+import type { ModeResolutionV1 } from "../mode/contracts.js";
 
 export interface KestrelOptions {
   store: SessionStore;
@@ -187,6 +188,29 @@ export class Kestrel {
 
   async getSession(sessionId: string) {
     return this.store.getSession(sessionId);
+  }
+
+  async persistModeResolution(sessionId: string, resolution: ModeResolutionV1) {
+    const session = await this.store.getSession(sessionId);
+    if (session === null) {
+      throw new Error(`Session '${sessionId}' does not exist.`);
+    }
+    const agent = typeof session.state.agent === "object" && session.state.agent !== null
+      ? session.state.agent as Record<string, unknown>
+      : {};
+    return this.store.patchSessionState({
+      sessionId,
+      expectedVersion: session.version,
+      reason: "mode_resolution",
+      statePatch: {
+        agent: {
+          ...agent,
+          interactionMode: resolution.interactionMode,
+          actSubmode: resolution.actSubmode,
+          latestModeResolution: resolution,
+        },
+      },
+    });
   }
 
   async updateManagedWorktreeBinding(
