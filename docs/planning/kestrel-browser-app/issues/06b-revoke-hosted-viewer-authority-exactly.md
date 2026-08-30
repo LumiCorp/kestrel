@@ -190,8 +190,12 @@ an observation that both authoritative stores failed to record.
   After restart and restored access, Web follows that current stored state and
   may expose the Session again. It does not infer the failed authority-loss
   observation.
+- After pending reconciliation succeeds, both viewer status and ticket mint
+  reread and reauthorize the exact current Session. A reconciliation that
+  terminalizes the Session therefore returns unavailable status and cannot mint
+  a ticket from stale pre-reconciliation authority.
 - The exact focused Web lifecycle, composition, socket, Redis, status, and UI
-  command passes 63 tests. Root TypeScript, scoped Web lint, and
+  command passes 65 tests. Root TypeScript, scoped Web lint, and
   `git diff --check` pass.
 
 ### Capacity-independent authority-loss repair evidence

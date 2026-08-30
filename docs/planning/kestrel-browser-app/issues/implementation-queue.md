@@ -32,7 +32,7 @@ None.
 
 ## Done
 
-- [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — policy A dual-store rejection and restart recovery are covered by the focused Web lifecycle regressions
+- [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — policy A and post-reconciliation authority rereads pass the focused Web lifecycle regressions
 - [Close an unfinished upload after an early response](05m-close-unfinished-upload-after-early-response.md)
 - [Separate upload progress from the response-header timeout](05l-separate-upload-progress-from-response-header-timeout.md)
 - [Enforce Gateway connection timeouts](05g-enforce-gateway-connection-timeouts.md)

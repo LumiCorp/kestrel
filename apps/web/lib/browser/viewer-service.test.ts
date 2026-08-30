@@ -8,6 +8,7 @@ import {
 import type { BrowserSessionV1 } from "../../../../src/browser/contracts.js";
 import type { HostedBrowserResourceRecord } from "./store";
 import type {
+  HostedBrowserViewerCleanupPendingV1,
   HostedBrowserViewerCleanupScopeV1,
   HostedBrowserViewerTicketStorePort,
 } from "./viewer-transient-store";
@@ -911,6 +912,38 @@ test("an unauthorized status request reconciles exact authority loss without exp
   assert.equal(fixture.cleanupPending, null);
 });
 
+test("status rereads authority after pending reconciliation terminalizes the Session", async () => {
+  const fixture = createFixture();
+  fixture.cleanupPending = authorityLossPending();
+
+  const status = await fixture.service.status({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+
+  assert.equal(status.available, false);
+  assert.equal(fixture.session.state, "lost");
+  assert.equal(fixture.cleanupPending, null);
+});
+
+test("ticket mint rereads authority after pending reconciliation terminalizes the Session", async () => {
+  const fixture = createFixture();
+  fixture.cleanupPending = authorityLossPending();
+
+  await assert.rejects(
+    fixture.service.mintTicket({
+      organizationId: "org-1",
+      actorId: "user-1",
+      threadId: "thread-1",
+    }),
+    /BROWSER_SESSION_LOST/u,
+  );
+
+  assert.equal(fixture.session.state, "lost");
+  assert.equal(fixture.cleanupPending, null);
+});
+
 test("authority loss without a marker dispatches worker fail-close before non-disclosure", async () => {
   const fixture = createFixture({ requestAuthorized: false });
 
@@ -1377,4 +1410,26 @@ function sameTestCleanupScope(
   right: HostedBrowserViewerCleanupScopeV1,
 ) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function authorityLossPending(): HostedBrowserViewerCleanupPendingV1 {
+  return {
+    version: "hosted_browser_viewer_cleanup_pending_v1",
+    reason: "authority_loss",
+    requestedAt: "2026-08-30T12:00:00.000Z",
+    scope: {
+      version: "hosted_browser_viewer_cleanup_scope_v1",
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      actorId: "user-1",
+      sessionId: "session-1",
+      generation: 1,
+      connectionId: "connection-1",
+      appName: "browser-app",
+      machineId: "machine-1",
+    },
+  };
 }

@@ -106,7 +106,7 @@ export class HostedBrowserViewerService {
 
   async status(input: { organizationId: string; actorId: string; threadId: string }) {
     const pending = await this.options.tickets.readCleanupPending(input.threadId);
-    const authority = await this.#readAuthorityCandidate(
+    let authority = await this.#readAuthorityCandidate(
       input,
       this.options.requestAuthorized !== false,
     );
@@ -133,6 +133,16 @@ export class HostedBrowserViewerService {
         cleanupPending: true,
       };
     }
+    if (pending) {
+      authority = await this.#readAuthorityCandidate(input, true);
+      if (!authority) {
+        return { version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION, available: false };
+      }
+      if (!(await this.#authorizeCandidate(input, authority))) {
+        await this.#reconcileDisconnectedAuthorityLoss(authority, null);
+        throw new Error("BROWSER_SESSION_LOST");
+      }
+    }
     return {
       version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
       available: true,
@@ -144,7 +154,7 @@ export class HostedBrowserViewerService {
 
   async mintTicket(input: { organizationId: string; actorId: string; threadId: string }) {
     const pending = await this.options.tickets.readCleanupPending(input.threadId);
-    const authority = await this.#readAuthorityCandidate(
+    let authority = await this.#readAuthorityCandidate(
       input,
       this.options.requestAuthorized !== false,
     );
@@ -163,6 +173,15 @@ export class HostedBrowserViewerService {
     }
     if (pending && !(await this.#reconcilePendingRecord(pending))) {
       throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+    }
+    if (pending) {
+      authority = await this.#readAuthorityCandidate(input, true);
+      if (!(authority && (await this.#authorizeCandidate(input, authority)))) {
+        if (authority) {
+          await this.#reconcileDisconnectedAuthorityLoss(authority, null);
+        }
+        throw new Error("BROWSER_SESSION_LOST");
+      }
     }
     const now = this.#now();
     const claims: HostedBrowserViewerTicketClaimsV1 = {
