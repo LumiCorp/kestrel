@@ -4,6 +4,8 @@ export const BROWSER_RUNTIME_RELEASE_MANIFEST_VERSION =
 export const DESKTOP_BROWSER_RUNTIME_TARGET = "darwin-arm64" as const;
 export const DESKTOP_BROWSER_RUNTIME_RESOURCE_DIRECTORY =
   "browser-runtime" as const;
+export const HOSTED_BROWSER_WORKER_IMAGE_REPOSITORY =
+  "registry.fly.io/kestrel-one-browser-worker" as const;
 
 export const BROWSER_RUNTIME_RELEASE_MANIFEST = Object.freeze({
   version: BROWSER_RUNTIME_RELEASE_MANIFEST_VERSION,
@@ -42,11 +44,17 @@ export const BROWSER_RUNTIME_RELEASE_MANIFEST = Object.freeze({
         url: "https://github.com/vercel-labs/agent-browser/releases/download/v0.35.0/agent-browser-linux-x64",
         sha256:
           "b7a28c3a43a7008dd02585e2e60c391c08983f7a099149caed63c9f13f57b752",
+        sourceFileName: "agent-browser-linux-x64",
+        executableRelativePath: "agent-browser",
       }),
       chrome: Object.freeze({
         url: "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.54/linux64/chrome-linux64.zip",
         sha256:
           "88af83664e1e5f79dc1c1378d0699b98dddd69690a748addf4ccbe322bfacedf",
+        sourceFileName: "chrome-linux64.zip",
+        archiveRoot: "chrome-linux64",
+        executableRelativePath: "chrome/chrome",
+        excludedRuntimeRelativePaths: Object.freeze([]),
       }),
     }),
   }),
@@ -74,4 +82,27 @@ export function getDesktopBrowserRuntimeExecutableRelativePaths(): {
     chromeExecutablePath:
       `${DESKTOP_BROWSER_RUNTIME_RESOURCE_DIRECTORY}/${release.chrome.executableRelativePath}`,
   };
+}
+
+export function getHostedBrowserRuntimeRelease() {
+  return BROWSER_RUNTIME_RELEASE_MANIFEST.targets["linux-x64"];
+}
+
+export function requireImmutableHostedBrowserWorkerImage(value: string): string {
+  const image = value.trim();
+  if (
+    !new RegExp(
+      `^${escapeRegExp(HOSTED_BROWSER_WORKER_IMAGE_REPOSITORY)}@sha256:[a-f0-9]{64}$`,
+      "u",
+    ).test(image)
+  ) {
+    throw new Error(
+      `Hosted Browser worker image must use an immutable digest from ${HOSTED_BROWSER_WORKER_IMAGE_REPOSITORY}.`,
+    );
+  }
+  return image;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }

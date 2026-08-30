@@ -72,7 +72,14 @@ export const noActiveHostedBrowserSessionsAllowlistAdoptionCoordinator:
 
 export const hostedBrowserAllowlistAdoptionCoordinator:
   | HostedBrowserAllowlistAdoptionCoordinator
-  | null = noActiveHostedBrowserSessionsAllowlistAdoptionCoordinator;
+  | null = {
+  async adoptPersonalDomainRevision(input) {
+    const { adoptHostedBrowserPersonalDomainRevision } = await import(
+      "@/lib/browser/personal-domain-adoption"
+    );
+    return adoptHostedBrowserPersonalDomainRevision(input);
+  },
+};
 
 export async function listPersonalBrowserDomainsForSignedInUser(
   input: PersonalDomainScope,

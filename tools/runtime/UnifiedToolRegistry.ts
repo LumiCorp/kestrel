@@ -92,6 +92,7 @@ import {
   isBrowserToolName,
   isConformingBrowserServicePort,
 } from "../../src/browser/contracts.js";
+import { createKestrelOneBrowserService } from "../kestrelOne/browserService.js";
 
 type CapabilityManifestItem = ToolCapabilityMetadata & {
   name: string;
@@ -2603,6 +2604,14 @@ function resolveScopedRunContext(
         }
       : {}),
   };
+  if (
+    scopedBaseContext.browserService === undefined &&
+    scopedBaseContext.kestrelOne?.executionTicket
+  ) {
+    scopedBaseContext.browserService = createKestrelOneBrowserService(
+      scopedBaseContext,
+    );
+  }
   return {
     allowlist: toolAllowlist === undefined ? fallback : new Set(toolAllowlist),
     builtInContext: withDefaultFileSystemPolicy({

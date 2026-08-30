@@ -71,6 +71,38 @@ export async function handlePreviewLifecycle(input: {
   }
 }
 
+/** Resolve a model-supplied preview ID to its current owned Edge hostname. */
+export async function resolveActiveHostedPreviewSelector(input: {
+  previewId: string;
+  organizationId: string;
+  environmentId: string;
+  projectId: string;
+  now?: Date | undefined;
+}): Promise<{ previewId: string; hostname: string; scheme: "https"; port: 443 }> {
+  const preview = await knowledgeDb.query.workspacePreviewLeases.findFirst({
+    where: (table, { and: all, eq: equals, gt }) =>
+      all(
+        equals(table.id, input.previewId),
+        equals(table.organizationId, input.organizationId),
+        equals(table.environmentId, input.environmentId),
+        equals(table.projectId, input.projectId),
+        equals(table.targetProvider, "fly"),
+        equals(table.status, "active"),
+        gt(table.expiresAt, input.now ?? new Date()),
+      ),
+    columns: { id: true, hostname: true },
+  });
+  if (!preview) {
+    throw new AppRuntimeError("WORKSPACE_PREVIEW_NOT_FOUND", 404);
+  }
+  return {
+    previewId: preview.id,
+    hostname: preview.hostname,
+    scheme: "https",
+    port: 443,
+  };
+}
+
 async function publishPreview(input: {
   ticket: EnvironmentExecutionTicket;
   authorization: string;

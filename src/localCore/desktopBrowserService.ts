@@ -27,6 +27,7 @@ import {
   type BrowserAllowlistAdoptionReceiptV1,
   type BrowserArtifactAuthorizationRequestV1,
   type BrowserAuthorizedArtifactV1,
+  type BrowserHostExecutionAuthorityV1,
   type BrowserOperationLifecycleV1,
   type BrowserPolicyResolutionV1,
   type BrowserServicePort,
@@ -225,6 +226,23 @@ export interface DesktopBrowserServiceOptions {
     | undefined;
   writeLedger?:
     | ((ledgerPath: string, ledger: DesktopBrowserLedgerV1) => Promise<void>)
+    | undefined;
+  /**
+   * Hosted Browser supplies its control-plane-owned Session and exact QA target.
+   * The local ledger remains ephemeral execution state, never session authority.
+   */
+  hostedSession?:
+    | {
+        session: BrowserSessionV1;
+        resolveQaDestination(input: {
+          target: Record<string, unknown>;
+          authority: BrowserHostExecutionAuthorityV1;
+        }): {
+          destination: string;
+          targetIdentity: string;
+          authority: QaRunAuthority;
+        };
+      }
     | undefined;
 }
 
@@ -833,18 +851,23 @@ export class DesktopBrowserService implements BrowserServicePort {
     }
     const threadId = requireText(lifecycle.authority.threadId, "threadId");
     const target = requireRecord(input.target, "target");
-    const qaResolution =
-      mode === "qa"
-        ? await this.#resolveQaDestination(target, lifecycle)
-        : undefined;
+    const hostedQaResolution = mode === "qa"
+      ? this.#options.hostedSession?.resolveQaDestination({
+          target,
+          authority: lifecycle.authority,
+        })
+      : undefined;
+    const qaResolution = mode === "qa"
+      ? hostedQaResolution ?? await this.#resolveQaDestination(target, lifecycle)
+      : undefined;
     const destination =
       mode === "qa"
         ? qaResolution!.destination
         : requirePublicDestination(target);
-    const targetIdentity =
-      mode === "qa"
-        ? `qa:${requireText(target.projectId, "target.projectId")}:${requireText(target.runId, "target.runId")}:${requireText(target.urlId, "target.urlId")}`
-        : "operator";
+    const targetIdentity = mode === "qa"
+      ? hostedQaResolution?.targetIdentity ??
+        `qa:${requireText(target.projectId, "target.projectId")}:${requireText(target.runId, "target.runId")}:${requireText(target.urlId, "target.urlId")}`
+      : "operator";
     const activeForThread = [...this.#active.values()].filter(
       (runtime) => runtime.session.threadId === threadId,
     );
@@ -930,25 +953,42 @@ export class DesktopBrowserService implements BrowserServicePort {
       );
     }
     const now = this.#now();
+    const hostedSession = this.#options.hostedSession?.session;
     const sessionId = requireDesktopBrowserSessionId(
-      `browser-${this.#id()}`,
-      "generated Browser session ID",
+      hostedSession?.sessionId ?? `browser-${this.#id()}`,
+      hostedSession ? "hosted Browser session ID" : "generated Browser session ID",
     );
-    const session: BrowserSessionV1 = {
-      version: "browser_session_v1",
-      sessionId,
-      threadId,
-      mode,
-      state: "opening",
-      engineRevision: ENGINE_REVISION,
-      generation: this.#generation,
-      effectiveAllowlistRevision: authority.effectiveAllowlistRevision,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      lastActivityAt: now.toISOString(),
-      idleExpiresAt: new Date(now.getTime() + IDLE_TTL_MS).toISOString(),
-      hardExpiresAt: new Date(now.getTime() + HARD_TTL_MS).toISOString(),
-    };
+    if (
+      hostedSession &&
+      (hostedSession.threadId !== threadId ||
+        hostedSession.mode !== mode ||
+        hostedSession.state !== "opening" ||
+        hostedSession.effectiveAllowlistRevision !==
+          authority.effectiveAllowlistRevision)
+    ) {
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The hosted Browser Session no longer matches its execution authority.",
+        { browserOutcomeKnown: true },
+      );
+    }
+    const session: BrowserSessionV1 = hostedSession
+      ? { ...hostedSession }
+      : {
+          version: "browser_session_v1",
+          sessionId,
+          threadId,
+          mode,
+          state: "opening",
+          engineRevision: ENGINE_REVISION,
+          generation: this.#generation,
+          effectiveAllowlistRevision: authority.effectiveAllowlistRevision,
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+          lastActivityAt: now.toISOString(),
+          idleExpiresAt: new Date(now.getTime() + IDLE_TTL_MS).toISOString(),
+          hardExpiresAt: new Date(now.getTime() + HARD_TTL_MS).toISOString(),
+        };
     this.#sessions.push(session);
     let proxy: LocalCoreBrowserEgressProxy | undefined;
     let engine: DesktopBrowserEngineInvocation | undefined;
@@ -1581,6 +1621,22 @@ export class DesktopBrowserService implements BrowserServicePort {
       mode: runtime.session.mode,
       destination,
     });
+    if (
+      authority.effectiveAllowlistRevision ===
+        runtime.session.effectiveAllowlistRevision &&
+      effectiveBrowserAuthorityAllowsPublicDestination(authority, destination)
+    ) {
+      runtime.authority = authority;
+      const output = browserOutput("browser.request_grant", {
+        outcome: "already_allowed",
+        sessionId: runtime.session.sessionId,
+        canonicalWildcard: `*.${canonical.canonicalDomain}`,
+        effectiveAllowlistRevision: authority.effectiveAllowlistRevision,
+      });
+      await lifecycle.persistCompletedResult(output);
+      return output;
+    }
+    await lifecycle.acknowledgeDispatch();
     await this.#installRequestGrantAuthority(runtime, authority);
     this.#assertCommitAllowed(runtime);
     let outcome: "already_allowed" | "granted";
@@ -1599,7 +1655,6 @@ export class DesktopBrowserService implements BrowserServicePort {
           "Browser domain grant is unavailable.",
         );
       }
-      await lifecycle.acknowledgeDispatch();
       authority = await this.#withRuntimeAuthorityResolution(
         runtime,
         async () =>

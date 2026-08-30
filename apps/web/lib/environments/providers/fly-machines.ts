@@ -1,6 +1,10 @@
 import { createHash, createPublicKey, randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
+  BROWSER_RUNTIME_RELEASE_MANIFEST,
+  requireImmutableHostedBrowserWorkerImage,
+} from "../../../../../src/browser/runtimeReleaseManifest.js";
+import {
   type EnvironmentInfrastructureProvider,
   type EnvironmentProviderApp,
   EnvironmentProviderError,
@@ -15,6 +19,7 @@ import {
   KESTREL_WORKSPACE_STOP_CONFIG,
   KESTREL_WORKSPACE_VOLUME_GB,
   type EnvironmentProviderMachineStopConfig,
+  type BrowserMachineProvisioningInput,
   type WorkspaceMachineProvisioningInput,
 } from "./contracts";
 
@@ -606,6 +611,58 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       input,
       workspaceMachineName(input.workspaceId),
     );
+  }
+
+  async createBrowserMachine(
+    input: BrowserMachineProvisioningInput,
+  ): Promise<EnvironmentProviderMachine> {
+    const config = browserMachineConfig(input);
+    const machine = parseResponse(
+      machineCreateResponseSchema,
+      await this.request(
+        "fly.browser.machine.create",
+        `/apps/${encodeURIComponent(input.appName)}/machines`,
+        {
+          method: "POST",
+          body: jsonBody({
+            name: browserMachineName(input.sessionId, input.generation),
+            region: input.region,
+            skip_launch: false,
+            config,
+          }),
+        },
+      ),
+    );
+    return {
+      id: machine.id,
+      state: "created",
+      region: input.region,
+      image: input.runtimeImageDigest,
+      mounts: [],
+    };
+  }
+
+  async listBrowserMachines(input: {
+    appName: string;
+    sessionId?: string | undefined;
+  }): Promise<EnvironmentProviderMachine[]> {
+    const machines = parseResponse(
+      z.array(machineSchema),
+      await this.request(
+        "fly.browser.machine.list",
+        `/apps/${encodeURIComponent(input.appName)}/machines`,
+        { method: "GET" },
+      ),
+    );
+    return machines
+      .filter(
+        (machine) =>
+          machine.config?.metadata?.kestrel_browser_session === "true" &&
+          (input.sessionId === undefined ||
+            machine.config.metadata.kestrel_browser_session_id ===
+              input.sessionId),
+      )
+      .map(toMachine);
   }
 
   async createReplacementWorkspaceMachine(
@@ -1484,6 +1541,71 @@ function workspaceMachineConfig(
   };
 }
 
+function browserMachineConfig(input: BrowserMachineProvisioningInput) {
+  if (!Number.isInteger(input.generation) || input.generation < 1) {
+    throw new EnvironmentProviderError(
+      "FLY_PROVIDER_REJECTED",
+      "Browser Session generation must be a positive integer.",
+    );
+  }
+  if (
+    input.engineRevision !== BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision ||
+    input.chromeRevision !== BROWSER_RUNTIME_RELEASE_MANIFEST.chrome.revision
+  ) {
+    throw new EnvironmentProviderError(
+      "FLY_PROVIDER_REJECTED",
+      "Browser worker runtime revisions must match the pinned release manifest.",
+    );
+  }
+  let runtimeImageDigest: string;
+  try {
+    runtimeImageDigest = requireImmutableHostedBrowserWorkerImage(
+      input.runtimeImageDigest,
+    );
+  } catch {
+    throw new EnvironmentProviderError(
+      "FLY_PROVIDER_REJECTED",
+      "Browser worker image must use the approved immutable OCI repository.",
+    );
+  }
+  return {
+    image: runtimeImageDigest,
+    auto_destroy: true,
+    env: {
+      KESTREL_BROWSER_SESSION_ID: input.sessionId,
+      KESTREL_BROWSER_GENERATION: String(input.generation),
+      KESTREL_BROWSER_ORGANIZATION_ID: input.organizationId,
+      KESTREL_BROWSER_ENVIRONMENT_ID: input.environmentId,
+      KESTREL_BROWSER_PROJECT_ID: input.projectId,
+      KESTREL_BROWSER_USER_ID: input.userId,
+      KESTREL_BROWSER_THREAD_ID: input.threadId,
+      KESTREL_BROWSER_EFFECTIVE_ALLOWLIST_REVISION:
+        input.effectiveAllowlistRevision,
+      KESTREL_BROWSER_WORKER_IMAGE_DIGEST: runtimeImageDigest,
+      KESTREL_BROWSER_CAPABILITY_PUBLIC_KEY: input.capabilityPublicKeyPem,
+      PORT: "43105",
+      KESTREL_BROWSER_DIRECT_EGRESS: "disabled",
+      KESTREL_BROWSER_QUIC: "disabled",
+      KESTREL_BROWSER_WEBRTC: "disabled",
+      KESTREL_BROWSER_EVALUATION: "disabled",
+    },
+    metadata: {
+      kestrel_browser_session: "true",
+      kestrel_browser_session_id: input.sessionId,
+      kestrel_browser_generation: String(input.generation),
+    },
+    guest: { cpu_kind: "shared", cpus: 1, memory_mb: 1024 },
+    mounts: [],
+    services: [],
+    restart: { policy: "no" },
+    stop_config: { signal: "SIGTERM", timeout: 10_000_000_000 },
+  };
+}
+
+function browserMachineName(sessionId: string, generation: number): string {
+  return `browser-${compactId(sessionId, 30)}-g${generation}`.slice(0, 63);
+}
+
 function environmentGatewayMachineConfig(input: {
   appName: string;
   environmentId: string;
@@ -1645,6 +1767,20 @@ function toMachine(
     ...(machine.instance_id ? { instanceId: machine.instance_id } : {}),
     ...(machine.config?.metadata?.kestrel_workspace_id
       ? { workspaceId: machine.config.metadata.kestrel_workspace_id }
+      : {}),
+    ...(machine.config?.metadata?.kestrel_browser_session_id
+      ? {
+          browserSessionId:
+            machine.config.metadata.kestrel_browser_session_id,
+        }
+      : {}),
+    ...(machine.config?.metadata?.kestrel_browser_generation &&
+      /^\d+$/u.test(machine.config.metadata.kestrel_browser_generation)
+      ? {
+          browserGeneration: Number(
+            machine.config.metadata.kestrel_browser_generation,
+          ),
+        }
       : {}),
     ...(machine.checks
       ? {

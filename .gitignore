@@ -20,6 +20,8 @@ apps/desktop/static/renderer/
 apps/desktop/.desktop-package/
 apps/desktop/.desktop-runtime/
 apps/desktop/.desktop-browser-runtime/
+deploy/fly/kestrel-one-browser-worker/runtime/linux-x64/*
+!deploy/fly/kestrel-one-browser-worker/runtime/linux-x64/README.md
 apps/desktop-runtime/payload/
 apps/desktop/.npm-cache/
 apps/desktop/.forge-package/

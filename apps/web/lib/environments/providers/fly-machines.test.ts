@@ -30,6 +30,149 @@ test("Fly resource names are deterministic and provider-safe", () => {
   );
 });
 
+test("dedicated Browser Machines are ephemeral, private, immutable, and volume-free", async () => {
+  let body: Record<string, any> | undefined;
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json({ id: "browser-machine-1" });
+    }) as typeof fetch,
+  });
+  const digest = `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`;
+  await client.createBrowserMachine({
+    appName: "browser-workers",
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    userId: "user-1",
+    threadId: "thread-1",
+    sessionId: "session-1",
+    generation: 3,
+    region: "iad",
+    runtimeImageDigest: digest,
+    engineRevision: "v0.35.0",
+    chromeRevision: "152.0.7977.54",
+    effectiveAllowlistRevision: "revision-1",
+    capabilityPublicKeyPem: environmentTicketPublicKey,
+  });
+  assert.equal(body?.config.image, digest);
+  assert.equal(body?.config.auto_destroy, true);
+  assert.deepEqual(body?.config.mounts, []);
+  assert.deepEqual(body?.config.services, []);
+  assert.equal(body?.config.restart.policy, "no");
+  assert.equal(body?.config.metadata.kestrel_browser_session_id, "session-1");
+  assert.equal(body?.config.metadata.kestrel_browser_generation, "3");
+  assert.equal(body?.config.env.FLY_API_TOKEN, undefined);
+  assert.equal(body?.config.env.KESTREL_WORKSPACE_ID, undefined);
+  assert.equal(body?.config.env.KESTREL_WORKSPACE_SERVICE_TOKEN, undefined);
+  assert.equal(body?.config.env.KESTREL_ONE_TOOL_TOKEN, undefined);
+  assert.equal(body?.config.env.PORT, "43105");
+  assert.equal(body?.config.env.KESTREL_BROWSER_EGRESS_PROXY_URL, undefined);
+  assert.equal(
+    body?.config.env.KESTREL_BROWSER_EFFECTIVE_ALLOWLIST_REVISION,
+    "revision-1",
+  );
+  assert.equal(body?.config.env.KESTREL_BROWSER_ENGINE_REVISION, undefined);
+  assert.equal(body?.config.env.KESTREL_BROWSER_CHROME_REVISION, undefined);
+});
+
+test("dedicated Browser Machines reject immutable images from another repository", async () => {
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async () => {
+      assert.fail("provider request must not run");
+    }) as unknown as typeof fetch,
+  });
+  await assert.rejects(
+    client.createBrowserMachine({
+      appName: "browser-workers",
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      sessionId: "session-1",
+      generation: 3,
+      region: "iad",
+      runtimeImageDigest: `registry.fly.io/other@sha256:${"a".repeat(64)}`,
+      engineRevision: "v0.35.0",
+      chromeRevision: "152.0.7977.54",
+      effectiveAllowlistRevision: "revision-1",
+      capabilityPublicKeyPem: environmentTicketPublicKey,
+    }),
+    /approved immutable OCI repository/u,
+  );
+});
+
+test("dedicated Browser Machines reject caller-asserted runtime revision drift", async () => {
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async () => {
+      assert.fail("provider request must not run");
+    }) as unknown as typeof fetch,
+  });
+  await assert.rejects(
+    client.createBrowserMachine({
+      appName: "browser-workers",
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      sessionId: "session-1",
+      generation: 3,
+      region: "iad",
+      runtimeImageDigest:
+        `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
+      engineRevision: "v999.0.0",
+      chromeRevision: "152.0.7977.54",
+      effectiveAllowlistRevision: "revision-1",
+      capabilityPublicKeyPem: environmentTicketPublicKey,
+    }),
+    /pinned release manifest/u,
+  );
+});
+
+test("Browser Machine reconciliation filters labels locally", async () => {
+  const requested: string[] = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url) => {
+      requested.push(String(url));
+      return Response.json([
+        {
+          id: "browser-1",
+          state: "started",
+          region: "iad",
+          config: {
+            metadata: {
+              kestrel_browser_session: "true",
+              kestrel_browser_session_id: "session-1",
+            },
+          },
+        },
+        {
+          id: "workspace-1",
+          state: "started",
+          region: "iad",
+          config: { metadata: { kestrel_workspace_id: "workspace-1" } },
+        },
+      ]);
+    }) as typeof fetch,
+  });
+  const machines = await client.listBrowserMachines({
+    appName: "browser-workers",
+    sessionId: "session-1",
+  });
+  assert.deepEqual(machines.map((machine) => machine.id), ["browser-1"]);
+  assert.doesNotMatch(requested[0] ?? "", /metadata\./u);
+});
+
 test("Fly Machine inventory preserves authoritative standby relationships", async () => {
   const client = new FlyMachinesClient({
     token: "test-token",

@@ -10,6 +10,7 @@ const files = execFileSync(
   .concat(
     "apps/web/lib/knowledge/queue.postgres.test.ts",
     "apps/web/lib/ai/managed-runpod-lifecycle.postgres.test.ts",
+    "apps/web/lib/browser/lifecycle.postgres.test.ts",
     "apps/web/lib/costs/store.postgres.test.ts",
     "apps/web/lib/environments/authorization-renewal.postgres.test.ts",
     "apps/web/lib/environments/desktop.postgres.test.ts",
@@ -101,6 +102,7 @@ const groups = [
     files: [
       "lib/ai/gateways.postgres.test.ts",
       "lib/ai/managed-runpod-lifecycle.postgres.test.ts",
+      "lib/browser/lifecycle.postgres.test.ts",
       "lib/costs/store.postgres.test.ts",
       "lib/email/config.postgres.test.ts",
       "lib/email-receipts/ingress.postgres.test.ts",

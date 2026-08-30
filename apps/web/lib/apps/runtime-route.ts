@@ -10,6 +10,7 @@ import { enrichUsageEvent, recordUsageEvent } from "@/lib/costs/store";
 import { getAppProviderAdapter } from "./provider-adapter";
 import { appProviderHealthTransition } from "./provider-health";
 import { handlePreviewLifecycle } from "./preview-lifecycle";
+import { handleHostedBrowserControl } from "@/lib/browser/control-route";
 import {
   AppRuntimeError,
   authorizeAppRuntime,
@@ -36,6 +37,12 @@ export async function handleAppRuntimeRequest(input: {
       publicKey: process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
     });
     if (!ticket.capabilities.includes("kestrel.tools.invoke")) {
+      throw new AppRuntimeError("APP_RUNTIME_ROUTE_CAPABILITY_DENIED");
+    }
+    if (
+      input.appKey === "built_in.browser" &&
+      ticket.agentId !== "kestrel-one-app-relay"
+    ) {
       throw new AppRuntimeError("APP_RUNTIME_ROUTE_CAPABILITY_DENIED");
     }
     const approval = parseApprovalContext(input.approval);
@@ -72,17 +79,28 @@ export async function handleAppRuntimeRequest(input: {
     });
     connectionId = policy.connectionId;
     if (runtime.mode === "lifecycle") {
-      if (input.appKey !== "built_in.previews") {
+      if (
+        input.appKey !== "built_in.previews" &&
+        input.appKey !== "built_in.browser"
+      ) {
         throw new AppRuntimeError("APP_RUNTIME_PROVIDER_NOT_FOUND", 404);
       }
-      const response = await handlePreviewLifecycle({
-        request: input.request,
-        path: input.path,
-        capability: input.capabilityKey,
-        authorization: input.request.headers.get("authorization") ?? "",
-        ticket,
-        policy,
-      });
+      const response =
+        input.appKey === "built_in.browser"
+          ? await handleHostedBrowserControl({
+              request: input.request,
+              action: input.path[1] ?? "",
+              ticket,
+              projectId: policy.projectId,
+            })
+          : await handlePreviewLifecycle({
+              request: input.request,
+              path: input.path,
+              capability: input.capabilityKey,
+              authorization: input.request.headers.get("authorization") ?? "",
+              ticket,
+              policy,
+            });
       await logAdminEvent({
         organizationId: ticket.organizationId,
         actorUserId: ticket.actorId,

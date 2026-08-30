@@ -248,6 +248,47 @@ const kestrelEdgePreviewAdapter: AppProviderAdapter = {
   },
 };
 
+const browserAdapter: AppProviderAdapter = {
+  appKey: "built_in.browser",
+  authMethods: ["none"],
+  runtime: {
+    mode: "lifecycle",
+    capabilityKeys: [
+      "open",
+      "request_grant",
+      "snapshot",
+      "inspect",
+      "navigate",
+      "interact",
+      "tabs",
+      "capture",
+      "upload",
+      "download",
+      "request_takeover",
+      "close",
+    ],
+    assertTarget(input) {
+      const allowedActions =
+        input.capability === "request_grant"
+          ? new Set(["policy", "accept", "invoke", "commit", "complete", "unknown", "adopt", "adopt-complete"])
+          : input.capability === "capture" || input.capability === "download"
+            ? new Set(["accept", "invoke", "commit", "complete", "unknown", "artifact"])
+            : new Set(["accept", "invoke", "commit", "complete", "unknown"]);
+      if (
+        input.method !== "POST" ||
+        input.path.length !== 2 ||
+        input.path[0] !== "control" ||
+        !allowedActions.has(input.path[1] ?? "")
+      ) {
+        throw new AppProviderRuntimeContractError(
+          "BROWSER_CONTROL_TARGET_DENIED",
+          404,
+        );
+      }
+    },
+  },
+};
+
 const vercelAdapter: AppProviderAdapter = {
   appKey: "vercel",
   authMethods: ["api_key"],
@@ -303,7 +344,13 @@ const vercelAdapter: AppProviderAdapter = {
 };
 
 const PROVIDER_ADAPTERS = new Map(
-  [weatherAdapter, tavilyAdapter, kestrelEdgePreviewAdapter, vercelAdapter].map(
+  [
+    weatherAdapter,
+    tavilyAdapter,
+    kestrelEdgePreviewAdapter,
+    browserAdapter,
+    vercelAdapter,
+  ].map(
     (adapter) => [adapter.appKey, adapter],
   ),
 );

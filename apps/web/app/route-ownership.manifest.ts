@@ -1513,6 +1513,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/runtime/browser-artifacts/[fileId]/route.ts",
+    "/api/runtime/browser-artifacts/:fileId",
+    "artifacts",
+    "service-boundary",
+    "service-bearer",
+  ),
+  api(
     "app/api/mobile/v1/account/deletion-request/route.ts",
     "/api/mobile/v1/account/deletion-request",
     "mobile",

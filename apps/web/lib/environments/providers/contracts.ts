@@ -46,6 +46,8 @@ export type EnvironmentProviderMachine = {
   resolvedImageDigest?: string | undefined;
   instanceId?: string | undefined;
   workspaceId?: string | undefined;
+  browserSessionId?: string | undefined;
+  browserGeneration?: number | undefined;
   mounts?: EnvironmentProviderMachineMount[] | undefined;
   checks?: Array<{
     name: string;
@@ -102,6 +104,44 @@ export type WorkspaceMachineProvisioningInput = {
   };
   idleTimeoutMinutes: number;
 };
+
+export type BrowserMachineProvisioningInput = {
+  appName: string;
+  organizationId: string;
+  environmentId: string;
+  projectId: string;
+  userId: string;
+  threadId: string;
+  sessionId: string;
+  generation: number;
+  region: string;
+  runtimeImageDigest: string;
+  engineRevision: string;
+  chromeRevision: string;
+  effectiveAllowlistRevision: string;
+  capabilityPublicKeyPem: string;
+};
+
+export interface BrowserMachineInfrastructureProvider {
+  createBrowserMachine(
+    input: BrowserMachineProvisioningInput,
+  ): Promise<EnvironmentProviderMachine>;
+  listBrowserMachines(input: {
+    appName: string;
+    sessionId?: string | undefined;
+  }): Promise<EnvironmentProviderMachine[]>;
+  getMachine(input: {
+    appName: string;
+    machineId: string;
+  }): Promise<EnvironmentProviderMachine | null>;
+  deleteMachine(input: { appName: string; machineId: string }): Promise<void>;
+  waitForMachine(input: {
+    appName: string;
+    machineId: string;
+    state: "started" | "stopped" | "destroyed";
+    timeoutSeconds?: number;
+  }): Promise<void>;
+}
 
 export interface EnvironmentInfrastructureProvider {
   ensureEnvironmentApp(input: {

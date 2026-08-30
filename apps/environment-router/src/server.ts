@@ -15,6 +15,7 @@ import { handleModelRelay } from "./model-relay.js";
 import { handleAppRelay } from "./app-relay.js";
 import { PreviewRelay } from "./preview-relay.js";
 import { handleWorkspaceIdle } from "./workspace-idle.js";
+import { handleBrowserRevisionControl } from "./browser-revision.js";
 
 const ENVIRONMENT_GATEWAY_CONTRACT_REVISION = 2;
 const port = readPort(process.env.PORT);
@@ -111,6 +112,16 @@ const server = createServer(async (request, response) => {
       response.writeHead(503, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: { code: "GATEWAY_CONFIG_UNAVAILABLE" } }));
     }
+    return;
+  }
+  if (request.method === "POST" && pathname === "/internal/browser/revision") {
+    await handleBrowserRevisionControl({
+      request,
+      response,
+      publicKey,
+      environmentId,
+      expectedAppName,
+    });
     return;
   }
   if (pathname.startsWith("/internal/models/")) {

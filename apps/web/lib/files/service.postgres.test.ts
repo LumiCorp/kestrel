@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -320,6 +321,138 @@ test(
 );
 
 test(
+  "hosted Browser upload rejects declared PNG bytes without PNG magic and consumes the reserved draft",
+  async (context) => {
+    assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
+    const previousStorageProvider = process.env.STORAGE_PROVIDER;
+    const previousStorageRoot = process.env.STORAGE_LOCAL_ROOT;
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-artifact-"));
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.POSTGRES_URL = databaseUrl;
+    process.env.STORAGE_PROVIDER = "local";
+    process.env.STORAGE_LOCAL_ROOT = storageRoot;
+
+    const [
+      { resetDbRuntimeForTests },
+      files,
+      { resetStorageAdapterForTests },
+    ] = await Promise.all([
+      import("@/lib/db/runtime"),
+      import("./service"),
+      import("@/lib/storage"),
+    ]);
+    resetStorageAdapterForTests();
+    const sql = postgres(databaseUrl, { max: 2 });
+    const suffix = crypto.randomUUID();
+    const userId = `browser-artifact-user-${suffix}`;
+    const organizationId = `browser-artifact-org-${suffix}`;
+    const threadId = `browser-artifact-thread-${suffix}`;
+    const fileId = `file-browser-${createHash("sha256").update(suffix).digest("hex")}`;
+    const invalidPng = Buffer.from("not-png!", "utf8");
+    const expectedSha256 = createHash("sha256").update(invalidPng).digest("hex");
+
+    context.after(async () => {
+      await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+      await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+      await resetDbRuntimeForTests();
+      resetStorageAdapterForTests();
+      if (previousStorageProvider === undefined) delete process.env.STORAGE_PROVIDER;
+      else process.env.STORAGE_PROVIDER = previousStorageProvider;
+      if (previousStorageRoot === undefined) delete process.env.STORAGE_LOCAL_ROOT;
+      else process.env.STORAGE_LOCAL_ROOT = previousStorageRoot;
+      await rm(storageRoot, { recursive: true, force: true });
+      await sql.end({ timeout: 0 });
+    });
+
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "user" (
+          "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+        ) VALUES (
+          ${userId}, 'Browser Artifact User', ${`${userId}@example.test`},
+          true, now(), now()
+        )
+      `;
+      await transaction`
+        INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+        VALUES (
+          ${organizationId}, 'Browser Artifact Org', ${organizationId}, now()
+        )
+      `;
+      await transaction`
+        INSERT INTO "threads" (
+          "id", "title", "created_by_user_id", "organization_id", "origin"
+        ) VALUES (
+          ${threadId}, 'Browser Artifact Thread', ${userId}, ${organizationId}, 'web'
+        )
+      `;
+    });
+
+    await files.initializeThreadFile({
+      threadId,
+      organizationId,
+      userId,
+      filename: "browser-screenshot.png",
+      sizeBytes: invalidPng.byteLength,
+      declaredMediaType: "image/png",
+      trustedFileId: fileId,
+    });
+    await assert.rejects(
+      files.uploadThreadFile({
+        fileId,
+        threadId,
+        organizationId,
+        userId,
+        body: webStream(invalidPng),
+        contentLength: invalidPng.byteLength,
+        expectedSha256,
+        expectedMediaType: "image/png",
+        singleUseDraft: true,
+      }),
+      (error: unknown) =>
+        error instanceof files.FileUploadVerificationError &&
+        error.code === "FILE_MEDIA_TYPE_MISMATCH",
+    );
+    const failed = await files.getThreadFileForUser({
+      fileId,
+      threadId,
+      organizationId,
+      userId,
+    });
+    assert.equal(failed.lifecycleState, "failed");
+    await assert.rejects(
+      files.uploadThreadFile({
+        fileId,
+        threadId,
+        organizationId,
+        userId,
+        body: webStream(invalidPng),
+        contentLength: invalidPng.byteLength,
+        expectedSha256,
+        expectedMediaType: "image/png",
+        singleUseDraft: true,
+      }),
+      (error: unknown) =>
+        error instanceof files.FileUploadVerificationError &&
+        error.code === "FILE_UPLOAD_ALREADY_USED",
+    );
+    await assert.rejects(
+      files.uploadThreadFile({
+        fileId,
+        threadId,
+        organizationId,
+        userId,
+        body: webStream(invalidPng),
+        contentLength: invalidPng.byteLength,
+      }),
+      (error: unknown) =>
+        error instanceof files.FileUploadVerificationError &&
+        error.code === "FILE_UPLOAD_ALREADY_USED",
+    );
+  },
+);
+
+test(
   "concurrent project promotion converges on one grant, document, and active run",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
@@ -533,3 +666,12 @@ test(
     });
   },
 );
+
+function webStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}

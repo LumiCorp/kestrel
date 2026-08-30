@@ -32,6 +32,11 @@ import {
   recordFileRepresentationOutcome,
   type FileRepresentationFailureCategory,
 } from "./representation";
+import {
+  isReservedHostedBrowserFileId,
+  matchesExpectedUploadMediaType,
+  type InternalExpectedUploadMediaType,
+} from "./internal-upload-policy";
 
 export type FileScanResult = "clean" | "quarantined" | "unavailable";
 export type FileScanner = (input: {
@@ -44,7 +49,12 @@ export type FileScanner = (input: {
 }) => Promise<FileScanResult>;
 
 export class FileUploadVerificationError extends Error {
-  constructor(readonly code: "FILE_SIZE_EXCEEDED" | "FILE_SIZE_MISMATCH") {
+  constructor(readonly code:
+    | "FILE_SIZE_EXCEEDED"
+    | "FILE_SIZE_MISMATCH"
+    | "FILE_HASH_MISMATCH"
+    | "FILE_MEDIA_TYPE_MISMATCH"
+    | "FILE_UPLOAD_ALREADY_USED") {
     super(code);
     this.name = "FileUploadVerificationError";
   }
@@ -198,12 +208,20 @@ export async function initializeThreadFile(input: {
   filename: string;
   sizeBytes: number;
   declaredMediaType?: string | undefined;
+  /** Internal deterministic identity; public file APIs never accept this field. */
+  trustedFileId?: string | undefined;
 }) {
   const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
   if (!thread) throw new Error("Thread not found.");
   validateFileSize(input.sizeBytes);
   const filename = sanitizeFilename(input.filename);
-  const fileId = `file-${randomUUID()}`;
+  const fileId = input.trustedFileId ?? `file-${randomUUID()}`;
+  if (
+    input.trustedFileId !== undefined &&
+    !/^file-browser-[0-9a-f]{64}$/u.test(fileId)
+  ) {
+    throw new Error("Trusted file ID is invalid.");
+  }
   const blobId = `blob-${randomUUID()}`;
   const storage = getManagedFileStorageProvider();
   const objectKey = storage.buildOriginalKey({ organizationId: input.organizationId, blobId });
@@ -264,10 +282,42 @@ export async function uploadThreadFile(input: {
   body: ReadableStream<Uint8Array> | null;
   contentLength?: number | undefined;
   scanner?: FileScanner | undefined;
+  expectedSha256?: string | undefined;
+  expectedMediaType?: InternalExpectedUploadMediaType | undefined;
+  singleUseDraft?: boolean | undefined;
 }) {
   if (!input.body) throw new Error("File body is required.");
+  if (
+    isReservedHostedBrowserFileId(input.fileId) &&
+    input.singleUseDraft !== true
+  ) {
+    throw new FileUploadVerificationError("FILE_UPLOAD_ALREADY_USED");
+  }
+  if (
+    input.expectedSha256 !== undefined &&
+    !/^[0-9a-f]{64}$/u.test(input.expectedSha256)
+  ) {
+    throw new FileUploadVerificationError("FILE_HASH_MISMATCH");
+  }
   const file = await requireThreadFileForUser(input);
-  if (!["draft", "failed"].includes(file.lifecycleState)) throw new Error("File is not available for upload.");
+  if (input.singleUseDraft === true) {
+    if (file.lifecycleState !== "draft") {
+      throw new FileUploadVerificationError("FILE_UPLOAD_ALREADY_USED");
+    }
+    const claimed = await knowledgeDb
+      .update(schema.kestrelFiles)
+      .set({ lifecycleState: "failed" })
+      .where(and(
+        eq(schema.kestrelFiles.id, file.id),
+        eq(schema.kestrelFiles.lifecycleState, "draft"),
+      ))
+      .returning({ id: schema.kestrelFiles.id });
+    if (claimed.length !== 1) {
+      throw new FileUploadVerificationError("FILE_UPLOAD_ALREADY_USED");
+    }
+  } else if (!["draft", "failed"].includes(file.lifecycleState)) {
+    throw new Error("File is not available for upload.");
+  }
   if (input.contentLength !== undefined && input.contentLength !== file.sizeBytes) {
     throw new FileUploadVerificationError("FILE_SIZE_MISMATCH");
   }
@@ -281,6 +331,18 @@ export async function uploadThreadFile(input: {
       contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
     });
     const verified = verifier.result();
+    if (
+      input.expectedMediaType !== undefined &&
+      !matchesExpectedUploadMediaType(verifier.header, input.expectedMediaType)
+    ) {
+      throw new FileUploadVerificationError("FILE_MEDIA_TYPE_MISMATCH");
+    }
+    if (
+      input.expectedSha256 !== undefined &&
+      verified.sha256 !== input.expectedSha256
+    ) {
+      throw new FileUploadVerificationError("FILE_HASH_MISMATCH");
+    }
     const detectedMediaType = detectMediaType(verifier.header, file.filename, file.declaredMediaType ?? undefined);
     const scanResult = await input.scanner?.({
       fileId: file.id,

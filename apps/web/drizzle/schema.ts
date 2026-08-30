@@ -5526,6 +5526,121 @@ export const browserPersonalDomains = pgTable(
   ],
 );
 
+/** Hosted BrowserSessionV1 state. Tenant and actor identity resolve through the originating turn. */
+export const browserSessions = pgTable(
+  "browser_sessions",
+  {
+    sessionId: text("session_id").primaryKey(),
+    version: text("version").notNull().default("browser_session_v1"),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "restrict" }),
+    mode: text("mode", { enum: ["qa", "operator"] }).notNull(),
+    state: text("state", {
+      enum: [
+        "opening",
+        "ready",
+        "human_control",
+        "closing",
+        "closed",
+        "expired",
+        "lost",
+        "failed",
+      ],
+    }).notNull(),
+    engineRevision: text("engine_revision").notNull(),
+    generation: integer("generation").notNull(),
+    effectiveAllowlistRevision: text("effective_allowlist_revision").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull(),
+    idleExpiresAt: timestamp("idle_expires_at", { withTimezone: true }).notNull(),
+    hardExpiresAt: timestamp("hard_expires_at", { withTimezone: true }).notNull(),
+    terminalReason: text("terminal_reason"),
+  },
+  (table) => [
+    uniqueIndex("browser_sessions_one_nonterminal_per_thread_idx")
+      .on(table.threadId)
+      .where(
+        sql`${table.state} in ('opening', 'ready', 'human_control', 'closing')`,
+      ),
+    index("browser_sessions_expiry_idx").on(table.state, table.idleExpiresAt),
+    check(
+      "browser_sessions_version_check",
+      sql`${table.version} = 'browser_session_v1'`,
+    ),
+    check("browser_sessions_generation_check", sql`${table.generation} > 0`),
+    check(
+      "browser_sessions_expiry_check",
+      sql`${table.createdAt} <= ${table.lastActivityAt}
+        and ${table.lastActivityAt} <= ${table.updatedAt}
+        and ${table.lastActivityAt} < ${table.idleExpiresAt}
+        and ${table.idleExpiresAt} <= ${table.hardExpiresAt}`,
+    ),
+    check(
+      "browser_sessions_terminal_reason_check",
+      sql`(
+        ${table.state} in ('opening', 'ready', 'human_control', 'closing')
+        and ${table.terminalReason} is null
+      ) or (
+        ${table.state} in ('closed', 'expired', 'lost', 'failed')
+        and ${table.terminalReason} is not null
+      )`,
+    ),
+  ],
+);
+
+/** Host-only execution binding; never projected into BrowserSessionV1 or model output. */
+export const browserSessionResources = pgTable(
+  "browser_session_resources",
+  {
+    sessionId: text("session_id")
+      .primaryKey()
+      .references(() => browserSessions.sessionId, { onDelete: "cascade" }),
+    originatingTurnId: text("originating_turn_id")
+      .notNull()
+      .references(() => threadTurns.id, { onDelete: "restrict" }),
+    previewLeaseId: text("preview_lease_id").references(
+      () => workspacePreviewLeases.id,
+      { onDelete: "restrict" },
+    ),
+    machineId: text("machine_id").notNull().unique(),
+    machineGeneration: integer("machine_generation").notNull(),
+    workerImageDigest: text("worker_image_digest").notNull(),
+    proxyAuthorityRevision: text("proxy_authority_revision").notNull(),
+    cleanupRequestedAt: timestamp("cleanup_requested_at", {
+      withTimezone: true,
+    }),
+    cleanupConfirmedAt: timestamp("cleanup_confirmed_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("browser_session_resources_turn_idx").on(table.originatingTurnId),
+    index("browser_session_resources_preview_idx").on(table.previewLeaseId),
+    check(
+      "browser_session_resources_generation_check",
+      sql`${table.machineGeneration} > 0`,
+    ),
+    check(
+      "browser_session_resources_image_digest_check",
+      sql`${table.workerImageDigest} ~ '@sha256:[a-f0-9]{64}$'`,
+    ),
+    check(
+      "browser_session_resources_cleanup_check",
+      sql`${table.cleanupConfirmedAt} is null
+        or (${table.cleanupRequestedAt} is not null
+          and ${table.cleanupConfirmedAt} >= ${table.cleanupRequestedAt})`,
+    ),
+  ],
+);
+
 export const environmentCapabilitySubjectRestrictions = pgTable(
   "environment_capability_subject_restrictions",
   {
