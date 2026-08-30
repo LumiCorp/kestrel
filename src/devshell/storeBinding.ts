@@ -70,7 +70,7 @@ function resolveLegacyBindingRevision(
 
 export function buildDevShellStoreBindingEnvironment(
   binding: DevShellStoreBinding,
-): NodeJS.ProcessEnv {
+): Partial<NodeJS.ProcessEnv> {
   return {
     [DEV_SHELL_STORE_DRIVER_ENV]: binding.driver,
     [DEV_SHELL_STORE_BINDING_REVISION_ENV]: binding.revision,
