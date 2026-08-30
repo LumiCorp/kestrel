@@ -48,8 +48,10 @@ import {
   type DevShellStoreBinding,
 } from "./storeBinding.js";
 import {
-  readDevShellSocketIdentity,
-  removeDevShellSocketIfOwned,
+  isSameDevShellSocketObservation,
+  readDevShellSocketObservation,
+  removeDevShellSocketIfUnchanged,
+  type DevShellSocketObservation,
 } from "./socketOwnership.js";
 import {
   acquireDevShellBootstrapAuthority,
@@ -252,14 +254,14 @@ export class LocalDevShellService implements DevShellServicePort {
       return;
     }
 
-    const [socketIdentity, health, status] = await Promise.all([
-      readDevShellSocketIdentity(this.socketPath),
+    const [socketObservation, health, status] = await Promise.all([
+      readDevShellSocketObservation(this.socketPath),
       this.tryReadHealth(),
       this.readBootstrapStatus(),
     ]);
     const canCleanOwnedSocket =
       child.pid !== undefined &&
-      socketIdentity !== undefined &&
+      socketObservation !== undefined &&
       health?.serviceProtocolVersion === DEV_SHELL_SERVICE_PROTOCOL_VERSION &&
       health.servicePid === child.pid &&
       status?.status === "ready" &&
@@ -276,7 +278,29 @@ export class LocalDevShellService implements DevShellServicePort {
       await waitForChildProcessExit(child, 500);
     }
     if (canCleanOwnedSocket && isChildProcessRunning(child) === false) {
-      await removeDevShellSocketIfOwned(this.socketPath, socketIdentity);
+      const cleanupAuthority = await acquireDevShellBootstrapAuthority({
+        authorityPath: this.bootstrapAuthorityPath,
+        ownerToken: createDevShellBootstrapAuthorityToken(),
+        timeoutMs: 0,
+        pollIntervalMs: this.pollIntervalMs,
+      });
+      if (cleanupAuthority.status === "unavailable") {
+        if (cleanupAuthority.reason === "wait_timeout") {
+          return;
+        }
+        throw await this.createUnavailableFailure(
+          "bootstrap_authority_invalid",
+          "Developer shell service cleanup found invalid ownership evidence and stopped safely.",
+          {
+            nextSuggestedAction:
+              "Inspect the developer-shell bootstrap authority before retrying cleanup.",
+          },
+        );
+      }
+      await this.removeObservedSocketAndReleaseAuthority(
+        socketObservation,
+        cleanupAuthority.lease,
+      );
     }
   }
 
@@ -471,9 +495,9 @@ export class LocalDevShellService implements DevShellServicePort {
       return;
     }
     if (health !== undefined) {
-      await this.stopIncompatibleService(health);
+      await this.stopIncompatibleService(health, authorityLease);
     } else {
-      await this.refuseSpawnWithoutExclusiveSocketAuthority();
+      await this.reconcileSocketBeforeSpawn(authorityLease);
     }
 
     const prerequisiteFailure = this.readBootstrapPrerequisiteFailure();
@@ -531,19 +555,41 @@ export class LocalDevShellService implements DevShellServicePort {
     }
   }
 
-  private async refuseSpawnWithoutExclusiveSocketAuthority(): Promise<void> {
+  private async reconcileSocketBeforeSpawn(
+    authorityLease: DevShellBootstrapAuthorityLease,
+  ): Promise<void> {
     const status = await this.readBootstrapStatus();
     const pid = status?.pid;
+    const socketObservation = await readDevShellSocketObservation(this.socketPath);
+    const hasValidStatusPid =
+      typeof pid === "number" &&
+      Number.isInteger(pid) &&
+      pid > 0 &&
+      pid !== process.pid;
+    const statusNamesSocket = status?.socketPath === this.socketPath;
+    const statusCanOwnSocket = status?.status === "ready" || status?.status === "booting";
     if (
-      (status?.status !== "ready" && status?.status !== "booting") ||
-      status.socketPath !== this.socketPath ||
-      typeof pid !== "number" ||
-      Number.isInteger(pid) === false ||
-      pid <= 0 ||
-      pid === process.pid ||
+      socketObservation !== undefined &&
+      statusCanOwnSocket &&
+      statusNamesSocket &&
+      hasValidStatusPid &&
       isPidRunning(pid) === false
     ) {
-      if (await readDevShellSocketIdentity(this.socketPath) !== undefined) {
+      const cleanup = await this.removeObservedSocketWithAuthority(
+        socketObservation,
+        authorityLease,
+      );
+      if (cleanup === "removed" || cleanup === "missing") {
+        return;
+      }
+    }
+    if (
+      statusCanOwnSocket === false ||
+      statusNamesSocket === false ||
+      hasValidStatusPid === false ||
+      isPidRunning(pid) === false
+    ) {
+      if (socketObservation !== undefined) {
         throw await this.createUnavailableFailure(
           "socket_ownership_unproven",
           "Developer shell found an existing local socket without provable live ownership.",
@@ -566,10 +612,13 @@ export class LocalDevShellService implements DevShellServicePort {
     );
   }
 
-  private async stopIncompatibleService(health: DevShellHealth): Promise<void> {
+  private async stopIncompatibleService(
+    health: DevShellHealth,
+    authorityLease: DevShellBootstrapAuthorityLease,
+  ): Promise<void> {
     const status = await this.readBootstrapStatus();
     const pid = status?.pid;
-    const socketIdentity = await readDevShellSocketIdentity(this.socketPath);
+    const socketObservation = await readDevShellSocketObservation(this.socketPath);
     const healthIdentityMatches =
       health.serviceProtocolVersion === DEV_SHELL_SERVICE_PROTOCOL_VERSION &&
       health.servicePid === pid;
@@ -581,7 +630,7 @@ export class LocalDevShellService implements DevShellServicePort {
       pid === process.pid ||
       healthIdentityMatches === false ||
       status.socketPath !== this.socketPath ||
-      socketIdentity === undefined ||
+      socketObservation === undefined ||
       isPidRunning(pid) === false
     ) {
       throw await this.createUnavailableFailure(
@@ -615,15 +664,15 @@ export class LocalDevShellService implements DevShellServicePort {
     }
 
     const deadline = Date.now() + INCOMPATIBLE_SERVICE_SHUTDOWN_TIMEOUT_MS;
-    let currentSocketIdentity = await readDevShellSocketIdentity(this.socketPath);
+    let currentSocketObservation = await readDevShellSocketObservation(this.socketPath);
     while (
       Date.now() < deadline &&
-      isSameDevShellSocketIdentity(currentSocketIdentity, socketIdentity)
+      isSameDevShellSocketObservation(currentSocketObservation, socketObservation)
     ) {
       await this.wait(50);
-      currentSocketIdentity = await readDevShellSocketIdentity(this.socketPath);
+      currentSocketObservation = await readDevShellSocketObservation(this.socketPath);
     }
-    if (isSameDevShellSocketIdentity(currentSocketIdentity, socketIdentity)) {
+    if (isSameDevShellSocketObservation(currentSocketObservation, socketObservation)) {
       throw await this.createUnavailableFailure(
         "incompatible_service_shutdown_timeout",
         "Developer shell did not replace an incompatible service because its shutdown did not complete.",
@@ -636,11 +685,11 @@ export class LocalDevShellService implements DevShellServicePort {
       );
     }
 
-    const socketCleanup = await removeDevShellSocketIfOwned(
-      this.socketPath,
-      socketIdentity,
+    const socketCleanup = await this.removeObservedSocketWithAuthority(
+      socketObservation,
+      authorityLease,
     );
-    if (socketCleanup === "different_owner") {
+    if (socketCleanup === "changed") {
       throw await this.createUnavailableFailure(
         "incompatible_service_socket_replaced",
         "Developer shell did not start another service because the shared socket acquired a different owner during shutdown.",
@@ -650,6 +699,55 @@ export class LocalDevShellService implements DevShellServicePort {
         },
       );
     }
+  }
+
+  private async removeObservedSocketWithAuthority(
+    observation: DevShellSocketObservation,
+    authorityLease: DevShellBootstrapAuthorityLease,
+  ): Promise<"removed" | "missing" | "changed"> {
+    if (await authorityLease.verify() === false) {
+      throw await this.createUnavailableFailure(
+        "bootstrap_authority_lost",
+        "Developer shell socket cleanup lost exclusive bootstrap authority.",
+        {
+          authorityOwnerPid: authorityLease.ownerPid,
+          nextSuggestedAction:
+            "The command did not run. Inspect the developer-shell bootstrap authority before retrying.",
+        },
+      );
+    }
+    return removeDevShellSocketIfUnchanged(this.socketPath, observation);
+  }
+
+  private async removeObservedSocketAndReleaseAuthority(
+    observation: DevShellSocketObservation,
+    authorityLease: DevShellBootstrapAuthorityLease,
+  ): Promise<void> {
+    let cleanupError: unknown;
+    try {
+      await this.removeObservedSocketWithAuthority(observation, authorityLease);
+    } catch (error) {
+      cleanupError = error;
+    }
+    let releaseError: unknown;
+    try {
+      if (await authorityLease.release() === false) {
+        releaseError = await this.createUnavailableFailure(
+          "bootstrap_authority_release_failed",
+          "Developer shell socket cleanup could not release bootstrap authority.",
+        );
+      }
+    } catch (error) {
+      releaseError = error;
+    }
+    if (cleanupError !== undefined && releaseError !== undefined) {
+      throw new AggregateError(
+        [cleanupError, releaseError],
+        "Developer shell socket cleanup and authority release failed.",
+      );
+    }
+    if (cleanupError !== undefined) throw cleanupError;
+    if (releaseError !== undefined) throw releaseError;
   }
 
   private readBootstrapPrerequisiteFailure() {
@@ -1171,15 +1269,6 @@ function isPidRunning(pid: number): boolean {
   } catch (error) {
     return readNodeErrorCode(error) === "EPERM";
   }
-}
-
-function isSameDevShellSocketIdentity(
-  current: { device: number; inode: number } | undefined,
-  expected: { device: number; inode: number },
-): boolean {
-  return current !== undefined &&
-    current.device === expected.device &&
-    current.inode === expected.inode;
 }
 
 async function waitForChildProcessExit(child: ChildProcess, timeoutMs: number): Promise<void> {

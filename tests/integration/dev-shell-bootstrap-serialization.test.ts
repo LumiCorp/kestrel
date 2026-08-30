@@ -13,6 +13,30 @@ import { LocalDevShellService } from "../../src/devshell/LocalDevShellService.js
 import { DEV_SHELL_SERVICE_PROTOCOL_VERSION } from "../../src/devshell/contracts.js";
 import { acquireDevShellBootstrapAuthority } from "../../src/devshell/bootstrapAuthority.js";
 import { buildDevShellRequestIdentityHeaders } from "../../src/devshell/requestIdentity.js";
+import {
+  readDevShellSocketObservation,
+  removeDevShellSocketIfUnchanged,
+} from "../../src/devshell/socketOwnership.js";
+
+test("socket cleanup does not unlink a replacement Unix socket", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "dev-shell-socket-owner-"));
+  const socketPath = path.join(directory, "supervisor.sock");
+  const original = await listenOnUnixSocket(socketPath);
+  const oldObservation = await readDevShellSocketObservation(socketPath);
+  assert.ok(oldObservation !== undefined);
+  await closeNetServer(original);
+
+  const replacement = await listenOnUnixSocket(socketPath);
+  try {
+    assert.equal(
+      await removeDevShellSocketIfUnchanged(socketPath, oldObservation),
+      "changed",
+    );
+    assert.ok(await readDevShellSocketObservation(socketPath) !== undefined);
+  } finally {
+    await closeNetServer(replacement);
+  }
+});
 
 test("a cross-instance high-contention cold burst shares one SQLite service", async () => {
   const baseDir = await mkdtemp(
@@ -100,6 +124,48 @@ test("one fresh LocalDevShellService completes 20 simultaneous real cold request
     });
   } finally {
     await service.close();
+  }
+});
+
+test("a bootstrap authority winner replaces a socket left by a crashed service", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "ldss-crashed-service-"));
+  const options = {
+    env: {
+      ...process.env,
+      KESTREL_HOME: path.join(baseDir, "home"),
+      KESTREL_STORE_DRIVER: "sqlite",
+      DATABASE_URL: undefined,
+    },
+    storeBinding: { driver: "sqlite" as const, revision: "binding-shared" },
+    startupTimeoutMs: 10_000,
+    pollIntervalMs: 10,
+  };
+  const crashed = new LocalDevShellService(baseDir, options) as any;
+  const replacement = new LocalDevShellService(baseDir, options);
+
+  try {
+    const initial = await crashed.runCommand({
+      workspaceRoot: baseDir,
+      command: "printf initial",
+      timeoutMs: 2_000,
+    });
+    assert.equal(initial.text, "initial");
+    const crashedChild = crashed.ownedChild as ChildProcess | undefined;
+    assert.ok(crashedChild?.pid !== undefined);
+    crashedChild.kill("SIGKILL");
+    await waitForPidExit(crashedChild.pid, 2_000);
+    assert.ok(await lstat(crashed.socketPath));
+
+    const recovered = await replacement.runCommand({
+      workspaceRoot: baseDir,
+      command: "printf recovered",
+      timeoutMs: 2_000,
+    });
+    assert.equal(recovered.status, "COMPLETED");
+    assert.equal(recovered.text, "recovered");
+  } finally {
+    await crashed.close();
+    await replacement.close();
   }
 });
 
@@ -719,6 +785,27 @@ test("LocalDevShellService preserves a pre-existing socket with no provable live
   assert.equal(spawned, false);
   assert.equal(await readFile(service.socketPath, "utf8"), "unproven owner");
 });
+
+async function listenOnUnixSocket(socketPath: string): Promise<net.Server> {
+  const server = net.createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  return server;
+}
+
+async function closeNetServer(server: net.Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error === undefined) resolve();
+      else reject(error);
+    });
+  });
+}
 
 function compatibleHealth(binding: {
   driver: "sqlite" | "postgres";

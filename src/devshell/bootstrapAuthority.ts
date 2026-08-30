@@ -19,6 +19,7 @@ type OwnerReadResult =
 export interface DevShellBootstrapAuthorityLease {
   readonly ownerPid: number;
   readonly ownerToken: string;
+  verify(): Promise<boolean>;
   transferTo(input: { ownerPid: number; ownerToken: string; faultHook?: FaultHook | undefined }): Promise<boolean>;
   release(input?: { faultHook?: FaultHook | undefined }): Promise<boolean>;
 }
@@ -88,6 +89,13 @@ function createLease(authorityPath: string, initial: Owner): DevShellBootstrapAu
   let owner = initial;
   return { status: "acquired", lease: {
     get ownerPid() { return owner.pid; }, get ownerToken() { return owner.token; },
+    async verify() {
+      return verifyDevShellBootstrapAuthority({
+        authorityPath,
+        ownerPid: owner.pid,
+        ownerToken: owner.token,
+      });
+    },
     async transferTo(input) {
       const next = createOwner(input.ownerPid, input.ownerToken);
       if (next === undefined) return false;

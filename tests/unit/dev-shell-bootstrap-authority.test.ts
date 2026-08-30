@@ -93,6 +93,7 @@ test("developer-shell bootstrap authority distinguishes same-process instances b
   });
   assert.equal(first.status, "acquired");
   if (first.status !== "acquired") return;
+  assert.equal(await first.lease.verify(), true);
 
   const secondPromise = acquireDevShellBootstrapAuthority({
     authorityPath,
@@ -101,6 +102,7 @@ test("developer-shell bootstrap authority distinguishes same-process instances b
     pollIntervalMs: 2,
   });
   await first.lease.release();
+  assert.equal(await first.lease.verify(), false);
   const second = await secondPromise;
   assert.equal(second.status, "acquired");
   if (second.status === "acquired") {
@@ -157,12 +159,38 @@ test("bootstrap authority release preserves an exact replacement target", async 
     `kestrel-dev-shell-bootstrap-v2:${process.pid}:replacement-owner`,
     ownerEvidencePath,
   );
+  assert.equal(await acquired.lease.verify(), false);
   await acquired.lease.release();
 
   assert.equal(
     await readlink(ownerEvidencePath),
     `kestrel-dev-shell-bootstrap-v2:${process.pid}:replacement-owner`,
   );
+});
+
+test("bootstrap authority lease verification follows a successful transfer", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "dev-shell-authority-verify-transfer-"),
+  );
+  const authorityPath = path.join(root, "bootstrap-authority");
+  const acquired = await acquireDevShellBootstrapAuthority({
+    authorityPath,
+    ownerToken: "original-owner",
+    timeoutMs: 100,
+    pollIntervalMs: 2,
+  });
+  assert.equal(acquired.status, "acquired");
+  if (acquired.status !== "acquired") return;
+
+  assert.equal(await acquired.lease.verify(), true);
+  assert.equal(await acquired.lease.transferTo({
+    ownerPid: process.pid,
+    ownerToken: "transferred-owner",
+  }), true);
+  assert.equal(acquired.lease.ownerToken, "transferred-owner");
+  assert.equal(await acquired.lease.verify(), true);
+  assert.equal(await acquired.lease.release(), true);
+  assert.equal(await acquired.lease.verify(), false);
 });
 
 test("authority publication and cleanup recover after process death", async () => {

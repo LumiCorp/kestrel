@@ -33,14 +33,16 @@ import {
   type DevShellStoreBinding,
 } from "../../src/devshell/storeBinding.js";
 import {
-  readDevShellSocketIdentity,
-  removeDevShellSocketIfOwned,
+  readDevShellSocketObservation,
+  removeDevShellSocketIfUnchanged,
 } from "../../src/devshell/socketOwnership.js";
 import {
   isMatchingDevShellRequestIdentity,
   readDevShellRequestIdentity,
 } from "../../src/devshell/requestIdentity.js";
 import {
+  acquireDevShellBootstrapAuthority,
+  createDevShellBootstrapAuthorityToken,
   releaseDevShellBootstrapAuthority,
   verifyDevShellBootstrapAuthority,
 } from "../../src/devshell/bootstrapAuthority.js";
@@ -48,13 +50,16 @@ import {
 async function main(): Promise<void> {
   const authority = await acceptBootstrapAuthority();
   try {
-    await runService();
+    await runService(authority.authorityPath);
   } finally {
-    await releaseDevShellBootstrapAuthority(authority);
+    const released = await releaseDevShellBootstrapAuthority(authority);
+    if (released === false) {
+      throw new Error("Developer shell bootstrap authority release failed.");
+    }
   }
 }
 
-async function runService(): Promise<void> {
+async function runService(authorityPath: string): Promise<void> {
   const socketPath = resolveSocketPath();
   const logPath = resolveLogPath();
   const statusPath = resolveStatusPath();
@@ -155,8 +160,8 @@ async function runService(): Promise<void> {
   } catch (error) {
     writeBootstrapLog(`warning: unable to chmod supervisor socket: ${toErrorMessage(error)}`);
   }
-  const socketIdentity = await readDevShellSocketIdentity(socketPath);
-  if (socketIdentity === undefined) {
+  const socketObservation = await readDevShellSocketObservation(socketPath);
+  if (socketObservation === undefined) {
     await writeBootstrapFailure(statusPath, "socket_bind_failed");
     await new Promise<void>((resolve) => server.close(() => resolve()));
     throw new Error("Developer shell service could not establish ownership of its local socket.");
@@ -167,6 +172,15 @@ async function runService(): Promise<void> {
   });
 
   let shutdownPromise: Promise<void> | undefined;
+  let shutdownFailureReported = false;
+  const reportShutdownFailure = (error: unknown) => {
+    if (shutdownFailureReported) return;
+    shutdownFailureReported = true;
+    const message = formatDevShellBootstrapFailureMessage(error);
+    writeBootstrapLog(message);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  };
   const shutdown = () => {
     shuttingDown = true;
     shutdownController.abort();
@@ -174,30 +188,83 @@ async function runService(): Promise<void> {
       await waitForRequestDrain();
       await supervisor.close();
       await storeHandle.close();
+      const cleanupAuthority = await acquireDevShellBootstrapAuthority({
+        authorityPath,
+        ownerToken: createDevShellBootstrapAuthorityToken(),
+        timeoutMs: 0,
+        pollIntervalMs: 1,
+      });
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
-      const socketCleanup = await removeDevShellSocketIfOwned(
-        socketPath,
-        socketIdentity,
-      );
-      if (socketCleanup === "different_owner") {
+      if (cleanupAuthority.status === "unavailable") {
+        if (cleanupAuthority.reason === "invalid_owner_evidence") {
+          throw new Error(
+            "Developer shell socket cleanup found invalid bootstrap authority evidence.",
+          );
+        }
         writeBootstrapLog(
-          "warning: skipped developer shell socket cleanup because the path has a different owner",
+          "warning: skipped developer shell socket cleanup because another bootstrap owner is active",
+        );
+        return;
+      }
+      let cleanupError: unknown;
+      try {
+        if (await cleanupAuthority.lease.verify() === false) {
+          throw new Error(
+            "Developer shell socket cleanup lost bootstrap authority.",
+          );
+        }
+        const socketCleanup = await removeDevShellSocketIfUnchanged(
+          socketPath,
+          socketObservation,
+        );
+        if (socketCleanup === "changed") {
+          writeBootstrapLog(
+            "warning: skipped developer shell socket cleanup because the path changed",
+          );
+        }
+      } catch (error) {
+        cleanupError = error;
+      }
+      let releaseError: unknown;
+      try {
+        if (await cleanupAuthority.lease.release() === false) {
+          throw new Error("Developer shell socket cleanup authority release failed.");
+        }
+      } catch (error) {
+        releaseError = error;
+      }
+      if (cleanupError !== undefined && releaseError !== undefined) {
+        throw new AggregateError(
+          [cleanupError, releaseError],
+          "Developer shell socket cleanup and authority release failed.",
         );
       }
+      if (cleanupError !== undefined) throw cleanupError;
+      if (releaseError !== undefined) throw releaseError;
     })();
+    void shutdownPromise.catch(reportShutdownFailure);
     return shutdownPromise;
   };
-  const ownerWatch = startOwnerWatch(supervisor, shutdown);
+  const exitAfterShutdown = () => {
+    void shutdown().then(
+      () => process.exit(0),
+      (error) => {
+        reportShutdownFailure(error);
+        process.exit(1);
+      },
+    );
+  };
+  const ownerWatch = startOwnerWatch(supervisor, exitAfterShutdown);
 
   process.on("SIGINT", () => {
     clearInterval(ownerWatch);
-    void shutdown().finally(() => process.exit(0));
+    exitAfterShutdown();
   });
   process.on("SIGTERM", () => {
     clearInterval(ownerWatch);
-    void shutdown().finally(() => process.exit(0));
+    exitAfterShutdown();
   });
 }
 
@@ -626,7 +693,7 @@ function buildBootstrapStatus(payload: Record<string, unknown>): Record<string, 
 
 function startOwnerWatch(
   supervisor: DevShellSupervisor,
-  shutdown: () => Promise<void>,
+  shutdownAndExit: () => void,
 ): NodeJS.Timeout {
   const ownerPid = parsePositiveInt(process.env.KESTREL_DEV_SHELL_OWNER_PID);
   const timer = setInterval(() => {
@@ -634,7 +701,7 @@ function startOwnerWatch(
       return;
     }
     clearInterval(timer);
-    void shutdown().finally(() => process.exit(0));
+    shutdownAndExit();
   }, 5000);
   timer.unref();
   return timer;

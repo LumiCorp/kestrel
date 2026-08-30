@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -22,6 +22,10 @@ import {
   resolveDefaultDevShellLogPath,
   resolveDefaultDevShellSocketPath,
 } from "../../src/devshell/paths.js";
+import {
+  acquireDevShellBootstrapAuthority,
+  createDevShellBootstrapAuthorityToken,
+} from "../../src/devshell/bootstrapAuthority.js";
 
 test("developer shell launch resolution selects the source TypeScript entrypoint", () => {
   const launch = resolveDevShellServiceLaunch(
@@ -882,7 +886,7 @@ test("LocalDevShellService never signals a PID when the cooperative shutdown end
     };
 
     await assert.rejects(
-      service.stopIncompatibleService({
+      stopIncompatibleServiceWithAuthority(service, {
         ok: true,
         serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
         servicePid: child.pid,
@@ -929,7 +933,7 @@ test("LocalDevShellService completes cooperative replacement when the proven end
       return { status: "shutting_down" };
     };
 
-    await service.stopIncompatibleService({
+    await stopIncompatibleServiceWithAuthority(service, {
       ok: true,
       serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
       servicePid: reusedPidProcess.pid,
@@ -947,6 +951,55 @@ test("LocalDevShellService completes cooperative replacement when the proven end
     if (isChildRunning(reusedPidProcess)) {
       reusedPidProcess.kill("SIGKILL");
       await waitForChildExit(reusedPidProcess, 1_000);
+    }
+  }
+});
+
+test("LocalDevShellService preserves a changed socket during incompatible-service cleanup", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-replaced-socket-"));
+  const service = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-current" },
+  }) as any;
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  try {
+    assert.ok(child.pid !== undefined);
+    await writeFile(service.socketPath, "captured socket", "utf8");
+    await writeFile(service.bootstrapStatusPath, JSON.stringify({
+      status: "ready",
+      pid: child.pid,
+      socketPath: service.socketPath,
+    }), "utf8");
+    service.performRequest = async (_method: string, pathname: string) => {
+      if (pathname !== "/service/shutdown") throw new Error("unexpected request");
+      await rm(service.socketPath);
+      await writeFile(service.socketPath, "replacement socket", "utf8");
+      return { status: "shutting_down" };
+    };
+
+    await assert.rejects(
+      stopIncompatibleServiceWithAuthority(service, {
+        ok: true,
+        serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+        servicePid: child.pid,
+        storeDriver: "sqlite",
+        storeBindingRevision: "binding-stale",
+        capabilities: {
+          processWriteAndRead: true,
+          processRetentionLeases: true,
+          processRetentionPromotion: true,
+        },
+      }),
+      (error: unknown) =>
+        (error as { details?: Record<string, unknown> }).details?.bootstrapReason ===
+        "incompatible_service_socket_replaced",
+    );
+    assert.equal(await readFile(service.socketPath, "utf8"), "replacement socket");
+  } finally {
+    if (isChildRunning(child)) {
+      child.kill("SIGKILL");
+      await waitForChildExit(child, 1_000);
     }
   }
 });
@@ -990,7 +1043,7 @@ test("LocalDevShellService stops a current incompatible service only when health
       "utf8",
     );
 
-    await service.stopIncompatibleService({
+    await stopIncompatibleServiceWithAuthority(service, {
       ok: true,
       serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
       servicePid: child.pid,
@@ -1302,6 +1355,180 @@ test("LocalDevShellService close terminates a spawned supervisor process", async
     }
   }
 });
+
+test("LocalDevShellService close reacquires authority and removes an owned orphan socket", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-close-orphan-"));
+  const service = new LocalDevShellService(baseDir, {
+    startupTimeoutMs: 100,
+    pollIntervalMs: 1,
+  }) as any;
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  assert.ok(child.pid !== undefined);
+  service.ownedChild = child;
+  await writeFile(service.socketPath, "orphan socket", "utf8");
+  service.tryReadHealth = async () => ({
+    ok: true,
+    serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    servicePid: child.pid,
+  });
+  service.readBootstrapStatus = async () => ({
+    status: "ready",
+    pid: child.pid,
+    socketPath: service.socketPath,
+  });
+  const childAuthority = await acquireDevShellBootstrapAuthority({
+    authorityPath: service.bootstrapAuthorityPath,
+    ownerPid: child.pid,
+    ownerToken: "owned-child",
+    timeoutMs: 100,
+    pollIntervalMs: 1,
+  });
+  assert.equal(childAuthority.status, "acquired");
+
+  try {
+    await service.close();
+    await assert.rejects(readFile(service.socketPath, "utf8"), /ENOENT/u);
+  } finally {
+    if (isChildRunning(child)) {
+      child.kill("SIGKILL");
+      await waitForChildExit(child, 1_000);
+    }
+  }
+});
+
+test("LocalDevShellService close preserves the socket when a replacement holds authority", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-close-handoff-"));
+  const service = new LocalDevShellService(baseDir, {
+    startupTimeoutMs: 100,
+    pollIntervalMs: 1,
+  }) as any;
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  assert.ok(child.pid !== undefined);
+  service.ownedChild = child;
+  await writeFile(service.socketPath, "replacement socket", "utf8");
+  service.tryReadHealth = async () => ({
+    ok: true,
+    serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    servicePid: child.pid,
+  });
+  service.readBootstrapStatus = async () => ({
+    status: "ready",
+    pid: child.pid,
+    socketPath: service.socketPath,
+  });
+  const replacementAuthority = await acquireDevShellBootstrapAuthority({
+    authorityPath: service.bootstrapAuthorityPath,
+    ownerToken: "replacement-owner",
+    timeoutMs: 100,
+    pollIntervalMs: 1,
+  });
+  assert.equal(replacementAuthority.status, "acquired");
+  if (replacementAuthority.status !== "acquired") return;
+
+  try {
+    await service.close();
+    assert.equal(await readFile(service.socketPath, "utf8"), "replacement socket");
+  } finally {
+    assert.equal(await replacementAuthority.lease.release(), true);
+    if (isChildRunning(child)) {
+      child.kill("SIGKILL");
+      await waitForChildExit(child, 1_000);
+    }
+  }
+});
+
+test("LocalDevShellService close surfaces corrupt cleanup authority evidence", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-close-invalid-"));
+  const service = new LocalDevShellService(baseDir, {
+    startupTimeoutMs: 100,
+    pollIntervalMs: 1,
+  }) as any;
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  assert.ok(child.pid !== undefined);
+  service.ownedChild = child;
+  await writeFile(service.socketPath, "owned socket", "utf8");
+  service.tryReadHealth = async () => ({
+    ok: true,
+    serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    servicePid: child.pid,
+  });
+  service.readBootstrapStatus = async () => ({
+    status: "ready",
+    pid: child.pid,
+    socketPath: service.socketPath,
+  });
+  await mkdir(service.bootstrapAuthorityPath);
+  await symlink("invalid authority evidence", path.join(service.bootstrapAuthorityPath, "owner"));
+
+  try {
+    await assert.rejects(
+      service.close(),
+      (error: unknown) =>
+        (error as { details?: Record<string, unknown> }).details?.bootstrapReason ===
+        "bootstrap_authority_invalid",
+    );
+    assert.equal(await readFile(service.socketPath, "utf8"), "owned socket");
+  } finally {
+    if (isChildRunning(child)) {
+      child.kill("SIGKILL");
+      await waitForChildExit(child, 1_000);
+    }
+  }
+});
+
+test("bootstrap authority winner removes a socket proven to belong to a dead predecessor", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-dead-predecessor-"));
+  const service = new LocalDevShellService(baseDir, {
+    startupTimeoutMs: 100,
+    pollIntervalMs: 1,
+  }) as any;
+  await writeFile(service.socketPath, "dead predecessor", "utf8");
+  await writeFile(service.bootstrapStatusPath, JSON.stringify({
+    status: "ready",
+    pid: 2_147_483_647,
+    socketPath: service.socketPath,
+  }), "utf8");
+  const authority = await acquireDevShellBootstrapAuthority({
+    authorityPath: service.bootstrapAuthorityPath,
+    ownerToken: "recovery-owner",
+    timeoutMs: 100,
+    pollIntervalMs: 1,
+  });
+  assert.equal(authority.status, "acquired");
+  if (authority.status !== "acquired") return;
+
+  try {
+    await service.reconcileSocketBeforeSpawn(authority.lease);
+    await assert.rejects(readFile(service.socketPath, "utf8"), /ENOENT/u);
+  } finally {
+    assert.equal(await authority.lease.release(), true);
+  }
+});
+
+async function stopIncompatibleServiceWithAuthority(
+  service: any,
+  health: Record<string, unknown>,
+): Promise<void> {
+  const authority = await acquireDevShellBootstrapAuthority({
+    authorityPath: service.bootstrapAuthorityPath,
+    ownerToken: createDevShellBootstrapAuthorityToken(),
+    timeoutMs: 100,
+    pollIntervalMs: 2,
+  });
+  assert.equal(authority.status, "acquired");
+  if (authority.status !== "acquired") return;
+  try {
+    await service.stopIncompatibleService(health, authority.lease);
+  } finally {
+    assert.equal(await authority.lease.release(), true);
+  }
+}
 
 function serverClosed(server: http.Server): Promise<void> {
   return new Promise((resolve) => {
