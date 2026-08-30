@@ -460,6 +460,15 @@ export class DevShellSupervisor {
       running.resolveInitialRecordOutcome();
     } catch (error) {
       running.forcedFailureReason = "Developer shell could not persist the initial process record.";
+      options.shutdownSignal?.removeEventListener("abort", stopStartingProcess);
+      if (shutdownKillTimer !== undefined) {
+        clearTimeout(shutdownKillTimer);
+        shutdownKillTimer = undefined;
+      }
+      if (running.wallTimeout !== undefined) {
+        clearTimeout(running.wallTimeout);
+        running.wallTimeout = undefined;
+      }
       running.initialRecordSettled = true;
       running.resolveInitialRecordOutcome();
       signalProcessTree(running.child, "SIGTERM");

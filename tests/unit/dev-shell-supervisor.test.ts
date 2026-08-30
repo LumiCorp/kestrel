@@ -1879,6 +1879,41 @@ test("a fast child cannot persist success before its failed initial record settl
   }
 });
 
+test("shutdown cannot replace an initial persistence failure while its child is terminating", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-start-failure-priority-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  const childPidPath = path.join(workspaceRootPath, "child.pid");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const store = new FailingInitialDevShellStore();
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"));
+  const shutdown = new AbortController();
+  await supervisor.initialize();
+  try {
+    const startPromise = supervisor.startProcess({
+      workspaceRoot,
+      command: `${JSON.stringify(process.execPath)} -e 'const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(childPidPath)},String(process.pid));process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'`,
+      yieldTimeMs: 50,
+    }, { shutdownSignal: shutdown.signal });
+    await store.initialWriteStarted;
+    await waitForFile(childPidPath, 1000);
+    const childPid = Number.parseInt((await readFile(childPidPath, "utf8")).trim(), 10);
+    store.failInitialWrite();
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    shutdown.abort();
+    await assert.rejects(startPromise, /initial process write failed/u);
+    await waitForPidExit(childPid, 2_000);
+    const records = await store.listProcesses();
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.status, "FAILED");
+    assert.match(records[0]?.failureReason ?? "", /initial process record/u);
+    assert.doesNotMatch(records[0]?.failureReason ?? "", /service shutdown interrupted/u);
+  } finally {
+    store.failInitialWrite();
+    await supervisor.close();
+  }
+});
+
 test("double persistence failure is observed while the failed child remains stopped", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-double-start-failure-"));
   const workspaceRootPath = path.join(baseDir, "workspace");
