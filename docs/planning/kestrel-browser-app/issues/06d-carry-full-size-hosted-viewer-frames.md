@@ -64,3 +64,21 @@ relay. Its worker, Router, Web client, and WebSocket bounds must derive from one
   complexity diagnostics outside the 06d hunks. Web typecheck reaches only the
   pre-existing runtime-profile and hosted personal OAuth test errors already
   recorded by the hosted viewer work.
+
+### Independent-review repair evidence
+
+- Real Desktop `screenshot --base64` collection now opts into the shared
+  serialized viewer-frame maximum, which includes the bounded agent-browser
+  JSON wrapper. The generic command stdout collector remains at 512 KiB. A
+  real process-backed regression proves a 2 MiB PNG reaches frame parsing,
+  generic collection still truncates at its original bound, and screenshot
+  output above the dedicated bound kills the child and rejects without parsing
+  a partial frame.
+- Environment Router uses the derived viewer-frame response bound only after a
+  successful `frame` response. Every non-OK response, including a typed frame
+  error, retains the ordinary 20 MiB control-response bound.
+- The repaired exact protocol, Router, Web, worker, and lifecycle command passes
+  118 tests, and the real Desktop collector regression passes independently.
+  Root and Environment Router TypeScript checks remain green. Scoped lint
+  reaches only the previously recorded diagnostics outside the repair hunks,
+  and `git diff --check` passes.

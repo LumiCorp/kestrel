@@ -22,7 +22,7 @@ None.
 
 ## Implemented
 
-- [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — one shared 20 MiB raw PNG bound and derived dedicated viewer-envelope bound pass 117 focused transport and lifecycle tests; awaiting independent review
+- [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — shared viewer frame bounds, real Desktop screenshot collection, and status-aware Router bounds pass 118 focused transport/lifecycle tests plus the real collector regression; awaiting independent review
 - [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — remaining review findings are assigned to the existing 06b lifecycle and 06c scheduling owners
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)
 - [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)

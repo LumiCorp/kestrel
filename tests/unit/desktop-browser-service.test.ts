@@ -49,6 +49,7 @@ import {
   canonicalizePublicBrowserDestination,
   type BrowserEffectiveDomainAuthorityV1,
 } from "../../src/browser/domainAuthority.js";
+import { HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES } from "../../src/browser/hostedViewerProtocol.js";
 import type {
   BrowserOperationLifecycleV1,
   BrowserSessionV1,
@@ -4192,6 +4193,60 @@ test("engine command collection waits for stdio close after process exit", async
     timeoutMs: 2_000,
   });
   assert.equal(result.stdout, "late-output");
+});
+
+test("viewer screenshot collection carries multi-MiB JSON and rejects output over its dedicated bound", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-viewer-output-"));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  const frameBytes = 2 * 1024 * 1024;
+  const validExecutable = path.join(root, "valid-viewer-frame");
+  await writeFile(validExecutable, [
+    `#!${process.execPath}`,
+    `const bytes = Buffer.alloc(${String(frameBytes)});`,
+    "Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);",
+    "process.stdout.write(JSON.stringify({ dataBase64: bytes.toString(\"base64\") }));",
+    "",
+  ].join("\n"));
+  await chmod(validExecutable, 0o755);
+  const generic = await spawnAndCollect({
+    executable: validExecutable,
+    args: [],
+    cwd: root,
+    env: { PATH: "", LANG: "C.UTF-8" },
+    timeoutMs: 2000,
+  });
+  assert.equal(Buffer.byteLength(generic.stdout, "utf8"), 512 * 1024);
+  const invocation = {
+    ...engineInvocation(),
+    runtimePath: root,
+    socketPath: root,
+    profilePath: root,
+    configPath: root,
+  };
+  const adapter = new AgentBrowserCliAdapter({
+    engineExecutablePath: validExecutable,
+    chromeExecutablePath: "/usr/bin/true",
+  });
+  const frame = await adapter.captureViewerFrame(invocation);
+  assert.equal(Buffer.from(frame.dataBase64, "base64").byteLength, frameBytes);
+
+  const oversizedExecutable = path.join(root, "oversized-viewer-frame");
+  await writeFile(oversizedExecutable, [
+    `#!${process.execPath}`,
+    `process.stdout.write(JSON.stringify({ dataBase64: "A".repeat(${String(HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES)}) }));`,
+    "",
+  ].join("\n"));
+  await chmod(oversizedExecutable, 0o755);
+  const oversizedAdapter = new AgentBrowserCliAdapter({
+    engineExecutablePath: oversizedExecutable,
+    chromeExecutablePath: "/usr/bin/true",
+  });
+  await assert.rejects(
+    oversizedAdapter.captureViewerFrame(invocation),
+    /output exceeded its bound/u,
+  );
 });
 
 async function createFixture(

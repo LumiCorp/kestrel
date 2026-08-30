@@ -35,7 +35,10 @@ import {
 } from "../browser/contracts.js";
 import { resolveBrowserToolExecutionClass } from "../browser/browserAppContract.fixture.js";
 import { HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED } from "../browser/hostedViewer.js";
-import { HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES } from "../browser/hostedViewerProtocol.js";
+import {
+  HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
+  HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES,
+} from "../browser/hostedViewerProtocol.js";
 import {
   BROWSER_EFFECTIVE_DOMAIN_AUTHORITY_VERSION,
   BROWSER_QA_TARGET_VERSION,
@@ -4296,7 +4299,9 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
   async captureViewerFrame(
     input: DesktopBrowserEngineInvocation,
   ): Promise<{ mediaType: "image/png"; dataBase64: string }> {
-    const result = await this.#run(input, ["screenshot", "--base64"]);
+    const result = await this.#run(input, ["screenshot", "--base64"], {
+      stdoutMaxBytes: HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
+    });
     return {
       mediaType: "image/png",
       dataBase64: extractTransientPngBase64(result.stdout),
@@ -4519,6 +4524,7 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     options: {
       timeoutMs?: number | undefined;
       captureLaunchProcessGroup?: boolean | undefined;
+      stdoutMaxBytes?: number | undefined;
     } = {},
   ): Promise<DesktopBrowserEngineCommandResult> {
     const launch = buildAgentBrowserCliInvocation({
@@ -4532,6 +4538,7 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
       cwd: input.runtimePath,
       env: launch.env,
       timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
+      stdoutMaxBytes: options.stdoutMaxBytes,
       detached: options.captureLaunchProcessGroup === true,
       onSpawn:
         options.captureLaunchProcessGroup === true
@@ -5365,6 +5372,7 @@ export async function spawnAndCollect(input: {
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
   detached?: boolean | undefined;
+  stdoutMaxBytes?: number | undefined;
   onSpawn?: ((pid: number) => void) | undefined;
 }): Promise<DesktopBrowserEngineCommandResult> {
   return await new Promise((resolve, reject) => {
@@ -5381,6 +5389,7 @@ export async function spawnAndCollect(input: {
     }
     if (child.pid !== undefined) input.onSpawn?.(child.pid);
     let stdout = "";
+    let stdoutBytes = 0;
     let stderr = "";
     let settled = false;
     const timer = setTimeout(() => {
@@ -5394,6 +5403,23 @@ export async function spawnAndCollect(input: {
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
+      if (settled) return;
+      if (input.stdoutMaxBytes !== undefined) {
+        stdoutBytes += Buffer.byteLength(chunk, "utf8");
+        if (stdoutBytes > input.stdoutMaxBytes) {
+          settled = true;
+          clearTimeout(timer);
+          child.kill("SIGKILL");
+          reject(
+            new Error(
+              "BROWSER_ENGINE_FAILURE: agent-browser output exceeded its bound.",
+            ),
+          );
+          return;
+        }
+        stdout += chunk;
+        return;
+      }
       stdout = appendBounded(stdout, chunk);
     });
     child.stderr?.on("data", (chunk: string) => {

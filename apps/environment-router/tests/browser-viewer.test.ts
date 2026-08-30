@@ -501,6 +501,28 @@ test("browser viewer control preserves a bounded oversized-frame rejection", asy
   });
 });
 
+test("browser viewer frame errors retain the ordinary 20 MiB control-response bound", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const input = viewerRequest({ nowSeconds: now, action: "frame" });
+  const capture = responseCapture();
+  await handleBrowserViewerControl({
+    request: incoming(input.body, input.token),
+    response: capture.response,
+    publicKey: environmentPublicKey,
+    environmentId: "env-1",
+    expectedAppName: "environment-app",
+    fetchImpl: (async () => new Response(
+      Buffer.alloc(20 * 1024 * 1024 + 1),
+      { status: 400 },
+    )) as typeof fetch,
+  });
+
+  assert.equal(capture.status, 503);
+  assert.deepEqual(JSON.parse(capture.body), {
+    error: { code: "BROWSER_VIEWER_UNAVAILABLE" },
+  });
+});
+
 test("Web-shaped Router requests preserve ticket and lease expiry from the real worker boundary", async () => {
   let viewerCalls = 0;
   const worker = startHostedBrowserWorker({

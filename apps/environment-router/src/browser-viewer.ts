@@ -151,7 +151,7 @@ export async function handleBrowserViewerControl(input: {
     try {
       const body = await readBoundedBrowserViewerWorkerBody(
         worker,
-        routedViewerAction === "frame",
+        false,
       );
       const parsed = JSON.parse(body.toString("utf8")) as {
         error?: { code?: unknown } | undefined;
