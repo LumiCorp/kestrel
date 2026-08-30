@@ -100,6 +100,13 @@ test("hosted personal Browser grants serialize one user and Environment revision
         (${secondProjectId}, ${organizationId}, ${environmentId}, ${userId}, 'Second Browser Project')
     `;
     await transaction`
+      INSERT INTO "project_members" (
+        "project_id", "organization_member_id", "role"
+      ) VALUES
+        (${projectId}, ${memberId}, 'owner'),
+        (${secondProjectId}, ${memberId}, 'owner')
+    `;
+    await transaction`
       INSERT INTO "project_apps" (
         "project_id", "app_key", "enabled", "added_by_user_id", "settings"
       ) VALUES
@@ -130,10 +137,11 @@ test("hosted personal Browser grants serialize one user and Environment revision
     await transaction`
       INSERT INTO "thread_turns" (
         "id", "organization_id", "thread_id", "author_user_id",
-        "requested_environment_id", "idempotency_key", "sequence",
-        "queue_ordinal", "status", "finished_at"
+        "approval_id", "approval_approved", "requested_environment_id",
+        "idempotency_key", "sequence", "queue_ordinal", "status", "finished_at"
       ) VALUES (
-        ${turnId}, ${organizationId}, ${threadId}, ${userId}, ${environmentId},
+        ${turnId}, ${organizationId}, ${threadId}, ${userId},
+        ${`browser-domain-approval-${suffix}`}, true, ${environmentId},
         ${`browser-domain-${suffix}`}, 1, 1, 'completed', ${now}
       )
     `;
@@ -317,18 +325,29 @@ test("hosted personal Browser grants serialize one user and Environment revision
     revision: "qa-none",
     target: null,
   } as const;
-  for (const candidateProjectId of [projectId, secondProjectId]) {
-    const authority = await browserDomains.resolveHostedBrowserDomainAuthority({
+  const narrowedAuthority =
+    await browserDomains.resolveHostedBrowserDomainAuthority({
       ...scope,
-      projectId: candidateProjectId,
+      projectId,
       qa,
     });
-    assert.ok(
-      authority.publicDomains.some(
-        (entry) => entry.canonicalDomain === "example.com",
-      ),
-    );
-  }
+  assert.equal(
+    narrowedAuthority.publicDomains.some(
+      (entry) => entry.canonicalDomain === "example.com",
+    ),
+    false,
+  );
+  const eligibleProjectAuthority =
+    await browserDomains.resolveHostedBrowserDomainAuthority({
+      ...scope,
+      projectId: secondProjectId,
+      qa,
+    });
+  assert.ok(
+    eligibleProjectAuthority.publicDomains.some(
+      (entry) => entry.canonicalDomain === "example.com",
+    ),
+  );
 
   const revoked = await browserDomains.revokeHostedBrowserPersonalDomain({
     ...scope,
