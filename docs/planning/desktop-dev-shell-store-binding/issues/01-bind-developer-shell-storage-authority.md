@@ -87,3 +87,5 @@ Use focused regression tests at the owning seams. Include a real smoke path for 
 - [Make endpoint removal prove cleanup completion](16-make-endpoint-removal-prove-cleanup.md)
 - [Drain in-flight requests before service cleanup](17-drain-inflight-requests-before-cleanup.md)
 - [Keep malformed request targets inside the service error boundary](18-keep-malformed-targets-inside-error-boundary.md)
+- [Cancel shutdown-blocking requests before replacement times out](19-cancel-shutdown-blocking-requests.md)
+- [Align the supervisor environment regression with private control stripping](20-align-supervisor-environment-regression.md)

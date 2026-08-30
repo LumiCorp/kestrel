@@ -143,6 +143,10 @@ test("real replacement keeps its proven endpoint until active-process cleanup co
         assert.equal(currentSocket.dev, originalSocket.dev);
         assert.equal(currentSocket.ino, originalSocket.ino);
         assert.equal(isPidRunning(childPid), true);
+        assert.deepEqual(
+          await first.performRequest("POST", "/service/shutdown"),
+          { status: "shutting_down" },
+        );
         observedShutdown = true;
         break;
       }
@@ -187,7 +191,9 @@ test("a partially delivered authenticated command cannot dispatch after shutdown
       timeoutMs: 2_000,
     });
     let request!: http.ClientRequest;
-    const responsePromise = new Promise<{ statusCode: number | undefined; body: string }>((resolve, reject) => {
+    const responsePromise = new Promise<
+      { statusCode: number | undefined; body: string } | { errorCode: string | undefined }
+    >((resolve) => {
       request = http.request({
         socketPath: service.socketPath,
         method: "POST",
@@ -203,7 +209,7 @@ test("a partially delivered authenticated command cannot dispatch after shutdown
         response.on("data", (chunk: string) => { responseBody += chunk; });
         response.on("end", () => resolve({ statusCode: response.statusCode, body: responseBody }));
       });
-      request.once("error", reject);
+      request.on("error", (error: NodeJS.ErrnoException) => resolve({ errorCode: error.code }));
       request.flushHeaders();
     });
     await new Promise((resolve) => setImmediate(resolve));
@@ -211,16 +217,102 @@ test("a partially delivered authenticated command cannot dispatch after shutdown
 
     const shutdown = await service.performRequest("POST", "/service/shutdown");
     assert.deepEqual(shutdown, { status: "shutting_down" });
-    const repeatedShutdown = await service.performRequest("POST", "/service/shutdown");
-    assert.deepEqual(repeatedShutdown, { status: "shutting_down" });
     request.end(body);
 
     const delayed = await responsePromise;
-    assert.equal(delayed.statusCode, 503);
-    assert.match(delayed.body, /service_shutting_down/u);
+    if ("errorCode" in delayed) {
+      assert.equal(delayed.errorCode, "ECONNRESET");
+    } else {
+      assert.equal(delayed.statusCode, 503);
+      assert.match(delayed.body, /service_shutting_down/u);
+    }
     await assert.rejects(readFile(markerPath, "utf8"), /ENOENT/u);
   } finally {
     await service.close();
+  }
+});
+
+test("an abandoned request body cannot outlive incompatible-service replacement", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "ldss-abandoned-body-"));
+  const firstBinding = { driver: "sqlite" as const, revision: "binding-first" };
+  const first = new LocalDevShellService(baseDir, {
+    storeBinding: firstBinding,
+    startupTimeoutMs: 10_000,
+    pollIntervalMs: 10,
+  });
+  const replacement = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-replacement" },
+    startupTimeoutMs: 10_000,
+    pollIntervalMs: 10,
+  });
+  let request: http.ClientRequest | undefined;
+  try {
+    await first.runCommand({ workspaceRoot: baseDir, command: "printf ready", timeoutMs: 2_000 });
+    request = http.request({
+      socketPath: first.socketPath,
+      method: "POST",
+      path: "/shell/run",
+      headers: {
+        ...buildDevShellRequestIdentityHeaders(firstBinding),
+        "content-type": "application/json",
+        "content-length": 4096,
+      },
+    });
+    request.on("error", () => {});
+    request.flushHeaders();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const result = await replacement.runCommand({
+      workspaceRoot: baseDir,
+      command: "printf replacement",
+      timeoutMs: 2_000,
+    });
+    assert.equal(result.status, "COMPLETED");
+    assert.equal(result.text, "replacement");
+  } finally {
+    request?.destroy();
+    await Promise.allSettled([first.close(), replacement.close()]);
+  }
+});
+
+test("shutdown interrupts an executing command before the replacement deadline", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "ldss-interrupt-command-"));
+  const markerPath = path.join(baseDir, "long-command-started");
+  const first = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-first" },
+    startupTimeoutMs: 10_000,
+    pollIntervalMs: 10,
+  });
+  const replacement = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-replacement" },
+    startupTimeoutMs: 10_000,
+    pollIntervalMs: 10,
+  });
+  try {
+    const longRun = first.runCommand({
+      workspaceRoot: baseDir,
+      command: `printf started > ${JSON.stringify(markerPath)}; sleep 32`,
+      timeoutMs: 60_000,
+    });
+    const markerDeadline = Date.now() + 5_000;
+    while (Date.now() < markerDeadline) {
+      if (await readFile(markerPath, "utf8").then(() => true).catch(() => false)) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(await readFile(markerPath, "utf8"), "started");
+
+    const result = await replacement.runCommand({
+      workspaceRoot: baseDir,
+      command: "printf replacement",
+      timeoutMs: 2_000,
+    });
+    assert.equal(result.status, "COMPLETED");
+    assert.equal(result.text, "replacement");
+    const interrupted = await longRun;
+    assert.equal(interrupted.status, "FAILED");
+    assert.match(interrupted.failureReason ?? "", /service shutdown interrupted/u);
+  } finally {
+    await Promise.allSettled([first.close(), replacement.close()]);
   }
 });
 

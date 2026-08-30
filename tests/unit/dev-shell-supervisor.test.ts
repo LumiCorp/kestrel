@@ -1590,7 +1590,7 @@ test("DevShellSupervisor reads transcript chunks on UTF-8 character boundaries",
   }
 });
 
-test("DevShellSupervisor exposes the core in-shell dev-shell client without leaking unrelated env", async () => {
+test("DevShellSupervisor exposes the core in-shell client without leaking service control env", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   const originalSocketPath = process.env.KESTREL_DEV_SHELL_SOCKET_PATH;
   const originalSecret = process.env.KESTREL_DEV_SHELL_TEST_SECRET;
@@ -1616,9 +1616,9 @@ test("DevShellSupervisor exposes the core in-shell dev-shell client without leak
 
     assert.equal(finalResult.status, "COMPLETED");
     assert.match(`${result.text}${finalResult.text}`, /kestrel_devshell/u);
-    assert.match(`${result.text}${finalResult.text}`, /\/tmp\/kestrel-dev-shell-test\.sock/u);
     assert.match(`${result.text}${finalResult.text}`, /\/opt\/kestrel-corepack/u);
     assert.match(`${result.text}${finalResult.text}`, /missing/u);
+    assert.doesNotMatch(`${result.text}${finalResult.text}`, /\/tmp\/kestrel-dev-shell-test\.sock/u);
     assert.doesNotMatch(`${result.text}${finalResult.text}`, /do-not-leak/u);
   } finally {
     if (originalSocketPath !== undefined) {

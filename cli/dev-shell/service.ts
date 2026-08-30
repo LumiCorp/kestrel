@@ -92,6 +92,7 @@ async function runService(): Promise<void> {
   }
 
   let shuttingDown = false;
+  const shutdownController = new AbortController();
   let activeRequests = 0;
   const drainWaiters = new Set<() => void>();
   const beginRequest = (allowDuringShutdown: boolean): (() => void) | undefined => {
@@ -126,8 +127,9 @@ async function runService(): Promise<void> {
       response,
       () => shutdown(),
       () => shuttingDown,
+      shutdownController.signal,
     ).catch((error) => {
-      if (response.headersSent === false) {
+      if (response.headersSent === false && response.destroyed === false) {
         writeJson(response, 500, {
           error: asRuntimeError(error),
         });
@@ -167,6 +169,7 @@ async function runService(): Promise<void> {
   let shutdownPromise: Promise<void> | undefined;
   const shutdown = () => {
     shuttingDown = true;
+    shutdownController.abort();
     shutdownPromise ??= (async () => {
       await waitForRequestDrain();
       await supervisor.close();
@@ -257,6 +260,7 @@ export async function handleRequest(
   response: http.ServerResponse,
   requestShutdown?: (() => Promise<void>) | undefined,
   isShuttingDown: (() => boolean) = () => false,
+  shutdownSignal?: AbortSignal | undefined,
 ): Promise<void> {
   const method = request.method ?? "GET";
   const url = new URL(request.url ?? "/", "http://unix");
@@ -315,16 +319,16 @@ export async function handleRequest(
   }
 
   if (method === "POST" && url.pathname === "/shell/run") {
-    const body = await readJson(request) as unknown as DevShellRunInput;
+    const body = await readJson(request, shutdownSignal) as unknown as DevShellRunInput;
     if (rejectShuttingDownRequest(response, isShuttingDown)) return;
-    writeJson(response, 200, await supervisor.runCommand(body));
+    writeJson(response, 200, await supervisor.runCommand(body, { shutdownSignal }));
     return;
   }
 
   if (method === "POST" && url.pathname === "/processes/start") {
-    const body = await readJson(request) as unknown as DevProcessStartInput;
+    const body = await readJson(request, shutdownSignal) as unknown as DevProcessStartInput;
     if (rejectShuttingDownRequest(response, isShuttingDown)) return;
-    writeJson(response, 200, await supervisor.startProcess(body));
+    writeJson(response, 200, await supervisor.startProcess(body, { shutdownSignal }));
     return;
   }
 
@@ -345,7 +349,7 @@ export async function handleRequest(
   );
   if (method === "POST" && retentionPromotionMatch !== null) {
     const processId = decodeURIComponent(retentionPromotionMatch[1]!);
-    const body = await readJson(request) as unknown as Omit<
+    const body = await readJson(request, shutdownSignal) as unknown as Omit<
       DevProcessRetentionPromoteInput,
       "processId"
     >;
@@ -376,14 +380,14 @@ export async function handleRequest(
   const action = match[2]!;
 
   if (method === "POST" && action === "retention") {
-    const body = await readJson(request) as unknown as Omit<DevProcessRetainInput, "processId">;
+    const body = await readJson(request, shutdownSignal) as unknown as Omit<DevProcessRetainInput, "processId">;
     if (rejectShuttingDownRequest(response, isShuttingDown)) return;
     writeJson(response, 200, await supervisor.retainProcess({ ...body, processId }));
     return;
   }
 
   if (method === "POST" && action === "write") {
-    const body = await readJson(request) as unknown as Omit<DevProcessWriteInput, "processId">;
+    const body = await readJson(request, shutdownSignal) as unknown as Omit<DevProcessWriteInput, "processId">;
     if (rejectShuttingDownRequest(response, isShuttingDown)) return;
     writeJson(response, 200, await supervisor.writeProcess({
       ...body,
@@ -393,38 +397,50 @@ export async function handleRequest(
   }
 
   if (method === "POST" && action === "write_and_read") {
-    const body = await readJson(request) as unknown as Omit<DevProcessWriteAndReadInput, "processId">;
+    const body = await readJson(request, shutdownSignal) as unknown as Omit<DevProcessWriteAndReadInput, "processId">;
     if (rejectShuttingDownRequest(response, isShuttingDown)) return;
-    writeJson(response, 200, await supervisor.writeAndReadProcess({
-      ...body,
-      processId,
-    }));
+    writeJson(
+      response,
+      200,
+      await supervisor.writeAndReadProcess(
+        { ...body, processId },
+        { shutdownSignal },
+      ),
+    );
     return;
   }
 
   if (method === "GET" && action === "read") {
-    writeJson(response, 200, await supervisor.readProcess({
-      processId,
-      ...(url.searchParams.get("waitMs") !== null
-        ? { waitMs: Number.parseInt(url.searchParams.get("waitMs") ?? "", 10) }
-        : {}),
-      ...(url.searchParams.get("maxBytes") !== null
-        ? { maxBytes: Number.parseInt(url.searchParams.get("maxBytes") ?? "", 10) }
-        : {}),
-      ...(url.searchParams.get("cursor") !== null
-        ? { cursor: Number.parseInt(url.searchParams.get("cursor") ?? "", 10) }
-        : {}),
-    }));
+    writeJson(
+      response,
+      200,
+      await supervisor.readProcess({
+        processId,
+        ...(url.searchParams.get("waitMs") !== null
+          ? { waitMs: Number.parseInt(url.searchParams.get("waitMs") ?? "", 10) }
+          : {}),
+        ...(url.searchParams.get("maxBytes") !== null
+          ? { maxBytes: Number.parseInt(url.searchParams.get("maxBytes") ?? "", 10) }
+          : {}),
+        ...(url.searchParams.get("cursor") !== null
+          ? { cursor: Number.parseInt(url.searchParams.get("cursor") ?? "", 10) }
+          : {}),
+      }, { shutdownSignal }),
+    );
     return;
   }
 
   if (method === "POST" && action === "stop") {
-    const body = await readJson(request) as unknown as Omit<DevProcessStopInput, "processId">;
+    const body = await readJson(request, shutdownSignal) as unknown as Omit<DevProcessStopInput, "processId">;
     if (rejectShuttingDownRequest(response, isShuttingDown)) return;
-    writeJson(response, 200, await supervisor.stopProcess({
-      ...body,
-      processId,
-    }));
+    writeJson(
+      response,
+      200,
+      await supervisor.stopProcess(
+        { ...body, processId },
+        { shutdownSignal },
+      ),
+    );
     return;
   }
 
@@ -455,16 +471,26 @@ function createHealthPayload(storeBinding: DevShellStoreBinding): DevShellHealth
   };
 }
 
-async function readJson(request: http.IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+async function readJson(
+  request: http.IncomingMessage,
+  signal?: AbortSignal | undefined,
+): Promise<Record<string, unknown>> {
+  const abortRequest = () => request.destroy(new Error("Developer shell service is shutting down."));
+  if (signal?.aborted === true) abortRequest();
+  signal?.addEventListener("abort", abortRequest, { once: true });
+  try {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    }
+    const raw = Buffer.concat(chunks).toString("utf8").trim();
+    if (raw.length === 0) {
+      return {};
+    }
+    return JSON.parse(raw) as Record<string, unknown>;
+  } finally {
+    signal?.removeEventListener("abort", abortRequest);
   }
-  const raw = Buffer.concat(chunks).toString("utf8").trim();
-  if (raw.length === 0) {
-    return {};
-  }
-  return JSON.parse(raw) as Record<string, unknown>;
 }
 
 function writeJson(
