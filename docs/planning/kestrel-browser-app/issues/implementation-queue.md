@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md)
+- [Complete exact Browser egress close cleanup](05h-complete-exact-egress-close-cleanup.md)
 - [Complete native authentication takeover](04c-complete-native-authentication-takeover.md)
 - [Reserve Gateway work before DNS](05c-reserve-gateway-work-before-dns.md)
 - [Proxy authorized QA WebSockets](05d-proxy-authorized-qa-websockets.md)
@@ -15,25 +15,25 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## In progress
 
-None.
+- [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md)
 
 ## Blocked
 
-- [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — review found missing packaged lifecycle-evidence proof, lost authority cleanup after transient Local Core failure, and no native authentication handoff; blocked on issues 04a-04d
-- [Wire Desktop viewer lifecycle evidence](04a-wire-desktop-viewer-lifecycle-evidence.md) — review found that the direct sink test does not prove packaged service wiring; blocked on issue 04d
+- [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — packaged lifecycle evidence is proven; blocked on authority-loss retry and native authentication issues 04b-04c
 - [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — blocked on issues 05a-05g and the remaining live Fly canaries
-- [Enforce Gateway-only Browser worker egress](05a-enforce-gateway-only-worker-egress.md) — review found an inbound reverse-channel bypass; blocked on issue 05e and live Fly proof
+- [Enforce Gateway-only Browser worker egress](05a-enforce-gateway-only-worker-egress.md) — input/output policy and routed image smoke are review-clean; blocked on live Fly proof
 - [Close the in-flight Gateway revocation race](05b-close-inflight-gateway-revocation-race.md) — review found pre-DNS lifecycle, plain QA WebSocket, and inert timeout gaps; blocked on issues 05c, 05d, and 05g
+- [Revoke egress after uncertain Browser close](05f-revoke-egress-after-uncertain-close.md) — review found broad pre-commit cleanup and throwable non-retryable exact teardown; blocked on issue 05h
 
 ## Implemented
 
-- [Prove packaged viewer evidence wiring](04d-prove-packaged-viewer-evidence-wiring.md) — production-composed lifecycle and durable-sink mutation proof are green; awaiting independent review
-- [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — local routed image smoke is green; awaiting independent review and live Fly 6PN proof
-- [Revoke egress after uncertain Browser close](05f-revoke-egress-after-uncertain-close.md) — exact success/unknown cleanup and drift proofs are green; awaiting independent review
+- [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 
 ## Done
 
+- [Prove packaged viewer evidence wiring](04d-prove-packaged-viewer-evidence-wiring.md)
+- [Wire Desktop viewer lifecycle evidence](04a-wire-desktop-viewer-lifecycle-evidence.md)
 - [Allow and remember personal browser domains](02-allow-and-remember-personal-browser-domains.md)
 - [Register the Browser App and stable tool contract](01-register-the-browser-app-and-tool-contract.md)
 - [Resolve Browser policy before approval](01a-resolve-browser-policy-before-approval.md)
