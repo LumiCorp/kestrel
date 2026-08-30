@@ -1923,6 +1923,44 @@ test("double persistence failure is observed while the failed child remains stop
   }
 });
 
+test("close retains failed ownership while terminating every captured child", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-close-all-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  const firstPidPath = path.join(workspaceRootPath, "first.pid");
+  const secondPidPath = path.join(workspaceRootPath, "second.pid");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const store = new FirstTerminalFailureDevShellStore();
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"));
+  await supervisor.initialize();
+  try {
+    const first = await supervisor.startProcess({
+      workspaceRoot,
+      command: `${JSON.stringify(process.execPath)} -e 'const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(firstPidPath)},String(process.pid));setInterval(()=>{},1000)'`,
+      yieldTimeMs: 50,
+    });
+    const second = await supervisor.startProcess({
+      workspaceRoot,
+      command: `${JSON.stringify(process.execPath)} -e 'const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(secondPidPath)},String(process.pid));setInterval(()=>{},1000)'`,
+      yieldTimeMs: 50,
+    });
+    assert.equal(first.status, "RUNNING");
+    assert.equal(second.status, "RUNNING");
+    await Promise.all([waitForFile(firstPidPath, 1000), waitForFile(secondPidPath, 1000)]);
+    const firstPid = Number.parseInt((await readFile(firstPidPath, "utf8")).trim(), 10);
+    const secondPid = Number.parseInt((await readFile(secondPidPath, "utf8")).trim(), 10);
+
+    await assert.rejects(supervisor.close(), /first terminal process write failed/u);
+    await Promise.all([waitForPidExit(firstPid, 2_000), waitForPidExit(secondPid, 2_000)]);
+    assert.equal(isPidRunning(firstPid), false);
+    assert.equal(isPidRunning(secondPid), false);
+    assert.equal(supervisor.hasActiveProcesses(), true);
+    await assert.rejects(supervisor.close(), /first terminal process write failed/u);
+  } finally {
+    await Promise.allSettled([supervisor.close()]);
+  }
+});
+
 async function createSupervisor(now?: () => Date): Promise<{
   supervisor: DevShellSupervisor;
   workspaceRoot: string;
@@ -2099,6 +2137,31 @@ class FailingInitialAndTerminalDevShellStore implements DevShellProcessStore {
     status?: DevShellProcessStatus[] | undefined;
   }): Promise<DevShellProcessRecord[]> {
     return Promise.resolve([]);
+  }
+}
+
+class FirstTerminalFailureDevShellStore implements DevShellProcessStore {
+  private readonly delegate = new InMemoryDevShellStore();
+  private firstProcessId: string | undefined;
+
+  async upsertProcess(record: DevShellProcessRecord): Promise<void> {
+    if (record.status === "RUNNING" && this.firstProcessId === undefined) {
+      this.firstProcessId = record.processId;
+    }
+    if (record.status !== "RUNNING" && record.processId === this.firstProcessId) {
+      throw new Error("first terminal process write failed");
+    }
+    await this.delegate.upsertProcess(record);
+  }
+
+  getProcess(processId: string): Promise<DevShellProcessRecord | null> {
+    return this.delegate.getProcess(processId);
+  }
+
+  listProcesses(input?: {
+    status?: DevShellProcessStatus[] | undefined;
+  }): Promise<DevShellProcessRecord[]> {
+    return this.delegate.listProcesses(input);
   }
 }
 

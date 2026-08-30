@@ -40,6 +40,7 @@ None.
 - [Terminate a starting child when shutdown interrupts initial persistence](22-terminate-starting-child-on-shutdown.md)
 - [Clean up children after initial process persistence failure](23-cleanup-child-after-initial-persistence-failure.md)
 - [Serialize startup evidence and own settlement failure](24-serialize-startup-evidence-and-own-settlement-failure.md)
+- [Retain every child through failed supervisor close](25-retain-every-child-through-failed-close.md)
 
 ## Done
 

@@ -135,8 +135,7 @@ export class DevShellSupervisor {
   async close(): Promise<void> {
     clearInterval(this.idleInterval);
     const processes = [...this.processes.values()];
-    this.processes.clear();
-    for (const process of processes) {
+    const results = await Promise.allSettled(processes.map(async (process) => {
       if (process.wallTimeout !== undefined) {
         clearTimeout(process.wallTimeout);
       }
@@ -148,6 +147,22 @@ export class DevShellSupervisor {
         await waitForProcessExit(process.child, 500);
       }
       await process.settlement;
+    }));
+    const failures = results.flatMap((result, index) =>
+      result.status === "rejected"
+        ? [{
+            operation: `settle_process_shutdown:${processes[index]!.record.processId}`,
+            message: errorMessage(result.reason),
+            error: result.reason,
+          }]
+        : []
+    );
+    if (failures.length > 0) {
+      const [primary, ...additional] = failures;
+      throw attachFailureEvidence(
+        primary!.error,
+        additional.map(({ operation, message }) => ({ operation, message })),
+      );
     }
     this.deliveredOffsets.clear();
     this.deliveredTerminalResults.clear();
