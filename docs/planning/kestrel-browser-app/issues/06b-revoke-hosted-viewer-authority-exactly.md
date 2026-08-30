@@ -31,12 +31,24 @@ depend on an expired user ticket granting a new action.
 - On disconnect or lease expiry, remove connection/lease/frame authority while
   preserving `human_control`. A newly authorized ticket can reconnect without
   inheriting a stale lease.
+- Do not swallow an established connection's failed or response-lost worker
+  disconnect. Preserve its exact cleanup operation as unknown until worker-side
+  expiry, exact cleanup, or durable Session fail-close proves convergence; emit
+  `disconnected` evidence only after that proof.
 - On Thread/Project/Environment access loss, actor change, App disablement,
   generation change, or worker loss, perform exact cleanup where possible and
   fail-close the Browser Session even when current viewer authorization no
   longer resolves.
 - Continue authority revalidation while a socket is connected even when frame
   capture is paused by backpressure.
+- If socket close precedes an outcome-unknown connect and its immediate exact
+  retry remains unknown, retain a server-authoritative cleanup-pending state.
+  Status and ticket minting must block a replacement connection until cleanup,
+  worker-side expiry, or terminal Session state clears it.
+- Project cleanup-pending through the existing viewer status endpoint. The web
+  client must keep reconnect blocked across polling, component remount, and page
+  reload, then clear the warning automatically only after server authority says
+  cleanup converged or the Session became terminal.
 - Add deterministic return, expiry, dropped-Web-function, authorization-loss,
   reconnect, stale-cleanup, and unknown-cleanup regressions.
 
@@ -44,6 +56,8 @@ depend on an expired user ticket granting a new action.
 
 - Return, close, expiry, disconnect, authorization loss, and worker loss leave no
   retained connection, lease, frame timer, or observable frame.
+- Failed established disconnect and close-before-connect-unknown remain visible
+  and retryable; they never degrade into ordinary disconnected availability.
 - Only explicit return changes `human_control` to `ready`; disconnect and expiry
   do not silently resume the agent.
 - Cleanup for one connection cannot revoke a replacement connection or Session

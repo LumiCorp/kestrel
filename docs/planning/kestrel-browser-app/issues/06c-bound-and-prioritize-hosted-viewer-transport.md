@@ -34,6 +34,10 @@ or input authority.
 - Treat an agent operation currently owning the Browser engine as transient
   frame unavailability. Wait or skip that frame; do not classify ordinary agent
   work as worker loss or terminate the Browser Session.
+- Recheck close intent after every awaited frame capture. A close waiting for
+  queued work must never be awaited from that same queued frame task; late frame
+  completion after close intent is discarded before send, and close settlement
+  must always reach exact disconnect.
 - Parse and validate every server message in the shared protocol before the web
   client uses it. Invalid JSON, unknown keys/types, invalid frame/state identity,
   or oversized data closes the socket and clears viewer state and frames.
