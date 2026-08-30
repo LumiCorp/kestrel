@@ -476,6 +476,9 @@ export class DesktopBrowserService implements BrowserServicePort {
     principalId: string;
     threadId: string;
     projectId: string;
+    sessionId?: string | undefined;
+    generation?: number | undefined;
+    connectionId?: string | undefined;
   }): Promise<DesktopBrowserViewerStateV1> {
     await this.#requireInitialized();
     return await this.#serialize(async () => {
@@ -501,6 +504,50 @@ export class DesktopBrowserService implements BrowserServicePort {
       }
       const runtime = matches[0]!;
       await this.#assertViewerAuthority(runtime, projectId);
+      const expectedIdentityPresent =
+        input.sessionId !== undefined ||
+        input.generation !== undefined ||
+        input.connectionId !== undefined;
+      if (expectedIdentityPresent) {
+        const expectedConnection =
+          input.connectionId === undefined
+            ? undefined
+            : runtime.viewerConnections.get(input.connectionId);
+        const expectedSessionTerminal =
+          input.sessionId !== undefined &&
+          input.generation !== undefined &&
+          runtime.session.sessionId !== input.sessionId &&
+          this.#sessions.some(
+            (session) =>
+              session.sessionId === input.sessionId &&
+              session.threadId === threadId &&
+              session.generation === input.generation &&
+              TERMINAL_STATES.has(session.state),
+          );
+        if (expectedSessionTerminal) {
+          return {
+            version: DESKTOP_BROWSER_VIEWER_STATE_VERSION,
+            available: false,
+            threadId,
+            projectId,
+          };
+        }
+        if (
+          input.sessionId === undefined ||
+          input.generation === undefined ||
+          input.connectionId === undefined ||
+          runtime.session.sessionId !== input.sessionId ||
+          runtime.session.generation !== input.generation ||
+          expectedConnection?.principalId !== principalId ||
+          expectedConnection.projectId !== projectId
+        ) {
+          this.#viewerEvent(runtime, "rejection", "connection_identity");
+          throw browserFailure(
+            "BROWSER_SESSION_LOST",
+            "The Browser viewer expected identity is no longer current.",
+          );
+        }
+      }
       const conflicting = [...runtime.viewerConnections.values()].find(
         (connection) => connection.principalId !== principalId,
       );
@@ -734,6 +781,18 @@ export class DesktopBrowserService implements BrowserServicePort {
     generation: number;
     connectionId: string;
   }): Promise<void> {
+    await this.#requireInitialized();
+    const active = this.#active.get(input.sessionId);
+    if (active === undefined) {
+      const terminal = this.#sessions.find(
+        (session) =>
+          session.sessionId === input.sessionId &&
+          session.threadId === input.threadId &&
+          session.generation === input.generation &&
+          TERMINAL_STATES.has(session.state),
+      );
+      if (terminal !== undefined) return;
+    }
     const { runtime } = await this.#requireViewerConnection(input);
     this.#viewerEvent(runtime, "authorization_loss", "principal_changed");
     await this.#requestTermination(runtime, "lost", "BROWSER_SESSION_LOST");

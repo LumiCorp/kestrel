@@ -548,6 +548,7 @@ test("Browser close commit revokes its exact egress binding for success and ever
     name: string;
     timeoutMs?: number;
     expectedStatus: number;
+    cleanupThrows?: boolean;
     commit: (signal: AbortSignal | null | undefined, operationId: string) => Promise<Response>;
   }> = [
     {
@@ -557,8 +558,23 @@ test("Browser close commit revokes its exact egress binding for success and ever
         Response.json({ committed: true, operationId }),
     },
     {
+      name: "success with cleanup failure",
+      expectedStatus: 200,
+      cleanupThrows: true,
+      commit: async (_signal, operationId) =>
+        Response.json({ committed: true, operationId }),
+    },
+    {
       name: "lost response",
       expectedStatus: 409,
+      commit: async () => {
+        throw new Error("commit response lost");
+      },
+    },
+    {
+      name: "lost response with cleanup failure",
+      expectedStatus: 409,
+      cleanupThrows: true,
       commit: async () => {
         throw new Error("commit response lost");
       },
@@ -592,6 +608,7 @@ test("Browser close commit revokes its exact egress binding for success and ever
     const sessionId = `browser-session-${scenario.name.replaceAll(" ", "-")}`;
     const generation = 7;
     const egress = new RecordingBrowserEgressRegistry();
+    egress.throwOnClose = scenario.cleanupThrows === true;
     let commitCalls = 0;
     const instruction = {
       version: "hosted_browser_relay_instruction_v1",
@@ -685,6 +702,126 @@ test("Browser close commit revokes its exact egress binding for success and ever
       assert.equal(duplicate.status, 409, scenario.name);
       assert.deepEqual(egress.closed, [{ sessionId, generation }], scenario.name);
       assert.equal(commitCalls, 1, scenario.name);
+    } finally {
+      relay.close();
+      await egress.closeAll();
+      fixture.config.stop();
+    }
+  }
+});
+
+test("stale Browser close invoke and completion cleanup cannot revoke a replacement generation", async () => {
+  for (const failurePoint of ["invoke", "complete"] as const) {
+    const fixture = await createRelayFixture();
+    const operationId = `call-close-stale-${failurePoint}`;
+    const sessionId = `browser-session-stale-${failurePoint}`;
+    const staleGeneration = 1;
+    const replacementGeneration = 2;
+    const egress = new ReplacementAwareBrowserEgressRegistry(
+      sessionId,
+      staleGeneration,
+    );
+    let workerInvokes = 0;
+    let unknownNotifications = 0;
+    const instruction = {
+      version: "hosted_browser_relay_instruction_v1",
+      operationId,
+      operation: "browser.close",
+      sessionId,
+      generation: staleGeneration,
+      capability: `private-${operationId}`,
+      machine: { appName: "kestrel-env-test", machineId: `machine-${operationId}` },
+    };
+    const relay = createServer((request, response) => void handleAppRelay({
+      request,
+      response,
+      config: fixture.config,
+      browserEgress: egress,
+      fetchImpl: (async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/accept")) return Response.json({
+          ...instruction,
+          phase: "accept",
+          prepared: { callId: operationId },
+          authority: { effectiveAllowlistRevision: "revision-1" },
+        });
+        if (path.endsWith("/invoke")) {
+          return Response.json({ ...instruction, phase: "invoke" });
+        }
+        if (path.endsWith("/complete") && failurePoint === "complete") {
+          throw new Error("completion response lost");
+        }
+        if (path.endsWith("/unknown")) unknownNotifications += 1;
+        return Response.json({
+          version: "browser_tool_result_v1",
+          operation: "browser.close",
+          outcome: "closed",
+        });
+      }) as typeof fetch,
+      browserWorkerFetchImpl: (async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/accept")) return Response.json({
+          accepted: true,
+          operationId,
+          sessionId,
+          generation: staleGeneration,
+          identity: {
+            sessionId,
+            generation: staleGeneration,
+            engineRevision: "v0.35.0",
+            chromeRevision: "152.0.7977.54",
+            imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+          },
+        });
+        workerInvokes += 1;
+        if (failurePoint === "invoke") throw new Error("invoke response lost");
+        return Response.json({
+          version: "browser_tool_result_v1",
+          operation: "browser.close",
+          outcome: "closed",
+        });
+      }) as typeof fetch,
+    }));
+    relay.listen(0, "127.0.0.1");
+    await once(relay, "listening");
+    const address = relay.address();
+    assert.ok(address && typeof address !== "string");
+    const base = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/close/auto/control`;
+    const headers = {
+      authorization: `Bearer ${fixture.workspaceToken}`,
+      "content-type": "application/json",
+    };
+    try {
+      const accepted = await fetch(`${base}/accept`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ prepared: { callId: operationId } }),
+      });
+      assert.equal(accepted.status, 200, failurePoint);
+      const receipt = await accepted.json();
+      egress.replace(replacementGeneration);
+
+      const invoked = await fetch(`${base}/invoke`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          prepared: { callId: operationId },
+          receipt,
+        }),
+      });
+      assert.equal(invoked.status, 409, failurePoint);
+      assert.equal(
+        (await invoked.json() as { error: { code: string } }).error.code,
+        "BROWSER_ACTION_OUTCOME_UNKNOWN",
+        failurePoint,
+      );
+      assert.deepEqual(egress.closed, [{
+        sessionId,
+        generation: staleGeneration,
+      }], failurePoint);
+      assert.equal(egress.activeGeneration, replacementGeneration, failurePoint);
+      assert.equal(workerInvokes, 1, failurePoint);
+      assert.equal(unknownNotifications, 1, failurePoint);
     } finally {
       relay.close();
       await egress.closeAll();
@@ -896,6 +1033,7 @@ test("app relay aborts its upstream request when the downstream closes", async (
 
 class RecordingBrowserEgressRegistry extends HostedBrowserEgressRegistry {
   readonly closed: Array<{ sessionId: string; generation: number }> = [];
+  throwOnClose = false;
 
   constructor() {
     super({
@@ -927,6 +1065,35 @@ class RecordingBrowserEgressRegistry extends HostedBrowserEgressRegistry {
     generation: number;
   }): Promise<boolean> {
     this.closed.push(structuredClone(input));
+    if (this.throwOnClose) throw new Error("injected exact cleanup failure");
+    return true;
+  }
+}
+
+class ReplacementAwareBrowserEgressRegistry extends RecordingBrowserEgressRegistry {
+  activeGeneration: number;
+  readonly #sessionId: string;
+
+  constructor(sessionId: string, generation: number) {
+    super();
+    this.#sessionId = sessionId;
+    this.activeGeneration = generation;
+  }
+
+  replace(generation: number): void {
+    this.activeGeneration = generation;
+  }
+
+  override async closeExact(input: {
+    sessionId: string;
+    generation: number;
+  }): Promise<boolean> {
+    this.closed.push(structuredClone(input));
+    if (
+      input.sessionId !== this.#sessionId ||
+      input.generation !== this.activeGeneration
+    ) return false;
+    this.activeGeneration = 0;
     return true;
   }
 }

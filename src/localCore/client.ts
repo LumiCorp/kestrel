@@ -247,6 +247,9 @@ export class LocalCoreClient {
     principalId: string;
     threadId: string;
     projectId: string;
+    sessionId?: string | undefined;
+    generation?: number | undefined;
+    connectionId?: string | undefined;
   }): Promise<DesktopBrowserViewerStateV1> {
     return readObjectField(
       await this.post("/v1/browser/viewer/connect", input),

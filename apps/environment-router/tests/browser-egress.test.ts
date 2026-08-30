@@ -142,6 +142,68 @@ test("hosted Browser gateway closes only the exact session generation and is ide
   }
 });
 
+test("hosted Browser gateway exact close retries throwing destructors without reviving credentials", async () => {
+  const upstreamSockets = new Set<Socket>();
+  const upstream = net.createServer((socket) => {
+    upstreamSockets.add(socket);
+    socket.once("close", () => upstreamSockets.delete(socket));
+  });
+  await listen(upstream);
+  const upstreamPort = (upstream.address() as AddressInfo).port;
+  const destroyAttempts = [0, 0];
+  let dialCount = 0;
+  const registry = new HostedBrowserEgressRegistry({
+    gatewayMachineId: "gateway-machine-1",
+    appName: "kestrel-env-test",
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    dial: () => {
+      const index = dialCount++;
+      const socket = net.connect({ host: "127.0.0.1", port: upstreamPort });
+      const destroy = socket.destroy.bind(socket);
+      socket.destroy = ((error?: Error) => {
+        destroyAttempts[index] = (destroyAttempts[index] ?? 0) + 1;
+        if (destroyAttempts[index] <= 2) {
+          throw new Error(`injected destroy failure ${index}`);
+        }
+        return destroy(error);
+      }) as Socket["destroy"];
+      return socket;
+    },
+  });
+  try {
+    const binding = await registry.install(session(authority));
+    const first = await openTunnel(binding, "www.example.com:443");
+    const second = await openTunnel(binding, "www.example.com:443");
+    const firstClientClosed = once(first.socket, "close");
+    const secondClientClosed = once(second.socket, "close");
+
+    assert.equal(await registry.closeExact({
+      sessionId: binding.sessionId,
+      generation: binding.generation,
+    }), true);
+    await Promise.all([firstClientClosed, secondClientClosed]);
+    assert.deepEqual(destroyAttempts, [2, 2]);
+    assert.match(
+      await connect(binding, "www.example.com:443", true),
+      /^HTTP\/1\.1 407/u,
+    );
+
+    assert.equal(await registry.closeExact({
+      sessionId: binding.sessionId,
+      generation: binding.generation,
+    }), true);
+    assert.deepEqual(destroyAttempts, [3, 3]);
+    assert.equal(await registry.closeExact({
+      sessionId: binding.sessionId,
+      generation: binding.generation,
+    }), false);
+  } finally {
+    for (const socket of upstreamSockets) socket.destroy();
+    await registry.closeAll();
+    await close(upstream);
+  }
+});
+
 test("hosted Browser gateway revision closes connections revoked by the new allowlist", async () => {
   const upstreamSockets = new Set<Socket>();
   const upstream = net.createServer((socket) => upstreamSockets.add(socket));

@@ -3335,9 +3335,9 @@ function parseDesktopBrowserViewerApiBody(
     "principalId",
     "threadId",
     "projectId",
-    ...(action === "connect"
-      ? []
-      : ["sessionId", "generation", "connectionId"]),
+    "sessionId",
+    "generation",
+    "connectionId",
     ...(action === "renew" || action === "return" || action === "input"
       ? ["leaseId"]
       : []),
@@ -3376,6 +3376,21 @@ function parseDesktopBrowserViewerApiBody(
       400,
       "DESKTOP_BROWSER_VIEWER_INVALID",
       "Desktop Browser viewer generation is invalid.",
+    );
+  }
+  if (
+    action === "connect" &&
+    [sessionId, generation, connectionId].some(
+      (identity) => identity !== undefined,
+    ) &&
+    [sessionId, generation, connectionId].some(
+      (identity) => identity === undefined,
+    )
+  ) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "DESKTOP_BROWSER_VIEWER_INVALID",
+      "Desktop Browser viewer expected identity must be exact when present.",
     );
   }
   return {

@@ -4,7 +4,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Complete exact Browser egress close cleanup](05h-complete-exact-egress-close-cleanup.md)
 - [Complete native authentication takeover](04c-complete-native-authentication-takeover.md)
 - [Reserve Gateway work before DNS](05c-reserve-gateway-work-before-dns.md)
 - [Proxy authorized QA WebSockets](05d-proxy-authorized-qa-websockets.md)
@@ -15,7 +14,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## In progress
 
-- [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md)
+None.
 
 ## Blocked
 
@@ -27,6 +26,8 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Implemented
 
+- [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md) — exact pending-loss retry, terminal-generation proof, and reconnect serialization are green; awaiting independent review
+- [Complete exact Browser egress close cleanup](05h-complete-exact-egress-close-cleanup.md) — exact all-phase cleanup and total retryable teardown proofs are green; awaiting independent review
 - [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 

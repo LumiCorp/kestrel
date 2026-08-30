@@ -69,7 +69,7 @@ type Connection = {
   destination: Destination;
   readonly active: boolean;
   attach(resource: TrackedResource, watchClose?: boolean): boolean;
-  close(): void;
+  close(): boolean;
   release(): void;
 };
 type ResolvedAddress = { address: string; family: 4 | 6 };
@@ -79,6 +79,7 @@ type RequestUpstream = (options: RequestOptions) => ClientRequest;
 
 export class HostedBrowserEgressRegistry {
   readonly #sessions = new Map<string, HostedBrowserGatewayProxy>();
+  readonly #retiring = new Map<string, HostedBrowserGatewayProxy>();
   readonly #server: Server;
   readonly #advertisedHost: string;
   readonly #resolve: ResolveAddresses;
@@ -186,30 +187,38 @@ export class HostedBrowserEgressRegistry {
 
   async close(sessionId: string): Promise<void> {
     const proxy = this.#sessions.get(sessionId);
+    if (!proxy) return;
     this.#sessions.delete(sessionId);
-    await proxy?.close();
+    await this.#retire(proxy);
   }
 
   async closeExact(input: {
     sessionId: string;
     generation: number;
   }): Promise<boolean> {
-    const proxy = this.#sessions.get(input.sessionId);
-    if (!proxy) return false;
-    try {
-      proxy.assertGeneration(input);
-    } catch {
-      return false;
+    const retirementKey = exactSessionKey(input);
+    let proxy = this.#retiring.get(retirementKey);
+    if (!proxy) {
+      proxy = this.#sessions.get(input.sessionId);
+      if (!proxy) return false;
+      try {
+        proxy.assertGeneration(input);
+      } catch {
+        return false;
+      }
+      this.#sessions.delete(input.sessionId);
     }
-    this.#sessions.delete(input.sessionId);
-    await proxy.close();
+    await this.#retire(proxy);
     return true;
   }
 
   async closeAll(): Promise<void> {
     const proxies = [...this.#sessions.values()];
     this.#sessions.clear();
-    await Promise.allSettled(proxies.map((proxy) => proxy.close()));
+    await Promise.allSettled(proxies.map((proxy) => this.#retire(proxy)));
+    await Promise.allSettled(
+      [...this.#retiring.values()].map((proxy) => this.#retire(proxy)),
+    );
     if (this.#closed) return;
     this.#closed = true;
     if (this.#listening) {
@@ -242,6 +251,15 @@ export class HostedBrowserEgressRegistry {
       if (proxy.authenticates(request)) return proxy;
     }
     return undefined;
+  }
+
+  async #retire(proxy: HostedBrowserGatewayProxy): Promise<void> {
+    const retirementKey = exactSessionKey(proxy.identity);
+    this.#retiring.set(retirementKey, proxy);
+    if (
+      await proxy.close() &&
+      this.#retiring.get(retirementKey) === proxy
+    ) this.#retiring.delete(retirementKey);
   }
 
   #prune(): void {
@@ -280,6 +298,12 @@ class HostedBrowserGatewayProxy {
 
   get revision() { return this.#binding.authority.effectiveAllowlistRevision; }
   get hardExpiresAt() { return this.#binding.hardExpiresAt; }
+  get identity() {
+    return {
+      sessionId: this.#binding.sessionId,
+      generation: this.#binding.generation,
+    };
+  }
 
   get launchBinding(): HostedBrowserGatewayProxyBindingV1 {
     if (this.#closed) throw new Error("BROWSER_SESSION_LOST");
@@ -306,7 +330,7 @@ class HostedBrowserGatewayProxy {
   }
 
   authenticates(request: IncomingMessage): boolean {
-    return authenticated(request, this.#credential.authorization);
+    return !this.#closed && authenticated(request, this.#credential.authorization);
   }
 
   assertSameSession(input: SessionBinding): void {
@@ -370,10 +394,13 @@ class HostedBrowserGatewayProxy {
     return closed;
   }
 
-  async close(): Promise<void> {
-    if (this.#closed) return;
+  async close(): Promise<boolean> {
     this.#closed = true;
-    for (const connection of [...this.#connections]) connection.close();
+    let complete = true;
+    for (const connection of [...this.#connections]) {
+      if (!connection.close()) complete = false;
+    }
+    return complete;
   }
 
   async connect(request: IncomingMessage, client: Duplex, head: Buffer) {
@@ -495,13 +522,16 @@ class HostedBrowserGatewayProxy {
     // Adoption must be able to invalidate the request before any allocator can
     // attach a socket and make the authorized operation observable upstream.
     let closed = false;
+    let closing = false;
     const attached = new Set<TrackedResource>();
     const connection: Connection = {
       destination,
       get active() { return !closed; },
       attach: (resource, watchClose = true) => {
         if (closed) {
-          resource.destroy();
+          attached.add(resource);
+          this.#connections.add(connection);
+          connection.close();
           return false;
         }
         if (attached.has(resource)) return true;
@@ -510,11 +540,21 @@ class HostedBrowserGatewayProxy {
         return true;
       },
       close: () => {
-        if (closed) return;
+        if (closing) return attached.size === 0;
         closed = true;
-        this.#connections.delete(connection);
-        for (const resource of attached) resource.destroy();
-        attached.clear();
+        closing = true;
+        for (const resource of [...attached]) {
+          try {
+            resource.destroy();
+            attached.delete(resource);
+          } catch {
+            // Retain failed resources so exact cleanup can safely retry without
+            // making the closed credential authenticating again.
+          }
+        }
+        closing = false;
+        if (attached.size === 0) this.#connections.delete(connection);
+        return attached.size === 0;
       },
       release: () => {
         if (closed) return;
@@ -527,6 +567,10 @@ class HostedBrowserGatewayProxy {
     for (const resource of resources) connection.attach(resource);
     return connection;
   }
+}
+
+function exactSessionKey(input: { sessionId: string; generation: number }): string {
+  return JSON.stringify([input.sessionId, input.generation]);
 }
 
 function validateSessionBinding(input: SessionBinding) {

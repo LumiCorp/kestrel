@@ -516,10 +516,53 @@ test("Desktop viewer authority loss and engine loss terminate human control inst
       projectId: "project-1",
     }),
   );
+  await assert.doesNotReject(
+    second.service.connectViewer({
+      principalId: "desktop-main-2",
+      threadId: "thread-1",
+      projectId: "project-1",
+      sessionId: secondViewer.sessionId,
+      generation: secondViewer.generation,
+      connectionId: secondViewer.connectionId,
+    }),
+  );
+  await assert.rejects(
+    second.service.connectViewer({
+      principalId: "desktop-main-2",
+      threadId: "thread-1",
+      projectId: "project-1",
+      sessionId: secondViewer.sessionId,
+      generation: secondViewer.generation + 1,
+      connectionId: secondViewer.connectionId,
+    }),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
   await second.service.loseViewerAuthority({
     ...secondViewer,
     principalId: "desktop-main-2",
   });
+  await assert.doesNotReject(
+    second.service.loseViewerAuthority({
+      ...secondViewer,
+      principalId: "desktop-main-2",
+    }),
+  );
+  await assert.rejects(
+    second.service.loseViewerAuthority({
+      ...secondViewer,
+      principalId: "desktop-main-2",
+      generation: secondViewer.generation + 1,
+    }),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
+  await assert.rejects(
+    second.service.loseViewerAuthority({
+      ...secondViewer,
+      principalId: "desktop-main-2",
+      threadId: "thread-drifted",
+    }),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
   assert.equal(second.engine.closed.length, 1);
   assert.ok(
     secondViewerEvents.some((event) => event.name === "authorization_loss"),
@@ -532,6 +575,41 @@ test("Desktop viewer authority loss and engine loss terminate human control inst
     ),
     hasCode("BROWSER_SESSION_LOST"),
   );
+  const replacementSession = await openSession(second.service);
+  const terminalProof = await second.service.connectViewer({
+    principalId: "desktop-main-2",
+    threadId: "thread-1",
+    projectId: "project-1",
+    sessionId: secondViewer.sessionId,
+    generation: secondViewer.generation,
+    connectionId: secondViewer.connectionId,
+  });
+  assert.equal(terminalProof.available, false);
+  const replacementViewer = requireAvailableViewer(
+    await second.service.connectViewer({
+      principalId: "desktop-main-2",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  assert.equal(replacementViewer.sessionId, replacementSession);
+  await second.service.close();
+  const restarted = await createFixture({ homePath: second.homePath });
+  await assert.doesNotReject(
+    restarted.service.loseViewerAuthority({
+      ...secondViewer,
+      principalId: "desktop-main-2",
+    }),
+  );
+  await assert.rejects(
+    restarted.service.loseViewerAuthority({
+      ...secondViewer,
+      principalId: "desktop-main-2",
+      generation: secondViewer.generation + 1,
+    }),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
+  await restarted.service.close();
 });
 
 test("operator open reuses the Thread Session across allowed destinations", async () => {

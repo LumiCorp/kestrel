@@ -118,6 +118,11 @@ import {
   LinkPreviewService,
   parseDesktopLinkPreviewInput,
 } from "./linkPreview.js";
+import {
+  DesktopBrowserViewerAuthorityCoordinator,
+  type DesktopBrowserViewerAuthorityLossReason,
+  type DesktopBrowserViewerPrincipal,
+} from "./browserViewerAuthority.js";
 import type { DatabaseUrlSource } from "../../../src/runtime/databasePreflight.js";
 import type {
   DesktopBootState,
@@ -415,17 +420,16 @@ let desktopSettings: DesktopSettings = createDefaultDesktopSettings();
 let browserPersonalDomainService:
   | DesktopBrowserPersonalDomainService
   | undefined;
-let desktopBrowserViewerPrincipal:
-  | {
-      senderId: number;
-      principalId: string;
-      threadId: string;
-      projectId: string;
-      sessionId: string;
-      generation: number;
-      connectionId: string;
-    }
-  | undefined;
+const desktopBrowserViewerAuthority =
+  new DesktopBrowserViewerAuthorityCoordinator({
+    async loseAuthority(principal) {
+      await requireLocalCoreConnectionManager().executeOnce(async (client) =>
+        await client.loseDesktopBrowserViewerAuthority(
+          localCoreDesktopBrowserViewerIdentity(principal),
+        ),
+      );
+    },
+  });
 const desktopBrowserPersonalRevisionAdoptionCoordinator: DesktopBrowserPersonalRevisionAdoptionCoordinator =
   {
     async adoptPersonalRevision(input) {
@@ -637,6 +641,10 @@ async function startDesktopServices(): Promise<void> {
       localCoreStatus = connection.status;
       currentDatabaseUrl = connection.status.databaseUrl;
       subscribeToCoreProjectRuns(connection.client);
+      void desktopBrowserViewerAuthority.retryPending().catch(() => {
+        // The exact pending viewer loss remains retained for the next Local
+        // Core recovery or Desktop cleanup pass.
+      });
     },
     onStateChanged(state) {
       localCoreConnectionState = state;
@@ -848,6 +856,11 @@ function createMainDesktopShutdownPreparation(): DesktopShutdownPreparation {
   return createDesktopShutdownPreparation({
     stopProjectRuns: stopCoreProjectRuns,
     closeAdapters: async () => {
+      await loseCurrentDesktopBrowserViewerAuthority(
+        "desktop_stopped",
+        undefined,
+        false,
+      );
       unsubscribeProjectRunEvents?.();
       await Promise.all(
         [...desktopRunnerAdapters.values()].map(
@@ -1033,7 +1046,10 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
   );
   ensureMediaPermissionHandler(window);
   window.on("closed", () => {
-    void loseCurrentDesktopBrowserViewerAuthority(window.webContents.id);
+    void loseCurrentDesktopBrowserViewerAuthority(
+      "window_closed",
+      window.webContents.id,
+    );
     clearDesktopRendererBootstrapTimeout();
     if (mainWindow === window) {
       mainWindow = undefined;
@@ -1049,7 +1065,10 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
     },
   );
   window.webContents.on("render-process-gone", () => {
-    void loseCurrentDesktopBrowserViewerAuthority(window.webContents.id);
+    void loseCurrentDesktopBrowserViewerAuthority(
+      "renderer_crashed",
+      window.webContents.id,
+    );
     if (desktopAppQuitting || rendererFallbackActive) {
       return;
     }
@@ -1064,7 +1083,10 @@ async function loadDesktopRenderer(
   window: BrowserWindow,
   config: ReturnType<typeof resolveDesktopPathConfig>,
 ): Promise<void> {
-  await loseCurrentDesktopBrowserViewerAuthority(window.webContents.id);
+  await loseCurrentDesktopBrowserViewerAuthority(
+    "renderer_restarted",
+    window.webContents.id,
+  );
   rendererBootstrapGeneration += 1;
   const generation = rendererBootstrapGeneration;
   rendererFallbackActive = false;
@@ -1419,11 +1441,11 @@ function exactDesktopBrowserViewerBinding(
 function requireCurrentDesktopBrowserViewerPrincipal(
   event: IpcMainInvokeEvent,
   request: DesktopBrowserViewerBindingV1,
-): NonNullable<typeof desktopBrowserViewerPrincipal> {
+): DesktopBrowserViewerPrincipal {
   requireCurrentMainWindowIpcSender(event);
   assertDesktopBrowserViewerAppEnabled();
   exactDesktopBrowserViewerBinding(request);
-  const principal = desktopBrowserViewerPrincipal;
+  const principal = desktopBrowserViewerAuthority.current();
   if (
     principal === undefined ||
     principal.senderId !== event.sender.id ||
@@ -1448,7 +1470,7 @@ function assertDesktopBrowserViewerAppEnabled(): void {
       "built_in.browser",
     )
   ) {
-    void loseCurrentDesktopBrowserViewerAuthority();
+    void loseCurrentDesktopBrowserViewerAuthority("app_disabled");
     throw createDesktopError({
       code: "desktop.browser_viewer_app_disabled",
       message: "The Browser App is disabled.",
@@ -1457,7 +1479,7 @@ function assertDesktopBrowserViewerAppEnabled(): void {
 }
 
 function localCoreDesktopBrowserViewerIdentity(
-  principal: NonNullable<typeof desktopBrowserViewerPrincipal>,
+  principal: DesktopBrowserViewerPrincipal,
 ) {
   return {
     principalId: principal.principalId,
@@ -1470,26 +1492,15 @@ function localCoreDesktopBrowserViewerIdentity(
 }
 
 async function loseCurrentDesktopBrowserViewerAuthority(
+  reason: DesktopBrowserViewerAuthorityLossReason,
   expectedSenderId?: number,
+  bestEffort = true,
 ): Promise<void> {
-  const principal = desktopBrowserViewerPrincipal;
-  if (
-    principal === undefined ||
-    (expectedSenderId !== undefined && principal.senderId !== expectedSenderId)
-  ) {
-    return;
-  }
-  desktopBrowserViewerPrincipal = undefined;
-  try {
-    await requireLocalCoreConnectionManager().executeOnce(async (client) =>
-      await client.loseDesktopBrowserViewerAuthority(
-        localCoreDesktopBrowserViewerIdentity(principal),
-      ),
-    );
-  } catch {
-    // Renderer loss is best-effort here; Local Core also destroys sessions on
-    // account, policy, engine, and process authority loss.
-  }
+  await desktopBrowserViewerAuthority.loseCurrent({
+    reason,
+    ...(expectedSenderId === undefined ? {} : { expectedSenderId }),
+    bestEffort,
+  });
 }
 
 function desktopBrowserViewerLeaseId(value: unknown): string {
@@ -1520,7 +1531,7 @@ async function requireAvailableDesktopBrowserViewerThread(
       }),
   });
   if (authority.status === "missing") {
-    await loseCurrentDesktopBrowserViewerAuthority();
+    await loseCurrentDesktopBrowserViewerAuthority("thread_unavailable");
     throw createDesktopError({
       code: "desktop.browser_viewer_thread_unavailable",
       message: "The Browser viewer Thread is unavailable.",
@@ -1900,41 +1911,51 @@ function registerIpcHandlers(
           message: "Browser viewer connection starts from a Thread and Project.",
         });
       }
-      const current = desktopBrowserViewerPrincipal;
-      if (
-        current !== undefined &&
-        (current.senderId !== event.sender.id ||
-          current.threadId !== request.threadId ||
-          current.projectId !== request.projectId)
-      ) {
-        await loseCurrentDesktopBrowserViewerAuthority(current.senderId);
-      }
       const principalId = desktopBrowserViewerPrincipalId(event.sender.id);
-      const viewer = await requireLocalCoreConnectionManager().executeOnce(
-        async (client) =>
-          await client.connectDesktopBrowserViewer({
-            principalId,
-            threadId: request.threadId,
-            projectId: request.projectId,
-          }),
-      );
-      if (
-        viewer.available &&
-        viewer.sessionId !== undefined &&
-        viewer.generation !== undefined &&
-        viewer.connectionId !== undefined
-      ) {
-        desktopBrowserViewerPrincipal = {
-          senderId: event.sender.id,
-          principalId,
-          threadId: request.threadId,
-          projectId: request.projectId,
-          sessionId: viewer.sessionId,
-          generation: viewer.generation,
-          connectionId: viewer.connectionId,
-        };
-      }
-      return viewer;
+      return await desktopBrowserViewerAuthority.connect({
+        senderId: event.sender.id,
+        principalId,
+        threadId: request.threadId,
+        projectId: request.projectId,
+        connect: async (expected) => {
+          const viewer =
+            await requireLocalCoreConnectionManager().executeOnce(
+              async (client) =>
+                await client.connectDesktopBrowserViewer({
+                  principalId,
+                  threadId: request.threadId,
+                  projectId: request.projectId,
+                  ...(expected === undefined
+                    ? {}
+                    : {
+                        sessionId: expected.sessionId,
+                        generation: expected.generation,
+                        connectionId: expected.connectionId,
+                      }),
+                }),
+            );
+          return {
+            value: viewer,
+            previousSessionTerminal: viewer.available === false,
+            ...(viewer.available &&
+            viewer.sessionId !== undefined &&
+            viewer.generation !== undefined &&
+            viewer.connectionId !== undefined
+              ? {
+                  principal: {
+                    senderId: event.sender.id,
+                    principalId,
+                    threadId: request.threadId,
+                    projectId: request.projectId,
+                    sessionId: viewer.sessionId,
+                    generation: viewer.generation,
+                    connectionId: viewer.connectionId,
+                  },
+                }
+              : {}),
+          };
+        },
+      });
     },
   );
   ipcMain.handle(
@@ -2037,11 +2058,14 @@ function registerIpcHandlers(
         runnerTransport,
         request.threadId,
       );
-      desktopBrowserViewerPrincipal = undefined;
-      await requireLocalCoreConnectionManager().executeOnce(
-        async (client) =>
-          await client.disconnectDesktopBrowserViewer(
-            localCoreDesktopBrowserViewerIdentity(principal),
+      await desktopBrowserViewerAuthority.releaseCurrent(
+        principal,
+        async () =>
+          await requireLocalCoreConnectionManager().executeOnce(
+            async (client) =>
+              await client.disconnectDesktopBrowserViewer(
+                localCoreDesktopBrowserViewerIdentity(principal),
+              ),
           ),
       );
     },
@@ -2058,11 +2082,14 @@ function registerIpcHandlers(
         runnerTransport,
         request.threadId,
       );
-      desktopBrowserViewerPrincipal = undefined;
-      await requireLocalCoreConnectionManager().executeOnce(
-        async (client) =>
-          await client.closeDesktopBrowserViewerSession(
-            localCoreDesktopBrowserViewerIdentity(principal),
+      await desktopBrowserViewerAuthority.releaseCurrent(
+        principal,
+        async () =>
+          await requireLocalCoreConnectionManager().executeOnce(
+            async (client) =>
+              await client.closeDesktopBrowserViewerSession(
+                localCoreDesktopBrowserViewerIdentity(principal),
+              ),
           ),
       );
     },
@@ -6495,9 +6522,11 @@ async function refreshDesktopCoreState(): Promise<void> {
   const response = await requireLocalCoreConnectionManager().executeIdempotent(
     async (client) => await client.desktopSettings<Partial<DesktopSettings>>(),
   );
-  desktopSettings = normalizeDesktopSettings(response.settings, {
-    fallbackModelPolicy: response.modelPolicy,
-  });
+  adoptDesktopSettings(
+    normalizeDesktopSettings(response.settings, {
+      fallbackModelPolicy: response.modelPolicy,
+    }),
+  );
   desktopModelPolicy = response.modelPolicy;
   projectFileIndex.retainRoots(
     desktopSettings.projects.map((project) => project.path),
@@ -6597,9 +6626,11 @@ async function saveDesktopCoreSettings(
       });
     },
   );
-  desktopSettings = normalizeDesktopSettings(response.settings, {
-    fallbackModelPolicy: response.modelPolicy,
-  });
+  adoptDesktopSettings(
+    normalizeDesktopSettings(response.settings, {
+      fallbackModelPolicy: response.modelPolicy,
+    }),
+  );
   desktopModelPolicy = response.modelPolicy;
   projectFileIndex.retainRoots(
     desktopSettings.projects.map((project) => project.path),
@@ -6610,14 +6641,31 @@ async function refreshDesktopCoreSettingsSnapshot(): Promise<DesktopSettings> {
   const response = await requireLocalCoreConnectionManager().executeIdempotent(
     async (client) => await client.desktopSettings<Partial<DesktopSettings>>(),
   );
-  desktopSettings = normalizeDesktopSettings(response.settings, {
-    fallbackModelPolicy: response.modelPolicy,
-  });
+  adoptDesktopSettings(
+    normalizeDesktopSettings(response.settings, {
+      fallbackModelPolicy: response.modelPolicy,
+    }),
+  );
   desktopModelPolicy = response.modelPolicy;
   projectFileIndex.retainRoots(
     desktopSettings.projects.map((project) => project.path),
   );
   return desktopSettings;
+}
+
+function adoptDesktopSettings(settings: DesktopSettings): void {
+  const browserWasEnabled = getEffectiveDesktopEnabledAppIds(
+    desktopSettings,
+  ).includes("built_in.browser");
+  desktopSettings = settings;
+  if (
+    browserWasEnabled &&
+    !getEffectiveDesktopEnabledAppIds(desktopSettings).includes(
+      "built_in.browser",
+    )
+  ) {
+    void loseCurrentDesktopBrowserViewerAuthority("app_disabled");
+  }
 }
 
 async function applyDesktopModelCapabilityConfiguration(

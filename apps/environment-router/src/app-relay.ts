@@ -815,7 +815,7 @@ async function handleBrowserInvokeRelay(input: {
   } catch {
     browserRelayReceipts.delete(receiptId);
     await notifyBrowserUnknown(input, publicBody, privateReceipt).catch(() => {});
-    await input.browserEgress?.close(retained.instruction.sessionId).catch(() => {});
+    await input.browserEgress?.closeExact(retained.identity).catch(() => {});
     writeError(input.response, 409, "BROWSER_ACTION_OUTCOME_UNKNOWN");
     return;
   }
@@ -825,7 +825,7 @@ async function handleBrowserInvokeRelay(input: {
       return writeFetchResponse(input.response, worker);
     }
     await notifyBrowserUnknown(input, publicBody, privateReceipt).catch(() => {});
-    await input.browserEgress?.close(retained.instruction.sessionId).catch(() => {});
+    await input.browserEgress?.closeExact(retained.identity).catch(() => {});
     writeError(input.response, 409, "BROWSER_ACTION_OUTCOME_UNKNOWN");
     return;
   }
@@ -862,7 +862,7 @@ async function handleBrowserInvokeRelay(input: {
   } catch {
     browserRelayReceipts.delete(receiptId);
     await notifyBrowserUnknown(input, publicBody, privateReceipt).catch(() => {});
-    await input.browserEgress?.close(retained.instruction.sessionId).catch(() => {});
+    await input.browserEgress?.closeExact(retained.identity).catch(() => {});
     writeError(input.response, 409, "BROWSER_ACTION_OUTCOME_UNKNOWN");
     return;
   }
@@ -939,7 +939,7 @@ async function handleBrowserCommitRelay(
     // lost or malformed. The caller must receive an unknown outcome, not a retry.
   } finally {
     if (retained.instruction.operation === "browser.close") {
-      await input.browserEgress?.closeExact(retained.identity);
+      await input.browserEgress?.closeExact(retained.identity).catch(() => {});
     }
   }
   if (!committed) {
