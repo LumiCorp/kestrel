@@ -16,7 +16,7 @@ export interface DevShellRequestIdentity {
 }
 
 export function buildDevShellRequestIdentityHeaders(
-  binding: DevShellStoreBinding,
+  binding: Pick<DevShellStoreBinding, "driver" | "revision">,
 ): OutgoingHttpHeaders {
   return {
     [DEV_SHELL_REQUEST_PROTOCOL_HEADER]: String(

@@ -1,261 +1,202 @@
 import { randomUUID } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  open,
-  readlink,
-  rename,
-  rm,
-  symlink,
-} from "node:fs/promises";
+import { lstat, mkdir, readdir, readlink, rename, rm, symlink } from "node:fs/promises";
 import path from "node:path";
 
-const BOOTSTRAP_AUTHORITY_VERSION = "kestrel-dev-shell-bootstrap-v1";
-
-interface BootstrapAuthorityIdentity {
-  device: number;
-  inode: number;
-  target: string;
-}
+const AUTHORITY_VERSION = "kestrel-dev-shell-bootstrap-v2";
+const OWNER_ENTRY = "owner";
+const NEXT_OWNER_ENTRY = "next-owner";
+export type DevShellBootstrapAuthorityFaultPhase = "publication_prepared" | "cleanup_claimed" | "cleanup_quarantined" | "transfer_claimed" | "transfer_prepared";
+type FaultHook = (phase: DevShellBootstrapAuthorityFaultPhase) => void | Promise<void>;
+interface Owner { pid: number; token: string; evidence: string }
+interface NormalState { kind: "normal"; owner: Owner }
+interface ClaimedState { kind: "claimed"; owner: Owner; claimant: Owner; claimEntry: string; nextOwner?: Owner | undefined }
+type State = { kind: "missing" } | { kind: "invalid" } | NormalState | ClaimedState;
 
 export interface DevShellBootstrapAuthorityLease {
-  ownerPid: number;
-  ownerToken: string;
-  release(): Promise<void>;
+  readonly ownerPid: number;
+  readonly ownerToken: string;
+  transferTo(input: { ownerPid: number; ownerToken: string; faultHook?: FaultHook | undefined }): Promise<boolean>;
+  release(input?: { faultHook?: FaultHook | undefined }): Promise<boolean>;
 }
-
 export type DevShellBootstrapAuthorityResult =
-  | {
-      status: "acquired";
-      lease: DevShellBootstrapAuthorityLease;
-    }
-  | {
-      status: "unavailable";
-      reason: "invalid_owner_evidence" | "wait_timeout";
-      ownerPid?: number | undefined;
-    };
+  | { status: "acquired"; lease: DevShellBootstrapAuthorityLease }
+  | { status: "unavailable"; reason: "invalid_owner_evidence" | "wait_timeout"; ownerPid?: number | undefined };
 
-export function createDevShellBootstrapAuthorityToken(): string {
-  return randomUUID();
+export function createDevShellBootstrapAuthorityToken(): string { return randomUUID(); }
+
+export function parseDevShellBootstrapAuthorityEvidence(evidence: string): { pid: number; token: string } | undefined {
+  const match = evidence.match(/^kestrel-dev-shell-bootstrap-v2:([1-9][0-9]*):([A-Za-z0-9_-]+)$/u);
+  if (match === null) return undefined;
+  const pid = Number(match[1]);
+  if (!Number.isSafeInteger(pid) || pid <= 0 || String(pid) !== match[1]) return undefined;
+  return { pid, token: match[2]! };
 }
 
 export async function acquireDevShellBootstrapAuthority(input: {
-  authorityPath: string;
-  ownerToken: string;
-  timeoutMs: number;
-  pollIntervalMs: number;
-  ownerPid?: number | undefined;
+  authorityPath: string; ownerToken: string; timeoutMs: number; pollIntervalMs: number;
+  ownerPid?: number | undefined; faultHook?: FaultHook | undefined;
 }): Promise<DevShellBootstrapAuthorityResult> {
-  const ownerPid = input.ownerPid ?? process.pid;
-  const target = formatOwnerEvidence(ownerPid, input.ownerToken);
+  const claimant = createOwner(input.ownerPid ?? process.pid, input.ownerToken);
+  if (claimant === undefined) return { status: "unavailable", reason: "invalid_owner_evidence" };
   const deadline = Date.now() + input.timeoutMs;
   await mkdir(path.dirname(input.authorityPath), { recursive: true });
-
   while (true) {
-    try {
-      await mkdir(input.authorityPath);
-      await symlink(target, ownerEvidencePath(input.authorityPath));
-      const identity = await readAuthorityIdentity(input.authorityPath);
-      if (identity === undefined || identity.target !== target) {
-        return { status: "unavailable", reason: "invalid_owner_evidence" };
-      }
-      return {
-        status: "acquired",
-        lease: {
-          ownerPid,
-          ownerToken: input.ownerToken,
-          release: async () => {
-            await removeAuthorityIfOwned(input.authorityPath, identity);
-          },
-        },
-      };
-    } catch (error) {
-      if (readNodeErrorCode(error) !== "EEXIST") {
-        throw error;
-      }
-    }
-
-    const existing = await readAuthorityIdentity(input.authorityPath);
-    if (existing === undefined) {
-      const authorityPathKind = await readAuthorityPathKind(
-        input.authorityPath,
-      );
-      if (authorityPathKind === "invalid") {
-        return { status: "unavailable", reason: "invalid_owner_evidence" };
-      }
-      if (authorityPathKind === "directory" && Date.now() >= deadline) {
-        return { status: "unavailable", reason: "invalid_owner_evidence" };
-      }
-      if (authorityPathKind === "directory") {
-        await new Promise((resolve) =>
-          setTimeout(resolve, input.pollIntervalMs),
-        );
-      }
+    const state = await readState(input.authorityPath);
+    if (state.kind === "missing") {
+      if (await publish(input.authorityPath, claimant, input.faultHook)) return createLease(input.authorityPath, claimant);
       continue;
     }
-    const owner = parseOwnerEvidence(existing.target);
-    if (owner === undefined) {
-      return { status: "unavailable", reason: "invalid_owner_evidence" };
-    }
-    if (isPidRunning(owner.pid) === false) {
-      const removed = await removeAuthorityIfOwned(
-        input.authorityPath,
-        existing,
-      );
-      if (removed === false) {
-        if (Date.now() >= deadline) {
-          return {
-            status: "unavailable",
-            reason: "invalid_owner_evidence",
-            ownerPid: owner.pid,
-          };
-        }
-        await new Promise((resolve) =>
-          setTimeout(resolve, input.pollIntervalMs),
-        );
+    if (state.kind === "invalid") return { status: "unavailable", reason: "invalid_owner_evidence" };
+    if (state.kind === "claimed") {
+      if (!isPidRunning(state.claimant.pid)) {
+        await recoverClaim(input.authorityPath, state, claimant);
+        continue;
       }
+      if (Date.now() >= deadline) return { status: "unavailable", reason: "wait_timeout", ownerPid: state.claimant.pid };
+      await wait(input.pollIntervalMs); continue;
+    }
+    if (!isPidRunning(state.owner.pid)) {
+      if (await claim(input.authorityPath, state.owner, claimant)) await quarantine(input.authorityPath, claimant);
       continue;
     }
-    if (Date.now() >= deadline) {
-      return {
-        status: "unavailable",
-        reason: "wait_timeout",
-        ownerPid: owner.pid,
-      };
-    }
-    await new Promise((resolve) => setTimeout(resolve, input.pollIntervalMs));
+    if (Date.now() >= deadline) return { status: "unavailable", reason: "wait_timeout", ownerPid: state.owner.pid };
+    await wait(input.pollIntervalMs);
   }
 }
 
-async function readAuthorityPathKind(
-  authorityPath: string,
-): Promise<"missing" | "directory" | "invalid"> {
-  try {
-    const stats = await lstat(authorityPath);
-    return stats.isDirectory() ? "directory" : "invalid";
-  } catch (error) {
-    if (readNodeErrorCode(error) === "ENOENT") {
-      return "missing";
-    }
+export async function verifyDevShellBootstrapAuthority(input: { authorityPath: string; ownerToken: string; ownerPid?: number | undefined }): Promise<boolean> {
+  const expected = createOwner(input.ownerPid ?? process.pid, input.ownerToken);
+  if (expected === undefined) return false;
+  const state = await readState(input.authorityPath);
+  return state.kind === "normal" && state.owner.evidence === expected.evidence;
+}
+
+export async function releaseDevShellBootstrapAuthority(input: { authorityPath: string; ownerToken: string; ownerPid?: number | undefined; faultHook?: FaultHook | undefined }): Promise<boolean> {
+  const owner = createOwner(input.ownerPid ?? process.pid, input.ownerToken);
+  return owner !== undefined && release(input.authorityPath, owner, input.faultHook);
+}
+
+function createLease(authorityPath: string, initial: Owner): DevShellBootstrapAuthorityResult {
+  let owner = initial;
+  return { status: "acquired", lease: {
+    get ownerPid() { return owner.pid; }, get ownerToken() { return owner.token; },
+    async transferTo(input) {
+      const next = createOwner(input.ownerPid, input.ownerToken);
+      if (next === undefined) return false;
+      const result = await transfer(authorityPath, owner, next, input.faultHook);
+      if (result) owner = next;
+      return result;
+    },
+    async release(input) { return release(authorityPath, owner, input?.faultHook); },
+  } };
+}
+
+async function publish(authorityPath: string, owner: Owner, hook?: FaultHook): Promise<boolean> {
+  const prepared = `${authorityPath}.publish-${owner.pid}-${owner.token}`;
+  await rm(prepared, { recursive: true, force: true });
+  await mkdir(prepared); await symlink(owner.evidence, path.join(prepared, OWNER_ENTRY));
+  await hook?.("publication_prepared");
+  if ((await readState(authorityPath)).kind !== "missing") { await rm(prepared, { recursive: true, force: true }); return false; }
+  try { await rename(prepared, authorityPath); return true; }
+  catch (error) {
+    await rm(prepared, { recursive: true, force: true });
+    if (["EEXIST", "ENOTEMPTY", "ENOTDIR"].includes(code(error) ?? "")) return false;
     throw error;
   }
 }
 
-function formatOwnerEvidence(pid: number, token: string): string {
-  return `${BOOTSTRAP_AUTHORITY_VERSION}:${pid}:${token}`;
-}
-
-function parseOwnerEvidence(
-  target: string,
-): { pid: number; token: string } | undefined {
-  const prefix = `${BOOTSTRAP_AUTHORITY_VERSION}:`;
-  if (target.startsWith(prefix) === false) {
-    return undefined;
-  }
-  const separator = target.indexOf(":", prefix.length);
-  if (separator < 0) {
-    return undefined;
-  }
-  const pid = Number.parseInt(target.slice(prefix.length, separator), 10);
-  const token = target.slice(separator + 1);
-  if (Number.isSafeInteger(pid) === false || pid <= 0 || token.length === 0) {
-    return undefined;
-  }
-  return { pid, token };
-}
-
-async function readAuthorityIdentity(
-  authorityPath: string,
-): Promise<BootstrapAuthorityIdentity | undefined> {
-  try {
-    const evidencePath = ownerEvidencePath(authorityPath);
-    const [stats, target] = await Promise.all([
-      lstat(evidencePath),
-      readlink(evidencePath),
-    ]);
-    if (stats.isSymbolicLink() === false) {
-      return undefined;
-    }
-    return { device: stats.dev, inode: stats.ino, target };
-  } catch (error) {
-    if (
-      readNodeErrorCode(error) === "ENOENT" ||
-      readNodeErrorCode(error) === "ENOTDIR"
-    ) {
-      return undefined;
-    }
-    throw error;
-  }
-}
-
-async function removeAuthorityIfOwned(
-  authorityPath: string,
-  expected: BootstrapAuthorityIdentity,
-): Promise<boolean> {
-  const cleanupPath = path.join(authorityPath, "cleanup");
-  let cleanupHandle;
-  try {
-    cleanupHandle = await open(cleanupPath, "wx");
-  } catch (error) {
-    if (
-      readNodeErrorCode(error) === "EEXIST" ||
-      readNodeErrorCode(error) === "ENOENT" ||
-      readNodeErrorCode(error) === "ENOTDIR"
-    ) {
-      return false;
-    }
-    throw error;
-  }
-
-  let quarantinePath: string | undefined;
-  try {
-    const current = await readAuthorityIdentity(authorityPath);
-    if (
-      current === undefined ||
-      current.device !== expected.device ||
-      current.inode !== expected.inode ||
-      current.target !== expected.target
-    ) {
-      return false;
-    }
-    quarantinePath = `${authorityPath}.release-${randomUUID()}`;
-    try {
-      await rename(authorityPath, quarantinePath);
-    } catch (error) {
-      if (readNodeErrorCode(error) === "ENOENT") {
-        quarantinePath = undefined;
-        return false;
-      }
-      throw error;
-    }
-  } finally {
-    await cleanupHandle.close();
-    if (quarantinePath === undefined) {
-      await rm(cleanupPath, { force: true });
-    } else {
-      await rm(quarantinePath, { force: true, recursive: true });
-    }
-  }
+async function transfer(authorityPath: string, expected: Owner, next: Owner, hook?: FaultHook): Promise<boolean> {
+  if (!(await claim(authorityPath, expected, expected))) return false;
+  await hook?.("transfer_claimed");
+  const claimPath = path.join(authorityPath, claimName(expected));
+  const nextPath = path.join(authorityPath, NEXT_OWNER_ENTRY);
+  await symlink(next.evidence, nextPath); await hook?.("transfer_prepared");
+  await rename(nextPath, claimPath); await rename(claimPath, path.join(authorityPath, OWNER_ENTRY));
   return true;
 }
 
-function ownerEvidencePath(authorityPath: string): string {
-  return path.join(authorityPath, "owner");
+async function release(authorityPath: string, expected: Owner, hook?: FaultHook): Promise<boolean> {
+  const state = await readState(authorityPath);
+  if (state.kind === "missing") return true;
+  if (state.kind !== "normal" || state.owner.evidence !== expected.evidence) return false;
+  if (!(await claim(authorityPath, expected, expected))) return false;
+  await hook?.("cleanup_claimed");
+  return quarantine(authorityPath, expected, hook);
 }
 
-function isPidRunning(pid: number): boolean {
+async function claim(authorityPath: string, expected: Owner, claimant: Owner): Promise<boolean> {
+  const state = await readState(authorityPath);
+  if (state.kind !== "normal" || state.owner.evidence !== expected.evidence) return false;
+  try { await rename(path.join(authorityPath, OWNER_ENTRY), path.join(authorityPath, claimName(claimant))); return true; }
+  catch (error) { if (code(error) === "ENOENT") return false; throw error; }
+}
+
+async function recoverClaim(authorityPath: string, state: ClaimedState, claimant: Owner): Promise<void> {
+  const oldPath = path.join(authorityPath, state.claimEntry);
+  const newPath = path.join(authorityPath, claimName(claimant));
+  try { await rename(oldPath, newPath); } catch (error) { if (code(error) === "ENOENT") return; throw error; }
+  const current = await readState(authorityPath);
+  if (current.kind !== "claimed" || current.claimEntry !== claimName(claimant)) return;
+  if (current.nextOwner !== undefined) {
+    await rename(path.join(authorityPath, NEXT_OWNER_ENTRY), newPath);
+    await rename(newPath, path.join(authorityPath, OWNER_ENTRY)); return;
+  }
+  if (isPidRunning(current.owner.pid)) { await rename(newPath, path.join(authorityPath, OWNER_ENTRY)); return; }
+  await quarantine(authorityPath, claimant);
+}
+
+async function quarantine(authorityPath: string, claimant: Owner, hook?: FaultHook): Promise<boolean> {
+  const state = await readState(authorityPath);
+  if (state.kind !== "claimed" || state.claimEntry !== claimName(claimant)) return false;
+  const destination = `${authorityPath}.released-${claimant.pid}-${claimant.token}-${randomUUID()}`;
+  try { await rename(authorityPath, destination); } catch (error) { if (code(error) === "ENOENT") return false; throw error; }
+  await hook?.("cleanup_quarantined");
+  await rm(destination, { recursive: true, force: true }); return true;
+}
+
+async function readState(authorityPath: string): Promise<State> {
+  const first = await readStateOnce(authorityPath);
+  return first.kind === "invalid" ? readStateOnce(authorityPath) : first;
+}
+
+async function readStateOnce(authorityPath: string): Promise<State> {
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return readNodeErrorCode(error) === "EPERM";
-  }
+    if (!(await lstat(authorityPath)).isDirectory()) return { kind: "invalid" };
+    const entries = await readdir(authorityPath);
+    const claims = entries.filter((entry) => entry.startsWith("claim--"));
+    if (entries.length === 1 && entries[0] === OWNER_ENTRY) {
+      const owner = await readOwner(path.join(authorityPath, OWNER_ENTRY));
+      return owner ? { kind: "normal", owner } : { kind: "invalid" };
+    }
+    if (claims.length === 1 && entries.every((entry) => entry === claims[0] || entry === NEXT_OWNER_ENTRY)) {
+      const claimant = parseClaimName(claims[0]!);
+      const owner = await readOwner(path.join(authorityPath, claims[0]!));
+      const nextOwner = entries.includes(NEXT_OWNER_ENTRY) ? await readOwner(path.join(authorityPath, NEXT_OWNER_ENTRY)) : undefined;
+      if (!claimant || !owner || (entries.includes(NEXT_OWNER_ENTRY) && !nextOwner)) return { kind: "invalid" };
+      return { kind: "claimed", owner, claimant, claimEntry: claims[0]!, ...(nextOwner ? { nextOwner } : {}) };
+    }
+    return { kind: "invalid" };
+  } catch (error) { return code(error) === "ENOENT" ? { kind: "missing" } : { kind: "invalid" }; }
 }
 
-function readNodeErrorCode(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null) {
-    return undefined;
-  }
-  const code = (error as { code?: unknown }).code;
-  return typeof code === "string" ? code : undefined;
+async function readOwner(entryPath: string): Promise<Owner | undefined> {
+  try {
+    const [stats, evidence] = await Promise.all([lstat(entryPath), readlink(entryPath)]);
+    if (!stats.isSymbolicLink()) return undefined;
+    const parsed = parseDevShellBootstrapAuthorityEvidence(evidence);
+    return parsed ? { ...parsed, evidence } : undefined;
+  } catch { return undefined; }
 }
+function createOwner(pid: number, token: string): Owner | undefined {
+  const evidence = `${AUTHORITY_VERSION}:${pid}:${token}`;
+  const parsed = parseDevShellBootstrapAuthorityEvidence(evidence);
+  return parsed ? { ...parsed, evidence } : undefined;
+}
+function claimName(owner: Owner): string { return `claim--${owner.pid}--${owner.token}`; }
+function parseClaimName(value: string): Owner | undefined {
+  const match = value.match(/^claim--([1-9][0-9]*)--([A-Za-z0-9_-]+)$/u);
+  return match ? createOwner(Number(match[1]), match[2]!) : undefined;
+}
+function isPidRunning(pid: number): boolean { try { process.kill(pid, 0); return true; } catch (error) { return code(error) === "EPERM"; } }
+function code(error: unknown): string | undefined { return typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : undefined; }
+async function wait(ms: number): Promise<void> { await new Promise((resolve) => setTimeout(resolve, ms)); }

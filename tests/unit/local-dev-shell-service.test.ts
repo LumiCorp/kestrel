@@ -858,18 +858,85 @@ test("LocalDevShellService never signals a sidecar PID from legacy health withou
   }
 });
 
+test("LocalDevShellService never signals a PID when the cooperative shutdown endpoint disappears", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-disappeared-endpoint-"));
+  const service = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-current" },
+  }) as any;
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const originalKill = process.kill;
+  let sentTerminationSignal = false;
+  try {
+    assert.ok(child.pid !== undefined);
+    await writeFile(service.socketPath, "captured socket", "utf8");
+    await writeFile(service.bootstrapStatusPath, JSON.stringify({
+      status: "ready", pid: child.pid, socketPath: service.socketPath,
+    }), "utf8");
+    service.performRequest = async (_method: string, pathname: string) => {
+      if (pathname === "/service/shutdown") throw new Error("endpoint disappeared");
+      throw new Error("unexpected request");
+    };
+    (process as any).kill = (pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal === "SIGTERM" || signal === "SIGKILL") sentTerminationSignal = true;
+      return originalKill(pid, signal as any);
+    };
+
+    await assert.rejects(
+      service.stopIncompatibleService({
+        ok: true,
+        serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+        servicePid: child.pid,
+        storeDriver: "sqlite",
+        storeBindingRevision: "binding-stale",
+        capabilities: {
+          processWriteAndRead: true,
+          processRetentionLeases: true,
+          processRetentionPromotion: true,
+        },
+      }),
+      (error: unknown) =>
+        (error as { details?: Record<string, unknown> }).details?.bootstrapReason ===
+        "incompatible_service_identity_unavailable",
+    );
+    assert.equal(sentTerminationSignal, false);
+    assert.equal(isChildRunning(child), true);
+  } finally {
+    (process as any).kill = originalKill;
+    if (isChildRunning(child)) {
+      child.kill("SIGKILL");
+      await waitForChildExit(child, 1_000);
+    }
+  }
+});
+
 test("LocalDevShellService stops a current incompatible service only when health and status PID match", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-current-pid-"));
   await mkdir(baseDir, { recursive: true });
   const service = new LocalDevShellService(baseDir, {
     storeBinding: { driver: "sqlite", revision: "binding-current" },
   }) as any;
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-    stdio: "ignore",
-  });
+  const childScript = `
+    const http = require("node:http");
+    const server = http.createServer((request, response) => {
+      response.setHeader("content-type", "application/json; charset=utf-8");
+      if (request.method === "POST" && request.url === "/service/shutdown") {
+        response.statusCode = 202;
+        response.end(JSON.stringify({ status: "shutting_down" }));
+        setImmediate(() => server.close(() => process.exit(0)));
+        return;
+      }
+      response.end(JSON.stringify({ ok: true }));
+    });
+    server.listen(${JSON.stringify(service.socketPath)});
+  `;
+  const child = spawn(process.execPath, ["-e", childScript], { stdio: "ignore" });
   try {
     assert.ok(child.pid !== undefined);
-    await writeFile(service.socketPath, "current socket owner", "utf8");
+    const readyDeadline = Date.now() + 5_000;
+    while (Date.now() < readyDeadline) {
+      try { await service.performRequest("GET", "/health"); break; }
+      catch { await new Promise((resolve) => setTimeout(resolve, 25)); }
+    }
     await writeFile(
       service.bootstrapStatusPath,
       JSON.stringify({
@@ -895,7 +962,7 @@ test("LocalDevShellService stops a current incompatible service only when health
     });
 
     assert.equal(isChildRunning(child), false);
-    await assert.rejects(readFile(service.socketPath, "utf8"), /ENOENT/u);
+    await assert.rejects(readFile(service.socketPath, "utf8"), /ENOENT|ENXIO/u);
   } finally {
     if (isChildRunning(child)) {
       child.kill("SIGKILL");
@@ -914,10 +981,18 @@ test("LocalDevShellService waits for slow proven current shutdown before binding
   }) as any;
   const childScript = `
     const http = require("node:http");
-    const { rmSync } = require("node:fs");
     const socketPath = ${JSON.stringify(service.socketPath)};
-    const server = http.createServer((_request, response) => {
+    const server = http.createServer((request, response) => {
       response.setHeader("content-type", "application/json; charset=utf-8");
+      if (request.method === "POST" && request.url === "/service/shutdown") {
+        response.statusCode = 202;
+        response.end(JSON.stringify({ status: "shutting_down" }));
+        if (!stopping) {
+          stopping = true;
+          setTimeout(() => server.close(() => process.exit(0)), 1_200);
+        }
+        return;
+      }
       response.end(JSON.stringify({
         ok: true,
         serviceProtocolVersion: ${DEV_SHELL_SERVICE_PROTOCOL_VERSION},
@@ -933,16 +1008,6 @@ test("LocalDevShellService waits for slow proven current shutdown before binding
     });
     server.listen(socketPath);
     let stopping = false;
-    process.on("SIGTERM", () => {
-      if (stopping) return;
-      stopping = true;
-      setTimeout(() => {
-        server.close(() => {
-          rmSync(socketPath, { force: true });
-          process.exit(0);
-        });
-      }, 1_200);
-    });
   `;
   const staleChild = spawn(process.execPath, ["-e", childScript], {
     stdio: "ignore",

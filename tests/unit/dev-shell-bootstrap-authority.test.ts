@@ -8,7 +8,6 @@ import {
   readlink,
   rm,
   symlink,
-  writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -126,43 +125,69 @@ test("bootstrap authority release preserves an exact replacement target", async 
   const ownerEvidencePath = path.join(authorityPath, "owner");
   await rm(ownerEvidencePath);
   await symlink(
-    `kestrel-dev-shell-bootstrap-v1:${process.pid}:replacement-owner`,
+    `kestrel-dev-shell-bootstrap-v2:${process.pid}:replacement-owner`,
     ownerEvidencePath,
   );
   await acquired.lease.release();
 
   assert.equal(
     await readlink(ownerEvidencePath),
-    `kestrel-dev-shell-bootstrap-v1:${process.pid}:replacement-owner`,
+    `kestrel-dev-shell-bootstrap-v2:${process.pid}:replacement-owner`,
   );
 });
 
-test("dead authority with an unowned cleanup marker fails within the caller deadline", async () => {
-  const root = await mkdtemp(
-    path.join(os.tmpdir(), "dev-shell-authority-stuck-cleanup-"),
-  );
-  const authorityPath = path.join(root, "bootstrap-authority");
-  await mkdir(authorityPath);
-  await symlink(
-    "kestrel-dev-shell-bootstrap-v1:2147483647:dead-owner",
-    path.join(authorityPath, "owner"),
-  );
-  await writeFile(path.join(authorityPath, "cleanup"), "", "utf8");
+test("authority publication and cleanup recover after process death", async () => {
+  for (const phase of ["publication_prepared", "cleanup_claimed", "cleanup_quarantined"] as const) {
+    const root = await mkdtemp(path.join(os.tmpdir(), `dev-shell-authority-${phase}-`));
+    const authorityPath = path.join(root, "bootstrap-authority");
+    const moduleUrl = pathToFileURL(path.resolve("src/devshell/bootstrapAuthority.ts")).href;
+    const tsxImport = createRequire(import.meta.url).resolve("tsx");
+    const childScript = `
+      import { acquireDevShellBootstrapAuthority } from ${JSON.stringify(moduleUrl)};
+      const result = await acquireDevShellBootstrapAuthority({
+        authorityPath: ${JSON.stringify(authorityPath)}, ownerToken: "fault-owner",
+        timeoutMs: 1000, pollIntervalMs: 2,
+        faultHook(phase) { if (phase === ${JSON.stringify(phase)}) process.kill(process.pid, "SIGKILL"); },
+      });
+      if (result.status !== "acquired") process.exit(2);
+      if (${JSON.stringify(phase)} !== "publication_prepared") await result.lease.release({
+        faultHook(observed) { if (observed === ${JSON.stringify(phase)}) process.kill(process.pid, "SIGKILL"); },
+      });
+    `;
+    const child = spawn(process.execPath, ["--import", tsxImport, "--input-type=module", "-e", childScript], { stdio: "ignore" });
+    await waitForExit(child);
+    const recovered = await acquireDevShellBootstrapAuthority({
+      authorityPath, ownerToken: "recovery-owner", timeoutMs: 500, pollIntervalMs: 2,
+    });
+    assert.equal(recovered.status, "acquired", phase);
+    if (recovered.status === "acquired") await recovered.lease.release();
+  }
+});
 
-  const startedAt = Date.now();
-  const result = await acquireDevShellBootstrapAuthority({
-    authorityPath,
-    ownerToken: "waiting-owner",
-    timeoutMs: 30,
-    pollIntervalMs: 2,
-  });
-
-  assert.deepEqual(result, {
-    status: "unavailable",
-    reason: "invalid_owner_evidence",
-    ownerPid: 2147483647,
-  });
-  assert.ok(Date.now() - startedAt < 1_000);
+test("malformed authority evidence is rejected canonically and preserved", async () => {
+  const malformed = [
+    "kestrel-dev-shell-bootstrap-v2:2147483647junk:token",
+    "kestrel-dev-shell-bootstrap-v2:+2147483647:token",
+    "kestrel-dev-shell-bootstrap-v2: 2147483647:token",
+    "kestrel-dev-shell-bootstrap-v2:2147483647 :token",
+    "kestrel-dev-shell-bootstrap-v2:1.5:token",
+    "kestrel-dev-shell-bootstrap-v2:1e3:token",
+    "kestrel-dev-shell-bootstrap-v2::token",
+    "kestrel-dev-shell-bootstrap-v2:123:",
+    "kestrel-dev-shell-bootstrap-v2:123:token:extra",
+    "kestrel-dev-shell-bootstrap-v2:0123:token",
+  ];
+  for (const evidence of malformed) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "dev-shell-authority-malformed-"));
+    const authorityPath = path.join(root, "bootstrap-authority");
+    await mkdir(authorityPath);
+    await symlink(evidence, path.join(authorityPath, "owner"));
+    const result = await acquireDevShellBootstrapAuthority({
+      authorityPath, ownerToken: "waiting-owner", timeoutMs: 20, pollIntervalMs: 2,
+    });
+    assert.deepEqual(result, { status: "unavailable", reason: "invalid_owner_evidence" });
+    assert.equal(await readlink(path.join(authorityPath, "owner")), evidence);
+  }
 });
 
 async function waitForOutput(

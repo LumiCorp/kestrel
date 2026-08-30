@@ -54,6 +54,7 @@ import {
 import {
   acquireDevShellBootstrapAuthority,
   createDevShellBootstrapAuthorityToken,
+  type DevShellBootstrapAuthorityLease,
 } from "./bootstrapAuthority.js";
 import { buildDevShellRequestIdentityHeaders } from "./requestIdentity.js";
 
@@ -440,13 +441,17 @@ export class LocalDevShellService implements DevShellServicePort {
     }
 
     try {
-      await this.ensureServiceWithAuthority();
+      await this.ensureServiceWithAuthority(authority.lease);
     } finally {
-      await authority.lease.release();
+      if (authority.lease.ownerPid === process.pid) {
+        await authority.lease.release();
+      }
     }
   }
 
-  private async ensureServiceWithAuthority(): Promise<void> {
+  private async ensureServiceWithAuthority(
+    authorityLease: DevShellBootstrapAuthorityLease,
+  ): Promise<void> {
     const health = await this.tryReadHealth();
     if (isCompatibleDevShellHealth(health, this.storeBinding)) {
       return;
@@ -462,7 +467,7 @@ export class LocalDevShellService implements DevShellServicePort {
       throw prerequisiteFailure;
     }
 
-    const child = await this.spawnService();
+    const child = await this.spawnService(authorityLease);
     const startedAtMs = Date.now();
     const deadline = startedAtMs + this.startupTimeoutMs;
     while (Date.now() < deadline) {
@@ -576,16 +581,21 @@ export class LocalDevShellService implements DevShellServicePort {
     }
 
     try {
-      process.kill(pid, "SIGTERM");
+      await this.performRequest(
+        "POST",
+        "/service/shutdown",
+        undefined,
+        { driver: health.storeDriver, revision: health.storeBindingRevision },
+      );
     } catch (error) {
       throw await this.createUnavailableFailure(
         "incompatible_service_identity_unavailable",
-        "Developer shell could not signal the incompatible service identified by its bootstrap status.",
+        "Developer shell could not authenticate a cooperative shutdown with the incompatible service.",
         {
           pid,
-          signalErrorCode: readNodeErrorCode(error),
+          shutdownErrorCode: readNodeErrorCode(error),
           nextSuggestedAction:
-            "The command did not run. Verify the incompatible developer-shell service identity, stop it safely, and retry the original command.",
+            "The command did not run. Verify the incompatible developer-shell endpoint identity, stop it safely, and retry the original command.",
         },
       );
     }
@@ -645,7 +655,9 @@ export class LocalDevShellService implements DevShellServicePort {
     );
   }
 
-  private async spawnService(): Promise<ChildProcess> {
+  private async spawnService(
+    authorityLease?: DevShellBootstrapAuthorityLease,
+  ): Promise<ChildProcess> {
     await mkdir(path.dirname(this.socketPath), { recursive: true });
     await mkdir(path.dirname(this.logPath), { recursive: true });
     await mkdir(path.dirname(this.bootstrapStatusPath), { recursive: true });
@@ -687,9 +699,10 @@ export class LocalDevShellService implements DevShellServicePort {
       if (storeBinding === undefined) {
         throw new Error("Developer shell store binding is unavailable.");
       }
+      const childAuthorityToken = createDevShellBootstrapAuthorityToken();
       child = spawn(process.execPath, [...launch.nodeArguments, "--socket", this.socketPath], {
         detached: true,
-        stdio: ["ignore", logFd, logFd],
+        stdio: ["ignore", logFd, logFd, "ipc"],
         env: {
           ...this.env,
           KESTREL_DEV_SHELL_SOCKET_PATH: this.socketPath,
@@ -697,9 +710,37 @@ export class LocalDevShellService implements DevShellServicePort {
           KESTREL_DEV_SHELL_STATUS_PATH: this.bootstrapStatusPath,
           KESTREL_DEV_SHELL_OWNER_PID: String(process.pid),
           KESTREL_DEV_SHELL_OWNER_KIND: this.env.KESTREL_DEV_SHELL_OWNER_KIND ?? "ks",
+          KESTREL_DEV_SHELL_AUTHORITY_PATH: this.bootstrapAuthorityPath,
+          KESTREL_DEV_SHELL_AUTHORITY_TOKEN: childAuthorityToken,
           ...buildDevShellStoreBindingEnvironment(storeBinding),
         },
       });
+      if (authorityLease !== undefined) {
+        if (child.pid === undefined) {
+          throw new Error("Developer shell child did not publish a process identity.");
+        }
+        const transferred = await authorityLease.transferTo({
+          ownerPid: child.pid,
+          ownerToken: childAuthorityToken,
+        });
+        if (transferred === false) {
+          child.kill("SIGKILL");
+          throw new Error("Developer shell bootstrap authority handoff failed.");
+        }
+        try {
+          await completeChildAuthorityHandoff(
+            child,
+            childAuthorityToken,
+            this.startupTimeoutMs,
+          );
+        } catch (error) {
+          if (isChildProcessRunning(child)) {
+            child.kill("SIGKILL");
+            await waitForChildProcessExit(child, this.startupTimeoutMs);
+          }
+          throw error;
+        }
+      }
     } finally {
       closeSync(logFd);
     }
@@ -809,13 +850,18 @@ export class LocalDevShellService implements DevShellServicePort {
     await new Promise((resolve) => setTimeout(resolve, durationMs));
   }
 
-  private async performRequest<T>(method: string, pathname: string, body?: unknown): Promise<T> {
+  private async performRequest<T>(
+    method: string,
+    pathname: string,
+    body?: unknown,
+    expectedBinding: Pick<DevShellStoreBinding, "driver" | "revision"> | undefined = this.storeBinding,
+  ): Promise<T> {
     const payload = body === undefined ? undefined : JSON.stringify(body);
     const requestIdentityHeaders = pathname === "/health"
       ? {}
-      : this.storeBinding === undefined
+      : expectedBinding === undefined
         ? undefined
-        : buildDevShellRequestIdentityHeaders(this.storeBinding);
+        : buildDevShellRequestIdentityHeaders(expectedBinding);
     if (requestIdentityHeaders === undefined) {
       throw this.readBootstrapPrerequisiteFailure() ?? createRuntimeFailure(
         "DEV_SHELL_SERVICE_UNAVAILABLE",
@@ -897,6 +943,44 @@ export class LocalDevShellService implements DevShellServicePort {
       request.end();
     });
   }
+}
+
+async function completeChildAuthorityHandoff(
+  child: ChildProcess,
+  authorityToken: string,
+  timeoutMs: number,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(
+      () => finish(new Error("Developer shell authority handoff timed out.")),
+      timeoutMs,
+    );
+    const onMessage = (message: unknown) => {
+      const record = asLocalRecord(message);
+      if (
+        record?.type === "kestrel-dev-shell-authority-accepted" &&
+        record.authorityToken === authorityToken
+      ) {
+        finish();
+      }
+    };
+    const onExit = () => finish(new Error("Developer shell exited during authority handoff."));
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.off("message", onMessage);
+      child.off("exit", onExit);
+      if (child.connected) child.disconnect();
+      if (error === undefined) resolve(); else reject(error);
+    };
+    child.on("message", onMessage);
+    child.once("exit", onExit);
+    child.send?.({ type: "kestrel-dev-shell-authority-proceed", authorityToken }, (error) => {
+      if (error !== null) finish(error);
+    });
+  });
 }
 
 export function isCompatibleDevShellHealth(

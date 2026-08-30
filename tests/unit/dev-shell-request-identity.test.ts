@@ -148,6 +148,31 @@ test("socket-owner swap after health is rejected before supervisor access", asyn
   }
 });
 
+test("matching current identity authorizes one cooperative shutdown", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dev-shell-shutdown-auth-"));
+  const binding = { driver: "sqlite" as const, revision: "binding-current" };
+  const service = new LocalDevShellService(root, { storeBinding: binding }) as any;
+  let shutdownRequests = 0;
+  const server = http.createServer((request, response) => {
+    void handleRequest(
+      createRecordingSupervisor([]) as any,
+      binding,
+      request,
+      response,
+      async () => { shutdownRequests += 1; },
+    );
+  });
+  await listen(server, service.socketPath);
+  try {
+    const result = await service.performRequest("POST", "/service/shutdown");
+    assert.deepEqual(result, { status: "shutting_down" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(shutdownRequests, 1);
+  } finally {
+    await closeServer(server);
+  }
+});
+
 function createRecordingSupervisor(calls: string[]) {
   const processResult = {
     processId: "process-1",

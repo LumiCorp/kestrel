@@ -1,11 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { LocalDevShellService } from "../../src/devshell/LocalDevShellService.js";
 import { DEV_SHELL_SERVICE_PROTOCOL_VERSION } from "../../src/devshell/contracts.js";
+import { acquireDevShellBootstrapAuthority } from "../../src/devshell/bootstrapAuthority.js";
 
 test("two real simultaneous cold requests share one SQLite service", async () => {
   const baseDir = await mkdtemp(
@@ -47,6 +51,50 @@ test("two real simultaneous cold requests share one SQLite service", async () =>
   } finally {
     await Promise.allSettled([firstService.close(), secondService.close()]);
   }
+});
+
+test("a client killed after child handoff cannot leave a live initializing child", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dev-shell-handoff-death-"));
+  const authorityPath = path.join(root, "bootstrap-authority");
+  const initializedPath = path.join(root, "initialized");
+  const moduleUrl = pathToFileURL(path.resolve("src/devshell/bootstrapAuthority.ts")).href;
+  const tsxImport = createRequire(import.meta.url).resolve("tsx");
+  const workerScript = `
+    const fs = require("node:fs");
+    process.on("message", (message) => {
+      if (message?.type === "proceed") fs.writeFileSync(${JSON.stringify(initializedPath)}, "initialized");
+    });
+    process.once("disconnect", () => process.exit(0));
+    setInterval(() => {}, 1000);
+  `;
+  const clientScript = `
+    import { acquireDevShellBootstrapAuthority } from ${JSON.stringify(moduleUrl)};
+    import { spawn } from "node:child_process";
+    const result = await acquireDevShellBootstrapAuthority({
+      authorityPath: ${JSON.stringify(authorityPath)}, ownerToken: "client-owner",
+      timeoutMs: 1000, pollIntervalMs: 2,
+    });
+    if (result.status !== "acquired") process.exit(2);
+    const worker = spawn(process.execPath, ["-e", ${JSON.stringify(workerScript)}], {
+      stdio: ["ignore", "ignore", "ignore", "ipc"], detached: true,
+    });
+    const transferred = await result.lease.transferTo({ ownerPid: worker.pid, ownerToken: "worker-owner" });
+    if (!transferred) process.exit(3);
+    process.stdout.write(String(worker.pid) + "\\n", () => process.kill(process.pid, "SIGKILL"));
+  `;
+  const client = spawn(process.execPath, ["--import", tsxImport, "--input-type=module", "-e", clientScript], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  const workerPid = Number(await waitForOutput(client));
+  await waitForExit(client);
+
+  const recovered = await acquireDevShellBootstrapAuthority({
+    authorityPath, ownerToken: "next-client", timeoutMs: 2_000, pollIntervalMs: 5,
+  });
+  assert.equal(recovered.status, "acquired");
+  assert.equal(isPidRunning(workerPid), false);
+  await assert.rejects(readFile(initializedPath, "utf8"), /ENOENT/u);
+  if (recovered.status === "acquired") await recovered.lease.release();
 });
 
 test("LocalDevShellService serializes simultaneous same-binding cold starts", async () => {
@@ -278,4 +326,26 @@ function completedRunResult(text: string): Record<string, unknown> {
     truncated: false,
     exitCode: 0,
   };
+}
+
+async function waitForOutput(child: ChildProcess): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let output = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      output += chunk.toString("utf8");
+      if (output.includes("\n")) resolve(output.trim());
+    });
+    child.once("exit", (code) => {
+      if (output.length === 0) reject(new Error(`client exited before handoff: ${code}`));
+    });
+  });
+}
+
+async function waitForExit(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+}
+
+function isPidRunning(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
 }

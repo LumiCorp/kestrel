@@ -40,8 +40,21 @@ import {
   isMatchingDevShellRequestIdentity,
   readDevShellRequestIdentity,
 } from "../../src/devshell/requestIdentity.js";
+import {
+  releaseDevShellBootstrapAuthority,
+  verifyDevShellBootstrapAuthority,
+} from "../../src/devshell/bootstrapAuthority.js";
 
 async function main(): Promise<void> {
+  const authority = await acceptBootstrapAuthority();
+  try {
+    await runService();
+  } finally {
+    await releaseDevShellBootstrapAuthority(authority);
+  }
+}
+
+async function runService(): Promise<void> {
   const socketPath = resolveSocketPath();
   const logPath = resolveLogPath();
   const statusPath = resolveStatusPath();
@@ -79,7 +92,7 @@ async function main(): Promise<void> {
   }
 
   const server = http.createServer((request, response) => {
-    void handleRequest(supervisor, storeBinding, request, response).catch((error) => {
+    void handleRequest(supervisor, storeBinding, request, response, () => shutdown()).catch((error) => {
       writeJson(response, 500, {
         error: asRuntimeError(error),
       });
@@ -145,11 +158,55 @@ async function main(): Promise<void> {
   });
 }
 
+async function acceptBootstrapAuthority(): Promise<{
+  authorityPath: string;
+  ownerPid: number;
+  ownerToken: string;
+}> {
+  const authorityPath = process.env.KESTREL_DEV_SHELL_AUTHORITY_PATH?.trim();
+  const ownerToken = process.env.KESTREL_DEV_SHELL_AUTHORITY_TOKEN?.trim();
+  if (authorityPath === undefined || authorityPath.length === 0 || ownerToken === undefined || ownerToken.length === 0) {
+    throw new Error("Developer shell bootstrap authority handshake is missing.");
+  }
+  await new Promise<void>((resolve, reject) => {
+    const onDisconnect = () => finish(new Error("Developer shell bootstrap client disconnected before authority handoff."));
+    const onMessage = (message: unknown) => {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        (message as { type?: unknown }).type === "kestrel-dev-shell-authority-proceed" &&
+        (message as { authorityToken?: unknown }).authorityToken === ownerToken
+      ) finish();
+    };
+    const finish = (error?: Error) => {
+      process.off("disconnect", onDisconnect);
+      process.off("message", onMessage);
+      if (error === undefined) resolve(); else reject(error);
+    };
+    process.once("disconnect", onDisconnect);
+    process.on("message", onMessage);
+  });
+  const valid = await verifyDevShellBootstrapAuthority({
+    authorityPath,
+    ownerPid: process.pid,
+    ownerToken,
+  });
+  if (valid === false) {
+    throw new Error("Developer shell bootstrap authority handoff identity is invalid.");
+  }
+  process.send?.({
+    type: "kestrel-dev-shell-authority-accepted",
+    authorityToken: ownerToken,
+  });
+  return { authorityPath, ownerPid: process.pid, ownerToken };
+}
+
 export async function handleRequest(
   supervisor: DevShellSupervisor,
   storeBinding: DevShellStoreBinding,
   request: http.IncomingMessage,
   response: http.ServerResponse,
+  requestShutdown?: (() => Promise<void>) | undefined,
 ): Promise<void> {
   const method = request.method ?? "GET";
   const url = new URL(request.url ?? "/", "http://unix");
@@ -184,6 +241,16 @@ export async function handleRequest(
         },
       )),
     });
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/service/shutdown") {
+    if (requestShutdown === undefined) {
+      writeJson(response, 503, { error: "shutdown_unavailable" });
+      return;
+    }
+    writeJson(response, 202, { status: "shutting_down" });
+    setImmediate(() => { void requestShutdown(); });
     return;
   }
 

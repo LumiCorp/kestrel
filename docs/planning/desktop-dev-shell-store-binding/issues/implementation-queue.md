@@ -22,6 +22,9 @@ None.
 - [Serialize developer-shell service bootstrap](04-serialize-service-bootstrap.md)
 - [Refuse unproven legacy service termination](05-refuse-unproven-legacy-service-termination.md)
 - [Assert store binding at command dispatch](06-assert-binding-at-command-dispatch.md)
+- [Make bootstrap authority crash-safe and child-owned](07-make-bootstrap-authority-crash-safe.md)
+- [Use cooperative service shutdown instead of numeric PID signaling](08-use-cooperative-service-shutdown.md)
+- [Parse bootstrap authority evidence strictly](09-parse-authority-evidence-strictly.md)
 
 ## Done
 
