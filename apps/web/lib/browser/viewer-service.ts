@@ -557,23 +557,22 @@ export class HostedBrowserViewerService {
     try {
       pending = await this.#markCleanupPending(scope, "authority_loss");
     } catch {
-      // Worker and durable lifecycle remain independent fail-close owners.
+      // Worker cleanup is defense in depth. PostgreSQL remains the only
+      // durable authority-loss owner when Redis rejects this write.
     }
     if (pending) {
       await this.#reconcilePendingRecord(pending);
       return;
     }
-    let workerProven = false;
     try {
       await this.#dispatchCleanup(scope, "authority_loss");
-      workerProven = true;
     } catch {
       // The durable lifecycle remains the independent fail-close owner.
     }
     try {
       await this.#failClosed(scope);
     } catch (error) {
-      if (!workerProven) throw error;
+      throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN", { cause: error });
     }
   }
 
@@ -650,8 +649,8 @@ export class HostedBrowserViewerService {
         "authority_loss",
       );
     } catch {
-      // Durable Session fail-close below is the fallback proof when the
-      // transient cleanup marker is unavailable.
+      // PostgreSQL fail-close below is the remaining durable owner when the
+      // Redis authority-loss promotion is unavailable.
     }
     let workerProven = false;
     try {
@@ -666,7 +665,7 @@ export class HostedBrowserViewerService {
       connection.revoked = true;
       if (pending) await this.#clearCleanupPending(pending).catch(() => false);
     } catch (error) {
-      if (workerProven) {
+      if (workerProven && pending) {
         connection.revoked = true;
         return;
       }

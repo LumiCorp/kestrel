@@ -928,23 +928,69 @@ test("authority loss without a marker dispatches worker fail-close before non-di
     call.action === "cleanup" && call.purpose === "authority_loss"));
 });
 
-test("worker authority-loss proof closes the Redis and PostgreSQL double-failure gap", async () => {
-  const fixture = createFixture({ requestAuthorized: false });
+test("dual-store rejection without a marker does not claim durable authority loss and restored access may reconnect", async () => {
+  const fixture = createFixture();
+  fixture.accessAllowed = false;
   fixture.cleanupMarkerFailure = true;
   fixture.terminationFailure = "before_terminal";
 
   await assert.rejects(
     fixture.service.status({
       organizationId: "org-1",
-      actorId: "replacement-user",
+      actorId: "user-1",
       threadId: "thread-1",
     }),
-    /BROWSER_SESSION_LOST/u,
+    /BROWSER_ACTION_OUTCOME_UNKNOWN/u,
   );
 
   assert.ok(fixture.workerCalls.some((call) =>
     call.action === "cleanup" && call.purpose === "authority_loss"));
   assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
+  assert.equal(fixture.cleanupPending, null);
+  assert.equal(fixture.session.state, "ready");
+
+  fixture.accessAllowed = true;
+  fixture.reloadService();
+  const recovered = await fixture.service.status({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  assert.equal(recovered.available, true);
+  assert.equal(recovered.sessionId, "session-1");
+});
+
+test("dual-store rejection retains a weak live marker and restored access reconciles only its stored state", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  assert.equal(fixture.cleanupPending?.reason, "connect_unknown");
+
+  fixture.accessAllowed = false;
+  fixture.cleanupMarkerFailure = true;
+  fixture.terminationFailure = "before_terminal";
+  await assert.rejects(
+    connection.revalidate(),
+    HostedBrowserViewerOutcomeUnknownError,
+  );
+  assert.equal(fixture.cleanupPending?.reason, "connect_unknown");
+  assert.equal(fixture.session.state, "ready");
+  assert.equal(fixture.liveConnections.size, 0);
+
+  fixture.accessAllowed = true;
+  fixture.reloadService();
+  const recovered = await fixture.service.status({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  assert.equal(recovered.available, true);
+  assert.equal(recovered.sessionId, "session-1");
+  assert.equal(fixture.cleanupPending, null);
 });
 
 test("a proven connected marker never becomes ordinary availability through Redis and PostgreSQL outage recovery", async () => {
@@ -960,7 +1006,10 @@ test("a proven connected marker never becomes ordinary availability through Redi
   fixture.accessAllowed = false;
   fixture.cleanupMarkerFailure = true;
   fixture.terminationFailure = "before_terminal";
-  await assert.rejects(connection.revalidate(), /BROWSER_SESSION_LOST/u);
+  await assert.rejects(
+    connection.revalidate(),
+    HostedBrowserViewerOutcomeUnknownError,
+  );
   assert.equal(fixture.cleanupPending?.reason, "connect_unknown");
   assert.equal(fixture.liveConnections.size, 0);
   fixture.reloadService();
@@ -968,7 +1017,7 @@ test("a proven connected marker never becomes ordinary availability through Redi
     organizationId: "org-1",
     actorId: "user-1",
     threadId: "thread-1",
-  }), /BROWSER_SESSION_LOST/u);
+  }), /BROWSER_ACTION_OUTCOME_UNKNOWN/u);
 
   fixture.cleanupMarkerFailure = false;
   await assert.rejects(fixture.service.status({

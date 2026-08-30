@@ -176,6 +176,24 @@ and no authority-loss write was durably recorded, the Session follows its
 current stored state and may reconnect. This deliberately does not reconstruct
 an observation that both authoritative stores failed to record.
 
+### Policy A dual-store regression evidence
+
+- Web now rejects authority-loss convergence when Redis promotion and
+  PostgreSQL terminalization both reject, even if worker-local cleanup succeeds.
+  Worker cleanup remains defense in depth and does not substitute for a durable
+  control-plane write.
+- A retained `connect_unknown` marker remains unchanged after dual rejection.
+  After restart and restored access, Web reconciles only that weak stored marker
+  as ordinary disconnect cleanup, clears it exactly, and may expose the still
+  active Session again.
+- With no marker, dual rejection leaves the active PostgreSQL Session unchanged.
+  After restart and restored access, Web follows that current stored state and
+  may expose the Session again. It does not infer the failed authority-loss
+  observation.
+- The exact focused Web lifecycle, composition, socket, Redis, status, and UI
+  command passes 63 tests. Root TypeScript, scoped Web lint, and
+  `git diff --check` pass.
+
 ### Capacity-independent authority-loss repair evidence
 
 - Worker authority loss now uses a separate Session/principal-wide retirement
