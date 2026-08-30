@@ -1858,17 +1858,30 @@ test("a fast child cannot persist success before its failed initial record settl
   const workspaceRoot = await realpath(workspaceRootPath);
   const store = new FailingInitialDevShellStore();
   const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"));
+  const shutdown = new AbortController();
   await supervisor.initialize();
   try {
     const startPromise = supervisor.startProcess({
       workspaceRoot,
       command: "exit 0",
       yieldTimeMs: 50,
-    });
+    }, { shutdownSignal: shutdown.signal });
     await store.initialWriteStarted;
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
-    store.failInitialWrite();
-    await assert.rejects(startPromise, /initial process write failed/u);
+    const originalKill = process.kill;
+    const delayedSignalAttempts: Array<{ pid: number; signal?: NodeJS.Signals | number | undefined }> = [];
+    try {
+      (process as any).kill = (pid: number, signal?: NodeJS.Signals | number) => {
+        delayedSignalAttempts.push({ pid, signal });
+        return originalKill(pid, signal as any);
+      };
+      shutdown.abort();
+      store.failInitialWrite();
+      await assert.rejects(startPromise, /initial process write failed/u);
+    } finally {
+      (process as any).kill = originalKill;
+    }
+    assert.deepEqual(delayedSignalAttempts, []);
     const records = await store.listProcesses();
     assert.equal(records.length, 1);
     assert.equal(records[0]?.status, "FAILED");
@@ -1981,6 +1994,7 @@ test("close retains failed ownership while terminating every captured child", as
     });
     assert.equal(first.status, "RUNNING");
     assert.equal(second.status, "RUNNING");
+    assert.notEqual(first.processId, undefined);
     await Promise.all([waitForFile(firstPidPath, 1000), waitForFile(secondPidPath, 1000)]);
     const firstPid = Number.parseInt((await readFile(firstPidPath, "utf8")).trim(), 10);
     const secondPid = Number.parseInt((await readFile(secondPidPath, "utf8")).trim(), 10);
@@ -1997,6 +2011,10 @@ test("close retains failed ownership while terminating every captured child", as
         signalAttempts.push({ pid, signal });
         return originalKill(pid, signal as any);
       };
+      await supervisor.stopProcess({ processId: first.processId! });
+      const retained = (supervisor as any).processes.get(first.processId);
+      retained.record.expiresAt = new Date(0).toISOString();
+      await (supervisor as any).expireIdleProcesses();
       await assert.rejects(supervisor.close(), /first terminal process write failed/u);
     } finally {
       (process as any).kill = originalKill;
@@ -2189,12 +2207,18 @@ class FailingInitialAndTerminalDevShellStore implements DevShellProcessStore {
 class FirstTerminalFailureDevShellStore implements DevShellProcessStore {
   private readonly delegate = new InMemoryDevShellStore();
   private firstProcessId: string | undefined;
+  private terminalFailureInjected = false;
 
   async upsertProcess(record: DevShellProcessRecord): Promise<void> {
     if (record.status === "RUNNING" && this.firstProcessId === undefined) {
       this.firstProcessId = record.processId;
     }
-    if (record.status !== "RUNNING" && record.processId === this.firstProcessId) {
+    if (
+      record.status !== "RUNNING" &&
+      record.processId === this.firstProcessId &&
+      this.terminalFailureInjected === false
+    ) {
+      this.terminalFailureInjected = true;
       throw new Error("first terminal process write failed");
     }
     await this.delegate.upsertProcess(record);

@@ -449,11 +449,13 @@ export class DevShellSupervisor {
       } else {
         running.stopRequested = true;
       }
-      signalProcessTree(running.child, "SIGTERM");
-      shutdownKillTimer = setTimeout(() => {
-        if (isProcessRunning(running.child)) signalProcessTree(running.child, "SIGKILL");
-      }, 1000);
-      shutdownKillTimer.unref();
+      if (isProcessRunning(running.child)) {
+        signalProcessTree(running.child, "SIGTERM");
+        shutdownKillTimer = setTimeout(() => {
+          if (isProcessRunning(running.child)) signalProcessTree(running.child, "SIGKILL");
+        }, 1000);
+        shutdownKillTimer.unref();
+      }
     };
     options.shutdownSignal?.addEventListener("abort", stopStartingProcess, { once: true });
     try {
@@ -473,11 +475,13 @@ export class DevShellSupervisor {
       }
       running.initialRecordSettled = true;
       running.resolveInitialRecordOutcome();
-      signalProcessTree(running.child, "SIGTERM");
-      await waitForProcessExit(running.child, 1000);
       if (isProcessRunning(running.child)) {
-        signalProcessTree(running.child, "SIGKILL");
-        await waitForProcessExit(running.child, 500);
+        signalProcessTree(running.child, "SIGTERM");
+        await waitForProcessExit(running.child, 1000);
+        if (isProcessRunning(running.child)) {
+          signalProcessTree(running.child, "SIGKILL");
+          await waitForProcessExit(running.child, 500);
+        }
       }
       try {
         await running.settlement;
@@ -558,12 +562,14 @@ export class DevShellSupervisor {
       await this.persistLiveProcessRecord(running);
     });
     const signal = input.signal ?? "SIGTERM";
-    signalProcessTree(running.child, signal);
-    await waitForProcessExit(
-      running.child,
-      normalizePositiveInt(input.waitMs, DEFAULT_YIELD_TIME_MS),
-      options.shutdownSignal,
-    );
+    if (isProcessRunning(running.child)) {
+      signalProcessTree(running.child, signal);
+      await waitForProcessExit(
+        running.child,
+        normalizePositiveInt(input.waitMs, DEFAULT_YIELD_TIME_MS),
+        options.shutdownSignal,
+      );
+    }
     if (isProcessRunning(running.child) && signal !== "SIGKILL") {
       signalProcessTree(running.child, "SIGKILL");
       await waitForProcessExit(running.child, 500);
@@ -865,6 +871,7 @@ export class DevShellSupervisor {
       clearTimeout(process.wallTimeout);
       process.wallTimeout = undefined;
     }
+    signalProcessTree(process.child, "SIGTERM");
     if (process.initialRecordSettled === false) {
       await process.initialRecordOutcome;
     }
@@ -903,7 +910,6 @@ export class DevShellSupervisor {
       await this.persistLiveProcessRecord(process);
     });
     await this.enforceSourceWriteGuard(process);
-    signalProcessTree(process.child, "SIGTERM");
     this.processes.delete(process.record.processId);
     await this.releaseManagedWorktreeProcessLease(process.record);
     flushWaiters(process);
@@ -1172,11 +1178,13 @@ export class DevShellSupervisor {
         continue;
       }
       process.stopRequested = true;
-      signalProcessTree(process.child, "SIGTERM");
-      await waitForProcessExit(process.child, 1500);
       if (isProcessRunning(process.child)) {
-        signalProcessTree(process.child, "SIGKILL");
-        await waitForProcessExit(process.child, 500);
+        signalProcessTree(process.child, "SIGTERM");
+        await waitForProcessExit(process.child, 1500);
+        if (isProcessRunning(process.child)) {
+          signalProcessTree(process.child, "SIGKILL");
+          await waitForProcessExit(process.child, 500);
+        }
       }
     }
   }
@@ -1347,11 +1355,13 @@ export class DevShellSupervisor {
         await this.persistLiveProcessRecord(process);
       }
     });
-    signalProcessTree(process.child, "SIGTERM");
-    await waitForProcessExit(process.child, 1500);
     if (isProcessRunning(process.child)) {
-      signalProcessTree(process.child, "SIGKILL");
-      await waitForProcessExit(process.child, 500);
+      signalProcessTree(process.child, "SIGTERM");
+      await waitForProcessExit(process.child, 1500);
+      if (isProcessRunning(process.child)) {
+        signalProcessTree(process.child, "SIGKILL");
+        await waitForProcessExit(process.child, 500);
+      }
     }
     await process.settlement;
   }
