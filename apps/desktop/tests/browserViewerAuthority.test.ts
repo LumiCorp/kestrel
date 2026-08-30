@@ -114,6 +114,57 @@ test("an abrupt restart converts durable current authority to pending desktop lo
   await anotherRestart.retryPending();
 });
 
+test("post-unlink directory sync failure converges and a restored stale record retries only exact loss", async (t) => {
+  const fixture = await journalFixture(t);
+  const exact = principal();
+  const durable = fixture.journal();
+  await durable.recordCurrent(exact);
+  await durable.recordPending(exact, "renderer_crashed");
+  const staleRecord = await readFile(fixture.journalPath, "utf8");
+
+  let syncAttempts = 0;
+  const postUnlinkFailure = new DesktopBrowserViewerAuthorityJournal(
+    fixture.journalPath,
+    {
+      async syncDirectory() {
+        syncAttempts += 1;
+        throw new Error("injected post-unlink directory sync failure");
+      },
+    },
+  );
+  await assert.doesNotReject(postUnlinkFailure.clear(exact));
+  assert.equal(syncAttempts, 1);
+  assert.equal(await durable.load(), undefined);
+
+  // A crash may expose the pre-sync directory entry again. It carries only
+  // the old exact principal and therefore can retry that idempotent loss; it
+  // cannot authorize a replacement connection.
+  await fixture.writeRaw(staleRecord);
+  const losses: DesktopBrowserViewerPrincipal[] = [];
+  const restarted = new DesktopBrowserViewerAuthorityCoordinator({
+    journal: fixture.journal(),
+    async loseAuthority(retained, reason) {
+      assert.equal(reason, "renderer_crashed");
+      losses.push(retained);
+    },
+  });
+  await restarted.retryPending();
+  assert.deepEqual(losses, [exact]);
+  assert.deepEqual(restarted.snapshot(), {
+    current: undefined,
+    pending: undefined,
+  });
+  assert.equal(await fixture.journal().load(), undefined);
+
+  const anotherRestart = new DesktopBrowserViewerAuthorityCoordinator({
+    journal: fixture.journal(),
+    async loseAuthority() {
+      assert.fail("converged exact loss must not be replayed again");
+    },
+  });
+  await anotherRestart.retryPending();
+});
+
 test("malformed, partial, and identity-drifted journals fail closed", async (t) => {
   const cases: Array<{ name: string; source: string }> = [
     { name: "malformed", source: "{" },

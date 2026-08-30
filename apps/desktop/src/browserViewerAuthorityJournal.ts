@@ -25,6 +25,10 @@ export interface DesktopBrowserViewerAuthorityJournalState {
   pendingReason: DesktopBrowserViewerAuthorityLossReason | undefined;
 }
 
+export interface DesktopBrowserViewerAuthorityJournalDependencies {
+  syncDirectory?(directoryPath: string): Promise<void>;
+}
+
 /**
  * Private, single-record persistence for Desktop's one authoritative viewer.
  * This intentionally is not a general recovery queue.
@@ -32,10 +36,15 @@ export interface DesktopBrowserViewerAuthorityJournalState {
 export class DesktopBrowserViewerAuthorityJournal {
   readonly #journalPath: string;
   readonly #directoryPath: string;
+  readonly #syncDirectory: (directoryPath: string) => Promise<void>;
 
-  constructor(journalPath: string) {
+  constructor(
+    journalPath: string,
+    dependencies: DesktopBrowserViewerAuthorityJournalDependencies = {},
+  ) {
     this.#journalPath = path.resolve(journalPath);
     this.#directoryPath = path.dirname(this.#journalPath);
+    this.#syncDirectory = dependencies.syncDirectory ?? syncDirectory;
   }
 
   async load(): Promise<DesktopBrowserViewerAuthorityJournalState | undefined> {
@@ -120,9 +129,15 @@ export class DesktopBrowserViewerAuthorityJournal {
     }
     try {
       await unlink(this.#journalPath);
-      await syncDirectory(this.#directoryPath);
     } catch (error) {
       throw journalError("clear journal", error);
+    }
+    try {
+      await this.#syncDirectory(this.#directoryPath);
+    } catch {
+      // The exact authority has already been lost and the journal name is gone
+      // in this process. If a crash exposes the old directory entry again,
+      // startup treats that exact stale record as idempotent pending loss.
     }
   }
 
@@ -143,7 +158,7 @@ export class DesktopBrowserViewerAuthorityJournal {
       handle = undefined;
       await rename(temporaryPath, this.#journalPath);
       assertPrivateRegularFile(await lstat(this.#journalPath));
-      await syncDirectory(this.#directoryPath);
+      await this.#syncDirectory(this.#directoryPath);
     } catch (error) {
       await handle?.close().catch(() => undefined);
       await unlink(temporaryPath).catch(() => undefined);

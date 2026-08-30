@@ -584,6 +584,16 @@ export class DesktopBrowserService implements BrowserServicePort {
           );
         }
       }
+      if (!expectedIdentityPresent && runtime.viewerConnections.size > 0) {
+        this.#viewerEvent(runtime, "rejection", "connection_identity");
+        await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST");
+        return {
+          version: DESKTOP_BROWSER_VIEWER_STATE_VERSION,
+          available: false,
+          threadId,
+          projectId,
+        };
+      }
       const conflicting = [...runtime.viewerConnections.values()].find(
         (connection) => connection.principalId !== principalId,
       );
@@ -907,6 +917,19 @@ export class DesktopBrowserService implements BrowserServicePort {
           TERMINAL_STATES.has(session.state),
       );
       if (terminal !== undefined) return;
+    }
+    if (
+      active !== undefined &&
+      active.session.threadId === input.threadId &&
+      active.session.generation === input.generation &&
+      active.authority.projectId === input.projectId &&
+      !active.viewerConnections.has(
+        requireText(input.connectionId, "viewer connectionId"),
+      )
+    ) {
+      requireText(input.principalId, "viewer principalId");
+      this.#assertViewerSessionState(active);
+      return;
     }
     const { runtime } = await this.#requireViewerConnection(input);
     this.#viewerEvent(runtime, "authorization_loss", "principal_changed");
@@ -3234,11 +3257,63 @@ export class DesktopBrowserService implements BrowserServicePort {
         "The Browser engine returned an invalid native handoff receipt.",
       );
     }
+    try {
+      this.#assertNativeHandoffPresentationCurrent(
+        runtime,
+        connection,
+        lease,
+        authority,
+      );
+    } catch (error) {
+      try {
+        await revoke.call(this.#engine, {
+          ...runtime.engine,
+          authority,
+          presentation,
+        });
+      } catch (revocationError) {
+        throw new AggregateError(
+          [error, revocationError],
+          "Browser native handoff presentation expired or drifted and revocation could not be proven.",
+        );
+      }
+      throw error;
+    }
     runtime.nativeHandoff = {
       authority,
       presentation: Object.freeze({ ...presentation }),
     };
     this.#scheduleNativeHandoffExpiry(runtime);
+  }
+
+  #assertNativeHandoffPresentationCurrent(
+    runtime: ActiveDesktopBrowserRuntime,
+    connection: DesktopBrowserViewerConnection,
+    lease: DesktopBrowserInputLease,
+    authority: DesktopBrowserNativeHandoffAuthority,
+  ): void {
+    if (
+      this.#active.get(authority.sessionId) !== runtime ||
+      runtime.session.sessionId !== authority.sessionId ||
+      runtime.session.generation !== authority.generation ||
+      runtime.session.threadId !== authority.threadId ||
+      runtime.terminationRequested !== undefined ||
+      (runtime.session.state !== "ready" &&
+        runtime.session.state !== "human_control") ||
+      runtime.viewerConnections.get(authority.connectionId) !== connection ||
+      connection.connectionId !== lease.connectionId ||
+      connection.principalId !== authority.principalId ||
+      connection.projectId !== authority.projectId ||
+      lease.leaseId !== authority.leaseId ||
+      lease.expiresAt !== authority.expiresAt ||
+      runtime.activeInputLease !== undefined ||
+      this.#now().getTime() >= Date.parse(authority.expiresAt)
+    ) {
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser native handoff authority expired or changed during presentation.",
+      );
+    }
   }
 
   async #revokeNativeHandoff(
@@ -4454,12 +4529,23 @@ export async function presentAgentBrowserNativeWindow(
         "BROWSER_ENGINE_FAILURE: Browser native handoff presentation was not proven.",
       );
     }
+    const current = await resolveNativeHandoffWindow(
+      parsed.toString(),
+      presentation.targetId,
+      sendRequest,
+    );
+    if (current !== presentation.windowId) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: Browser native handoff target changed windows during presentation.",
+      );
+    }
     return presentation;
   } catch (error) {
-    await sendRequest(parsed.toString(), "Browser.setWindowBounds", {
-      windowId: presentation.windowId,
-      bounds: { windowState: "minimized" },
-    }).catch(() => undefined);
+    await revokeAgentBrowserNativeWindow(
+      parsed.toString(),
+      presentation,
+      sendRequest,
+    ).catch(() => undefined);
     throw error;
   }
 }
@@ -4510,15 +4596,83 @@ export async function revokeAgentBrowserNativeWindow(
       "BROWSER_ENGINE_FAILURE: Browser native handoff receipt is invalid.",
     );
   }
-  await sendRequest(parsed.toString(), "Browser.setWindowBounds", {
-    windowId: presentation.windowId,
+  let currentWindowId: number;
+  try {
+    currentWindowId = await resolveNativeHandoffWindow(
+      parsed.toString(),
+      presentation.targetId,
+      sendRequest,
+    );
+  } catch (error) {
+    await minimizeAndVerifyNativeHandoffWindow(
+      parsed.toString(),
+      presentation.windowId,
+      sendRequest,
+    ).catch(() => undefined);
+    throw error;
+  }
+
+  const windowIds = [...new Set([presentation.windowId, currentWindowId])];
+  const failures: unknown[] = [];
+  for (const windowId of windowIds) {
+    try {
+      await minimizeAndVerifyNativeHandoffWindow(
+        parsed.toString(),
+        windowId,
+        sendRequest,
+      );
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      "BROWSER_ENGINE_FAILURE: Browser native handoff revocation was not proven.",
+    );
+  }
+
+  const verifiedCurrentWindowId = await resolveNativeHandoffWindow(
+    parsed.toString(),
+    presentation.targetId,
+    sendRequest,
+  );
+  if (!windowIds.includes(verifiedCurrentWindowId)) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser native handoff target changed windows during revocation.",
+    );
+  }
+}
+
+async function resolveNativeHandoffWindow(
+  cdpUrl: string,
+  targetId: string,
+  sendRequest: typeof sendBrowserCdpRequest,
+): Promise<number> {
+  const result = await sendRequest(cdpUrl, "Browser.getWindowForTarget", {
+    targetId,
+  });
+  const windowId = result.windowId;
+  if (!Number.isSafeInteger(windowId) || Number(windowId) < 1) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser native handoff window identity is invalid.",
+    );
+  }
+  return Number(windowId);
+}
+
+async function minimizeAndVerifyNativeHandoffWindow(
+  cdpUrl: string,
+  windowId: number,
+  sendRequest: typeof sendBrowserCdpRequest,
+): Promise<void> {
+  await sendRequest(cdpUrl, "Browser.setWindowBounds", {
+    windowId,
     bounds: { windowState: "minimized" },
   });
-  const verified = await sendRequest(
-    parsed.toString(),
-    "Browser.getWindowBounds",
-    { windowId: presentation.windowId },
-  );
+  const verified = await sendRequest(cdpUrl, "Browser.getWindowBounds", {
+    windowId,
+  });
   if (requireWindowState(verified) !== "minimized") {
     throw new Error(
       "BROWSER_ENGINE_FAILURE: Browser native handoff revocation was not proven.",

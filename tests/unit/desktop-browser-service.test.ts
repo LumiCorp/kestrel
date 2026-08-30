@@ -64,6 +64,11 @@ import {
   DesktopProjectRunRegistry,
   desktopProjectRunPreviewUrlId,
 } from "../../src/localCore/desktopProjectRuns.js";
+import {
+  DesktopBrowserViewerAuthorityCoordinator,
+  type DesktopBrowserViewerPrincipal,
+} from "../../apps/desktop/src/browserViewerAuthority.js";
+import { DesktopBrowserViewerAuthorityJournal } from "../../apps/desktop/src/browserViewerAuthorityJournal.js";
 
 const PROJECT_ROOT = "/projects/exact";
 const PREVIEW_URL = "http://localhost:4317/";
@@ -411,8 +416,11 @@ test("Desktop human control survives disconnect and lease expiry until an author
       principalId: "wrong-renderer",
       threadId: "thread-1",
       projectId: "project-1",
+      sessionId: first.sessionId,
+      generation: first.generation,
+      connectionId: first.connectionId,
     }),
-    hasCode("BROWSER_SESSION_CONFLICT"),
+    hasCode("BROWSER_SESSION_LOST"),
   );
   now = new Date(now.getTime() + 31_000);
   await assert.rejects(
@@ -564,7 +572,7 @@ test("Desktop native handoff fails closed when presentation or revocation cannot
   assert.equal(revocation.engine.closed.length, 1);
 });
 
-test("Desktop native handoff timer uses the injected clock and revokes an expired lease without another viewer call", async () => {
+test("Desktop native handoff never commits a presentation that outlives its injected-clock lease", async () => {
   let now = new Date();
   const engine = new FakeEngine();
   engine.onNativePresentation = () => {
@@ -590,22 +598,26 @@ test("Desktop native handoff timer uses the injected clock and revokes an expire
       projectId: "project-1",
     }),
   );
-  await fixture.service.acceptViewerTakeover({
-    ...viewer,
-    principalId: "desktop-main-1",
-  });
-  await waitFor(async () => engine.revokedNativeHandoffs.length === 1);
-  const afterExpiry = requireAvailableViewer(
-    await fixture.service.connectViewer({
+  await assert.rejects(
+    fixture.service.acceptViewerTakeover({
+      ...viewer,
       principalId: "desktop-main-1",
-      threadId: "thread-1",
-      projectId: "project-1",
     }),
+    hasCode("BROWSER_ACTION_OUTCOME_UNKNOWN"),
   );
-  assert.equal(afterExpiry.sessionState, "human_control");
-  assert.equal(afterExpiry.inputLeaseId, undefined);
-  assert.equal(afterExpiry.nativeHandoffActive, undefined);
-  await fixture.service.close();
+  assert.equal(engine.nativeHandoffs.length, 1);
+  assert.equal(engine.revokedNativeHandoffs.length, 1);
+  assert.equal(engine.closed.length, 1);
+  assert.equal(
+    (
+      await fixture.service.connectViewer({
+        principalId: "desktop-main-1",
+        threadId: "thread-1",
+        projectId: "project-1",
+      })
+    ).available,
+    false,
+  );
 });
 
 test("Desktop viewer authority loss and engine loss terminate human control instead of resuming the agent", async () => {
@@ -753,6 +765,146 @@ test("Desktop viewer authority loss and engine loss terminate human control inst
     hasCode("BROWSER_SESSION_LOST"),
   );
   await restarted.service.close();
+});
+
+test("a restarted Desktop without an exact journal cannot inherit a surviving Local Core viewer connection", async () => {
+  const fixture = await createFixture();
+  const staleSessionId = await openSession(fixture.service);
+  const senderId = 41;
+  const principalId = "desktop-main-41-reused";
+  const journalPath = path.join(
+    fixture.homePath,
+    "desktop-private",
+    "browser-viewer-authority.json",
+  );
+  const stale = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId,
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  assert.equal(stale.sessionId, staleSessionId);
+
+  // Local Core completed the connection, but Desktop exited before the exact
+  // identity could be represented in its journal. The restarted coordinator
+  // therefore has only the reused sender/bootstrap principal.
+  let exactLosses = 0;
+  const restarted = new DesktopBrowserViewerAuthorityCoordinator({
+    journal: new DesktopBrowserViewerAuthorityJournal(journalPath),
+    async loseAuthority(exact) {
+      exactLosses += 1;
+      await fixture.service.loseViewerAuthority({
+        principalId: exact.principalId,
+        threadId: exact.threadId,
+        projectId: exact.projectId,
+        sessionId: exact.sessionId,
+        generation: exact.generation,
+        connectionId: exact.connectionId,
+      });
+    },
+  });
+  const unavailable = await restarted.connect({
+    senderId,
+    principalId,
+    threadId: "thread-1",
+    projectId: "project-1",
+    async connect(expected) {
+      assert.equal(expected, undefined);
+      const viewer = await fixture.service.connectViewer({
+        principalId,
+        threadId: "thread-1",
+        projectId: "project-1",
+      });
+      return { value: viewer, previousSessionTerminal: !viewer.available };
+    },
+  });
+  assert.equal(unavailable.available, false);
+  assert.equal(restarted.current(), undefined);
+  assert.equal(fixture.engine.closed.length, 1);
+  assert.equal(exactLosses, 0);
+
+  const replacementSessionId = await openSession(fixture.service);
+  const replacement = await restarted.connect({
+    senderId,
+    principalId,
+    threadId: "thread-1",
+    projectId: "project-1",
+    async connect(expected) {
+      assert.equal(expected, undefined);
+      const viewer = requireAvailableViewer(
+        await fixture.service.connectViewer({
+          principalId,
+          threadId: "thread-1",
+          projectId: "project-1",
+        }),
+      );
+      const exact: DesktopBrowserViewerPrincipal = {
+        senderId,
+        principalId,
+        threadId: viewer.threadId,
+        projectId: viewer.projectId,
+        sessionId: viewer.sessionId,
+        generation: viewer.generation,
+        connectionId: viewer.connectionId,
+      };
+      return { value: viewer, principal: exact };
+    },
+  });
+  assert.equal(replacement.sessionId, replacementSessionId);
+  assert.equal(fixture.engine.closed.length, 1);
+
+  await restarted.loseCurrent({ reason: "desktop_stopped" });
+  assert.equal(exactLosses, 1);
+  assert.equal(fixture.engine.closed.length, 2);
+  await fixture.service.close();
+});
+
+test("a crash-restored exact disconnect record is idempotent without changing its replacement viewer", async () => {
+  const fixture = await createFixture();
+  await openSession(fixture.service);
+  const retired = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  await fixture.service.disconnectViewer({
+    ...retired,
+    principalId: "desktop-main-1",
+  });
+  const replacement = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+
+  await assert.doesNotReject(
+    fixture.service.loseViewerAuthority({
+      ...retired,
+      principalId: "desktop-main-1",
+    }),
+  );
+  const stillCurrent = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      ...replacement,
+      principalId: "desktop-main-1",
+    }),
+  );
+  assert.equal(stillCurrent.connectionId, replacement.connectionId);
+  assert.equal(fixture.engine.closed.length, 0);
+  await assert.rejects(
+    fixture.service.loseViewerAuthority({
+      ...retired,
+      principalId: "desktop-main-1",
+      generation: retired.generation + 1,
+    }),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
+  await fixture.service.close();
 });
 
 test("operator open reuses the Thread Session across allowed destinations", async () => {
@@ -3404,6 +3556,102 @@ test("native handoff presents and revokes only the exact private CDP window with
   assert.doesNotMatch(JSON.stringify(calls), /cdpUrl|proxy-secret|passkey|mfa/u);
 });
 
+test("native handoff revocation minimizes and verifies both stored and moved target windows", async () => {
+  const states = new Map<number, "normal" | "minimized">([
+    [17, "minimized"],
+    [23, "normal"],
+  ]);
+  let targetWindowId = 17;
+  const calls: Array<{ method: string; windowId?: number | undefined }> = [];
+  const send = async (
+    _cdpUrl: string,
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    const windowId =
+      typeof params.windowId === "number" ? params.windowId : undefined;
+    calls.push({ method, ...(windowId === undefined ? {} : { windowId }) });
+    if (method === "Browser.getWindowForTarget") {
+      return { windowId: targetWindowId };
+    }
+    if (method === "Browser.setWindowBounds" && windowId !== undefined) {
+      const windowState = asRecord(params.bounds).windowState;
+      if (windowState !== "normal" && windowState !== "minimized") {
+        throw new Error("unexpected window state");
+      }
+      states.set(windowId, windowState);
+      return {};
+    }
+    if (method === "Browser.getWindowBounds" && windowId !== undefined) {
+      return { bounds: { windowState: states.get(windowId) } };
+    }
+    throw new Error(`unexpected ${method}`);
+  };
+  const cdp = "ws://127.0.0.1:9222/devtools/browser/exact";
+  const presentation = await presentAgentBrowserNativeWindow(
+    cdp,
+    "target-1",
+    send,
+    async () => undefined,
+  );
+  targetWindowId = 23;
+
+  await revokeAgentBrowserNativeWindow(cdp, presentation, send);
+
+  assert.equal(states.get(17), "minimized");
+  assert.equal(states.get(23), "minimized");
+  assert.deepEqual(
+    calls
+      .filter((call) => call.method === "Browser.getWindowBounds")
+      .map((call) => call.windowId),
+    [17, 17, 23],
+  );
+  assert.doesNotMatch(
+    JSON.stringify(calls),
+    /proxy-secret|password-sentinel|passkey-sentinel|mfa-sentinel/u,
+  );
+});
+
+test("native handoff revocation rejects target lookup, minimization, and verification failures", async (t) => {
+  const presentation = { windowId: 17, targetId: "target-1" };
+  const cdp = "ws://127.0.0.1:9222/devtools/browser/exact";
+  for (const failure of ["lookup", "minimize", "verify"] as const) {
+    await t.test(failure, async () => {
+      await assert.rejects(
+        revokeAgentBrowserNativeWindow(
+          cdp,
+          presentation,
+          async (_cdpUrl, method) => {
+            if (
+              failure === "lookup" &&
+              method === "Browser.getWindowForTarget"
+            ) {
+              throw new Error("target missing");
+            }
+            if (method === "Browser.getWindowForTarget") {
+              return { windowId: 23 };
+            }
+            if (
+              failure === "minimize" &&
+              method === "Browser.setWindowBounds"
+            ) {
+              throw new Error("window closed");
+            }
+            if (method === "Browser.getWindowBounds") {
+              return {
+                bounds: {
+                  windowState: failure === "verify" ? "normal" : "minimized",
+                },
+              };
+            }
+            return {};
+          },
+        ),
+      );
+    });
+  }
+});
+
 test("native handoff presentation rolls the exact window back to minimized on failed verification", async () => {
   const states: string[] = [];
   await assert.rejects(
@@ -3423,6 +3671,33 @@ test("native handoff presentation rolls the exact window back to minimized on fa
     /presentation was not proven/u,
   );
   assert.deepEqual(states, ["normal", "minimized"]);
+});
+
+test("native handoff focus failure conceals the exact target window before rejecting", async () => {
+  let state: "normal" | "minimized" = "minimized";
+  await assert.rejects(
+    presentAgentBrowserNativeWindow(
+      "ws://127.0.0.1:9222/devtools/browser/exact",
+      "target-1",
+      async (_cdpUrl, method, params) => {
+        if (method === "Browser.getWindowForTarget") return { windowId: 9 };
+        if (method === "Browser.setWindowBounds") {
+          const next = asRecord(params.bounds).windowState;
+          if (next !== "normal" && next !== "minimized") {
+            throw new Error("unexpected window state");
+          }
+          state = next;
+          return {};
+        }
+        return { bounds: { windowState: state } };
+      },
+      async () => {
+        throw new Error("target focus failed");
+      },
+    ),
+    /target focus failed/u,
+  );
+  assert.equal(state, "minimized");
 });
 
 test("agent-browser adapter requires the exact accepted operation token before invocation", async () => {

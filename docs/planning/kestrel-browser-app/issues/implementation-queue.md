@@ -4,16 +4,11 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Close Desktop viewer journal crash windows](04f-close-viewer-journal-crash-windows.md)
-- [Revalidate native handoff presentation](04g-revalidate-native-handoff-presentation.md)
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
 
 ## In progress
-
-- [Proxy authorized QA WebSockets](05d-proxy-authorized-qa-websockets.md)
-- [Enforce Gateway connection timeouts](05g-enforce-gateway-connection-timeouts.md)
 
 ## Blocked
 
@@ -27,6 +22,10 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Implemented
 
+- [Close Desktop viewer journal crash windows](04f-close-viewer-journal-crash-windows.md) — focused restart, authority-loss, and journal convergence tests are green; awaiting independent review
+- [Revalidate native handoff presentation](04g-revalidate-native-handoff-presentation.md) — focused lease-expiry and exact-window lifecycle tests are green; awaiting independent review
+- [Proxy authorized QA WebSockets](05d-proxy-authorized-qa-websockets.md) — focused authenticated upgrade, revocation, and rebinding tests are green; awaiting independent review
+- [Enforce Gateway connection timeouts](05g-enforce-gateway-connection-timeouts.md) — focused DNS, connect, header, body-idle, and established-stream lifecycle tests are green; awaiting independent review
 - [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 

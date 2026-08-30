@@ -15,6 +15,21 @@ import { assertPublicResolvedAddresses } from "@kestrel/mcp-security";
 const MAX_HEADER_BYTES = 32 * 1024;
 const AUTH_REALM = "Kestrel Hosted Browser";
 export const HOSTED_BROWSER_EGRESS_PROXY_PORT = 43_109;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+export type HostedBrowserEgressTimeouts = {
+  dnsMs: number;
+  connectMs: number;
+  headersMs: number;
+  bodyIdleMs: number;
+};
+
+const DEFAULT_TIMEOUTS: HostedBrowserEgressTimeouts = {
+  dnsMs: 5_000,
+  connectMs: 10_000,
+  headersMs: 15_000,
+  bodyIdleMs: 30_000,
+};
 
 type BrowserMode = "qa" | "operator";
 export type HostedBrowserGatewayAuthorityV1 = {
@@ -69,6 +84,7 @@ type Connection = {
   destination: Destination;
   readonly active: boolean;
   attach(resource: TrackedResource, watchClose?: boolean): boolean;
+  defer(cleanup: () => void): () => void;
   close(): boolean;
   release(): void;
 };
@@ -85,6 +101,7 @@ export class HostedBrowserEgressRegistry {
   readonly #resolve: ResolveAddresses;
   readonly #dial: Dial;
   readonly #requestUpstream: RequestUpstream;
+  readonly #timeouts: HostedBrowserEgressTimeouts;
   #listening: Promise<void> | undefined;
   #shutdown: Promise<void> | undefined;
   #closed = false;
@@ -95,6 +112,7 @@ export class HostedBrowserEgressRegistry {
     resolve?: ResolveAddresses | undefined;
     dial?: Dial | undefined;
     requestUpstream?: RequestUpstream | undefined;
+    timeouts?: Partial<HostedBrowserEgressTimeouts> | undefined;
   }) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(input.gatewayMachineId)) {
       throw new Error("Hosted Browser gateway Machine identity is invalid.");
@@ -107,6 +125,7 @@ export class HostedBrowserEgressRegistry {
     this.#resolve = input.resolve ?? resolveAddresses;
     this.#dial = input.dial ?? dialAddress;
     this.#requestUpstream = input.requestUpstream ?? ((options) => http.request(options));
+    this.#timeouts = validateTimeouts({ ...DEFAULT_TIMEOUTS, ...input.timeouts });
     this.#server = http.createServer(
       { maxHeaderSize: MAX_HEADER_BYTES, requireHostHeader: true },
       (request, response) => {
@@ -120,7 +139,11 @@ export class HostedBrowserEgressRegistry {
       if (proxy) void proxy.connect(request, client, head);
       else rejectAuthentication(client);
     });
-    this.#server.on("upgrade", (_request, socket) => rejectSocket(socket));
+    this.#server.on("upgrade", (request, socket, head) => {
+      const proxy = this.#proxyFor(request);
+      if (proxy) void proxy.upgrade(request, socket, head);
+      else rejectAuthentication(socket);
+    });
     this.#server.on("clientError", (_error, socket) => rejectSocket(socket));
   }
 
@@ -147,6 +170,7 @@ export class HostedBrowserEgressRegistry {
       this.#resolve,
       this.#dial,
       this.#requestUpstream,
+      this.#timeouts,
       () => this.#sessions.get(input.sessionId) === proxy,
     );
     this.#sessions.set(input.sessionId, proxy);
@@ -301,6 +325,7 @@ class HostedBrowserGatewayProxy {
   readonly #resolve: ResolveAddresses;
   readonly #dial: Dial;
   readonly #requestUpstream: RequestUpstream;
+  readonly #timeouts: HostedBrowserEgressTimeouts;
   readonly #isCurrent: () => boolean;
   #binding: SessionBinding;
   #closed = false;
@@ -311,6 +336,7 @@ class HostedBrowserGatewayProxy {
     resolve: ResolveAddresses,
     dial: Dial,
     requestUpstream: RequestUpstream,
+    timeouts: HostedBrowserEgressTimeouts,
     isCurrent: () => boolean,
   ) {
     validateSessionBinding(binding);
@@ -319,6 +345,7 @@ class HostedBrowserGatewayProxy {
     this.#resolve = resolve;
     this.#dial = dial;
     this.#requestUpstream = requestUpstream;
+    this.#timeouts = timeouts;
     this.#isCurrent = isCurrent;
     this.#credential = credentialFor(binding);
   }
@@ -446,16 +473,27 @@ class HostedBrowserGatewayProxy {
       if (client.destroyed) throw new Error("blocked");
       const activeConnection = this.#reserve(destination, client);
       connection = activeConnection;
-      const addresses = [...(await this.#resolve(destination.hostname))];
-      assertPublicResolvedAddresses(addresses);
-      this.#assertReservationCurrent(activeConnection, revision);
+      client.once("end", activeConnection.close);
+      const addresses = await this.#resolvePublic(
+        destination,
+        activeConnection,
+        revision,
+      );
       const selected = addresses[0];
       if (!selected) throw new Error("blocked");
       this.#assertReservationCurrent(activeConnection, revision);
       const upstream = this.#dial({ address: selected, port: destination.port });
       activeConnection.attach(upstream);
-      upstream.once("error", () => activeConnection.close());
+      const clearConnectDeadline = armConnectionDeadline(
+        activeConnection,
+        this.#timeouts.connectMs,
+      );
+      upstream.once("error", () => {
+        clearConnectDeadline();
+        activeConnection.close();
+      });
       upstream.once("connect", () => {
+        clearConnectDeadline();
         if (!activeConnection.active || client.destroyed || upstream.destroyed) return;
         client.write("HTTP/1.1 200 Connection Established\r\nProxy-Agent: Kestrel\r\n\r\n");
         if (head.byteLength > 0) upstream.write(head);
@@ -501,9 +539,11 @@ class HostedBrowserGatewayProxy {
       response.once("close", () => {
         if (!response.writableEnded) activeConnection.close();
       });
-      const addresses = [...(await this.#resolve(destination.hostname))];
-      assertPublicResolvedAddresses(addresses);
-      this.#assertReservationCurrent(activeConnection, revision);
+      const addresses = await this.#resolvePublic(
+        destination,
+        activeConnection,
+        revision,
+      );
       const selected = addresses[0];
       if (!selected) throw new Error("blocked");
       const headers = sanitizeHeaders(request.headers);
@@ -519,10 +559,25 @@ class HostedBrowserGatewayProxy {
         agent: false,
       });
       activeConnection.attach(upstream, false);
+      const clearConnectDeadline = armConnectionDeadline(
+        activeConnection,
+        this.#timeouts.connectMs,
+      );
+      const clearHeaderDeadline = armConnectionDeadline(
+        activeConnection,
+        this.#timeouts.headersMs,
+      );
       upstream.once("socket", (socket) => {
         activeConnection.attach(socket);
+        if (socket.connecting) {
+          socket.once("connect", clearConnectDeadline);
+        } else {
+          clearConnectDeadline();
+        }
       });
       upstream.once("response", (upstreamResponse) => {
+        clearConnectDeadline();
+        clearHeaderDeadline();
         if (!activeConnection.active) {
           upstreamResponse.destroy();
           return;
@@ -531,18 +586,134 @@ class HostedBrowserGatewayProxy {
           upstreamResponse.statusCode ?? 502,
           sanitizeHeaders(upstreamResponse.headers),
         );
+        let clearBodyDeadline = armConnectionDeadline(
+          activeConnection,
+          this.#timeouts.bodyIdleMs,
+        );
+        upstreamResponse.on("data", () => {
+          clearBodyDeadline();
+          clearBodyDeadline = armConnectionDeadline(
+            activeConnection,
+            this.#timeouts.bodyIdleMs,
+          );
+        });
         upstreamResponse.pipe(response);
-        upstreamResponse.once("end", () => activeConnection.release());
+        upstreamResponse.once("end", () => {
+          clearBodyDeadline();
+          activeConnection.release();
+        });
         upstreamResponse.once("aborted", () => activeConnection.close());
         upstreamResponse.once("error", () => activeConnection.close());
       });
-      upstream.once("error", () => activeConnection.close());
-      upstream.once("timeout", () => activeConnection.close());
+      upstream.once("error", () => {
+        clearConnectDeadline();
+        clearHeaderDeadline();
+        activeConnection.close();
+      });
       request.pipe(upstream);
     } catch {
       if (connection?.active) connection.release();
       if (!response.destroyed && !response.writableEnded) rejectHttp(response);
     }
+  }
+
+  async upgrade(request: IncomingMessage, client: Duplex, head: Buffer) {
+    if (!authenticated(request, this.#credential.authorization)) {
+      rejectAuthentication(client);
+      return;
+    }
+    let connection: Connection | undefined;
+    try {
+      const { url, destination } = parseWebSocketUpgrade(request);
+      const revision = this.revision;
+      if (!allows(this.#binding.mode, this.#binding.authority, destination)) {
+        throw new Error("blocked");
+      }
+      if (client.destroyed) throw new Error("blocked");
+      const activeConnection = this.#reserve(destination, client);
+      connection = activeConnection;
+      client.once("end", activeConnection.close);
+      const addresses = await this.#resolvePublic(
+        destination,
+        activeConnection,
+        revision,
+      );
+      const selected = addresses[0];
+      if (!selected) throw new Error("blocked");
+      const headers = sanitizeWebSocketRequestHeaders(request.headers);
+      headers.host = `${destination.hostname}:${destination.port}`;
+      this.#assertReservationCurrent(activeConnection, revision);
+      const upstream = this.#requestUpstream({
+        host: selected.address,
+        family: selected.family,
+        port: destination.port,
+        method: "GET",
+        path: `${url.pathname}${url.search}`,
+        headers,
+        agent: false,
+      });
+      activeConnection.attach(upstream, false);
+      const clearConnectDeadline = armConnectionDeadline(
+        activeConnection,
+        this.#timeouts.connectMs,
+      );
+      const clearHeaderDeadline = armConnectionDeadline(
+        activeConnection,
+        this.#timeouts.headersMs,
+      );
+      upstream.once("socket", (socket) => {
+        activeConnection.attach(socket);
+        if (socket.connecting) {
+          socket.once("connect", clearConnectDeadline);
+        } else {
+          clearConnectDeadline();
+        }
+      });
+      upstream.once("upgrade", (upstreamResponse, upstreamSocket, upstreamHead) => {
+        clearConnectDeadline();
+        clearHeaderDeadline();
+        if (!activeConnection.active || client.destroyed) {
+          upstreamSocket.destroy();
+          return;
+        }
+        activeConnection.attach(upstreamSocket);
+        client.write(serializeWebSocketResponse(upstreamResponse));
+        if (upstreamHead.byteLength > 0) client.write(upstreamHead);
+        if (head.byteLength > 0) upstreamSocket.write(head);
+        client.pipe(upstreamSocket);
+        upstreamSocket.pipe(client);
+      });
+      upstream.once("response", (upstreamResponse) => {
+        clearConnectDeadline();
+        clearHeaderDeadline();
+        upstreamResponse.resume();
+        activeConnection.close();
+      });
+      upstream.once("error", () => {
+        clearConnectDeadline();
+        clearHeaderDeadline();
+        activeConnection.close();
+      });
+      upstream.end();
+    } catch {
+      if (connection?.active) connection.release();
+      if (!client.destroyed) rejectSocket(client);
+    }
+  }
+
+  async #resolvePublic(
+    destination: Destination,
+    connection: Connection,
+    revision: string,
+  ): Promise<ResolvedAddress[]> {
+    const addresses = [...await withinDeadline(
+      this.#resolve(destination.hostname),
+      this.#timeouts.dnsMs,
+      connection,
+    )];
+    assertPublicResolvedAddresses(addresses);
+    this.#assertReservationCurrent(connection, revision);
+    return addresses;
   }
 
   #assertReservationCurrent(connection: Connection, revision: string): void {
@@ -566,7 +737,9 @@ class HostedBrowserGatewayProxy {
     ) throw new Error("blocked");
     let closed = false;
     let closing = false;
+    let expiryTimer: NodeJS.Timeout | undefined;
     const attached = new Set<TrackedResource>();
+    const cleanups = new Set<() => void>();
     const connection: Connection = {
       destination,
       get active() { return !closed; },
@@ -582,9 +755,20 @@ class HostedBrowserGatewayProxy {
         if (watchClose) resource.once("close", connection.close);
         return true;
       },
+      defer: (cleanup) => {
+        if (closed) {
+          cleanup();
+          return () => {};
+        }
+        cleanups.add(cleanup);
+        return () => cleanups.delete(cleanup);
+      },
       close: () => {
         if (closing) return attached.size === 0;
         closed = true;
+        if (expiryTimer) clearTimeout(expiryTimer);
+        for (const cleanup of [...cleanups]) cleanup();
+        cleanups.clear();
         closing = true;
         for (const resource of [...attached]) {
           try {
@@ -602,12 +786,25 @@ class HostedBrowserGatewayProxy {
       release: () => {
         if (closed) return;
         closed = true;
+        if (expiryTimer) clearTimeout(expiryTimer);
+        for (const cleanup of [...cleanups]) cleanup();
+        cleanups.clear();
         this.#connections.delete(connection);
         attached.clear();
       },
     };
     this.#connections.add(connection);
     for (const resource of resources) connection.attach(resource);
+    const expire = () => {
+      const remaining = Date.parse(this.#binding.hardExpiresAt) - Date.now();
+      if (remaining <= 0) {
+        connection.close();
+        return;
+      }
+      expiryTimer = setTimeout(expire, Math.min(remaining, MAX_TIMER_DELAY_MS));
+      expiryTimer.unref();
+    };
+    expire();
     return connection;
   }
 }
@@ -683,6 +880,35 @@ function parseConnect(value: string | undefined): Destination {
   return { scheme: "https", hostname, port };
 }
 
+function parseWebSocketUpgrade(request: IncomingMessage): {
+  url: URL;
+  destination: Destination;
+} {
+  if (request.method !== "GET") throw new Error("blocked");
+  const upgrade = request.headers.upgrade;
+  const connection = request.headers.connection;
+  if (
+    typeof upgrade !== "string" || upgrade.toLowerCase() !== "websocket" ||
+    typeof connection !== "string" ||
+    !connection.split(",").some((token) => token.trim().toLowerCase() === "upgrade")
+  ) throw new Error("blocked");
+  const url = new URL(request.url ?? "");
+  if (
+    url.protocol !== "http:" || url.username || url.password || url.hash ||
+    !url.pathname.startsWith("/")
+  ) throw new Error("blocked");
+  const destination: Destination = {
+    scheme: "http",
+    hostname: normalizeHostname(url.hostname),
+    port: url.port ? Number(url.port) : 80,
+  };
+  if (
+    !Number.isSafeInteger(destination.port) ||
+    destination.port < 1 || destination.port > 65_535
+  ) throw new Error("blocked");
+  return { url, destination };
+}
+
 function normalizeHostname(value: string) {
   const unbracketed = value.startsWith("[") && value.endsWith("]")
     ? value.slice(1, -1) : value;
@@ -737,14 +963,119 @@ const HOP_HEADERS = new Set([
 function sanitizeHeaders(
   headers: IncomingMessage["headers"],
 ): OutgoingHttpHeaders {
+  const excluded = new Set(HOP_HEADERS);
+  const connection = headers.connection;
+  if (typeof connection === "string") {
+    for (const token of connection.split(",")) {
+      const normalized = token.trim().toLowerCase();
+      if (normalized) excluded.add(normalized);
+    }
+  }
   const result: OutgoingHttpHeaders = {};
   for (const [name, value] of Object.entries(headers)) {
-    if (value !== undefined && !HOP_HEADERS.has(name.toLowerCase())) {
+    if (value !== undefined && !excluded.has(name.toLowerCase())) {
       result[name] = value;
     }
   }
   return result;
 }
+
+function sanitizeWebSocketRequestHeaders(
+  headers: IncomingMessage["headers"],
+): OutgoingHttpHeaders {
+  const result = sanitizeHeaders(headers);
+  result.connection = "Upgrade";
+  result.upgrade = "websocket";
+  return result;
+}
+
+function serializeWebSocketResponse(response: IncomingMessage): Buffer {
+  const headers = sanitizeHeaders(response.headers);
+  headers.connection = "Upgrade";
+  headers.upgrade = "websocket";
+  const lines = [
+    `HTTP/1.1 ${response.statusCode ?? 101} ${response.statusMessage ?? "Switching Protocols"}`,
+  ];
+  for (const [name, value] of Object.entries(headers)) {
+    if (value === undefined) continue;
+    for (const item of Array.isArray(value) ? value : [value]) {
+      lines.push(`${name}: ${String(item)}`);
+    }
+  }
+  lines.push("", "");
+  return Buffer.from(lines.join("\r\n"), "utf8");
+}
+
+function validateTimeouts(
+  input: HostedBrowserEgressTimeouts,
+): HostedBrowserEgressTimeouts {
+  for (const value of Object.values(input)) {
+    if (!Number.isSafeInteger(value) || value < 1 || value > MAX_TIMER_DELAY_MS) {
+      throw new Error("Hosted Browser egress timeout is invalid.");
+    }
+  }
+  return Object.freeze({ ...input });
+}
+
+async function withinDeadline<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  connection: Connection,
+): Promise<T> {
+  let rejectDeadline!: (reason?: unknown) => void;
+  let settled = false;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    rejectDeadline = reject;
+  });
+  let unregister = () => {};
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    unregister();
+    connection.close();
+    rejectDeadline(new Error("blocked"));
+  }, timeoutMs);
+  timer.unref();
+  unregister = connection.defer(() => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    rejectDeadline(new Error("blocked"));
+  });
+  try {
+    return await Promise.race([operation, deadline]);
+  } finally {
+    settled = true;
+    clearTimeout(timer);
+    unregister();
+  }
+}
+
+function armConnectionDeadline(
+  connection: Connection,
+  timeoutMs: number,
+  afterClose?: () => void,
+): () => void {
+  let removeCleanup = () => {};
+  let cleared = false;
+  const timer = setTimeout(() => {
+    if (cleared) return;
+    cleared = true;
+    removeCleanup();
+    connection.close();
+    afterClose?.();
+  }, timeoutMs);
+  timer.unref();
+  const clear = () => {
+    if (cleared) return;
+    cleared = true;
+    clearTimeout(timer);
+    removeCleanup();
+  };
+  removeCleanup = connection.defer(clear);
+  return clear;
+}
+
 function rejectAuthentication(socket: Duplex) {
   socket.end(`HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="${AUTH_REALM}"\r\nConnection: close\r\n\r\n`);
 }

@@ -671,6 +671,421 @@ for (const action of ["close", "expiry", "client", "reinstall"] as const) {
   });
 }
 
+test("hosted Browser gateway authenticates exact QA WebSockets without leaking proxy credentials", async () => {
+  const receivedHeaders = deferred<string>();
+  const upstreamClosed = deferred<void>();
+  const upstream = net.createServer((socket) => {
+    socket.once("close", () => upstreamClosed.resolve());
+    let handshake = "";
+    const readHandshake = (chunk: Buffer) => {
+      handshake += chunk.toString("utf8");
+      const boundary = handshake.indexOf("\r\n\r\n");
+      if (boundary < 0) return;
+      socket.off("data", readHandshake);
+      receivedHeaders.resolve(handshake.slice(0, boundary + 4));
+      socket.write([
+        "HTTP/1.1 101 Switching Protocols",
+        "Connection: Upgrade",
+        "Upgrade: websocket",
+        "Sec-WebSocket-Accept: destination-owned",
+        "",
+        "",
+      ].join("\r\n"));
+      const trailing = Buffer.from(handshake.slice(boundary + 4), "utf8");
+      if (trailing.byteLength > 0) socket.write(trailing);
+      socket.on("data", (data) => socket.write(data));
+    };
+    socket.on("data", readHandshake);
+  });
+  await listen(upstream);
+  const upstreamPort = (upstream.address() as AddressInfo).port;
+  let allocations = 0;
+  const registry = new HostedBrowserEgressRegistry({
+    gatewayMachineId: "gateway-machine-1",
+    appName: "kestrel-env-test",
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    requestUpstream: (options) => {
+      allocations += 1;
+      return http.request({
+        ...options,
+        host: "127.0.0.1",
+        family: 4,
+        port: upstreamPort,
+      });
+    },
+  });
+  try {
+    const binding = await registry.install({
+      ...session(qaAuthority()),
+      mode: "qa",
+    });
+    const unauthenticated = await openWebSocket(
+      binding,
+      "http://qa.example.com:8080/socket",
+      false,
+    );
+    assert.match(unauthenticated.response, /^HTTP\/1\.1 407/u);
+    unauthenticated.socket.destroy();
+
+    const wrongCredential = await openWebSocket(
+      { ...binding, password: "wrong-session-secret" },
+      "http://qa.example.com:8080/socket",
+    );
+    assert.match(wrongCredential.response, /^HTTP\/1\.1 407/u);
+    wrongCredential.socket.destroy();
+
+    const wrongTarget = await openWebSocket(
+      binding,
+      "http://other.example.com:8080/socket",
+    );
+    assert.match(wrongTarget.response, /^HTTP\/1\.1 403/u);
+    wrongTarget.socket.destroy();
+    assert.equal(allocations, 0);
+
+    const allowed = await openWebSocket(
+      binding,
+      "http://qa.example.com:8080/socket?case=1",
+    );
+    assert.match(allowed.response, /^HTTP\/1\.1 101 Switching Protocols/u);
+    const headers = await receivedHeaders.promise;
+    assert.match(headers, /^GET \/socket\?case=1 HTTP\/1\.1\r\n/u);
+    assert.doesNotMatch(headers, /proxy-authorization/iu);
+    assert.match(headers, /\r\nconnection: Upgrade\r\n/iu);
+    assert.match(headers, /\r\nupgrade: websocket\r\n/iu);
+    const echoed = readSocketUntil(allowed.socket, "bidirectional-proof");
+    allowed.socket.write("bidirectional-proof");
+    assert.match(
+      await echoed,
+      /bidirectional-proof/u,
+    );
+    const clientClosed = once(allowed.socket, "close");
+    allowed.socket.destroy();
+    await clientClosed;
+    await upstreamClosed.promise;
+    assert.equal(allocations, 1);
+    const afterClientLoss = await registry.adopt({
+      sessionId: binding.sessionId,
+      generation: binding.generation,
+      authority: {
+        ...qaAuthority(),
+        qaTarget: null,
+        effectiveAllowlistRevision: "revision-2",
+      },
+    });
+    assert.equal(afterClientLoss.closedUnauthorizedConnections, 0);
+  } finally {
+    await registry.closeAll();
+    await close(upstream);
+  }
+});
+
+test("hosted Browser gateway revocation cancels a reserved QA WebSocket before DNS can allocate upstream", async () => {
+  const dnsStarted = deferred<void>();
+  const dnsRelease = deferred<readonly [{ address: string; family: 4 }]>();
+  let allocations = 0;
+  const registry = new HostedBrowserEgressRegistry({
+    gatewayMachineId: "gateway-machine-1",
+    appName: "kestrel-env-test",
+    resolve: async () => {
+      dnsStarted.resolve();
+      return await dnsRelease.promise;
+    },
+    requestUpstream: (options) => {
+      allocations += 1;
+      return http.request(options);
+    },
+  });
+  try {
+    const binding = await registry.install({
+      ...session(qaAuthority()),
+      mode: "qa",
+    });
+    const pending = startPendingWebSocket(
+      binding,
+      "http://qa.example.com:8080/socket",
+    );
+    await dnsStarted.promise;
+    const revoked = await registry.adopt({
+      sessionId: binding.sessionId,
+      generation: binding.generation,
+      authority: {
+        ...qaAuthority(),
+        qaTarget: null,
+        effectiveAllowlistRevision: "revision-2",
+      },
+    });
+    assert.equal(revoked.closedUnauthorizedConnections, 1);
+    await pending.settled;
+    dnsRelease.resolve([{ address: "93.184.216.34", family: 4 }]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(allocations, 0);
+  } finally {
+    dnsRelease.resolve([{ address: "93.184.216.34", family: 4 }]);
+    await registry.closeAll();
+  }
+});
+
+test("hosted Browser gateway rejects QA WebSocket private-address rebinding before allocation", async () => {
+  let allocations = 0;
+  const registry = new HostedBrowserEgressRegistry({
+    gatewayMachineId: "gateway-machine-1",
+    appName: "kestrel-env-test",
+    resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+    requestUpstream: (options) => {
+      allocations += 1;
+      return http.request(options);
+    },
+  });
+  try {
+    const binding = await registry.install({
+      ...session(qaAuthority()),
+      mode: "qa",
+    });
+    const denied = await openWebSocket(
+      binding,
+      "http://qa.example.com:8080/socket",
+    );
+    assert.match(denied.response, /^HTTP\/1\.1 403/u);
+    denied.socket.destroy();
+    assert.equal(allocations, 0);
+  } finally {
+    await registry.closeAll();
+  }
+});
+
+test("hosted Browser gateway keeps established WebSockets past request deadlines and closes them on adoption and hard expiry", async () => {
+  const sockets = new Set<Socket>();
+  const upstream = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    let request = "";
+    socket.on("data", (chunk) => {
+      request += chunk.toString("utf8");
+      if (!request.includes("\r\n\r\n")) return;
+      request = "";
+      socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+    });
+  });
+  await listen(upstream);
+  const upstreamPort = (upstream.address() as AddressInfo).port;
+  const registry = new HostedBrowserEgressRegistry({
+    gatewayMachineId: "gateway-machine-1",
+    appName: "kestrel-env-test",
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    requestUpstream: (options) => http.request({
+      ...options,
+      host: "127.0.0.1",
+      family: 4,
+      port: upstreamPort,
+    }),
+    timeouts: { dnsMs: 25, connectMs: 25, headersMs: 25, bodyIdleMs: 25 },
+  });
+  try {
+    const hardExpiresAt = new Date(Date.now() + 350).toISOString();
+    const binding = await registry.install({
+      ...session(qaAuthority()),
+      mode: "qa",
+      hardExpiresAt,
+    });
+    const first = await openWebSocket(
+      binding,
+      "http://qa.example.com:8080/socket",
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    assert.equal(first.socket.destroyed, false);
+    const firstClosed = waitForSocketClose(first.socket);
+    const revoked = await registry.adopt({
+      sessionId: binding.sessionId,
+      generation: binding.generation,
+      authority: {
+        ...qaAuthority(),
+        qaTarget: null,
+        effectiveAllowlistRevision: "revision-2",
+      },
+    });
+    assert.equal(revoked.closedUnauthorizedConnections, 1);
+    await firstClosed;
+
+    const granted = await registry.adopt({
+      sessionId: binding.sessionId,
+      generation: binding.generation,
+      authority: {
+        ...qaAuthority(),
+        effectiveAllowlistRevision: "revision-3",
+      },
+    });
+    const second = await openWebSocket(
+      granted.binding,
+      "http://qa.example.com:8080/socket",
+    );
+    await waitForSocketClose(second.socket);
+    assert.ok(Date.now() >= Date.parse(hardExpiresAt));
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await registry.closeAll();
+    await close(upstream);
+  }
+});
+
+test("hosted Browser gateway bounds DNS, WebSocket, and CONNECT establishment and releases reservations", async () => {
+  const dnsRegistry = new HostedBrowserEgressRegistry({
+    gatewayMachineId: "gateway-machine-1",
+    appName: "kestrel-env-test",
+    resolve: async () => await new Promise<never>(() => {}),
+    timeouts: { dnsMs: 30, connectMs: 30, headersMs: 30, bodyIdleMs: 30 },
+  });
+  try {
+    const binding = await dnsRegistry.install({
+      ...session(qaAuthority()),
+      mode: "qa",
+    });
+    const pending = startPendingWebSocket(
+      binding,
+      "http://qa.example.com:8080/socket",
+    );
+    await pending.settled;
+    const adopted = await dnsRegistry.adopt({
+      sessionId: binding.sessionId,
+      generation: binding.generation,
+      authority: {
+        ...qaAuthority(),
+        qaTarget: null,
+        effectiveAllowlistRevision: "revision-2",
+      },
+    });
+    assert.equal(adopted.closedUnauthorizedConnections, 0);
+  } finally {
+    await dnsRegistry.closeAll();
+  }
+
+  const webSocketSockets = new Set<Socket>();
+  const webSocketBlackhole = net.createServer((socket) => {
+    webSocketSockets.add(socket);
+    socket.once("close", () => webSocketSockets.delete(socket));
+    socket.on("data", () => {});
+  });
+  await listen(webSocketBlackhole);
+  const webSocketPort = (webSocketBlackhole.address() as AddressInfo).port;
+  const webSocketRegistry = new HostedBrowserEgressRegistry({
+    gatewayMachineId: "gateway-machine-1",
+    appName: "kestrel-env-test",
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    requestUpstream: (options) => http.request({
+      ...options,
+      host: "127.0.0.1",
+      family: 4,
+      port: webSocketPort,
+    }),
+    timeouts: { dnsMs: 30, connectMs: 30, headersMs: 30, bodyIdleMs: 30 },
+  });
+  try {
+    const binding = await webSocketRegistry.install({
+      ...session(qaAuthority()),
+      mode: "qa",
+    });
+    await startPendingWebSocket(
+      binding,
+      "http://qa.example.com:8080/socket",
+    ).settled;
+    const adopted = await webSocketRegistry.adopt({
+      sessionId: binding.sessionId,
+      generation: binding.generation,
+      authority: {
+        ...qaAuthority(),
+        qaTarget: null,
+        effectiveAllowlistRevision: "revision-2",
+      },
+    });
+    assert.equal(adopted.closedUnauthorizedConnections, 0);
+  } finally {
+    for (const socket of webSocketSockets) socket.destroy();
+    await webSocketRegistry.closeAll();
+    await close(webSocketBlackhole);
+  }
+
+  const connectRegistry = new HostedBrowserEgressRegistry({
+    gatewayMachineId: "gateway-machine-1",
+    appName: "kestrel-env-test",
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    dial: () => new Socket(),
+    timeouts: { dnsMs: 30, connectMs: 30, headersMs: 30, bodyIdleMs: 30 },
+  });
+  try {
+    const binding = await connectRegistry.install(session(authority));
+    await startPendingTunnel(binding, "www.example.com:443").settled;
+    const adopted = await connectRegistry.adopt({
+      sessionId: binding.sessionId,
+      generation: binding.generation,
+      authority: {
+        ...authority,
+        publicDomains: [],
+        effectiveAllowlistRevision: "revision-2",
+      },
+    });
+    assert.equal(adopted.closedUnauthorizedConnections, 0);
+  } finally {
+    await connectRegistry.closeAll();
+  }
+});
+
+for (const stall of ["headers", "body"] as const) {
+  test(`hosted Browser gateway bounds stalled HTTP ${stall} and releases its reservation`, async () => {
+    const sockets = new Set<Socket>();
+    const upstream = stall === "headers"
+      ? net.createServer((socket) => {
+          sockets.add(socket);
+          socket.once("close", () => sockets.delete(socket));
+          socket.on("data", () => {});
+        })
+      : http.createServer((_request, response) => {
+          response.writeHead(200, { "content-length": 100 });
+          response.write("partial");
+        });
+    upstream.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
+    await listen(upstream);
+    const upstreamPort = (upstream.address() as AddressInfo).port;
+    const registry = new HostedBrowserEgressRegistry({
+      gatewayMachineId: "gateway-machine-1",
+      appName: "kestrel-env-test",
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      requestUpstream: (options) => http.request({
+        ...options,
+        host: "127.0.0.1",
+        family: 4,
+        port: upstreamPort,
+      }),
+      timeouts: { dnsMs: 30, connectMs: 30, headersMs: 30, bodyIdleMs: 30 },
+    });
+    try {
+      const binding = await registry.install({
+        ...session(qaAuthority()),
+        mode: "qa",
+      });
+      await assert.rejects(
+        proxyHttpRequest(binding, "http://qa.example.com:8080/stall", "body"),
+        /aborted|ECONNRESET|socket hang up/u,
+      );
+      const adopted = await registry.adopt({
+        sessionId: binding.sessionId,
+        generation: binding.generation,
+        authority: {
+          ...qaAuthority(),
+          qaTarget: null,
+          effectiveAllowlistRevision: "revision-2",
+        },
+      });
+      assert.equal(adopted.closedUnauthorizedConnections, 0);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await registry.closeAll();
+      await close(upstream);
+    }
+  });
+}
+
 function session(nextAuthority: HostedBrowserGatewayAuthorityV1) {
   return {
     threadId: "thread-1",
@@ -680,6 +1095,116 @@ function session(nextAuthority: HostedBrowserGatewayAuthorityV1) {
     authority: nextAuthority,
     hardExpiresAt: "2099-01-01T00:00:00.000Z",
   };
+}
+
+function qaAuthority(): HostedBrowserGatewayAuthorityV1 {
+  return {
+    ...authority,
+    enabledModes: ["qa"],
+    publicDomains: [],
+    qaTarget: {
+      version: "browser_qa_target_v1",
+      scheme: "http",
+      hostname: "qa.example.com",
+      port: 8080,
+    },
+  };
+}
+
+async function openWebSocket(
+  binding: Awaited<ReturnType<HostedBrowserEgressRegistry["install"]>>,
+  target: string,
+  authenticate = true,
+): Promise<{ socket: Socket; response: string }> {
+  const pending = startPendingWebSocket(binding, target, authenticate);
+  let response = "";
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("WebSocket proxy response timed out")),
+      2_000,
+    );
+    pending.socket.on("data", (chunk) => {
+      response += chunk.toString("utf8");
+      if (response.includes("\r\n\r\n")) {
+        clearTimeout(timeout);
+        resolve();
+      }
+    });
+    pending.socket.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+  return { socket: pending.socket, response };
+}
+
+function startPendingWebSocket(
+  binding: Awaited<ReturnType<HostedBrowserEgressRegistry["install"]>>,
+  target: string,
+  authenticate = true,
+): { socket: Socket; settled: Promise<void> } {
+  const proxy = new URL(binding.proxyServer);
+  const socket = net.connect({ host: "127.0.0.1", port: Number(proxy.port) });
+  const authorization = Buffer.from(
+    `${binding.username}:${binding.password}`,
+    "utf8",
+  ).toString("base64");
+  const settled = new Promise<void>((resolve) => {
+    socket.once("close", resolve);
+    socket.once("end", resolve);
+    socket.once("error", resolve);
+    socket.on("data", () => {});
+  });
+  socket.write([
+    `GET ${target} HTTP/1.1`,
+    `Host: ${new URL(target).host}`,
+    "Connection: keep-alive, Upgrade",
+    "Upgrade: websocket",
+    "Sec-WebSocket-Key: dGVzdC1rZXk=",
+    "Sec-WebSocket-Version: 13",
+    ...(authenticate ? [`Proxy-Authorization: Basic ${authorization}`] : []),
+    "",
+    "",
+  ].join("\r\n"));
+  return { socket, settled };
+}
+
+async function readSocketUntil(socket: Socket, expected: string): Promise<string> {
+  let received = "";
+  return await new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("socket data timed out")),
+      2_000,
+    );
+    socket.on("data", (chunk) => {
+      received += chunk.toString("utf8");
+      if (received.includes(expected)) {
+        clearTimeout(timeout);
+        resolve(received);
+      }
+    });
+    socket.once("error", reject);
+  });
+}
+
+async function waitForSocketClose(socket: Socket): Promise<void> {
+  if (socket.destroyed) return;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("socket did not close")),
+      2_000,
+    );
+    socket.once("close", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    socket.once("error", (error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ECONNRESET") {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    });
+  });
 }
 
 async function connect(
