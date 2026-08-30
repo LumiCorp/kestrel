@@ -827,6 +827,22 @@ export class TuiRunController {
         const routedRunId = response.payload.runId;
         const activeViewRunId = response.payload.view.activeRun?.runId;
         const startedRoute = response.payload.disposition === "started";
+        const routedStatus = routedRunId === undefined
+          ? undefined
+          : exactRunStatusFromView(response.payload.view, routedRunId);
+        const exactStartedRouteEvidence = routedRunId !== undefined
+          && (
+            activeViewRunId === routedRunId
+            || (
+              (routedStatus === "COMPLETED" || routedStatus === "FAILED")
+              && hasExactMessageTerminalTurn(response.payload.view, {
+                runId: routedRunId,
+                messageId: submissionMessageId,
+                threadId,
+                status: routedStatus,
+              })
+            )
+          );
         let pendingQueueSubmission = queueSubmission
           ? findPendingQueueSubmission(
               readSubmittingSession()?.pendingQueueSubmissions,
@@ -859,11 +875,7 @@ export class TuiRunController {
           )
           || (
             startedRoute
-            && (
-              routedRunId === undefined
-              || activeViewRunId === undefined
-              || routedRunId !== activeViewRunId
-            )
+            && exactStartedRouteEvidence === false
           )
           || (
             response.payload.disposition !== "queued"
@@ -893,9 +905,6 @@ export class TuiRunController {
         }
         const disposition = response.payload.disposition;
         const awaitingQueuedRun = disposition === "queued";
-        const routedStatus = routedRunId === undefined
-          ? undefined
-          : exactRunStatusFromView(response.payload.view, routedRunId);
         const authoritativeRunActive = awaitingQueuedRun
           ? response.payload.view.activeRun?.status === "RUNNING"
           : routedStatus === "RUNNING";
@@ -924,7 +933,7 @@ export class TuiRunController {
         }
         const exactTerminalRoute = terminalStatus === undefined
           || pendingQueueSubmission === undefined
-          || hasExactQueuedTerminalTurn(response.payload.view, {
+          || hasExactMessageTerminalTurn(response.payload.view, {
             ...pendingQueueSubmission,
             status: terminalStatus,
           });
@@ -4070,7 +4079,7 @@ function exactRunStatusFromView(
   return terminalTurn?.status;
 }
 
-function hasExactQueuedTerminalTurn(
+function hasExactMessageTerminalTurn(
   view: OperatorThreadView,
   candidate: {
     runId: string;
@@ -4107,7 +4116,7 @@ function hasExactQueuedRunEvidence(
   ) ?? [];
   if (matchingRoutes.length !== 1) return false;
   if (candidate.status === "COMPLETED" || candidate.status === "FAILED") {
-    return hasExactQueuedTerminalTurn(view, {
+    return hasExactMessageTerminalTurn(view, {
       ...candidate,
       status: candidate.status,
     });

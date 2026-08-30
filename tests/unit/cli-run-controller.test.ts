@@ -34,6 +34,35 @@ import {
   normalizeTuiQueueGraph,
   resolveExactTuiQueuedEvidence,
 } from "../../cli/session/TuiQueueGraph.js";
+import { ProtocolClient } from "../../cli/client/ProtocolClient.js";
+import { RemoteRunnerTransport } from "../../cli/client/RemoteRunnerTransport.js";
+import { createRunnerServiceServer } from "../../cli/runner/RunnerService.js";
+import {
+  ThreadRuntime,
+  type TurnExecutionInput,
+  type TurnExecutionResult,
+  type TurnExecutor,
+} from "../../src/orchestration/index.js";
+import type { SessionRecord } from "../../src/kestrel/contracts/store.js";
+import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+
+class ImmediateCompletedTurnExecutor implements TurnExecutor {
+  constructor(private readonly sessionStore: InMemorySessionStore) {}
+
+  async executeTurn(input: TurnExecutionInput): Promise<TurnExecutionResult> {
+    const runId = input.runtimeTurn?.runId;
+    if (runId === undefined) {
+      throw new Error("Immediate executor requires a runtime-owned run ID.");
+    }
+    const output = makeCompletedOutput(input.sessionId, runId);
+    await this.sessionStore.completeRun(runId, "COMPLETED");
+    return { assistantText: "Completed through the real runtime path.", output };
+  }
+
+  async getSession(sessionId: string): Promise<SessionRecord | null> {
+    return this.sessionStore.getSession(sessionId);
+  }
+}
 
 function requireConversationMessageSubmitPayload(
   payload: unknown,
@@ -1792,6 +1821,142 @@ test("TuiRunController reconciles terminal outcomes when routing returns after c
   assert.equal(harness.uiStore.getState().statusLine, "completed");
 });
 
+test("TuiRunController accepts a started route that completed before routing returned", async () => {
+  const messageId = "message-started-terminal-before-route";
+  const recovered: string[] = [];
+  const harness = createRunHarness({
+    started: false,
+    recoverTerminalMessages: async (session) => {
+      recovered.push(session.sessionId);
+    },
+    sendCommand: async (type, payload) => {
+      assert.equal(type, "conversation.message.submit");
+      const runId = runtimeRunIdForPayload(payload);
+      return makeRunnerEvent({
+        type: "conversation.message.routed",
+        payload: {
+          threadId: "thread-main:session-1",
+          sessionId: "session-1",
+          messageId,
+          disposition: "started",
+          runId,
+          view: {
+            ...makeConversationView({ lastRunStatus: "COMPLETED" }),
+            conversationTurns: [{
+              turnId: "turn-started-terminal-before-route",
+              threadId: "thread-main:session-1",
+              sessionId: "session-1",
+              sequence: 1,
+              status: "COMPLETED",
+              rootRunId: runId,
+              sourceMessageId: messageId,
+              terminalRunId: runId,
+              terminalStatus: "COMPLETED",
+              startedAt: "2026-05-14T00:00:00.000Z",
+              completedAt: "2026-05-14T00:00:03.000Z",
+              updatedAt: "2026-05-14T00:00:03.000Z",
+            }],
+          },
+        },
+      });
+    },
+  });
+
+  assert.equal(await harness.controller.startActiveTurn({
+    messageId,
+    submittedMessage: "finish before routing returns",
+  }), true);
+
+  assert.deepEqual(recovered, ["session-1"]);
+  assert.equal(harness.uiStore.getState().activeSession.started, true);
+  assert.equal(harness.uiStore.getState().activeSession.lastRunStatus, "COMPLETED");
+  assert.equal(harness.uiStore.getState().running, false);
+  assert.equal(harness.uiStore.getState().errorOverlay, undefined);
+});
+
+test("TuiRunController accepts a real ThreadRuntime completion returned through runner protocol routing", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const threadRuntime = new ThreadRuntime({
+    sessionStore,
+    executor: new ImmediateCompletedTurnExecutor(sessionStore),
+  });
+  const server = await createRunnerServiceServer({
+    profileProvider: {
+      async listProfiles() {
+        return [];
+      },
+      async getProfile(profileId) {
+        return {
+          id: profileId,
+          label: "Assembled TUI route",
+          agent: "kestrel",
+          sessionPrefix: "assembled",
+        };
+      },
+    },
+    runtimeFactory: () => ({
+      runTurn: async () => {
+        throw new Error("The assembled route test must use conversation routing.");
+      },
+      submitConversationMessage: async (input) =>
+        await threadRuntime.submitConversationMessage(input),
+      close: async () => {},
+    }),
+  });
+  const client = new ProtocolClient(new RemoteRunnerTransport({ baseUrl: server.url }));
+  let commandEvent: RunnerEvent | undefined;
+  let routedEvent: RunnerEvent | undefined;
+  const harness = createRunHarness({
+    started: false,
+    sendCommand: async (type, payload, metadata) => {
+      const event = await client.sendCommand(type, payload, {
+        ...metadata,
+        actor: {
+          actorId: "assembled-tui-operator",
+          actorType: "operator",
+        },
+      });
+      commandEvent = event;
+      if (event.type === "conversation.message.routed") routedEvent = event;
+      return event;
+    },
+  });
+  const unsubscribe = client.onEvent((event) => {
+    if (event.type === "conversation.message.routed") routedEvent = event;
+    void harness.controller.onRunnerEvent(event);
+  });
+
+  try {
+    const accepted = await harness.controller.startActiveTurn({
+      messageId: "message-real-runtime-terminal-route",
+      submittedMessage: "complete through the assembled runtime path",
+    });
+    assert.equal(accepted, true, JSON.stringify({
+      commandEvent,
+      routedEvent,
+      activeSession: harness.uiStore.getState().activeSession,
+      errorOverlay: harness.uiStore.getState().errorOverlay,
+      diagnostics: harness.diagnostics,
+    }));
+
+    assert.equal(routedEvent?.type, "conversation.message.routed");
+    if (routedEvent?.type !== "conversation.message.routed") {
+      assert.fail("Expected a routed conversation response.");
+    }
+    assert.equal(routedEvent.payload.disposition, "started");
+    assert.equal(routedEvent.payload.view.activeRun, undefined);
+    assert.equal(routedEvent.payload.view.conversationTurns?.[0]?.status, "COMPLETED");
+    assert.equal(harness.uiStore.getState().activeSession.started, true);
+    assert.equal(harness.uiStore.getState().activeSession.lastRunStatus, "COMPLETED");
+    assert.equal(harness.uiStore.getState().running, false);
+    assert.equal(harness.uiStore.getState().errorOverlay, undefined);
+  } finally {
+    unsubscribe();
+    await client.close();
+    await server.close();
+  }
+});
+
 test("TuiRunController preserves an authoritative terminal event when the routed response is lost", async () => {
   let controller: TuiRunController | undefined;
   const harness = createRunHarness({
@@ -2189,24 +2354,55 @@ test("TuiRunController rejects routed session and thread mismatches before accep
   }
 });
 
-test("TuiRunController rejects started routes without one run identity shared by the route and active view", async (t) => {
-  for (const mismatch of ["missing", "conflict"] as const) {
+test("TuiRunController rejects started routes without exact active or message-bound terminal evidence", async (t) => {
+  for (const mismatch of ["missing", "conflict", "terminal-message", "terminal-ambiguous"] as const) {
     await t.test(mismatch, async () => {
-      const view = makeConversationView({ active: true });
       const harness = createRunHarness({
         started: false,
         sessionDescribeWithoutRuntimeEvidence: true,
-        sendCommand: async (_type, payload) => makeRunnerEvent({
-          type: "conversation.message.routed",
-          payload: {
-            sessionId: "session-1",
+        sendCommand: async (_type, payload) => {
+          const messageId = String((payload as Record<string, unknown>).messageId);
+          const runId = `runtime:${messageId}`;
+          const terminalTurn = {
+            turnId: "turn-invalid-terminal-route",
             threadId: "thread-main:session-1",
-            messageId: String((payload as Record<string, unknown>).messageId),
-            disposition: "started",
-            ...(mismatch === "conflict" ? { runId: "run-route-other" } : {}),
-            view,
-          },
-        }),
+            sessionId: "session-1",
+            sequence: 1,
+            status: "COMPLETED" as const,
+            rootRunId: runId,
+            sourceMessageId: mismatch === "terminal-message" ? "message-other" : messageId,
+            terminalRunId: runId,
+            terminalStatus: "COMPLETED" as const,
+            startedAt: "2026-05-14T00:00:00.000Z",
+            completedAt: "2026-05-14T00:00:03.000Z",
+            updatedAt: "2026-05-14T00:00:03.000Z",
+          };
+          const terminalMismatch = mismatch === "terminal-message" || mismatch === "terminal-ambiguous";
+          return makeRunnerEvent({
+            type: "conversation.message.routed",
+            payload: {
+              sessionId: "session-1",
+              threadId: "thread-main:session-1",
+              messageId,
+              disposition: "started",
+              ...(mismatch === "missing" ? {} : {
+                runId: mismatch === "conflict" ? "run-route-other" : runId,
+              }),
+              view: terminalMismatch
+                ? {
+                    ...makeConversationView({ lastRunStatus: "COMPLETED" }),
+                    conversationTurns: mismatch === "terminal-ambiguous"
+                      ? [terminalTurn, {
+                          ...terminalTurn,
+                          turnId: "turn-invalid-terminal-route-duplicate",
+                          sequence: 2,
+                        }]
+                      : [terminalTurn],
+                  }
+                : makeConversationView({ active: true }),
+            },
+          });
+        },
       });
 
       assert.equal(await harness.controller.startActiveTurn({ submittedMessage: "start" }), false);
