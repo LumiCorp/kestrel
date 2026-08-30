@@ -1065,6 +1065,119 @@ test("hosted worker lets a valid agent operation wait for one slow frame to sett
   await worker.close();
 });
 
+test("hosted worker rejects an operation capability that expires while waiting for a frame", async () => {
+  const prepared = preparedNavigate();
+  let frameStartedResolve!: () => void;
+  const frameStarted = new Promise<void>((resolve) => {
+    frameStartedResolve = resolve;
+  });
+  let releaseFrameResolve!: () => void;
+  const releaseFrame = new Promise<void>((resolve) => {
+    releaseFrameResolve = resolve;
+  });
+  let operationExecutions = 0;
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async execute(_input, lifecycle) {
+        operationExecutions += 1;
+        await lifecycle.acknowledgeDispatch();
+        const output = { ok: true };
+        await lifecycle.persistCompletedResult(output);
+        return output;
+      },
+      async adopt() { return 0; },
+      async viewer(input) {
+        assert.equal(input.action, "frame");
+        frameStartedResolve();
+        await releaseFrame;
+        return {
+          version: "desktop_browser_viewer_frame_v1",
+          sessionId: "browser-session-1",
+          generation: 1,
+          sequence: 1,
+          capturedAt: new Date().toISOString(),
+          mediaType: "image/png",
+          dataBase64: "iVBORw0KGgo=",
+        };
+      },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const request = (path: string, body: unknown) => fetch(
+    `http://[::1]:${port}${path}`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+  );
+  const frame = request("/v1/viewer", {
+    ticket: viewerTicket("user-1"),
+    action: "frame",
+    connectionId: "connection-1",
+  });
+  await frameStarted;
+
+  const expiresAt = new Date(Date.now() + 250);
+  const expiringCapability = issueHostedBrowserOperationCapability({
+    privateKeyPem,
+    claims: {
+      version: HOSTED_BROWSER_CAPABILITY_VERSION,
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      sessionId: "browser-session-1",
+      generation: 1,
+      operationId: prepared.callId,
+      effectiveAllowlistRevision: "revision-1",
+      expiresAt: expiresAt.toISOString(),
+    },
+  });
+  let acceptanceSettled = false;
+  const expiredAcceptance = request("/v1/operations/accept", {
+    capability: expiringCapability,
+    prepared,
+    authority,
+  });
+  void expiredAcceptance.then(() => {
+    acceptanceSettled = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(acceptanceSettled, false);
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, Math.max(1, expiresAt.getTime() - Date.now() + 5));
+  });
+  releaseFrameResolve();
+  assert.equal((await frame).status, 200);
+
+  const expired = await expiredAcceptance;
+  assert.equal(expired.status, 400);
+  assert.deepEqual(await expired.json(), {
+    error: {
+      code: "BROWSER_ENGINE_FAILURE",
+      details: { browserOutcomeKnown: true },
+    },
+  });
+  assert.equal(operationExecutions, 0);
+
+  const freshCapability = operationCapabilityFor(prepared, "revision-1");
+  const accepted = await request("/v1/operations/accept", {
+    capability: freshCapability,
+    prepared,
+    authority,
+  });
+  assert.equal(accepted.status, 200);
+  assert.equal(operationExecutions, 1);
+  const operationBody = {
+    capability: freshCapability,
+    operationId: prepared.callId,
+  };
+  assert.equal((await request("/v1/operations/invoke", operationBody)).status, 200);
+  assert.equal((await request("/v1/operations/commit", operationBody)).status, 200);
+  await worker.close();
+});
+
 test("hosted worker termination rejects delayed and new work while exact cleanup remains available", async () => {
   let frameStartedResolve!: () => void;
   const frameStarted = new Promise<void>((resolve) => {

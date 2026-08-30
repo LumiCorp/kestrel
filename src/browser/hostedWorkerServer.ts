@@ -222,6 +222,16 @@ export function startHostedBrowserWorker(input: {
           await Promise.race([pendingFrame, terminationStarted.promise]);
           if (terminating) throw new Error("BROWSER_SESSION_LOST");
           if (revisionInstalling) throw new Error("BROWSER_ENGINE_FAILURE");
+          // The immutable token and key passed exact validation above; after
+          // this await, only the verifier's authoritative expiry check can change.
+          try {
+            verifyHostedBrowserCapabilitySignature({
+              token: capability,
+              publicKeyPem: config.capabilityPublicKeyPem,
+            });
+          } catch {
+            throw knownWorkerFailure("BROWSER_ENGINE_FAILURE");
+          }
         }
         const identityHash = hashCanonical({
           prepared,

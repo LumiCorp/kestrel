@@ -97,7 +97,9 @@ or input authority.
   another authorization read until the current read settles.
 - Hosted worker engine ownership is symmetric: accepted agent operations make
   frames transiently unavailable, while valid agent operation acceptance waits
-  for the one in-flight observation to settle and then reserves the engine.
+  for the one in-flight observation to settle, rechecks signed capability expiry,
+  and only then reserves the engine. A capability that expires during capture is
+  a proven pre-effect rejection and retains no operation reservation.
   Termination wakes that wait and fail-closes all viewer, operation, and revision
   admission immediately; exact fixed-key viewer cleanup remains available for
   lifecycle convergence.
@@ -105,7 +107,7 @@ or input authority.
   Shared parsing now rejects structurally invalid Base64, invalid padding, and
   nonzero unused pad bits without decoding or allocating a second frame buffer.
 - The final exact protocol, Vercel route, Web lifecycle/client, Router, worker,
-  and Browser Session command passes 107 tests. Root and Environment Router
+  and Browser Session command passes 108 tests. Root and Environment Router
   TypeScript and `git diff --check` pass. Scoped worker lint reaches six
   pre-existing diagnostics outside the final repair hunks. Web typecheck reaches
   only the pre-existing runtime-profile and hosted personal OAuth test errors
