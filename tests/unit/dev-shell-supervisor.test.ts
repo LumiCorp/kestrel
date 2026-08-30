@@ -1851,6 +1851,78 @@ test("an initial process persistence failure terminates and settles the inaccess
   }
 });
 
+test("a fast child cannot persist success before its failed initial record settles", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-fast-start-failure-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const store = new FailingInitialDevShellStore();
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"));
+  await supervisor.initialize();
+  try {
+    const startPromise = supervisor.startProcess({
+      workspaceRoot,
+      command: "exit 0",
+      yieldTimeMs: 50,
+    });
+    await store.initialWriteStarted;
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    store.failInitialWrite();
+    await assert.rejects(startPromise, /initial process write failed/u);
+    const records = await store.listProcesses();
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.status, "FAILED");
+    assert.match(records[0]?.failureReason ?? "", /initial process record/u);
+  } finally {
+    store.failInitialWrite();
+    await supervisor.close();
+  }
+});
+
+test("double persistence failure is observed while the failed child remains stopped", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-double-start-failure-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  const childPidPath = path.join(workspaceRootPath, "child.pid");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const store = new FailingInitialAndTerminalDevShellStore();
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"));
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+  await supervisor.initialize();
+  try {
+    const startPromise = supervisor.startProcess({
+      workspaceRoot,
+      command: `${JSON.stringify(process.execPath)} -e 'const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(childPidPath)},String(process.pid));setInterval(()=>{},1000)'`,
+      yieldTimeMs: 50,
+    });
+    await store.initialWriteStarted;
+    await waitForFile(childPidPath, 1000);
+    const childPid = Number.parseInt((await readFile(childPidPath, "utf8")).trim(), 10);
+    store.failInitialWrite();
+    await assert.rejects(startPromise, (error: unknown) => {
+      assert.match((error as Error).message, /initial process write failed/u);
+      assert.deepEqual(
+        (error as { details?: { cleanupFailures?: unknown } }).details?.cleanupFailures,
+        [{ operation: "settle_failed_process_start", message: "terminal process write failed" }],
+      );
+      return true;
+    });
+    await waitForPidExit(childPid, 2_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(isPidRunning(childPid), false);
+    assert.deepEqual(unhandled, []);
+    await assert.rejects(supervisor.close(), /terminal process write failed/u);
+  } finally {
+    process.off("unhandledRejection", onUnhandledRejection);
+    store.failInitialWrite();
+    await Promise.allSettled([supervisor.close()]);
+  }
+});
+
 async function createSupervisor(now?: () => Date): Promise<{
   supervisor: DevShellSupervisor;
   workspaceRoot: string;
@@ -1986,6 +2058,47 @@ class FailingInitialDevShellStore implements DevShellProcessStore {
     status?: DevShellProcessStatus[] | undefined;
   }): Promise<DevShellProcessRecord[]> {
     return this.delegate.listProcesses(input);
+  }
+}
+
+class FailingInitialAndTerminalDevShellStore implements DevShellProcessStore {
+  private failed = false;
+  readonly initialWriteStarted: Promise<void>;
+  private readonly initialWriteFailureReleased: Promise<void>;
+  private resolveInitialWriteStarted!: () => void;
+  private resolveInitialWriteFailureReleased!: () => void;
+
+  constructor() {
+    this.initialWriteStarted = new Promise((resolve) => {
+      this.resolveInitialWriteStarted = resolve;
+    });
+    this.initialWriteFailureReleased = new Promise((resolve) => {
+      this.resolveInitialWriteFailureReleased = resolve;
+    });
+  }
+
+  failInitialWrite(): void {
+    this.resolveInitialWriteFailureReleased();
+  }
+
+  async upsertProcess(record: DevShellProcessRecord): Promise<void> {
+    if (record.status === "RUNNING" && this.failed === false) {
+      this.failed = true;
+      this.resolveInitialWriteStarted();
+      await this.initialWriteFailureReleased;
+      throw new Error("initial process write failed");
+    }
+    throw new Error("terminal process write failed");
+  }
+
+  getProcess(_processId: string): Promise<DevShellProcessRecord | null> {
+    return Promise.resolve(null);
+  }
+
+  listProcesses(_input?: {
+    status?: DevShellProcessStatus[] | undefined;
+  }): Promise<DevShellProcessRecord[]> {
+    return Promise.resolve([]);
   }
 }
 

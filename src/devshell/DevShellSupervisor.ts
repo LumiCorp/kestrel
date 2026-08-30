@@ -63,8 +63,12 @@ interface RunningProcess {
   record: DevShellProcessRecord;
   recordMutation: Promise<void>;
   recordWrite: Promise<void>;
+  initialRecordSettled: boolean;
+  initialRecordOutcome: Promise<void>;
+  resolveInitialRecordOutcome: () => void;
   settlement: Promise<void>;
   resolveSettlement: () => void;
+  rejectSettlement: (error: unknown) => void;
   child: ChildProcessWithoutNullStreams;
   outputObserver?: DevShellCommandOptions["outputObserver"] | undefined;
   sourceWriteGuard?: ActiveDevShellSourceWriteGuard | undefined;
@@ -374,16 +378,27 @@ export class DevShellSupervisor {
           }
         : {}),
     };
-    let resolveSettlement = () => {};
-    const settlement = new Promise<void>((resolvePromise) => {
-      resolveSettlement = resolvePromise;
+    let resolveInitialRecordOutcome = () => {};
+    const initialRecordOutcome = new Promise<void>((resolvePromise) => {
+      resolveInitialRecordOutcome = resolvePromise;
     });
+    let resolveSettlement = () => {};
+    let rejectSettlement = (_error: unknown) => {};
+    const settlement = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolveSettlement = resolvePromise;
+      rejectSettlement = rejectPromise;
+    });
+    void settlement.catch(() => {});
     const running: RunningProcess = {
       record,
       recordMutation: Promise.resolve(),
       recordWrite: Promise.resolve(),
+      initialRecordSettled: false,
+      initialRecordOutcome,
+      resolveInitialRecordOutcome,
       settlement,
       resolveSettlement,
+      rejectSettlement,
       child,
       ...(options.outputObserver !== undefined ? { outputObserver: options.outputObserver } : {}),
       ...(sourceWriteGuard !== undefined ? { sourceWriteGuard } : {}),
@@ -426,15 +441,26 @@ export class DevShellSupervisor {
     options.shutdownSignal?.addEventListener("abort", stopStartingProcess, { once: true });
     try {
       await this.persistLiveProcessRecord(running);
+      running.initialRecordSettled = true;
+      running.resolveInitialRecordOutcome();
     } catch (error) {
       running.forcedFailureReason = "Developer shell could not persist the initial process record.";
+      running.initialRecordSettled = true;
+      running.resolveInitialRecordOutcome();
       signalProcessTree(running.child, "SIGTERM");
       await waitForProcessExit(running.child, 1000);
       if (isProcessRunning(running.child)) {
         signalProcessTree(running.child, "SIGKILL");
         await waitForProcessExit(running.child, 500);
       }
-      await running.settlement;
+      try {
+        await running.settlement;
+      } catch (settlementError) {
+        throw attachFailureEvidence(error, [{
+          operation: "settle_failed_process_start",
+          message: errorMessage(settlementError),
+        }]);
+      }
       throw error;
     } finally {
       options.shutdownSignal?.removeEventListener("abort", stopStartingProcess);
@@ -720,10 +746,14 @@ export class DevShellSupervisor {
       void this.handleChunk(process, "stderr", chunk);
     });
     process.child.on("exit", (code, signal) => {
-      void this.handleExit(process, code, signal);
+      void this.handleExit(process, code, signal).catch((error) => {
+        process.rejectSettlement(error);
+      });
     });
     process.child.on("error", (error) => {
-      void this.handleSpawnError(process, error);
+      void this.handleSpawnError(process, error).catch((handlerError) => {
+        process.rejectSettlement(handlerError);
+      });
     });
   }
 
@@ -809,6 +839,9 @@ export class DevShellSupervisor {
       clearTimeout(process.wallTimeout);
       process.wallTimeout = undefined;
     }
+    if (process.initialRecordSettled === false) {
+      await process.initialRecordOutcome;
+    }
     await process.transcriptWrite.catch(() => {});
     await this.mutateLiveProcessRecord(process, async () => {
       const completedAt = this.now().toISOString();
@@ -856,6 +889,9 @@ export class DevShellSupervisor {
       clearTimeout(process.wallTimeout);
       process.wallTimeout = undefined;
     }
+    if (process.initialRecordSettled === false) {
+      await process.initialRecordOutcome;
+    }
     await process.transcriptWrite.catch(() => {});
     await this.mutateLiveProcessRecord(process, async () => {
       const completedAt = this.now().toISOString();
@@ -867,7 +903,7 @@ export class DevShellSupervisor {
         updatedAt: completedAt,
         completedAt,
         exitCode: 1,
-        failureReason: error.message,
+        failureReason: process.forcedFailureReason ?? error.message,
       };
       await this.persistLiveProcessRecord(process);
     });

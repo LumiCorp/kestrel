@@ -309,7 +309,7 @@ export async function handleRequest(
     }
     const completion = requestShutdown();
     writeJson(response, 202, { status: "shutting_down" });
-    void completion;
+    void completion.catch(() => {});
     return;
   }
 
