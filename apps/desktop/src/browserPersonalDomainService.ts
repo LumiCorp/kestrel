@@ -5,14 +5,13 @@ import type {
 import type { KestrelOneAccountStatus } from "../../../src/localCore/kestrelOneAccount.js";
 import {
   projectDesktopBrowserPersonalDomains,
-  rememberDesktopBrowserPersonalDomain,
   revokeDesktopBrowserPersonalDomain,
   type DesktopBrowserPersonalDomainMutationResult,
 } from "./settingsStore.js";
 
 export interface DesktopBrowserPersonalDomainServiceDependencies {
   resolveAccount(): Promise<KestrelOneAccountStatus>;
-  readSettings(): DesktopSettings;
+  readSettings(): Promise<DesktopSettings>;
   persistSettings(settings: DesktopSettings): Promise<void>;
   adoptionCoordinator: DesktopBrowserPersonalRevisionAdoptionCoordinator;
 }
@@ -27,17 +26,12 @@ export interface DesktopBrowserPersonalRevisionAdoptionCoordinator {
     accountId: string;
     environmentId: string;
     personalRevision: number;
+    threadId?: string | undefined;
+    sessionId?: string | undefined;
   }): Promise<{
     personalRevision: number;
     closedUnauthorizedConnections: number;
   }>;
-}
-
-export interface DesktopBrowserPersonalDomainRememberRequest {
-  environmentId: string;
-  destination: string;
-  approvalId: string;
-  approvedAt: string;
 }
 
 /**
@@ -52,29 +46,15 @@ export class DesktopBrowserPersonalDomainService {
     this.#dependencies = dependencies;
   }
 
-  list(environmentId: string): Promise<DesktopBrowserPersonalDomainProjectionV1> {
+  list(
+    environmentId: string,
+  ): Promise<DesktopBrowserPersonalDomainProjectionV1> {
     return this.#serialize(async () => {
       const scope = await this.#resolveScope(environmentId);
       return projectDesktopBrowserPersonalDomains(
-        this.#dependencies.readSettings(),
+        await this.#dependencies.readSettings(),
         scope,
       );
-    });
-  }
-
-  remember(
-    input: DesktopBrowserPersonalDomainRememberRequest,
-  ): Promise<DesktopBrowserPersonalDomainProjectionV1> {
-    return this.#serialize(async () => {
-      const scope = await this.#resolveScope(input.environmentId);
-      const current = this.#dependencies.readSettings();
-      const mutation = rememberDesktopBrowserPersonalDomain(current, {
-        ...scope,
-        destination: input.destination,
-        approvalId: input.approvalId,
-        approvedAt: input.approvedAt,
-      });
-      return await this.#persistAndAdopt(scope, mutation);
     });
   }
 
@@ -85,7 +65,7 @@ export class DesktopBrowserPersonalDomainService {
   }): Promise<DesktopBrowserPersonalDomainProjectionV1> {
     return this.#serialize(async () => {
       const scope = await this.#resolveScope(input.environmentId);
-      const current = this.#dependencies.readSettings();
+      const current = await this.#dependencies.readSettings();
       const mutation = revokeDesktopBrowserPersonalDomain(current, {
         ...scope,
         canonicalDomain: input.canonicalDomain,
@@ -109,7 +89,9 @@ export class DesktopBrowserPersonalDomainService {
     const environmentId = canonicalText(environmentIdInput, "Environment ID");
     const account = await this.#dependencies.resolveAccount();
     if (account.status !== "signed_in") {
-      throw new Error("Kestrel One sign-in is required for personal Browser domains.");
+      throw new Error(
+        "Kestrel One sign-in is required for personal Browser domains.",
+      );
     }
     if (
       !account.projection.projects.some(
@@ -121,7 +103,10 @@ export class DesktopBrowserPersonalDomainService {
       );
     }
     return {
-      accountId: canonicalText(account.projection.account.id, "Kestrel One account ID"),
+      accountId: canonicalText(
+        account.projection.account.id,
+        "Kestrel One account ID",
+      ),
       environmentId,
     };
   }
@@ -163,7 +148,7 @@ export class DesktopBrowserPersonalDomainService {
     }
     await this.#assertScopeUnchanged(scope);
     const projection = projectDesktopBrowserPersonalDomains(
-      this.#dependencies.readSettings(),
+      await this.#dependencies.readSettings(),
       scope,
     );
     if (projection.revision !== mutation.projection.revision) {
@@ -185,7 +170,11 @@ export class DesktopBrowserPersonalDomainService {
 }
 
 function canonicalText(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0 || value !== value.trim()) {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value !== value.trim()
+  ) {
     throw new Error(`${label} is invalid.`);
   }
   return value;

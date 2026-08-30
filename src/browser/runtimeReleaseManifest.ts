@@ -1,6 +1,10 @@
 export const BROWSER_RUNTIME_RELEASE_MANIFEST_VERSION =
   "browser_runtime_release_manifest_v1" as const;
 
+export const DESKTOP_BROWSER_RUNTIME_TARGET = "darwin-arm64" as const;
+export const DESKTOP_BROWSER_RUNTIME_RESOURCE_DIRECTORY =
+  "browser-runtime" as const;
+
 export const BROWSER_RUNTIME_RELEASE_MANIFEST = Object.freeze({
   version: BROWSER_RUNTIME_RELEASE_MANIFEST_VERSION,
   engine: {
@@ -17,11 +21,20 @@ export const BROWSER_RUNTIME_RELEASE_MANIFEST = Object.freeze({
         url: "https://github.com/vercel-labs/agent-browser/releases/download/v0.35.0/agent-browser-darwin-arm64",
         sha256:
           "83ee82aa60bf60d21a4ce459bcb3aa7bc31c33a08f13f0db01d9098552e2ae39",
+        sourceFileName: "agent-browser-darwin-arm64",
+        executableRelativePath: "agent-browser",
       }),
       chrome: Object.freeze({
         url: "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.54/mac-arm64/chrome-mac-arm64.zip",
         sha256:
           "0c8741d580076b3a8add518ddbb674183992d005cdee37a4875948c9f2748d2a",
+        sourceFileName: "chrome-mac-arm64.zip",
+        archiveRoot: "chrome-mac-arm64",
+        executableRelativePath:
+          "chrome/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        excludedRuntimeRelativePaths: Object.freeze([
+          "chrome/Google Chrome for Testing.app/Contents/Frameworks/Google Chrome for Testing Framework.framework/Versions/152.0.7977.54/Resources/install.sh",
+        ]),
       }),
     }),
     "linux-x64": Object.freeze({
@@ -44,4 +57,21 @@ export type BrowserRuntimeTarget =
 
 export function getBrowserRuntimeRelease(target: BrowserRuntimeTarget) {
   return BROWSER_RUNTIME_RELEASE_MANIFEST.targets[target];
+}
+
+export function getDesktopBrowserRuntimeRelease() {
+  return BROWSER_RUNTIME_RELEASE_MANIFEST.targets[DESKTOP_BROWSER_RUNTIME_TARGET];
+}
+
+export function getDesktopBrowserRuntimeExecutableRelativePaths(): {
+  engineExecutablePath: string;
+  chromeExecutablePath: string;
+} {
+  const release = getDesktopBrowserRuntimeRelease();
+  return {
+    engineExecutablePath:
+      `${DESKTOP_BROWSER_RUNTIME_RESOURCE_DIRECTORY}/${release.engine.executableRelativePath}`,
+    chromeExecutablePath:
+      `${DESKTOP_BROWSER_RUNTIME_RESOURCE_DIRECTORY}/${release.chrome.executableRelativePath}`,
+  };
 }

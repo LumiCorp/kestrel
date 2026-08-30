@@ -94,6 +94,15 @@ const boundaryProperties = {
   boundary: constString("untrusted_browser_content"),
 };
 
+const sessionOperationInput = {
+  sessionId: stringId("Active Browser Session ID."),
+  generation: {
+    type: "integer",
+    minimum: 1,
+    description: "Exact generation returned by browser.open for this Session.",
+  },
+};
+
 const pendingDownloadSchema = strictObject(
   {
     downloadId: stringId("Opaque quarantined download ID."),
@@ -191,6 +200,7 @@ const commonFailures = [
   "BROWSER_SESSION_EXPIRED",
   "BROWSER_SESSION_LOST",
   "BROWSER_HUMAN_CONTROL_ACTIVE",
+  "BROWSER_DOWNLOAD_UNAVAILABLE",
   "BROWSER_SERVICE_UNAVAILABLE",
   "BROWSER_ENGINE_FAILURE",
 ] as const;
@@ -305,10 +315,10 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
       "browser.request_grant",
       strictObject(
         {
-          sessionId: stringId("Active Browser Session ID."),
+          ...sessionOperationInput,
           destination: stringId("Public HTTPS destination to canonicalize."),
         },
-        ["sessionId", "destination"],
+        ["sessionId", "generation", "destination"],
       ),
       strictObject(
         {
@@ -351,12 +361,12 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
       "browser.snapshot",
       strictObject(
         {
-          sessionId: stringId("Active Browser Session ID."),
+          ...sessionOperationInput,
           tabId: stringId("Optional tab ID; defaults to the active tab."),
           scope: enumString(["viewport", "document"]),
           cursor: stringId("Opaque continuation cursor returned by this tool."),
         },
-        ["sessionId"],
+        ["sessionId", "generation"],
       ),
       strictObject(
         {
@@ -395,7 +405,7 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
       "browser.inspect",
       strictObject(
         {
-          sessionId: stringId("Active Browser Session ID."),
+          ...sessionOperationInput,
           kind: enumString([
             "console_errors",
             "page_errors",
@@ -404,7 +414,7 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
           ]),
           cursor: stringId("Opaque continuation cursor returned by this tool."),
         },
-        ["sessionId", "kind"],
+        ["sessionId", "generation", "kind"],
       ),
       strictObject(
         {
@@ -450,19 +460,19 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
         oneOf: [
           strictObject(
             {
-              sessionId: stringId("Active Browser Session ID."),
+              ...sessionOperationInput,
               kind: constString("url"),
               url: stringId("Destination URL within the effective allowlist."),
             },
-            ["sessionId", "kind", "url"],
+            ["sessionId", "generation", "kind", "url"],
           ),
           ...["back", "forward", "reload"].map((kind) =>
             strictObject(
               {
-                sessionId: stringId("Active Browser Session ID."),
+                ...sessionOperationInput,
                 kind: constString(kind),
               },
-              ["sessionId", "kind"],
+              ["sessionId", "generation", "kind"],
             ),
           ),
         ],
@@ -502,7 +512,7 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
       "browser.interact",
       strictObject(
         {
-          sessionId: stringId("Active Browser Session ID."),
+          ...sessionOperationInput,
           snapshotId: stringId("Snapshot that issued the target ref."),
           documentRevision: stringId(
             "Document revision that issued the target ref.",
@@ -575,7 +585,14 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
             ],
           },
         },
-        ["sessionId", "snapshotId", "documentRevision", "tabId", "action"],
+        [
+          "sessionId",
+          "generation",
+          "snapshotId",
+          "documentRevision",
+          "tabId",
+          "action",
+        ],
       ),
       strictObject(
         {
@@ -617,19 +634,19 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
         oneOf: [
           strictObject(
             {
-              sessionId: stringId("Active Browser Session ID."),
+              ...sessionOperationInput,
               operation: constString("list"),
             },
-            ["sessionId", "operation"],
+            ["sessionId", "generation", "operation"],
           ),
           ...["switch", "close"].map((operation) =>
             strictObject(
               {
-                sessionId: stringId("Active Browser Session ID."),
+                ...sessionOperationInput,
                 operation: constString(operation),
                 tabId: stringId("Existing tab ID in this session."),
               },
-              ["sessionId", "operation", "tabId"],
+              ["sessionId", "generation", "operation", "tabId"],
             ),
           ),
         ],
@@ -639,6 +656,8 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
           ...outputBase("browser.tabs"),
           sessionId: stringId("Active Browser Session ID."),
           generation: { type: "integer", minimum: 1 },
+          capturedAt: timestamp(),
+          boundary: constString("untrusted_browser_content"),
           activeTabId: stringId("Active tab ID."),
           tabs: {
             type: "array",
@@ -659,6 +678,8 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
           "operation",
           "sessionId",
           "generation",
+          "capturedAt",
+          "boundary",
           "activeTabId",
           "tabs",
         ],
@@ -676,11 +697,11 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
       "browser.capture",
       strictObject(
         {
-          sessionId: stringId("Active Browser Session ID."),
+          ...sessionOperationInput,
           kind: constString("screenshot"),
           fullPage: { type: "boolean" },
         },
-        ["sessionId", "kind"],
+        ["sessionId", "generation", "kind"],
       ),
       strictObject(
         {
@@ -690,6 +711,7 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
           artifact: artifactSchema(["browser-screenshot"]),
           normalizedOrigin: stringId("Captured normalized origin."),
           capturedAt: timestamp(),
+          boundary: constString("untrusted_browser_content"),
         },
         [
           "version",
@@ -699,6 +721,7 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
           "artifact",
           "normalizedOrigin",
           "capturedAt",
+          "boundary",
         ],
       ),
       {
@@ -714,7 +737,7 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
       "browser.upload",
       strictObject(
         {
-          sessionId: stringId("Active Browser Session ID."),
+          ...sessionOperationInput,
           snapshotId: stringId("Snapshot that issued targetRef."),
           targetRef: stringId(
             "Snapshot-scoped file-input ref; never a selector.",
@@ -723,7 +746,7 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
             "Explicit attachment already authorized for the active Thread.",
           ),
         },
-        ["sessionId", "snapshotId", "targetRef", "attachmentId"],
+        ["sessionId", "generation", "snapshotId", "targetRef", "attachmentId"],
       ),
       strictObject(
         {
@@ -760,12 +783,12 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
       "browser.download",
       strictObject(
         {
-          sessionId: stringId("Active Browser Session ID."),
+          ...sessionOperationInput,
           pendingDownloadId: stringId(
             "Quarantined download ID returned by navigate or interact.",
           ),
         },
-        ["sessionId", "pendingDownloadId"],
+        ["sessionId", "generation", "pendingDownloadId"],
       ),
       strictObject(
         {
@@ -793,7 +816,7 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
       "browser.request_takeover",
       strictObject(
         {
-          sessionId: stringId("Active Browser Session ID."),
+          ...sessionOperationInput,
           reason: {
             type: "string",
             minLength: 1,
@@ -801,7 +824,7 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
             description: "Non-secret reason shown to the authenticated viewer.",
           },
         },
-        ["sessionId", "reason"],
+        ["sessionId", "generation", "reason"],
       ),
       strictObject(
         {
@@ -824,9 +847,7 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
     ),
     tool(
       "browser.close",
-      strictObject({ sessionId: stringId("Active Browser Session ID.") }, [
-        "sessionId",
-      ]),
+      strictObject(sessionOperationInput, ["sessionId", "generation"]),
       strictObject(
         {
           ...outputBase("browser.close"),
@@ -861,4 +882,15 @@ export function getBrowserToolContract(
   if (contract === undefined)
     throw new Error(`Browser tool contract '${toolName}' is unavailable.`);
   return contract;
+}
+
+export function resolveBrowserToolExecutionClass(
+  toolName: BrowserToolName,
+  input: Record<string, unknown>,
+): ToolExecutionClass {
+  const contract = getBrowserToolContract(toolName);
+  if (toolName === "browser.tabs" && input.operation === "list") {
+    return "read_only";
+  }
+  return contract.executionClass;
 }

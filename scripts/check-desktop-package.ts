@@ -8,6 +8,11 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  createDarwinDesktopBrowserRuntimeSignatureVerifier,
+  desktopBrowserRuntimeExecutablePaths,
+  verifyDesktopBrowserRuntimeDirectory,
+} from "./desktop-browser-runtime-assets.js";
 
 const repoRoot = resolveRepoRoot(process.cwd());
 const appPath = path.resolve(
@@ -20,6 +25,7 @@ const runtimeRoot = path.join(resourcesPath, "kestrel-runtime");
 const payloadRoot = path.join(runtimeRoot, "payload");
 const executable = path.join(appPath, "Contents", "MacOS", "Kestrel");
 const helper = path.join(resourcesPath, "kestrel-uninstall-helper");
+const browserRuntimeRoot = path.join(resourcesPath, "browser-runtime");
 
 if (process.platform !== "darwin" || process.arch !== "arm64") {
   throw new Error("Desktop package preflight supports macOS arm64 only.");
@@ -38,11 +44,27 @@ for (const required of [
   path.join(payloadRoot, "cli", "runner", "main.ts"),
   path.join(payloadRoot, "db", "migrations"),
   path.join(payloadRoot, "src", "localCore", "api.ts"),
+  browserRuntimeRoot,
 ]) {
   if (!existsSync(required)) {
     throw new Error(`Packaged Desktop dependency is missing: ${required}`);
   }
 }
+
+const browserReceipt = process.env.KESTREL_DESKTOP_RELEASE === "1"
+  ? verifyDesktopBrowserRuntimeDirectory(
+      browserRuntimeRoot,
+      undefined,
+      {
+        mode: "signed-release",
+        appPath,
+        expectedSigningAuthority: requireReleaseSigningAuthority(),
+        signatureVerifier:
+          createDarwinDesktopBrowserRuntimeSignatureVerifier(),
+      },
+    )
+  : verifyDesktopBrowserRuntimeDirectory(browserRuntimeRoot);
+const browserExecutables = desktopBrowserRuntimeExecutablePaths(browserRuntimeRoot);
 
 for (const entry of walk(resourcesPath)) {
   const basename = path.basename(entry);
@@ -81,6 +103,13 @@ for (const manifestPath of [
 }
 
 assertArm64(helper);
+assertArm64(browserExecutables.engine);
+assertArm64(browserExecutables.chrome);
+for (const entry of browserReceipt.files) {
+  if (entry.nativeExecutable === true) {
+    assertArm64(path.join(browserRuntimeRoot, entry.path));
+  }
+}
 for (const entry of walk(resourcesPath)) {
   if (entry.endsWith(".node") && lstatSync(entry).isFile()) {
     assertArm64(entry);
@@ -141,6 +170,16 @@ function assertArm64(filePath: string): void {
   if (!description.includes("arm64")) {
     throw new Error(`Packaged native executable is not arm64: ${filePath}: ${description.trim()}`);
   }
+}
+
+function requireReleaseSigningAuthority(): string {
+  const authority = process.env.KESTREL_DESKTOP_SIGN_IDENTITY?.trim();
+  if (!authority) {
+    throw new Error(
+      "Signed Desktop package preflight requires KESTREL_DESKTOP_SIGN_IDENTITY.",
+    );
+  }
+  return authority;
 }
 
 function resolveRepoRoot(cwd: string): string {

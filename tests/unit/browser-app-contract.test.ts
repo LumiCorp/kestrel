@@ -9,6 +9,7 @@ import {
   BROWSER_FAILURE_CODES,
   BROWSER_SERVICE_PORT_VERSION,
   BROWSER_TOOL_NAMES,
+  browserFailure,
   parseBrowserSessionV1,
   projectBrowserAuditInput,
   projectBrowserAuditOutput,
@@ -55,35 +56,56 @@ const validInputs: Record<
   },
   "browser.request_grant": {
     sessionId: "browser-session-1",
+    generation: 1,
     destination: "https://example.com",
   },
-  "browser.snapshot": { sessionId: "browser-session-1" },
-  "browser.inspect": { sessionId: "browser-session-1", kind: "console_errors" },
-  "browser.navigate": { sessionId: "browser-session-1", kind: "reload" },
+  "browser.snapshot": { sessionId: "browser-session-1", generation: 1 },
+  "browser.inspect": {
+    sessionId: "browser-session-1",
+    generation: 1,
+    kind: "console_errors",
+  },
+  "browser.navigate": {
+    sessionId: "browser-session-1",
+    generation: 1,
+    kind: "reload",
+  },
   "browser.interact": {
     sessionId: "browser-session-1",
+    generation: 1,
     snapshotId: "snapshot-1",
     documentRevision: "document-1",
     tabId: "tab-1",
     action: { kind: "click", ref: "ref-1" },
   },
-  "browser.tabs": { sessionId: "browser-session-1", operation: "list" },
-  "browser.capture": { sessionId: "browser-session-1", kind: "screenshot" },
+  "browser.tabs": {
+    sessionId: "browser-session-1",
+    generation: 1,
+    operation: "list",
+  },
+  "browser.capture": {
+    sessionId: "browser-session-1",
+    generation: 1,
+    kind: "screenshot",
+  },
   "browser.upload": {
     sessionId: "browser-session-1",
+    generation: 1,
     snapshotId: "snapshot-1",
     targetRef: "ref-1",
     attachmentId: "attachment-1",
   },
   "browser.download": {
     sessionId: "browser-session-1",
+    generation: 1,
     pendingDownloadId: "download-1",
   },
   "browser.request_takeover": {
     sessionId: "browser-session-1",
+    generation: 1,
     reason: "Authentication required",
   },
-  "browser.close": { sessionId: "browser-session-1" },
+  "browser.close": { sessionId: "browser-session-1", generation: 1 },
 };
 
 const commonOperationOutput = (operation: string) => ({
@@ -145,6 +167,8 @@ const validOutputs: Record<
   },
   "browser.tabs": {
     ...commonOperationOutput("browser.tabs"),
+    capturedAt: "2026-08-29T12:00:00.000Z",
+    boundary: "untrusted_browser_content",
     activeTabId: "tab-1",
     tabs: [
       {
@@ -167,6 +191,7 @@ const validOutputs: Record<
     },
     normalizedOrigin: "https://example.com",
     capturedAt: "2026-08-29T12:00:00.000Z",
+    boundary: "untrusted_browser_content",
   },
   "browser.upload": {
     ...commonOperationOutput("browser.upload"),
@@ -326,6 +351,7 @@ test("Browser input schemas accept only typed targets and snapshot refs", () => 
   assert.equal(
     interact({
       sessionId: "session-1",
+      generation: 1,
       snapshotId: "snapshot-1",
       documentRevision: "document-1",
       tabId: "tab-1",
@@ -336,6 +362,7 @@ test("Browser input schemas accept only typed targets and snapshot refs", () => 
   assert.equal(
     interact({
       sessionId: "session-1",
+      generation: 1,
       snapshotId: "snapshot-1",
       documentRevision: "document-1",
       tabId: "tab-1",
@@ -364,6 +391,10 @@ test("BrowserSessionV1 parser is strict and lifecycle-complete", () => {
   assert.throws(
     () => parseBrowserSessionV1({ ...session, state: "paused" }),
     /state is invalid/u,
+  );
+  assert.throws(
+    () => parseBrowserSessionV1({ ...session, sessionId: "../browser-owned" }),
+    /path-safe opaque identifier/u,
   );
   assert.throws(
     () =>
@@ -536,6 +567,8 @@ test("fake Browser port receives the exact prepared call and conditional effect 
           operation: "browser.tabs",
           sessionId: "browser-session-1",
           generation: 1,
+          capturedAt: "2026-08-29T12:00:00.000Z",
+          boundary: "untrusted_browser_content",
           activeTabId: "tab-1",
           tabs: [
             {
@@ -660,7 +693,9 @@ test("fake Browser port receives the exact prepared call and conditional effect 
 });
 
 test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () => {
-  let authorization: Parameters<BrowserServicePort["authorizeArtifact"]>[0] | undefined;
+  let authorization:
+    | Parameters<BrowserServicePort["authorizeArtifact"]>[0]
+    | undefined;
   let executedPrepared: PreparedToolCallV1 | undefined;
   const port: BrowserServicePort = {
     version: BROWSER_SERVICE_PORT_VERSION,
@@ -689,6 +724,7 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
         },
         normalizedOrigin: "https://example.com",
         capturedAt: "2026-08-29T12:00:00.000Z",
+        boundary: "untrusted_browser_content",
       };
     },
     async authorizeArtifact(input) {
@@ -816,7 +852,10 @@ test("Browser capture and download keep authorized URLs only on presentation", a
     assert.equal(result.outcome.kind, "success");
     assert.equal(result.presentation?.artifacts?.[0]?.url, authorizedUrl);
     assert.equal(result.presentation?.artifacts?.[0]?.title, scenario.title);
-    assert.equal(result.presentation?.artifacts?.[0]?.mediaType, scenario.mediaType);
+    assert.equal(
+      result.presentation?.artifacts?.[0]?.mediaType,
+      scenario.mediaType,
+    );
     assert.doesNotMatch(
       JSON.stringify(result),
       new RegExp(`${titleSentinel}|${metadataSentinel}|${hostTokenSentinel}`),
@@ -875,7 +914,10 @@ test("Browser capture and download keep authorized URLs only on presentation", a
     );
     assert.match(durableEvidence, new RegExp(scenario.artifactId));
     assert.match(durableEvidence, new RegExp(scenario.artifactKind));
-    assert.match(durableEvidence, new RegExp(scenario.mediaType.replace("/", "\\/")));
+    assert.match(
+      durableEvidence,
+      new RegExp(scenario.mediaType.replace("/", "\\/")),
+    );
     assert.equal(completed.presentation, undefined);
     assert.equal(replay.presentation, undefined);
     assert.equal(failed.presentation, undefined);
@@ -952,6 +994,7 @@ test("Desktop and hosted Browser preparation resolve all grant branches before d
           },
           rawInput: {
             sessionId: "browser-session-1",
+            generation: 1,
             destination,
           },
         },
@@ -969,6 +1012,97 @@ test("Desktop and hosted Browser preparation resolve all grant branches before d
     }
     assert.equal(dispatches, 0, host);
   }
+});
+
+test("scoped Browser policy and execution carry the canonical Desktop app root", async () => {
+  const workspaceRoot = "/tmp/Desktop QA Project";
+  const expectedAuthority = {
+    threadId: "desktop-qa-thread",
+    projectRoot: workspaceRoot,
+  };
+  let policyAuthority: unknown;
+  let executionAuthority: unknown;
+  const output = {
+    version: "browser_tool_result_v1" as const,
+    operation: "browser.request_grant" as const,
+    outcome: "already_allowed" as const,
+    sessionId: "browser-session-1",
+    canonicalWildcard: "*.example.com",
+    effectiveAllowlistRevision: "allowlist-1",
+  };
+  const port: BrowserServicePort = {
+    ...passiveBrowserPort(),
+    async resolvePolicy(input) {
+      policyAuthority = input.authority;
+      return {
+        version: "browser_policy_resolution_v1",
+        decision: "allow",
+        policyRevision: "desktop-qa-policy-1",
+        sessionMode: "qa",
+      };
+    },
+    async execute(_prepared, lifecycle) {
+      executionAuthority = lifecycle.authority;
+      await lifecycle.acknowledgeDispatch();
+      return output;
+    },
+  };
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.request_grant"],
+    context: { browserService: port },
+  });
+  const runContext = {
+    runId: "desktop-qa-run",
+    sessionId: "desktop-qa-thread",
+    payload: {
+      workspace: {
+        workspaceRoot,
+        appRoot: ".",
+      },
+    },
+    sessionState: {},
+  };
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    runContext,
+    toolNames: ["browser.request_grant"],
+  });
+  const activation = snapshot.tools[0]!;
+  const origin = {
+    kind: "model" as const,
+    snapshotId: snapshot.snapshotId,
+    modelToolCallId: "desktop-qa-grant-call",
+  };
+  const rawInput = {
+    sessionId: "browser-session-1",
+    generation: 1,
+    destination: "https://example.com",
+  };
+  const inspection = await registry.inspectToolCall(
+    { activation, origin, rawInput },
+    { runContext },
+  );
+  assert.deepEqual(policyAuthority, expectedAuthority);
+  assert.equal(inspection.policy?.decision, "allow");
+  assert.ok(inspection.policy);
+
+  const prepared = await registry.prepareToolCall(
+    {
+      runId: runContext.runId,
+      sessionId: runContext.sessionId,
+      callId: "desktop-qa-grant-call",
+      activation,
+      origin,
+      rawInput,
+      policy: inspection.policy,
+    },
+    { runContext },
+  );
+  const result = await registry.executePreparedToolCall(prepared, {
+    runContext,
+  });
+
+  assert.equal(result.outcome.kind, "success");
+  assert.deepEqual(executionAuthority, expectedAuthority);
 });
 
 test("QA Browser policy cannot produce a personal-domain approval", async () => {
@@ -1010,6 +1144,7 @@ test("QA Browser policy cannot produce a personal-domain approval", async () => 
         },
         rawInput: {
           sessionId: "qa-browser-session",
+          generation: 1,
           destination: "https://new.example.org",
         },
       },
@@ -1206,6 +1341,36 @@ test("Browser dispatch acknowledgement distinguishes pre-dispatch failure from u
   }
 });
 
+test("Browser preserves an exact known host failure after dispatch acknowledgement", async () => {
+  const port: BrowserServicePort = {
+    ...passiveBrowserPort(),
+    async execute(_prepared, lifecycle) {
+      await lifecycle.acknowledgeDispatch();
+      throw browserFailure(
+        "BROWSER_TARGET_STALE",
+        "The current Browser document no longer matches the snapshot.",
+        { browserOutcomeKnown: true },
+      );
+    },
+  };
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.close"],
+    context: { browserService: port },
+  });
+  const { prepared, runContext } = await prepareBrowserCall(
+    registry,
+    "browser.close",
+    { sessionId: "browser-session-1" },
+  );
+  const result = await registry.executePreparedToolCall(prepared, {
+    runContext,
+  });
+  assert.equal(result.outcome.kind, "failure");
+  if (result.outcome.kind !== "failure") assert.fail("expected failure");
+  assert.equal(result.outcome.normalizedFailureCode, "BROWSER_TARGET_STALE");
+  assert.equal(result.outcome.effectState, "unknown");
+});
+
 test("Browser destructive operations persist their exact normalized result before cleanup", async () => {
   const ordering: string[] = [];
   const output = {
@@ -1246,9 +1411,10 @@ test("Browser destructive operations persist their exact normalized result befor
   assert.deepEqual(result.outcome.rawOutput, output);
 });
 
-test("Browser grants adopt the effective allowlist revision before persistence or success", async () => {
+test("Browser request_grant host owns allowlist adoption before persistence", async () => {
   for (const outcome of ["granted", "already_allowed"] as const) {
     const ordering: string[] = [];
+    let moduleAdoptions = 0;
     const output = {
       version: "browser_tool_result_v1" as const,
       operation: "browser.request_grant" as const,
@@ -1260,13 +1426,14 @@ test("Browser grants adopt the effective allowlist revision before persistence o
     const port: BrowserServicePort = {
       ...passiveBrowserPort(),
       async execute(_prepared, lifecycle) {
+        ordering.push("host-adopt");
         await lifecycle.acknowledgeDispatch();
         await lifecycle.persistCompletedResult(output);
         ordering.push("cleanup");
         return output;
       },
       async adoptAllowlistRevision(input) {
-        ordering.push("adopt");
+        moduleAdoptions += 1;
         return allowlistAdoptionReceipt(input);
       },
     };
@@ -1288,7 +1455,8 @@ test("Browser grants adopt the effective allowlist revision before persistence o
         ordering.push("persist");
       },
     });
-    assert.deepEqual(ordering, ["adopt", "persist", "cleanup"]);
+    assert.deepEqual(ordering, ["host-adopt", "persist", "cleanup"]);
+    assert.equal(moduleAdoptions, 0);
     assert.equal(result.outcome.kind, "success");
   }
 
@@ -1296,19 +1464,7 @@ test("Browser grants adopt the effective allowlist revision before persistence o
   const failingPort: BrowserServicePort = {
     ...passiveBrowserPort(),
     async execute(_prepared, lifecycle) {
-      const output = {
-        version: "browser_tool_result_v1" as const,
-        operation: "browser.request_grant" as const,
-        outcome: "granted" as const,
-        sessionId: "browser-session-1",
-        canonicalWildcard: "*.example.com",
-        effectiveAllowlistRevision: "allowlist-rejected",
-      };
       await lifecycle.acknowledgeDispatch();
-      await lifecycle.persistCompletedResult(output);
-      return output;
-    },
-    async adoptAllowlistRevision() {
       throw new Error("allowlist adoption unavailable");
     },
   };
@@ -1344,7 +1500,10 @@ test("Browser results cannot cross prepared session or Thread authority", async 
         ...validOutputs["browser.capture"],
         sessionId: "foreign-browser-session",
         artifact: {
-          ...(validOutputs["browser.capture"].artifact as Record<string, unknown>),
+          ...(validOutputs["browser.capture"].artifact as Record<
+            string,
+            unknown
+          >),
           title: foreignSecret,
         },
       };
@@ -1383,10 +1542,14 @@ test("Browser results cannot cross prepared session or Thread authority", async 
   );
   assert.throws(
     () =>
-      validateBrowserResultAuthority(openPrepared, {
-        ...validOutputs["browser.open"],
-        session: { ...session, threadId: "foreign-thread" },
-      }, browserExecutionAuthority(openPrepared, "thread-1")),
+      validateBrowserResultAuthority(
+        openPrepared,
+        {
+          ...validOutputs["browser.open"],
+          session: { ...session, threadId: "foreign-thread" },
+        },
+        browserExecutionAuthority(openPrepared, "thread-1"),
+      ),
     /Thread does not match execution authority/u,
   );
   assert.throws(
@@ -1429,7 +1592,10 @@ test("Browser results cannot cross prepared session or Thread authority", async 
     () =>
       validateBrowserResultAuthority(
         uploadPrepared,
-        { ...validOutputs["browser.upload"], attachmentId: "foreign-attachment" },
+        {
+          ...validOutputs["browser.upload"],
+          attachmentId: "foreign-attachment",
+        },
         browserExecutionAuthority(uploadPrepared, "thread-1"),
       ),
     /upload result attachment does not match/u,
@@ -1439,7 +1605,9 @@ test("Browser results cannot cross prepared session or Thread authority", async 
 test("Browser artifacts require exact trusted run, Thread, call, ID, and URL authority", async () => {
   const foreignSentinel = "foreign-artifact-sentinel";
   let persisted = false;
-  let authorization: Parameters<BrowserServicePort["authorizeArtifact"]>[0] | undefined;
+  let authorization:
+    | Parameters<BrowserServicePort["authorizeArtifact"]>[0]
+    | undefined;
   const port: BrowserServicePort = {
     ...passiveBrowserPort(),
     async authorizeArtifact(input) {
@@ -1450,7 +1618,10 @@ test("Browser artifacts require exact trusted run, Thread, call, ID, and URL aut
       const output = {
         ...validOutputs["browser.capture"],
         artifact: {
-          ...(validOutputs["browser.capture"].artifact as Record<string, unknown>),
+          ...(validOutputs["browser.capture"].artifact as Record<
+            string,
+            unknown
+          >),
           id: foreignSentinel,
           url: `https://foreign.example/artifacts/${foreignSentinel}`,
         },
@@ -1540,6 +1711,8 @@ async function executeBrowserCall(
   rawInput: Record<string, unknown>,
   decision: "allow" | "approval_required" | "deny" = "allow",
 ) {
+  const effectiveRawInput =
+    toolName === "browser.open" ? rawInput : { generation: 1, ...rawInput };
   const sequence = nextBrowserCallSequence++;
   const runContext = {
     runId: `run-${toolName}-${String(rawInput.operation ?? "operation")}-${sequence}`,
@@ -1563,10 +1736,14 @@ async function executeBrowserCall(
         producerId: "browser-contract-test",
         adapterId: "browser-contract-test:v1",
       },
-      rawInput,
+      rawInput: effectiveRawInput,
       policy: {
         decision,
-        policyRevision: hashCanonical({ toolName, rawInput, decision }),
+        policyRevision: hashCanonical({
+          toolName,
+          rawInput: effectiveRawInput,
+          decision,
+        }),
       },
       ...(decision === "approval_required"
         ? { approval: { authorityRevision: "browser-test-authority-v1" } }
@@ -1589,21 +1766,24 @@ async function prepareBrowserCall(
     hosted?: boolean;
   } = {},
 ) {
+  const effectiveRawInput =
+    toolName === "browser.open" ? rawInput : { generation: 1, ...rawInput };
   const sequence = nextBrowserCallSequence++;
   const runContext = {
     runId: `prepared-${toolName}-${sequence}`,
     sessionId: `prepared-session-${sequence}`,
-    payload: policy.approval && policy.hosted !== false
-      ? {
-          hostedApprovalAuthority: {
-            organizationId: "organization-1",
-            environmentId: "environment-1",
-            projectId: "project-1",
-            threadId: `prepared-session-${sequence}`,
-          },
-          actor: { actorType: "end_user", actorId: "user-1" },
-        }
-      : {},
+    payload:
+      policy.approval && policy.hosted !== false
+        ? {
+            hostedApprovalAuthority: {
+              organizationId: "organization-1",
+              environmentId: "environment-1",
+              projectId: "project-1",
+              threadId: `prepared-session-${sequence}`,
+            },
+            actor: { actorType: "end_user", actorId: "user-1" },
+          }
+        : {},
     sessionState: {},
   };
   const snapshot = await registry.createToolSurfaceSnapshot({
@@ -1624,7 +1804,7 @@ async function prepareBrowserCall(
         snapshotId: snapshot.snapshotId,
         modelToolCallId: `prepared-model-call-${sequence}`,
       },
-      rawInput,
+      rawInput: effectiveRawInput,
       policy: {
         decision,
         policyRevision: hashCanonical({ upstreamPolicy: sequence }),
@@ -1723,6 +1903,7 @@ function browserExecutionAuthority(
     sessionId: prepared.sessionId,
     threadId,
     callId: prepared.callId,
-    toolName: prepared.activation.descriptor.toolId as (typeof BROWSER_TOOL_NAMES)[number],
+    toolName: prepared.activation.descriptor
+      .toolId as (typeof BROWSER_TOOL_NAMES)[number],
   };
 }

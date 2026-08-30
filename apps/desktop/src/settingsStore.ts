@@ -39,11 +39,11 @@ import {
 } from "../../../src/desktopShell/standardAppConnections.js";
 import type { McpServerConfig } from "../../../src/mcp/contracts.js";
 import {
-  BROWSER_PERSONAL_DOMAIN_AUTHORITY_VERSION,
   BROWSER_PUBLIC_DOMAIN_AUTHORITY_VERSION,
   canonicalizePublicBrowserDestination,
   type BrowserPublicDomainAuthorityV1,
 } from "../../../src/browser/domainAuthority.js";
+import { projectDesktopBrowserPersonalDomainAuthority } from "../../../src/desktopShell/browserPersonalDomains.js";
 import { KESTREL_STANDARD_APP_MANIFESTS } from "@kestrel-agents/protocol";
 import type {
   DesktopBrowserPersonalDomainPartitionV1,
@@ -114,7 +114,9 @@ type DesktopSettingsFileBase = {
   defaultEnabledBuiltInAppIds?: string[] | undefined;
   appearanceTheme?: DesktopSettings["appearanceTheme"] | undefined;
   projectTombstones?: DesktopSettings["projectTombstones"] | undefined;
-  browserPersonalDomains?: DesktopSettings["browserPersonalDomains"] | undefined;
+  browserPersonalDomains?:
+    | DesktopSettings["browserPersonalDomains"]
+    | undefined;
 };
 
 type DesktopSettingsInput = Partial<DesktopSettings> & {
@@ -242,7 +244,10 @@ export function createDefaultDesktopSettings(
     projects: [],
     projectTombstones: [],
     mcpServers: [],
-    plugins: buildDesktopPluginInstallations([], DESKTOP_DEFAULT_ENABLED_APP_IDS),
+    plugins: buildDesktopPluginInstallations(
+      [],
+      DESKTOP_DEFAULT_ENABLED_APP_IDS,
+    ),
     capabilityVerifications: {},
     developerShellEnvMode: "inherit",
     developerShellAllowedEnvNames: [],
@@ -440,14 +445,23 @@ export function normalizeDesktopSettings(
     : (modelConfigurations.find(
         (configuration) => configuration.archivedAt === undefined,
       )?.id ?? modelConfigurations[0]!.id);
-  const persistedPlugins = normalizeDesktopPluginInstallations(settings?.plugins);
-  const mcpServers = persistedPlugins === undefined
-    ? normalizeDesktopMcpServers(settings?.mcpServers)
-    : persistedPlugins.flatMap((plugin) => plugin.mcpServer === undefined ? [] : [plugin.mcpServer]);
+  const persistedPlugins = normalizeDesktopPluginInstallations(
+    settings?.plugins,
+  );
+  const mcpServers =
+    persistedPlugins === undefined
+      ? normalizeDesktopMcpServers(settings?.mcpServers)
+      : persistedPlugins.flatMap((plugin) =>
+          plugin.mcpServer === undefined ? [] : [plugin.mcpServer],
+        );
   const legacyDefaultAppIds = Array.isArray(settings?.defaultEnabledAppIds)
-    ? settings.defaultEnabledAppIds.flatMap((id) => typeof id === "string" ? [id] : [])
+    ? settings.defaultEnabledAppIds.flatMap((id) =>
+        typeof id === "string" ? [id] : [],
+      )
     : undefined;
-  const defaultEnabledBuiltInAppIds = Array.isArray(settings?.defaultEnabledBuiltInAppIds)
+  const defaultEnabledBuiltInAppIds = Array.isArray(
+    settings?.defaultEnabledBuiltInAppIds,
+  )
     ? filterDesktopBuiltInAppIds(settings.defaultEnabledBuiltInAppIds)
     : legacyDefaultAppIds !== undefined
       ? filterDesktopBuiltInAppIds(legacyDefaultAppIds)
@@ -461,13 +475,12 @@ export function normalizeDesktopSettings(
     settings?.browserPersonalDomains,
   );
 
-  const requestedCapabilityPacks =
-    isLegacyGeneratedDesktopSelection({
-      presetId: settings?.presetId,
-      capabilityPacks: settings?.capabilityPacks,
-    })
-      ? DESKTOP_SAFE_CAPABILITY_PACKS
-      : settings?.capabilityPacks;
+  const requestedCapabilityPacks = isLegacyGeneratedDesktopSelection({
+    presetId: settings?.presetId,
+    capabilityPacks: settings?.capabilityPacks,
+  })
+    ? DESKTOP_SAFE_CAPABILITY_PACKS
+    : settings?.capabilityPacks;
   const capabilityPacks = normalizeDesktopCapabilityPacks(
     requestedCapabilityPacks,
   );
@@ -486,9 +499,17 @@ export function normalizeDesktopSettings(
       settings?.projectTombstones,
     ),
     mcpServers,
-    plugins: persistedPlugins === undefined
-      ? buildDesktopPluginInstallations(mcpServers, defaultEnabledBuiltInAppIds, tavilyApiKey)
-      : mergeIncludedDesktopPlugins(persistedPlugins, defaultEnabledBuiltInAppIds),
+    plugins:
+      persistedPlugins === undefined
+        ? buildDesktopPluginInstallations(
+            mcpServers,
+            defaultEnabledBuiltInAppIds,
+            tavilyApiKey,
+          )
+        : mergeIncludedDesktopPlugins(
+            persistedPlugins,
+            defaultEnabledBuiltInAppIds,
+          ),
     capabilityVerifications: normalizeCapabilityVerifications(
       settings?.capabilityVerifications,
     ),
@@ -557,7 +578,10 @@ export function buildDesktopRunnerProfile(
       server.appId === undefined ||
       (() => {
         const connection = getDesktopStandardAppConnection(server.appId!);
-        return connection?.kind !== "authorization" || connection.runtime !== "native";
+        return (
+          connection?.kind !== "authorization" ||
+          connection.runtime !== "native"
+        );
       })(),
   );
   return {
@@ -573,17 +597,20 @@ export function buildDesktopRunnerProfile(
     mcpServers: mcpServers.map(toRuntimeMcpServer),
     toolAllowlist: [
       ...(profile.toolAllowlist ?? []),
-      ...enabledServers.flatMap(
-        (server) => {
-          const connection = server.appId === undefined
+      ...enabledServers.flatMap((server) => {
+        const connection =
+          server.appId === undefined
             ? undefined
             : getDesktopStandardAppConnection(server.appId);
-          const native = connection?.kind === "authorization" && connection.runtime === "native";
-          return server.tools?.map((tool) =>
+        const native =
+          connection?.kind === "authorization" &&
+          connection.runtime === "native";
+        return (
+          server.tools?.map((tool) =>
             native ? tool.name : `mcp.${server.id}.${tool.name}`,
-          ) ?? [];
-        },
-      ),
+          ) ?? []
+        );
+      }),
     ],
   };
 }
@@ -834,7 +861,10 @@ export async function readDesktopSettings(
         ? parsed.setupCompletedAt
         : undefined;
     const desktopOnboarding =
-      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12 || parsed.version === 13)
+      parsed.version === 10 ||
+      parsed.version === 11 ||
+      parsed.version === 12 ||
+      parsed.version === 13
         ? normalizeDesktopOnboardingRecord(parsed.desktopOnboarding)
         : undefined;
     const advancedWorkspaceEnabled =
@@ -843,26 +873,41 @@ export async function readDesktopSettings(
         ? parsed.advancedWorkspaceEnabled
         : undefined;
     const modelConfigurations =
-      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12 || parsed.version === 13) && Array.isArray(parsed.modelConfigurations)
+      (parsed.version === 10 ||
+        parsed.version === 11 ||
+        parsed.version === 12 ||
+        parsed.version === 13) &&
+      Array.isArray(parsed.modelConfigurations)
         ? parsed.modelConfigurations
         : undefined;
     const defaultModelConfigurationId =
-      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12 || parsed.version === 13) &&
+      (parsed.version === 10 ||
+        parsed.version === 11 ||
+        parsed.version === 12 ||
+        parsed.version === 13) &&
       typeof parsed.defaultModelConfigurationId === "string"
         ? parsed.defaultModelConfigurationId
         : undefined;
     const legacyDefaultAppIds =
       parsed.version === 10 && Array.isArray(parsed.defaultEnabledAppIds)
-        ? parsed.defaultEnabledAppIds.flatMap((entry) => typeof entry === "string" ? [entry] : [])
+        ? parsed.defaultEnabledAppIds.flatMap((entry) =>
+            typeof entry === "string" ? [entry] : [],
+          )
         : [];
     const defaultEnabledBuiltInAppIds =
-      (parsed.version === 11 || parsed.version === 12 || parsed.version === 13) && Array.isArray(parsed.defaultEnabledBuiltInAppIds)
+      (parsed.version === 11 ||
+        parsed.version === 12 ||
+        parsed.version === 13) &&
+      Array.isArray(parsed.defaultEnabledBuiltInAppIds)
         ? parsed.defaultEnabledBuiltInAppIds
         : parsed.version === 10
           ? filterDesktopBuiltInAppIds(legacyDefaultAppIds)
           : undefined;
     const appearanceTheme =
-      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12 || parsed.version === 13) &&
+      (parsed.version === 10 ||
+        parsed.version === 11 ||
+        parsed.version === 12 ||
+        parsed.version === 13) &&
       (parsed.appearanceTheme === "system" ||
         parsed.appearanceTheme === "light" ||
         parsed.appearanceTheme === "dark")
@@ -965,13 +1010,19 @@ export async function readDesktopSettings(
         ...(defaultModelConfigurationId !== undefined
           ? { defaultModelConfigurationId }
           : {}),
-        ...(defaultEnabledBuiltInAppIds !== undefined ? { defaultEnabledBuiltInAppIds } : {}),
+        ...(defaultEnabledBuiltInAppIds !== undefined
+          ? { defaultEnabledBuiltInAppIds }
+          : {}),
         ...(appearanceTheme !== undefined ? { appearanceTheme } : {}),
         browserPersonalDomains,
       },
       {
         backfillProviderSelection:
-          parsed.version !== 9 && parsed.version !== 10 && parsed.version !== 11 && parsed.version !== 12 && parsed.version !== 13,
+          parsed.version !== 9 &&
+          parsed.version !== 10 &&
+          parsed.version !== 11 &&
+          parsed.version !== 12 &&
+          parsed.version !== 13,
       },
     );
   } catch {
@@ -996,9 +1047,16 @@ export async function writeDesktopSettings(
     })),
     plugins: normalized.plugins.map((plugin) => ({
       ...plugin,
-      capabilityPacks: plugin.capabilityPacks !== undefined ? [...plugin.capabilityPacks] : undefined,
-      credentialIds: plugin.credentialIds !== undefined ? [...plugin.credentialIds] : undefined,
-      mcpServer: plugin.mcpServer === undefined ? undefined : { ...plugin.mcpServer },
+      capabilityPacks:
+        plugin.capabilityPacks !== undefined
+          ? [...plugin.capabilityPacks]
+          : undefined,
+      credentialIds:
+        plugin.credentialIds !== undefined
+          ? [...plugin.credentialIds]
+          : undefined,
+      mcpServer:
+        plugin.mcpServer === undefined ? undefined : { ...plugin.mcpServer },
     })),
     capabilityVerifications: { ...normalized.capabilityVerifications },
     ...(normalized.developerShellPath !== undefined
@@ -1112,15 +1170,7 @@ export interface DesktopBrowserPersonalDomainScope {
   environmentId: string;
 }
 
-export interface RememberDesktopBrowserPersonalDomainInput
-  extends DesktopBrowserPersonalDomainScope {
-  destination: string;
-  approvalId: string;
-  approvedAt: string;
-}
-
-export interface RevokeDesktopBrowserPersonalDomainInput
-  extends DesktopBrowserPersonalDomainScope {
+export interface RevokeDesktopBrowserPersonalDomainInput extends DesktopBrowserPersonalDomainScope {
   canonicalDomain: string;
   revokedAt: string;
 }
@@ -1147,86 +1197,10 @@ export function projectDesktopBrowserPersonalDomains(
   scope: DesktopBrowserPersonalDomainScope,
 ): DesktopBrowserPersonalDomainProjectionV1 {
   const { accountId, environmentId } = parseDesktopBrowserScope(scope);
-  const partition = settings.browserPersonalDomains.partitions.find(
-    (candidate) =>
-      candidate.accountId === accountId &&
-      candidate.environmentId === environmentId,
+  return projectDesktopBrowserPersonalDomainAuthority(
+    settings.browserPersonalDomains,
+    { accountId, environmentId },
   );
-  const revision = partition?.revision ?? 0;
-  const domains = (partition?.domains ?? []).map(cloneDesktopBrowserDomainRecord);
-  return {
-    accountId,
-    environmentId,
-    revision,
-    authority: {
-      version: BROWSER_PERSONAL_DOMAIN_AUTHORITY_VERSION,
-      userId: accountId,
-      environmentId,
-      revision: String(revision),
-      activeDomains: domains
-        .filter((record) => record.state === "active")
-        .map((record) => ({ ...record.authority })),
-    },
-    domains,
-  };
-}
-
-/** Idempotently creates or reactivates one canonical personal grant. */
-export function rememberDesktopBrowserPersonalDomain(
-  settings: DesktopSettings,
-  input: RememberDesktopBrowserPersonalDomainInput,
-): DesktopBrowserPersonalDomainMutationResult {
-  const scope = parseDesktopBrowserScope(input);
-  const approvalId = requireDesktopBrowserText(input.approvalId, "approvalId");
-  const approvedAt = requireDesktopBrowserTimestamp(input.approvedAt, "approvedAt");
-  const authority = canonicalizePublicBrowserDestination(input.destination);
-  const existingPartition = settings.browserPersonalDomains.partitions.find(
-    (partition) => partitionMatchesScope(partition, scope),
-  );
-  const existingRecord = existingPartition?.domains.find(
-    (record) => record.authority.canonicalDomain === authority.canonicalDomain,
-  );
-  if (existingRecord?.state === "active") {
-    return {
-      settings,
-      projection: projectDesktopBrowserPersonalDomains(settings, scope),
-      disposition: "unchanged",
-    };
-  }
-  if (
-    existingRecord !== undefined &&
-    Date.parse(approvedAt) < Date.parse(existingRecord.updatedAt)
-  ) {
-    throw new Error("approvedAt cannot precede the domain's current state.");
-  }
-
-  const nextRecord: DesktopBrowserPersonalDomainRecordV1 = {
-    version: DESKTOP_BROWSER_PERSONAL_DOMAIN_RECORD_VERSION,
-    authority,
-    state: "active",
-    provenance: {
-      version: DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION,
-      source: "browser.request_grant",
-      approvalId,
-      approvedAt,
-    },
-    createdAt: existingRecord?.createdAt ?? approvedAt,
-    updatedAt: approvedAt,
-  };
-  const nextSettings = replaceDesktopBrowserPartition(
-    settings,
-    scope,
-    nextPartition(
-      existingPartition,
-      scope,
-      upsertDesktopBrowserDomain(existingPartition?.domains ?? [], nextRecord),
-    ),
-  );
-  return {
-    settings: nextSettings,
-    projection: projectDesktopBrowserPersonalDomains(nextSettings, scope),
-    disposition: existingRecord === undefined ? "created" : "reactivated",
-  };
 }
 
 /** Idempotently revokes only one domain in the caller's exact partition. */
@@ -1235,7 +1209,10 @@ export function revokeDesktopBrowserPersonalDomain(
   input: RevokeDesktopBrowserPersonalDomainInput,
 ): DesktopBrowserPersonalDomainMutationResult {
   const scope = parseDesktopBrowserScope(input);
-  const revokedAt = requireDesktopBrowserTimestamp(input.revokedAt, "revokedAt");
+  const revokedAt = requireDesktopBrowserTimestamp(
+    input.revokedAt,
+    "revokedAt",
+  );
   const authority = canonicalizePublicBrowserDestination(
     `https://${requireDesktopBrowserText(input.canonicalDomain, "canonicalDomain")}`,
   );
@@ -1291,7 +1268,9 @@ function normalizeDesktopBrowserPersonalDomains(
     "browserPersonalDomains",
   );
   if (root.version !== DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION) {
-    throw new Error("Desktop Browser personal-domain settings version is invalid.");
+    throw new Error(
+      "Desktop Browser personal-domain settings version is invalid.",
+    );
   }
   if (!Array.isArray(root.partitions)) {
     throw new Error("browserPersonalDomains.partitions must be an array.");
@@ -1305,17 +1284,24 @@ function normalizeDesktopBrowserPersonalDomains(
       ["version", "accountId", "environmentId", "revision", "domains"],
       label,
     );
-    if (partition.version !== DESKTOP_BROWSER_PERSONAL_DOMAIN_PARTITION_VERSION) {
+    if (
+      partition.version !== DESKTOP_BROWSER_PERSONAL_DOMAIN_PARTITION_VERSION
+    ) {
       throw new Error(`${label}.version is invalid.`);
     }
-    const accountId = requireDesktopBrowserText(partition.accountId, `${label}.accountId`);
+    const accountId = requireDesktopBrowserText(
+      partition.accountId,
+      `${label}.accountId`,
+    );
     const environmentId = requireDesktopBrowserText(
       partition.environmentId,
       `${label}.environmentId`,
     );
     const partitionKey = `${accountId}\u0000${environmentId}`;
     if (partitionKeys.has(partitionKey)) {
-      throw new Error("Desktop Browser personal-domain partitions must be unique.");
+      throw new Error(
+        "Desktop Browser personal-domain partitions must be unique.",
+      );
     }
     partitionKeys.add(partitionKey);
     if (
@@ -1335,7 +1321,9 @@ function normalizeDesktopBrowserPersonalDomains(
         `${label}.domains[${domainIndex}]`,
       );
       if (domainKeys.has(parsed.authority.canonicalDomain)) {
-        throw new Error(`${label}.domains must contain unique canonical domains.`);
+        throw new Error(
+          `${label}.domains must contain unique canonical domains.`,
+        );
       }
       domainKeys.add(parsed.authority.canonicalDomain);
       return parsed;
@@ -1375,7 +1363,10 @@ function parseDesktopBrowserDomainRecord(
   if (record.state !== "active" && record.state !== "revoked") {
     throw new Error(`${label}.state is invalid.`);
   }
-  const authorityRecord = requireDesktopBrowserRecord(record.authority, `${label}.authority`);
+  const authorityRecord = requireDesktopBrowserRecord(
+    record.authority,
+    `${label}.authority`,
+  );
   requireExactDesktopBrowserKeys(
     authorityRecord,
     ["version", "scheme", "canonicalDomain", "includeSubdomains", "port"],
@@ -1393,7 +1384,9 @@ function parseDesktopBrowserDomainRecord(
     authorityRecord.canonicalDomain,
     `${label}.authority.canonicalDomain`,
   );
-  const canonical = canonicalizePublicBrowserDestination(`https://${canonicalDomain}`);
+  const canonical = canonicalizePublicBrowserDestination(
+    `https://${canonicalDomain}`,
+  );
   if (canonical.canonicalDomain !== canonicalDomain) {
     throw new Error(`${label}.authority.canonicalDomain is not canonical.`);
   }
@@ -1407,23 +1400,34 @@ function parseDesktopBrowserDomainRecord(
     `${label}.provenance`,
   );
   if (
-    provenanceRecord.version !== DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION ||
+    provenanceRecord.version !==
+      DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION ||
     provenanceRecord.source !== "browser.request_grant"
   ) {
     throw new Error(`${label}.provenance is invalid.`);
   }
-  const createdAt = requireDesktopBrowserTimestamp(record.createdAt, `${label}.createdAt`);
-  const updatedAt = requireDesktopBrowserTimestamp(record.updatedAt, `${label}.updatedAt`);
+  const createdAt = requireDesktopBrowserTimestamp(
+    record.createdAt,
+    `${label}.createdAt`,
+  );
+  const updatedAt = requireDesktopBrowserTimestamp(
+    record.updatedAt,
+    `${label}.updatedAt`,
+  );
   const approvedAt = requireDesktopBrowserTimestamp(
     provenanceRecord.approvedAt,
     `${label}.provenance.approvedAt`,
   );
-  if (Date.parse(updatedAt) < Date.parse(createdAt) || Date.parse(updatedAt) < Date.parse(approvedAt)) {
+  if (
+    Date.parse(updatedAt) < Date.parse(createdAt) ||
+    Date.parse(updatedAt) < Date.parse(approvedAt)
+  ) {
     throw new Error(`${label} timestamps are out of order.`);
   }
-  const revokedAt = record.state === "revoked"
-    ? requireDesktopBrowserTimestamp(record.revokedAt, `${label}.revokedAt`)
-    : undefined;
+  const revokedAt =
+    record.state === "revoked"
+      ? requireDesktopBrowserTimestamp(record.revokedAt, `${label}.revokedAt`)
+      : undefined;
   if (revokedAt !== undefined && revokedAt !== updatedAt) {
     throw new Error(`${label}.revokedAt must equal updatedAt.`);
   }
@@ -1451,7 +1455,10 @@ function parseDesktopBrowserScope(
 ): DesktopBrowserPersonalDomainScope {
   return {
     accountId: requireDesktopBrowserText(value.accountId, "accountId"),
-    environmentId: requireDesktopBrowserText(value.environmentId, "environmentId"),
+    environmentId: requireDesktopBrowserText(
+      value.environmentId,
+      "environmentId",
+    ),
   };
 }
 
@@ -1500,7 +1507,8 @@ function upsertDesktopBrowserDomain(
     ...records
       .filter(
         (record) =>
-          record.authority.canonicalDomain !== replacement.authority.canonicalDomain,
+          record.authority.canonicalDomain !==
+          replacement.authority.canonicalDomain,
       )
       .map(cloneDesktopBrowserDomainRecord),
     cloneDesktopBrowserDomainRecord(replacement),
@@ -1570,7 +1578,11 @@ function requireExactDesktopBrowserKeys(
 }
 
 function requireDesktopBrowserText(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.trim().length === 0 || value !== value.trim()) {
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value !== value.trim()
+  ) {
     throw new Error(`${label} must be a non-empty canonical string.`);
   }
   return value;
@@ -1579,13 +1591,18 @@ function requireDesktopBrowserText(value: unknown, label: string): string {
 function requireDesktopBrowserTimestamp(value: unknown, label: string): string {
   const timestamp = requireDesktopBrowserText(value, label);
   const parsed = new Date(timestamp);
-  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== timestamp) {
+  if (
+    !Number.isFinite(parsed.getTime()) ||
+    parsed.toISOString() !== timestamp
+  ) {
     throw new Error(`${label} must be a canonical ISO timestamp.`);
   }
   return timestamp;
 }
 
-async function preservePreV12SettingsBackup(settingsPath: string): Promise<void> {
+async function preservePreV12SettingsBackup(
+  settingsPath: string,
+): Promise<void> {
   let source: Buffer;
   try {
     source = await readFile(settingsPath);
@@ -1628,14 +1645,20 @@ async function preservePreV12SettingsBackup(settingsPath: string): Promise<void>
         await chmod(backupPath, 0o600);
         return;
       } catch (existingError) {
-        throw new Error("Desktop could not verify its pre-v12 settings backup.", {
-          cause: existingError,
-        });
+        throw new Error(
+          "Desktop could not verify its pre-v12 settings backup.",
+          {
+            cause: existingError,
+          },
+        );
       }
     }
-    throw new Error("Desktop could not preserve pre-v12 settings before migration.", {
-      cause: error,
-    });
+    throw new Error(
+      "Desktop could not preserve pre-v12 settings before migration.",
+      {
+        cause: error,
+      },
+    );
   }
 }
 
@@ -1681,9 +1704,7 @@ function normalizeDesktopOnboardingRecord(
     startedAt: record.startedAt,
     ...(completedAt !== undefined ? { completedAt } : {}),
     ...(handoffId !== undefined ? { handoffId } : {}),
-    ...(handoffAcknowledgedAt !== undefined
-      ? { handoffAcknowledgedAt }
-      : {}),
+    ...(handoffAcknowledgedAt !== undefined ? { handoffAcknowledgedAt } : {}),
     ...(record.provider !== undefined ? { provider } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(projectPath !== undefined ? { projectPath } : {}),
@@ -1720,9 +1741,7 @@ function normalizeDatabaseMode(value: unknown): DesktopDatabaseMode {
 
 function normalizeDesktopProjects(
   projects: readonly DesktopProjectRegistration[] | undefined,
-  tombstones:
-    | DesktopSettings["projectTombstones"]
-    | undefined = undefined,
+  tombstones: DesktopSettings["projectTombstones"] | undefined = undefined,
 ): DesktopProjectRegistration[] {
   if (Array.isArray(projects) === false) {
     return [];
@@ -1749,9 +1768,9 @@ function normalizeDesktopProjects(
           project.id,
         )
           ? project.id
-          : normalizeDesktopProjectTombstones(tombstones).find(
-                (tombstone) => tombstone.path === resolvedPath,
-              )?.id ?? randomUUID(),
+          : (normalizeDesktopProjectTombstones(tombstones).find(
+              (tombstone) => tombstone.path === resolvedPath,
+            )?.id ?? randomUUID()),
       path: resolvedPath,
       label:
         typeof project.label === "string" && project.label.trim().length > 0
@@ -1788,7 +1807,10 @@ function normalizeDesktopProjectTombstones(
   tombstones: DesktopSettings["projectTombstones"] | undefined,
 ): DesktopSettings["projectTombstones"] {
   if (!Array.isArray(tombstones)) return [];
-  const normalized = new Map<string, DesktopSettings["projectTombstones"][number]>();
+  const normalized = new Map<
+    string,
+    DesktopSettings["projectTombstones"][number]
+  >();
   for (const tombstone of tombstones) {
     if (
       typeof tombstone?.id !== "string" ||
@@ -2041,26 +2063,57 @@ function buildDesktopPluginInstallations(
   for (const manifest of KESTREL_STANDARD_APP_MANIFESTS) {
     if (!manifest.preinstalled) continue;
     installed.set(manifest.id, {
-      id: manifest.id, pluginId: manifest.id, version: manifest.version,
-      installScope: "desktop", driver: "builtin", source: "included", installed: true,
-      configured: true, enabled: enabledBuiltIns.includes(manifest.id),
+      id: manifest.id,
+      pluginId: manifest.id,
+      version: manifest.version,
+      installScope: "desktop",
+      driver: "builtin",
+      source: "included",
+      installed: true,
+      configured: true,
+      enabled: enabledBuiltIns.includes(manifest.id),
       capabilityPacks: manifest.capabilityPacks.map((pack) => pack.key),
     });
   }
-  if (tavilyApiKey?.trim()) installed.set("tavily", {
-    id: "tavily", pluginId: "tavily", version: 1, installScope: "desktop", driver: "api",
-    source: "standard", installed: true, configured: true, verifiedAt: undefined, enabled: true,
-    capabilityPacks: ["search"], credentialIds: ["tavily"],
-  });
+  if (tavilyApiKey?.trim())
+    installed.set("tavily", {
+      id: "tavily",
+      pluginId: "tavily",
+      version: 1,
+      installScope: "desktop",
+      driver: "api",
+      source: "standard",
+      installed: true,
+      configured: true,
+      verifiedAt: undefined,
+      enabled: true,
+      capabilityPacks: ["search"],
+      credentialIds: ["tavily"],
+    });
   for (const server of servers) {
     const pluginId = server.appId ?? `custom.${server.id}`;
     installed.set(pluginId, {
-      id: server.id, pluginId, version: 1, installScope: "desktop",
+      id: server.id,
+      pluginId,
+      version: 1,
+      installScope: "desktop",
       driver: server.transport === "stdio" ? "mcp-stdio" : "mcp-http",
-      source: server.appId === undefined ? "custom" : "standard", installed: true,
-      configured: Boolean(server.verifiedAt || server.credentials?.every((binding) => binding.configured) || server.oauthCredentialPrefix),
-      ...(server.verifiedAt !== undefined ? { verifiedAt: server.verifiedAt } : {}), enabled: server.enabled,
-      capabilityPacks: server.capabilityPacks, credentialIds: server.credentials?.flatMap((binding) => binding.credentialId ? [binding.credentialId] : []), mcpServer: { ...server },
+      source: server.appId === undefined ? "custom" : "standard",
+      installed: true,
+      configured: Boolean(
+        server.verifiedAt ||
+        server.credentials?.every((binding) => binding.configured) ||
+        server.oauthCredentialPrefix,
+      ),
+      ...(server.verifiedAt !== undefined
+        ? { verifiedAt: server.verifiedAt }
+        : {}),
+      enabled: server.enabled,
+      capabilityPacks: server.capabilityPacks,
+      credentialIds: server.credentials?.flatMap((binding) =>
+        binding.credentialId ? [binding.credentialId] : [],
+      ),
+      mcpServer: { ...server },
     });
   }
   return [...installed.values()];
@@ -2070,7 +2123,9 @@ function mergeIncludedDesktopPlugins(
   persisted: readonly DesktopPluginInstallation[],
   enabledBuiltIns: readonly string[],
 ): DesktopPluginInstallation[] {
-  const merged = new Map(persisted.map((plugin) => [plugin.pluginId, { ...plugin }]));
+  const merged = new Map(
+    persisted.map((plugin) => [plugin.pluginId, { ...plugin }]),
+  );
   for (const included of buildDesktopPluginInstallations([], enabledBuiltIns)) {
     if (!merged.has(included.pluginId)) merged.set(included.pluginId, included);
   }
@@ -2083,26 +2138,62 @@ function normalizeDesktopPluginInstallations(
   if (!Array.isArray(value)) return;
   const plugins = new Map<string, DesktopPluginInstallation>();
   for (const candidate of value) {
-    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) continue;
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      Array.isArray(candidate)
+    )
+      continue;
     const plugin = candidate as Partial<DesktopPluginInstallation>;
     const version = plugin.version;
-    if (typeof plugin.id !== "string" || typeof plugin.pluginId !== "string" ||
-      typeof version !== "number" || !Number.isSafeInteger(version) || version < 1 ||
+    if (
+      typeof plugin.id !== "string" ||
+      typeof plugin.pluginId !== "string" ||
+      typeof version !== "number" ||
+      !Number.isSafeInteger(version) ||
+      version < 1 ||
       plugin.installScope !== "desktop" ||
-      !["builtin", "cli", "mcp-stdio", "mcp-http", "api"].includes(plugin.driver ?? "") ||
+      !["builtin", "cli", "mcp-stdio", "mcp-http", "api"].includes(
+        plugin.driver ?? "",
+      ) ||
       !["included", "standard", "custom"].includes(plugin.source ?? "") ||
-      typeof plugin.installed !== "boolean" || typeof plugin.configured !== "boolean" || typeof plugin.enabled !== "boolean") continue;
-    const mcpServer = plugin.mcpServer === undefined
-      ? undefined
-      : normalizeDesktopMcpServers([plugin.mcpServer])[0];
+      typeof plugin.installed !== "boolean" ||
+      typeof plugin.configured !== "boolean" ||
+      typeof plugin.enabled !== "boolean"
+    )
+      continue;
+    const mcpServer =
+      plugin.mcpServer === undefined
+        ? undefined
+        : normalizeDesktopMcpServers([plugin.mcpServer])[0];
     plugins.set(plugin.pluginId, {
-      id: plugin.id, pluginId: plugin.pluginId, version,
-      installScope: "desktop", driver: plugin.driver!, source: plugin.source!,
-      installed: plugin.installed, configured: plugin.configured, enabled: plugin.enabled,
-      ...(typeof plugin.verifiedAt === "string" && !Number.isNaN(Date.parse(plugin.verifiedAt))
-        ? { verifiedAt: new Date(plugin.verifiedAt).toISOString() } : {}),
-      ...(Array.isArray(plugin.capabilityPacks) ? { capabilityPacks: plugin.capabilityPacks.filter((pack): pack is string => typeof pack === "string") } : {}),
-      ...(Array.isArray(plugin.credentialIds) ? { credentialIds: plugin.credentialIds.filter((id): id is string => typeof id === "string") } : {}),
+      id: plugin.id,
+      pluginId: plugin.pluginId,
+      version,
+      installScope: "desktop",
+      driver: plugin.driver!,
+      source: plugin.source!,
+      installed: plugin.installed,
+      configured: plugin.configured,
+      enabled: plugin.enabled,
+      ...(typeof plugin.verifiedAt === "string" &&
+      !Number.isNaN(Date.parse(plugin.verifiedAt))
+        ? { verifiedAt: new Date(plugin.verifiedAt).toISOString() }
+        : {}),
+      ...(Array.isArray(plugin.capabilityPacks)
+        ? {
+            capabilityPacks: plugin.capabilityPacks.filter(
+              (pack): pack is string => typeof pack === "string",
+            ),
+          }
+        : {}),
+      ...(Array.isArray(plugin.credentialIds)
+        ? {
+            credentialIds: plugin.credentialIds.filter(
+              (id): id is string => typeof id === "string",
+            ),
+          }
+        : {}),
       ...(mcpServer !== undefined ? { mcpServer } : {}),
     });
   }

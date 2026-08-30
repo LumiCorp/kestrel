@@ -1,0 +1,4654 @@
+import { createHash, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { createConnection } from "node:net";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import path from "node:path";
+import WebSocket from "ws";
+
+import {
+  BROWSER_AUTHORIZED_ARTIFACT_VERSION,
+  BROWSER_POLICY_RESOLUTION_VERSION,
+  BROWSER_SERVICE_PORT_VERSION,
+  BROWSER_TOOL_RESULT_VERSION,
+  browserFailure,
+  isBrowserToolName,
+  normalizeBrowserHostFailure,
+  parseBrowserSessionV1,
+  type BrowserAllowlistAdoptionReceiptV1,
+  type BrowserArtifactAuthorizationRequestV1,
+  type BrowserAuthorizedArtifactV1,
+  type BrowserOperationLifecycleV1,
+  type BrowserPolicyResolutionV1,
+  type BrowserServicePort,
+  type BrowserSessionV1,
+} from "../browser/contracts.js";
+import { resolveBrowserToolExecutionClass } from "../browser/browserAppContract.fixture.js";
+import {
+  BROWSER_EFFECTIVE_DOMAIN_AUTHORITY_VERSION,
+  BROWSER_QA_TARGET_VERSION,
+  canonicalizePublicBrowserDestination,
+  canonicalizeTrustedBrowserQaTarget,
+  effectiveBrowserAuthorityAllowsPublicDestination,
+  type BrowserEffectiveDomainAuthorityV1,
+} from "../browser/domainAuthority.js";
+import type { PreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
+import {
+  DESKTOP_MAX_ATTACHMENT_BYTES,
+  DesktopAttachmentStore,
+  type DesktopAttachmentMetadata,
+} from "./desktopAttachments.js";
+import {
+  createLocalCoreBrowserEgressProxy,
+  type CreateLocalCoreBrowserEgressProxyInput,
+  type LocalCoreBrowserEgressLaunchBindingV1,
+  type LocalCoreBrowserEgressProxy,
+} from "./browserEgressProxy.js";
+import type { DesktopProjectRunRegistry } from "./desktopProjectRuns.js";
+
+const LEDGER_VERSION = "desktop_browser_sessions_v1" as const;
+const IDLE_TTL_MS = 30 * 60 * 1000;
+const HARD_TTL_MS = 8 * 60 * 60 * 1000;
+const COMMAND_TIMEOUT_MS = 30_000;
+const MAX_ENGINE_OUTPUT_BYTES = 512 * 1024;
+const MAX_PAGE_OUTPUT_CHARS = 32_768;
+const MAX_ENGINE_PAGE_OUTPUT_CHARS = 128 * 1024;
+const ENGINE_REVISION = "agent-browser:v0.35.0+chrome:152.0.7977.54";
+const TERMINAL_STATES = new Set(["closed", "expired", "lost", "failed"]);
+const AGENT_BROWSER_INTERNAL_SHUTDOWN_ACTION =
+  "__agent_browser_internal_shutdown";
+const AGENT_BROWSER_SHUTDOWN_TIMEOUT_MS = 5_000;
+const MAX_BROWSER_TABS = 100;
+const DESKTOP_BROWSER_SESSION_ID_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+
+export interface DesktopBrowserAuthorityResolutionInput {
+  runId: string;
+  threadId: string;
+  projectId?: string | undefined;
+  mode: "qa" | "operator";
+  destination?: string | undefined;
+}
+
+export interface DesktopBrowserAuthorityResolver {
+  resolve(
+    input: DesktopBrowserAuthorityResolutionInput,
+  ): Promise<BrowserEffectiveDomainAuthorityV1>;
+  resolveForPersonalRevision?(
+    input: DesktopBrowserAuthorityResolutionInput & {
+      accountId: string;
+      environmentId: string;
+    },
+  ): Promise<{
+    authority: BrowserEffectiveDomainAuthorityV1;
+    personalRevision: number;
+  }>;
+  rememberPersonalDomain?(
+    input: DesktopBrowserAuthorityResolutionInput & {
+      destination: string;
+      approvalId: string;
+    },
+  ): Promise<BrowserEffectiveDomainAuthorityV1>;
+}
+
+export interface DesktopBrowserEngineCommandResult {
+  stdout: string;
+  stderr: string;
+}
+
+export interface DesktopBrowserAcceptedOperation {
+  readonly sessionId: string;
+  readonly operationId: string;
+  readonly grantGeneration: number;
+  readonly acceptanceToken: string;
+}
+
+export interface DesktopBrowserInterceptedDownload {
+  readonly downloadId: string;
+  readonly filename: string;
+  readonly sourceOrigin: string;
+}
+
+export interface DesktopBrowserUploadStreamHook {
+  open(input: {
+    threadId: string;
+    sessionId: string;
+    generation: number;
+    attachmentId: string;
+    maximumBytes: number;
+  }): Promise<AsyncIterable<Uint8Array>>;
+}
+
+export interface DesktopBrowserEngineAdapter {
+  acceptOperation(
+    input: DesktopBrowserEngineInvocation & {
+      operationId: string;
+      grantGeneration: number;
+    },
+  ): Promise<DesktopBrowserAcceptedOperation>;
+  releaseOperation(operation: DesktopBrowserAcceptedOperation): void;
+  open(
+    input: DesktopBrowserEngineInvocation & {
+      destination: string;
+      acceptedOperation: DesktopBrowserAcceptedOperation;
+    },
+  ): Promise<void>;
+  command(
+    input: DesktopBrowserEngineInvocation & {
+      command: readonly string[];
+      acceptedOperation: DesktopBrowserAcceptedOperation;
+    },
+  ): Promise<DesktopBrowserEngineCommandResult>;
+  close(
+    input: DesktopBrowserEngineInvocation & {
+      acceptedOperation?: DesktopBrowserAcceptedOperation | undefined;
+    },
+  ): Promise<void>;
+  watchForLoss?(
+    input: DesktopBrowserEngineInvocation,
+    onLost: () => void,
+  ): () => void;
+}
+
+export type DesktopBrowserMetricName =
+  | "browser_startup"
+  | "browser_revision_adoption"
+  | "browser_destination_blocked"
+  | "browser_target_stale"
+  | "browser_session_expired"
+  | "browser_engine_crash"
+  | "browser_unknown_outcome"
+  | "browser_screenshot"
+  | "browser_cleanup";
+
+export interface DesktopBrowserMetric {
+  version: "desktop_browser_metric_v1";
+  name: DesktopBrowserMetricName;
+  at: string;
+  mode?: "qa" | "operator" | undefined;
+  operation?: string | undefined;
+  outcome?: "success" | "failure" | undefined;
+  reason?: string | undefined;
+  durationMs?: number | undefined;
+  count?: number | undefined;
+}
+
+export interface DesktopBrowserMetricSink {
+  record(metric: DesktopBrowserMetric): void;
+}
+
+export interface DesktopBrowserEngineInvocation {
+  sessionId: string;
+  runtimePath: string;
+  socketPath: string;
+  profilePath: string;
+  configPath: string;
+  screenshotPath: string;
+  blockedDownloadPath: string;
+  proxy: LocalCoreBrowserEgressLaunchBindingV1;
+  launchProcessGroupId?: number | undefined;
+  daemonPid?: number | undefined;
+  onDownloadIntercepted?:
+    | ((download: DesktopBrowserInterceptedDownload) => void)
+    | undefined;
+  stopDownloadInterception?: (() => void) | undefined;
+  synchronizeDownloads?: (() => Promise<void>) | undefined;
+}
+
+export interface DesktopBrowserServiceOptions {
+  homePath: string;
+  engineExecutablePath: string;
+  chromeExecutablePath: string;
+  projectRunRegistry: Pick<DesktopProjectRunRegistry, "resolvePreviewUrl">;
+  authorityResolver?: DesktopBrowserAuthorityResolver | undefined;
+  engine?: DesktopBrowserEngineAdapter | undefined;
+  createProxy?: typeof createLocalCoreBrowserEgressProxy | undefined;
+  attachmentStore?:
+    | Pick<DesktopAttachmentStore, "importPath" | "list">
+    | undefined;
+  uploadStream?: DesktopBrowserUploadStreamHook | undefined;
+  metrics?: DesktopBrowserMetricSink | undefined;
+  now?: (() => Date) | undefined;
+  randomId?: (() => string) | undefined;
+  scheduleExpiry?: boolean | undefined;
+  withAuthorityAdmission?:
+    | (<T>(action: () => Promise<T>) => Promise<T>)
+    | undefined;
+  writeLedger?:
+    | ((ledgerPath: string, ledger: DesktopBrowserLedgerV1) => Promise<void>)
+    | undefined;
+}
+
+interface DesktopBrowserLedgerV1 {
+  version: typeof LEDGER_VERSION;
+  sessions: BrowserSessionV1[];
+  artifacts: PendingArtifact[];
+}
+
+interface SnapshotAuthority {
+  snapshotId: string;
+  documentRevision: string;
+  tabId: string;
+}
+
+interface ActiveDesktopBrowserRuntime {
+  session: BrowserSessionV1;
+  targetIdentity: string;
+  destination: string;
+  authority: BrowserEffectiveDomainAuthorityV1;
+  qaRunAuthority?: QaRunAuthority | undefined;
+  proxy: LocalCoreBrowserEgressProxy;
+  engine: DesktopBrowserEngineInvocation;
+  snapshots: Map<string, SnapshotAuthority>;
+  operations: Map<string, Promise<unknown>>;
+  operationTail: Promise<void>;
+  continuations: Map<string, BrowserContinuation>;
+  interceptedDownloads: DesktopBrowserInterceptedDownload[];
+  interceptedDownloadCount: number;
+  authorityResolutionDepth: number;
+  terminationRequested?: BrowserSessionV1["terminalReason"] | undefined;
+  stopWatchingEngine?: (() => void) | undefined;
+  expiryTimer?: ReturnType<typeof setTimeout> | undefined;
+}
+
+interface BrowserContinuation {
+  operation: "browser.snapshot" | "browser.inspect";
+  chunks: string[];
+  index: number;
+  base: Record<string, unknown>;
+}
+
+interface PendingArtifact {
+  runId: string;
+  threadId: string;
+  callId: string;
+  toolName: "browser.capture" | "browser.download";
+  sessionId: string;
+  authorization: BrowserAuthorizedArtifactV1;
+}
+
+interface QaRunAuthority {
+  runId: string;
+  urlId: string;
+  projectRoot: string;
+}
+
+interface PendingOpenOperation {
+  identity: string;
+  promise: Promise<unknown>;
+}
+
+export class DesktopBrowserService implements BrowserServicePort {
+  readonly version = BROWSER_SERVICE_PORT_VERSION;
+  readonly #options: DesktopBrowserServiceOptions;
+  readonly #ledgerPath: string;
+  readonly #runtimeRoot: string;
+  readonly #engine: DesktopBrowserEngineAdapter;
+  readonly #active = new Map<string, ActiveDesktopBrowserRuntime>();
+  readonly #artifacts = new Map<string, PendingArtifact>();
+  readonly #openOperations = new Map<string, PendingOpenOperation>();
+  #sessions: BrowserSessionV1[] = [];
+  #generation = 1;
+  #mutation = Promise.resolve();
+  #ledgerWrites = Promise.resolve();
+  #initialized = false;
+
+  constructor(options: DesktopBrowserServiceOptions) {
+    this.#options = options;
+    this.#ledgerPath = path.join(options.homePath, "browser", "sessions.json");
+    this.#runtimeRoot = path.join(options.homePath, "browser", "runtime");
+    this.#engine =
+      options.engine ??
+      new AgentBrowserCliAdapter({
+        engineExecutablePath: requireAbsolutePath(
+          options.engineExecutablePath,
+          "agent-browser executable",
+        ),
+        chromeExecutablePath: requireAbsolutePath(
+          options.chromeExecutablePath,
+          "Chrome executable",
+        ),
+      });
+  }
+
+  async initialize(): Promise<void> {
+    await this.#serialize(async () => {
+      if (this.#initialized) return;
+      const ledger = await readLedger(this.#ledgerPath);
+      this.#sessions = ledger.sessions;
+      for (const artifact of ledger.artifacts) {
+        this.#artifacts.set(artifact.authorization.id, artifact);
+      }
+      this.#generation =
+        Math.max(0, ...this.#sessions.map((session) => session.generation)) + 1;
+      const now = this.#now().toISOString();
+      let changed = false;
+      for (const session of this.#sessions) {
+        const terminal = TERMINAL_STATES.has(session.state);
+        await this.#cleanupOrphan(session);
+        if (terminal) continue;
+        changed = true;
+        session.state = "lost";
+        session.terminalReason = "BROWSER_SESSION_LOST";
+        session.updatedAt = now;
+      }
+      if (changed) await this.#persist();
+      this.#initialized = true;
+    });
+  }
+
+  async close(): Promise<void> {
+    const candidates = [...this.#active.values()];
+    await this.#closeAuthorityCandidates(candidates);
+  }
+
+  async closeAuthority(input: {
+    accountId?: string | undefined;
+    environmentId?: string | undefined;
+    projectIds?: readonly string[] | undefined;
+  }): Promise<number> {
+    await this.#requireInitialized();
+    const projectIds =
+      input.projectIds === undefined ? undefined : new Set(input.projectIds);
+    const candidates = [...this.#active.values()].filter(
+      (runtime) =>
+        (input.accountId === undefined ||
+          runtime.authority.userId === input.accountId) &&
+        (input.environmentId === undefined ||
+          runtime.authority.environmentId === input.environmentId) &&
+        (projectIds === undefined ||
+          (runtime.authority.projectId !== undefined &&
+            projectIds.has(runtime.authority.projectId))),
+    );
+    await this.#closeAuthorityCandidates(candidates);
+    return candidates.length;
+  }
+
+  async resolvePolicy(input: {
+    version: typeof BROWSER_POLICY_RESOLUTION_VERSION;
+    runId: string;
+    threadId: string;
+    operation: "browser.request_grant";
+    effectiveInput: Record<string, unknown>;
+    authority: BrowserOperationLifecycleV1["authority"];
+  }): Promise<BrowserPolicyResolutionV1> {
+    await this.#requireInitialized();
+    const sessionId = requireText(input.effectiveInput.sessionId, "sessionId");
+    const destination = requireText(
+      input.effectiveInput.destination,
+      "destination",
+    );
+    const runtime = this.#requireRuntime(sessionId, input.threadId);
+    const generation = requireGeneration(input.effectiveInput.generation);
+    if (generation !== runtime.session.generation) {
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser policy generation does not match the active Session.",
+      );
+    }
+    if (runtime.session.mode !== "operator") {
+      return {
+        version: BROWSER_POLICY_RESOLUTION_VERSION,
+        decision: "deny",
+        policyRevision: runtime.session.effectiveAllowlistRevision,
+        sessionMode: runtime.session.mode,
+      };
+    }
+    const authority = await this.#resolveCurrentAuthority(runtime, {
+      runId: input.runId,
+      threadId: input.threadId,
+      projectId: input.authority.projectId,
+      mode: runtime.session.mode,
+      destination,
+    });
+    const allowed = effectiveBrowserAuthorityAllowsPublicDestination(
+      authority,
+      destination,
+    );
+    return {
+      version: BROWSER_POLICY_RESOLUTION_VERSION,
+      decision: allowed
+        ? "allow"
+        : authority.personalGrantsEnabled
+          ? "approval_required"
+          : "deny",
+      policyRevision: authority.effectiveAllowlistRevision,
+      sessionMode: runtime.session.mode,
+    };
+  }
+
+  async execute(
+    prepared: PreparedToolCallV1,
+    lifecycle: BrowserOperationLifecycleV1,
+  ): Promise<unknown> {
+    await this.#requireInitialized();
+    const operation = prepared.activation.descriptor.toolId;
+    if (!operation.startsWith("browser.")) {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "Invalid Browser operation.",
+      );
+    }
+    if (operation === "browser.open") {
+      const threadId = requireText(lifecycle.authority.threadId, "threadId");
+      const operationKey = `${threadId}:${prepared.callId}`;
+      const identity = digest({
+        runId: prepared.runId,
+        sessionId: prepared.sessionId,
+        callId: prepared.callId,
+        effectiveInput: prepared.effectiveInput,
+        authority: lifecycle.authority,
+      });
+      const existing = this.#openOperations.get(operationKey);
+      if (existing !== undefined) {
+        if (existing.identity !== identity) {
+          throw browserFailure(
+            "BROWSER_SESSION_CONFLICT",
+            "The Browser open call identity conflicts with an operation already in progress.",
+          );
+        }
+        return await existing.promise;
+      }
+      const promise = (this.#options.withAuthorityAdmission ?? runDirectly)(
+        () => this.#serialize(() => this.#open(prepared, lifecycle)),
+      );
+      const pending = { identity, promise };
+      this.#openOperations.set(operationKey, pending);
+      try {
+        return await promise;
+      } finally {
+        if (this.#openOperations.get(operationKey) === pending) {
+          this.#openOperations.delete(operationKey);
+        }
+      }
+    }
+    const sessionId = requireText(
+      prepared.effectiveInput.sessionId,
+      "sessionId",
+    );
+    const runtime = this.#requireRuntime(
+      sessionId,
+      lifecycle.authority.threadId,
+    );
+    const generation = requireGeneration(prepared.effectiveInput.generation);
+    if (generation !== runtime.session.generation) {
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser operation generation does not match the active Session.",
+      );
+    }
+    const existing = runtime.operations.get(prepared.callId);
+    if (existing !== undefined) return await existing;
+    const promise = runtime.operationTail.then(() =>
+      this.#executeInRuntime(runtime, prepared, lifecycle),
+    );
+    runtime.operationTail = promise.then(
+      () => undefined,
+      () => undefined,
+    );
+    runtime.operations.set(prepared.callId, promise);
+    try {
+      return await promise;
+    } finally {
+      runtime.operations.delete(prepared.callId);
+    }
+  }
+
+  async authorizeArtifact(
+    input: BrowserArtifactAuthorizationRequestV1,
+  ): Promise<BrowserAuthorizedArtifactV1 | undefined> {
+    const pending = this.#artifacts.get(input.artifactId);
+    if (
+      pending === undefined ||
+      pending.runId !== input.runId ||
+      pending.threadId !== input.threadId ||
+      pending.callId !== input.callId ||
+      pending.toolName !== input.toolName ||
+      pending.sessionId !== input.sessionId ||
+      pending.authorization.kind !== input.artifactKind
+    )
+      return;
+    const stored = (
+      await (
+        this.#options.attachmentStore ??
+        new DesktopAttachmentStore(this.#options.homePath)
+      ).list(input.threadId)
+    ).find((attachment) => attachment.fileId === input.artifactId);
+    if (
+      stored === undefined ||
+      stored.lifecycleState !== "ready" ||
+      !attachmentMatchesAuthorization(stored, pending.authorization)
+    ) {
+      return;
+    }
+    return pending.authorization;
+  }
+
+  async adoptAllowlistRevision(input: {
+    version: "browser_allowlist_adoption_v1";
+    runId: string;
+    threadId: string;
+    sessionId: string;
+    effectiveAllowlistRevision: string;
+    cause: "personal_grant" | "personal_revocation";
+  }): Promise<BrowserAllowlistAdoptionReceiptV1> {
+    return await this.#serialize(async () => {
+      const runtime = this.#requireRuntime(input.sessionId, input.threadId);
+      let authority: BrowserEffectiveDomainAuthorityV1;
+      try {
+        authority = await this.#withRuntimeAuthorityResolution(
+          runtime,
+          async () =>
+            await this.#resolveAuthority({
+              runId: input.runId,
+              threadId: input.threadId,
+              projectId: runtime.authority.projectId,
+              mode: runtime.session.mode,
+              destination: runtime.destination,
+            }),
+        );
+      } catch (error) {
+        await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
+          () => undefined,
+        );
+        throw error;
+      }
+      this.#assertCommitAllowed(runtime);
+      if (
+        authority.effectiveAllowlistRevision !==
+        input.effectiveAllowlistRevision
+      ) {
+        throw browserFailure(
+          "BROWSER_DESTINATION_BLOCKED",
+          "The Browser authority revision changed before adoption.",
+        );
+      }
+      const adopted = await runtime.proxy.adoptAuthority({
+        threadId: runtime.session.threadId,
+        sessionId: runtime.session.sessionId,
+        generation: runtime.session.generation,
+        mode: runtime.session.mode,
+        authority,
+      });
+      if (
+        adopted.launchBinding.username !== runtime.engine.proxy.username ||
+        adopted.launchBinding.password !== runtime.engine.proxy.password
+      ) {
+        throw browserFailure(
+          "BROWSER_SESSION_LOST",
+          "The Browser engine cannot adopt rotated proxy credentials.",
+        );
+      }
+      runtime.engine.proxy = adopted.launchBinding;
+      runtime.authority = authority;
+      runtime.session.effectiveAllowlistRevision =
+        authority.effectiveAllowlistRevision;
+      this.#touch(runtime);
+      await this.#persist();
+      this.#metric("browser_revision_adoption", {
+        mode: runtime.session.mode,
+        operation: "browser.request_grant",
+        outcome: "success",
+        reason: input.cause,
+        count: adopted.receipt.closedUnauthorizedConnections,
+      });
+      return adopted.receipt;
+    });
+  }
+
+  async adoptPersonalRevision(input: {
+    accountId: string;
+    environmentId: string;
+    personalRevision: number;
+    threadId?: string | undefined;
+    sessionId?: string | undefined;
+  }): Promise<{
+    personalRevision: number;
+    closedUnauthorizedConnections: number;
+  }> {
+    if (
+      !Number.isSafeInteger(input.personalRevision) ||
+      input.personalRevision < 0
+    ) {
+      throw new Error("Desktop Browser personal revision is invalid.");
+    }
+    const transition = await this.#serialize(async () => {
+      const candidates = [...this.#active.values()].filter(
+        (runtime) =>
+          runtime.authority.userId === input.accountId &&
+          runtime.authority.environmentId === input.environmentId &&
+          (input.threadId === undefined ||
+            runtime.session.threadId === input.threadId) &&
+          (input.sessionId === undefined ||
+            runtime.session.sessionId === input.sessionId),
+      );
+      if (
+        (input.threadId !== undefined || input.sessionId !== undefined) &&
+        candidates.length !== 1
+      ) {
+        throw new Error(
+          "The exact Desktop Browser Session is unavailable for revision adoption.",
+        );
+      }
+      return {
+        candidates,
+        ...this.#holdOperationQueues(candidates),
+      };
+    });
+    await Promise.all(transition.priorOperations);
+    try {
+      return await this.#serialize(async () => {
+        const candidates = transition.candidates;
+        if (
+          candidates.some(
+            (runtime) =>
+              this.#active.get(runtime.session.sessionId) !== runtime,
+          )
+        ) {
+          throw new Error(
+            "Desktop Browser authority changed while revision adoption was waiting.",
+          );
+        }
+        const resolveForPersonalRevision =
+          this.#options.authorityResolver?.resolveForPersonalRevision;
+        if (candidates.length > 0 && resolveForPersonalRevision === undefined) {
+          await this.#terminateAuthorityCandidates(candidates);
+          throw new Error(
+            "Desktop Browser authority cannot prove the persisted personal revision.",
+          );
+        }
+        let closedUnauthorizedConnections = 0;
+        try {
+          const resolutions = await Promise.all(
+            candidates.map(async (runtime) => {
+              const resolved = await this.#withRuntimeAuthorityResolution(
+                runtime,
+                async () =>
+                  await resolveForPersonalRevision!({
+                    runId: "desktop-personal-revision-adoption",
+                    threadId: runtime.session.threadId,
+                    projectId: runtime.authority.projectId,
+                    mode: runtime.session.mode,
+                    destination: runtime.destination,
+                    accountId: input.accountId,
+                    environmentId: input.environmentId,
+                  }),
+              );
+              if (
+                resolved.personalRevision !== input.personalRevision ||
+                resolved.authority.userId !== input.accountId ||
+                resolved.authority.environmentId !== input.environmentId ||
+                resolved.authority.projectId !== runtime.authority.projectId
+              ) {
+                throw new Error(
+                  "Desktop Browser revision adoption did not resolve the exact persisted authority.",
+                );
+              }
+              return { runtime, authority: resolved.authority };
+            }),
+          );
+          for (const { runtime, authority } of resolutions) {
+            this.#assertCommitAllowed(runtime);
+            if (
+              runtime.session.effectiveAllowlistRevision ===
+              authority.effectiveAllowlistRevision
+            ) {
+              runtime.authority = authority;
+              this.#touch(runtime);
+              continue;
+            }
+            const adopted = await runtime.proxy.adoptAuthority({
+              threadId: runtime.session.threadId,
+              sessionId: runtime.session.sessionId,
+              generation: runtime.session.generation,
+              mode: runtime.session.mode,
+              authority,
+            });
+            if (
+              adopted.launchBinding.username !==
+                runtime.engine.proxy.username ||
+              adopted.launchBinding.password !== runtime.engine.proxy.password
+            )
+              throw new Error(
+                "Desktop Browser proxy credentials changed during adoption.",
+              );
+            runtime.engine.proxy = adopted.launchBinding;
+            runtime.authority = authority;
+            runtime.session.effectiveAllowlistRevision =
+              authority.effectiveAllowlistRevision;
+            closedUnauthorizedConnections +=
+              adopted.receipt.closedUnauthorizedConnections;
+            this.#touch(runtime);
+          }
+          for (const runtime of candidates) this.#assertCommitAllowed(runtime);
+        } catch (error) {
+          await this.#terminateAuthorityCandidates(candidates);
+          throw error;
+        }
+        if (candidates.length > 0) await this.#persist();
+        this.#metric("browser_revision_adoption", {
+          operation: "browser.personal_revision",
+          outcome: "success",
+          reason:
+            input.threadId === undefined
+              ? "revocation_scope"
+              : "approved_session",
+          count: candidates.length,
+        });
+        return {
+          personalRevision: input.personalRevision,
+          closedUnauthorizedConnections,
+        };
+      });
+    } finally {
+      transition.release();
+    }
+  }
+
+  #holdOperationQueues(candidates: readonly ActiveDesktopBrowserRuntime[]): {
+    priorOperations: Promise<void>[];
+    release: () => void;
+  } {
+    const priorOperations = candidates.map((runtime) => runtime.operationTail);
+    const releases: Array<() => void> = [];
+    for (const runtime of candidates) {
+      let release!: () => void;
+      const hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      runtime.operationTail = runtime.operationTail.then(() => hold);
+      releases.push(release);
+    }
+    return {
+      priorOperations,
+      release: () => {
+        for (const release of releases) release();
+      },
+    };
+  }
+
+  async #terminateAuthorityCandidates(
+    candidates: readonly ActiveDesktopBrowserRuntime[],
+  ): Promise<void> {
+    for (const runtime of candidates) {
+      if (this.#active.get(runtime.session.sessionId) !== runtime) continue;
+      await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
+        () => undefined,
+      );
+    }
+  }
+
+  async #closeAuthorityCandidates(
+    candidates: readonly ActiveDesktopBrowserRuntime[],
+  ): Promise<void> {
+    for (const runtime of candidates) {
+      if (this.#active.get(runtime.session.sessionId) === runtime) {
+        if (runtime.terminationRequested !== "BROWSER_DOWNLOAD_UNAVAILABLE") {
+          runtime.terminationRequested = "BROWSER_SESSION_LOST";
+        }
+      }
+    }
+    const resolving = candidates.filter(
+      (runtime) => runtime.authorityResolutionDepth > 0,
+    );
+    for (const runtime of resolving) {
+      if (this.#active.get(runtime.session.sessionId) !== runtime) continue;
+      await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST");
+    }
+    const queued = candidates.filter(
+      (runtime) => runtime.authorityResolutionDepth === 0,
+    );
+    if (queued.length === 0) return;
+    await Promise.all(queued.map((runtime) => runtime.operationTail));
+    await this.#serialize(async () => {
+      for (const runtime of queued) {
+        if (this.#active.get(runtime.session.sessionId) !== runtime) continue;
+        await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST");
+      }
+    });
+  }
+
+  async #open(
+    prepared: PreparedToolCallV1,
+    lifecycle: BrowserOperationLifecycleV1,
+  ): Promise<unknown> {
+    const startupStartedAt = Date.now();
+    let dispatched = false;
+    const input = prepared.effectiveInput;
+    const mode = input.mode;
+    if (mode !== "qa" && mode !== "operator") {
+      throw browserFailure(
+        "BROWSER_DESTINATION_BLOCKED",
+        "Browser mode is invalid.",
+      );
+    }
+    const threadId = requireText(lifecycle.authority.threadId, "threadId");
+    const target = requireRecord(input.target, "target");
+    const qaResolution =
+      mode === "qa"
+        ? await this.#resolveQaDestination(target, lifecycle)
+        : undefined;
+    const destination =
+      mode === "qa"
+        ? qaResolution!.destination
+        : requirePublicDestination(target);
+    const targetIdentity =
+      mode === "qa"
+        ? `qa:${requireText(target.projectId, "target.projectId")}:${requireText(target.runId, "target.runId")}:${requireText(target.urlId, "target.urlId")}`
+        : "operator";
+    const activeForThread = [...this.#active.values()].filter(
+      (runtime) => runtime.session.threadId === threadId,
+    );
+    if (
+      activeForThread.some(
+        (runtime) =>
+          runtime.terminationRequested !== undefined ||
+          TERMINAL_STATES.has(runtime.session.state),
+      )
+    ) {
+      throw browserFailure(
+        "BROWSER_SESSION_CONFLICT",
+        "The Thread Browser Session is still completing cleanup.",
+      );
+    }
+    if (activeForThread.length > 1) {
+      throw browserFailure(
+        "BROWSER_SESSION_CONFLICT",
+        "The Thread has conflicting active Browser Sessions.",
+      );
+    }
+    const active = activeForThread[0];
+    if (active !== undefined) {
+      if (
+        active.session.mode === mode &&
+        active.targetIdentity === targetIdentity
+      ) {
+        await this.#assertUsable(active, false, true);
+        if (mode === "operator") {
+          await this.#refreshAuthorityBeforeDispatch(
+            active,
+            prepared,
+            lifecycle.authority.projectId,
+            true,
+            destination,
+          );
+        }
+        const output = browserOutput("browser.open", {
+          outcome: "existing",
+          session: { ...active.session },
+        });
+        await lifecycle.persistCompletedResult(output);
+        return output;
+      }
+      throw browserFailure(
+        "BROWSER_SESSION_CONFLICT",
+        "The Thread already has a conflicting Browser Session.",
+      );
+    }
+    const prior = this.#sessions.find(
+      (session) =>
+        session.threadId === threadId && !TERMINAL_STATES.has(session.state),
+    );
+    if (prior !== undefined) {
+      throw browserFailure(
+        "BROWSER_SESSION_CONFLICT",
+        "The Thread already has a conflicting Browser Session.",
+      );
+    }
+    const authority =
+      mode === "qa"
+        ? createQaAuthority({
+            threadId,
+            projectId: requireText(lifecycle.authority.projectId, "projectId"),
+            destination,
+            revision: prepared.policy.policyRevision,
+          })
+        : await this.#resolveAuthority({
+            runId: prepared.runId,
+            threadId,
+            projectId: lifecycle.authority.projectId,
+            mode,
+            destination,
+          });
+    if (
+      mode === "operator" &&
+      !effectiveBrowserAuthorityAllowsPublicDestination(authority, destination)
+    ) {
+      throw this.#destinationBlocked(
+        "The public destination is outside current Browser authority.",
+        mode,
+        "browser.open",
+      );
+    }
+    const now = this.#now();
+    const sessionId = requireDesktopBrowserSessionId(
+      `browser-${this.#id()}`,
+      "generated Browser session ID",
+    );
+    const session: BrowserSessionV1 = {
+      version: "browser_session_v1",
+      sessionId,
+      threadId,
+      mode,
+      state: "opening",
+      engineRevision: ENGINE_REVISION,
+      generation: this.#generation,
+      effectiveAllowlistRevision: authority.effectiveAllowlistRevision,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      lastActivityAt: now.toISOString(),
+      idleExpiresAt: new Date(now.getTime() + IDLE_TTL_MS).toISOString(),
+      hardExpiresAt: new Date(now.getTime() + HARD_TTL_MS).toISOString(),
+    };
+    this.#sessions.push(session);
+    let proxy: LocalCoreBrowserEgressProxy | undefined;
+    let engine: DesktopBrowserEngineInvocation | undefined;
+    let runtime: ActiveDesktopBrowserRuntime | undefined;
+    try {
+      await this.#persist();
+      const proxyInput: CreateLocalCoreBrowserEgressProxyInput = {
+        threadId,
+        sessionId,
+        generation: session.generation,
+        mode,
+        authority,
+      };
+      proxy =
+        this.#options.createProxy === undefined
+          ? await createLocalCoreBrowserEgressProxy({
+              ...proxyInput,
+              dependencies: {
+                metrics: {
+                  record: (metric) => {
+                    this.#metric("browser_destination_blocked", {
+                      mode: metric.mode,
+                      operation: `browser.egress.${metric.transport}`,
+                      outcome: metric.outcome,
+                      reason: metric.reason,
+                    });
+                  },
+                },
+              },
+            })
+          : await this.#options.createProxy(proxyInput);
+      engine = await this.#prepareRuntime(sessionId, proxy.launchBinding);
+      runtime = {
+        session,
+        targetIdentity,
+        destination,
+        authority,
+        ...(qaResolution === undefined
+          ? {}
+          : { qaRunAuthority: qaResolution.authority }),
+        proxy,
+        engine,
+        snapshots: new Map(),
+        operations: new Map(),
+        operationTail: Promise.resolve(),
+        continuations: new Map(),
+        interceptedDownloads: [],
+        interceptedDownloadCount: 0,
+        authorityResolutionDepth: 0,
+      };
+      this.#active.set(sessionId, runtime);
+      const activeRuntime = runtime;
+      const launchedEngine = {
+        ...engine,
+        destination,
+        onDownloadIntercepted: (
+          download: DesktopBrowserInterceptedDownload,
+        ) => {
+          runtime!.interceptedDownloadCount += 1;
+          runtime!.interceptedDownloads.push(download);
+          if (runtime!.interceptedDownloads.length > 32) {
+            runtime!.interceptedDownloads.shift();
+          }
+          if (
+            runtime!.session.state === "ready" &&
+            runtime!.terminationRequested === undefined &&
+            this.#active.get(runtime!.session.sessionId) === runtime
+          ) {
+            void this.#requestTermination(
+              runtime!,
+              "failed",
+              "BROWSER_DOWNLOAD_UNAVAILABLE",
+            ).catch(() => undefined);
+          }
+        },
+      };
+      activeRuntime.engine = launchedEngine;
+      const acceptedOperation = await this.#engine.acceptOperation({
+        ...launchedEngine,
+        operationId: prepared.callId,
+        grantGeneration: session.generation,
+      });
+      try {
+        await lifecycle.acknowledgeDispatch();
+        dispatched = true;
+        const priorDownloads = activeRuntime.interceptedDownloadCount;
+        const openInvocation = {
+          ...launchedEngine,
+          acceptedOperation,
+        };
+        try {
+          await this.#engine.open(openInvocation);
+        } finally {
+          activeRuntime.engine.daemonPid = openInvocation.daemonPid;
+          activeRuntime.engine.launchProcessGroupId =
+            openInvocation.launchProcessGroupId;
+          activeRuntime.engine.stopDownloadInterception =
+            openInvocation.stopDownloadInterception;
+          activeRuntime.engine.synchronizeDownloads =
+            openInvocation.synchronizeDownloads;
+        }
+        await activeRuntime.engine.synchronizeDownloads?.();
+        this.#throwIfDownloadIntercepted(activeRuntime, priorDownloads);
+      } finally {
+        this.#engine.releaseOperation(acceptedOperation);
+      }
+      session.state = "ready";
+      this.#assertCommitAllowed(activeRuntime);
+      this.#startWatchingEngine(activeRuntime);
+      this.#touch(activeRuntime);
+      await this.#persist();
+      this.#assertCommitAllowed(activeRuntime);
+      this.#scheduleExpiry(activeRuntime);
+      this.#metric("browser_startup", {
+        mode,
+        operation: "browser.open",
+        outcome: "success",
+        durationMs: Math.max(0, Date.now() - startupStartedAt),
+      });
+      const output = browserOutput("browser.open", {
+        outcome: "opened",
+        session: { ...session },
+      });
+      await lifecycle.persistCompletedResult(output);
+      return output;
+    } catch (error) {
+      if (dispatched) {
+        this.#recordUnknownOutcomeIfClassified(
+          error,
+          prepared,
+          mode,
+          "startup_after_dispatch",
+        );
+      }
+      this.#metric("browser_startup", {
+        mode,
+        operation: "browser.open",
+        outcome: "failure",
+        durationMs: Math.max(0, Date.now() - startupStartedAt),
+      });
+      const terminalReason = isBrowserDownloadUnavailable(error)
+        ? "BROWSER_DOWNLOAD_UNAVAILABLE"
+        : "BROWSER_ENGINE_FAILURE";
+      if (runtime !== undefined) {
+        await this.#terminate(runtime, "failed", terminalReason);
+      } else {
+        session.state = "failed";
+        session.terminalReason = terminalReason;
+        session.updatedAt = this.#now().toISOString();
+        await this.#persist();
+        const ownedPaths = desktopBrowserOwnedPaths(
+          this.#runtimeRoot,
+          sessionId,
+        );
+        const cleanup = await Promise.allSettled([
+          ...(engine === undefined
+            ? []
+            : [
+                (async () => {
+                  assertDesktopBrowserInvocationPaths(ownedPaths, engine!);
+                  await this.#engine.close(engine!);
+                  await removeDesktopBrowserRuntimePaths(ownedPaths);
+                })(),
+              ]),
+          ...(proxy === undefined ? [] : [proxy.close()]),
+          ...(engine === undefined
+            ? [removeDesktopBrowserRuntimePaths(ownedPaths)]
+            : []),
+        ]);
+        const cleanupFailure = cleanup.find(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
+        );
+        if (cleanupFailure !== undefined) throw cleanupFailure.reason;
+      }
+      throw error;
+    }
+  }
+
+  async #executeInRuntime(
+    runtime: ActiveDesktopBrowserRuntime,
+    prepared: PreparedToolCallV1,
+    lifecycle: BrowserOperationLifecycleV1,
+  ): Promise<unknown> {
+    const operation = prepared.activation.descriptor.toolId;
+    await this.#assertUsable(runtime, operation === "browser.close");
+    if (operation === "browser.close") {
+      const acceptedOperation = await this.#engine.acceptOperation({
+        ...runtime.engine,
+        operationId: prepared.callId,
+        grantGeneration: runtime.session.generation,
+      });
+      try {
+        await lifecycle.acknowledgeDispatch();
+        await this.#terminate(
+          runtime,
+          "closed",
+          "closed_by_user",
+          acceptedOperation,
+        );
+      } finally {
+        this.#engine.releaseOperation(acceptedOperation);
+      }
+      const output = browserOutput("browser.close", {
+        sessionId: runtime.session.sessionId,
+        state: "closed",
+      });
+      await lifecycle.persistCompletedResult(output);
+      return output;
+    }
+    if (operation === "browser.upload" || operation === "browser.download") {
+      throw browserFailure(
+        operation === "browser.download"
+          ? "BROWSER_DOWNLOAD_UNAVAILABLE"
+          : "BROWSER_SERVICE_UNAVAILABLE",
+        operation === "browser.upload"
+          ? "Browser upload is unavailable until Thread attachment streaming is installed."
+          : "Browser download promotion is unavailable; downloads are cancelled before storage.",
+      );
+    }
+    if (operation === "browser.request_takeover") {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "Browser takeover is not available until the Desktop viewer is installed.",
+      );
+    }
+    if (operation === "browser.request_grant") {
+      return await this.#requestGrant(runtime, prepared, lifecycle);
+    }
+    await this.#refreshAuthorityBeforeDispatch(
+      runtime,
+      prepared,
+      lifecycle.authority.projectId,
+    );
+    await this.#preflightOperation(runtime, prepared);
+    const acceptedOperation = await this.#engine.acceptOperation({
+      ...runtime.engine,
+      operationId: prepared.callId,
+      grantGeneration: runtime.session.generation,
+    });
+    let output: unknown;
+    try {
+      await lifecycle.acknowledgeDispatch();
+      await this.#refreshActivePageAuthority(
+        runtime,
+        prepared,
+        lifecycle.authority.projectId,
+        acceptedOperation,
+      );
+      output = await this.#runOperation(
+        runtime,
+        prepared,
+        acceptedOperation,
+        lifecycle.authority.projectId,
+      );
+      this.#assertCommitAllowed(runtime);
+    } catch (error) {
+      if (isEngineTabGone(error)) {
+        if (
+          isBrowserToolName(operation) &&
+          resolveBrowserToolExecutionClass(
+            operation,
+            prepared.effectiveInput,
+          ) === "external_side_effect"
+        ) {
+          this.#recordUnknownOutcomeIfClassified(
+            error,
+            prepared,
+            runtime.session.mode,
+            "tab_gone",
+          );
+          throw normalizeBrowserHostFailure(error, {
+            toolName: operation,
+            dispatchAcknowledged: true,
+            effectful: true,
+          });
+        }
+        this.#metric("browser_target_stale", {
+          mode: runtime.session.mode,
+          operation,
+          outcome: "failure",
+          reason: "tab_gone",
+        });
+        throw this.#targetStale(
+          runtime,
+          operation,
+          "The Browser tab bound to this operation is no longer available.",
+          "tab_gone",
+        );
+      }
+      this.#recordUnknownOutcomeIfClassified(
+        error,
+        prepared,
+        runtime.session.mode,
+        isEngineLost(error) ? "engine_lost" : "engine_failure",
+      );
+      if (isEngineLost(error)) {
+        this.#metric("browser_engine_crash", {
+          mode: runtime.session.mode,
+          operation,
+          outcome: "failure",
+          reason: "command_lost_control",
+        });
+        await this.#serialize(() =>
+          this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST"),
+        );
+      }
+      throw error;
+    } finally {
+      this.#engine.releaseOperation(acceptedOperation);
+    }
+    this.#touch(runtime);
+    await this.#persist();
+    this.#assertCommitAllowed(runtime);
+    await lifecycle.persistCompletedResult(output);
+    return output;
+  }
+
+  async #runOperation(
+    runtime: ActiveDesktopBrowserRuntime,
+    prepared: PreparedToolCallV1,
+    acceptedOperation: DesktopBrowserAcceptedOperation,
+    projectId: string | undefined,
+  ): Promise<unknown> {
+    const operation = prepared.activation.descriptor.toolId;
+    const input = prepared.effectiveInput;
+    if (operation === "browser.snapshot") {
+      const cursor =
+        typeof input.cursor === "string" ? input.cursor : undefined;
+      if (cursor !== undefined) {
+        return this.#continueContent(runtime, operation, cursor);
+      }
+      const requestedTabId =
+        typeof input.tabId === "string" ? requireTabId(input.tabId) : undefined;
+      if (requestedTabId !== undefined) {
+        await this.#selectExactTab(
+          runtime,
+          requestedTabId,
+          operation,
+          acceptedOperation,
+        );
+        await this.#refreshActivePageAuthority(
+          runtime,
+          prepared,
+          projectId,
+          acceptedOperation,
+        );
+      }
+      const result = await this.#command(runtime, acceptedOperation, [
+        "snapshot",
+      ]);
+      const page = await this.#readPageIdentity(runtime, acceptedOperation);
+      await this.#applyActivePageAuthority(
+        runtime,
+        prepared,
+        projectId,
+        page.exactUrl,
+        false,
+      );
+      const content = extractEngineContent(result);
+      const snapshotId = `snapshot-${this.#id()}`;
+      const documentRevision = digest({
+        documentIdentity: page.documentIdentity,
+        content,
+      });
+      if (requestedTabId !== undefined && page.tabId !== requestedTabId) {
+        throw this.#targetStale(
+          runtime,
+          operation,
+          "The requested Browser tab is no longer active.",
+          "snapshot_tab",
+        );
+      }
+      const tabId = page.tabId;
+      runtime.snapshots.clear();
+      runtime.continuations.clear();
+      runtime.snapshots.set(snapshotId, {
+        snapshotId,
+        documentRevision,
+        tabId,
+      });
+      return this.#createPagedContent(
+        runtime,
+        operation,
+        {
+          sessionId: runtime.session.sessionId,
+          generation: runtime.session.generation,
+          snapshotId,
+          documentRevision,
+          normalizedOrigin: page.origin,
+          capturedAt: this.#now().toISOString(),
+          boundary: "untrusted_browser_content",
+          title: page.title,
+        },
+        content,
+      );
+    }
+    if (operation === "browser.inspect") {
+      const cursor =
+        typeof input.cursor === "string" ? input.cursor : undefined;
+      if (cursor !== undefined) {
+        return this.#continueContent(runtime, operation, cursor);
+      }
+      const kind = requireText(input.kind, "kind");
+      const command =
+        kind === "console_errors"
+          ? ["console", "--json"]
+          : kind === "page_errors"
+            ? ["errors", "--json"]
+            : kind === "accessibility"
+              ? ["a11y", "--json"]
+              : ["network", "requests", "--json"];
+      const result = await this.#command(runtime, acceptedOperation, command);
+      const page = await this.#readPageIdentity(runtime, acceptedOperation);
+      await this.#applyActivePageAuthority(
+        runtime,
+        prepared,
+        projectId,
+        page.exactUrl,
+        false,
+      );
+      const content =
+        kind === "network_summary"
+          ? metadataOnlyNetworkSummary(result.stdout)
+          : extractEngineContent(result);
+      return this.#createPagedContent(
+        runtime,
+        operation,
+        {
+          sessionId: runtime.session.sessionId,
+          generation: runtime.session.generation,
+          snapshotId: `inspect-${this.#id()}`,
+          documentRevision: digest({
+            documentIdentity: page.documentIdentity,
+            kind,
+            content,
+          }),
+          normalizedOrigin: page.origin,
+          capturedAt: this.#now().toISOString(),
+          boundary: "untrusted_browser_content",
+          kind,
+        },
+        content,
+      );
+    }
+    if (operation === "browser.navigate") {
+      const kind = requireText(input.kind, "kind");
+      const command =
+        kind === "url" ? ["open", requireText(input.url, "url")] : [kind];
+      const priorDownloads = runtime.interceptedDownloadCount;
+      await this.#command(runtime, acceptedOperation, command);
+      this.#throwIfDownloadIntercepted(runtime, priorDownloads);
+      runtime.snapshots.clear();
+      runtime.continuations.clear();
+      const page = await this.#readPageIdentity(runtime, acceptedOperation);
+      await this.#applyActivePageAuthority(
+        runtime,
+        prepared,
+        projectId,
+        page.exactUrl,
+        true,
+      );
+      return browserOutput(operation, {
+        sessionId: runtime.session.sessionId,
+        generation: runtime.session.generation,
+        outcome: "completed",
+        normalizedOrigin: page.origin,
+      });
+    }
+    if (operation === "browser.interact") {
+      const snapshot = this.#assertSnapshotAuthority(runtime, input);
+      await this.#assertCurrentSnapshotAuthority(
+        runtime,
+        snapshot,
+        acceptedOperation,
+        prepared,
+        projectId,
+      );
+      const action = requireRecord(input.action, "action");
+      const kind = requireText(action.kind, "action.kind");
+      const ref =
+        typeof action.ref === "string"
+          ? requireEngineRef(action.ref)
+          : undefined;
+      const command = mapInteraction(kind, ref, action);
+      const priorDownloads = runtime.interceptedDownloadCount;
+      await this.#command(runtime, acceptedOperation, command);
+      this.#throwIfDownloadIntercepted(runtime, priorDownloads);
+      await this.#refreshActivePageAuthority(
+        runtime,
+        prepared,
+        projectId,
+        acceptedOperation,
+        true,
+      );
+      runtime.snapshots.clear();
+      runtime.continuations.clear();
+      return browserOutput(operation, {
+        sessionId: runtime.session.sessionId,
+        generation: runtime.session.generation,
+        outcome: "completed",
+        documentRevision: `changed-${this.#id()}`,
+      });
+    }
+    if (operation === "browser.tabs") {
+      const tabOperation = requireText(input.operation, "operation");
+      if (tabOperation === "switch") {
+        await this.#command(runtime, acceptedOperation, [
+          "tab",
+          requireTabId(input.tabId),
+        ]);
+        runtime.snapshots.clear();
+        runtime.continuations.clear();
+      } else if (tabOperation === "close") {
+        await this.#command(runtime, acceptedOperation, [
+          "tab",
+          "close",
+          requireTabId(input.tabId),
+        ]);
+        runtime.snapshots.clear();
+        runtime.continuations.clear();
+      }
+      const result = await this.#command(runtime, acceptedOperation, [
+        "tab",
+        "--json",
+      ]);
+      await this.#refreshActivePageAuthority(
+        runtime,
+        prepared,
+        projectId,
+        acceptedOperation,
+        tabOperation === "switch" || tabOperation === "close",
+      );
+      const parsedTabs = parseTabs(result.stdout);
+      const requestedTabId =
+        typeof input.tabId === "string" ? requireTabId(input.tabId) : undefined;
+      return browserOutput(operation, {
+        sessionId: runtime.session.sessionId,
+        generation: runtime.session.generation,
+        capturedAt: this.#now().toISOString(),
+        boundary: "untrusted_browser_content",
+        ...boundTabsForOutput(parsedTabs, requestedTabId),
+      });
+    }
+    if (operation === "browser.capture") {
+      await rm(runtime.engine.screenshotPath, { force: true });
+      await this.#command(runtime, acceptedOperation, [
+        "screenshot",
+        runtime.engine.screenshotPath,
+        ...(input.fullPage === true ? ["--full"] : []),
+      ]);
+      const page = await this.#readPageIdentity(runtime, acceptedOperation);
+      await this.#applyActivePageAuthority(
+        runtime,
+        prepared,
+        projectId,
+        page.exactUrl,
+        false,
+      );
+      const file = await stat(runtime.engine.screenshotPath);
+      if (file.size > DESKTOP_MAX_ATTACHMENT_BYTES) {
+        throw browserFailure(
+          "BROWSER_ARTIFACT_TOO_LARGE",
+          "The Browser screenshot exceeds the Desktop artifact limit.",
+          { browserOutcomeKnown: true },
+        );
+      }
+      const imported = await (
+        this.#options.attachmentStore ??
+        new DesktopAttachmentStore(this.#options.homePath)
+      ).importPath({
+        threadId: runtime.session.threadId,
+        filename: `browser-screenshot-${this.#id()}.png`,
+        sourcePath: runtime.engine.screenshotPath,
+        mimeType: "image/png",
+      });
+      const authorization: BrowserAuthorizedArtifactV1 = {
+        version: BROWSER_AUTHORIZED_ARTIFACT_VERSION,
+        id: imported.fileId,
+        title: "Browser screenshot",
+        kind: "browser-screenshot",
+        mediaType: imported.mimeType,
+        bytes: imported.sizeBytes,
+        sha256: imported.sha256,
+      };
+      this.#artifacts.set(imported.fileId, {
+        runId: prepared.runId,
+        threadId: runtime.session.threadId,
+        callId: prepared.callId,
+        toolName: "browser.capture",
+        sessionId: runtime.session.sessionId,
+        authorization,
+      });
+      await this.#persist();
+      this.#metric("browser_screenshot", {
+        mode: runtime.session.mode,
+        operation,
+        outcome: "success",
+        count: 1,
+      });
+      return browserOutput(operation, {
+        sessionId: runtime.session.sessionId,
+        generation: runtime.session.generation,
+        artifact: authorization,
+        normalizedOrigin: page.origin,
+        capturedAt: this.#now().toISOString(),
+        boundary: "untrusted_browser_content",
+      });
+    }
+    throw browserFailure(
+      "BROWSER_SERVICE_UNAVAILABLE",
+      "Browser operation is unavailable.",
+    );
+  }
+
+  async #requestGrant(
+    runtime: ActiveDesktopBrowserRuntime,
+    prepared: PreparedToolCallV1,
+    lifecycle: BrowserOperationLifecycleV1,
+  ): Promise<unknown> {
+    const destination = requireText(
+      prepared.effectiveInput.destination,
+      "destination",
+    );
+    const canonical = canonicalizePublicBrowserDestination(destination);
+    let authority = await this.#resolveCurrentAuthority(runtime, {
+      runId: prepared.runId,
+      threadId: runtime.session.threadId,
+      projectId: lifecycle.authority.projectId,
+      mode: runtime.session.mode,
+      destination,
+    });
+    await this.#installRequestGrantAuthority(runtime, authority);
+    this.#assertCommitAllowed(runtime);
+    let outcome: "already_allowed" | "granted";
+    if (
+      effectiveBrowserAuthorityAllowsPublicDestination(authority, destination)
+    ) {
+      outcome = "already_allowed";
+    } else {
+      if (
+        authority.personalGrantsEnabled !== true ||
+        this.#options.authorityResolver?.rememberPersonalDomain === undefined ||
+        prepared.approval?.approvalId === undefined
+      ) {
+        throw browserFailure(
+          "BROWSER_GRANT_DENIED",
+          "Browser domain grant is unavailable.",
+        );
+      }
+      await lifecycle.acknowledgeDispatch();
+      authority = await this.#withRuntimeAuthorityResolution(
+        runtime,
+        async () =>
+          await this.#options.authorityResolver!.rememberPersonalDomain!({
+            runId: prepared.runId,
+            threadId: runtime.session.threadId,
+            projectId: runtime.authority.projectId,
+            mode: runtime.session.mode,
+            destination,
+            approvalId: prepared.approval!.approvalId!,
+          }),
+      );
+      this.#assertCommitAllowed(runtime);
+      await this.#installRequestGrantAuthority(runtime, authority);
+      outcome = "granted";
+    }
+    const output = browserOutput("browser.request_grant", {
+      outcome,
+      sessionId: runtime.session.sessionId,
+      canonicalWildcard: `*.${canonical.canonicalDomain}`,
+      effectiveAllowlistRevision: authority.effectiveAllowlistRevision,
+    });
+    await lifecycle.persistCompletedResult(output);
+    return output;
+  }
+
+  async #installRequestGrantAuthority(
+    runtime: ActiveDesktopBrowserRuntime,
+    authority: BrowserEffectiveDomainAuthorityV1,
+  ): Promise<void> {
+    if (
+      authority.userId !== runtime.authority.userId ||
+      authority.environmentId !== runtime.authority.environmentId ||
+      authority.projectId !== runtime.authority.projectId
+    ) {
+      await this.#loseRuntime(runtime);
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser grant authority belongs to another person, Environment, or Project.",
+      );
+    }
+    if (
+      authority.effectiveAllowlistRevision ===
+      runtime.session.effectiveAllowlistRevision
+    ) {
+      runtime.authority = authority;
+      return;
+    }
+    try {
+      const adopted = await runtime.proxy.adoptAuthority({
+        threadId: runtime.session.threadId,
+        sessionId: runtime.session.sessionId,
+        generation: runtime.session.generation,
+        mode: runtime.session.mode,
+        authority,
+      });
+      if (
+        adopted.receipt.sessionId !== runtime.session.sessionId ||
+        adopted.receipt.effectiveAllowlistRevision !==
+          authority.effectiveAllowlistRevision ||
+        adopted.launchBinding.username !== runtime.engine.proxy.username ||
+        adopted.launchBinding.password !== runtime.engine.proxy.password
+      ) {
+        throw browserFailure(
+          "BROWSER_SESSION_LOST",
+          "The Browser Session could not install the remembered domain authority.",
+        );
+      }
+      runtime.engine.proxy = adopted.launchBinding;
+      runtime.authority = authority;
+      runtime.session.effectiveAllowlistRevision =
+        authority.effectiveAllowlistRevision;
+      this.#touch(runtime);
+      await this.#persist();
+      this.#metric("browser_revision_adoption", {
+        mode: runtime.session.mode,
+        operation: "browser.request_grant",
+        outcome: "success",
+        reason: "personal_grant",
+        count: adopted.receipt.closedUnauthorizedConnections,
+      });
+    } catch (error) {
+      await this.#loseRuntime(runtime);
+      throw error;
+    }
+  }
+
+  async #refreshActivePageAuthority(
+    runtime: ActiveDesktopBrowserRuntime,
+    prepared: PreparedToolCallV1,
+    projectId: string | undefined,
+    acceptedOperation: DesktopBrowserAcceptedOperation,
+    effectDispatched = false,
+  ): Promise<void> {
+    const destination = await this.#readActivePageUrl(
+      runtime,
+      acceptedOperation,
+    );
+    await this.#applyActivePageAuthority(
+      runtime,
+      prepared,
+      projectId,
+      destination,
+      effectDispatched,
+    );
+  }
+
+  async #readActivePageUrl(
+    runtime: ActiveDesktopBrowserRuntime,
+    acceptedOperation: DesktopBrowserAcceptedOperation,
+  ): Promise<string> {
+    const result = await this.#command(runtime, acceptedOperation, [
+      "get",
+      "url",
+      "--json",
+    ]);
+    const rawUrl = extractScalar(result.stdout, "url");
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error("unsupported page URL scheme");
+      }
+      return parsed.href;
+    } catch {
+      throw browserFailure(
+        "BROWSER_ENGINE_FAILURE",
+        "Browser engine returned an invalid active page URL.",
+        { browserOutcomeKnown: true, effectDispatched: false },
+      );
+    }
+  }
+
+  async #applyActivePageAuthority(
+    runtime: ActiveDesktopBrowserRuntime,
+    prepared: PreparedToolCallV1,
+    projectId: string | undefined,
+    destination: string,
+    effectDispatched: boolean,
+  ): Promise<void> {
+    this.#assertCommitAllowed(runtime);
+    const operation = prepared.activation.descriptor.toolId;
+    if (runtime.session.mode === "qa") {
+      await this.#assertCurrentQaRunAuthority(runtime);
+      let target: ReturnType<typeof canonicalizeTrustedBrowserQaTarget>;
+      try {
+        target = canonicalizeTrustedBrowserQaTarget(destination);
+      } catch {
+        throw this.#destinationBlocked(
+          "The active QA page is not the exact managed target.",
+          runtime.session.mode,
+          operation,
+          effectDispatched,
+        );
+      }
+      const allowed = runtime.authority.qaTarget;
+      if (
+        allowed === null ||
+        target.scheme !== allowed.scheme ||
+        target.hostname !== allowed.hostname ||
+        target.port !== allowed.port
+      ) {
+        throw this.#destinationBlocked(
+          "The active QA page is not the exact managed target.",
+          runtime.session.mode,
+          operation,
+          effectDispatched,
+        );
+      }
+      runtime.destination = destination;
+      this.#assertCommitAllowed(runtime);
+      return;
+    }
+
+    const current = await this.#resolveCurrentAuthority(runtime, {
+      runId: prepared.runId,
+      threadId: runtime.session.threadId,
+      projectId,
+      mode: runtime.session.mode,
+      destination,
+    });
+    if (
+      current.userId !== runtime.authority.userId ||
+      current.environmentId !== runtime.authority.environmentId ||
+      current.projectId !== runtime.authority.projectId
+    ) {
+      await this.#loseRuntime(runtime);
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser account, Environment, or Project identity changed.",
+        { browserOutcomeKnown: true, effectDispatched },
+      );
+    }
+    if (
+      current.effectiveAllowlistRevision !==
+      runtime.session.effectiveAllowlistRevision
+    ) {
+      try {
+        const adopted = await runtime.proxy.adoptAuthority({
+          threadId: runtime.session.threadId,
+          sessionId: runtime.session.sessionId,
+          generation: runtime.session.generation,
+          mode: runtime.session.mode,
+          authority: current,
+        });
+        if (
+          adopted.receipt.sessionId !== runtime.session.sessionId ||
+          adopted.receipt.effectiveAllowlistRevision !==
+            current.effectiveAllowlistRevision ||
+          adopted.launchBinding.username !== runtime.engine.proxy.username ||
+          adopted.launchBinding.password !== runtime.engine.proxy.password
+        ) {
+          throw browserFailure(
+            "BROWSER_SESSION_LOST",
+            "The Browser engine cannot adopt current page authority.",
+          );
+        }
+        runtime.engine.proxy = adopted.launchBinding;
+        runtime.authority = current;
+        runtime.session.effectiveAllowlistRevision =
+          current.effectiveAllowlistRevision;
+        this.#touch(runtime);
+        await this.#persist();
+        this.#metric("browser_revision_adoption", {
+          mode: runtime.session.mode,
+          operation,
+          outcome: "success",
+          reason: "active_page_refresh",
+          count: adopted.receipt.closedUnauthorizedConnections,
+        });
+      } catch (error) {
+        await this.#loseRuntime(runtime);
+        throw error;
+      }
+    } else {
+      runtime.authority = current;
+    }
+    let destinationAllowed = false;
+    try {
+      destinationAllowed = effectiveBrowserAuthorityAllowsPublicDestination(
+        current,
+        destination,
+      );
+    } catch {
+      destinationAllowed = false;
+    }
+    if (!destinationAllowed) {
+      throw this.#destinationBlocked(
+        "The active Browser page is outside current authority.",
+        runtime.session.mode,
+        operation,
+        effectDispatched,
+      );
+    }
+    runtime.destination = destination;
+    this.#assertCommitAllowed(runtime);
+  }
+
+  async #refreshAuthorityBeforeDispatch(
+    runtime: ActiveDesktopBrowserRuntime,
+    prepared: PreparedToolCallV1,
+    projectId: string | undefined,
+    directAuthorityLoss = false,
+    destinationOverride?: string | undefined,
+  ): Promise<void> {
+    this.#assertCommitAllowed(runtime);
+    let current = runtime.authority;
+    const explicitDestination =
+      destinationOverride ??
+      (prepared.activation.descriptor.toolId === "browser.navigate" &&
+      prepared.effectiveInput.kind === "url"
+        ? requireText(prepared.effectiveInput.url, "url")
+        : undefined);
+    if (runtime.session.mode === "operator") {
+      current = await this.#resolveCurrentAuthority(
+        runtime,
+        {
+          runId: prepared.runId,
+          threadId: runtime.session.threadId,
+          projectId,
+          mode: runtime.session.mode,
+          destination: explicitDestination,
+        },
+        directAuthorityLoss,
+      );
+      if (
+        current.userId !== runtime.authority.userId ||
+        current.environmentId !== runtime.authority.environmentId ||
+        current.projectId !== runtime.authority.projectId
+      ) {
+        await this.#loseRuntime(runtime, directAuthorityLoss);
+        throw browserFailure(
+          "BROWSER_SESSION_LOST",
+          "The Browser account, Environment, or Project identity changed.",
+        );
+      }
+    } else {
+      await this.#assertCurrentQaRunAuthority(runtime);
+      if (
+        prepared.activation.descriptor.toolId !== "browser.navigate" ||
+        prepared.effectiveInput.kind !== "url"
+      ) {
+        this.#assertCommitAllowed(runtime);
+        return;
+      }
+      const target = canonicalizeTrustedBrowserQaTarget(
+        requireText(prepared.effectiveInput.url, "url"),
+      );
+      const allowed = current.qaTarget;
+      if (
+        allowed === null ||
+        target.scheme !== allowed.scheme ||
+        target.hostname !== allowed.hostname ||
+        target.port !== allowed.port
+      ) {
+        throw this.#destinationBlocked(
+          "The QA navigation destination is not the exact managed target.",
+          runtime.session.mode,
+          prepared.activation.descriptor.toolId,
+        );
+      }
+    }
+    if (
+      current.effectiveAllowlistRevision !==
+      runtime.session.effectiveAllowlistRevision
+    ) {
+      try {
+        const adopted = await runtime.proxy.adoptAuthority({
+          threadId: runtime.session.threadId,
+          sessionId: runtime.session.sessionId,
+          generation: runtime.session.generation,
+          mode: runtime.session.mode,
+          authority: current,
+        });
+        if (
+          adopted.launchBinding.username !== runtime.engine.proxy.username ||
+          adopted.launchBinding.password !== runtime.engine.proxy.password
+        ) {
+          throw browserFailure(
+            "BROWSER_SESSION_LOST",
+            "The Browser engine cannot adopt rotated proxy credentials.",
+          );
+        }
+        runtime.engine.proxy = adopted.launchBinding;
+        runtime.authority = current;
+        runtime.session.effectiveAllowlistRevision =
+          current.effectiveAllowlistRevision;
+        this.#touch(runtime);
+        await this.#persist();
+        this.#metric("browser_revision_adoption", {
+          mode: runtime.session.mode,
+          operation: prepared.activation.descriptor.toolId,
+          outcome: "success",
+          reason: "dispatch_refresh",
+          count: adopted.receipt.closedUnauthorizedConnections,
+        });
+      } catch (error) {
+        await this.#loseRuntime(runtime, directAuthorityLoss);
+        throw error;
+      }
+    }
+    if (
+      runtime.session.mode === "operator" &&
+      explicitDestination !== undefined &&
+      !effectiveBrowserAuthorityAllowsPublicDestination(
+        current,
+        explicitDestination,
+      )
+    ) {
+      throw this.#destinationBlocked(
+        "The Browser destination is outside current authority.",
+        runtime.session.mode,
+        prepared.activation.descriptor.toolId,
+      );
+    }
+    this.#assertCommitAllowed(runtime);
+  }
+
+  async #assertCurrentQaRunAuthority(
+    runtime: ActiveDesktopBrowserRuntime,
+  ): Promise<void> {
+    const authority = runtime.qaRunAuthority;
+    if (authority === undefined) {
+      await this.#loseRuntime(runtime);
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The managed Project run authority is unavailable.",
+        { browserOutcomeKnown: true },
+      );
+    }
+    try {
+      const resolved = this.#options.projectRunRegistry.resolvePreviewUrl({
+        runId: authority.runId,
+        urlId: authority.urlId,
+      });
+      if (
+        path.resolve(resolved.run.projectPath) !==
+        path.resolve(authority.projectRoot)
+      ) {
+        throw new Error("Project run ownership changed.");
+      }
+      const target = canonicalizeTrustedBrowserQaTarget(resolved.url);
+      const active = runtime.authority.qaTarget;
+      if (
+        active === null ||
+        target.scheme !== active.scheme ||
+        target.hostname !== active.hostname ||
+        target.port !== active.port
+      ) {
+        throw new Error("Project run preview authority changed.");
+      }
+    } catch {
+      await this.#loseRuntime(runtime);
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The managed Project run is no longer live and owned by this Session.",
+        { browserOutcomeKnown: true },
+      );
+    }
+  }
+
+  #createPagedContent(
+    runtime: ActiveDesktopBrowserRuntime,
+    operation: "browser.snapshot" | "browser.inspect",
+    base: Record<string, unknown>,
+    content: string,
+  ): unknown {
+    const chunks = splitContent(content);
+    const first = chunks[0] ?? "";
+    if (chunks.length <= 1) {
+      return browserOutput(operation, {
+        ...base,
+        content: first,
+        complete: true,
+      });
+    }
+    const cursor = `browser-cursor-${this.#id()}`;
+    runtime.continuations.set(cursor, {
+      operation,
+      chunks,
+      index: 1,
+      base,
+    });
+    return browserOutput(operation, {
+      ...base,
+      content: first,
+      complete: false,
+      nextCursor: cursor,
+    });
+  }
+
+  #continueContent(
+    runtime: ActiveDesktopBrowserRuntime,
+    operation: "browser.snapshot" | "browser.inspect",
+    cursor: string,
+  ): unknown {
+    const continuation = runtime.continuations.get(cursor);
+    if (continuation === undefined || continuation.operation !== operation) {
+      this.#metric("browser_target_stale", {
+        mode: runtime.session.mode,
+        operation,
+        outcome: "failure",
+        reason: "continuation",
+      });
+      throw browserFailure(
+        "BROWSER_TARGET_STALE",
+        "The Browser continuation cursor is stale.",
+      );
+    }
+    const content = continuation.chunks[continuation.index] ?? "";
+    continuation.index += 1;
+    const complete = continuation.index >= continuation.chunks.length;
+    if (complete) runtime.continuations.delete(cursor);
+    return browserOutput(operation, {
+      ...continuation.base,
+      content,
+      complete,
+      ...(complete ? {} : { nextCursor: cursor }),
+    });
+  }
+
+  async #readPageIdentity(
+    runtime: ActiveDesktopBrowserRuntime,
+    acceptedOperation: DesktopBrowserAcceptedOperation,
+  ): Promise<{
+    origin: string;
+    exactUrl: string;
+    title: string;
+    tabId: string;
+    documentIdentity: string;
+  }> {
+    const url = await this.#command(runtime, acceptedOperation, [
+      "get",
+      "url",
+      "--json",
+    ]);
+    const title = await this.#command(runtime, acceptedOperation, [
+      "get",
+      "title",
+      "--json",
+    ]);
+    const tabs = await this.#command(runtime, acceptedOperation, [
+      "tab",
+      "--json",
+    ]);
+    const document = await this.#command(runtime, acceptedOperation, [
+      "eval",
+      "String(globalThis.performance.timeOrigin)",
+      "--json",
+    ]);
+    const rawUrl = extractScalar(url.stdout, "url");
+    let origin: string;
+    let exactUrl: string;
+    try {
+      const parsed = new URL(rawUrl);
+      origin = parsed.origin;
+      exactUrl = parsed.href;
+    } catch {
+      throw browserFailure(
+        "BROWSER_ENGINE_FAILURE",
+        "Browser engine returned an invalid page URL.",
+      );
+    }
+    const parsedTabs = parseTabs(tabs.stdout);
+    return {
+      origin,
+      exactUrl,
+      title: extractScalar(title.stdout, "title").slice(0, 2048),
+      tabId: parsedTabs.activeTabId,
+      documentIdentity: digest({
+        tabId: parsedTabs.activeTabId,
+        exactUrl,
+        navigationEpoch: extractScalar(document.stdout, "value"),
+      }),
+    };
+  }
+
+  async #command(
+    runtime: ActiveDesktopBrowserRuntime,
+    acceptedOperation: DesktopBrowserAcceptedOperation,
+    command: readonly string[],
+  ): Promise<DesktopBrowserEngineCommandResult> {
+    const priorDownloads = runtime.interceptedDownloadCount;
+    let result: DesktopBrowserEngineCommandResult | undefined;
+    let commandError: unknown;
+    let synchronizationError: unknown;
+    try {
+      result = await this.#engine.command({
+        ...runtime.engine,
+        acceptedOperation,
+        command,
+      });
+    } catch (error) {
+      commandError = error;
+    }
+    try {
+      await runtime.engine.synchronizeDownloads?.();
+    } catch (error) {
+      synchronizationError = error;
+    }
+    // An observed, denied download is the exact known outcome even when the
+    // engine command or the post-command protocol fence also failed.
+    this.#throwIfDownloadIntercepted(runtime, priorDownloads);
+    if (synchronizationError !== undefined) {
+      void this.#requestTermination(
+        runtime,
+        "failed",
+        "BROWSER_ENGINE_FAILURE",
+      ).catch(() => undefined);
+      throw synchronizationError;
+    }
+    if (commandError !== undefined) throw commandError;
+    return result!;
+  }
+
+  async #assertCurrentSnapshotAuthority(
+    runtime: ActiveDesktopBrowserRuntime,
+    snapshot: SnapshotAuthority,
+    acceptedOperation: DesktopBrowserAcceptedOperation,
+    prepared: PreparedToolCallV1,
+    projectId: string | undefined,
+  ): Promise<void> {
+    await this.#selectExactTab(
+      runtime,
+      snapshot.tabId,
+      "browser.interact",
+      acceptedOperation,
+      true,
+    );
+    await this.#refreshActivePageAuthority(
+      runtime,
+      prepared,
+      projectId,
+      acceptedOperation,
+    );
+    const current = await this.#command(runtime, acceptedOperation, [
+      "snapshot",
+    ]);
+    const page = await this.#readPageIdentity(runtime, acceptedOperation);
+    await this.#applyActivePageAuthority(
+      runtime,
+      prepared,
+      projectId,
+      page.exactUrl,
+      false,
+    );
+    const documentRevision = digest({
+      documentIdentity: page.documentIdentity,
+      content: extractEngineContent(current),
+    });
+    if (
+      page.tabId !== snapshot.tabId ||
+      documentRevision !== snapshot.documentRevision
+    ) {
+      runtime.snapshots.clear();
+      runtime.continuations.clear();
+      throw this.#targetStale(
+        runtime,
+        "browser.interact",
+        "The Browser document changed after the target snapshot was captured.",
+        "document_revision",
+      );
+    }
+  }
+
+  #throwIfDownloadIntercepted(
+    runtime: ActiveDesktopBrowserRuntime,
+    priorCount: number,
+  ): void {
+    if (runtime.interceptedDownloadCount <= priorCount) return;
+    throw this.#downloadUnavailable();
+  }
+
+  #downloadUnavailable(): ReturnType<typeof browserFailure> {
+    return browserFailure(
+      "BROWSER_DOWNLOAD_UNAVAILABLE",
+      "Browser download promotion is unavailable; the download was cancelled before storage.",
+      { browserOutcomeKnown: true, downloadIntercepted: true },
+    );
+  }
+
+  #assertCommitAllowed(runtime: ActiveDesktopBrowserRuntime): void {
+    if (
+      this.#active.get(runtime.session.sessionId) !== runtime ||
+      runtime.terminationRequested !== undefined ||
+      runtime.session.state !== "ready"
+    ) {
+      if (
+        runtime.terminationRequested === "BROWSER_DOWNLOAD_UNAVAILABLE" ||
+        runtime.session.terminalReason === "BROWSER_DOWNLOAD_UNAVAILABLE"
+      ) {
+        throw this.#downloadUnavailable();
+      }
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser Session ended before the operation could commit.",
+        { browserOutcomeKnown: true },
+      );
+    }
+  }
+
+  async #resolveQaDestination(
+    target: Record<string, unknown>,
+    lifecycle: BrowserOperationLifecycleV1,
+  ): Promise<{ destination: string; authority: QaRunAuthority }> {
+    if (target.kind !== "desktop_project_run") {
+      throw browserFailure(
+        "BROWSER_DESTINATION_BLOCKED",
+        "Desktop QA requires a managed Project run.",
+      );
+    }
+    const projectId = requireText(
+      lifecycle.authority.projectId,
+      "active projectId",
+    );
+    if (requireText(target.projectId, "target.projectId") !== projectId) {
+      throw browserFailure(
+        "BROWSER_DESTINATION_BLOCKED",
+        "The QA target belongs to another Project.",
+      );
+    }
+    const projectRoot = requireText(
+      lifecycle.authority.projectRoot,
+      "active Project root",
+    );
+    const resolved = this.#options.projectRunRegistry.resolvePreviewUrl({
+      runId: requireText(target.runId, "target.runId"),
+      urlId: requireText(target.urlId, "target.urlId"),
+    });
+    if (path.resolve(resolved.run.projectPath) !== path.resolve(projectRoot)) {
+      throw browserFailure(
+        "BROWSER_DESTINATION_BLOCKED",
+        "The managed run is not owned by the active Project.",
+      );
+    }
+    return {
+      destination: resolved.url,
+      authority: {
+        runId: requireText(target.runId, "target.runId"),
+        urlId: requireText(target.urlId, "target.urlId"),
+        projectRoot,
+      },
+    };
+  }
+
+  async #resolveAuthority(
+    input: DesktopBrowserAuthorityResolutionInput,
+  ): Promise<BrowserEffectiveDomainAuthorityV1> {
+    const resolver = this.#options.authorityResolver;
+    if (resolver === undefined) {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "Desktop Browser authority is unavailable.",
+      );
+    }
+    const authority = await resolver.resolve(input);
+    if (authority.version !== BROWSER_EFFECTIVE_DOMAIN_AUTHORITY_VERSION) {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "Desktop Browser authority is invalid.",
+      );
+    }
+    if (
+      input.projectId !== undefined &&
+      authority.projectId !== input.projectId
+    ) {
+      throw browserFailure(
+        "BROWSER_DESTINATION_BLOCKED",
+        "Browser authority belongs to another Project.",
+      );
+    }
+    if (!authority.enabledModes.includes(input.mode)) {
+      throw browserFailure(
+        "BROWSER_DESTINATION_BLOCKED",
+        "Browser mode is disabled by current authority.",
+      );
+    }
+    return authority;
+  }
+
+  async #resolveCurrentAuthority(
+    runtime: ActiveDesktopBrowserRuntime,
+    input: DesktopBrowserAuthorityResolutionInput,
+    directAuthorityLoss = false,
+  ): Promise<BrowserEffectiveDomainAuthorityV1> {
+    try {
+      return await this.#withRuntimeAuthorityResolution(
+        runtime,
+        async () => await this.#resolveAuthority(input),
+      );
+    } catch (error) {
+      await this.#loseRuntime(runtime, directAuthorityLoss);
+      throw error;
+    }
+  }
+
+  async #loseRuntime(
+    runtime: ActiveDesktopBrowserRuntime,
+    direct = false,
+  ): Promise<void> {
+    if (this.#active.get(runtime.session.sessionId) !== runtime) return;
+    if (direct || runtime.authorityResolutionDepth > 0) {
+      await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
+        () => undefined,
+      );
+      return;
+    }
+    await this.#serialize(() =>
+      this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST"),
+    ).catch(() => undefined);
+  }
+
+  async #withRuntimeAuthorityResolution<T>(
+    runtime: ActiveDesktopBrowserRuntime,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    runtime.authorityResolutionDepth += 1;
+    try {
+      return await action();
+    } finally {
+      runtime.authorityResolutionDepth -= 1;
+    }
+  }
+
+  async #assertUsable(
+    runtime: ActiveDesktopBrowserRuntime,
+    allowCleanupRetry = false,
+    directExpiration = false,
+  ): Promise<void> {
+    if (allowCleanupRetry && runtime.terminationRequested !== undefined) return;
+    if (runtime.terminationRequested !== undefined && !allowCleanupRetry) {
+      if (runtime.terminationRequested === "BROWSER_DOWNLOAD_UNAVAILABLE") {
+        throw this.#downloadUnavailable();
+      }
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser Session is terminating.",
+      );
+    }
+    const now = this.#now().getTime();
+    if (
+      now >= Date.parse(runtime.session.idleExpiresAt) ||
+      now >= Date.parse(runtime.session.hardExpiresAt)
+    ) {
+      this.#metric("browser_session_expired", {
+        mode: runtime.session.mode,
+        operation: "browser.session",
+        outcome: "failure",
+        reason:
+          now >= Date.parse(runtime.session.hardExpiresAt)
+            ? "hard_ttl"
+            : "idle_ttl",
+      });
+      if (directExpiration) {
+        await this.#terminate(runtime, "expired", "BROWSER_SESSION_EXPIRED");
+      } else {
+        await this.#serialize(() =>
+          this.#terminate(runtime, "expired", "BROWSER_SESSION_EXPIRED"),
+        );
+      }
+      throw browserFailure(
+        "BROWSER_SESSION_EXPIRED",
+        "The Browser Session expired.",
+      );
+    }
+    if (runtime.session.state !== "ready") {
+      throw browserFailure(
+        runtime.session.state === "lost"
+          ? "BROWSER_SESSION_LOST"
+          : "BROWSER_ENGINE_FAILURE",
+        "The Browser Session is not ready.",
+      );
+    }
+  }
+
+  #assertSnapshotAuthority(
+    runtime: ActiveDesktopBrowserRuntime,
+    input: Record<string, unknown>,
+  ): SnapshotAuthority {
+    const snapshotId = requireText(input.snapshotId, "snapshotId");
+    const authority = runtime.snapshots.get(snapshotId);
+    if (
+      authority === undefined ||
+      authority.documentRevision !== input.documentRevision ||
+      authority.tabId !== input.tabId
+    ) {
+      this.#metric("browser_target_stale", {
+        mode: runtime.session.mode,
+        operation: "browser.interact",
+        outcome: "failure",
+        reason: "snapshot_authority",
+      });
+      throw browserFailure(
+        "BROWSER_TARGET_STALE",
+        "The Browser target reference is stale.",
+      );
+    }
+    return authority;
+  }
+
+  async #preflightOperation(
+    runtime: ActiveDesktopBrowserRuntime,
+    prepared: PreparedToolCallV1,
+  ): Promise<void> {
+    const operation = prepared.activation.descriptor.toolId;
+    if (operation === "browser.interact") {
+      const snapshot = this.#assertSnapshotAuthority(
+        runtime,
+        prepared.effectiveInput,
+      );
+      const action = requireRecord(prepared.effectiveInput.action, "action");
+      if (typeof action.ref === "string") requireEngineRef(action.ref);
+    }
+    if (
+      operation === "browser.tabs" &&
+      (prepared.effectiveInput.operation === "switch" ||
+        prepared.effectiveInput.operation === "close")
+    ) {
+      requireTabId(prepared.effectiveInput.tabId);
+    }
+  }
+
+  async #selectExactTab(
+    runtime: ActiveDesktopBrowserRuntime,
+    tabId: string,
+    operation: string,
+    acceptedOperation: DesktopBrowserAcceptedOperation,
+    preserveTabGone = false,
+  ): Promise<void> {
+    try {
+      const listed = parseTabs(
+        (await this.#command(runtime, acceptedOperation, ["tab", "--json"]))
+          .stdout,
+      );
+      const target = listed.tabs.find((tab) => tab.tabId === tabId);
+      if (target === undefined) {
+        throw this.#targetStale(
+          runtime,
+          operation,
+          "The requested Browser tab no longer exists.",
+          "tab_missing",
+        );
+      }
+      if (listed.activeTabId === tabId) return;
+      await this.#command(runtime, acceptedOperation, ["tab", tabId]);
+      const selected = parseTabs(
+        (await this.#command(runtime, acceptedOperation, ["tab", "--json"]))
+          .stdout,
+      );
+      if (selected.activeTabId !== tabId) {
+        throw this.#targetStale(
+          runtime,
+          operation,
+          "The requested Browser tab could not be selected exactly.",
+          "tab_selection",
+        );
+      }
+    } catch (error) {
+      if (isEngineTabGone(error)) {
+        if (preserveTabGone) throw error;
+        throw this.#targetStale(
+          runtime,
+          operation,
+          "The requested Browser tab no longer exists.",
+          "tab_gone",
+        );
+      }
+      throw error;
+    }
+  }
+
+  #targetStale(
+    runtime: ActiveDesktopBrowserRuntime,
+    operation: string,
+    message: string,
+    reason: string,
+  ): ReturnType<typeof browserFailure> {
+    this.#metric("browser_target_stale", {
+      mode: runtime.session.mode,
+      operation,
+      outcome: "failure",
+      reason,
+    });
+    return browserFailure("BROWSER_TARGET_STALE", message, {
+      browserOutcomeKnown: true,
+      effectDispatched: false,
+    });
+  }
+
+  #requireRuntime(
+    sessionId: string,
+    threadId: string,
+  ): ActiveDesktopBrowserRuntime {
+    const runtime = this.#active.get(sessionId);
+    if (runtime !== undefined && runtime.session.threadId === threadId)
+      return runtime;
+    const persisted = this.#sessions.find(
+      (session) => session.sessionId === sessionId,
+    );
+    if (persisted?.terminalReason === "BROWSER_DOWNLOAD_UNAVAILABLE") {
+      throw this.#downloadUnavailable();
+    }
+    throw browserFailure(
+      persisted?.state === "expired"
+        ? "BROWSER_SESSION_EXPIRED"
+        : "BROWSER_SESSION_LOST",
+      "The Browser Session is unavailable.",
+    );
+  }
+
+  async #prepareRuntime(
+    sessionId: string,
+    proxy: LocalCoreBrowserEgressLaunchBindingV1,
+  ): Promise<DesktopBrowserEngineInvocation> {
+    const ownedPaths = desktopBrowserOwnedPaths(this.#runtimeRoot, sessionId);
+    const {
+      runtimePath,
+      socketPath,
+      profilePath,
+      configPath,
+      screenshotPath,
+      blockedDownloadPath,
+    } = ownedPaths;
+    await mkdir(profilePath, { recursive: true, mode: 0o700 });
+    await mkdir(configPath, { recursive: true, mode: 0o700 });
+    await prepareOwnedSocketDirectory(socketPath);
+    await mkdir(blockedDownloadPath, { recursive: true, mode: 0o000 });
+    await chmod(blockedDownloadPath, 0o000);
+    return {
+      sessionId,
+      runtimePath,
+      socketPath,
+      profilePath,
+      configPath,
+      screenshotPath,
+      blockedDownloadPath,
+      proxy,
+    };
+  }
+
+  #touch(runtime: ActiveDesktopBrowserRuntime): void {
+    const now = this.#now();
+    runtime.session.lastActivityAt = now.toISOString();
+    runtime.session.updatedAt = now.toISOString();
+    runtime.session.idleExpiresAt = new Date(
+      Math.min(
+        now.getTime() + IDLE_TTL_MS,
+        Date.parse(runtime.session.hardExpiresAt),
+      ),
+    ).toISOString();
+    this.#scheduleExpiry(runtime);
+  }
+
+  #scheduleExpiry(runtime: ActiveDesktopBrowserRuntime): void {
+    if (this.#options.scheduleExpiry === false) return;
+    if (runtime.expiryTimer !== undefined) clearTimeout(runtime.expiryTimer);
+    const delay = Math.max(
+      1,
+      Math.min(
+        Date.parse(runtime.session.idleExpiresAt),
+        Date.parse(runtime.session.hardExpiresAt),
+      ) - Date.now(),
+    );
+    runtime.expiryTimer = setTimeout(() => {
+      void (async () => {
+        if (this.#active.get(runtime.session.sessionId) !== runtime) return;
+        this.#metric("browser_session_expired", {
+          mode: runtime.session.mode,
+          operation: "browser.session",
+          outcome: "failure",
+          reason:
+            Date.now() >= Date.parse(runtime.session.hardExpiresAt)
+              ? "hard_ttl"
+              : "idle_ttl",
+        });
+        await this.#requestTermination(
+          runtime,
+          "expired",
+          "BROWSER_SESSION_EXPIRED",
+        );
+      })().catch(() => undefined);
+    }, delay);
+    runtime.expiryTimer.unref?.();
+  }
+
+  async #terminate(
+    runtime: ActiveDesktopBrowserRuntime,
+    requestedState: "closed" | "expired" | "lost" | "failed",
+    requestedTerminalReason: BrowserSessionV1["terminalReason"],
+    acceptedOperation?: DesktopBrowserAcceptedOperation | undefined,
+  ): Promise<void> {
+    if (this.#active.get(runtime.session.sessionId) !== runtime) return;
+    const alreadyTerminal = TERMINAL_STATES.has(runtime.session.state);
+    const terminalReason =
+      runtime.session.terminalReason ??
+      runtime.terminationRequested ??
+      requestedTerminalReason;
+    const state = alreadyTerminal
+      ? runtime.session.state
+      : terminalReason === "BROWSER_DOWNLOAD_UNAVAILABLE"
+        ? "failed"
+        : requestedState;
+    runtime.terminationRequested = terminalReason;
+    runtime.session.state = state;
+    runtime.session.terminalReason = terminalReason;
+    if (!alreadyTerminal) {
+      runtime.session.updatedAt = this.#now().toISOString();
+    }
+    let persistenceFailure: unknown;
+    try {
+      await this.#persist();
+    } catch (error) {
+      persistenceFailure = error;
+    }
+    if (runtime.expiryTimer !== undefined) clearTimeout(runtime.expiryTimer);
+    runtime.expiryTimer = undefined;
+    runtime.stopWatchingEngine?.();
+    runtime.stopWatchingEngine = undefined;
+    runtime.engine.stopDownloadInterception?.();
+    runtime.engine.stopDownloadInterception = undefined;
+    runtime.engine.synchronizeDownloads = undefined;
+    const ownedPaths = desktopBrowserOwnedPaths(
+      this.#runtimeRoot,
+      runtime.session.sessionId,
+    );
+    assertDesktopBrowserInvocationPaths(ownedPaths, runtime.engine);
+    const cleanup = await Promise.allSettled([
+      runtime.proxy.close(),
+      this.#engine.close({ ...runtime.engine, acceptedOperation }),
+    ]);
+    let cleanupFailure: unknown = cleanup.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    )?.reason;
+    if (cleanupFailure === undefined) {
+      try {
+        await removeDesktopBrowserRuntimePaths(ownedPaths);
+      } catch (error) {
+        cleanupFailure = error;
+      }
+    }
+    if (persistenceFailure !== undefined) {
+      try {
+        await this.#persist();
+        persistenceFailure = undefined;
+      } catch (error) {
+        persistenceFailure = error;
+      }
+    }
+    if (cleanupFailure !== undefined) {
+      this.#metric("browser_cleanup", {
+        mode: runtime.session.mode,
+        operation: "browser.session",
+        outcome: "failure",
+        reason: "termination_unproven",
+        count: 1,
+      });
+      if (persistenceFailure !== undefined) {
+        throw new AggregateError(
+          [persistenceFailure, cleanupFailure],
+          "Browser terminal intent could not be persisted and cleanup could not be proven.",
+        );
+      }
+      throw cleanupFailure;
+    }
+    if (persistenceFailure !== undefined) {
+      this.#active.delete(runtime.session.sessionId);
+      this.#metric("browser_cleanup", {
+        mode: runtime.session.mode,
+        operation: "browser.session",
+        outcome: "failure",
+        reason: "terminal_persistence_pending",
+        count: 1,
+      });
+      throw persistenceFailure;
+    }
+    this.#active.delete(runtime.session.sessionId);
+    this.#metric("browser_cleanup", {
+      mode: runtime.session.mode,
+      operation: "browser.session",
+      outcome: "success",
+      reason: state,
+      count: 1,
+    });
+  }
+
+  #startWatchingEngine(runtime: ActiveDesktopBrowserRuntime): void {
+    runtime.stopWatchingEngine?.();
+    runtime.stopWatchingEngine = this.#engine.watchForLoss?.(
+      runtime.engine,
+      () => {
+        void (async () => {
+          if (
+            this.#active.get(runtime.session.sessionId) !== runtime ||
+            runtime.session.state !== "ready"
+          )
+            return;
+          this.#metric("browser_engine_crash", {
+            mode: runtime.session.mode,
+            operation: "browser.session",
+            outcome: "failure",
+            reason: "lost_control",
+          });
+          await this.#requestTermination(
+            runtime,
+            "lost",
+            "BROWSER_SESSION_LOST",
+          );
+        })().catch(() => undefined);
+      },
+    );
+  }
+
+  async #requestTermination(
+    runtime: ActiveDesktopBrowserRuntime,
+    state: "closed" | "expired" | "lost" | "failed",
+    terminalReason: BrowserSessionV1["terminalReason"],
+  ): Promise<void> {
+    if (this.#active.get(runtime.session.sessionId) !== runtime) return;
+    const retainedTerminalReason =
+      runtime.terminationRequested ?? terminalReason;
+    runtime.terminationRequested = retainedTerminalReason;
+    await runtime.operationTail;
+    await this.#serialize(() =>
+      this.#terminate(runtime, state, retainedTerminalReason),
+    );
+  }
+
+  async #cleanupOrphan(session: BrowserSessionV1): Promise<void> {
+    const sessionId = requireDesktopBrowserSessionId(
+      session.sessionId,
+      "persisted Browser session ID",
+    );
+    const ownedPaths = desktopBrowserOwnedPaths(this.#runtimeRoot, sessionId);
+    const {
+      runtimePath,
+      socketPath,
+      profilePath,
+      configPath,
+      screenshotPath,
+      blockedDownloadPath,
+    } = ownedPaths;
+    const invocation: DesktopBrowserEngineInvocation = {
+      sessionId,
+      runtimePath,
+      socketPath,
+      profilePath,
+      configPath,
+      screenshotPath,
+      blockedDownloadPath,
+      proxy: {
+        version: "local_core_browser_egress_launch_binding_v1",
+        proxyServer: "http://127.0.0.1:9",
+        username: "closed",
+        password: "closed",
+        threadId: "lost",
+        sessionId,
+        generation: 1,
+        effectiveAllowlistRevision: "lost",
+        chromiumFlags: [],
+      },
+    };
+    try {
+      const [runtimePathState, socketPathState] = await Promise.allSettled([
+        lstat(runtimePath),
+        lstat(socketPath),
+      ]);
+      for (const state of [runtimePathState, socketPathState]) {
+        if (state.status === "rejected" && !isMissingPathError(state.reason)) {
+          throw state.reason;
+        }
+      }
+      const pathsAlreadyRemoved =
+        runtimePathState.status === "rejected" &&
+        socketPathState.status === "rejected";
+      const terminal = TERMINAL_STATES.has(session.state);
+      if (pathsAlreadyRemoved && !terminal) {
+        throw new Error(
+          "BROWSER_ENGINE_FAILURE: prior nonterminal Browser launch has no PID or session socket termination proof.",
+        );
+      }
+      if (!pathsAlreadyRemoved && socketPathState.status === "fulfilled") {
+        assertDesktopBrowserInvocationPaths(ownedPaths, invocation);
+        await this.#engine.close(invocation);
+      } else if (!pathsAlreadyRemoved && !terminal) {
+        // A nonterminal ledger entry still represents potentially live
+        // authority. Without its owned control socket, termination is not
+        // proven and cleanup must fail closed.
+        throw new Error(
+          "BROWSER_ENGINE_FAILURE: prior Browser launch has no PID or session socket termination proof.",
+        );
+      }
+      if (!pathsAlreadyRemoved) {
+        await removeDesktopBrowserRuntimePaths(ownedPaths);
+      }
+    } catch (error) {
+      this.#metric("browser_cleanup", {
+        operation: "browser.initialize",
+        outcome: "failure",
+        reason: "orphan_termination_unproven",
+        count: 1,
+      });
+      throw error;
+    }
+    this.#metric("browser_cleanup", {
+      operation: "browser.initialize",
+      outcome: "success",
+      reason: "orphan",
+      count: 1,
+    });
+  }
+
+  async #persist(): Promise<void> {
+    const snapshot: DesktopBrowserLedgerV1 = {
+      version: LEDGER_VERSION,
+      sessions: this.#sessions.map((session) => parseBrowserSessionV1(session)),
+      artifacts: [...this.#artifacts.values()],
+    };
+    const write = this.#ledgerWrites.then(
+      async () =>
+        await (this.#options.writeLedger ?? writeLedger)(
+          this.#ledgerPath,
+          snapshot,
+        ),
+      async () =>
+        await (this.#options.writeLedger ?? writeLedger)(
+          this.#ledgerPath,
+          snapshot,
+        ),
+    );
+    this.#ledgerWrites = write.then(
+      () => undefined,
+      () => undefined,
+    );
+    await write;
+  }
+
+  async #requireInitialized(): Promise<void> {
+    if (!this.#initialized) await this.initialize();
+  }
+
+  #serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#mutation.then(operation, operation);
+    this.#mutation = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  #now(): Date {
+    return this.#options.now?.() ?? new Date();
+  }
+
+  #id(): string {
+    return this.#options.randomId?.() ?? randomUUID();
+  }
+
+  #destinationBlocked(
+    message: string,
+    mode: "qa" | "operator",
+    operation: string,
+    effectDispatched = false,
+  ): ReturnType<typeof browserFailure> {
+    this.#metric("browser_destination_blocked", {
+      mode,
+      operation,
+      outcome: "failure",
+      reason: "authority",
+    });
+    return browserFailure("BROWSER_DESTINATION_BLOCKED", message, {
+      browserOutcomeKnown: true,
+      effectDispatched,
+    });
+  }
+
+  #recordUnknownOutcomeIfClassified(
+    error: unknown,
+    prepared: PreparedToolCallV1,
+    mode: "qa" | "operator",
+    reason: string,
+  ): void {
+    try {
+      const toolName = prepared.activation.descriptor.toolId;
+      if (!isBrowserToolName(toolName)) return;
+      const classified = normalizeBrowserHostFailure(error, {
+        toolName,
+        dispatchAcknowledged: true,
+        effectful:
+          resolveBrowserToolExecutionClass(
+            toolName,
+            prepared.effectiveInput,
+          ) === "external_side_effect",
+      });
+      if (classified.code !== "BROWSER_ACTION_OUTCOME_UNKNOWN") return;
+      this.#metric("browser_unknown_outcome", {
+        mode,
+        operation: toolName,
+        outcome: "failure",
+        reason,
+      });
+    } catch {
+      // Outcome classification is observability and cannot alter execution.
+    }
+  }
+
+  #metric(
+    name: DesktopBrowserMetricName,
+    fields: Omit<DesktopBrowserMetric, "version" | "name" | "at"> = {},
+  ): void {
+    try {
+      this.#options.metrics?.record({
+        version: "desktop_browser_metric_v1",
+        name,
+        at: this.#now().toISOString(),
+        ...fields,
+      });
+    } catch {
+      // Observability must never change Browser execution behavior.
+    }
+  }
+}
+
+export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
+  readonly #engineExecutablePath: string;
+  readonly #chromeExecutablePath: string;
+  readonly #acceptedOperations = new Map<
+    string,
+    DesktopBrowserAcceptedOperation
+  >();
+
+  constructor(input: {
+    engineExecutablePath: string;
+    chromeExecutablePath: string;
+  }) {
+    this.#engineExecutablePath = realpathSync(
+      requireAbsolutePath(
+        input.engineExecutablePath,
+        "agent-browser executable",
+      ),
+    );
+    this.#chromeExecutablePath = realpathSync(
+      requireAbsolutePath(input.chromeExecutablePath, "Chrome executable"),
+    );
+  }
+
+  async acceptOperation(
+    input: DesktopBrowserEngineInvocation & {
+      operationId: string;
+      grantGeneration: number;
+    },
+  ): Promise<DesktopBrowserAcceptedOperation> {
+    const operationId = requireText(input.operationId, "Browser operationId");
+    if (
+      input.grantGeneration !== input.proxy.generation ||
+      input.proxy.sessionId !== input.sessionId
+    ) {
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser adapter rejected a stale operation generation.",
+      );
+    }
+    const acceptedOperation: DesktopBrowserAcceptedOperation = Object.freeze({
+      sessionId: input.sessionId,
+      operationId,
+      grantGeneration: input.grantGeneration,
+      acceptanceToken: randomUUID(),
+    });
+    this.#acceptedOperations.set(
+      acceptedOperation.acceptanceToken,
+      acceptedOperation,
+    );
+    return acceptedOperation;
+  }
+
+  releaseOperation(operation: DesktopBrowserAcceptedOperation): void {
+    if (this.#acceptedOperations.get(operation.acceptanceToken) === operation) {
+      this.#acceptedOperations.delete(operation.acceptanceToken);
+    }
+  }
+
+  async open(
+    input: DesktopBrowserEngineInvocation & {
+      destination: string;
+      acceptedOperation: DesktopBrowserAcceptedOperation;
+    },
+  ): Promise<void> {
+    this.#assertAccepted(input, input.acceptedOperation);
+    // v0.35.0 exposes the Browser CDP URL but has no deny-download CLI flag.
+    // Launch without remote content, install Browser-level denial, then navigate.
+    await this.#openStep("launch", () =>
+      this.#run(input, ["open", "about:blank"], {
+        captureLaunchProcessGroup: true,
+      }),
+    );
+    input.daemonPid = await this.#openStep("pid_binding", () =>
+      this.#readOwnedDaemonPid(input),
+    );
+    const cdp = await this.#openStep("cdp_discovery", () =>
+      this.#run(input, ["get", "cdp-url"]),
+    );
+    const interception = await this.#openStep("download_denial", () =>
+      installAgentBrowserDownloadInterception(
+        extractScalar(cdp.stdout, "cdpUrl"),
+        input.onDownloadIntercepted ?? (() => undefined),
+      ),
+    );
+    input.stopDownloadInterception = interception.stop;
+    input.synchronizeDownloads = interception.synchronize;
+    await this.#openStep("destination_navigation", () =>
+      this.#run(input, ["open", input.destination]),
+    );
+    await this.#openStep("download_synchronization", () =>
+      interception.synchronize(),
+    );
+  }
+
+  async command(
+    input: DesktopBrowserEngineInvocation & {
+      command: readonly string[];
+      acceptedOperation: DesktopBrowserAcceptedOperation;
+    },
+  ): Promise<DesktopBrowserEngineCommandResult> {
+    this.#assertAccepted(input, input.acceptedOperation);
+    return await this.#run(input, input.command);
+  }
+
+  async close(
+    input: DesktopBrowserEngineInvocation & {
+      acceptedOperation?: DesktopBrowserAcceptedOperation | undefined;
+    },
+  ): Promise<void> {
+    if (input.acceptedOperation !== undefined) {
+      this.#assertAccepted(input, input.acceptedOperation);
+    }
+    input.stopDownloadInterception?.();
+    let pid = input.daemonPid;
+    if (pid === undefined) {
+      try {
+        pid = await readDesktopBrowserOwnedDaemonPid(input);
+      } catch (pidError) {
+        let socketShutdown = false;
+        let socketFailure: unknown;
+        try {
+          socketShutdown = await requestOwnedAgentBrowserSocketShutdown(input);
+        } catch (error) {
+          socketFailure = error;
+        }
+        let launcherFailure: unknown;
+        if (input.launchProcessGroupId !== undefined) {
+          try {
+            await terminateOwnedLaunchProcessGroup(input.launchProcessGroupId);
+          } catch (error) {
+            launcherFailure = error;
+          }
+        }
+        if (socketShutdown && launcherFailure === undefined) return;
+        const socketDirectoryMissing = await pathIsMissing(input.socketPath);
+        if (
+          input.launchProcessGroupId === undefined &&
+          socketDirectoryMissing &&
+          socketFailure === undefined &&
+          isMissingPathError(pidError)
+        ) {
+          return;
+        }
+        throw new AggregateError(
+          [pidError, socketFailure, launcherFailure].filter(
+            (error) => error !== undefined,
+          ),
+          "BROWSER_ENGINE_FAILURE: agent-browser termination could not be proven by PID or the owned session socket.",
+        );
+      }
+    }
+    await this.#run(input, ["close"], { timeoutMs: 5_000 }).catch(
+      () => undefined,
+    );
+    await terminateOwnedProcessTree({
+      pid,
+      sessionId: input.sessionId,
+      engineExecutablePath: this.#engineExecutablePath,
+    });
+  }
+
+  #assertAccepted(
+    input: DesktopBrowserEngineInvocation,
+    acceptedOperation: DesktopBrowserAcceptedOperation,
+  ): void {
+    const accepted = this.#acceptedOperations.get(
+      acceptedOperation.acceptanceToken,
+    );
+    if (
+      accepted !== acceptedOperation ||
+      accepted.sessionId !== input.sessionId ||
+      accepted.grantGeneration !== input.proxy.generation
+    ) {
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser adapter rejected an unaccepted operation identity.",
+      );
+    }
+  }
+
+  watchForLoss(
+    input: DesktopBrowserEngineInvocation,
+    onLost: () => void,
+  ): () => void {
+    let stopped = false;
+    let checking = false;
+    const timer = setInterval(() => {
+      if (stopped || checking) return;
+      checking = true;
+      void this.#assertOwnedDaemonAlive(input).then(
+        () => {
+          checking = false;
+        },
+        () => {
+          checking = false;
+          if (stopped) return;
+          stopped = true;
+          clearInterval(timer);
+          onLost();
+        },
+      );
+    }, 1_000);
+    timer.unref?.();
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }
+
+  async #assertOwnedDaemonAlive(
+    input: DesktopBrowserEngineInvocation,
+  ): Promise<void> {
+    const pid = input.daemonPid ?? (await this.#readOwnedDaemonPid(input));
+    await assertDesktopBrowserOwnedDaemonArtifacts(input);
+    const command = await readProcessCommand(pid);
+    if (
+      !desktopBrowserDaemonCommandMatches(command, this.#engineExecutablePath)
+    ) {
+      throw new Error(
+        "BROWSER_SESSION_LOST: agent-browser daemon identity changed.",
+      );
+    }
+  }
+
+  async #openStep<T>(phase: string, operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch {
+      throw new Error(`BROWSER_ENGINE_FAILURE: agent-browser ${phase} failed.`);
+    }
+  }
+
+  async #readOwnedDaemonPid(
+    input: DesktopBrowserEngineInvocation,
+  ): Promise<number> {
+    await assertDesktopBrowserOwnedDaemonArtifacts(input);
+    const pidPath = path.join(input.socketPath, `${input.sessionId}.pid`);
+    const raw = (await readFile(pidPath, "utf8")).trim();
+    const pid = Number(raw);
+    if (!Number.isSafeInteger(pid) || pid < 2) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: agent-browser daemon PID is invalid.",
+      );
+    }
+    const command = await readProcessCommand(pid);
+    if (
+      !desktopBrowserDaemonCommandMatches(command, this.#engineExecutablePath)
+    ) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: agent-browser daemon identity is invalid.",
+      );
+    }
+    return pid;
+  }
+
+  async #run(
+    input: DesktopBrowserEngineInvocation,
+    command: readonly string[],
+    options: {
+      timeoutMs?: number | undefined;
+      captureLaunchProcessGroup?: boolean | undefined;
+    } = {},
+  ): Promise<DesktopBrowserEngineCommandResult> {
+    const launch = buildAgentBrowserCliInvocation({
+      input,
+      chromeExecutablePath: this.#chromeExecutablePath,
+      command,
+    });
+    return await spawnAndCollect({
+      executable: this.#engineExecutablePath,
+      args: launch.args,
+      cwd: input.runtimePath,
+      env: launch.env,
+      timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
+      detached: options.captureLaunchProcessGroup === true,
+      onSpawn:
+        options.captureLaunchProcessGroup === true
+          ? (pid) => {
+              input.launchProcessGroupId = pid;
+            }
+          : undefined,
+    });
+  }
+}
+
+export function buildAgentBrowserCliInvocation(input: {
+  input: DesktopBrowserEngineInvocation;
+  chromeExecutablePath: string;
+  command: readonly string[];
+}): { args: string[]; env: NodeJS.ProcessEnv } {
+  return {
+    args: [
+      "--session",
+      input.input.sessionId,
+      "--profile",
+      input.input.profilePath,
+      "--executable-path",
+      input.chromeExecutablePath,
+      "--proxy",
+      input.input.proxy.proxyServer,
+      "--proxy-bypass",
+      "<-loopback>",
+      "--pin-tab",
+      "--args",
+      [
+        ...input.input.proxy.chromiumFlags,
+        "--disable-extensions",
+        "--disable-component-extensions-with-background-pages",
+        "--disable-background-networking",
+        "--disable-component-update",
+        "--disable-default-apps",
+        "--disable-sync",
+        "--no-first-run",
+      ].join(","),
+      "--content-boundaries",
+      "--max-output",
+      String(MAX_ENGINE_PAGE_OUTPUT_CHARS),
+      "--json",
+      ...input.command,
+    ],
+    env: sanitizedAgentBrowserEnvironment(input.input),
+  };
+}
+
+function sanitizedAgentBrowserEnvironment(
+  input: DesktopBrowserEngineInvocation,
+): NodeJS.ProcessEnv {
+  return {
+    HOME: input.configPath,
+    TMPDIR: input.runtimePath,
+    XDG_CONFIG_HOME: input.configPath,
+    XDG_CACHE_HOME: input.configPath,
+    AGENT_BROWSER_SESSION: input.sessionId,
+    AGENT_BROWSER_SOCKET_DIR: input.socketPath,
+    AGENT_BROWSER_PROXY_USERNAME: input.proxy.username,
+    AGENT_BROWSER_PROXY_PASSWORD: input.proxy.password,
+    AGENT_BROWSER_NO_AUTO_DIALOG: "1",
+    NO_PROXY: "",
+    no_proxy: "",
+    HTTP_PROXY: "",
+    HTTPS_PROXY: "",
+    ALL_PROXY: "",
+    PATH: "",
+    LANG: "C.UTF-8",
+    NODE_ENV: "production",
+  };
+}
+
+export async function denyAgentBrowserDownloads(
+  cdpUrl: string,
+  sendCommand: (
+    cdpUrl: string,
+    method: string,
+    params: Record<string, unknown>,
+  ) => Promise<void> = sendBrowserCdpCommand,
+): Promise<void> {
+  const parsed = parseLocalBrowserCdpUrl(cdpUrl);
+  await sendCommand(parsed.toString(), "Browser.setDownloadBehavior", {
+    behavior: "deny",
+    eventsEnabled: true,
+  });
+}
+
+export async function installAgentBrowserDownloadInterception(
+  cdpUrl: string,
+  onDownloadIntercepted: (download: DesktopBrowserInterceptedDownload) => void,
+): Promise<{
+  stop: () => void;
+  synchronize: () => Promise<void>;
+}> {
+  const parsed = parseLocalBrowserCdpUrl(cdpUrl);
+  return await new Promise<{
+    stop: () => void;
+    synchronize: () => Promise<void>;
+  }>((resolve, reject) => {
+    const socket = new WebSocket(parsed.toString());
+    const commandId = 1;
+    let nextCommandId = commandId;
+    let settled = false;
+    let stopped = false;
+    const barriers = new Map<
+      number,
+      {
+        resolve: () => void;
+        reject: (error: Error) => void;
+        timer: ReturnType<typeof setTimeout>;
+      }
+    >();
+    const timer = setTimeout(() => {
+      finish(
+        new Error(
+          "BROWSER_ENGINE_TIMEOUT: Browser download interception was not acknowledged.",
+        ),
+      );
+    }, 5_000);
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      clearTimeout(timer);
+      const error = new Error(
+        "BROWSER_ENGINE_FAILURE: Browser download interception stopped.",
+      );
+      for (const pending of barriers.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(error);
+      }
+      barriers.clear();
+      socket.close();
+    };
+    const synchronize = async (): Promise<void> => {
+      if (stopped || socket.readyState !== WebSocket.OPEN) {
+        throw new Error(
+          "BROWSER_ENGINE_FAILURE: Browser download interception is unavailable.",
+        );
+      }
+      const id = ++nextCommandId;
+      await new Promise<void>((resolveBarrier, rejectBarrier) => {
+        const barrierTimer = setTimeout(() => {
+          barriers.delete(id);
+          rejectBarrier(
+            new Error(
+              "BROWSER_ENGINE_TIMEOUT: Browser download synchronization was not acknowledged.",
+            ),
+          );
+        }, 5_000);
+        barriers.set(id, {
+          resolve: resolveBarrier,
+          reject: rejectBarrier,
+          timer: barrierTimer,
+        });
+        socket.send(
+          JSON.stringify({
+            id,
+            method: "Browser.setDownloadBehavior",
+            params: { behavior: "deny", eventsEnabled: true },
+          }),
+        );
+      });
+    };
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error !== undefined) {
+        socket.close();
+        reject(error);
+      } else {
+        resolve({ stop, synchronize });
+      }
+    };
+    socket.once("open", () => {
+      socket.send(
+        JSON.stringify({
+          id: commandId,
+          method: "Browser.setDownloadBehavior",
+          params: { behavior: "deny", eventsEnabled: true },
+        }),
+      );
+    });
+    socket.on("message", (raw) => {
+      let message: Record<string, unknown>;
+      try {
+        message = requireRecord(
+          JSON.parse(raw.toString("utf8")),
+          "Browser CDP message",
+        );
+      } catch {
+        return;
+      }
+      if (message.id === commandId) {
+        if (message.error !== undefined) {
+          finish(
+            new Error(
+              "BROWSER_ENGINE_FAILURE: Browser download interception was rejected.",
+            ),
+          );
+        } else {
+          finish();
+        }
+        return;
+      }
+      if (typeof message.id === "number") {
+        const barrier = barriers.get(message.id);
+        if (barrier !== undefined) {
+          barriers.delete(message.id);
+          clearTimeout(barrier.timer);
+          if (message.error === undefined) barrier.resolve();
+          else {
+            barrier.reject(
+              new Error(
+                "BROWSER_ENGINE_FAILURE: Browser download synchronization was rejected.",
+              ),
+            );
+          }
+        }
+        return;
+      }
+      if (message.method !== "Browser.downloadWillBegin") return;
+      const params = requireOptionalRecord(message.params);
+      if (params === undefined) return;
+      const downloadId =
+        typeof params.guid === "string" ? params.guid : "download";
+      const filename =
+        typeof params.suggestedFilename === "string"
+          ? path.basename(params.suggestedFilename).slice(0, 255)
+          : "download";
+      let sourceOrigin = "null";
+      if (typeof params.url === "string") {
+        try {
+          sourceOrigin = new URL(params.url).origin;
+        } catch {
+          // Keep an opaque origin rather than exposing an invalid source URL.
+        }
+      }
+      onDownloadIntercepted({ downloadId, filename, sourceOrigin });
+    });
+    const failConnection = () => {
+      const error = new Error(
+        "BROWSER_ENGINE_FAILURE: Browser download interception connection failed.",
+      );
+      if (!settled) finish(error);
+      for (const pending of barriers.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(error);
+      }
+      barriers.clear();
+    };
+    socket.once("error", failConnection);
+    socket.once("close", () => {
+      if (!stopped) failConnection();
+    });
+  });
+}
+
+function parseLocalBrowserCdpUrl(cdpUrl: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(cdpUrl);
+  } catch {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser returned an invalid CDP URL.",
+    );
+  }
+  if (
+    parsed.protocol !== "ws:" ||
+    (parsed.hostname !== "127.0.0.1" &&
+      parsed.hostname !== "localhost" &&
+      parsed.hostname !== "[::1]") ||
+    !parsed.pathname.startsWith("/devtools/browser/")
+  ) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser returned a non-local Browser CDP URL.",
+    );
+  }
+  return parsed;
+}
+
+async function sendBrowserCdpCommand(
+  cdpUrl: string,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const socket = new WebSocket(cdpUrl);
+    const commandId = 1;
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.close();
+      if (error === undefined) resolve();
+      else reject(error);
+    };
+    const timer = setTimeout(() => {
+      finish(
+        new Error(
+          "BROWSER_ENGINE_TIMEOUT: Browser download denial was not acknowledged.",
+        ),
+      );
+    }, 5_000);
+    socket.once("open", () => {
+      socket.send(JSON.stringify({ id: commandId, method, params }));
+    });
+    socket.once("error", () => {
+      finish(
+        new Error(
+          "BROWSER_ENGINE_FAILURE: Browser download denial connection failed.",
+        ),
+      );
+    });
+    socket.on("message", (raw) => {
+      let response: Record<string, unknown>;
+      try {
+        response = JSON.parse(raw.toString()) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      if (response.id !== commandId) return;
+      if (response.error !== undefined) {
+        finish(
+          new Error(
+            "BROWSER_ENGINE_FAILURE: Browser rejected download denial.",
+          ),
+        );
+        return;
+      }
+      finish();
+    });
+  });
+}
+
+export async function spawnAndCollect(input: {
+  executable: string;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  timeoutMs: number;
+  detached?: boolean | undefined;
+  onSpawn?: ((pid: number) => void) | undefined;
+}): Promise<DesktopBrowserEngineCommandResult> {
+  return await new Promise((resolve, reject) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(input.executable, input.args, {
+        cwd: input.cwd,
+        env: input.env,
+        detached: input.detached === true,
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    if (child.pid !== undefined) input.onSpawn?.(child.pid);
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      reject(
+        new Error("BROWSER_ENGINE_TIMEOUT: agent-browser did not respond."),
+      );
+    }, input.timeoutMs);
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout = appendBounded(stdout, chunk);
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      stderr = appendBounded(stderr, chunk);
+    });
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const result = {
+        stdout,
+        stderr,
+      };
+      if (code !== 0) {
+        reject(
+          new BrowserChildProcessExitError(
+            `BROWSER_ENGINE_FAILURE: agent-browser exited ${String(code ?? signal ?? "unknown")}.`,
+            code,
+            signal,
+            stdout,
+            stderr,
+          ),
+        );
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+
+class BrowserChildProcessExitError extends Error {
+  readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdout: string;
+  readonly stderr: string;
+
+  constructor(
+    message: string,
+    exitCode: number | null,
+    signal: NodeJS.Signals | null,
+    stdout: string,
+    stderr: string,
+  ) {
+    super(message);
+    this.exitCode = exitCode;
+    this.signal = signal;
+    this.stdout = stdout;
+    this.stderr = stderr;
+  }
+}
+
+async function terminateOwnedLaunchProcessGroup(
+  processGroupId: number,
+): Promise<void> {
+  if (!Number.isSafeInteger(processGroupId) || processGroupId < 2) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser launch process group is invalid.",
+    );
+  }
+  for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+    try {
+      process.kill(-processGroupId, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      throw error;
+    }
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        process.kill(-processGroupId, 0);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw new Error(
+    "BROWSER_ENGINE_FAILURE: agent-browser launch process group termination could not be proven.",
+  );
+}
+
+async function inspectProcessCommand(
+  pid: number,
+): Promise<{ state: "absent" } | { state: "present"; command: string }> {
+  try {
+    const result = await spawnAndCollect({
+      executable: "/bin/ps",
+      args: ["-p", String(pid), "-o", "command="],
+      cwd: "/",
+      env: { PATH: "/usr/bin:/bin", LANG: "C", NODE_ENV: "production" },
+      timeoutMs: 2_000,
+    });
+    const command = result.stdout.trim();
+    if (command.length === 0) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: process inspection returned no command identity.",
+      );
+    }
+    return { state: "present", command };
+  } catch (error) {
+    // BSD ps documents exit 1 for a selection that matched no process. Every
+    // other failure (including timeout, spawn error, or signal) means process
+    // state could not be inspected and must fail closed.
+    if (
+      error instanceof BrowserChildProcessExitError &&
+      error.exitCode === 1 &&
+      error.signal === null &&
+      error.stdout.trim().length === 0 &&
+      error.stderr.trim().length === 0
+    ) {
+      return { state: "absent" };
+    }
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser process inspection was unavailable.",
+      { cause: error },
+    );
+  }
+}
+
+async function readProcessCommand(pid: number): Promise<string> {
+  const inspection = await inspectProcessCommand(pid);
+  if (inspection.state === "absent") {
+    throw new Error(
+      "BROWSER_SESSION_LOST: agent-browser daemon process is absent.",
+    );
+  }
+  return inspection.command;
+}
+
+async function terminateOwnedProcessTree(input: {
+  pid: number;
+  sessionId: string;
+  engineExecutablePath: string;
+}): Promise<void> {
+  const initialInspection = await inspectProcessCommand(input.pid);
+  if (initialInspection.state === "absent") return;
+  const command = initialInspection.command;
+  if (
+    !desktopBrowserDaemonCommandMatches(command, input.engineExecutablePath)
+  ) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser daemon identity changed before cleanup.",
+    );
+  }
+  const processTable = (
+    await spawnAndCollect({
+      executable: "/bin/ps",
+      args: ["-axo", "pid=,ppid=,command="],
+      cwd: "/",
+      env: { PATH: "/usr/bin:/bin", LANG: "C", NODE_ENV: "production" },
+      timeoutMs: 2_000,
+    })
+  ).stdout;
+  const rows = processTable.split("\n").flatMap((line) => {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/u);
+    return match === null
+      ? []
+      : [
+          {
+            pid: Number(match[1]),
+            ppid: Number(match[2]),
+            command: match[3] ?? "",
+          },
+        ];
+  });
+  const owned = new Set([input.pid]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of rows) {
+      if (owned.has(row.ppid) && !owned.has(row.pid)) {
+        owned.add(row.pid);
+        changed = true;
+      }
+    }
+  }
+  for (const pid of [...owned].reverse()) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {}
+  }
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  for (const pid of [...owned].reverse()) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const inspection = await inspectProcessCommand(input.pid);
+    if (inspection.state === "absent") return;
+    if (
+      !desktopBrowserDaemonCommandMatches(
+        inspection.command,
+        input.engineExecutablePath,
+      )
+    ) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: agent-browser daemon identity changed during cleanup.",
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    "BROWSER_ENGINE_FAILURE: agent-browser daemon termination could not be proven.",
+  );
+}
+
+export function desktopBrowserDaemonCommandMatches(
+  command: string,
+  engineExecutablePath: string,
+): boolean {
+  return command.trim() === engineExecutablePath;
+}
+
+export async function assertDesktopBrowserOwnedDaemonArtifacts(
+  input: Pick<DesktopBrowserEngineInvocation, "sessionId" | "socketPath">,
+): Promise<void> {
+  await assertDesktopBrowserOwnedSocketDirectory(input.socketPath);
+  await readDesktopBrowserOwnedDaemonPid(input);
+  const controlSocketPath = desktopBrowserOwnedControlSocketPath(input);
+  const controlSocket = await lstat(controlSocketPath);
+  if (!controlSocket.isSocket() || controlSocket.isSymbolicLink()) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser control socket is invalid.",
+    );
+  }
+}
+
+async function requestOwnedAgentBrowserSocketShutdown(
+  input: Pick<DesktopBrowserEngineInvocation, "sessionId" | "socketPath">,
+): Promise<boolean> {
+  try {
+    await assertDesktopBrowserOwnedSocketDirectory(input.socketPath);
+  } catch (error) {
+    if (isMissingPathError(error)) return false;
+    throw error;
+  }
+  const controlSocketPath = desktopBrowserOwnedControlSocketPath(input);
+  let controlSocket;
+  try {
+    controlSocket = await lstat(controlSocketPath);
+  } catch (error) {
+    if (isMissingPathError(error)) return false;
+    throw error;
+  }
+  if (!controlSocket.isSocket() || controlSocket.isSymbolicLink()) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser control socket is invalid.",
+    );
+  }
+  await sendAgentBrowserShutdownRequest(controlSocketPath, input.sessionId);
+  const deadline = Date.now() + AGENT_BROWSER_SHUTDOWN_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (!(await unixSocketIsReachable(controlSocketPath))) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (!(await unixSocketIsReachable(controlSocketPath))) return true;
+  throw new Error(
+    "BROWSER_ENGINE_FAILURE: agent-browser owned session socket remained reachable after shutdown.",
+  );
+}
+
+async function sendAgentBrowserShutdownRequest(
+  socketPath: string,
+  sessionId: string,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const socket = createConnection({ path: socketPath });
+    let response = "";
+    let settled = false;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.destroy();
+      if (error === undefined) resolve();
+      else reject(error);
+    };
+    const timeout = setTimeout(
+      () =>
+        finish(
+          new Error(
+            "BROWSER_ENGINE_FAILURE: agent-browser session shutdown timed out.",
+          ),
+        ),
+      2_000,
+    );
+    timeout.unref?.();
+    socket.once("connect", () => {
+      socket.write(
+        `${JSON.stringify({
+          id: `kestrel-shutdown-${sessionId}`,
+          action: AGENT_BROWSER_INTERNAL_SHUTDOWN_ACTION,
+        })}\n`,
+      );
+    });
+    socket.on("data", (chunk: Buffer) => {
+      response = appendBounded(response, chunk.toString("utf8"));
+      const newline = response.indexOf("\n");
+      if (newline < 0) return;
+      try {
+        const parsed = JSON.parse(response.slice(0, newline)) as unknown;
+        if (
+          typeof parsed !== "object" ||
+          parsed === null ||
+          Array.isArray(parsed)
+        ) {
+          throw new Error(
+            "BROWSER_ENGINE_FAILURE: agent-browser returned an invalid session shutdown response.",
+          );
+        }
+        const record = parsed as Record<string, unknown>;
+        if (record.success !== true) {
+          throw new Error(
+            "BROWSER_ENGINE_FAILURE: agent-browser rejected session shutdown.",
+          );
+        }
+        finish();
+      } catch (error) {
+        finish(error);
+      }
+    });
+    socket.once("error", finish);
+    socket.once("end", () => {
+      if (!settled) {
+        finish(
+          new Error(
+            "BROWSER_ENGINE_FAILURE: agent-browser closed before acknowledging session shutdown.",
+          ),
+        );
+      }
+    });
+  });
+}
+
+async function unixSocketIsReachable(socketPath: string): Promise<boolean> {
+  return await new Promise<boolean>((resolve, reject) => {
+    const socket = createConnection({ path: socketPath });
+    let settled = false;
+    const finish = (reachable: boolean, error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.destroy();
+      if (error === undefined) resolve(reachable);
+      else reject(error);
+    };
+    const timeout = setTimeout(
+      () =>
+        finish(
+          false,
+          new Error(
+            "BROWSER_ENGINE_FAILURE: agent-browser session socket liveness probe timed out.",
+          ),
+        ),
+      250,
+    );
+    timeout.unref?.();
+    socket.once("connect", () => finish(true));
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT" || error.code === "ECONNREFUSED") {
+        finish(false);
+        return;
+      }
+      finish(false, error);
+    });
+  });
+}
+
+function desktopBrowserOwnedControlSocketPath(
+  input: Pick<DesktopBrowserEngineInvocation, "sessionId" | "socketPath">,
+): string {
+  const directory = path.resolve(input.socketPath);
+  const controlSocketPath = path.resolve(directory, `${input.sessionId}.sock`);
+  if (path.dirname(controlSocketPath) !== directory) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser session socket escaped its owned namespace.",
+    );
+  }
+  return controlSocketPath;
+}
+
+async function pathIsMissing(targetPath: string): Promise<boolean> {
+  try {
+    await lstat(targetPath);
+    return false;
+  } catch (error) {
+    if (isMissingPathError(error)) return true;
+    throw error;
+  }
+}
+
+async function readDesktopBrowserOwnedDaemonPid(
+  input: Pick<DesktopBrowserEngineInvocation, "sessionId" | "socketPath">,
+): Promise<number> {
+  await assertDesktopBrowserOwnedSocketDirectory(input.socketPath);
+  const pidPath = path.join(input.socketPath, `${input.sessionId}.pid`);
+  const pidFile = await lstat(pidPath);
+  if (!pidFile.isFile() || pidFile.isSymbolicLink()) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser PID sidecar is invalid.",
+    );
+  }
+  const raw = (await readFile(pidPath, "utf8")).trim();
+  const pid = Number(raw);
+  if (!Number.isSafeInteger(pid) || pid < 2) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser daemon PID is invalid.",
+    );
+  }
+  return pid;
+}
+
+async function assertDesktopBrowserOwnedSocketDirectory(
+  socketPath: string,
+): Promise<void> {
+  const directory = await lstat(socketPath);
+  const uid = process.getuid?.();
+  if (
+    !directory.isDirectory() ||
+    directory.isSymbolicLink() ||
+    (uid !== undefined && directory.uid !== uid) ||
+    (directory.mode & 0o077) !== 0
+  ) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser socket directory is not owned and private.",
+    );
+  }
+}
+
+function appendBounded(current: string, chunk: string): string {
+  if (Buffer.byteLength(current, "utf8") >= MAX_ENGINE_OUTPUT_BYTES)
+    return current;
+  return `${current}${chunk}`.slice(0, MAX_ENGINE_OUTPUT_BYTES);
+}
+
+async function readLedger(ledgerPath: string): Promise<DesktopBrowserLedgerV1> {
+  try {
+    const parsed = JSON.parse(await readFile(ledgerPath, "utf8")) as unknown;
+    const record = requireRecord(parsed, "Browser session ledger");
+    if (
+      record.version !== LEDGER_VERSION ||
+      !Array.isArray(record.sessions) ||
+      (record.artifacts !== undefined && !Array.isArray(record.artifacts))
+    ) {
+      throw new Error("Browser session ledger is invalid.");
+    }
+    const sessions = record.sessions.map(parseBrowserSessionV1);
+    const artifacts = (record.artifacts ?? []).map(parsePersistedArtifact);
+    if (
+      new Set(sessions.map((session) => session.sessionId)).size !==
+      sessions.length
+    ) {
+      throw new Error("Browser session ledger contains duplicate session IDs.");
+    }
+    if (
+      new Set(artifacts.map((artifact) => artifact.authorization.id)).size !==
+      artifacts.length
+    ) {
+      throw new Error(
+        "Browser session ledger contains duplicate artifact IDs.",
+      );
+    }
+    return { version: LEDGER_VERSION, sessions, artifacts };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { version: LEDGER_VERSION, sessions: [], artifacts: [] };
+    }
+    throw error;
+  }
+}
+
+function parsePersistedArtifact(value: unknown): PendingArtifact {
+  const record = requireRecord(value, "Browser persisted artifact");
+  const authorization = requireRecord(
+    record.authorization,
+    "Browser persisted artifact authorization",
+  );
+  const kind = requireText(authorization.kind, "artifact.kind");
+  const bytes = authorization.bytes;
+  const sha256 = requireText(authorization.sha256, "artifact.sha256");
+  if (
+    authorization.version !== BROWSER_AUTHORIZED_ARTIFACT_VERSION ||
+    kind !== "browser-screenshot" ||
+    !Number.isSafeInteger(bytes) ||
+    (bytes as number) < 0 ||
+    !/^[0-9a-f]{64}$/u.test(sha256)
+  ) {
+    throw new Error("Browser persisted artifact authorization is invalid.");
+  }
+  return {
+    runId: requireText(record.runId, "artifact.runId"),
+    threadId: requireText(record.threadId, "artifact.threadId"),
+    callId: requireText(record.callId, "artifact.callId"),
+    toolName: requirePersistedArtifactToolName(record.toolName),
+    sessionId: requireText(record.sessionId, "artifact.sessionId"),
+    authorization: {
+      version: BROWSER_AUTHORIZED_ARTIFACT_VERSION,
+      id: requireText(authorization.id, "artifact.id"),
+      title: requireText(authorization.title, "artifact.title"),
+      kind,
+      mediaType: requireText(authorization.mediaType, "artifact.mediaType"),
+      bytes: bytes as number,
+      sha256,
+    },
+  };
+}
+
+function requirePersistedArtifactToolName(
+  value: unknown,
+): "browser.capture" | "browser.download" {
+  if (value !== "browser.capture" && value !== "browser.download") {
+    throw new Error("Browser persisted artifact tool name is invalid.");
+  }
+  return value;
+}
+
+function attachmentMatchesAuthorization(
+  attachment: DesktopAttachmentMetadata,
+  authorization: BrowserAuthorizedArtifactV1,
+): boolean {
+  return (
+    attachment.fileId === authorization.id &&
+    attachment.mimeType === authorization.mediaType &&
+    attachment.sizeBytes === authorization.bytes &&
+    attachment.sha256 === authorization.sha256
+  );
+}
+
+async function writeLedger(
+  ledgerPath: string,
+  ledger: DesktopBrowserLedgerV1,
+): Promise<void> {
+  await mkdir(path.dirname(ledgerPath), { recursive: true, mode: 0o700 });
+  const temporary = `${ledgerPath}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(ledger, null, 2)}\n`, {
+    mode: 0o600,
+    flag: "wx",
+  });
+  await rename(temporary, ledgerPath);
+}
+
+function createQaAuthority(input: {
+  threadId: string;
+  projectId: string;
+  destination: string;
+  revision: string;
+}): BrowserEffectiveDomainAuthorityV1 {
+  const qaTarget = canonicalizeTrustedBrowserQaTarget(input.destination);
+  return {
+    version: BROWSER_EFFECTIVE_DOMAIN_AUTHORITY_VERSION,
+    environmentId: "desktop-local",
+    projectId: input.projectId,
+    userId: "desktop-local-user",
+    enabledModes: ["qa"],
+    personalGrantsEnabled: false,
+    publicDomains: [],
+    qaTarget: {
+      version: BROWSER_QA_TARGET_VERSION,
+      scheme: qaTarget.scheme,
+      hostname: qaTarget.hostname,
+      port: qaTarget.port,
+    },
+    effectiveAllowlistRevision: digest({
+      revision: input.revision,
+      threadId: input.threadId,
+      projectId: input.projectId,
+      qaTarget,
+    }),
+  };
+}
+
+function browserOutput(
+  operation: string,
+  output: Record<string, unknown>,
+): unknown {
+  return {
+    version: BROWSER_TOOL_RESULT_VERSION,
+    operation,
+    ...output,
+  };
+}
+
+function requirePublicDestination(target: Record<string, unknown>): string {
+  if (target.kind !== "public_url") {
+    throw browserFailure(
+      "BROWSER_DESTINATION_BLOCKED",
+      "Operator Browser mode requires a public URL.",
+    );
+  }
+  const destination = requireText(target.url, "target.url");
+  canonicalizePublicBrowserDestination(destination);
+  return destination;
+}
+
+function mapInteraction(
+  kind: string,
+  ref: string | undefined,
+  action: Record<string, unknown>,
+): string[] {
+  switch (kind) {
+    case "click":
+    case "check":
+    case "uncheck":
+      return [kind, requireText(ref, "action.ref")];
+    case "fill":
+    case "type":
+      return [
+        kind,
+        requireText(ref, "action.ref"),
+        requireText(action.text, "action.text"),
+      ];
+    case "press":
+      return ["press", requireText(action.key, "action.key")];
+    case "select":
+      if (!Array.isArray(action.values) || action.values.length === 0) {
+        throw browserFailure(
+          "BROWSER_TARGET_STALE",
+          "Browser select values are invalid.",
+        );
+      }
+      return [
+        "select",
+        requireText(ref, "action.ref"),
+        ...action.values.map((value) => requireText(value, "action.values")),
+      ];
+    case "scroll":
+      return [
+        "scroll",
+        requireText(action.direction, "action.direction"),
+        String(action.amount),
+        ...(ref === undefined ? [] : ["--selector", ref]),
+      ];
+    default:
+      throw browserFailure(
+        "BROWSER_TARGET_STALE",
+        "Browser interaction is unsupported.",
+      );
+  }
+}
+
+function requireEngineRef(value: string): string {
+  if (!/^@e[1-9][0-9]*$/u.test(value)) {
+    throw browserFailure(
+      "BROWSER_TARGET_STALE",
+      "Browser target ref is invalid.",
+    );
+  }
+  return value;
+}
+
+function requireTabId(value: unknown): string {
+  const tabId = requireText(value, "tabId");
+  if (!/^t[1-9][0-9]*$/u.test(tabId)) {
+    throw browserFailure("BROWSER_TARGET_STALE", "Browser tab ID is invalid.");
+  }
+  return tabId;
+}
+
+function requireGeneration(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw browserFailure(
+      "BROWSER_SESSION_LOST",
+      "The Browser operation generation is invalid.",
+    );
+  }
+  return value as number;
+}
+
+function desktopBrowserSocketPath(sessionId: string): string {
+  requireDesktopBrowserSessionId(sessionId, "Browser session ID");
+  const uid = process.getuid?.() ?? 0;
+  const sessionHash = createHash("sha256")
+    .update(sessionId)
+    .digest("hex")
+    .slice(0, 16);
+  return path.join("/tmp", `kestrel-browser-${uid}`, sessionHash);
+}
+
+interface DesktopBrowserOwnedPaths {
+  runtimePath: string;
+  socketPath: string;
+  profilePath: string;
+  configPath: string;
+  screenshotPath: string;
+  blockedDownloadPath: string;
+}
+
+function requireDesktopBrowserSessionId(value: string, label: string): string {
+  if (!DESKTOP_BROWSER_SESSION_ID_PATTERN.test(value)) {
+    throw new Error(
+      `BROWSER_ENGINE_FAILURE: ${label} is not a path-safe opaque identifier.`,
+    );
+  }
+  return value;
+}
+
+function desktopBrowserOwnedPaths(
+  runtimeRoot: string,
+  sessionId: string,
+): DesktopBrowserOwnedPaths {
+  requireDesktopBrowserSessionId(sessionId, "Browser session ID");
+  const resolvedRuntimeRoot = path.resolve(runtimeRoot);
+  const runtimePath = path.resolve(resolvedRuntimeRoot, sessionId);
+  if (path.dirname(runtimePath) !== resolvedRuntimeRoot) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser runtime path escaped its owned root.",
+    );
+  }
+  const socketRoot = path.resolve(
+    "/tmp",
+    `kestrel-browser-${process.getuid?.() ?? 0}`,
+  );
+  const socketPath = path.resolve(desktopBrowserSocketPath(sessionId));
+  if (path.dirname(socketPath) !== socketRoot) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser socket path escaped its owned root.",
+    );
+  }
+  return {
+    runtimePath,
+    socketPath,
+    profilePath: path.join(runtimePath, "profile"),
+    configPath: path.join(runtimePath, "config"),
+    screenshotPath: path.join(runtimePath, "screenshot.png"),
+    blockedDownloadPath: path.join(runtimePath, "downloads-disabled"),
+  };
+}
+
+function assertDesktopBrowserInvocationPaths(
+  expected: DesktopBrowserOwnedPaths,
+  invocation: DesktopBrowserEngineInvocation,
+): void {
+  for (const key of [
+    "runtimePath",
+    "socketPath",
+    "profilePath",
+    "configPath",
+    "screenshotPath",
+    "blockedDownloadPath",
+  ] as const) {
+    if (path.resolve(invocation[key]) !== expected[key]) {
+      throw new Error(
+        `BROWSER_ENGINE_FAILURE: Browser ${key} escaped its owned session namespace.`,
+      );
+    }
+  }
+}
+
+async function removeDesktopBrowserRuntimePaths(
+  ownedPaths: DesktopBrowserOwnedPaths,
+): Promise<void> {
+  // Runtime data is removed before the control socket. If interrupted, the
+  // remaining socket can still prove or complete daemon termination on restart.
+  await rm(ownedPaths.runtimePath, { recursive: true, force: true });
+  await rm(ownedPaths.socketPath, { recursive: true, force: true });
+}
+
+async function prepareOwnedSocketDirectory(socketPath: string): Promise<void> {
+  const root = path.dirname(socketPath);
+  await ensureOwnedPrivateDirectory(root);
+  await ensureOwnedPrivateDirectory(socketPath);
+}
+
+async function ensureOwnedPrivateDirectory(directory: string): Promise<void> {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const metadata = await lstat(directory);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser socket path is not an owned directory.",
+    );
+  }
+  const uid = process.getuid?.();
+  if (uid !== undefined && metadata.uid !== uid) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser socket path has another owner.",
+    );
+  }
+  await chmod(directory, 0o700);
+}
+
+function parseTabs(stdout: string): {
+  activeTabId: string;
+  tabs: Array<{
+    tabId: string;
+    normalizedOrigin: string;
+    title: string;
+    active: boolean;
+  }>;
+} {
+  const data = unwrapAgentJson(stdout);
+  const candidates = Array.isArray(data)
+    ? data
+    : Array.isArray(requireOptionalRecord(data)?.tabs)
+      ? (requireOptionalRecord(data)!.tabs as unknown[])
+      : [];
+  const hasExplicitActiveTab = candidates.some((candidate) => {
+    const record = requireOptionalRecord(candidate);
+    return (
+      typeof record?.active === "boolean" ||
+      typeof record?.isActive === "boolean"
+    );
+  });
+  const tabs = candidates.flatMap((candidate, index) => {
+    const record = requireOptionalRecord(candidate);
+    if (record === undefined) return [];
+    const tabId =
+      typeof record.tabId === "string"
+        ? record.tabId
+        : typeof record.id === "string"
+          ? record.id
+          : `t${index + 1}`;
+    if (typeof record.url !== "string" || record.url.length === 0) {
+      throw browserFailure(
+        "BROWSER_ENGINE_FAILURE",
+        "Browser engine returned a tab without an exact URL.",
+      );
+    }
+    let normalizedOrigin: string;
+    try {
+      const parsed = new URL(record.url);
+      if (
+        (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+        parsed.origin === "null"
+      ) {
+        throw new Error("unsupported tab URL");
+      }
+      normalizedOrigin = parsed.origin;
+    } catch {
+      throw browserFailure(
+        "BROWSER_ENGINE_FAILURE",
+        "Browser engine returned an unsupported or invalid tab URL.",
+      );
+    }
+    return [
+      {
+        tabId,
+        normalizedOrigin,
+        title:
+          typeof record.title === "string" ? record.title.slice(0, 2048) : "",
+        active:
+          record.active === true ||
+          record.isActive === true ||
+          (!hasExplicitActiveTab && index === 0),
+      },
+    ];
+  });
+  if (tabs.length === 0) {
+    throw browserFailure(
+      "BROWSER_TARGET_STALE",
+      "The Browser Session no longer has a bound tab.",
+    );
+  }
+  if (new Set(tabs.map((tab) => tab.tabId)).size !== tabs.length) {
+    throw browserFailure(
+      "BROWSER_ENGINE_FAILURE",
+      "Browser engine returned duplicate tab identities.",
+    );
+  }
+  return {
+    activeTabId: tabs.find((tab) => tab.active)?.tabId ?? tabs[0]!.tabId,
+    tabs,
+  };
+}
+
+function boundTabsForOutput(
+  parsed: ReturnType<typeof parseTabs>,
+  requestedTabId?: string | undefined,
+): ReturnType<typeof parseTabs> {
+  if (parsed.tabs.length <= MAX_BROWSER_TABS) return parsed;
+  const preservedIds = new Set([
+    parsed.activeTabId,
+    ...(requestedTabId === undefined ? [] : [requestedTabId]),
+  ]);
+  const selectedIds = new Set<string>();
+  for (const tab of parsed.tabs) {
+    if (preservedIds.has(tab.tabId)) selectedIds.add(tab.tabId);
+  }
+  for (const tab of parsed.tabs) {
+    if (selectedIds.size >= MAX_BROWSER_TABS) break;
+    selectedIds.add(tab.tabId);
+  }
+  return {
+    activeTabId: parsed.activeTabId,
+    tabs: parsed.tabs.filter((tab) => selectedIds.has(tab.tabId)),
+  };
+}
+
+function extractScalar(stdout: string, field: string): string {
+  const data = unwrapAgentJson(stdout);
+  if (typeof data === "string") return data;
+  const record = requireOptionalRecord(data);
+  const nested = requireOptionalRecord(record?.data);
+  const value =
+    record?.[field] ?? nested?.[field] ?? record?.value ?? nested?.value;
+  return typeof value === "string" ? value : stdout.trim();
+}
+
+function extractEngineContent(
+  result: DesktopBrowserEngineCommandResult,
+): string {
+  const data = unwrapAgentJson(result.stdout);
+  if (typeof data === "string") return data;
+  const record = requireOptionalRecord(data);
+  const nested = requireOptionalRecord(record?.data);
+  const value =
+    record?.snapshot ??
+    record?.content ??
+    record?.text ??
+    nested?.snapshot ??
+    nested?.content ??
+    nested?.text;
+  return typeof value === "string" ? value : JSON.stringify(data);
+}
+
+function metadataOnlyNetworkSummary(stdout: string): string {
+  const data = unwrapAgentJson(stdout);
+  const record = requireOptionalRecord(data);
+  const requests = Array.isArray(data)
+    ? data
+    : Array.isArray(record?.requests)
+      ? (record!.requests as unknown[])
+      : [];
+  const byStatus: Record<string, number> = {};
+  for (const request of requests) {
+    const entry = requireOptionalRecord(request);
+    const status =
+      typeof entry?.status === "number" ? String(entry.status) : "unknown";
+    byStatus[status] = (byStatus[status] ?? 0) + 1;
+  }
+  return JSON.stringify({ requestCount: requests.length, byStatus });
+}
+
+function unwrapAgentJson(stdout: string): unknown {
+  try {
+    const parsed = JSON.parse(stdout) as unknown;
+    const record = requireOptionalRecord(parsed);
+    return record?.data ?? parsed;
+  } catch {
+    return stdout;
+  }
+}
+
+function splitContent(value: string): string[] {
+  if (value.length === 0) return [""];
+  const chunks: string[] = [];
+  for (let offset = 0; offset < value.length; offset += MAX_PAGE_OUTPUT_CHARS) {
+    chunks.push(value.slice(offset, offset + MAX_PAGE_OUTPUT_CHARS));
+  }
+  return chunks;
+}
+
+function digest(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+async function runDirectly<T>(action: () => Promise<T>): Promise<T> {
+  return await action();
+}
+
+function isEngineLost(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /ECONNREFUSED|socket|daemon|process exited/iu.test(error.message)
+  );
+}
+
+function isEngineTabGone(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /tab[_ -]?gone|target page.*closed|no bound tab/iu.test(error.message)
+  );
+}
+
+function isBrowserDownloadUnavailable(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as Error & { code?: unknown }).code ===
+      "BROWSER_DOWNLOAD_UNAVAILABLE"
+  );
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
+}
+
+function requireAbsolutePath(value: string, label: string): string {
+  if (!path.isAbsolute(value))
+    throw new Error(`${label} must be an absolute path.`);
+  return path.normalize(value);
+}
+
+function requireText(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  const record = requireOptionalRecord(value);
+  if (record === undefined) throw new Error(`${label} must be an object.`);
+  return record;
+}
+
+function requireOptionalRecord(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}

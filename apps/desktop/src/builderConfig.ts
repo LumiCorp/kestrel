@@ -23,6 +23,7 @@ export interface DesktopBuilderConfiguration {
   appId: string;
   productName: string;
   electronVersion: string;
+  electronDist: string;
   artifactName: string;
   asar: false;
   npmRebuild: false;
@@ -106,6 +107,7 @@ export function resolveDesktopBuilderConfiguration(
     appId: "com.kestrel.desktop",
     productName: "Kestrel",
     electronVersion: input.electronVersion,
+    electronDist: path.join(desktopRoot, "node_modules", "electron", "dist"),
     artifactName: `Kestrel-${input.version}-mac-\${arch}.\${ext}`,
     asar: false,
     npmRebuild: false,
@@ -129,6 +131,11 @@ export function resolveDesktopBuilderConfiguration(
       {
         from: path.join(desktopRoot, ".desktop-runtime", "node_modules"),
         to: path.join("kestrel-runtime", "node_modules"),
+        filter: ["**/*"],
+      },
+      {
+        from: path.join(desktopRoot, ".desktop-browser-runtime"),
+        to: "browser-runtime",
         filter: ["**/*"],
       },
       {

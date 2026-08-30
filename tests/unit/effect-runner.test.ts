@@ -557,7 +557,7 @@ test("registered Browser dispatch capability distinguishes claimed from dispatch
       snapshotId: snapshot.snapshotId,
       modelToolCallId: "model-call-browser-durable-dispatch",
     },
-    rawInput: { sessionId: "browser-session-1" },
+    rawInput: { sessionId: "browser-session-1", generation: 1 },
     policy: {
       decision: "allow",
       policyRevision: hashCanonical({ policy: "browser-durable-dispatch" }),

@@ -11,6 +11,17 @@ import {
   resolveLocalCoreBuildIdentity,
   verifyLocalCoreWorkspacePackagePayloads,
 } from "../src/localCore/buildIdentity.js";
+import {
+  BROWSER_RUNTIME_RELEASE_MANIFEST,
+  DESKTOP_BROWSER_RUNTIME_RESOURCE_DIRECTORY,
+  DESKTOP_BROWSER_RUNTIME_TARGET,
+  getDesktopBrowserRuntimeExecutableRelativePaths,
+} from "../src/browser/runtimeReleaseManifest.js";
+import {
+  createDarwinDesktopBrowserRuntimeSignatureVerifier,
+  desktopBrowserRuntimeExecutablePaths,
+  verifyDesktopBrowserRuntimeDirectory,
+} from "./desktop-browser-runtime-assets.js";
 
 const ROOT = resolveRepoRoot(process.cwd());
 const TARGET_VERSION = readManifestVersion("apps/desktop/package.json");
@@ -116,6 +127,46 @@ function checkDesktopBuilderConfiguration(): void {
     ) === false
   ) {
     errors.push("Desktop packages must include the native uninstall helper.");
+  }
+  const browserResource = release.extraResources.find(
+    (resource) => resource.to === DESKTOP_BROWSER_RUNTIME_RESOURCE_DIRECTORY,
+  );
+  if (
+    browserResource === undefined ||
+    path.basename(browserResource.from) !== ".desktop-browser-runtime"
+  ) {
+    errors.push("Desktop packages must include the manifest-verified Browser runtime resource.");
+  }
+  if (DESKTOP_BROWSER_RUNTIME_TARGET !== "darwin-arm64") {
+    errors.push("Desktop Browser runtime v1 must support only darwin-arm64.");
+  }
+  const explicitPaths = getDesktopBrowserRuntimeExecutableRelativePaths();
+  if (
+    !explicitPaths.engineExecutablePath.startsWith("browser-runtime/") ||
+    !explicitPaths.chromeExecutablePath.startsWith("browser-runtime/")
+  ) {
+    errors.push("Desktop Browser executables must resolve only from explicit packaged resource paths.");
+  }
+  for (const asset of [
+    BROWSER_RUNTIME_RELEASE_MANIFEST.targets[DESKTOP_BROWSER_RUNTIME_TARGET].engine,
+    BROWSER_RUNTIME_RELEASE_MANIFEST.targets[DESKTOP_BROWSER_RUNTIME_TARGET].chrome,
+  ]) {
+    if (!asset.url.startsWith("https://") || !/^[0-9a-f]{64}$/u.test(asset.sha256)) {
+      errors.push("Desktop Browser release assets must declare exact HTTPS sources and SHA-256 digests.");
+    }
+  }
+  const packagerSource = readFileSync(path.join(ROOT, "scripts", "package-desktop.ts"), "utf8");
+  if (!packagerSource.includes("prepareDesktopBrowserRuntimeAssets(repoRoot)")) {
+    errors.push("Desktop packaging must verify and stage Browser assets before electron-builder runs.");
+  }
+  for (const forbidden of [
+    "agent-browser install",
+    "agent-browser upgrade",
+    "agent-browser doctor",
+  ]) {
+    if (packagerSource.includes(forbidden)) {
+      errors.push(`Desktop packaging must not use runtime Browser discovery or installation: '${forbidden}'.`);
+    }
   }
 }
 
@@ -323,6 +374,10 @@ function checkPackagedDesktopSignature(): void {
     `mac-${arch}`,
     "Kestrel.app",
   );
+  if (arch !== "arm64") {
+    errors.push(`Desktop Browser release supports arm64 only; received '${arch}'.`);
+    return;
+  }
   if (!existsSync(appPath)) {
     if (process.env.KESTREL_DESKTOP_RELEASE === "1") {
       errors.push(`Desktop release package is missing at ${path.relative(ROOT, appPath)}.`);
@@ -344,6 +399,40 @@ function checkPackagedDesktopSignature(): void {
   }
   if (!/flags=.*\([^)]*\bruntime\b[^)]*\)/u.test(signatureDetails)) {
     errors.push("packaged Desktop release must enable hardened runtime.");
+  }
+  const browserRuntimeRoot = path.join(
+    appPath,
+    "Contents",
+    "Resources",
+    DESKTOP_BROWSER_RUNTIME_RESOURCE_DIRECTORY,
+  );
+  try {
+    const receipt = verifyDesktopBrowserRuntimeDirectory(
+      browserRuntimeRoot,
+      undefined,
+      {
+        mode: "signed-release",
+        appPath,
+        expectedSigningAuthority: requireReleaseSigningAuthority(),
+        signatureVerifier:
+          createDarwinDesktopBrowserRuntimeSignatureVerifier(),
+      },
+    );
+    const browserExecutables = desktopBrowserRuntimeExecutablePaths(browserRuntimeRoot);
+    const browserNativeExecutablePaths = receipt.files
+      .filter((entry) => entry.nativeExecutable === true)
+      .map((entry) => path.join(browserRuntimeRoot, entry.path));
+    for (const requiredExecutable of Object.values(browserExecutables)) {
+      if (!browserNativeExecutablePaths.includes(requiredExecutable)) {
+        throw new Error(
+          `Desktop Browser executable is not a manifest-covered Mach-O file: ${requiredExecutable}`,
+        );
+      }
+    }
+  } catch (error) {
+    errors.push(
+      `packaged Desktop Browser runtime is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   const helperPath = path.join(
     appPath,
@@ -415,6 +504,16 @@ function readManifestVersion(relativePath: string): string {
     throw new Error(`${relativePath} must declare a version.`);
   }
   return manifest.version;
+}
+
+function requireReleaseSigningAuthority(): string {
+  const authority = process.env.KESTREL_DESKTOP_SIGN_IDENTITY?.trim();
+  if (!authority) {
+    throw new Error(
+      "Desktop release verification requires KESTREL_DESKTOP_SIGN_IDENTITY.",
+    );
+  }
+  return authority;
 }
 
 function collectLocalEnvFiles(root: string): string[] {

@@ -8,6 +8,7 @@ import {
   parseDesktopUpdateChannel,
   resolveDesktopBuilderConfiguration,
 } from "../apps/desktop/src/builderConfig.js";
+import { prepareDesktopBrowserRuntimeAssets } from "./desktop-browser-runtime-assets.js";
 import { parseDesktopOtaFixturePackageOptions } from "./desktop-ota-fixture.js";
 
 const repoRoot = resolveRepoRoot(process.cwd());
@@ -38,6 +39,7 @@ if (
 writeDesktopPackageStageVersion();
 writeDesktopPublicAppConfiguration();
 prepareDesktopUninstallHelper();
+prepareDesktopBrowserRuntimeAssets(repoRoot);
 
 const config = resolveDesktopBuilderConfiguration({
   repoRoot,

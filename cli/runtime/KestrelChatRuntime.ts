@@ -145,6 +145,7 @@ import { PostgresSessionStore } from "../../src/store/PostgresSessionStore.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
 import type { Microsoft365ServicePort } from "../../src/apps/microsoft365.js";
 import type { GoogleWorkspaceServicePort } from "../../src/apps/googleWorkspace.js";
+import type { BrowserServicePort } from "../../src/browser/contracts.js";
 
 import {
   createToolProviderConfigurationResolverFromEnvironment,
@@ -347,6 +348,7 @@ export interface RuntimeFactoryWithStoreOptions {
         attachmentIds: string[],
       ) => Promise<RunTurnAttachment[]>)
     | undefined;
+  browserService?: BrowserServicePort | undefined;
 }
 
 export interface KestrelChatRuntimeOptions {
@@ -3302,6 +3304,7 @@ function createDefaultRuntime(
     false,
     undefined,
     undefined,
+    undefined,
     storeHandle.driver === "sqlite"
       ? (sessionId) =>
           (storeHandle.store as PostgresSessionStore).recoverOrphanedActiveRun(
@@ -3352,6 +3355,7 @@ export function createRuntimeFactoryWithStore(
         options.enableManagedWorktrees === true,
         options.managedWorktreeHomeDir,
         options.resolveAttachments,
+        options.browserService,
         store.recoverOrphanedActiveRun === undefined
           ? undefined
           : (sessionId) => store.recoverOrphanedActiveRun!(sessionId),
@@ -3383,6 +3387,7 @@ function createRuntimeWithStore(
   enableManagedWorktrees = false,
   managedWorktreeHomeDir?: string | undefined,
   resolveAttachments?: RuntimeFactoryWithStoreOptions["resolveAttachments"],
+  optionsBrowserService?: BrowserServicePort | undefined,
   recoverOrphanedActiveRun?:
     | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
     | undefined,
@@ -3562,6 +3567,9 @@ function createRuntimeWithStore(
       ),
     ...(microsoft365Service !== undefined ? { microsoft365Service } : {}),
     ...(googleWorkspaceService !== undefined ? { googleWorkspaceService } : {}),
+    ...(optionsBrowserService !== undefined
+      ? { browserService: optionsBrowserService }
+      : {}),
     ...(devShellService !== undefined ? { devShellService } : {}),
     ...(profile.shellKind === "desktop"
       ? { desktopHostOpenService: new MacOsDesktopHostOpenService() }

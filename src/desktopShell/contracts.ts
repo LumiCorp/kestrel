@@ -1836,6 +1836,8 @@ export type DesktopManagedProjectRunStatus =
   | "stopped";
 
 export interface DesktopManagedProjectRunPreviewUrl {
+  /** Stable opaque identity for trusted consumers; never the URL itself. */
+  urlId: string;
   url: string;
   source: "stdout" | "stderr";
   firstSeenAt: string;

@@ -18,17 +18,24 @@ import path from "node:path";
 
 import {
   LOCAL_CORE_DESKTOP_PROFILE_ID,
+  DesktopBrowserService,
   LocalCoreApiError,
   LocalCoreClient,
   acquireCoreLock,
   createDefaultLocalCoreRuntimeConfiguration,
   parseLocalCoreDesktopExecutionConfig,
   readCoreLock,
+  resolvePackagedDesktopBrowserResourcesRoot,
   resolveLocalCorePaths,
   startLocalCoreApiServer,
 } from "../../src/localCore/index.js";
 import { LOCAL_CORE_RUNTIME_CONFIGURATION_FILE_NAME } from "../../src/localCore/runtimeConfiguration.js";
 import { parseLocalCoreSystemShutdownRequest } from "../../src/localCore/contracts.js";
+import type { DesktopBrowserPersonalDomainsV1 } from "../../src/desktopShell/contracts.js";
+import {
+  mutateLocalCoreLocalSettings,
+  readLocalCoreLocalSettings,
+} from "../../src/localCore/localSettings.js";
 import {
   closeLocalCoreStore,
   ensureLocalCoreStore,
@@ -57,6 +64,93 @@ import {
 } from "../../packages/protocol/src/index.js";
 
 describe("Local Core API process contracts", { concurrency: 2 }, () => {
+  test("Kestrel One sign-out closes Desktop Browser authority first", async () => {
+    const home = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-core-browser-signout-"),
+    );
+    class TrackingDesktopBrowserService extends DesktopBrowserService {
+      closeCalls = 0;
+
+      override async close(): Promise<void> {
+        this.closeCalls += 1;
+        await super.close();
+      }
+    }
+    const browserService = new TrackingDesktopBrowserService({
+      homePath: home,
+      engineExecutablePath: "/unused/agent-browser",
+      chromeExecutablePath: "/unused/Chrome",
+      projectRunRegistry: {
+        resolvePreviewUrl() {
+          throw new Error("not used");
+        },
+      },
+      engine: {
+        async acceptOperation(input) {
+          return {
+            sessionId: input.sessionId,
+            operationId: input.operationId,
+            grantGeneration: input.grantGeneration,
+            acceptanceToken: `accepted:${input.operationId}`,
+          };
+        },
+        releaseOperation() {},
+        async open() {},
+        async command() {
+          return { stdout: "", stderr: "" };
+        },
+        async close() {},
+      },
+      scheduleExpiry: false,
+    });
+    const server = await startLocalCoreApiServer({
+      env: { KESTREL_CORE_HOME: home },
+      platform: "darwin",
+      coreVersion: "0.6.0",
+      idleTimeoutMs: 0,
+      browserService,
+      credentialStore: new MemoryLocalCoreCredentialStore(),
+    });
+    try {
+      const client = new LocalCoreClient({
+        socketPath: server.socketPath,
+        token: server.token,
+      });
+      assert.deepEqual(await client.signOutKestrelOneAccount(), {
+        status: "signed_out",
+      });
+      assert.equal(browserService.closeCalls, 1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("packaged Desktop Browser resources derive only from the packaged Local Core root", () => {
+    assert.equal(
+      resolvePackagedDesktopBrowserResourcesRoot({
+        repoRoot:
+          "/Applications/Kestrel.app/Contents/Resources/kestrel-runtime/payload",
+        platform: "darwin",
+      }),
+      "/Applications/Kestrel.app/Contents/Resources",
+    );
+    assert.equal(
+      resolvePackagedDesktopBrowserResourcesRoot({
+        repoRoot: "/tmp/ambient-browser-runtime",
+        platform: "darwin",
+      }),
+      undefined,
+    );
+    assert.equal(
+      resolvePackagedDesktopBrowserResourcesRoot({
+        repoRoot:
+          "/Applications/Kestrel.app/Contents/Resources/kestrel-runtime/payload",
+        platform: "linux",
+      }),
+      undefined,
+    );
+  });
+
   test("Local Core code-update shutdown requires its exact confirmation contract", () => {
     assert.deepEqual(
       parseLocalCoreSystemShutdownRequest({
@@ -373,6 +467,75 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
       }
       assert.equal(existsSync(paths.apiSocketPath), false);
       assert.equal(existsSync(paths.lockPath), false);
+    } finally {
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Desktop Browser revision adoption validates the exact typed contract", async () => {
+    const home = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-browser-adoption-api-"),
+    );
+    const server = await startLocalCoreApiServer({
+      env: { KESTREL_CORE_HOME: home },
+      platform: "linux",
+      coreVersion: "0.6.0",
+      idleTimeoutMs: 0,
+    });
+    const client = new LocalCoreClient({
+      socketPath: server.socketPath,
+      token: server.token,
+    });
+    try {
+      assert.deepEqual(
+        await client.adoptDesktopBrowserPersonalRevision({
+          accountId: "account-1",
+          environmentId: "environment-1",
+          personalRevision: 2,
+        }),
+        { personalRevision: 2, closedUnauthorizedConnections: 0 },
+      );
+      for (const body of [
+        {
+          accountId: "account-1",
+          environmentId: "environment-1",
+          personalRevision: 2,
+          unexpected: true,
+        },
+        {
+          accountId: "account-1",
+          environmentId: "environment-1",
+          personalRevision: 2,
+          threadId: "thread-1",
+        },
+        {
+          accountId: " ",
+          environmentId: "environment-1",
+          personalRevision: 2,
+        },
+      ]) {
+        await assert.rejects(
+          client.postJson("/v1/browser/personal-domain-revisions/adopt", body),
+          (error) =>
+            error instanceof LocalCoreApiError &&
+            error.statusCode === 400 &&
+            error.code === "DESKTOP_BROWSER_REVISION_INVALID",
+        );
+      }
+      await assert.rejects(
+        client.adoptDesktopBrowserPersonalRevision({
+          accountId: "account-1",
+          environmentId: "environment-1",
+          personalRevision: 2,
+          threadId: "thread-1",
+          sessionId: "browser-1",
+        }),
+        (error) =>
+          error instanceof LocalCoreApiError &&
+          error.statusCode === 503 &&
+          error.code === "DESKTOP_BROWSER_UNAVAILABLE",
+      );
     } finally {
       await server.close();
       await rm(home, { recursive: true, force: true });
@@ -2226,7 +2389,10 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
         "filesystem",
         "dev_shell",
       ]);
-      assert.equal(loadedSession?.effectiveAssemblyId, "bundle:kestrel:developer");
+      assert.equal(
+        loadedSession?.effectiveAssemblyId,
+        "bundle:kestrel:developer",
+      );
 
       const profiles = await new ProfileStore(home).load();
       assert.equal(
@@ -2391,6 +2557,132 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
       const restored = await client.desktopSettings();
       assert.equal(restored.settings.selectedProvider, "ollama");
       assert.equal(restored.modelPolicy.provider, "ollama");
+    } finally {
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Local Core settings reject grant authorship, allow explicit revocation, and preserve owned grants", async () => {
+    const home = await mkdtemp(path.join("/tmp", "kcad-browser-settings-"));
+    const server = await startLocalCoreApiServer({
+      env: { KESTREL_CORE_HOME: home },
+      platform: "darwin",
+      coreVersion: "0.6.0",
+      databaseMode: "external",
+      externalDatabaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
+      idleTimeoutMs: 0,
+    });
+    try {
+      const client = new LocalCoreClient({
+        socketPath: server.socketPath,
+        token: server.token,
+      });
+      const partition = (revision: number, domains: string[]) => ({
+        version: "desktop_browser_personal_domain_partition_v1",
+        accountId: "account-1",
+        environmentId: "environment-1",
+        revision,
+        domains: domains.map((canonicalDomain, index) => ({
+          version: "desktop_browser_personal_domain_record_v1",
+          authority: {
+            version: "browser_public_domain_authority_v1",
+            scheme: "https",
+            canonicalDomain,
+            includeSubdomains: true,
+            port: 443,
+          },
+          state: "active",
+          provenance: {
+            version: "desktop_browser_personal_domain_provenance_v1",
+            source: "browser.request_grant",
+            approvalId: `approval-${index + 1}`,
+            approvedAt: `2026-08-30T12:00:0${index}.000Z`,
+          },
+          createdAt: `2026-08-30T12:00:0${index}.000Z`,
+          updatedAt: `2026-08-30T12:00:0${index}.000Z`,
+        })),
+      });
+      const value = (revision: number, domains: string[]) => ({
+        version: "desktop_browser_personal_domains_v1",
+        partitions: [partition(revision, domains)],
+      });
+
+      await assert.rejects(
+        () =>
+          client.patchDesktopSettings({
+            browserPersonalDomains: value(1, ["example.com"]),
+          }),
+        (error) =>
+          error instanceof LocalCoreApiError &&
+          error.statusCode === 409 &&
+          error.code === "LOCAL_CORE_BROWSER_SETTINGS_STALE",
+      );
+
+      const owned = value(1, ["example.com"]);
+      await mutateLocalCoreLocalSettings(
+        server.status.home.homePath,
+        (current) => ({
+          settings: { ...current, browserPersonalDomains: owned },
+          result: undefined,
+        }),
+      );
+
+      await client.patchDesktopSettings({ selectedProvider: "ollama" });
+      const restored = await client.desktopSettings<{
+        selectedProvider: string;
+      }>();
+      assert.equal(restored.settings.selectedProvider, "ollama");
+      assert.deepEqual(
+        (await readLocalCoreLocalSettings(server.status.home.homePath))
+          .browserPersonalDomains,
+        owned,
+      );
+
+      const revoked: DesktopBrowserPersonalDomainsV1 = {
+        version: "desktop_browser_personal_domains_v1",
+        partitions: [
+          {
+            ...owned.partitions[0]!,
+            version: "desktop_browser_personal_domain_partition_v1",
+            revision: 2,
+            domains: [
+              {
+                ...owned.partitions[0]!.domains[0]!,
+                version: "desktop_browser_personal_domain_record_v1",
+                authority: {
+              ...owned.partitions[0]!.domains[0]!.authority,
+              version: "browser_public_domain_authority_v1",
+              scheme: "https",
+              includeSubdomains: true,
+              port: 443,
+            },
+                provenance: {
+                  ...owned.partitions[0]!.domains[0]!.provenance,
+                  version: "desktop_browser_personal_domain_provenance_v1",
+                  source: "browser.request_grant",
+                },
+                state: "revoked",
+                updatedAt: "2026-08-30T12:01:00.000Z",
+                revokedAt: "2026-08-30T12:01:00.000Z",
+              },
+            ],
+          },
+        ],
+      };
+      await assert.doesNotReject(() =>
+        client.patchDesktopSettings({ browserPersonalDomains: revoked }),
+      );
+
+      const reactivated = value(3, ["example.com"]);
+      await assert.rejects(
+        () =>
+          client.patchDesktopSettings({ browserPersonalDomains: reactivated }),
+        (error) =>
+          error instanceof LocalCoreApiError &&
+          error.statusCode === 409 &&
+          error.code === "LOCAL_CORE_BROWSER_SETTINGS_STALE",
+      );
     } finally {
       await server.close();
       await rm(home, { recursive: true, force: true });

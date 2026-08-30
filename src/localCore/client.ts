@@ -217,6 +217,20 @@ export class LocalCoreClient {
     );
   }
 
+  async adoptDesktopBrowserPersonalRevision(input: {
+    accountId: string;
+    environmentId: string;
+    personalRevision: number;
+    threadId?: string | undefined;
+    sessionId?: string | undefined;
+  }): Promise<{ personalRevision: number; closedUnauthorizedConnections: number }> {
+    return readObjectField(
+      await this.post("/v1/browser/personal-domain-revisions/adopt", input),
+      "adoption",
+      "Desktop Browser personal revision adoption",
+    );
+  }
+
   async startKestrelOneAuthorization(input: {
     baseUrl: string;
   }): Promise<KestrelOneAuthorizationSessionView> {

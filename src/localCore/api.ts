@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import {
@@ -53,14 +54,17 @@ import {
 } from "../replay/RunReplayService.js";
 import { buildRuntimeReplayBundle } from "../replay/RuntimeReplayBundle.js";
 import type {
+  DesktopBrowserPersonalDomainsV1,
   DesktopManagedProjectRun,
   DesktopPackageManager,
   DesktopProjectRegistration,
 } from "../desktopShell/contracts.js";
 import {
+  DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
   DESKTOP_UI_STATE_MAX_BYTES,
   parseDesktopUiStateV1,
 } from "../desktopShell/contracts.js";
+import { parseDesktopBrowserPersonalDomains } from "../desktopShell/browserPersonalDomains.js";
 import type {
   EnsureLocalCoreReadyOptions,
   LocalCoreBuildIdentityV1,
@@ -101,7 +105,12 @@ import {
   createLocalCoreDevShellStoreBinding,
   createLocalCoreRunnerRuntimeFactory,
 } from "./executionRuntime.js";
+import { DesktopBrowserService } from "./desktopBrowserService.js";
+import { LocalCoreDesktopBrowserAuthorityResolver } from "./desktopBrowserAuthority.js";
+import type { BrowserServicePort } from "../browser/contracts.js";
+import { getDesktopBrowserRuntimeExecutableRelativePaths } from "../browser/runtimeReleaseManifest.js";
 import {
+  mutateLocalCoreLocalSettings,
   patchLocalCoreLocalSettings,
   readLocalCoreLocalSettings,
 } from "./localSettings.js";
@@ -198,6 +207,8 @@ export interface StartLocalCoreApiServerOptions extends EnsureLocalCoreReadyOpti
    * fetch transport.
    */
   modelQualificationFetchImpl?: typeof fetch | undefined;
+  /** Test/embedding override. Production constructs the packaged Desktop host. */
+  browserService?: BrowserServicePort | undefined;
 }
 
 interface LocalCoreExecutionBundle {
@@ -264,6 +275,7 @@ export async function startLocalCoreApiServer(
   let socketPrepared = false;
   let executionBundle: LocalCoreExecutionBundle | undefined;
   let projectRunRegistry: DesktopProjectRunRegistry | undefined;
+  let desktopBrowserService: DesktopBrowserService | undefined;
   let server: http.Server | undefined;
   let heartbeat: NodeJS.Timeout | undefined;
   let idleTimeout: NodeJS.Timeout | undefined;
@@ -274,6 +286,8 @@ export async function startLocalCoreApiServer(
   let admissionClosed = false;
   let quiescedShutdownAccepted = false;
   let closePromise: Promise<void> | undefined;
+  const browserAuthorityCriticalSection =
+    new LocalCoreBrowserAuthorityCriticalSection();
   const projectRunEventClients = new Set<ProjectRunEventClient>();
   const mcpOAuthSessions = options.credentialStore?.available
     ? new LocalCoreMcpOAuthSessionManager({
@@ -295,10 +309,20 @@ export async function startLocalCoreApiServer(
     credentialStore:
       options.credentialStore ?? new UnavailableLocalCoreCredentialStore(),
     coreVersion: options.coreVersion,
+    beforeAuthorityRemoval: async (scope) => {
+      await desktopBrowserService?.closeAuthority(scope);
+    },
+    withAuthorityMutation: async (action) =>
+      await browserAuthorityCriticalSection.run(action),
   });
   const kestrelOneAccount = new LocalCoreKestrelOneAccountManager({
     credentialStore:
       options.credentialStore ?? new UnavailableLocalCoreCredentialStore(),
+    beforeCredentialReplace: async () => {
+      await desktopBrowserService?.close();
+    },
+    withCredentialReplacement: async (action) =>
+      await browserAuthorityCriticalSection.run(action),
   });
 
   try {
@@ -318,17 +342,6 @@ export async function startLocalCoreApiServer(
     await rm(paths.apiSocketPath, { force: true });
     socketPrepared = true;
     const token = await ensureApiToken(paths.apiTokenPath);
-    try {
-      executionBundle = await createExecutionBundle({
-        status,
-        options,
-        token,
-        runtimeConfigurationStore,
-      });
-    } catch (error) {
-      status = markExecutionUnavailable(status, error);
-    }
-
     projectRunRegistry = new DesktopProjectRunRegistry({
       ledger: createDesktopProjectRunLedger({
         ledgerPath: path.join(
@@ -343,6 +356,33 @@ export async function startLocalCoreApiServer(
     await withLocalCoreDaemonStoreOwnership(async () => {
       await projectRunRegistry!.hydrate();
     });
+    const browserService =
+      options.browserService ??
+      createPackagedDesktopBrowserService({
+        homePath: home.homePath,
+        repoRoot: options.repoRoot,
+        projectRunRegistry,
+        account: kestrelOneAccount,
+        desktopEnvironments,
+        platform: options.platform ?? process.platform,
+        withAuthorityAdmission: async (action) =>
+          await browserAuthorityCriticalSection.run(action),
+      });
+    if (browserService instanceof DesktopBrowserService) {
+      desktopBrowserService = browserService;
+      await browserService.initialize();
+    }
+    try {
+      executionBundle = await createExecutionBundle({
+        status,
+        options,
+        token,
+        runtimeConfigurationStore,
+        browserService,
+      });
+    } catch (error) {
+      status = markExecutionUnavailable(status, error);
+    }
 
     const beginMaintenance = <T>(input: {
       kind: LocalCoreMaintenanceOperation["kind"];
@@ -525,6 +565,7 @@ export async function startLocalCoreApiServer(
               options,
               token,
               runtimeConfigurationStore,
+              browserService,
             });
             executionBundle = nextBundle;
             return next;
@@ -575,6 +616,7 @@ export async function startLocalCoreApiServer(
               token,
               runtimeConfigurationStore,
               runtimeConfiguration,
+              browserService,
             });
             executionBundle = nextBundle;
             return runtimeConfiguration;
@@ -628,6 +670,7 @@ export async function startLocalCoreApiServer(
               options,
               token,
               runtimeConfigurationStore,
+              browserService,
             });
             if (nextBundle === undefined) {
               throw new Error(
@@ -741,6 +784,7 @@ export async function startLocalCoreApiServer(
           googleWorkspaceOAuthSessions,
           desktopEnvironments,
           kestrelOneAccount,
+          desktopBrowserService,
         });
       });
     });
@@ -781,6 +825,7 @@ export async function startLocalCoreApiServer(
         await googleWorkspaceOAuthSessions?.close();
         await kestrelOneAccount.close();
         await desktopEnvironments.close();
+        await desktopBrowserService?.close();
         const activeExecution = executionBundle;
         executionBundle = undefined;
         await closeServer({
@@ -853,6 +898,7 @@ export async function startLocalCoreApiServer(
     await googleWorkspaceOAuthSessions?.close();
     await kestrelOneAccount.close();
     await desktopEnvironments.close();
+    await desktopBrowserService?.close();
     if (idleTimeout !== undefined) {
       clearTimeout(idleTimeout);
     }
@@ -882,6 +928,7 @@ async function createExecutionBundle(input: {
   token: string;
   runtimeConfigurationStore: LocalCoreRuntimeConfigurationStore;
   runtimeConfiguration?: LocalCoreRuntimeConfigurationV1 | undefined;
+  browserService?: BrowserServicePort | undefined;
 }): Promise<LocalCoreExecutionBundle | undefined> {
   if (input.status.state === "blocked") {
     return;
@@ -934,6 +981,9 @@ async function createExecutionBundle(input: {
       runtimeEnvironmentResolver,
       homePath: input.status.home.homePath,
       devShellStoreBinding: createLocalCoreDevShellStoreBinding(storeHandle),
+      ...(input.browserService === undefined
+        ? {}
+        : { browserService: input.browserService }),
       ...(input.options.credentialStore !== undefined
         ? { credentialStore: input.options.credentialStore }
         : {}),
@@ -1084,6 +1134,89 @@ async function listenOnSocket(
     server.once("listening", onListening);
     server.listen(socketPath);
   });
+}
+
+function createPackagedDesktopBrowserService(input: {
+  homePath: string;
+  repoRoot?: string | undefined;
+  projectRunRegistry: DesktopProjectRunRegistry;
+  account: LocalCoreKestrelOneAccountManager;
+  desktopEnvironments: LocalCoreDesktopEnvironmentManager;
+  platform: NodeJS.Platform;
+  withAuthorityAdmission: <T>(action: () => Promise<T>) => Promise<T>;
+}): DesktopBrowserService | undefined {
+  if (input.platform !== "darwin") return;
+  const resourcesRoot = resolvePackagedDesktopBrowserResourcesRoot({
+    repoRoot: input.repoRoot,
+    platform: input.platform,
+  });
+  if (resourcesRoot === undefined) return;
+  const relative = getDesktopBrowserRuntimeExecutableRelativePaths();
+  const engineExecutablePath = path.join(
+    resourcesRoot,
+    relative.engineExecutablePath,
+  );
+  const chromeExecutablePath = path.join(
+    resourcesRoot,
+    relative.chromeExecutablePath,
+  );
+  if (!existsSync(engineExecutablePath) || !existsSync(chromeExecutablePath))
+    return;
+  return new DesktopBrowserService({
+    homePath: input.homePath,
+    engineExecutablePath,
+    chromeExecutablePath,
+    projectRunRegistry: input.projectRunRegistry,
+    authorityResolver: new LocalCoreDesktopBrowserAuthorityResolver({
+      homePath: input.homePath,
+      account: input.account,
+      environments: input.desktopEnvironments,
+    }),
+    withAuthorityAdmission: input.withAuthorityAdmission,
+  });
+}
+
+export class LocalCoreBrowserAuthorityCriticalSection {
+  readonly #scope = new AsyncLocalStorage<symbol>();
+  #owner: symbol | undefined;
+  #tail: Promise<void> = Promise.resolve();
+
+  async run<T>(action: () => Promise<T>): Promise<T> {
+    const inherited = this.#scope.getStore();
+    if (inherited !== undefined && inherited === this.#owner) {
+      return await action();
+    }
+    const token = Symbol("local-core-browser-authority");
+    const result = this.#tail.then(async () => {
+      this.#owner = token;
+      try {
+        return await this.#scope.run(token, action);
+      } finally {
+        this.#owner = undefined;
+      }
+    });
+    this.#tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await result;
+  }
+}
+
+export function resolvePackagedDesktopBrowserResourcesRoot(input: {
+  repoRoot?: string | undefined;
+  platform: NodeJS.Platform;
+}): string | undefined {
+  if (input.platform !== "darwin") return;
+  const repoRoot = normalizeString(input.repoRoot);
+  if (
+    repoRoot === undefined ||
+    path.basename(repoRoot) !== "payload" ||
+    path.basename(path.dirname(repoRoot)) !== "kestrel-runtime"
+  ) {
+    return;
+  }
+  return path.dirname(path.dirname(repoRoot));
 }
 
 async function cleanupFailedLocalCoreStartup(input: {
@@ -1254,6 +1387,7 @@ async function handleRequest(input: {
     | undefined;
   desktopEnvironments: LocalCoreDesktopEnvironmentManager;
   kestrelOneAccount: LocalCoreKestrelOneAccountManager;
+  desktopBrowserService?: DesktopBrowserService | undefined;
 }): Promise<void> {
   try {
     const method = input.request.method ?? "GET";
@@ -1272,6 +1406,100 @@ async function handleRequest(input: {
           "Local Core API token is missing or invalid.",
         ),
       );
+      return;
+    }
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/browser/personal-domain-revisions/adopt"
+    ) {
+      const body = requireObjectBody(
+        await readJsonBody(input.request),
+        "Desktop Browser revision adoption",
+      );
+      const allowedAdoptionKeys = new Set([
+        "accountId",
+        "environmentId",
+        "personalRevision",
+        "threadId",
+        "sessionId",
+      ]);
+      if (
+        Object.keys(body).some((key) => !allowedAdoptionKeys.has(key)) ||
+        !Object.hasOwn(body, "accountId") ||
+        !Object.hasOwn(body, "environmentId") ||
+        !Object.hasOwn(body, "personalRevision")
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "DESKTOP_BROWSER_REVISION_INVALID",
+          "Desktop Browser revision adoption fields are invalid.",
+        );
+      }
+      const hasThreadId =
+        typeof body.threadId === "string" && body.threadId.trim().length > 0;
+      const hasSessionId =
+        typeof body.sessionId === "string" && body.sessionId.trim().length > 0;
+      if (
+        hasThreadId !== hasSessionId ||
+        (body.threadId !== undefined && !hasThreadId) ||
+        (body.sessionId !== undefined && !hasSessionId)
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "DESKTOP_BROWSER_REVISION_INVALID",
+          "Desktop Browser exact adoption requires threadId and sessionId together.",
+        );
+      }
+      const personalRevision = body.personalRevision;
+      if (
+        !Number.isSafeInteger(personalRevision) ||
+        (personalRevision as number) < 0
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "DESKTOP_BROWSER_REVISION_INVALID",
+          "Desktop Browser personal revision is invalid.",
+        );
+      }
+      const accountId = normalizeString(body.accountId);
+      const environmentId = normalizeString(body.environmentId);
+      if (accountId === undefined || environmentId === undefined) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "DESKTOP_BROWSER_REVISION_INVALID",
+          "Desktop Browser revision adoption identity is invalid.",
+        );
+      }
+      if (
+        input.desktopBrowserService === undefined &&
+        (hasThreadId || hasSessionId)
+      ) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "DESKTOP_BROWSER_UNAVAILABLE",
+          "The exact Desktop Browser Session is unavailable for revision adoption.",
+        );
+      }
+      writeJson(input.response, 200, {
+        ok: true,
+        adoption:
+          input.desktopBrowserService === undefined
+            ? {
+                personalRevision: personalRevision as number,
+                closedUnauthorizedConnections: 0,
+              }
+            : await input.desktopBrowserService.adoptPersonalRevision({
+                accountId,
+                environmentId,
+                personalRevision: personalRevision as number,
+                ...(hasThreadId
+                  ? { threadId: (body.threadId as string).trim() }
+                  : {}),
+                ...(hasSessionId
+                  ? { sessionId: (body.sessionId as string).trim() }
+                  : {}),
+              }),
+      });
       return;
     }
 
@@ -1591,7 +1819,7 @@ async function handleRequest(input: {
       let settings: Record<string, unknown>;
       if (patch.modelPolicy !== undefined) {
         await input.updateRuntimeConfiguration(async () => {
-          await patchLocalCoreLocalSettings(
+          await patchLocalCoreSettings(
             input.status.home.homePath,
             patch.localSettings,
           );
@@ -1606,7 +1834,7 @@ async function handleRequest(input: {
         );
       } else {
         settings = await input.withRuntimeConfigurationMutation(async () => {
-          await patchLocalCoreLocalSettings(
+          await patchLocalCoreSettings(
             input.status.home.homePath,
             patch.localSettings,
           );
@@ -3304,6 +3532,114 @@ async function readSettings(
     ...localSettings,
     modelPolicy: runtimeConfiguration.modelPolicy,
   };
+}
+
+async function patchLocalCoreSettings(
+  homePath: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  if (Object.keys(patch).length === 0) return;
+  await mutateLocalCoreLocalSettings(homePath, (current) => {
+    if (Object.hasOwn(patch, "browserPersonalDomains")) {
+      assertCurrentDesktopBrowserPersonalDomainTransition(
+        current.browserPersonalDomains,
+        patch.browserPersonalDomains,
+      );
+    }
+    return {
+      settings: { ...current, ...patch },
+      result: undefined,
+    };
+  });
+}
+
+function assertCurrentDesktopBrowserPersonalDomainTransition(
+  currentValue: unknown,
+  nextValue: unknown,
+): void {
+  const empty: DesktopBrowserPersonalDomainsV1 = {
+    version: DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
+    partitions: [],
+  };
+  const current = parseDesktopBrowserPersonalDomains(currentValue ?? empty);
+  const next = parseDesktopBrowserPersonalDomains(nextValue);
+  const currentByScope = new Map(
+    current.partitions.map((partition) => [
+      `${partition.accountId}\u0000${partition.environmentId}`,
+      partition,
+    ]),
+  );
+  const nextByScope = new Map(
+    next.partitions.map((partition) => [
+      `${partition.accountId}\u0000${partition.environmentId}`,
+      partition,
+    ]),
+  );
+  const stale =
+    current.partitions.length !== next.partitions.length ||
+    next.partitions.some((partition) => {
+      const prior = currentByScope.get(
+        `${partition.accountId}\u0000${partition.environmentId}`,
+      );
+      if (prior === undefined) return true;
+      if (JSON.stringify(prior) === JSON.stringify(partition)) return false;
+      return (
+        partition.revision !== prior.revision + 1 ||
+        !isExplicitDesktopBrowserPersonalDomainRevocation(prior, partition)
+      );
+    });
+  if (stale) {
+    throw new LocalCoreApiRequestError(
+      409,
+      "LOCAL_CORE_BROWSER_SETTINGS_STALE",
+      "Browser personal-domain settings may only apply a current explicit revocation.",
+    );
+  }
+}
+
+function isExplicitDesktopBrowserPersonalDomainRevocation(
+  prior: DesktopBrowserPersonalDomainsV1["partitions"][number],
+  next: DesktopBrowserPersonalDomainsV1["partitions"][number],
+): boolean {
+  if (
+    prior.accountId !== next.accountId ||
+    prior.environmentId !== next.environmentId ||
+    prior.domains.length !== next.domains.length
+  ) {
+    return false;
+  }
+  const nextByDomain = new Map(
+    next.domains.map((record) => [record.authority.canonicalDomain, record]),
+  );
+  let revoked = 0;
+  for (const record of prior.domains) {
+    const replacement = nextByDomain.get(record.authority.canonicalDomain);
+    if (replacement === undefined) return false;
+    if (JSON.stringify(record) === JSON.stringify(replacement)) continue;
+    const {
+      state: _priorState,
+      updatedAt: _priorUpdatedAt,
+      revokedAt: _priorRevokedAt,
+      ...priorStable
+    } = record;
+    const {
+      state: _nextState,
+      updatedAt: _nextUpdatedAt,
+      revokedAt: _nextRevokedAt,
+      ...nextStable
+    } = replacement;
+    if (
+      record.state !== "active" ||
+      record.revokedAt !== undefined ||
+      replacement.state !== "revoked" ||
+      replacement.revokedAt !== replacement.updatedAt ||
+      JSON.stringify(priorStable) !== JSON.stringify(nextStable)
+    ) {
+      return false;
+    }
+    revoked += 1;
+  }
+  return revoked > 0;
 }
 
 async function resolveCoreOwnedReadyOptions(

@@ -8,8 +8,8 @@ import {
   createDefaultDesktopSettings,
   projectDesktopBrowserPersonalDomains,
   readDesktopSettings,
-  rememberDesktopBrowserPersonalDomain,
   revokeDesktopBrowserPersonalDomain,
+  type DesktopSettings,
   writeDesktopSettings,
 } from "../src/settingsStore.js";
 import { DesktopBrowserPersonalDomainService } from "../src/browserPersonalDomainService.js";
@@ -18,14 +18,41 @@ import {
   parseDesktopBrowserPersonalDomainRevokeRequest,
 } from "../../../src/desktopShell/contracts.js";
 import type { KestrelOneAccountStatus } from "../../../src/localCore/kestrelOneAccount.js";
+import { rememberDesktopBrowserPersonalDomainAuthority } from "../../../src/desktopShell/browserPersonalDomains.js";
 
 const ACCOUNT_A = "kestrel-account-a";
 const ACCOUNT_B = "kestrel-account-b";
 const ENVIRONMENT_A = "environment-a";
 const ENVIRONMENT_B = "environment-b";
 
+function rememberDesktopBrowserPersonalDomain(
+  settings: DesktopSettings,
+  input: {
+    accountId: string;
+    environmentId: string;
+    destination: string;
+    approvalId: string;
+    approvedAt: string;
+  },
+) {
+  const mutation = rememberDesktopBrowserPersonalDomainAuthority(
+    settings.browserPersonalDomains,
+    input,
+  );
+  return {
+    settings:
+      mutation.disposition === "unchanged"
+        ? settings
+        : { ...settings, browserPersonalDomains: mutation.value },
+    projection: mutation.projection,
+    disposition: mutation.disposition,
+  };
+}
+
 test("Desktop schema 13 migrates older settings to empty partitioned Browser authority", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-settings-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-browser-settings-"),
+  );
   const settingsPath = path.join(directory, "settings.json");
   await writeFile(
     settingsPath,
@@ -45,11 +72,16 @@ test("Desktop schema 13 migrates older settings to empty partitioned Browser aut
     browserPersonalDomains: unknown;
   };
   assert.equal(persisted.version, 13);
-  assert.deepEqual(persisted.browserPersonalDomains, migrated.browserPersonalDomains);
+  assert.deepEqual(
+    persisted.browserPersonalDomains,
+    migrated.browserPersonalDomains,
+  );
 });
 
 test("Desktop schema 13 rejects malformed or noncanonical Browser partitions", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-settings-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-browser-settings-"),
+  );
   const settingsPath = path.join(directory, "settings.json");
   await writeFile(
     settingsPath,
@@ -58,31 +90,35 @@ test("Desktop schema 13 rejects malformed or noncanonical Browser partitions", a
       selectedProvider: "ollama",
       browserPersonalDomains: {
         version: "desktop_browser_personal_domains_v1",
-        partitions: [{
-          version: "desktop_browser_personal_domain_partition_v1",
-          accountId: ACCOUNT_A,
-          environmentId: ENVIRONMENT_A,
-          revision: 1,
-          domains: [{
-            version: "desktop_browser_personal_domain_record_v1",
-            authority: {
-              version: "browser_public_domain_authority_v1",
-              scheme: "https",
-              canonicalDomain: "WWW.Example.com",
-              includeSubdomains: true,
-              port: 443,
-            },
-            state: "active",
-            provenance: {
-              version: "desktop_browser_personal_domain_provenance_v1",
-              source: "browser.request_grant",
-              approvalId: "approval-1",
-              approvedAt: "2026-08-29T12:00:00.000Z",
-            },
-            createdAt: "2026-08-29T12:00:00.000Z",
-            updatedAt: "2026-08-29T12:00:00.000Z",
-          }],
-        }],
+        partitions: [
+          {
+            version: "desktop_browser_personal_domain_partition_v1",
+            accountId: ACCOUNT_A,
+            environmentId: ENVIRONMENT_A,
+            revision: 1,
+            domains: [
+              {
+                version: "desktop_browser_personal_domain_record_v1",
+                authority: {
+                  version: "browser_public_domain_authority_v1",
+                  scheme: "https",
+                  canonicalDomain: "WWW.Example.com",
+                  includeSubdomains: true,
+                  port: 443,
+                },
+                state: "active",
+                provenance: {
+                  version: "desktop_browser_personal_domain_provenance_v1",
+                  source: "browser.request_grant",
+                  approvalId: "approval-1",
+                  approvedAt: "2026-08-29T12:00:00.000Z",
+                },
+                createdAt: "2026-08-29T12:00:00.000Z",
+                updatedAt: "2026-08-29T12:00:00.000Z",
+              },
+            ],
+          },
+        ],
       },
     })}\n`,
     "utf8",
@@ -105,14 +141,19 @@ test("Desktop remembers a canonical domain idempotently in the exact account and
   assert.equal(created.disposition, "created");
   assert.equal(created.projection.revision, 1);
   assert.equal(created.projection.authority.revision, "1");
-  assert.deepEqual(created.projection.authority.activeDomains, [{
-    version: "browser_public_domain_authority_v1",
-    scheme: "https",
-    canonicalDomain: "example.com",
-    includeSubdomains: true,
-    port: 443,
-  }]);
-  assert.equal(created.projection.domains[0]?.provenance.approvalId, "approval-a-1");
+  assert.deepEqual(created.projection.authority.activeDomains, [
+    {
+      version: "browser_public_domain_authority_v1",
+      scheme: "https",
+      canonicalDomain: "example.com",
+      includeSubdomains: true,
+      port: 443,
+    },
+  ]);
+  assert.equal(
+    created.projection.domains[0]?.provenance.approvalId,
+    "approval-a-1",
+  );
 
   const retried = rememberDesktopBrowserPersonalDomain(created.settings, {
     accountId: ACCOUNT_A,
@@ -124,17 +165,23 @@ test("Desktop remembers a canonical domain idempotently in the exact account and
   assert.equal(retried.disposition, "unchanged");
   assert.equal(retried.settings, created.settings);
   assert.equal(retried.projection.revision, 1);
-  assert.equal(retried.projection.domains[0]?.provenance.approvalId, "approval-a-1");
+  assert.equal(
+    retried.projection.domains[0]?.provenance.approvalId,
+    "approval-a-1",
+  );
 });
 
 test("Desktop Browser reads and writes never cross account or Environment partitions", () => {
-  const first = rememberDesktopBrowserPersonalDomain(createDefaultDesktopSettings(), {
-    accountId: ACCOUNT_A,
-    environmentId: ENVIRONMENT_A,
-    destination: "https://alpha.example.com",
-    approvalId: "approval-a",
-    approvedAt: "2026-08-29T12:00:00.000Z",
-  });
+  const first = rememberDesktopBrowserPersonalDomain(
+    createDefaultDesktopSettings(),
+    {
+      accountId: ACCOUNT_A,
+      environmentId: ENVIRONMENT_A,
+      destination: "https://alpha.example.com",
+      approvalId: "approval-a",
+      approvedAt: "2026-08-29T12:00:00.000Z",
+    },
+  );
   const second = rememberDesktopBrowserPersonalDomain(first.settings, {
     accountId: ACCOUNT_B,
     environmentId: ENVIRONMENT_A,
@@ -150,40 +197,58 @@ test("Desktop Browser reads and writes never cross account or Environment partit
     approvedAt: "2026-08-29T12:02:00.000Z",
   });
 
-  const accountAEnvironmentA = projectDesktopBrowserPersonalDomains(third.settings, {
-    accountId: ACCOUNT_A,
-    environmentId: ENVIRONMENT_A,
-  });
+  const accountAEnvironmentA = projectDesktopBrowserPersonalDomains(
+    third.settings,
+    {
+      accountId: ACCOUNT_A,
+      environmentId: ENVIRONMENT_A,
+    },
+  );
   assert.deepEqual(
-    accountAEnvironmentA.domains.map((record) => record.authority.canonicalDomain),
+    accountAEnvironmentA.domains.map(
+      (record) => record.authority.canonicalDomain,
+    ),
     ["example.com"],
   );
-  assert.equal(JSON.stringify(accountAEnvironmentA).includes("vercel.app"), false);
-  assert.equal(JSON.stringify(accountAEnvironmentA).includes("example.org"), false);
+  assert.equal(
+    JSON.stringify(accountAEnvironmentA).includes("vercel.app"),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(accountAEnvironmentA).includes("example.org"),
+    false,
+  );
 
-  const signedOutOrSwitchedAccount = projectDesktopBrowserPersonalDomains(third.settings, {
-    accountId: ACCOUNT_B,
-    environmentId: ENVIRONMENT_B,
-  });
+  const signedOutOrSwitchedAccount = projectDesktopBrowserPersonalDomains(
+    third.settings,
+    {
+      accountId: ACCOUNT_B,
+      environmentId: ENVIRONMENT_B,
+    },
+  );
   assert.equal(signedOutOrSwitchedAccount.revision, 0);
   assert.deepEqual(signedOutOrSwitchedAccount.authority.activeDomains, []);
   assert.throws(
-    () => projectDesktopBrowserPersonalDomains(third.settings, {
-      accountId: ACCOUNT_A,
-      environmentId: " environment-a",
-    }),
+    () =>
+      projectDesktopBrowserPersonalDomains(third.settings, {
+        accountId: ACCOUNT_A,
+        environmentId: " environment-a",
+      }),
     /environmentId must be a non-empty canonical string/u,
   );
 });
 
 test("Desktop revoke and reactivation advance only the affected personal revision", () => {
-  const created = rememberDesktopBrowserPersonalDomain(createDefaultDesktopSettings(), {
-    accountId: ACCOUNT_A,
-    environmentId: ENVIRONMENT_A,
-    destination: "https://example.com",
-    approvalId: "approval-1",
-    approvedAt: "2026-08-29T12:00:00.000Z",
-  });
+  const created = rememberDesktopBrowserPersonalDomain(
+    createDefaultDesktopSettings(),
+    {
+      accountId: ACCOUNT_A,
+      environmentId: ENVIRONMENT_A,
+      destination: "https://example.com",
+      approvalId: "approval-1",
+      approvedAt: "2026-08-29T12:00:00.000Z",
+    },
+  );
   const revoked = revokeDesktopBrowserPersonalDomain(created.settings, {
     accountId: ACCOUNT_A,
     environmentId: ENVIRONMENT_A,
@@ -215,20 +280,31 @@ test("Desktop revoke and reactivation advance only the affected personal revisio
   assert.equal(reactivated.projection.revision, 3);
   assert.equal(reactivated.projection.domains[0]?.state, "active");
   assert.equal(reactivated.projection.domains[0]?.revokedAt, undefined);
-  assert.equal(reactivated.projection.domains[0]?.createdAt, "2026-08-29T12:00:00.000Z");
-  assert.equal(reactivated.projection.domains[0]?.provenance.approvalId, "approval-2");
+  assert.equal(
+    reactivated.projection.domains[0]?.createdAt,
+    "2026-08-29T12:00:00.000Z",
+  );
+  assert.equal(
+    reactivated.projection.domains[0]?.provenance.approvalId,
+    "approval-2",
+  );
 });
 
 test("Desktop persists all partitions internally but projects only an authorized exact partition", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-settings-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-browser-settings-"),
+  );
   const settingsPath = path.join(directory, "settings.json");
-  const accountA = rememberDesktopBrowserPersonalDomain(createDefaultDesktopSettings(), {
-    accountId: ACCOUNT_A,
-    environmentId: ENVIRONMENT_A,
-    destination: "https://example.com",
-    approvalId: "approval-a",
-    approvedAt: "2026-08-29T12:00:00.000Z",
-  });
+  const accountA = rememberDesktopBrowserPersonalDomain(
+    createDefaultDesktopSettings(),
+    {
+      accountId: ACCOUNT_A,
+      environmentId: ENVIRONMENT_A,
+      destination: "https://example.com",
+      approvalId: "approval-a",
+      approvedAt: "2026-08-29T12:00:00.000Z",
+    },
+  );
   const accountB = rememberDesktopBrowserPersonalDomain(accountA.settings, {
     accountId: ACCOUNT_B,
     environmentId: ENVIRONMENT_A,
@@ -253,28 +329,30 @@ test("Desktop persists all partitions internally but projects only an authorized
 
 test("Desktop Browser IPC requests cannot supply an account identity", () => {
   assert.throws(
-    () => parseDesktopBrowserPersonalDomainListRequest({
-      accountId: ACCOUNT_B,
-      environmentId: ENVIRONMENT_A,
-    }),
+    () =>
+      parseDesktopBrowserPersonalDomainListRequest({
+        accountId: ACCOUNT_B,
+        environmentId: ENVIRONMENT_A,
+      }),
     /unsupported field 'accountId'/u,
   );
   assert.throws(
-    () => parseDesktopBrowserPersonalDomainRevokeRequest({
-      accountId: ACCOUNT_B,
-      environmentId: ENVIRONMENT_A,
-      canonicalDomain: "example.com",
-    }),
+    () =>
+      parseDesktopBrowserPersonalDomainRevokeRequest({
+        accountId: ACCOUNT_B,
+        environmentId: ENVIRONMENT_A,
+        canonicalDomain: "example.com",
+      }),
     /unsupported field 'accountId'/u,
   );
 });
 
-test("Desktop Browser service denies signed-out reads and mutations", async () => {
+test("Desktop Browser service denies signed-out reads and revocations", async () => {
   let settings = createDefaultDesktopSettings();
   let persisted = 0;
   const service = new DesktopBrowserPersonalDomainService({
     resolveAccount: async () => ({ status: "signed_out" }),
-    readSettings: () => settings,
+    readSettings: async () => settings,
     persistSettings: async (next) => {
       persisted += 1;
       settings = next;
@@ -284,15 +362,6 @@ test("Desktop Browser service denies signed-out reads and mutations", async () =
 
   await assert.rejects(
     service.list(ENVIRONMENT_A),
-    /Kestrel One sign-in is required/u,
-  );
-  await assert.rejects(
-    service.remember({
-      environmentId: ENVIRONMENT_A,
-      destination: "https://example.com",
-      approvalId: "approval-signed-out",
-      approvedAt: "2026-08-29T12:00:00.000Z",
-    }),
     /Kestrel One sign-in is required/u,
   );
   await assert.rejects(
@@ -307,33 +376,38 @@ test("Desktop Browser service denies signed-out reads and mutations", async () =
 });
 
 test("Desktop Browser service re-resolves account and Environment authority on every operation", async () => {
-  let settings = createDefaultDesktopSettings();
+  let settings = rememberDesktopBrowserPersonalDomain(
+    createDefaultDesktopSettings(),
+    {
+      accountId: ACCOUNT_A,
+      environmentId: ENVIRONMENT_A,
+      destination: "https://example.com",
+      approvalId: "approval-account-a",
+      approvedAt: "2026-08-29T12:00:00.000Z",
+    },
+  ).settings;
   let account: KestrelOneAccountStatus = signedInAccount(ACCOUNT_A, [
     ENVIRONMENT_A,
     ENVIRONMENT_B,
   ]);
   const service = new DesktopBrowserPersonalDomainService({
     resolveAccount: async () => account,
-    readSettings: () => settings,
+    readSettings: async () => settings,
     persistSettings: async (next) => {
       settings = next;
     },
     adoptionCoordinator: noActiveDesktopBrowserSessions(),
   });
 
-  await service.remember({
-    environmentId: ENVIRONMENT_A,
-    destination: "https://example.com",
-    approvalId: "approval-account-a",
-    approvedAt: "2026-08-29T12:00:00.000Z",
-  });
   account = signedInAccount(ACCOUNT_B, [ENVIRONMENT_A, ENVIRONMENT_B]);
   assert.deepEqual((await service.list(ENVIRONMENT_A)).domains, []);
   assert.deepEqual(
-    (await service.revoke({
-      environmentId: ENVIRONMENT_A,
-      canonicalDomain: "example.com",
-    })).domains,
+    (
+      await service.revoke({
+        environmentId: ENVIRONMENT_A,
+        canonicalDomain: "example.com",
+      })
+    ).domains,
     [],
   );
 
@@ -354,18 +428,26 @@ test("Desktop Browser service re-resolves account and Environment authority on e
 });
 
 test("Desktop Browser service aborts a mutation when the account switches before persistence", async () => {
-  let settings = createDefaultDesktopSettings();
+  let settings = rememberDesktopBrowserPersonalDomain(
+    createDefaultDesktopSettings(),
+    {
+      accountId: ACCOUNT_A,
+      environmentId: ENVIRONMENT_A,
+      destination: "https://example.com",
+      approvalId: "approval-switch",
+      approvedAt: "2026-08-29T12:00:00.000Z",
+    },
+  ).settings;
   let resolutions = 0;
   let persisted = 0;
   const service = new DesktopBrowserPersonalDomainService({
     resolveAccount: async () => {
       resolutions += 1;
-      return signedInAccount(
-        resolutions === 1 ? ACCOUNT_A : ACCOUNT_B,
-        [ENVIRONMENT_A],
-      );
+      return signedInAccount(resolutions === 1 ? ACCOUNT_A : ACCOUNT_B, [
+        ENVIRONMENT_A,
+      ]);
     },
-    readSettings: () => settings,
+    readSettings: async () => settings,
     persistSettings: async (next) => {
       persisted += 1;
       settings = next;
@@ -374,26 +456,38 @@ test("Desktop Browser service aborts a mutation when the account switches before
   });
 
   await assert.rejects(
-    service.remember({
+    service.revoke({
       environmentId: ENVIRONMENT_A,
-      destination: "https://example.com",
-      approvalId: "approval-switch",
-      approvedAt: "2026-08-29T12:00:00.000Z",
+      canonicalDomain: "example.com",
+      revokedAt: "2026-08-29T12:01:00.000Z",
     }),
     /account changed before Browser settings were saved/u,
   );
   assert.equal(persisted, 0);
-  assert.deepEqual(settings.browserPersonalDomains.partitions, []);
+  assert.equal(settings.browserPersonalDomains.partitions.length, 1);
+  assert.equal(
+    settings.browserPersonalDomains.partitions[0]?.domains[0]?.state,
+    "active",
+  );
 });
 
-test("Desktop Browser service persists before adoption and waits for exact revision confirmation", async () => {
-  let settings = createDefaultDesktopSettings();
+test("Desktop Browser revocation persists before adoption and waits for exact revision confirmation", async () => {
+  let settings = rememberDesktopBrowserPersonalDomain(
+    createDefaultDesktopSettings(),
+    {
+      accountId: ACCOUNT_A,
+      environmentId: ENVIRONMENT_A,
+      destination: "https://example.com",
+      approvalId: "approval-ordered",
+      approvedAt: "2026-08-29T12:00:00.000Z",
+    },
+  ).settings;
   const operations: string[] = [];
   let releaseAdoption: (() => void) | undefined;
   let resolved = false;
   const service = new DesktopBrowserPersonalDomainService({
     resolveAccount: async () => signedInAccount(ACCOUNT_A, [ENVIRONMENT_A]),
-    readSettings: () => settings,
+    readSettings: async () => settings,
     persistSettings: async (next) => {
       operations.push("persist:1");
       settings = next;
@@ -412,31 +506,41 @@ test("Desktop Browser service persists before adoption and waits for exact revis
     },
   });
 
-  const remembering = service.remember({
-    environmentId: ENVIRONMENT_A,
-    destination: "https://example.com",
-    approvalId: "approval-ordered",
-    approvedAt: "2026-08-29T12:00:00.000Z",
-  }).then((result) => {
-    resolved = true;
-    return result;
-  });
+  const revoking = service
+    .revoke({
+      environmentId: ENVIRONMENT_A,
+      canonicalDomain: "example.com",
+      revokedAt: "2026-08-29T12:01:00.000Z",
+    })
+    .then((result) => {
+      resolved = true;
+      return result;
+    });
 
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(operations, ["persist:1", "adopt:1"]);
+  assert.deepEqual(operations, ["persist:1", "adopt:2"]);
   assert.equal(resolved, false);
   releaseAdoption?.();
-  assert.equal((await remembering).revision, 1);
+  assert.equal((await revoking).revision, 2);
   assert.equal(resolved, true);
 });
 
-test("Desktop Browser remember and revoke fail closed on adoption failure and retry an unchanged revision", async () => {
-  let settings = createDefaultDesktopSettings();
+test("Desktop Browser revoke fails closed on adoption failure and retries an unchanged revision", async () => {
+  let settings = rememberDesktopBrowserPersonalDomain(
+    createDefaultDesktopSettings(),
+    {
+      accountId: ACCOUNT_A,
+      environmentId: ENVIRONMENT_A,
+      destination: "https://example.com",
+      approvalId: "approval-retry",
+      approvedAt: "2026-08-29T12:00:00.000Z",
+    },
+  ).settings;
   let failAdoption = true;
   const adoptedRevisions: number[] = [];
   const service = new DesktopBrowserPersonalDomainService({
     resolveAccount: async () => signedInAccount(ACCOUNT_A, [ENVIRONMENT_A]),
-    readSettings: () => settings,
+    readSettings: async () => settings,
     persistSettings: async (next) => {
       settings = next;
     },
@@ -451,29 +555,12 @@ test("Desktop Browser remember and revoke fail closed on adoption failure and re
       },
     },
   });
-  const request = {
-    environmentId: ENVIRONMENT_A,
-    destination: "https://example.com",
-    approvalId: "approval-retry",
-    approvedAt: "2026-08-29T12:00:00.000Z",
-  };
-
-  await assert.rejects(service.remember(request), /host unavailable/u);
-  assert.equal(
-    projectDesktopBrowserPersonalDomains(settings, {
-      accountId: ACCOUNT_A,
-      environmentId: ENVIRONMENT_A,
-    }).revision,
-    1,
-  );
-  failAdoption = false;
-  assert.equal((await service.remember(request)).revision, 1);
-  failAdoption = true;
   const revocation = {
     environmentId: ENVIRONMENT_A,
     canonicalDomain: "example.com",
     revokedAt: "2026-08-29T12:01:00.000Z",
   };
+
   await assert.rejects(service.revoke(revocation), /host unavailable/u);
   assert.equal(
     projectDesktopBrowserPersonalDomains(settings, {
@@ -484,7 +571,7 @@ test("Desktop Browser remember and revoke fail closed on adoption failure and re
   );
   failAdoption = false;
   assert.equal((await service.revoke(revocation)).revision, 2);
-  assert.deepEqual(adoptedRevisions, [1, 1, 2, 2]);
+  assert.deepEqual(adoptedRevisions, [2, 2]);
 });
 
 test("Desktop Browser service rejects mismatched or malformed revision confirmations", async () => {
@@ -501,10 +588,19 @@ test("Desktop Browser service rejects mismatched or malformed revision confirmat
       closedUnauthorizedConnections: Number.MAX_SAFE_INTEGER + 1,
     },
   ]) {
-    let settings = createDefaultDesktopSettings();
+    let settings = rememberDesktopBrowserPersonalDomain(
+      createDefaultDesktopSettings(),
+      {
+        accountId: ACCOUNT_A,
+        environmentId: ENVIRONMENT_A,
+        destination: "https://example.com",
+        approvalId: "approval-invalid-confirmation",
+        approvedAt: "2026-08-29T12:00:00.000Z",
+      },
+    ).settings;
     const service = new DesktopBrowserPersonalDomainService({
       resolveAccount: async () => signedInAccount(ACCOUNT_A, [ENVIRONMENT_A]),
-      readSettings: () => settings,
+      readSettings: async () => settings,
       persistSettings: async (next) => {
         settings = next;
       },
@@ -515,11 +611,10 @@ test("Desktop Browser service rejects mismatched or malformed revision confirmat
       },
     });
     await assert.rejects(
-      service.remember({
+      service.revoke({
         environmentId: ENVIRONMENT_A,
-        destination: "https://example.com",
-        approvalId: "approval-invalid-confirmation",
-        approvedAt: "2026-08-29T12:00:00.000Z",
+        canonicalDomain: "example.com",
+        revokedAt: "2026-08-29T12:01:00.000Z",
       }),
       /did not confirm the exact personal-domain revision/u,
     );
@@ -527,10 +622,12 @@ test("Desktop Browser service rejects mismatched or malformed revision confirmat
 });
 
 test("Desktop Browser service serializes sign-out ahead of later reads", async () => {
-  let account: KestrelOneAccountStatus = signedInAccount(ACCOUNT_A, [ENVIRONMENT_A]);
+  let account: KestrelOneAccountStatus = signedInAccount(ACCOUNT_A, [
+    ENVIRONMENT_A,
+  ]);
   const service = new DesktopBrowserPersonalDomainService({
     resolveAccount: async () => account,
-    readSettings: () => createDefaultDesktopSettings(),
+    readSettings: async () => createDefaultDesktopSettings(),
     persistSettings: async () => undefined,
     adoptionCoordinator: noActiveDesktopBrowserSessions(),
   });

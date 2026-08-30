@@ -1439,7 +1439,7 @@ test("Desktop Browser approval cannot cross a Browser policy revision", async ()
   const toolName = "browser.request_grant" as const;
   const toolInput = {
     sessionId: "browser-session-1",
-    grant: { kind: "origin", origin: "https://example.com" },
+    destination: "https://example.com",
   };
   const authorityRevision = hashCanonical({ browserGrant: "runtime-r1" });
   const config = {

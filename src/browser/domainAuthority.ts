@@ -249,6 +249,67 @@ export function resolveEffectiveBrowserDomainAuthority(
   };
 }
 
+export function parseBrowserEnvironmentDomainAuthority(
+  value: unknown,
+): BrowserEnvironmentDomainAuthorityV1 {
+  const environment = structuredClone(value) as BrowserEnvironmentDomainAuthorityV1;
+  validateAuthorityInput({
+    environment,
+    project: {
+      version: BROWSER_PROJECT_DOMAIN_AUTHORITY_VERSION,
+      projectId: "validation-project",
+      revision: "validation-project-revision",
+      enabledModes: [],
+      personalGrantsEnabled: false,
+      blockedPublicDomains: [],
+    },
+    personal: {
+      version: BROWSER_PERSONAL_DOMAIN_AUTHORITY_VERSION,
+      userId: "validation-user",
+      environmentId: environment.environmentId,
+      revision: "0",
+      activeDomains: [],
+    },
+    qa: {
+      version: BROWSER_QA_DOMAIN_AUTHORITY_VERSION,
+      revision: "validation-qa-revision",
+      target: null,
+    },
+  });
+  return environment;
+}
+
+export function parseBrowserProjectDomainAuthority(
+  value: unknown,
+): BrowserProjectDomainAuthorityV1 {
+  const project = structuredClone(value) as BrowserProjectDomainAuthorityV1;
+  validateAuthorityInput({
+    environment: {
+      version: BROWSER_ENVIRONMENT_DOMAIN_AUTHORITY_VERSION,
+      environmentId: "validation-environment",
+      revision: "validation-environment-revision",
+      enabledModes: [],
+      personalGrantsEnabled: false,
+      configuredPublicDomains: [],
+      blockedPublicDomains: [],
+    },
+    project,
+    personal: {
+      version: BROWSER_PERSONAL_DOMAIN_AUTHORITY_VERSION,
+      userId: "validation-user",
+      environmentId: "validation-environment",
+      revision: "0",
+      activeDomains: [],
+    },
+    qa: {
+      version: BROWSER_QA_DOMAIN_AUTHORITY_VERSION,
+      revision: "validation-qa-revision",
+      target: null,
+    },
+  });
+  return project;
+}
+
 export function browserPublicDomainAllowsHostname(
   authority: BrowserPublicDomainAuthorityV1,
   hostname: string,

@@ -22,6 +22,7 @@ import {
   createDevShellStoreBindingRevision,
   type DevShellStoreBinding,
 } from "../devshell/storeBinding.js";
+import type { BrowserServicePort } from "../browser/contracts.js";
 
 const sandboxCredentialRevisions = new WeakMap<LocalCoreCredentialStore, { secret: string; revision: string }>();
 
@@ -35,6 +36,7 @@ export interface LocalCoreRunnerRuntimeFactoryOptions {
   credentialStore?: LocalCoreCredentialStore | undefined;
   sandboxCapabilityFetchImpl?: typeof fetch | undefined;
   devShellStoreBinding?: DevShellStoreBinding | undefined;
+  browserService?: BrowserServicePort | undefined;
 }
 
 /**
@@ -54,6 +56,9 @@ export function createLocalCoreRunnerRuntimeFactory(
     ...(options.devShellStoreBinding !== undefined
       ? { devShellStoreBinding: options.devShellStoreBinding }
       : {}),
+    ...(options.browserService === undefined
+      ? {}
+      : { browserService: options.browserService }),
     ...(options.homePath !== undefined
       ? {
           managedWorktreeHomeDir: options.homePath,

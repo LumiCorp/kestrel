@@ -71,6 +71,7 @@ export const BROWSER_FAILURE_CODES = [
   "BROWSER_TARGET_STALE",
   "BROWSER_ACTION_OUTCOME_UNKNOWN",
   "BROWSER_ARTIFACT_TOO_LARGE",
+  "BROWSER_DOWNLOAD_UNAVAILABLE",
   "BROWSER_SERVICE_UNAVAILABLE",
   "BROWSER_ENGINE_FAILURE",
 ] as const;
@@ -102,6 +103,7 @@ export interface BrowserServicePort {
     threadId: string;
     operation: BrowserToolName;
     effectiveInput: Record<string, unknown>;
+    authority: BrowserHostExecutionAuthorityV1;
   }): Promise<BrowserPolicyResolutionV1>;
   execute(
     prepared: PreparedToolCallV1,
@@ -170,8 +172,16 @@ export interface BrowserPolicyResolutionV1 {
 }
 
 export interface BrowserOperationLifecycleV1 {
+  readonly authority: BrowserHostExecutionAuthorityV1;
   acknowledgeDispatch(): Promise<void>;
   persistCompletedResult(rawOutput: unknown): Promise<void>;
+}
+
+/** Trusted Browser-host identity from SharedToolContext, never model input. */
+export interface BrowserHostExecutionAuthorityV1 {
+  threadId: string;
+  projectId?: string | undefined;
+  projectRoot?: string | undefined;
 }
 
 export function isBrowserToolName(value: string): value is BrowserToolName {
@@ -282,12 +292,18 @@ export function parseBrowserAllowlistAdoptionRequestV1(
       `BrowserAllowlistAdoptionRequestV1.version must be '${BROWSER_ALLOWLIST_ADOPTION_VERSION}'.`,
     );
   }
-  if (record.cause !== "personal_grant" && record.cause !== "personal_revocation") {
+  if (
+    record.cause !== "personal_grant" &&
+    record.cause !== "personal_revocation"
+  ) {
     throw new Error("BrowserAllowlistAdoptionRequestV1.cause is invalid.");
   }
   return {
     version: BROWSER_ALLOWLIST_ADOPTION_VERSION,
-    runId: requireString(record.runId, "BrowserAllowlistAdoptionRequestV1.runId"),
+    runId: requireString(
+      record.runId,
+      "BrowserAllowlistAdoptionRequestV1.runId",
+    ),
     threadId: requireString(
       record.threadId,
       "BrowserAllowlistAdoptionRequestV1.threadId",
@@ -383,9 +399,18 @@ export function parseBrowserSessionV1(value: unknown): BrowserSessionV1 {
   ) {
     throw new Error("BrowserSessionV1.terminalReason is invalid.");
   }
+  const sessionId = requireString(
+    record.sessionId,
+    "BrowserSessionV1.sessionId",
+  );
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(sessionId)) {
+    throw new Error(
+      "BrowserSessionV1.sessionId must be a path-safe opaque identifier.",
+    );
+  }
   const session: BrowserSessionV1 = {
     version: "browser_session_v1",
-    sessionId: requireString(record.sessionId, "BrowserSessionV1.sessionId"),
+    sessionId,
     threadId: requireString(record.threadId, "BrowserSessionV1.threadId"),
     mode,
     state: state as BrowserSessionState,
@@ -504,6 +529,7 @@ export function projectBrowserAuditOutput(
     "documentRevision",
     "normalizedOrigin",
     "capturedAt",
+    "boundary",
     "activeTabId",
     "state",
   ]);
@@ -650,7 +676,10 @@ export function normalizeBrowserHostFailure(
     effectful: boolean;
   },
 ) {
-  if (input.dispatchAcknowledged && input.effectful) {
+  const exactOutcomeKnown =
+    error instanceof RuntimeFailure &&
+    error.details?.browserOutcomeKnown === true;
+  if (input.dispatchAcknowledged && input.effectful && !exactOutcomeKnown) {
     return browserFailure(
       "BROWSER_ACTION_OUTCOME_UNKNOWN",
       "The Browser operation was dispatched, but its exact outcome could not be confirmed.",
@@ -670,7 +699,7 @@ export function normalizeBrowserHostFailure(
     recoverable:
       code === "BROWSER_SERVICE_UNAVAILABLE" || code === "BROWSER_TARGET_STALE",
     operation: input.toolName,
-    dispatchAcknowledged: false,
+    dispatchAcknowledged: input.dispatchAcknowledged,
   });
 }
 
@@ -719,7 +748,9 @@ export function validateBrowserResultAuthority(
 ): unknown {
   const toolName = prepared.activation.descriptor.toolId;
   if (!isBrowserToolName(toolName)) {
-    throw new Error("Prepared Browser result authority has an invalid operation.");
+    throw new Error(
+      "Prepared Browser result authority has an invalid operation.",
+    );
   }
   if (
     execution.runId !== prepared.runId ||
@@ -728,12 +759,15 @@ export function validateBrowserResultAuthority(
     execution.toolName !== toolName ||
     execution.threadId.length === 0
   ) {
-    throw new Error("Browser execution authority does not match the prepared call.");
+    throw new Error(
+      "Browser execution authority does not match the prepared call.",
+    );
   }
   const output = requireRecord(value, `${toolName} output`);
-  const nestedSession = output.session === undefined
-    ? undefined
-    : parseBrowserSessionV1(output.session);
+  const nestedSession =
+    output.session === undefined
+      ? undefined
+      : parseBrowserSessionV1(output.session);
   const topLevelSessionId =
     typeof output.sessionId === "string" ? output.sessionId : undefined;
   const inputSessionId =
@@ -750,21 +784,29 @@ export function validateBrowserResultAuthority(
   if (
     toolName !== "browser.open" &&
     inputSessionId !== undefined &&
-    (topLevelSessionId !== undefined && topLevelSessionId !== inputSessionId ||
-      nestedSession !== undefined && nestedSession.sessionId !== inputSessionId)
+    ((topLevelSessionId !== undefined &&
+      topLevelSessionId !== inputSessionId) ||
+      (nestedSession !== undefined &&
+        nestedSession.sessionId !== inputSessionId))
   ) {
-    throw new Error("Browser result session does not match prepared authority.");
+    throw new Error(
+      "Browser result session does not match prepared authority.",
+    );
   }
   if (
     nestedSession !== undefined &&
     nestedSession.threadId !== execution.threadId
   ) {
-    throw new Error("Browser result Thread does not match execution authority.");
+    throw new Error(
+      "Browser result Thread does not match execution authority.",
+    );
   }
   if (toolName === "browser.open" && nestedSession === undefined) {
     const outcome = output.outcome;
     if (outcome !== "blocked") {
-      throw new Error("Browser open result is missing its prepared session authority.");
+      throw new Error(
+        "Browser open result is missing its prepared session authority.",
+      );
     }
   }
   if (
@@ -772,26 +814,34 @@ export function validateBrowserResultAuthority(
     nestedSession !== undefined &&
     nestedSession.mode !== prepared.effectiveInput.mode
   ) {
-    throw new Error("Browser open result mode does not match the prepared call.");
+    throw new Error(
+      "Browser open result mode does not match the prepared call.",
+    );
   }
   if (
     toolName === "browser.upload" &&
     output.attachmentId !== prepared.effectiveInput.attachmentId
   ) {
-    throw new Error("Browser upload result attachment does not match the prepared call.");
+    throw new Error(
+      "Browser upload result attachment does not match the prepared call.",
+    );
   }
   if (
     toolName === "browser.inspect" &&
     output.kind !== prepared.effectiveInput.kind
   ) {
-    throw new Error("Browser inspect result target does not match the prepared call.");
+    throw new Error(
+      "Browser inspect result target does not match the prepared call.",
+    );
   }
   if (
     toolName === "browser.tabs" &&
     prepared.effectiveInput.operation === "switch" &&
     output.activeTabId !== prepared.effectiveInput.tabId
   ) {
-    throw new Error("Browser tab result target does not match the prepared call.");
+    throw new Error(
+      "Browser tab result target does not match the prepared call.",
+    );
   }
   return value;
 }
@@ -807,17 +857,26 @@ export function browserArtifactAuthorizationRequest(
     return;
   }
   const output = requireRecord(value, `${execution.toolName} output`);
-  const artifact = requireRecord(output.artifact, `${execution.toolName} artifact`);
-  const sessionId = requireString(output.sessionId, `${execution.toolName} sessionId`);
+  const artifact = requireRecord(
+    output.artifact,
+    `${execution.toolName} artifact`,
+  );
+  const sessionId = requireString(
+    output.sessionId,
+    `${execution.toolName} sessionId`,
+  );
   const artifactKind = requireString(
     artifact.kind,
     `${execution.toolName} artifact.kind`,
   );
-  const expectedKind = execution.toolName === "browser.capture"
-    ? "browser-screenshot"
-    : "browser-download";
+  const expectedKind =
+    execution.toolName === "browser.capture"
+      ? "browser-screenshot"
+      : "browser-download";
   if (artifactKind !== expectedKind) {
-    throw new Error("Browser artifact kind does not match the prepared operation.");
+    throw new Error(
+      "Browser artifact kind does not match the prepared operation.",
+    );
   }
   return {
     version: BROWSER_ARTIFACT_AUTHORIZATION_VERSION,
@@ -857,10 +916,7 @@ export function parseBrowserAuthorizedArtifactV1(
     );
   }
   const id = requireString(record.id, "BrowserAuthorizedArtifactV1.id");
-  const kind = requireString(
-    record.kind,
-    "BrowserAuthorizedArtifactV1.kind",
-  );
+  const kind = requireString(record.kind, "BrowserAuthorizedArtifactV1.kind");
   if (id !== request.artifactId || kind !== request.artifactKind) {
     throw new Error(
       "Authorized Browser artifact does not match the requested artifact authority.",
@@ -1048,6 +1104,8 @@ function browserFailureMessage(code: BrowserFailureCode): string {
       return "The Browser operation outcome is unknown.";
     case "BROWSER_ARTIFACT_TOO_LARGE":
       return "The Browser artifact exceeds the permitted size.";
+    case "BROWSER_DOWNLOAD_UNAVAILABLE":
+      return "The Browser download was cancelled before storage.";
     case "BROWSER_SERVICE_UNAVAILABLE":
       return "The Browser service is unavailable.";
     case "BROWSER_ENGINE_FAILURE":
@@ -1095,11 +1153,7 @@ function requireString(value: unknown, label: string): string {
 }
 
 function requireNonNegativeSafeInteger(value: unknown, label: string): number {
-  if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value < 0
-  ) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${label} must be a non-negative safe integer.`);
   }
   return value;

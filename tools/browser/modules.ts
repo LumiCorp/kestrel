@@ -1,14 +1,13 @@
+import path from "node:path";
+
 import {
   compileToolJsonSchemaV1,
   hashCanonical,
 } from "../../src/kestrel/contracts/tool-contract.js";
-import type { ToolExecutionClass } from "../../src/mode/contracts.js";
 import {
-  BROWSER_ALLOWLIST_ADOPTION_VERSION,
   BROWSER_CONTRACT_VERSION,
   BROWSER_POLICY_RESOLUTION_VERSION,
   BROWSER_TOOL_NAMES,
-  adoptBrowserAllowlistRevision,
   browserArtifactAuthorizationRequest,
   browserArtifactPresentation,
   browserFailure,
@@ -22,26 +21,40 @@ import {
   validateBrowserResultAuthority,
   withoutBrowserArtifactPresentationUrl,
   type BrowserToolName,
+  type BrowserHostExecutionAuthorityV1,
 } from "../../src/browser/contracts.js";
-import {
-  DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION,
-} from "../../src/io/ToolInvocationSupport.js";
+import { DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION } from "../../src/io/ToolInvocationSupport.js";
 import {
   getBrowserToolContract,
+  resolveBrowserToolExecutionClass,
   type BrowserToolContractFixtureV1,
 } from "../../src/browser/browserAppContract.fixture.js";
-import type { SharedToolModule } from "../contracts.js";
+import { resolveWorkspaceAppCwd } from "../devshell/shared.js";
+import type {
+  RuntimeToolRunContext,
+  SharedToolContext,
+  SharedToolModule,
+} from "../contracts.js";
 
 const RESULT_NORMALIZER_ID = "kestrel.browser-contract:v1";
 
-function resolveExactExecutionClass(
-  contract: BrowserToolContractFixtureV1,
-  input: Record<string, unknown>,
-): ToolExecutionClass {
-  if (contract.toolId === "browser.tabs" && input.operation === "list") {
-    return "read_only";
-  }
-  return contract.executionClass;
+function resolveBrowserHostAuthority(
+  context: SharedToolContext,
+  runtime: RuntimeToolRunContext,
+): BrowserHostExecutionAuthorityV1 {
+  const workspaceRoot = context.fileSystem?.workspaceRoot;
+  const appRoot = context.workspace?.appRoot;
+  const projectRoot =
+    workspaceRoot === undefined || appRoot === undefined
+      ? undefined
+      : resolveWorkspaceAppCwd(path.resolve(workspaceRoot), appRoot);
+  return {
+    threadId: runtime.threadId ?? runtime.sessionId,
+    ...(runtime.projectId === undefined
+      ? {}
+      : { projectId: runtime.projectId }),
+    ...(projectRoot === undefined ? {} : { projectRoot }),
+  };
 }
 
 function resolveExactEffects(
@@ -63,9 +76,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
   const validateOutput = compileToolJsonSchemaV1(contract.outputSchema, {
     surface: "output",
   });
-  const normalizeOutput = (
-    output: unknown,
-  ): unknown => {
+  const normalizeOutput = (output: unknown): unknown => {
     const normalized = validateBrowserResultSemantics(toolName, output);
     if (validateOutput(normalized) !== true) {
       throw browserFailure(
@@ -139,7 +150,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
       },
     },
     resolveExecutionClass(input) {
-      return resolveExactExecutionClass(contract, input);
+      return resolveBrowserToolExecutionClass(contract.toolId, input);
     },
     prepareInputAdapter(input) {
       return {
@@ -147,7 +158,10 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
         metadata: {
           contractVersion: BROWSER_CONTRACT_VERSION,
           operation: contract.toolId,
-          executionClass: resolveExactExecutionClass(contract, input),
+          executionClass: resolveBrowserToolExecutionClass(
+            contract.toolId,
+            input,
+          ),
           exactEffects: [...resolveExactEffects(contract, input)],
           approval: contract.approval,
         },
@@ -174,6 +188,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
                   threadId: runtime.threadId ?? runtime.sessionId,
                   operation: contract.toolId,
                   effectiveInput: input,
+                  authority: resolveBrowserHostAuthority(context, runtime),
                 }),
               );
               if (
@@ -228,8 +243,10 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           );
         }
         const effectful =
-          resolveExactExecutionClass(contract, prepared.effectiveInput) ===
-          "external_side_effect";
+          resolveBrowserToolExecutionClass(
+            contract.toolId,
+            prepared.effectiveInput,
+          ) === "external_side_effect";
         const runtime = context.runtime;
         const threadId = runtime?.threadId ?? runtime?.sessionId;
         if (
@@ -250,34 +267,9 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           callId: runtime.toolCallId,
           toolName: contract.toolId,
         } as const;
-        const browserService = requireBrowserServicePort(context.browserService);
-        let adoptedAllowlistRevision: string | undefined;
-        const adoptGrantAllowlist = async (output: unknown): Promise<void> => {
-          if (contract.toolId !== "browser.request_grant") return;
-          const result = output as Record<string, unknown>;
-          if (
-            (result.outcome !== "granted" &&
-              result.outcome !== "already_allowed") ||
-            typeof result.sessionId !== "string" ||
-            typeof result.effectiveAllowlistRevision !== "string"
-          ) {
-            return;
-          }
-          if (
-            adoptedAllowlistRevision === result.effectiveAllowlistRevision
-          ) {
-            return;
-          }
-          await adoptBrowserAllowlistRevision(browserService, {
-            version: BROWSER_ALLOWLIST_ADOPTION_VERSION,
-            runId: runtime.runId,
-            threadId,
-            sessionId: result.sessionId,
-            effectiveAllowlistRevision: result.effectiveAllowlistRevision,
-            cause: "personal_grant",
-          });
-          adoptedAllowlistRevision = result.effectiveAllowlistRevision;
-        };
+        const browserService = requireBrowserServicePort(
+          context.browserService,
+        );
         let acceptedRawCanonical: string | undefined;
         let acceptedCanonical: string | undefined;
         let acceptedOutput: unknown;
@@ -298,9 +290,8 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           );
           let canonicalOutput = normalized;
           if (artifactRequest !== undefined) {
-            const authorization = await browserService.authorizeArtifact(
-              artifactRequest,
-            );
+            const authorization =
+              await browserService.authorizeArtifact(artifactRequest);
             if (authorization === undefined) {
               throw new Error(
                 "Browser artifact is not authorized for this execution.",
@@ -333,6 +324,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
         let dispatchAcknowledged = false;
         try {
           const output = await browserService.execute(prepared, {
+            authority: resolveBrowserHostAuthority(context, runtime),
             async acknowledgeDispatch() {
               if (!effectful || dispatchAcknowledged) return;
               await context.acknowledgeExternalEffect?.();
@@ -340,12 +332,10 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
             },
             async persistCompletedResult(rawOutput) {
               const accepted = await acceptOutput(rawOutput);
-              await adoptGrantAllowlist(accepted);
               await context.persistCompletedCapabilityResult?.(accepted);
             },
           });
           const accepted = await acceptOutput(output);
-          await adoptGrantAllowlist(accepted);
           return accepted;
         } catch (error) {
           throw normalizeBrowserHostFailure(error, {

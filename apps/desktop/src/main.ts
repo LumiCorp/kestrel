@@ -211,7 +211,6 @@ import {
 } from "./settingsStore.js";
 import {
   DesktopBrowserPersonalDomainService,
-  type DesktopBrowserPersonalDomainRememberRequest,
   type DesktopBrowserPersonalRevisionAdoptionCoordinator,
 } from "./browserPersonalDomainService.js";
 import {
@@ -408,20 +407,18 @@ let databaseStatus: DesktopDatabaseStatus = {
   running: false,
 };
 let desktopSettings: DesktopSettings = createDefaultDesktopSettings();
-let browserPersonalDomainService: DesktopBrowserPersonalDomainService | undefined;
-/**
- * Main owns the truthful pre-host state: Desktop cannot have an active Browser
- * Session until Issue 03 supplies and wires the real session coordinator.
- */
-const noActiveDesktopBrowserSessionsPersonalRevisionAdoptionCoordinator:
-  DesktopBrowserPersonalRevisionAdoptionCoordinator = {
-  async adoptPersonalRevision(input) {
-    return {
-      personalRevision: input.personalRevision,
-      closedUnauthorizedConnections: 0,
-    };
-  },
-};
+let browserPersonalDomainService:
+  | DesktopBrowserPersonalDomainService
+  | undefined;
+const desktopBrowserPersonalRevisionAdoptionCoordinator: DesktopBrowserPersonalRevisionAdoptionCoordinator =
+  {
+    async adoptPersonalRevision(input) {
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.adoptDesktopBrowserPersonalRevision(input),
+      );
+    },
+  };
 const linkPreviewService = new LinkPreviewService();
 
 function resolveAuthoritativeDesktopExecutionSelection(
@@ -1691,15 +1688,16 @@ function registerIpcHandlers(
       await requireLocalCoreConnectionManager().executeIdempotent(
         async (client) => await client.kestrelOneAccount(),
       ),
-    readSettings: () => desktopSettings,
+    readSettings: async () => await refreshDesktopCoreSettingsSnapshot(),
     persistSettings: async (settings) => {
-      await saveDesktopCoreSettings({
-        ...desktopSettings,
-        browserPersonalDomains: settings.browserPersonalDomains,
-      });
+      await saveDesktopCoreSettings(
+        {
+          browserPersonalDomains: settings.browserPersonalDomains,
+        },
+        { persistBrowserPersonalDomains: true },
+      );
     },
-    adoptionCoordinator:
-      noActiveDesktopBrowserSessionsPersonalRevisionAdoptionCoordinator,
+    adoptionCoordinator: desktopBrowserPersonalRevisionAdoptionCoordinator,
   });
   ipcMain.handle(
     "desktop:get-settings",
@@ -4443,13 +4441,6 @@ function requireBrowserPersonalDomainService(): DesktopBrowserPersonalDomainServ
   return browserPersonalDomainService;
 }
 
-/** Trusted main-process entrypoint for the eventual Browser approval effect. */
-export async function rememberBrowserPersonalDomainForCurrentAccount(
-  input: DesktopBrowserPersonalDomainRememberRequest,
-) {
-  return await requireBrowserPersonalDomainService().remember(input);
-}
-
 async function openProjectRunPreviewWindow(
   run: DesktopManagedProjectRun,
   url: string,
@@ -6236,18 +6227,34 @@ async function migrateDesktopCredentialsToLocalCore(): Promise<void> {
 
 async function saveDesktopCoreSettings(
   settings: Partial<DesktopSettings> & { modelPolicy?: unknown | undefined },
+  options: { persistBrowserPersonalDomains?: boolean | undefined } = {},
 ): Promise<void> {
-  const normalized = normalizeDesktopSettings(settings, {
-    fallbackModelPolicy: desktopModelPolicy,
-  });
   const response = await requireLocalCoreConnectionManager().executeIdempotent(
-    async (client) =>
-      await client.patchDesktopSettings<Partial<DesktopSettings>>({
-        ...normalized,
+    async (client) => {
+      const current = await client.desktopSettings<Partial<DesktopSettings>>();
+      const normalized = normalizeDesktopSettings(
+        {
+          ...current.settings,
+          ...settings,
+          ...(options.persistBrowserPersonalDomains === true
+            ? {}
+            : {
+                browserPersonalDomains: current.settings.browserPersonalDomains,
+              }),
+        },
+        { fallbackModelPolicy: current.modelPolicy },
+      );
+      const localSettingsPatch: Partial<DesktopSettings> = { ...normalized };
+      if (options.persistBrowserPersonalDomains !== true) {
+        delete localSettingsPatch.browserPersonalDomains;
+      }
+      return await client.patchDesktopSettings<Partial<DesktopSettings>>({
+        ...localSettingsPatch,
         ...(settings.modelPolicy !== undefined
           ? { modelPolicy: settings.modelPolicy }
           : {}),
-      }),
+      });
+    },
   );
   desktopSettings = normalizeDesktopSettings(response.settings, {
     fallbackModelPolicy: response.modelPolicy,
@@ -6256,6 +6263,20 @@ async function saveDesktopCoreSettings(
   projectFileIndex.retainRoots(
     desktopSettings.projects.map((project) => project.path),
   );
+}
+
+async function refreshDesktopCoreSettingsSnapshot(): Promise<DesktopSettings> {
+  const response = await requireLocalCoreConnectionManager().executeIdempotent(
+    async (client) => await client.desktopSettings<Partial<DesktopSettings>>(),
+  );
+  desktopSettings = normalizeDesktopSettings(response.settings, {
+    fallbackModelPolicy: response.modelPolicy,
+  });
+  desktopModelPolicy = response.modelPolicy;
+  projectFileIndex.retainRoots(
+    desktopSettings.projects.map((project) => project.path),
+  );
+  return desktopSettings;
 }
 
 async function applyDesktopModelCapabilityConfiguration(
@@ -7133,6 +7154,7 @@ async function persistDesktopRendererConfiguration(
 }
 
 async function readDesktopRendererSettings(): Promise<DesktopRendererSettings> {
+  await refreshDesktopCoreSettingsSnapshot();
   const selectedProvider = desktopSettings.selectedProvider;
   if (selectedProvider === "ollama" || selectedProvider === "lmstudio") {
     return toDesktopRendererSettings(
