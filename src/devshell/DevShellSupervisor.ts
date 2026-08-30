@@ -143,9 +143,7 @@ export class DevShellSupervisor {
         signalProcessTree(process.child, "SIGKILL");
         await waitForProcessExit(process.child, 500);
       }
-      await process.transcriptWrite.catch(() => {});
-      await this.enforceSourceWriteGuard(process);
-      await this.releaseManagedWorktreeProcessLease(process.record);
+      await process.settlement;
     }
     this.deliveredOffsets.clear();
     this.deliveredTerminalResults.clear();

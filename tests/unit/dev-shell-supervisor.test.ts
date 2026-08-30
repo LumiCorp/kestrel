@@ -1748,6 +1748,40 @@ test("DevShellSupervisor stops descendant processes when stopping a live process
   }
 });
 
+test("DevShellSupervisor close waits for terminal process persistence to settle", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-close-settlement-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const store = new BlockingTerminalDevShellStore();
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"));
+  await supervisor.initialize();
+  let closePromise: Promise<void> | undefined;
+  try {
+    const started = await supervisor.startProcess({
+      workspaceRoot,
+      command: "sleep 30",
+      yieldTimeMs: 50,
+    });
+    if (started.processId === undefined) throw new Error("missing supervised process id");
+
+    closePromise = supervisor.close();
+    await store.terminalWriteStarted;
+    let closeSettled = false;
+    void closePromise.then(() => { closeSettled = true; });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(closeSettled, false);
+
+    store.releaseTerminalWrite();
+    await closePromise;
+    const record = await store.getProcess(started.processId);
+    assert.equal(record?.status, "STOPPED");
+  } finally {
+    store.releaseTerminalWrite();
+    await (closePromise ?? supervisor.close());
+  }
+});
+
 async function createSupervisor(now?: () => Date): Promise<{
   supervisor: DevShellSupervisor;
   workspaceRoot: string;
@@ -1762,6 +1796,45 @@ async function createSupervisor(now?: () => Date): Promise<{
   const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"), now);
   await supervisor.initialize();
   return { supervisor, workspaceRoot, baseDir, store };
+}
+
+class BlockingTerminalDevShellStore implements DevShellProcessStore {
+  private readonly delegate = new InMemoryDevShellStore();
+  readonly terminalWriteStarted: Promise<void>;
+  private readonly terminalWriteReleased: Promise<void>;
+  private resolveTerminalWriteStarted!: () => void;
+  private resolveTerminalWriteReleased!: () => void;
+
+  constructor() {
+    this.terminalWriteStarted = new Promise((resolve) => {
+      this.resolveTerminalWriteStarted = resolve;
+    });
+    this.terminalWriteReleased = new Promise((resolve) => {
+      this.resolveTerminalWriteReleased = resolve;
+    });
+  }
+
+  releaseTerminalWrite(): void {
+    this.resolveTerminalWriteReleased();
+  }
+
+  async upsertProcess(record: DevShellProcessRecord): Promise<void> {
+    if (record.status !== "RUNNING") {
+      this.resolveTerminalWriteStarted();
+      await this.terminalWriteReleased;
+    }
+    await this.delegate.upsertProcess(record);
+  }
+
+  getProcess(processId: string): Promise<DevShellProcessRecord | null> {
+    return this.delegate.getProcess(processId);
+  }
+
+  listProcesses(input?: {
+    status?: DevShellProcessStatus[] | undefined;
+  }): Promise<DevShellProcessRecord[]> {
+    return this.delegate.listProcesses(input);
+  }
 }
 
 class FaultInjectingDevShellStore implements DevShellProcessStore {

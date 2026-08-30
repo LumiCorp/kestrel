@@ -89,3 +89,4 @@ Use focused regression tests at the owning seams. Include a real smoke path for 
 - [Keep malformed request targets inside the service error boundary](18-keep-malformed-targets-inside-error-boundary.md)
 - [Cancel shutdown-blocking requests before replacement times out](19-cancel-shutdown-blocking-requests.md)
 - [Align the supervisor environment regression with private control stripping](20-align-supervisor-environment-regression.md)
+- [Await child settlement before service cleanup completes](21-await-child-settlement-before-cleanup.md)
