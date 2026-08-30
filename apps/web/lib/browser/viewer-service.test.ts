@@ -188,6 +188,117 @@ test("an invalid connect state releases the exact connection and fail-closes onc
   assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
 });
 
+test("an invalid connect state carries an exact disconnect and fail-close retry", async () => {
+  const fixture = createFixture();
+  fixture.invalidConnectState = true;
+  fixture.disconnectLost = true;
+  fixture.terminationFailure = "before_terminal";
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+
+  let unknown: HostedBrowserViewerOutcomeUnknownError | undefined;
+  try {
+    await fixture.service.connect(issued.ticket);
+    assert.fail("invalid connect cleanup must remain outcome unknown");
+  } catch (error) {
+    assert.ok(error instanceof HostedBrowserViewerOutcomeUnknownError);
+    unknown = error;
+  }
+  assert.equal(fixture.liveConnections.size, 1);
+
+  fixture.disconnectLost = false;
+  fixture.terminationFailure = undefined;
+  assert.equal(await unknown?.retryCleanup(), true);
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.deepEqual(
+    fixture.workerCalls.map((call) => call.action),
+    ["connect", "disconnect", "disconnect"],
+  );
+});
+
+test("invalid pre-dispatch authority carries a real durable fail-close retry", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  fixture.accessAllowed = false;
+  fixture.terminationFailure = "before_terminal";
+
+  let unknown: HostedBrowserViewerOutcomeUnknownError | undefined;
+  try {
+    await fixture.service.connect(issued.ticket);
+    assert.fail("unconfirmed fail-close must remain outcome unknown");
+  } catch (error) {
+    assert.ok(error instanceof HostedBrowserViewerOutcomeUnknownError);
+    unknown = error;
+  }
+  assert.equal(fixture.workerCalls.length, 0);
+
+  fixture.terminationFailure = undefined;
+  assert.equal(await unknown?.retryCleanup(), true);
+  assert.equal(fixture.workerCalls.length, 0);
+  assert.deepEqual(fixture.terminations, [
+    "BROWSER_SESSION_LOST",
+    "BROWSER_SESSION_LOST",
+  ]);
+});
+
+test("frame fail-close uncertainty carries a real durable retry", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  fixture.workerLost = true;
+  fixture.terminationFailure = "before_terminal";
+
+  let unknown: HostedBrowserViewerOutcomeUnknownError | undefined;
+  try {
+    await connection.frame();
+    assert.fail("unconfirmed frame fail-close must remain outcome unknown");
+  } catch (error) {
+    assert.ok(error instanceof HostedBrowserViewerOutcomeUnknownError);
+    unknown = error;
+  }
+
+  fixture.terminationFailure = undefined;
+  assert.equal(await unknown?.retryCleanup(), true);
+});
+
+test("dispatch fail-close uncertainty carries a real durable retry", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  fixture.workerLost = true;
+  fixture.terminationFailure = "before_terminal";
+
+  let unknown: HostedBrowserViewerOutcomeUnknownError | undefined;
+  try {
+    await connection.dispatch({
+      version: "hosted_browser_viewer_route_v1",
+      type: "accept_takeover",
+    });
+    assert.fail("unconfirmed dispatch fail-close must remain outcome unknown");
+  } catch (error) {
+    assert.ok(error instanceof HostedBrowserViewerOutcomeUnknownError);
+    unknown = error;
+  }
+
+  fixture.terminationFailure = undefined;
+  assert.equal(await unknown?.retryCleanup(), true);
+});
+
 function createFixture() {
   const currentNow = new Date("2026-08-30T12:00:00.000Z");
   const session: BrowserSessionV1 = {

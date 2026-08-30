@@ -18,6 +18,10 @@ import type {
   DesktopBrowserViewerInputV1,
   DesktopBrowserViewerStateV1,
 } from "../../../../src/desktopShell/contracts";
+import {
+  hostedBrowserViewerCleanupUnknownPresentation,
+  type HostedBrowserViewerCleanupUnknownPresentation,
+} from "./hosted-browser-viewer-presentation";
 
 type Availability = {
   available: boolean;
@@ -29,6 +33,8 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
   const [state, setState] = useState<DesktopBrowserViewerStateV1 | null>(null);
   const [frame, setFrame] = useState<DesktopBrowserViewerFrameV1 | null>(null);
   const [transportState, setTransportState] = useState<"closed" | "connecting" | "open">("closed");
+  const [cleanupUnknown, setCleanupUnknown] =
+    useState<HostedBrowserViewerCleanupUnknownPresentation | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
 
@@ -59,6 +65,7 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
     socketRef.current?.close(1000, "viewer reconnecting");
     setTransportState("connecting");
     setFrame(null);
+    setCleanupUnknown(null);
     const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/browser-viewer`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -85,7 +92,11 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
       const message = JSON.parse(String(event.data)) as HostedBrowserViewerServerMessageV1;
       if (message.type === "state") setState(message.state);
       if (message.type === "frame") setFrame(message.frame);
-      if (message.type === "closed" || message.type === "error") socket.close();
+      if (message.type === "error") {
+        setCleanupUnknown(hostedBrowserViewerCleanupUnknownPresentation(message.code));
+        socket.close();
+      }
+      if (message.type === "closed") socket.close();
     });
     socket.addEventListener("close", () => {
       if (socketRef.current === socket) socketRef.current = null;
@@ -120,6 +131,16 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
     if (state?.inputLeaseId) send({ type: "input", leaseId: state.inputLeaseId, input });
   };
 
+  if (cleanupUnknown && transportState === "closed") {
+    return (
+      <div className="mx-auto w-full max-w-4xl px-2 md:px-4" data-testid="hosted-browser-viewer-cleanup-unknown">
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+          <p className="font-medium text-sm">{cleanupUnknown.title}</p>
+          <p className="text-muted-foreground text-xs">{cleanupUnknown.instruction}</p>
+        </div>
+      </div>
+    );
+  }
   if (!availability.available && transportState === "closed") return null;
   if (transportState === "closed") {
     return (

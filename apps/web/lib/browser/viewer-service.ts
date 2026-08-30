@@ -183,8 +183,14 @@ export class HostedBrowserViewerService {
       throw error;
     }
     if (!(isViewerState(state) && sameViewerState(state, claims))) {
-      await this.#releaseUncertainConnect(authority, token, claims);
-      await this.#failClosed(claims);
+      try {
+        await this.#resolveInvalidConnect(authority, token, claims);
+      } catch (cleanupError) {
+        throw new HostedBrowserViewerOutcomeUnknownError(
+          () => this.#retryInvalidConnectCleanup(authority, token, claims),
+          { cause: cleanupError },
+        );
+      }
       throw new Error("BROWSER_SESSION_LOST");
     }
     this.#evidence("connected", claims);
@@ -386,7 +392,7 @@ export class HostedBrowserViewerService {
       const terminal = await this.#readExactDurableTerminal(claims);
       if (!terminal) {
         throw new HostedBrowserViewerOutcomeUnknownError(
-          async () => false,
+          () => this.#retryFailClosed(claims),
           { cause: error },
         );
       }
@@ -421,6 +427,39 @@ export class HostedBrowserViewerService {
   ): Promise<void> {
     if (await this.#releaseUncertainConnect(authority, ticket, claims)) return;
     await this.#failClosed(claims);
+  }
+
+  async #resolveInvalidConnect(
+    authority: AuthorizedViewer,
+    ticket: string,
+    claims: HostedBrowserViewerTicketClaimsV1,
+  ): Promise<void> {
+    await this.#releaseUncertainConnect(authority, ticket, claims);
+    await this.#failClosed(claims);
+  }
+
+  async #retryInvalidConnectCleanup(
+    authority: AuthorizedViewer,
+    ticket: string,
+    claims: HostedBrowserViewerTicketClaimsV1,
+  ): Promise<boolean> {
+    try {
+      await this.#resolveInvalidConnect(authority, ticket, claims);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async #retryFailClosed(
+    claims: HostedBrowserViewerTicketClaimsV1,
+  ): Promise<boolean> {
+    try {
+      await this.#failClosed(claims);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async #retryUncertainConnectCleanup(

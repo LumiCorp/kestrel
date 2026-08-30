@@ -9,12 +9,14 @@ const read = (relative: string) => fs.readFileSync(path.join(root, relative), "u
 
 test("hosted Browser viewer uses the official versioned Vercel WebSocket route outside the App relay", () => {
   const route = read("app/api/threads/[id]/browser-viewer/v1/route.ts");
+  const socketRoute = read("lib/browser/viewer-socket-route.ts");
   const manifest = read("app/route-ownership.manifest.ts");
   const appRelay = read("../environment-router/src/app-relay.ts");
   assert.match(route, /experimental_upgradeWebSocket/u);
   assert.equal(typeof experimental_upgradeWebSocket, "function");
   assert.match(route, /maxPayload: MAX_CLIENT_MESSAGE_BYTES/u);
-  assert.match(route, /hosted_browser_viewer_route_v1|HOSTED_BROWSER_VIEWER_ROUTE_VERSION/u);
+  assert.match(socketRoute, /HOSTED_BROWSER_VIEWER_ROUTE_VERSION/u);
+  assert.match(route, /attachHostedBrowserViewerSocket/u);
   assert.match(route, /claims\.actorId !== requestAuthority\.actorId/u);
   assert.match(route, /claims\.threadId !== requestAuthority\.threadId/u);
   assert.match(manifest, /\/api\/threads\/:id\/browser-viewer\/v1/u);
@@ -40,6 +42,8 @@ test("web viewer exposes acceptance, typed input, reconnect, explicit return, an
   assert.match(component, /View browser/u);
   assert.doesNotMatch(component, /type=["']password["']/u);
   assert.doesNotMatch(component, /localStorage|sessionStorage/u);
+  assert.match(component, /hostedBrowserViewerCleanupUnknownPresentation/u);
+  assert.match(component, /hosted-browser-viewer-cleanup-unknown/u);
 });
 
 test("Kestrel One Mobile has no Browser viewer route, socket, or takeover action", () => {

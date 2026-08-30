@@ -4,7 +4,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
 
@@ -24,6 +23,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Implemented
 
+- [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md)
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)
 - [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)
 - [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
