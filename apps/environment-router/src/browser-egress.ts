@@ -190,6 +190,22 @@ export class HostedBrowserEgressRegistry {
     await proxy?.close();
   }
 
+  async closeExact(input: {
+    sessionId: string;
+    generation: number;
+  }): Promise<boolean> {
+    const proxy = this.#sessions.get(input.sessionId);
+    if (!proxy) return false;
+    try {
+      proxy.assertGeneration(input);
+    } catch {
+      return false;
+    }
+    this.#sessions.delete(input.sessionId);
+    await proxy.close();
+    return true;
+  }
+
   async closeAll(): Promise<void> {
     const proxies = [...this.#sessions.values()];
     this.#sessions.clear();

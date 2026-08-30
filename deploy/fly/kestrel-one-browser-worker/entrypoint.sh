@@ -6,6 +6,11 @@ if [[ ! "$gateway_host" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,127}\.vm\.[a-z0-9][a-z0-9
   printf 'hosted Browser worker gateway host is missing or invalid\n' >&2
   exit 1
 fi
+control_gateway_host="${KESTREL_BROWSER_CONTROL_GATEWAY_HOST:-}"
+if [[ "$control_gateway_host" != "$gateway_host" ]]; then
+  printf 'hosted Browser worker control Gateway host is missing or does not match the egress Gateway\n' >&2
+  exit 1
+fi
 
 mapfile -t gateway_addresses < <(
   getent ahosts "$gateway_host" \
@@ -39,6 +44,20 @@ trap cleanup EXIT
 
 {
   printf 'table inet kestrel_browser_egress {\n'
+  printf '  chain input {\n'
+  printf '    type filter hook input priority filter; policy drop;\n'
+  printf '    iifname "lo" accept\n'
+  printf '    ct state established accept\n'
+  printf '    icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept\n'
+  if [[ "$gateway_address" == *:* ]]; then
+    printf '    ip6 saddr %s tcp dport 43105 ct state new accept\n' "$gateway_address"
+  elif [[ "$gateway_address" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
+    printf '    ip saddr %s tcp dport 43105 ct state new accept\n' "$gateway_address"
+  else
+    printf 'hosted Browser worker control Gateway address is invalid\n' >&2
+    exit 1
+  fi
+  printf '  }\n'
   printf '  chain output {\n'
   printf '    type filter hook output priority filter; policy drop;\n'
   printf '    udp dport 53 drop\n'

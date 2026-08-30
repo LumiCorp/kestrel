@@ -107,7 +107,10 @@ import {
   createLocalCoreDevShellStoreBinding,
   createLocalCoreRunnerRuntimeFactory,
 } from "./executionRuntime.js";
-import { DesktopBrowserService } from "./desktopBrowserService.js";
+import {
+  DesktopBrowserService,
+  type DesktopBrowserServiceOptions,
+} from "./desktopBrowserService.js";
 import { createLocalCoreDesktopBrowserViewerEventSink } from "./desktopBrowserViewerEvidence.js";
 import { LocalCoreDesktopBrowserAuthorityResolver } from "./desktopBrowserAuthority.js";
 import type { BrowserServicePort } from "../browser/contracts.js";
@@ -1139,14 +1142,23 @@ async function listenOnSocket(
   });
 }
 
-function createPackagedDesktopBrowserService(input: {
+export type PackagedDesktopBrowserServiceRuntimeDependencies = Pick<
+  DesktopBrowserServiceOptions,
+  "engine" | "createProxy" | "now" | "randomId" | "scheduleExpiry"
+>;
+
+export function createPackagedDesktopBrowserService(input: {
   homePath: string;
   repoRoot?: string | undefined;
-  projectRunRegistry: DesktopProjectRunRegistry;
-  account: LocalCoreKestrelOneAccountManager;
-  desktopEnvironments: LocalCoreDesktopEnvironmentManager;
+  projectRunRegistry: DesktopBrowserServiceOptions["projectRunRegistry"];
+  account: Pick<LocalCoreKestrelOneAccountManager, "account">;
+  desktopEnvironments: Pick<LocalCoreDesktopEnvironmentManager, "snapshot">;
   platform: NodeJS.Platform;
   withAuthorityAdmission: <T>(action: () => Promise<T>) => Promise<T>;
+  /** Process adapters for composition tests; evidence ownership remains internal. */
+  runtimeDependencies?:
+    | PackagedDesktopBrowserServiceRuntimeDependencies
+    | undefined;
 }): DesktopBrowserService | undefined {
   if (input.platform !== "darwin") return;
   const resourcesRoot = resolvePackagedDesktopBrowserResourcesRoot({
@@ -1179,6 +1191,11 @@ function createPackagedDesktopBrowserService(input: {
       homePath: input.homePath,
     }),
     withAuthorityAdmission: input.withAuthorityAdmission,
+    engine: input.runtimeDependencies?.engine,
+    createProxy: input.runtimeDependencies?.createProxy,
+    now: input.runtimeDependencies?.now,
+    randomId: input.runtimeDependencies?.randomId,
+    scheduleExpiry: input.runtimeDependencies?.scheduleExpiry,
   });
 }
 

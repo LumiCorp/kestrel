@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import http from "node:http";
 import net, { type AddressInfo, type Socket } from "node:net";
 import test from "node:test";
@@ -80,6 +81,60 @@ test("hosted Browser gateway shares one fixed listener while credentials isolate
     assert.match(
       await connect(second, "www.example.com:443", true, true),
       /^HTTP\/1\.1 200 Connection Established/u,
+    );
+  } finally {
+    await registry.closeAll();
+    await close(upstream);
+  }
+});
+
+test("hosted Browser gateway closes only the exact session generation and is idempotent", async () => {
+  const upstream = net.createServer((socket) => socket.write("upstream-ready"));
+  await listen(upstream);
+  const upstreamPort = (upstream.address() as AddressInfo).port;
+  const registry = new HostedBrowserEgressRegistry({
+    gatewayMachineId: "gateway-machine-1",
+    appName: "kestrel-env-test",
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    dial: () => net.connect({ host: "127.0.0.1", port: upstreamPort }),
+  });
+  try {
+    const first = await registry.install(session(authority));
+    assert.equal(await registry.closeExact({
+      sessionId: first.sessionId,
+      generation: first.generation,
+    }), true);
+    assert.equal(await registry.closeExact({
+      sessionId: first.sessionId,
+      generation: first.generation,
+    }), false);
+
+    const replacement = await registry.install({
+      ...session(authority),
+      generation: 2,
+    });
+    assert.equal(await registry.closeExact({
+      sessionId: first.sessionId,
+      generation: first.generation,
+    }), false);
+    const tunnel = await openTunnel(
+      replacement,
+      "www.example.com:443",
+      true,
+      true,
+    );
+    assert.match(tunnel.response, /^HTTP\/1\.1 200 Connection Established/u);
+    const tunnelClosed = tunnel.socket.destroyed
+      ? Promise.resolve()
+      : once(tunnel.socket, "close");
+    assert.equal(await registry.closeExact({
+      sessionId: replacement.sessionId,
+      generation: replacement.generation,
+    }), true);
+    await tunnelClosed;
+    assert.match(
+      await connect(replacement, "www.example.com:443", true),
+      /^HTTP\/1\.1 407/u,
     );
   } finally {
     await registry.closeAll();

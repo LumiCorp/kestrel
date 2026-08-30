@@ -75,6 +75,10 @@ test("dedicated Browser Machines are ephemeral, private, immutable, and volume-f
     body?.config.env.KESTREL_BROWSER_EGRESS_GATEWAY_HOST,
     "gateway-machine-1.vm.browser-workers.internal",
   );
+  assert.equal(
+    body?.config.env.KESTREL_BROWSER_CONTROL_GATEWAY_HOST,
+    "gateway-machine-1.vm.browser-workers.internal",
+  );
   assert.equal(body?.config.env.KESTREL_BROWSER_EGRESS_GATEWAY_PORT, "43109");
   assert.equal(
     body?.config.env.KESTREL_BROWSER_EGRESS_OWNER,

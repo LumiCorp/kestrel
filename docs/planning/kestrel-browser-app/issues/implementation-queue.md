@@ -4,13 +4,10 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Prove packaged viewer evidence wiring](04d-prove-packaged-viewer-evidence-wiring.md)
 - [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md)
 - [Complete native authentication takeover](04c-complete-native-authentication-takeover.md)
 - [Reserve Gateway work before DNS](05c-reserve-gateway-work-before-dns.md)
 - [Proxy authorized QA WebSockets](05d-proxy-authorized-qa-websockets.md)
-- [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md)
-- [Revoke egress after uncertain Browser close](05f-revoke-egress-after-uncertain-close.md)
 - [Enforce Gateway connection timeouts](05g-enforce-gateway-connection-timeouts.md)
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
@@ -30,6 +27,9 @@ None.
 
 ## Implemented
 
+- [Prove packaged viewer evidence wiring](04d-prove-packaged-viewer-evidence-wiring.md) — production-composed lifecycle and durable-sink mutation proof are green; awaiting independent review
+- [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — local routed image smoke is green; awaiting independent review and live Fly 6PN proof
+- [Revoke egress after uncertain Browser close](05f-revoke-egress-after-uncertain-close.md) — exact success/unknown cleanup and drift proofs are green; awaiting independent review
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 
 ## Done

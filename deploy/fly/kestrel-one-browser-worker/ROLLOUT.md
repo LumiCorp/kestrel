@@ -33,7 +33,10 @@ Before publishing anything:
    that its namespace firewall denies steady-state DNS, direct public and
    private traffic, and another port on the exact Gateway Machine while
    authenticated Browser navigation succeeds through the pinned Gateway
-   address and dedicated TCP port 43109.
+   address and dedicated TCP port 43109. The same smoke must prove that only
+   that exact Gateway peer can initiate worker control on port 43105 and that
+   an unauthorized private peer cannot reach either control or a listener
+   opened on another port by the unprivileged worker.
 5. Choose a new readable tag. Record the operator, start time, production
    revision, prior `KESTREL_BROWSER_WORKER_IMAGE` digest, candidate tag, and
    intended canary organization, Environment, Project, Thread, and target. Do
@@ -90,10 +93,13 @@ origin. The canary must:
    observe the same resolved image identity from Fly;
 3. become ready only after the worker self-measures agent-browser `v0.35.0` and
    Chrome for Testing `152.0.7977.54`;
-4. prove the worker booted its nftables ceiling on Fly, resolved and pinned the
-   exact current Gateway Machine address, dropped to uid/gid 10001 with no
-   effective capabilities, and cannot reach DNS, a direct public destination,
-   an unauthorized Environment Machine, or another port on the Gateway;
+4. prove the worker booted its default-drop input and output nftables ceiling
+   on Fly, resolved and pinned the exact current Gateway Machine as both its
+   control peer and egress peer, dropped to uid/gid 10001 with no effective
+   capabilities, and cannot reach DNS, a direct public destination, an
+   unauthorized Environment Machine, or another port on the Gateway; also
+   prove an unauthorized private peer cannot connect to worker control or a
+   second listener opened by the unprivileged worker;
 5. complete open, navigation or inspection, one Thread-authorized screenshot,
    and close through the ordinary Browser App path;
 6. preserve the exact session ID and generation through capability and worker

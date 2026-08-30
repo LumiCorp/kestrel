@@ -52,6 +52,10 @@ type BrowserRelayReceipt = {
   expiresAt: number;
   runId: string;
   workspaceId: string;
+  identity: {
+    sessionId: string;
+    generation: number;
+  };
   instruction: BrowserPrivateInstruction;
   worker?: Record<string, unknown> | undefined;
   phase: "accepting" | "accepted" | "authorizing" | "invoked" | "commit_pending";
@@ -552,6 +556,10 @@ async function handleBrowserAcceptRelay(input: {
       expiresAt: Date.now() + BROWSER_RECEIPT_TTL_MS,
       runId: input.runId,
       workspaceId: input.workspaceId,
+      identity: {
+        sessionId: instruction.sessionId,
+        generation: instruction.generation,
+      },
       instruction,
       phase: "accepting",
       requestHash,
@@ -907,22 +915,36 @@ async function handleBrowserCommitRelay(
     return;
   }
   browserRelayReceipts.delete(receiptId);
-  const worker = await callPrivateBrowserWorker({
-    instruction: retained.instruction,
-    action: "commit",
-    body: {
-      capability: retained.instruction.capability,
-      operationId: retained.instruction.operationId,
-    },
-    signal: input.signal,
-    fetchImpl: input.workerFetchImpl,
-  }).catch(() => undefined);
-  if (!worker?.ok) {
+  let committed = false;
+  try {
+    const worker = await callPrivateBrowserWorker({
+      instruction: retained.instruction,
+      action: "commit",
+      body: {
+        capability: retained.instruction.capability,
+        operationId: retained.instruction.operationId,
+      },
+      signal: input.signal,
+      fetchImpl: input.workerFetchImpl,
+    });
+    if (worker.ok) {
+      assertWorkerCommit(
+        requireRecord(await readBoundedWorkerJson(worker)),
+        retained.instruction,
+      );
+      committed = true;
+    }
+  } catch {
+    // An accepted operation may already have committed even when its response is
+    // lost or malformed. The caller must receive an unknown outcome, not a retry.
+  } finally {
+    if (retained.instruction.operation === "browser.close") {
+      await input.browserEgress?.closeExact(retained.identity);
+    }
+  }
+  if (!committed) {
     writeError(input.response, 409, "BROWSER_ACTION_OUTCOME_UNKNOWN");
     return;
-  }
-  if (retained.instruction.operation === "browser.close") {
-    await input.browserEgress?.close(retained.instruction.sessionId);
   }
   writeJson(input.response, 200, { committed: true });
 }
@@ -1221,6 +1243,16 @@ function assertWorkerCompletionBeforeDispatch(
     !("output" in value)
   ) throw new Error("Browser pre-dispatch completion is invalid.");
   return value.output;
+}
+
+function assertWorkerCommit(
+  value: Record<string, unknown>,
+  instruction: BrowserPrivateInstruction,
+) {
+  if (
+    value.committed !== true ||
+    value.operationId !== instruction.operationId
+  ) throw new Error("Browser worker commit response is invalid.");
 }
 
 function parseBufferedJson(body: RequestInit["body"]): Record<string, unknown> {

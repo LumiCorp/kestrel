@@ -9,6 +9,11 @@ import {
   isAllowedAppRequest,
   MAX_APP_RELAY_SERIALIZED_BYTES,
 } from "../src/app-relay.js";
+import {
+  HostedBrowserEgressRegistry,
+  type HostedBrowserGatewayAuthorityV1,
+  type HostedBrowserGatewayProxyBindingV1,
+} from "../src/browser-egress.js";
 import { EnvironmentGatewayConfigClient } from "../src/gateway-config.js";
 
 test("ordinary App relay uses the settled 20 MiB serialized payload ceiling", () => {
@@ -260,25 +265,27 @@ test("Browser relay keeps private worker authority out of the runner and invokes
       browserWorkerFetchImpl: (async (url) => {
         const path = new URL(String(url)).pathname;
         workerPaths.push(path);
-        return path.endsWith("/accept")
-          ? Response.json({
-              accepted: true,
-              operationId: "call-1",
-              sessionId: "browser-session-1",
-              generation: 1,
-              identity: {
-                sessionId: "browser-session-1",
-                generation: 1,
-                engineRevision: "v0.35.0",
-                chromeRevision: "152.0.7977.54",
-                imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
-              },
-            })
-          : Response.json({
-              version: "browser_tool_result_v1",
-              operation: "browser.navigate",
-              outcome: "navigated",
-            });
+        if (path.endsWith("/accept")) return Response.json({
+          accepted: true,
+          operationId: "call-1",
+          sessionId: "browser-session-1",
+          generation: 1,
+          identity: {
+            sessionId: "browser-session-1",
+            generation: 1,
+            engineRevision: "v0.35.0",
+            chromeRevision: "152.0.7977.54",
+            imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+          },
+        });
+        if (path.endsWith("/commit")) {
+          return Response.json({ committed: true, operationId: "call-1" });
+        }
+        return Response.json({
+          version: "browser_tool_result_v1",
+          operation: "browser.navigate",
+          outcome: "navigated",
+        });
       }) as typeof fetch,
     });
   });
@@ -425,7 +432,9 @@ test("Browser relay returns a validated pre-dispatch result without invoking the
     browserWorkerFetchImpl: (async (url) => {
       const path = new URL(String(url)).pathname;
       workerPaths.push(path);
-      if (path.endsWith("/commit")) return Response.json({ committed: true });
+      if (path.endsWith("/commit")) {
+        return Response.json({ committed: true, operationId: "call-pre" });
+      }
       return Response.json({
         completedBeforeDispatch: true,
         operationId: "call-pre",
@@ -530,6 +539,205 @@ test("Browser relay preserves a definite pre-invoke policy refusal after acknowl
     assert.equal(unknownNotifications, 0);
   } finally {
     relay.close();
+    fixture.config.stop();
+  }
+});
+
+test("Browser close commit revokes its exact egress binding for success and every unknown terminal response", async () => {
+  const cases: Array<{
+    name: string;
+    timeoutMs?: number;
+    expectedStatus: number;
+    commit: (signal: AbortSignal | null | undefined, operationId: string) => Promise<Response>;
+  }> = [
+    {
+      name: "success",
+      expectedStatus: 200,
+      commit: async (_signal, operationId) =>
+        Response.json({ committed: true, operationId }),
+    },
+    {
+      name: "lost response",
+      expectedStatus: 409,
+      commit: async () => {
+        throw new Error("commit response lost");
+      },
+    },
+    {
+      name: "terminal worker failure",
+      expectedStatus: 409,
+      commit: async () => Response.json(
+        { error: { code: "BROWSER_ACTION_OUTCOME_UNKNOWN" } },
+        { status: 409 },
+      ),
+    },
+    {
+      name: "invalid success response",
+      expectedStatus: 409,
+      commit: async () => Response.json({ committed: true, operationId: "drifted" }),
+    },
+    {
+      name: "timeout",
+      timeoutMs: 5,
+      expectedStatus: 409,
+      commit: async (signal) => await new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }),
+    },
+  ];
+
+  for (const scenario of cases) {
+    const fixture = await createRelayFixture();
+    const operationId = `call-close-${scenario.name.replaceAll(" ", "-")}`;
+    const sessionId = `browser-session-${scenario.name.replaceAll(" ", "-")}`;
+    const generation = 7;
+    const egress = new RecordingBrowserEgressRegistry();
+    let commitCalls = 0;
+    const instruction = {
+      version: "hosted_browser_relay_instruction_v1",
+      operationId,
+      operation: "browser.close",
+      sessionId,
+      generation,
+      capability: `private-${operationId}`,
+      machine: { appName: "kestrel-env-test", machineId: `machine-${operationId}` },
+    };
+    const relay = createServer((request, response) => void handleAppRelay({
+      request,
+      response,
+      config: fixture.config,
+      requestTimeoutMs: scenario.timeoutMs,
+      browserEgress: egress,
+      fetchImpl: (async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/accept")) return Response.json({
+          ...instruction,
+          phase: "accept",
+          prepared: { callId: operationId },
+          authority: { effectiveAllowlistRevision: "revision-1" },
+        });
+        if (path.endsWith("/invoke")) {
+          return Response.json({ ...instruction, phase: "invoke" });
+        }
+        return Response.json({
+          version: "browser_tool_result_v1",
+          operation: "browser.close",
+          outcome: "closed",
+        });
+      }) as typeof fetch,
+      browserWorkerFetchImpl: (async (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/accept")) return Response.json({
+          accepted: true,
+          operationId,
+          sessionId,
+          generation,
+          identity: {
+            sessionId,
+            generation,
+            engineRevision: "v0.35.0",
+            chromeRevision: "152.0.7977.54",
+            imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+          },
+        });
+        if (path.endsWith("/invoke")) return Response.json({
+          version: "browser_tool_result_v1",
+          operation: "browser.close",
+          outcome: "closed",
+        });
+        commitCalls += 1;
+        return await scenario.commit(init?.signal, operationId);
+      }) as typeof fetch,
+    }));
+    relay.listen(0, "127.0.0.1");
+    await once(relay, "listening");
+    const address = relay.address();
+    assert.ok(address && typeof address !== "string");
+    const base = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/close/auto/control`;
+    const headers = {
+      authorization: `Bearer ${fixture.workspaceToken}`,
+      "content-type": "application/json",
+    };
+    try {
+      const accepted = await fetch(`${base}/accept`, {
+        method: "POST", headers, body: JSON.stringify({ prepared: { callId: operationId } }),
+      });
+      assert.equal(accepted.status, 200, scenario.name);
+      const dispatchReceipt = await accepted.json();
+      const invoked = await fetch(`${base}/invoke`, {
+        method: "POST", headers,
+        body: JSON.stringify({ prepared: { callId: operationId }, receipt: dispatchReceipt }),
+      });
+      assert.equal(invoked.status, 200, scenario.name);
+      const invocation = await invoked.json() as { commitReceipt: unknown };
+      const committed = await fetch(`${base}/commit`, {
+        method: "POST", headers,
+        body: JSON.stringify({ receipt: invocation.commitReceipt }),
+      });
+      assert.equal(committed.status, scenario.expectedStatus, scenario.name);
+      assert.deepEqual(egress.closed, [{ sessionId, generation }], scenario.name);
+      assert.equal(commitCalls, 1, scenario.name);
+
+      const duplicate = await fetch(`${base}/commit`, {
+        method: "POST", headers,
+        body: JSON.stringify({ receipt: invocation.commitReceipt }),
+      });
+      assert.equal(duplicate.status, 409, scenario.name);
+      assert.deepEqual(egress.closed, [{ sessionId, generation }], scenario.name);
+      assert.equal(commitCalls, 1, scenario.name);
+    } finally {
+      relay.close();
+      await egress.closeAll();
+      fixture.config.stop();
+    }
+  }
+});
+
+test("Browser close failure before worker acknowledgement does not revoke egress", async () => {
+  const fixture = await createRelayFixture();
+  const egress = new RecordingBrowserEgressRegistry();
+  const relay = createServer((request, response) => void handleAppRelay({
+    request,
+    response,
+    config: fixture.config,
+    browserEgress: egress,
+    fetchImpl: (async () => Response.json({
+      version: "hosted_browser_relay_instruction_v1",
+      phase: "accept",
+      operationId: "call-close-not-started",
+      operation: "browser.close",
+      sessionId: "browser-session-not-started",
+      generation: 3,
+      capability: "private-close-not-started",
+      machine: { appName: "kestrel-env-test", machineId: "machine-close-not-started" },
+      prepared: { callId: "call-close-not-started" },
+      authority: { effectiveAllowlistRevision: "revision-1" },
+    })) as typeof fetch,
+    browserWorkerFetchImpl: (async () => {
+      throw new Error("worker never acknowledged");
+    }) as typeof fetch,
+  }));
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const address = relay.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/close/auto/control/accept`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${fixture.workspaceToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ prepared: { callId: "call-close-not-started" } }),
+      },
+    );
+    assert.equal(response.status, 503);
+    assert.deepEqual(egress.closed, []);
+  } finally {
+    relay.close();
+    await egress.closeAll();
     fixture.config.stop();
   }
 });
@@ -685,6 +893,43 @@ test("app relay aborts its upstream request when the downstream closes", async (
     fixture.config.stop();
   }
 });
+
+class RecordingBrowserEgressRegistry extends HostedBrowserEgressRegistry {
+  readonly closed: Array<{ sessionId: string; generation: number }> = [];
+
+  constructor() {
+    super({
+      gatewayMachineId: "gateway-machine-test",
+      appName: "kestrel-env-test",
+    });
+  }
+
+  override require(input: {
+    sessionId: string;
+    generation: number;
+    authority: HostedBrowserGatewayAuthorityV1;
+  }): HostedBrowserGatewayProxyBindingV1 {
+    return {
+      version: "hosted_browser_gateway_proxy_binding_v1",
+      proxyServer: "http://gateway-machine-test.vm.kestrel-env-test.internal:43109",
+      username: "test-user",
+      password: "test-password",
+      threadId: "thread-test",
+      sessionId: input.sessionId,
+      generation: input.generation,
+      effectiveAllowlistRevision: input.authority.effectiveAllowlistRevision,
+      chromiumFlags: [],
+    };
+  }
+
+  override async closeExact(input: {
+    sessionId: string;
+    generation: number;
+  }): Promise<boolean> {
+    this.closed.push(structuredClone(input));
+    return true;
+  }
+}
 
 async function createRelayFixture(
   controlPlaneUrl = "http://127.0.0.1:18081",

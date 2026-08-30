@@ -81,6 +81,10 @@ test("hosted Browser image build is pinned, nonroot, compiled, and runtime-fetch
   );
   assert.doesNotMatch(dockerfile, /^USER /mu);
   assert.match(entrypoint, /policy drop/u);
+  assert.match(entrypoint, /chain input/u);
+  assert.match(entrypoint, /ct state established accept/u);
+  assert.match(entrypoint, /ip saddr %s tcp dport 43105 ct state new accept/u);
+  assert.match(entrypoint, /KESTREL_BROWSER_CONTROL_GATEWAY_HOST/u);
   assert.match(entrypoint, /udp dport 53 drop/u);
   assert.match(entrypoint, /tcp dport 53 drop/u);
   assert.match(entrypoint, /tcp dport %s accept/u);
@@ -102,9 +106,14 @@ test("hosted Browser image build is pinned, nonroot, compiled, and runtime-fetch
   assert.doesNotMatch(workerRun, /--publish/u);
   assert.match(workerRun, /--cap-add NET_ADMIN/u);
   assert.match(workerRun, /KESTREL_BROWSER_EGRESS_GATEWAY_PORT=43109/u);
-  assert.match(smoke, /credential-free TCP relay/u);
-  assert.match(smoke, /--network bridge/u);
-  assert.match(smoke, /docker network connect "\$network_name"/u);
+  assert.match(
+    workerRun,
+    /KESTREL_BROWSER_CONTROL_GATEWAY_HOST=gateway-machine-1\.vm\.browser-workers\.internal/u,
+  );
+  assert.match(smoke, /Gateway control relay/u);
+  assert.match(smoke, /unauthorized private peer connected to worker port/u);
+  assert.match(smoke, /await mustNotReach\(43105\)/u);
+  assert.match(smoke, /await mustNotReach\(43107\)/u);
   assert.match(smoke, /steady-state Browser worker DNS unexpectedly succeeded/u);
   assert.match(
     smoke,

@@ -10,7 +10,6 @@ network_name="${worker_name}-network"
 worker_container=""
 gateway_container=""
 preview_container=""
-relay_container=""
 
 cleanup() {
   if [[ -n "$worker_container" ]]; then
@@ -21,9 +20,6 @@ cleanup() {
   fi
   if [[ -n "$preview_container" ]]; then
     docker rm --force "$preview_container" >/dev/null 2>&1 || true
-  fi
-  if [[ -n "$relay_container" ]]; then
-    docker rm --force "$relay_container" >/dev/null 2>&1 || true
   fi
   docker network rm "$network_name" >/dev/null 2>&1 || true
   rm -f -- \
@@ -80,10 +76,13 @@ gateway_container="$(docker run --detach \
   --platform linux/amd64 \
   --network "$network_name" \
   --network-alias gateway-machine-1.vm.browser-workers.internal \
+  --publish 127.0.0.1::43108 \
   --read-only \
+  --env "WORKER_HOST=$worker_name" \
   --entrypoint node \
   "$image" --input-type=module --eval '
     import { createServer, request as forward } from "node:http";
+    import { createConnection, createServer as createTcpServer } from "node:net";
     const expected = `Basic ${Buffer.from("kestrel-browser-smoke:kestrel-browser-smoke-secret").toString("base64")}`;
     createServer((incoming, response) => {
       try {
@@ -112,6 +111,14 @@ gateway_container="$(docker run --detach \
       response.writeHead(200, { "content-type": "text/plain" });
       response.end("unauthorized-gateway-port");
     }).listen(43110, "::");
+    createTcpServer((incoming) => {
+      const upstream = createConnection({
+        host: process.env.WORKER_HOST,
+        port: 43105,
+      });
+      incoming.pipe(upstream).pipe(incoming);
+      upstream.on("error", () => incoming.destroy());
+    }).listen(43108, "::");
   ')"
 preview_address="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$preview_container")"
 gateway_address="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$gateway_container")"
@@ -139,6 +146,7 @@ worker_container="$(docker run --detach \
   --env "KESTREL_BROWSER_WORKER_IMAGE_DIGEST=$worker_image_identity" \
   --env "KESTREL_BROWSER_CAPABILITY_PUBLIC_KEY=$capability_public_key" \
   --env KESTREL_BROWSER_EGRESS_GATEWAY_HOST=gateway-machine-1.vm.browser-workers.internal \
+  --env KESTREL_BROWSER_CONTROL_GATEWAY_HOST=gateway-machine-1.vm.browser-workers.internal \
   --env KESTREL_BROWSER_EGRESS_GATEWAY_PORT=43109 \
   --env "KESTREL_BROWSER_SMOKE_GATEWAY_ADDRESS=$gateway_address" \
   --env "KESTREL_BROWSER_SMOKE_PREVIEW_ADDRESS=$preview_address" \
@@ -229,9 +237,9 @@ docker exec --user 10001:10001 "$worker_container" bash -ceu '
   [[ -z "$public_output" || "$public_output" == *"ERR_"* ]]
 '
 
-# The worker listener remains reachable inbound. Authorized Browser navigation
-# is proved below and can reach the preview only through the authenticated
-# Gateway proxy.
+# The worker listener remains reachable from loopback. Authorized Browser
+# navigation is proved below and can reach the preview only through the
+# authenticated Gateway proxy.
 docker exec "$worker_container" node --input-type=module --eval '
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
@@ -243,33 +251,66 @@ docker exec "$worker_container" node --input-type=module --eval '
   throw new Error("hosted Browser image loopback fixture did not start");
 '
 
-# A credential-free TCP relay exposes only the control listener on loopback;
-# it grants the worker no outbound route.
-relay_container="$(docker run --detach \
-  --platform linux/amd64 \
-  --network bridge \
-  --publish 127.0.0.1::43108 \
-  --read-only \
-  --env "WORKER_HOST=$worker_name" \
-  --entrypoint node \
-  "$image" --input-type=module --eval '
-    import { createConnection, createServer } from "node:net";
-    createServer((incoming) => {
-      const upstream = createConnection({
-        host: process.env.WORKER_HOST,
-        port: 43105,
-      });
-      incoming.pipe(upstream).pipe(incoming);
-      upstream.on("error", () => incoming.destroy());
-    }).listen(43108, "::");
-  ')"
-docker network connect "$network_name" "$relay_container"
+# A compromised unprivileged worker can open another listener, but the
+# namespace input ceiling keeps it unreachable from an unauthorized private
+# peer. The same peer also cannot connect to or receive a response from the
+# real control listener.
+docker exec --detach --user 10001:10001 "$worker_container" \
+  node --input-type=module --eval '
+    import { createServer } from "node:net";
+    createServer((socket) => socket.end("reverse-channel-response"))
+      .listen(43107, "0.0.0.0");
+  '
+docker exec "$worker_container" node --input-type=module --eval '
+  import { connect } from "node:net";
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const response = await new Promise((resolve) => {
+      const socket = connect({ host: "127.0.0.1", port: 43107 });
+      let body = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => { body += chunk; });
+      socket.on("end", () => resolve(body));
+      socket.on("error", () => resolve(""));
+    });
+    if (response === "reverse-channel-response") process.exit(0);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("unprivileged reverse-channel fixture did not listen on loopback");
+'
+docker exec --env "WORKER_HOST=$worker_name" "$preview_container" \
+  node --input-type=module --eval '
+  import { connect } from "node:net";
+  const mustNotReach = (port) => new Promise((resolve, reject) => {
+    const socket = connect({ host: process.env.WORKER_HOST, port });
+    let received = false;
+    const timer = setTimeout(() => {
+      socket.destroy();
+      received
+        ? reject(new Error(`unauthorized private peer received a response from worker port ${port}`))
+        : resolve();
+    }, 800);
+    socket.on("connect", () => {
+      clearTimeout(timer);
+      socket.destroy();
+      reject(new Error(`unauthorized private peer connected to worker port ${port}`));
+    });
+    socket.on("data", () => { received = true; });
+    socket.on("error", () => {
+      clearTimeout(timer);
+      received
+        ? reject(new Error(`unauthorized private peer received a response from worker port ${port}`))
+        : resolve();
+    });
+  });
+  await mustNotReach(43105);
+  await mustNotReach(43107);
+'
 
-published_address="$(docker port "$relay_container" 43108/tcp)"
+published_address="$(docker port "$gateway_container" 43108/tcp)"
 published_address="${published_address%%$'\n'*}"
 published_port="${published_address##*:}"
 if [[ ! "$published_port" =~ ^[0-9]+$ ]]; then
-  printf 'hosted Browser worker listener was not published for smoke control\n' >&2
+  printf 'hosted Browser Gateway control relay was not published for smoke control\n' >&2
   exit 1
 fi
 pnpm --dir "$repository_root" exec tsx \

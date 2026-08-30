@@ -1594,6 +1594,8 @@ function browserMachineConfig(input: BrowserMachineProvisioningInput) {
       KESTREL_BROWSER_EGRESS_OWNER: "environment_gateway",
       KESTREL_BROWSER_EGRESS_GATEWAY_HOST:
         `${input.gatewayMachineId}.vm.${input.appName}.internal`,
+      KESTREL_BROWSER_CONTROL_GATEWAY_HOST:
+        `${input.gatewayMachineId}.vm.${input.appName}.internal`,
       KESTREL_BROWSER_EGRESS_GATEWAY_PORT: "43109",
       KESTREL_BROWSER_QUIC: "disabled",
       KESTREL_BROWSER_WEBRTC: "disabled",
