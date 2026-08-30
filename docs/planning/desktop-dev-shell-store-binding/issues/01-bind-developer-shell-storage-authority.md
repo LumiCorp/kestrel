@@ -84,3 +84,4 @@ Use focused regression tests at the owning seams. Include a real smoke path for 
 - [Bind shutdown completion to the proven endpoint](13-bind-shutdown-completion-to-endpoint.md)
 - [Strip developer-shell control environment from commands](14-strip-dev-shell-control-environment.md)
 - [Stabilize standalone binding revisions](15-stabilize-standalone-binding-revisions.md)
+- [Make endpoint removal prove cleanup completion](16-make-endpoint-removal-prove-cleanup.md)

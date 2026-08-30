@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -97,6 +97,67 @@ test("one fresh LocalDevShellService completes 20 simultaneous real cold request
     });
   } finally {
     await service.close();
+  }
+});
+
+test("real replacement keeps its proven endpoint until active-process cleanup completes", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "ldss-cleanup-proof-"));
+  const childPidPath = path.join(baseDir, "active-child.pid");
+  const first = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-a" },
+    startupTimeoutMs: 10_000,
+    pollIntervalMs: 10,
+  }) as any;
+  const replacement = new LocalDevShellService(baseDir, {
+    storeBinding: { driver: "sqlite", revision: "binding-b" },
+    startupTimeoutMs: 10_000,
+    pollIntervalMs: 10,
+  }) as any;
+  let processId: string | undefined;
+  try {
+    const started = await first.startProcess({
+      workspaceRoot: baseDir,
+      command: `${JSON.stringify(process.execPath)} -e 'const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(childPidPath)},String(process.pid));process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'`,
+      yieldTimeMs: 250,
+    });
+    processId = started.processId;
+    const childPid = Number(await readFile(childPidPath, "utf8"));
+    assert.equal(isPidRunning(childPid), true);
+    const originalSocket = await lstat(first.socketPath);
+
+    const replacementRun = replacement.runCommand({
+      workspaceRoot: baseDir,
+      command: "printf replacement",
+      timeoutMs: 2_000,
+    });
+    const shutdownDeadline = Date.now() + 5_000;
+    let observedShutdown = false;
+    while (Date.now() < shutdownDeadline) {
+      try {
+        await first.performRequest("GET", "/health");
+      } catch {
+        const currentSocket = await lstat(first.socketPath);
+        assert.equal(currentSocket.dev, originalSocket.dev);
+        assert.equal(currentSocket.ino, originalSocket.ino);
+        assert.equal(isPidRunning(childPid), true);
+        observedShutdown = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(observedShutdown, true);
+
+    const result = await replacementRun;
+    assert.equal(result.status, "COMPLETED");
+    assert.equal(result.text, "replacement");
+    await waitForPidExit(childPid, 2_000);
+    assert.equal(isPidRunning(childPid), false);
+    processId = undefined;
+  } finally {
+    if (processId !== undefined) {
+      await first.stopProcess({ processId, waitMs: 2_000 }).catch(() => {});
+    }
+    await Promise.allSettled([first.close(), replacement.close()]);
   }
 });
 

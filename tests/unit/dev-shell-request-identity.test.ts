@@ -173,6 +173,34 @@ test("matching current identity authorizes one cooperative shutdown", async () =
   }
 });
 
+test("a shutting-down service rejects health and command dispatch", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dev-shell-shutdown-reject-"));
+  const binding = { driver: "sqlite" as const, revision: "binding-current" };
+  const service = new LocalDevShellService(root, { storeBinding: binding }) as any;
+  const calls: string[] = [];
+  const server = http.createServer((request, response) => {
+    void handleRequest(
+      createRecordingSupervisor(calls) as any,
+      binding,
+      request,
+      response,
+      undefined,
+      () => true,
+    );
+  });
+  await listen(server, service.socketPath);
+  try {
+    await assert.rejects(service.performRequest("GET", "/health"));
+    await assert.rejects(service.performRequest("POST", "/shell/run", {
+      workspaceRoot: root,
+      command: "printf blocked",
+    }));
+    assert.deepEqual(calls, []);
+  } finally {
+    await closeServer(server);
+  }
+});
+
 function createRecordingSupervisor(calls: string[]) {
   const processResult = {
     processId: "process-1",

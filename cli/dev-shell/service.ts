@@ -91,8 +91,16 @@ async function runService(): Promise<void> {
     throw error;
   }
 
+  let shuttingDown = false;
   const server = http.createServer((request, response) => {
-    void handleRequest(supervisor, storeBinding, request, response, () => shutdown()).catch((error) => {
+    void handleRequest(
+      supervisor,
+      storeBinding,
+      request,
+      response,
+      () => shutdown(),
+      () => shuttingDown,
+    ).catch((error) => {
       writeJson(response, 500, {
         error: asRuntimeError(error),
       });
@@ -128,7 +136,10 @@ async function runService(): Promise<void> {
 
   let shutdownPromise: Promise<void> | undefined;
   const shutdown = () => {
+    shuttingDown = true;
     shutdownPromise ??= (async () => {
+      await supervisor.close();
+      await storeHandle.close();
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
@@ -141,8 +152,6 @@ async function runService(): Promise<void> {
           "warning: skipped developer shell socket cleanup because the path has a different owner",
         );
       }
-      await supervisor.close();
-      await storeHandle.close();
     })();
     return shutdownPromise;
   };
@@ -207,11 +216,16 @@ export async function handleRequest(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   requestShutdown?: (() => Promise<void>) | undefined,
+  isShuttingDown: (() => boolean) = () => false,
 ): Promise<void> {
   const method = request.method ?? "GET";
   const url = new URL(request.url ?? "/", "http://unix");
 
   if (method === "GET" && url.pathname === "/health") {
+    if (isShuttingDown()) {
+      writeJson(response, 503, { error: "service_shutting_down" });
+      return;
+    }
     writeJson(response, 200, createHealthPayload(storeBinding));
     return;
   }
@@ -249,8 +263,14 @@ export async function handleRequest(
       writeJson(response, 503, { error: "shutdown_unavailable" });
       return;
     }
+    const completion = requestShutdown();
     writeJson(response, 202, { status: "shutting_down" });
-    setImmediate(() => { void requestShutdown(); });
+    void completion;
+    return;
+  }
+
+  if (isShuttingDown()) {
+    writeJson(response, 503, { error: "service_shutting_down" });
     return;
   }
 
