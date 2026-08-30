@@ -20,6 +20,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 export type HostedBrowserEgressTimeouts = {
   dnsMs: number;
   connectMs: number;
+  requestBodyIdleMs: number;
   headersMs: number;
   bodyIdleMs: number;
 };
@@ -27,6 +28,7 @@ export type HostedBrowserEgressTimeouts = {
 const DEFAULT_TIMEOUTS: HostedBrowserEgressTimeouts = {
   dnsMs: 5_000,
   connectMs: 10_000,
+  requestBodyIdleMs: 30_000,
   headersMs: 15_000,
   bodyIdleMs: 30_000,
 };
@@ -563,10 +565,31 @@ class HostedBrowserGatewayProxy {
         activeConnection,
         this.#timeouts.connectMs,
       );
-      const clearHeaderDeadline = armConnectionDeadline(
+      let responseReceived = false;
+      let clearRequestBodyDeadline = armConnectionDeadline(
         activeConnection,
-        this.#timeouts.headersMs,
+        this.#timeouts.requestBodyIdleMs,
       );
+      let clearHeaderDeadline = () => {};
+      const recordRequestBodyProgress = () => {
+        if (responseReceived) return;
+        clearRequestBodyDeadline();
+        clearRequestBodyDeadline = armConnectionDeadline(
+          activeConnection,
+          this.#timeouts.requestBodyIdleMs,
+        );
+      };
+      request.on("data", recordRequestBodyProgress);
+      upstream.on("drain", recordRequestBodyProgress);
+      upstream.once("finish", () => {
+        clearRequestBodyDeadline();
+        if (!responseReceived && activeConnection.active) {
+          clearHeaderDeadline = armConnectionDeadline(
+            activeConnection,
+            this.#timeouts.headersMs,
+          );
+        }
+      });
       upstream.once("socket", (socket) => {
         activeConnection.attach(socket);
         if (socket.connecting) {
@@ -576,7 +599,9 @@ class HostedBrowserGatewayProxy {
         }
       });
       upstream.once("response", (upstreamResponse) => {
+        responseReceived = true;
         clearConnectDeadline();
+        clearRequestBodyDeadline();
         clearHeaderDeadline();
         if (!activeConnection.active) {
           upstreamResponse.destroy();
@@ -607,6 +632,7 @@ class HostedBrowserGatewayProxy {
       });
       upstream.once("error", () => {
         clearConnectDeadline();
+        clearRequestBodyDeadline();
         clearHeaderDeadline();
         activeConnection.close();
       });
@@ -894,7 +920,7 @@ function parseWebSocketUpgrade(request: IncomingMessage): {
   ) throw new Error("blocked");
   const url = new URL(request.url ?? "");
   if (
-    url.protocol !== "http:" || url.username || url.password || url.hash ||
+    url.protocol !== "ws:" || url.username || url.password || url.hash ||
     !url.pathname.startsWith("/")
   ) throw new Error("blocked");
   const destination: Destination = {
@@ -1077,7 +1103,10 @@ function armConnectionDeadline(
 }
 
 function rejectAuthentication(socket: Duplex) {
-  socket.end(`HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="${AUTH_REALM}"\r\nConnection: close\r\n\r\n`);
+  terminalizeRejectedSocket(
+    socket,
+    `HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="${AUTH_REALM}"\r\nConnection: close\r\n\r\n`,
+  );
 }
 function rejectAuthenticationResponse(response: http.ServerResponse) {
   response.writeHead(407, {
@@ -1087,7 +1116,18 @@ function rejectAuthenticationResponse(response: http.ServerResponse) {
   response.end();
 }
 function rejectSocket(socket: Duplex) {
-  socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+  terminalizeRejectedSocket(
+    socket,
+    "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n",
+  );
+}
+function terminalizeRejectedSocket(socket: Duplex, response: string) {
+  if (socket.destroyed) return;
+  try {
+    socket.end(response, () => socket.destroy());
+  } catch {
+    socket.destroy();
+  }
 }
 function copyBinding(input: SessionBinding): SessionBinding {
   return structuredClone(input);

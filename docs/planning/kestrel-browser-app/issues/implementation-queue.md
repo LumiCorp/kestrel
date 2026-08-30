@@ -4,9 +4,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Accept the real QA WebSocket proxy form](05j-accept-real-qa-websocket-proxy-form.md)
-- [Terminalize rejected upgrade sockets](05k-terminalize-rejected-upgrade-sockets.md)
-- [Separate upload progress from the response-header timeout](05l-separate-upload-progress-from-response-header-timeout.md)
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
@@ -23,6 +20,9 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Implemented
 
+- [Accept the real QA WebSocket proxy form](05j-accept-real-qa-websocket-proxy-form.md) — exact `ws://` QA upgrade and `wss://` CONNECT coverage are green; awaiting independent review
+- [Terminalize rejected upgrade sockets](05k-terminalize-rejected-upgrade-sockets.md) — half-open authentication and policy rejection shutdown regressions are green; awaiting independent review
+- [Separate upload progress from the response-header timeout](05l-separate-upload-progress-from-response-header-timeout.md) — request-body idle, response-header, and response-body idle phases are distinct and green; awaiting independent review
 - [Proxy authorized QA WebSockets](05d-proxy-authorized-qa-websockets.md) — review found the real `ws://` wire form and rejected-socket lifecycle gaps; blocked on issues 05j-05k
 - [Enforce Gateway connection timeouts](05g-enforce-gateway-connection-timeouts.md) — review found progressing request uploads are treated as stalled response headers; blocked on issue 05l
 - [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
