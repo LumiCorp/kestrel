@@ -86,3 +86,23 @@ or input authority.
   TypeScript checks, scoped Web lint, and `git diff --check` pass. The broad Web
   lint remains baseline-red on 149 unrelated existing diagnostics; no 06c file
   is among the scoped lint failures.
+
+### Independent-review repair evidence
+
+- A syntactically valid authenticate message no longer clears the 10-second
+  deadline. The socket closes immediately if authority proof is still pending,
+  while the independent settlement retains the pending attempt and disconnects
+  an exact connection that proves itself late.
+- Authority revalidation is single-flight. Repeated interval ticks cannot start
+  another authorization read until the current read settles.
+- Hosted worker engine ownership is symmetric: accepted agent operations make
+  frames transiently unavailable, and an in-flight frame reserves the engine
+  against new operation acceptance or authority revision until capture settles.
+- The client pins Project together with Session, generation, and connection.
+  Shared parsing now rejects structurally invalid Base64, invalid padding, and
+  nonzero unused pad bits without decoding or allocating a second frame buffer.
+- The final exact protocol, Vercel route, Web lifecycle/client, Router, worker,
+  and Browser Session command passes 106 tests. Root and Environment Router
+  TypeScript, scoped Web/shared-protocol lint, and `git diff --check` pass. Web
+  typecheck reaches only the pre-existing runtime-profile and hosted personal
+  OAuth test errors already recorded by the Browser viewer work.

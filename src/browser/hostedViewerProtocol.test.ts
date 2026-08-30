@@ -47,6 +47,13 @@ test("hosted viewer server parser rejects unknown envelopes and identity drift",
     }),
     /BROWSER_SESSION_LOST/u,
   );
+  assert.throws(
+    () => parseHostedBrowserViewerServerMessage(stateMessage(), {
+      threadId: "thread-1",
+      projectId: "replacement-project",
+    }),
+    /BROWSER_SESSION_LOST/u,
+  );
 });
 
 test("hosted viewer server parser rejects oversized frame data", () => {
@@ -60,6 +67,19 @@ test("hosted viewer server parser rejects oversized frame data", () => {
     }),
     /BROWSER_SESSION_LOST/u,
   );
+});
+
+test("hosted viewer server parser rejects structurally invalid and noncanonical Base64", () => {
+  for (const dataBase64 of ["A", "AB==", "AAB=", "AAAA===", "AAAA\n"]) {
+    assert.throws(
+      () => parseHostedBrowserViewerServerMessage({
+        ...frameMessage(),
+        frame: { ...frameMessage().frame, dataBase64 },
+      }),
+      /BROWSER_SESSION_LOST/u,
+      dataBase64,
+    );
+  }
 });
 
 function stateMessage() {

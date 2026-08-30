@@ -63,10 +63,7 @@ export function parseHostedBrowserViewerServerMessage(
       !viewerPositiveInteger(frame.sequence) ||
       !viewerTimestamp(frame.capturedAt) ||
       frame.mediaType !== "image/png" ||
-      typeof frame.dataBase64 !== "string" ||
-      frame.dataBase64.length < 1 ||
-      frame.dataBase64.length > HOSTED_BROWSER_VIEWER_MAX_SERVER_MESSAGE_BYTES ||
-      !/^[A-Za-z0-9+/]+={0,2}$/u.test(frame.dataBase64) ||
+      !viewerCanonicalBase64(frame.dataBase64) ||
       (expected.sessionId !== undefined && frame.sessionId !== expected.sessionId) ||
       (expected.generation !== undefined && frame.generation !== expected.generation)
     ) throw invalidViewerMessage();
@@ -134,6 +131,24 @@ function viewerTimestamp(value: unknown): value is string {
   if (!viewerText(value)) return false;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
+function viewerCanonicalBase64(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    value.length < 4 ||
+    value.length > HOSTED_BROWSER_VIEWER_MAX_SERVER_MESSAGE_BYTES ||
+    value.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
+  ) return false;
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  if (value.endsWith("==")) {
+    return (alphabet.indexOf(value.at(-3)!) & 15) === 0;
+  }
+  if (value.endsWith("=")) {
+    return (alphabet.indexOf(value.at(-2)!) & 3) === 0;
+  }
+  return true;
 }
 
 function invalidViewerMessage() {

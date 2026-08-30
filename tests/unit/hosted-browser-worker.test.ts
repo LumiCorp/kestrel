@@ -994,6 +994,77 @@ test("hosted worker reports transient frame unavailability while an agent operat
   await worker.close();
 });
 
+test("hosted worker reserves a slow frame before accepting an agent operation", async () => {
+  const prepared = preparedNavigate();
+  const capability = operationCapabilityFor(prepared, "revision-1");
+  let frameStartedResolve!: () => void;
+  const frameStarted = new Promise<void>((resolve) => {
+    frameStartedResolve = resolve;
+  });
+  let releaseFrameResolve!: () => void;
+  const releaseFrame = new Promise<void>((resolve) => {
+    releaseFrameResolve = resolve;
+  });
+  let operationExecutions = 0;
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async execute(_input, lifecycle) {
+        operationExecutions += 1;
+        await lifecycle.acknowledgeDispatch();
+        throw new Error("BROWSER_DESTINATION_BLOCKED");
+      },
+      async adopt() { return 0; },
+      async viewer(input) {
+        assert.equal(input.action, "frame");
+        frameStartedResolve();
+        await releaseFrame;
+        return {
+          version: "desktop_browser_viewer_frame_v1",
+          sessionId: "browser-session-1",
+          generation: 1,
+          sequence: 1,
+          capturedAt: new Date().toISOString(),
+          mediaType: "image/png",
+          dataBase64: "iVBORw0KGgo=",
+        };
+      },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const request = (path: string, body: unknown) => fetch(
+    `http://[::1]:${port}${path}`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+  );
+  const frame = request("/v1/viewer", {
+    ticket: viewerTicket("user-1"),
+    action: "frame",
+    connectionId: "connection-1",
+  });
+  await frameStarted;
+
+  const blocked = await request("/v1/operations/accept", {
+    capability,
+    prepared,
+    authority,
+  });
+  assert.equal(blocked.status, 400);
+  assert.equal(operationExecutions, 0);
+
+  releaseFrameResolve();
+  assert.equal((await frame).status, 200);
+  const accepted = await request("/v1/operations/accept", {
+    capability,
+    prepared,
+    authority,
+  });
+  assert.equal(accepted.status, 200);
+  assert.equal(operationExecutions, 1);
+  await worker.close();
+});
+
 test("hosted worker cleanup requires a fixed-key capability bound to exact connection and purpose", async () => {
   const cleaned: string[] = [];
   const worker = startHostedBrowserWorker({

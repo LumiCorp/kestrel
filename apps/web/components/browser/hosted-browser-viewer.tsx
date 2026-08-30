@@ -37,6 +37,7 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const availabilityAbortRef = useRef<AbortController | null>(null);
   const viewerIdentityRef = useRef<{
+    projectId: string;
     sessionId: string;
     generation: number;
     connectionId: string;
@@ -135,6 +136,7 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
         }
         if (message.type === "state") {
           viewerIdentityRef.current = {
+            projectId: message.state.projectId!,
             sessionId: message.state.sessionId!,
             generation: message.state.generation!,
             connectionId: message.state.connectionId!,

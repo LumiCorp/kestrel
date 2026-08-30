@@ -56,6 +56,7 @@ test("web viewer validates every server message and clears stale state on reject
   assert.match(component, /HOSTED_BROWSER_VIEWER_MAX_SERVER_MESSAGE_BYTES/u);
   assert.match(component, /parseHostedBrowserViewerServerMessage/u);
   assert.match(component, /viewerIdentityRef/u);
+  assert.match(component, /projectId: message\.state\.projectId/u);
   assert.match(component, /if \(!identity && message\.type === "frame"\)/u);
   assert.match(component, /setState\(null\);\s*setFrame\(null\);\s*socket\.close\(1008/u);
   assert.doesNotMatch(component, /as HostedBrowserViewerServerMessageV1/u);

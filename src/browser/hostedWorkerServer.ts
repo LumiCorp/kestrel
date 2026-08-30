@@ -61,7 +61,7 @@ type AcceptedOperation = {
   acknowledged: Promise<void>;
   result: Promise<unknown>;
   acceptOutcome: Promise<unknown>;
-  phase: "accepted" | "invoked" | "pre_dispatch_result";
+  phase: "accepted" | "invoked" | "pre_dispatch_result" | "committing" | "cancelling";
 };
 
 export type HostedBrowserWorkerConfig = {
@@ -134,6 +134,7 @@ export function startHostedBrowserWorker(input: {
   const accepted = new Map<string, AcceptedOperation>();
   let terminating = false;
   let revisionInstalling = false;
+  let viewerFrameInFlight = false;
   let installedAllowlistRevision = config.effectiveAllowlistRevision;
   const loseControl = async () => {
     if (terminating) return;
@@ -154,7 +155,9 @@ export function startHostedBrowserWorker(input: {
       const pathname = new URL(request.url ?? "/", "http://worker.internal").pathname;
       const body = await readJson(request);
       if (pathname === "/v1/operations/accept") {
-        if (revisionInstalling) throw new Error("BROWSER_ENGINE_FAILURE");
+        if (revisionInstalling || viewerFrameInFlight) {
+          throw new Error("BROWSER_ENGINE_FAILURE");
+        }
         const record = requireRecord(body);
         const prepared = parsePreparedToolCallV1(record.prepared);
         const authority = requireAuthority(record.authority);
@@ -337,10 +340,14 @@ export function startHostedBrowserWorker(input: {
         ) {
           throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
         }
-        accepted.delete(operationId);
+        operation.phase = "committing";
         operation.commit();
-        await operation.execution;
-        clearTimeout(operation.deadline);
+        try {
+          await operation.execution;
+        } finally {
+          accepted.delete(operationId);
+          clearTimeout(operation.deadline);
+        }
         return writeJson(response, 200, { committed: true, operationId });
       }
       if (pathname === "/v1/operations/cancel") {
@@ -358,14 +365,19 @@ export function startHostedBrowserWorker(input: {
             operation.phase !== "pre_dispatch_result" &&
             operation.phase !== "invoked")
         ) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
-        accepted.delete(operationId);
-        if (operation.phase === "accepted") {
+        const cancelledPhase = operation.phase;
+        operation.phase = "cancelling";
+        if (cancelledPhase === "accepted") {
           operation.cancelInvoke(knownWorkerFailure("BROWSER_DESTINATION_BLOCKED"));
         } else {
           operation.cancelCommit(knownWorkerFailure(reason));
         }
-        await operation.execution.catch(() => {});
-        clearTimeout(operation.deadline);
+        try {
+          await operation.execution.catch(() => {});
+        } finally {
+          accepted.delete(operationId);
+          clearTimeout(operation.deadline);
+        }
         return writeJson(response, 200, { cancelled: true, operationId });
       }
       if (pathname === "/v1/operations/revision") {
@@ -410,7 +422,7 @@ export function startHostedBrowserWorker(input: {
           (record.cause !== "personal_grant" &&
             record.cause !== "personal_revocation")
         ) throw new Error("BROWSER_SESSION_LOST");
-        if (accepted.size !== 0 || revisionInstalling) {
+        if (accepted.size !== 0 || revisionInstalling || viewerFrameInFlight) {
           throw new Error("BROWSER_ENGINE_FAILURE");
         }
         revisionInstalling = true;
@@ -455,14 +467,19 @@ export function startHostedBrowserWorker(input: {
         if (Date.parse(claims.expiresAt) <= Date.now()) {
           throw knownWorkerFailure(HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED);
         }
-        if ((accepted.size !== 0 || revisionInstalling) && action === "frame") {
+        if (
+          (accepted.size !== 0 || revisionInstalling || viewerFrameInFlight) &&
+          action === "frame"
+        ) {
           throw knownWorkerFailure(HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE);
         }
         if (revisionInstalling || accepted.size !== 0) {
           throw new Error("BROWSER_ENGINE_FAILURE");
         }
         if (!engine.viewer) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
-        return writeJson(response, 200, await engine.viewer({
+        const viewerInput: Parameters<
+          NonNullable<HostedBrowserWorkerEngine["viewer"]>
+        >[0] = {
           action,
           claims,
           connectionId,
@@ -472,7 +489,16 @@ export function startHostedBrowserWorker(input: {
           ...(record.viewerInput === undefined
             ? {}
             : { viewerInput: requireViewerInput(record.viewerInput) }),
-        }));
+        };
+        if (action !== "frame") {
+          return writeJson(response, 200, await engine.viewer(viewerInput));
+        }
+        viewerFrameInFlight = true;
+        try {
+          return writeJson(response, 200, await engine.viewer(viewerInput));
+        } finally {
+          viewerFrameInFlight = false;
+        }
       }
       if (pathname === "/v1/viewer-cleanup") {
         const record = requireRecord(body);

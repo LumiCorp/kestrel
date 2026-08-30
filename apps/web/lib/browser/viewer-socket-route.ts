@@ -61,6 +61,7 @@ export function attachHostedBrowserViewerSocket(input: {
   let closeIntent: { code: number; reason: string } | undefined;
   let closeSettlement: Promise<void> | undefined;
   let frameInFlight = false;
+  let authorityRevalidationInFlight = false;
   let pendingState: Extract<HostedBrowserViewerServerMessageV1, { type: "state" }> | undefined;
   let pendingFrame: HostedBrowserViewerServerMessageV1 | undefined;
   let drainingMessages = false;
@@ -103,21 +104,19 @@ export function attachHostedBrowserViewerSocket(input: {
     }
     if (retry) await retry().catch(() => false);
     if (lateRetry && lateRetry !== retry) await lateRetry().catch(() => false);
-
-    const intent = closeIntent;
-    if (intent && (input.socket.readyState === 1 || input.socket.readyState === 0)) {
-      try {
-        input.socket.close(intent.code, intent.reason);
-      } catch {
-        // The exact viewer cleanup above is authoritative. Socket close is best effort.
-      }
-    }
   };
 
   const close = (code: number, reason: string, waitForQueuedWork = true) => {
     if (!closeIntent) {
       closeIntent = { code, reason };
       clearTimers();
+      if (input.socket.readyState === 1 || input.socket.readyState === 0) {
+        try {
+          input.socket.close(code, reason);
+        } catch {
+          // Exact viewer cleanup remains owned by the independent settlement.
+        }
+      }
     }
     if (!closeSettlement) {
       const queuedWork = waitForQueuedWork ? drainPromise : undefined;
@@ -262,11 +261,14 @@ export function attachHostedBrowserViewerSocket(input: {
     if (closeIntent || authorityPollTimer) return;
     authorityPollTimer = timers.setInterval(() => {
       void (async () => {
-        if (!connection || closeIntent) return;
+        if (!connection || closeIntent || authorityRevalidationInFlight) return;
+        authorityRevalidationInFlight = true;
         try {
           await connection.revalidate();
         } catch (error) {
           await fail(error, "viewer authorization failed");
+        } finally {
+          authorityRevalidationInFlight = false;
         }
       })();
     }, input.authorityRevalidationIntervalMs ?? DEFAULT_AUTHORITY_REVALIDATION_INTERVAL_MS);
@@ -358,6 +360,8 @@ export function attachHostedBrowserViewerSocket(input: {
       await fail(outcome.error, "viewer authorization failed");
       return;
     }
+    if (authenticateTimer) timers.clearTimeout(authenticateTimer);
+    authenticateTimer = undefined;
     connection = outcome.connection;
     const sent = await sendOrClose({
       version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
@@ -384,8 +388,6 @@ export function attachHostedBrowserViewerSocket(input: {
         void close(1008, "viewer authorization failed", false);
         return;
       }
-      if (authenticateTimer) timers.clearTimeout(authenticateTimer);
-      authenticateTimer = undefined;
       const attempt = Promise.resolve()
         .then(() => input.connect(message.ticket))
         .then<ConnectOutcome, ConnectOutcome>(

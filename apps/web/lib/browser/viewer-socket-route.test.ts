@@ -190,6 +190,33 @@ test("authority revalidation continues independently of frame capture", async ()
   assert.equal(connection.disconnects, 1);
 });
 
+test("authority revalidation remains single-flight while one check is unresolved", async () => {
+  const socket = new FakeSocket();
+  const connection = fakeConnection();
+  const timers = fakeTimers();
+  const revalidation = deferred<void>();
+  let revalidations = 0;
+  connection.revalidate = async () => {
+    revalidations += 1;
+    await revalidation.promise;
+  };
+  const controller = attach(socket, async () => connection.value, timers);
+
+  socket.emitMessage();
+  await waitFor(() => timers.intervalHandlers.length === 2);
+  timers.intervalHandlers[0]?.();
+  timers.intervalHandlers[0]?.();
+  timers.intervalHandlers[0]?.();
+  await nextTurn();
+  assert.equal(revalidations, 1);
+
+  revalidation.resolve();
+  await nextTurn();
+  timers.intervalHandlers[0]?.();
+  await waitFor(() => revalidations === 2);
+  await controller.close(1000, "test complete");
+});
+
 test("a silent peer is closed at the explicit authentication deadline without worker work", async () => {
   const socket = new FakeSocket();
   const timers = fakeTimers();
@@ -204,6 +231,27 @@ test("a silent peer is closed at the explicit authentication deadline without wo
   await controller.whenClosed();
 
   assert.equal(connects, 0);
+  assert.equal(socket.closeCalls, 1);
+});
+
+test("authentication deadline closes promptly while a late proven connection is cleaned exactly", async () => {
+  const socket = new FakeSocket();
+  const timers = fakeTimers();
+  const connect = deferred<HostedBrowserViewerConnection>();
+  const connection = fakeConnection();
+  const controller = attach(socket, () => connect.promise, timers);
+
+  socket.emitMessage();
+  await nextTurn();
+  assert.equal(timers.clearedTimeouts, 0);
+  timers.timeoutHandlers[0]?.();
+  await nextTurn();
+
+  assert.equal(socket.closeCalls, 1);
+  assert.equal(connection.disconnects, 0);
+  connect.resolve(connection.value);
+  await controller.whenClosed();
+  assert.equal(connection.disconnects, 1);
   assert.equal(socket.closeCalls, 1);
 });
 
