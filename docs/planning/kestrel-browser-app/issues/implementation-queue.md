@@ -4,7 +4,8 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Complete native authentication takeover](04c-complete-native-authentication-takeover.md)
+- [Persist Desktop viewer authority loss across restart](04e-persist-viewer-authority-loss-across-restart.md)
+- [Serialize Gateway retirement and shutdown](05i-serialize-gateway-retirement-and-shutdown.md)
 - [Reserve Gateway work before DNS](05c-reserve-gateway-work-before-dns.md)
 - [Proxy authorized QA WebSockets](05d-proxy-authorized-qa-websockets.md)
 - [Enforce Gateway connection timeouts](05g-enforce-gateway-connection-timeouts.md)
@@ -14,20 +15,20 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## In progress
 
-None.
+- [Complete native authentication takeover](04c-complete-native-authentication-takeover.md)
 
 ## Blocked
 
 - [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — packaged lifecycle evidence is proven; blocked on authority-loss retry and native authentication issues 04b-04c
+- [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md) — review found process-memory-only authority can be stranded or inherited across Desktop restart; blocked on issue 04e
 - [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — blocked on issues 05a-05g and the remaining live Fly canaries
 - [Enforce Gateway-only Browser worker egress](05a-enforce-gateway-only-worker-egress.md) — input/output policy and routed image smoke are review-clean; blocked on live Fly proof
 - [Close the in-flight Gateway revocation race](05b-close-inflight-gateway-revocation-race.md) — review found pre-DNS lifecycle, plain QA WebSocket, and inert timeout gaps; blocked on issues 05c, 05d, and 05g
-- [Revoke egress after uncertain Browser close](05f-revoke-egress-after-uncertain-close.md) — review found broad pre-commit cleanup and throwable non-retryable exact teardown; blocked on issue 05h
+- [Revoke egress after uncertain Browser close](05f-revoke-egress-after-uncertain-close.md) — blocked on exact cleanup issue 05h
+- [Complete exact Browser egress close cleanup](05h-complete-exact-egress-close-cleanup.md) — review found pre-DNS work, same-key reinstall, and shutdown-admission races; blocked on issues 05c and 05i
 
 ## Implemented
 
-- [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md) — exact pending-loss retry, terminal-generation proof, and reconnect serialization are green; awaiting independent review
-- [Complete exact Browser egress close cleanup](05h-complete-exact-egress-close-cleanup.md) — exact all-phase cleanup and total retryable teardown proofs are green; awaiting independent review
 - [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 
