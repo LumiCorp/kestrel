@@ -92,6 +92,7 @@ export interface DesktopBrowserViewerStateV1 {
   takeoverRequested?: boolean | undefined;
   inputLeaseId?: string | undefined;
   inputLeaseExpiresAt?: string | undefined;
+  nativeHandoffActive?: boolean | undefined;
 }
 
 export interface DesktopBrowserViewerFrameV1 {

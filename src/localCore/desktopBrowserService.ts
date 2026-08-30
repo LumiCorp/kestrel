@@ -175,6 +175,33 @@ export interface DesktopBrowserEngineAdapter {
       viewerInput: DesktopBrowserViewerInputV1;
     },
   ): Promise<void>;
+  presentNativeHandoff?(
+    input: DesktopBrowserEngineInvocation & {
+      authority: DesktopBrowserNativeHandoffAuthority;
+    },
+  ): Promise<DesktopBrowserNativeHandoffPresentation>;
+  revokeNativeHandoff?(
+    input: DesktopBrowserEngineInvocation & {
+      authority: DesktopBrowserNativeHandoffAuthority;
+      presentation: DesktopBrowserNativeHandoffPresentation;
+    },
+  ): Promise<void>;
+}
+
+export interface DesktopBrowserNativeHandoffAuthority {
+  sessionId: string;
+  generation: number;
+  threadId: string;
+  projectId: string;
+  principalId: string;
+  connectionId: string;
+  leaseId: string;
+  expiresAt: string;
+}
+
+export interface DesktopBrowserNativeHandoffPresentation {
+  windowId: number;
+  targetId: string;
 }
 
 export type DesktopBrowserMetricName =
@@ -254,6 +281,7 @@ export interface DesktopBrowserEngineInvocation {
   screenshotPath: string;
   blockedDownloadPath: string;
   proxy: LocalCoreBrowserEgressLaunchBindingV1;
+  nativeAuthenticationHandoff?: boolean | undefined;
   launchProcessGroupId?: number | undefined;
   daemonPid?: number | undefined;
   onDownloadIntercepted?:
@@ -277,6 +305,7 @@ export interface DesktopBrowserServiceOptions {
   uploadStream?: DesktopBrowserUploadStreamHook | undefined;
   metrics?: DesktopBrowserMetricSink | undefined;
   viewerEvents?: DesktopBrowserViewerEventSink | undefined;
+  nativeAuthenticationHandoff?: boolean | undefined;
   now?: (() => Date) | undefined;
   randomId?: (() => string) | undefined;
   scheduleExpiry?: boolean | undefined;
@@ -335,6 +364,7 @@ interface ActiveDesktopBrowserRuntime {
   takeoverRequested: boolean;
   viewerConnections: Map<string, DesktopBrowserViewerConnection>;
   activeInputLease?: DesktopBrowserInputLease | undefined;
+  nativeHandoff?: DesktopBrowserActiveNativeHandoff | undefined;
   viewerFrameSequence: number;
   terminationRequested?: BrowserSessionV1["terminalReason"] | undefined;
   stopWatchingEngine?: (() => void) | undefined;
@@ -352,6 +382,12 @@ interface DesktopBrowserInputLease {
   leaseId: string;
   connectionId: string;
   expiresAt: string;
+}
+
+interface DesktopBrowserActiveNativeHandoff {
+  authority: DesktopBrowserNativeHandoffAuthority;
+  presentation: DesktopBrowserNativeHandoffPresentation;
+  expiryTimer?: ReturnType<typeof setTimeout> | undefined;
 }
 
 interface BrowserContinuation {
@@ -570,6 +606,7 @@ export class DesktopBrowserService implements BrowserServicePort {
         };
         runtime.viewerConnections.set(connection.connectionId, connection);
       }
+      await this.#expireViewerLease(runtime);
       return this.#viewerState(runtime, connection);
     });
   }
@@ -626,7 +663,7 @@ export class DesktopBrowserService implements BrowserServicePort {
   }): Promise<DesktopBrowserViewerStateV1> {
     return await this.#serialize(async () => {
       const { runtime, connection } = await this.#requireViewerConnection(input);
-      this.#expireViewerLease(runtime);
+      await this.#expireViewerLease(runtime);
       const activeLease = runtime.activeInputLease;
       if (
         activeLease !== undefined &&
@@ -638,6 +675,22 @@ export class DesktopBrowserService implements BrowserServicePort {
           "Another viewer connection holds Browser input control.",
         );
       }
+      if (
+        activeLease !== undefined &&
+        (runtime.nativeHandoff === undefined ||
+          runtime.nativeHandoff.authority.sessionId !== runtime.session.sessionId ||
+          runtime.nativeHandoff.authority.generation !== runtime.session.generation ||
+          runtime.nativeHandoff.authority.connectionId !== connection.connectionId ||
+          runtime.nativeHandoff.authority.leaseId !== activeLease.leaseId)
+      ) {
+        await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
+          () => undefined,
+        );
+        throw browserFailure(
+          "BROWSER_SESSION_LOST",
+          "The Browser native handoff authority is unavailable.",
+        );
+      }
       if (runtime.session.state === "ready" && !runtime.takeoverRequested) {
         this.#viewerEvent(runtime, "rejection", "request_missing");
         throw browserFailure(
@@ -645,28 +698,57 @@ export class DesktopBrowserService implements BrowserServicePort {
           "The agent has not requested Browser takeover.",
         );
       }
-      if (runtime.session.state === "ready") {
-        runtime.session.state = "human_control";
-        runtime.takeoverRequested = false;
-        this.#viewerEvent(runtime, "acceptance");
-      } else if (runtime.session.state !== "human_control") {
+      if (
+        runtime.session.state !== "ready" &&
+        runtime.session.state !== "human_control"
+      ) {
         throw browserFailure(
           "BROWSER_SESSION_LOST",
           "The Browser Session cannot enter human control.",
         );
       }
       if (activeLease === undefined) {
-        runtime.activeInputLease = {
+        const lease = {
           leaseId: `browser-lease-${this.#id()}`,
           connectionId: connection.connectionId,
           expiresAt: new Date(
             this.#now().getTime() + DESKTOP_BROWSER_INPUT_LEASE_MS,
           ).toISOString(),
         };
+        const wasReady = runtime.session.state === "ready";
+        try {
+          await this.#presentNativeHandoff(runtime, connection, lease);
+        } catch (error) {
+          await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
+            () => undefined,
+          );
+          throw normalizeBrowserHostFailure(error, {
+            toolName: "browser.request_takeover",
+            dispatchAcknowledged: true,
+            effectful: true,
+          });
+        }
+        runtime.activeInputLease = lease;
+        if (wasReady) {
+          runtime.session.state = "human_control";
+          runtime.takeoverRequested = false;
+          this.#viewerEvent(runtime, "acceptance");
+        }
         this.#viewerEvent(runtime, "lease_issue");
       }
       this.#touch(runtime);
-      await this.#persist();
+      try {
+        await this.#persist();
+      } catch (error) {
+        await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
+          () => undefined,
+        );
+        throw normalizeBrowserHostFailure(error, {
+          toolName: "browser.request_takeover",
+          dispatchAcknowledged: true,
+          effectful: true,
+        });
+      }
       return this.#viewerState(runtime, connection);
     });
   }
@@ -682,10 +764,21 @@ export class DesktopBrowserService implements BrowserServicePort {
   }): Promise<DesktopBrowserViewerStateV1> {
     return await this.#serialize(async () => {
       const { runtime, connection } = await this.#requireViewerConnection(input);
-      const lease = this.#requireViewerLease(runtime, connection, input.leaseId);
+      const lease = await this.#requireViewerLease(
+        runtime,
+        connection,
+        input.leaseId,
+      );
       lease.expiresAt = new Date(
         this.#now().getTime() + DESKTOP_BROWSER_INPUT_LEASE_MS,
       ).toISOString();
+      if (runtime.nativeHandoff !== undefined) {
+        runtime.nativeHandoff.authority = {
+          ...runtime.nativeHandoff.authority,
+          expiresAt: lease.expiresAt,
+        };
+        this.#scheduleNativeHandoffExpiry(runtime);
+      }
       this.#viewerEvent(runtime, "lease_renewal");
       return this.#viewerState(runtime, connection);
     });
@@ -703,7 +796,7 @@ export class DesktopBrowserService implements BrowserServicePort {
   }): Promise<DesktopBrowserViewerStateV1> {
     return await this.#serialize(async () => {
       const { runtime, connection } = await this.#requireViewerConnection(input);
-      this.#requireViewerLease(runtime, connection, input.leaseId);
+      await this.#requireViewerLease(runtime, connection, input.leaseId);
       const dispatch = this.#engine.dispatchViewerInput;
       if (dispatch === undefined) {
         throw browserFailure(
@@ -744,7 +837,19 @@ export class DesktopBrowserService implements BrowserServicePort {
   }): Promise<DesktopBrowserViewerStateV1> {
     return await this.#serialize(async () => {
       const { runtime, connection } = await this.#requireViewerConnection(input);
-      this.#requireViewerLease(runtime, connection, input.leaseId);
+      await this.#requireViewerLease(runtime, connection, input.leaseId);
+      try {
+        await this.#revokeNativeHandoff(runtime);
+      } catch (error) {
+        await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
+          () => undefined,
+        );
+        throw normalizeBrowserHostFailure(error, {
+          toolName: "browser.request_takeover",
+          dispatchAcknowledged: true,
+          effectful: true,
+        });
+      }
       runtime.activeInputLease = undefined;
       runtime.takeoverRequested = false;
       runtime.session.state = "ready";
@@ -765,6 +870,16 @@ export class DesktopBrowserService implements BrowserServicePort {
   }): Promise<void> {
     await this.#serialize(async () => {
       const { runtime, connection } = await this.#requireViewerConnection(input);
+      if (runtime.activeInputLease?.connectionId === connection.connectionId) {
+        try {
+          await this.#revokeNativeHandoff(runtime);
+        } catch {
+          await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
+            () => undefined,
+          );
+          return;
+        }
+      }
       runtime.viewerConnections.delete(connection.connectionId);
       if (runtime.activeInputLease?.connectionId === connection.connectionId) {
         runtime.activeInputLease = undefined;
@@ -2989,23 +3104,35 @@ export class DesktopBrowserService implements BrowserServicePort {
     this.#assertViewerSessionState(runtime);
   }
 
-  #expireViewerLease(runtime: ActiveDesktopBrowserRuntime): void {
+  async #expireViewerLease(runtime: ActiveDesktopBrowserRuntime): Promise<void> {
     const lease = runtime.activeInputLease;
     if (
       lease !== undefined &&
       this.#now().getTime() >= Date.parse(lease.expiresAt)
     ) {
+      try {
+        await this.#revokeNativeHandoff(runtime);
+      } catch (error) {
+        await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
+          () => undefined,
+        );
+        throw normalizeBrowserHostFailure(error, {
+          toolName: "browser.request_takeover",
+          dispatchAcknowledged: true,
+          effectful: true,
+        });
+      }
       runtime.activeInputLease = undefined;
       this.#viewerEvent(runtime, "expiry", "input_lease");
     }
   }
 
-  #requireViewerLease(
+  async #requireViewerLease(
     runtime: ActiveDesktopBrowserRuntime,
     connection: DesktopBrowserViewerConnection,
     leaseId: string,
-  ): DesktopBrowserInputLease {
-    this.#expireViewerLease(runtime);
+  ): Promise<DesktopBrowserInputLease> {
+    await this.#expireViewerLease(runtime);
     const lease = runtime.activeInputLease;
     if (
       runtime.session.state !== "human_control" ||
@@ -3019,6 +3146,22 @@ export class DesktopBrowserService implements BrowserServicePort {
         "The Browser input lease is unavailable.",
       );
     }
+    const handoff = runtime.nativeHandoff;
+    if (
+      handoff === undefined ||
+      handoff.authority.sessionId !== runtime.session.sessionId ||
+      handoff.authority.generation !== runtime.session.generation ||
+      handoff.authority.connectionId !== connection.connectionId ||
+      handoff.authority.leaseId !== lease.leaseId
+    ) {
+      await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
+        () => undefined,
+      );
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The Browser native handoff authority is unavailable.",
+      );
+    }
     return lease;
   }
 
@@ -3026,7 +3169,6 @@ export class DesktopBrowserService implements BrowserServicePort {
     runtime: ActiveDesktopBrowserRuntime,
     connection: DesktopBrowserViewerConnection,
   ): DesktopBrowserViewerStateV1 {
-    this.#expireViewerLease(runtime);
     const lease =
       runtime.activeInputLease?.connectionId === connection.connectionId
         ? runtime.activeInputLease
@@ -3047,8 +3189,97 @@ export class DesktopBrowserService implements BrowserServicePort {
         : {
             inputLeaseId: lease.leaseId,
             inputLeaseExpiresAt: lease.expiresAt,
+            nativeHandoffActive:
+              runtime.nativeHandoff?.authority.leaseId === lease.leaseId,
           }),
     };
+  }
+
+  async #presentNativeHandoff(
+    runtime: ActiveDesktopBrowserRuntime,
+    connection: DesktopBrowserViewerConnection,
+    lease: DesktopBrowserInputLease,
+  ): Promise<void> {
+    const present = this.#engine.presentNativeHandoff;
+    const revoke = this.#engine.revokeNativeHandoff;
+    if (present === undefined || revoke === undefined) {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "The Browser engine cannot prove native authentication presentation.",
+      );
+    }
+    const authority: DesktopBrowserNativeHandoffAuthority = Object.freeze({
+      sessionId: runtime.session.sessionId,
+      generation: runtime.session.generation,
+      threadId: runtime.session.threadId,
+      projectId: connection.projectId,
+      principalId: connection.principalId,
+      connectionId: connection.connectionId,
+      leaseId: lease.leaseId,
+      expiresAt: lease.expiresAt,
+    });
+    const presentation = await present.call(this.#engine, {
+      ...runtime.engine,
+      authority,
+    });
+    if (
+      !Number.isSafeInteger(presentation.windowId) ||
+      presentation.windowId < 1 ||
+      typeof presentation.targetId !== "string" ||
+      presentation.targetId.length < 1 ||
+      presentation.targetId.length > 512
+    ) {
+      throw browserFailure(
+        "BROWSER_ENGINE_FAILURE",
+        "The Browser engine returned an invalid native handoff receipt.",
+      );
+    }
+    runtime.nativeHandoff = {
+      authority,
+      presentation: Object.freeze({ ...presentation }),
+    };
+    this.#scheduleNativeHandoffExpiry(runtime);
+  }
+
+  async #revokeNativeHandoff(
+    runtime: ActiveDesktopBrowserRuntime,
+  ): Promise<void> {
+    const handoff = runtime.nativeHandoff;
+    if (handoff === undefined) return;
+    if (handoff.expiryTimer !== undefined) clearTimeout(handoff.expiryTimer);
+    const revoke = this.#engine.revokeNativeHandoff;
+    if (revoke === undefined) {
+      throw browserFailure(
+        "BROWSER_ENGINE_FAILURE",
+        "The Browser engine cannot prove native authentication revocation.",
+      );
+    }
+    await revoke.call(this.#engine, {
+      ...runtime.engine,
+      authority: handoff.authority,
+      presentation: handoff.presentation,
+    });
+    if (runtime.nativeHandoff === handoff) runtime.nativeHandoff = undefined;
+  }
+
+  #scheduleNativeHandoffExpiry(runtime: ActiveDesktopBrowserRuntime): void {
+    const handoff = runtime.nativeHandoff;
+    if (handoff === undefined || this.#options.scheduleExpiry === false) return;
+    if (handoff.expiryTimer !== undefined) clearTimeout(handoff.expiryTimer);
+    const delay = Math.max(
+      1,
+      Date.parse(handoff.authority.expiresAt) - this.#now().getTime(),
+    );
+    handoff.expiryTimer = setTimeout(() => {
+      void this.#serialize(async () => {
+        if (
+          this.#active.get(runtime.session.sessionId) !== runtime ||
+          runtime.nativeHandoff !== handoff
+        ) return;
+        await this.#expireViewerLease(runtime);
+      }).catch(() => undefined);
+    }, delay);
+    handoff.expiryTimer.unref?.();
   }
 
   #viewerEvent(
@@ -3093,6 +3324,12 @@ export class DesktopBrowserService implements BrowserServicePort {
     direct = false,
   ): Promise<void> {
     if (this.#active.get(runtime.session.sessionId) !== runtime) return;
+    try {
+      await this.#revokeNativeHandoff(runtime);
+    } catch {
+      // Closing the exact owned engine below is the fail-closed revocation
+      // proof when window minimization itself cannot be acknowledged.
+    }
     if (direct || runtime.authorityResolutionDepth > 0) {
       await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
         () => undefined,
@@ -3329,6 +3566,9 @@ export class DesktopBrowserService implements BrowserServicePort {
       screenshotPath,
       blockedDownloadPath,
       proxy,
+      ...(this.#options.nativeAuthenticationHandoff === true
+        ? { nativeAuthenticationHandoff: true }
+        : {}),
     };
   }
 
@@ -3426,6 +3666,7 @@ export class DesktopBrowserService implements BrowserServicePort {
       runtime.proxy.close(),
       this.#engine.close({ ...runtime.engine, acceptedOperation }),
     ]);
+    if (cleanup[1]?.status === "fulfilled") runtime.nativeHandoff = undefined;
     let cleanupFailure: unknown = cleanup.find(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     )?.reason;
@@ -3797,6 +4038,17 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     const cdp = await this.#openStep("cdp_discovery", () =>
       this.#run(input, ["get", "cdp-url"]),
     );
+    if (input.nativeAuthenticationHandoff === true) {
+      await this.#openStep("native_window_concealment", async () => {
+        const tabs = parseTabs(
+          (await this.#run(input, ["tab", "--json"])).stdout,
+        );
+        await minimizeAgentBrowserNativeWindow(
+          extractScalar(cdp.stdout, "cdpUrl"),
+          tabs.activeTabId,
+        );
+      });
+    }
     const interception = await this.#openStep("download_denial", () =>
       installAgentBrowserDownloadInterception(
         extractScalar(cdp.stdout, "cdpUrl"),
@@ -3849,6 +4101,46 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
       input.viewerInput.kind === "pointer"
         ? viewerPointerCdpParameters(input.viewerInput)
         : viewerKeyboardCdpParameters(input.viewerInput),
+    );
+  }
+
+  async presentNativeHandoff(
+    input: DesktopBrowserEngineInvocation & {
+      authority: DesktopBrowserNativeHandoffAuthority;
+    },
+  ): Promise<DesktopBrowserNativeHandoffPresentation> {
+    if (input.nativeAuthenticationHandoff !== true) {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "Native authentication handoff is unavailable on this Browser host.",
+      );
+    }
+    assertNativeHandoffAuthority(input, input.authority);
+    const cdp = await this.#run(input, ["get", "cdp-url"]);
+    const tabs = parseTabs((await this.#run(input, ["tab", "--json"])).stdout);
+    return await presentAgentBrowserNativeWindow(
+      extractScalar(cdp.stdout, "cdpUrl"),
+      tabs.activeTabId,
+    );
+  }
+
+  async revokeNativeHandoff(
+    input: DesktopBrowserEngineInvocation & {
+      authority: DesktopBrowserNativeHandoffAuthority;
+      presentation: DesktopBrowserNativeHandoffPresentation;
+    },
+  ): Promise<void> {
+    if (input.nativeAuthenticationHandoff !== true) {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "Native authentication handoff is unavailable on this Browser host.",
+      );
+    }
+    assertNativeHandoffAuthority(input, input.authority);
+    const cdp = await this.#run(input, ["get", "cdp-url"]);
+    await revokeAgentBrowserNativeWindow(
+      extractScalar(cdp.stdout, "cdpUrl"),
+      input.presentation,
     );
   }
 
@@ -4038,8 +4330,11 @@ export function buildAgentBrowserCliInvocation(input: {
   chromeExecutablePath: string;
   command: readonly string[];
 }): { args: string[]; env: NodeJS.ProcessEnv } {
+  const nativeAuthenticationHandoff =
+    input.input.nativeAuthenticationHandoff === true;
   return {
     args: [
+      ...(nativeAuthenticationHandoff ? ["--headed"] : []),
       "--session",
       input.input.sessionId,
       "--profile",
@@ -4061,6 +4356,7 @@ export function buildAgentBrowserCliInvocation(input: {
         "--disable-default-apps",
         "--disable-sync",
         "--no-first-run",
+        ...(nativeAuthenticationHandoff ? ["--start-minimized"] : []),
       ].join(","),
       "--content-boundaries",
       "--max-output",
@@ -4094,6 +4390,152 @@ function sanitizedAgentBrowserEnvironment(
     LANG: "C.UTF-8",
     NODE_ENV: "production",
   };
+}
+
+function assertNativeHandoffAuthority(
+  input: DesktopBrowserEngineInvocation,
+  authority: DesktopBrowserNativeHandoffAuthority,
+): void {
+  if (
+    authority.sessionId !== input.sessionId ||
+    authority.generation !== input.proxy.generation ||
+    authority.threadId !== input.proxy.threadId ||
+    authority.sessionId !== input.proxy.sessionId ||
+    !Number.isFinite(Date.parse(authority.expiresAt))
+  ) {
+    throw browserFailure(
+      "BROWSER_SESSION_LOST",
+      "The Browser adapter rejected stale native handoff authority.",
+    );
+  }
+}
+
+export async function presentAgentBrowserNativeWindow(
+  cdpUrl: string,
+  targetId: string,
+  sendRequest: typeof sendBrowserCdpRequest = sendBrowserCdpRequest,
+  sendPageCommand: typeof sendBrowserPageCdpCommand = sendBrowserPageCdpCommand,
+): Promise<DesktopBrowserNativeHandoffPresentation> {
+  const parsed = parseLocalBrowserCdpUrl(cdpUrl);
+  const exactTarget = requireText(targetId, "Browser native handoff targetId");
+  const window = await sendRequest(
+    parsed.toString(),
+    "Browser.getWindowForTarget",
+    { targetId: exactTarget },
+  );
+  const windowId = window.windowId;
+  if (!Number.isSafeInteger(windowId) || Number(windowId) < 1) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser native handoff window identity is invalid.",
+    );
+  }
+  const presentation = Object.freeze({
+    windowId: Number(windowId),
+    targetId: exactTarget,
+  });
+  try {
+    await sendRequest(parsed.toString(), "Browser.setWindowBounds", {
+      windowId: presentation.windowId,
+      bounds: { windowState: "normal" },
+    });
+    await sendPageCommand(
+      parsed.toString(),
+      presentation.targetId,
+      "Page.bringToFront",
+      {},
+    );
+    const verified = await sendRequest(
+      parsed.toString(),
+      "Browser.getWindowBounds",
+      { windowId: presentation.windowId },
+    );
+    if (requireWindowState(verified) !== "normal") {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: Browser native handoff presentation was not proven.",
+      );
+    }
+    return presentation;
+  } catch (error) {
+    await sendRequest(parsed.toString(), "Browser.setWindowBounds", {
+      windowId: presentation.windowId,
+      bounds: { windowState: "minimized" },
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function minimizeAgentBrowserNativeWindow(
+  cdpUrl: string,
+  targetId: string,
+  sendRequest: typeof sendBrowserCdpRequest = sendBrowserCdpRequest,
+): Promise<DesktopBrowserNativeHandoffPresentation> {
+  const parsed = parseLocalBrowserCdpUrl(cdpUrl);
+  const exactTarget = requireText(targetId, "Browser native handoff targetId");
+  const window = await sendRequest(
+    parsed.toString(),
+    "Browser.getWindowForTarget",
+    { targetId: exactTarget },
+  );
+  const windowId = window.windowId;
+  if (!Number.isSafeInteger(windowId) || Number(windowId) < 1) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser native handoff window identity is invalid.",
+    );
+  }
+  const presentation = Object.freeze({
+    windowId: Number(windowId),
+    targetId: exactTarget,
+  });
+  await revokeAgentBrowserNativeWindow(
+    parsed.toString(),
+    presentation,
+    sendRequest,
+  );
+  return presentation;
+}
+
+export async function revokeAgentBrowserNativeWindow(
+  cdpUrl: string,
+  presentation: DesktopBrowserNativeHandoffPresentation,
+  sendRequest: typeof sendBrowserCdpRequest = sendBrowserCdpRequest,
+): Promise<void> {
+  const parsed = parseLocalBrowserCdpUrl(cdpUrl);
+  if (
+    !Number.isSafeInteger(presentation.windowId) ||
+    presentation.windowId < 1 ||
+    typeof presentation.targetId !== "string" ||
+    presentation.targetId.length < 1
+  ) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser native handoff receipt is invalid.",
+    );
+  }
+  await sendRequest(parsed.toString(), "Browser.setWindowBounds", {
+    windowId: presentation.windowId,
+    bounds: { windowState: "minimized" },
+  });
+  const verified = await sendRequest(
+    parsed.toString(),
+    "Browser.getWindowBounds",
+    { windowId: presentation.windowId },
+  );
+  if (requireWindowState(verified) !== "minimized") {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser native handoff revocation was not proven.",
+    );
+  }
+}
+
+function requireWindowState(
+  result: Record<string, unknown>,
+): "normal" | "minimized" {
+  const bounds = requireRecord(result.bounds, "Browser window bounds");
+  if (bounds.windowState !== "normal" && bounds.windowState !== "minimized") {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser window state is invalid.",
+    );
+  }
+  return bounds.windowState;
 }
 
 export async function denyAgentBrowserDownloads(
@@ -4356,6 +4798,78 @@ async function sendBrowserCdpCommand(
         return;
       }
       finish();
+    });
+  });
+}
+
+async function sendBrowserCdpRequest(
+  cdpUrl: string,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const parsed = parseLocalBrowserCdpUrl(cdpUrl);
+  return await new Promise<Record<string, unknown>>((resolve, reject) => {
+    const socket = new WebSocket(parsed.toString());
+    const commandId = 1;
+    let settled = false;
+    const finish = (result?: Record<string, unknown>, error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.close();
+      if (error !== undefined) reject(error);
+      else resolve(result ?? {});
+    };
+    const timer = setTimeout(() => {
+      finish(
+        undefined,
+        new Error(
+          "BROWSER_ENGINE_TIMEOUT: Browser native handoff was not acknowledged.",
+        ),
+      );
+    }, 5_000);
+    socket.once("open", () => {
+      socket.send(JSON.stringify({ id: commandId, method, params }));
+    });
+    socket.once("error", () => {
+      finish(
+        undefined,
+        new Error(
+          "BROWSER_ENGINE_FAILURE: Browser native handoff connection failed.",
+        ),
+      );
+    });
+    socket.once("close", () => {
+      if (!settled) {
+        finish(
+          undefined,
+          new Error(
+            "BROWSER_ENGINE_FAILURE: Browser native handoff connection closed.",
+          ),
+        );
+      }
+    });
+    socket.on("message", (raw) => {
+      let response: Record<string, unknown>;
+      try {
+        response = requireRecord(
+          JSON.parse(raw.toString("utf8")),
+          "Browser native handoff response",
+        );
+      } catch {
+        return;
+      }
+      if (response.id !== commandId) return;
+      if (response.error !== undefined) {
+        finish(
+          undefined,
+          new Error(
+            "BROWSER_ENGINE_FAILURE: Browser native handoff was rejected.",
+          ),
+        );
+        return;
+      }
+      finish(requireOptionalRecord(response.result) ?? {});
     });
   });
 }

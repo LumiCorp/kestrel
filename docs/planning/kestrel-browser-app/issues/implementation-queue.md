@@ -4,9 +4,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Persist Desktop viewer authority loss across restart](04e-persist-viewer-authority-loss-across-restart.md)
-- [Serialize Gateway retirement and shutdown](05i-serialize-gateway-retirement-and-shutdown.md)
-- [Reserve Gateway work before DNS](05c-reserve-gateway-work-before-dns.md)
 - [Proxy authorized QA WebSockets](05d-proxy-authorized-qa-websockets.md)
 - [Enforce Gateway connection timeouts](05g-enforce-gateway-connection-timeouts.md)
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md)
@@ -15,7 +12,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## In progress
 
-- [Complete native authentication takeover](04c-complete-native-authentication-takeover.md)
+None.
 
 ## Blocked
 
@@ -29,6 +26,10 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Implemented
 
+- [Complete native authentication takeover](04c-complete-native-authentication-takeover.md) — packaged Desktop-only native window handoff and fail-closed lifecycle proofs are green; awaiting independent review and signed platform-authenticator canary
+- [Persist Desktop viewer authority loss across restart](04e-persist-viewer-authority-loss-across-restart.md) — private exact-identity restart journal and surviving-Local-Core regressions are green; awaiting independent review
+- [Reserve Gateway work before DNS](05c-reserve-gateway-work-before-dns.md) — delayed-DNS close, expiry, disconnect, revision, and reinstall proofs are green; awaiting independent review
+- [Serialize Gateway retirement and shutdown](05i-serialize-gateway-retirement-and-shutdown.md) — same-key retirement and concurrent-shutdown admission proofs are green; awaiting independent review
 - [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 

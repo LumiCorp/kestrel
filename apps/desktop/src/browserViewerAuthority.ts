@@ -1,3 +1,5 @@
+import type { DesktopBrowserViewerAuthorityJournal } from "./browserViewerAuthorityJournal.js";
+
 export interface DesktopBrowserViewerPrincipal {
   senderId: number;
   principalId: string;
@@ -32,6 +34,8 @@ export class DesktopBrowserViewerAuthorityCoordinator {
     principal: DesktopBrowserViewerPrincipal,
     reason: DesktopBrowserViewerAuthorityLossReason,
   ) => Promise<void>;
+  readonly #journal: DesktopBrowserViewerAuthorityJournal | undefined;
+  readonly #initialization: Promise<void>;
   #current: DesktopBrowserViewerPrincipal | undefined;
   #pending: PendingDesktopBrowserViewerAuthorityLoss | undefined;
   #tail: Promise<void> = Promise.resolve();
@@ -41,8 +45,12 @@ export class DesktopBrowserViewerAuthorityCoordinator {
       principal: DesktopBrowserViewerPrincipal,
       reason: DesktopBrowserViewerAuthorityLossReason,
     ): Promise<void>;
+    journal?: DesktopBrowserViewerAuthorityJournal | undefined;
   }) {
     this.#loseAuthority = input.loseAuthority;
+    this.#journal = input.journal;
+    this.#initialization = this.#restore();
+    void this.#initialization.catch(() => undefined);
   }
 
   current(): DesktopBrowserViewerPrincipal | undefined {
@@ -51,8 +59,7 @@ export class DesktopBrowserViewerAuthorityCoordinator {
 
   snapshot(): DesktopBrowserViewerAuthoritySnapshot {
     return {
-      current:
-        this.#current === undefined ? undefined : { ...this.#current },
+      current: this.#current === undefined ? undefined : { ...this.#current },
       pending:
         this.#pending === undefined
           ? undefined
@@ -68,9 +75,7 @@ export class DesktopBrowserViewerAuthorityCoordinator {
     principalId: string;
     threadId: string;
     projectId: string;
-    connect(
-      expected: DesktopBrowserViewerPrincipal | undefined,
-    ): Promise<{
+    connect(expected: DesktopBrowserViewerPrincipal | undefined): Promise<{
       value: T;
       principal?: DesktopBrowserViewerPrincipal | undefined;
       previousSessionTerminal?: boolean | undefined;
@@ -86,13 +91,16 @@ export class DesktopBrowserViewerAuthorityCoordinator {
           current.threadId !== input.threadId ||
           current.projectId !== input.projectId)
       ) {
-        this.#stageLoss(current, "principal_replaced");
+        await this.#stageLoss(current, "principal_replaced");
         await this.#flushPending();
       }
 
       const connected = await input.connect(this.#current);
       if (connected.principal === undefined) {
         if (connected.previousSessionTerminal === true) {
+          if (this.#current !== undefined) {
+            await this.#journal?.clear(this.#current);
+          }
           this.#current = undefined;
         }
         return connected.value;
@@ -105,6 +113,19 @@ export class DesktopBrowserViewerAuthorityCoordinator {
         throw new Error(
           "Desktop Browser viewer connection identity changed while the prior principal remained authoritative.",
         );
+      }
+      try {
+        await this.#journal?.recordCurrent(connected.principal);
+      } catch (persistenceError) {
+        try {
+          await this.#loseAuthority(connected.principal, "desktop_stopped");
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [persistenceError, cleanupError],
+            "Desktop Browser viewer authority could not be retained or revoked.",
+          );
+        }
+        throw persistenceError;
       }
       this.#current = connected.principal;
       return connected.value;
@@ -123,7 +144,7 @@ export class DesktopBrowserViewerAuthorityCoordinator {
         (input.expectedSenderId === undefined ||
           current.senderId === input.expectedSenderId)
       ) {
-        this.#stageLoss(current, input.reason);
+        await this.#stageLoss(current, input.reason);
       }
       try {
         await this.#flushPending();
@@ -154,23 +175,27 @@ export class DesktopBrowserViewerAuthorityCoordinator {
       }
       await release();
       if (sameDesktopBrowserViewerPrincipal(this.#current, expected)) {
+        await this.#journal?.clear(expected);
         this.#current = undefined;
       }
     });
   }
 
-  #stageLoss(
+  async #stageLoss(
     principal: DesktopBrowserViewerPrincipal,
     reason: DesktopBrowserViewerAuthorityLossReason,
-  ): void {
+  ): Promise<void> {
     if (this.#pending !== undefined) {
-      if (!sameDesktopBrowserViewerPrincipal(this.#pending.principal, principal)) {
+      if (
+        !sameDesktopBrowserViewerPrincipal(this.#pending.principal, principal)
+      ) {
         throw new Error(
           "Desktop Browser viewer authority loss cannot drift to another principal.",
         );
       }
       return;
     }
+    await this.#journal?.recordPending(principal, reason);
     this.#pending = { principal, reason };
   }
 
@@ -178,6 +203,7 @@ export class DesktopBrowserViewerAuthorityCoordinator {
     const pending = this.#pending;
     if (pending === undefined) return;
     await this.#loseAuthority(pending.principal, pending.reason);
+    await this.#journal?.clear(pending.principal);
     if (this.#pending === pending) this.#pending = undefined;
     if (sameDesktopBrowserViewerPrincipal(this.#current, pending.principal)) {
       this.#current = undefined;
@@ -185,12 +211,27 @@ export class DesktopBrowserViewerAuthorityCoordinator {
   }
 
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.#tail.then(operation, operation);
+    const run = async () => {
+      await this.#initialization;
+      return await operation();
+    };
+    const result = this.#tail.then(run, run);
     this.#tail = result.then(
       () => undefined,
       () => undefined,
     );
     return result;
+  }
+
+  async #restore(): Promise<void> {
+    const retained = await this.#journal?.load();
+    if (retained === undefined) return;
+    const reason = retained.pendingReason ?? "desktop_stopped";
+    if (retained.pendingReason === undefined) {
+      await this.#journal?.recordPending(retained.current, reason);
+    }
+    this.#current = retained.current;
+    this.#pending = { principal: retained.current, reason };
   }
 }
 

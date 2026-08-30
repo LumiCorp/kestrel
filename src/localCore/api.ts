@@ -1190,6 +1190,7 @@ export function createPackagedDesktopBrowserService(input: {
     viewerEvents: createLocalCoreDesktopBrowserViewerEventSink({
       homePath: input.homePath,
     }),
+    nativeAuthenticationHandoff: true,
     withAuthorityAdmission: input.withAuthorityAdmission,
     engine: input.runtimeDependencies?.engine,
     createProxy: input.runtimeDependencies?.createProxy,

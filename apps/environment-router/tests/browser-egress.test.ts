@@ -187,21 +187,71 @@ test("hosted Browser gateway exact close retries throwing destructors without re
       await connect(binding, "www.example.com:443", true),
       /^HTTP\/1\.1 407/u,
     );
+    await assert.rejects(
+      registry.install(session(authority)),
+      /BROWSER_SESSION_LOST/u,
+    );
+
+    const replacement = await registry.install({
+      ...session(authority),
+      generation: 2,
+    });
+    const replacementTunnel = await openTunnel(
+      replacement,
+      "www.example.com:443",
+      true,
+      false,
+    );
 
     assert.equal(await registry.closeExact({
       sessionId: binding.sessionId,
       generation: binding.generation,
     }), true);
     assert.deepEqual(destroyAttempts, [3, 3]);
+    assert.equal(replacementTunnel.socket.destroyed, false);
     assert.equal(await registry.closeExact({
       sessionId: binding.sessionId,
       generation: binding.generation,
     }), false);
+    replacementTunnel.socket.destroy();
   } finally {
     for (const socket of upstreamSockets) socket.destroy();
     await registry.closeAll();
     await close(upstream);
   }
+});
+
+test("hosted Browser gateway shutdown excludes an install already waiting on its listener", async () => {
+  const registry = new HostedBrowserEgressRegistry({
+    gatewayMachineId: "gateway-machine-1",
+    appName: "kestrel-env-test",
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+  });
+  const first = await registry.install(session(authority));
+  const installing = registry.install({
+    ...session(authority),
+    threadId: "thread-2",
+    sessionId: "browser-session-2",
+  });
+  const shutdown = registry.closeAll();
+
+  await assert.rejects(installing, /BROWSER_SESSION_LOST/u);
+  await shutdown;
+  assert.throws(
+    () => registry.requireSession({
+      sessionId: first.sessionId,
+      generation: first.generation,
+    }),
+    /BROWSER_SESSION_LOST/u,
+  );
+  await assert.rejects(
+    registry.install({
+      ...session(authority),
+      threadId: "thread-3",
+      sessionId: "browser-session-3",
+    }),
+    /BROWSER_SESSION_LOST/u,
+  );
 });
 
 test("hosted Browser gateway revision closes connections revoked by the new allowlist", async () => {
@@ -461,6 +511,166 @@ test("hosted Browser gateway rejects DNS changes into reserved space", async () 
   }
 });
 
+for (const action of ["close", "expiry", "client", "reinstall"] as const) {
+  test(`hosted Browser gateway ${action} cancels delayed-DNS HTTP before upstream allocation`, async () => {
+    const upstream = http.createServer((_request, response) => response.end("fresh"));
+    await listen(upstream);
+    const upstreamPort = (upstream.address() as AddressInfo).port;
+    const dnsStarted = deferred<void>();
+    const dnsRelease = deferred<readonly [{ address: string; family: 4 }]>();
+    let delayDns = true;
+    let upstreamAllocations = 0;
+    const registry = new HostedBrowserEgressRegistry({
+      gatewayMachineId: "gateway-machine-1",
+      appName: "kestrel-env-test",
+      resolve: async () => {
+        if (!delayDns) return [{ address: "93.184.216.34", family: 4 }];
+        dnsStarted.resolve();
+        return await dnsRelease.promise;
+      },
+      requestUpstream: (options) => {
+        upstreamAllocations += 1;
+        return http.request({
+          ...options,
+          host: "127.0.0.1",
+          family: 4,
+          port: upstreamPort,
+        });
+      },
+    });
+    const qaAuthority: HostedBrowserGatewayAuthorityV1 = {
+      ...authority,
+      enabledModes: ["qa"],
+      publicDomains: [],
+      qaTarget: {
+        version: "browser_qa_target_v1",
+        scheme: "http",
+        hostname: "qa.example.com",
+        port: 8080,
+      },
+    };
+    const sessionBinding = {
+      ...session(qaAuthority),
+      mode: "qa" as const,
+      ...(action === "expiry"
+        ? { hardExpiresAt: new Date(Date.now() + 30).toISOString() }
+        : {}),
+    };
+    try {
+      const binding = await registry.install(sessionBinding);
+      const pending = startProxyHttpRequest(
+        binding,
+        "http://qa.example.com:8080/delayed",
+        "must-not-leave-gateway",
+      );
+      await dnsStarted.promise;
+
+      let replacement: typeof binding | undefined;
+      if (action === "client") {
+        pending.request.destroy();
+        await pending.settled;
+      } else if (action === "expiry") {
+        await new Promise<void>((resolve) => setTimeout(resolve, 40));
+      } else {
+        await registry.closeExact({
+          sessionId: binding.sessionId,
+          generation: binding.generation,
+        });
+        if (action === "reinstall") {
+          delayDns = false;
+          replacement = await registry.install(sessionBinding);
+        }
+      }
+
+      dnsRelease.resolve([{ address: "93.184.216.34", family: 4 }]);
+      await pending.settled;
+      assert.equal(upstreamAllocations, 0);
+
+      if (replacement) {
+        const fresh = await proxyHttpRequest(
+          replacement,
+          "http://qa.example.com:8080/fresh",
+          "fresh-request",
+        );
+        assert.equal(fresh.statusCode, 200);
+        assert.equal(fresh.body, "fresh");
+        assert.equal(upstreamAllocations, 1);
+      }
+    } finally {
+      dnsRelease.resolve([{ address: "93.184.216.34", family: 4 }]);
+      await registry.closeAll();
+      await close(upstream);
+    }
+  });
+
+  test(`hosted Browser gateway ${action} cancels delayed-DNS CONNECT before upstream allocation`, async () => {
+    const upstream = net.createServer((socket) => socket.write("upstream-ready"));
+    await listen(upstream);
+    const upstreamPort = (upstream.address() as AddressInfo).port;
+    const dnsStarted = deferred<void>();
+    const dnsRelease = deferred<readonly [{ address: string; family: 4 }]>();
+    let delayDns = true;
+    let upstreamAllocations = 0;
+    const registry = new HostedBrowserEgressRegistry({
+      gatewayMachineId: "gateway-machine-1",
+      appName: "kestrel-env-test",
+      resolve: async () => {
+        if (!delayDns) return [{ address: "93.184.216.34", family: 4 }];
+        dnsStarted.resolve();
+        return await dnsRelease.promise;
+      },
+      dial: () => {
+        upstreamAllocations += 1;
+        return net.connect({ host: "127.0.0.1", port: upstreamPort });
+      },
+    });
+    const sessionBinding = {
+      ...session(authority),
+      ...(action === "expiry"
+        ? { hardExpiresAt: new Date(Date.now() + 30).toISOString() }
+        : {}),
+    };
+    try {
+      const binding = await registry.install(sessionBinding);
+      const pending = startPendingTunnel(binding, "www.example.com:443");
+      await dnsStarted.promise;
+
+      let replacement: typeof binding | undefined;
+      if (action === "client") {
+        pending.socket.destroy();
+        await pending.settled;
+      } else if (action === "expiry") {
+        await new Promise<void>((resolve) => setTimeout(resolve, 40));
+      } else {
+        await registry.closeExact({
+          sessionId: binding.sessionId,
+          generation: binding.generation,
+        });
+        if (action === "reinstall") {
+          delayDns = false;
+          replacement = await registry.install(sessionBinding);
+        }
+      }
+
+      dnsRelease.resolve([{ address: "93.184.216.34", family: 4 }]);
+      await pending.settled;
+      assert.equal(upstreamAllocations, 0);
+
+      if (replacement) {
+        assert.match(
+          await connect(replacement, "www.example.com:443", true, true),
+          /^HTTP\/1\.1 200 Connection Established/u,
+        );
+        assert.equal(upstreamAllocations, 1);
+      }
+    } finally {
+      dnsRelease.resolve([{ address: "93.184.216.34", family: 4 }]);
+      await registry.closeAll();
+      await close(upstream);
+    }
+  });
+}
+
 function session(nextAuthority: HostedBrowserGatewayAuthorityV1) {
   return {
     threadId: "thread-1",
@@ -550,6 +760,66 @@ async function connectUntilClosed(
       if ((error as NodeJS.ErrnoException).code !== "ECONNRESET") reject(error);
     });
   });
+}
+
+function startPendingTunnel(
+  binding: Awaited<ReturnType<HostedBrowserEgressRegistry["install"]>>,
+  destination: string,
+): { socket: Socket; settled: Promise<void> } {
+  const proxy = new URL(binding.proxyServer);
+  const socket = net.connect({ host: "127.0.0.1", port: Number(proxy.port) });
+  const authorization = Buffer.from(
+    `${binding.username}:${binding.password}`,
+    "utf8",
+  ).toString("base64");
+  const settled = new Promise<void>((resolve) => {
+    socket.once("close", () => resolve());
+    socket.once("end", () => resolve());
+    socket.once("error", () => resolve());
+    socket.on("data", () => {});
+  });
+  socket.write([
+    `CONNECT ${destination} HTTP/1.1`,
+    `Host: ${destination}`,
+    `Proxy-Authorization: Basic ${authorization}`,
+    "",
+    "",
+  ].join("\r\n"));
+  return { socket, settled };
+}
+
+function startProxyHttpRequest(
+  binding: Awaited<ReturnType<HostedBrowserEgressRegistry["install"]>>,
+  target: string,
+  body: string,
+): { request: http.ClientRequest; settled: Promise<void> } {
+  const proxy = new URL(binding.proxyServer);
+  const authorization = Buffer.from(
+    `${binding.username}:${binding.password}`,
+    "utf8",
+  ).toString("base64");
+  let settle!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  const request = http.request({
+    host: "127.0.0.1",
+    port: Number(proxy.port),
+    method: "POST",
+    path: target,
+    headers: {
+      "content-length": Buffer.byteLength(body),
+      "proxy-authorization": `Basic ${authorization}`,
+    },
+  });
+  request.once("error", settle);
+  request.once("response", (response) => {
+    response.resume();
+    response.once("end", settle);
+    response.once("error", settle);
+  });
+  request.end(body);
+  return { request, settled };
 }
 
 async function proxyHttpRequest(

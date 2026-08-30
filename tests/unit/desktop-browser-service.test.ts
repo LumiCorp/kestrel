@@ -29,12 +29,17 @@ import {
   desktopBrowserZombieCommandMatches,
   denyAgentBrowserDownloads,
   installAgentBrowserDownloadInterception,
+  minimizeAgentBrowserNativeWindow,
+  presentAgentBrowserNativeWindow,
+  revokeAgentBrowserNativeWindow,
   spawnAndCollect,
   type DesktopBrowserAuthorityResolver,
   type DesktopBrowserAcceptedOperation,
   type DesktopBrowserEngineAdapter,
   type DesktopBrowserEngineInvocation,
   type DesktopBrowserMetric,
+  type DesktopBrowserNativeHandoffAuthority,
+  type DesktopBrowserNativeHandoffPresentation,
   type DesktopBrowserViewerEventV1,
 } from "../../src/localCore/desktopBrowserService.js";
 import { LocalCoreBrowserAuthorityCriticalSection } from "../../src/localCore/api.js";
@@ -305,6 +310,17 @@ test("Desktop takeover stays pending until viewer acceptance and blocks the agen
   );
   assert.equal(accepted.sessionState, "human_control");
   assert.ok(accepted.inputLeaseId);
+  assert.equal(accepted.nativeHandoffActive, true);
+  assert.deepEqual(fixture.engine.nativeHandoffs[0], {
+    sessionId,
+    generation: viewer.generation,
+    threadId: "thread-1",
+    projectId: "project-1",
+    principalId: "desktop-main-1",
+    connectionId: viewer.connectionId,
+    leaseId: accepted.inputLeaseId,
+    expiresAt: accepted.inputLeaseExpiresAt,
+  });
   const blockedLifecycle = createLifecycle();
   await assert.rejects(
     fixture.service.execute(
@@ -336,6 +352,10 @@ test("Desktop takeover stays pending until viewer acceptance and blocks the agen
   assert.doesNotMatch(JSON.stringify(afterInput), new RegExp(sentinel, "u"));
   assert.doesNotMatch(JSON.stringify(viewerEvents), new RegExp(sentinel, "u"));
   assert.doesNotMatch(
+    JSON.stringify(fixture.engine.nativeHandoffs),
+    new RegExp(sentinel, "u"),
+  );
+  assert.doesNotMatch(
     await readFile(path.join(fixture.homePath, "browser", "sessions.json"), "utf8"),
     new RegExp(sentinel, "u"),
   );
@@ -346,6 +366,8 @@ test("Desktop takeover stays pending until viewer acceptance and blocks the agen
     leaseId: accepted.inputLeaseId!,
   });
   assert.equal(returned.sessionState, "ready");
+  assert.equal(returned.nativeHandoffActive, undefined);
+  assert.equal(fixture.engine.revokedNativeHandoffs.length, 1);
   const afterReturn = createLifecycle();
   await fixture.service.execute(
     prepared("browser.snapshot", { sessionId }),
@@ -462,6 +484,127 @@ test("Desktop human control survives disconnect and lease expiry until an author
   assert.ok(viewerEvents.some((event) => event.name === "disconnect"));
   assert.ok(viewerEvents.some((event) => event.name === "lease_renewal"));
   assert.ok(viewerEvents.some((event) => event.name === "rejection"));
+  assert.equal(fixture.engine.nativeHandoffs.length, 2);
+  assert.equal(fixture.engine.revokedNativeHandoffs.length, 2);
+  await fixture.service.close();
+});
+
+test("Desktop native handoff fails closed when presentation or revocation cannot be proven", async () => {
+  const presentation = await createFixture();
+  const sessionId = await openSession(presentation.service);
+  await presentation.service.execute(
+    prepared("browser.request_takeover", {
+      sessionId,
+      reason: "Platform authentication required.",
+    }),
+    createLifecycle(),
+  );
+  const viewer = requireAvailableViewer(
+    await presentation.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  presentation.engine.failNextNativePresentation = new Error(
+    "BROWSER_ENGINE_FAILURE: native presentation unavailable",
+  );
+  await assert.rejects(
+    presentation.service.acceptViewerTakeover({
+      ...viewer,
+      principalId: "desktop-main-1",
+    }),
+    hasCode("BROWSER_ACTION_OUTCOME_UNKNOWN"),
+  );
+  assert.equal(presentation.engine.closed.length, 1);
+  assert.equal(
+    (
+      await presentation.service.connectViewer({
+        principalId: "desktop-main-1",
+        threadId: "thread-1",
+        projectId: "project-1",
+      })
+    ).available,
+    false,
+  );
+
+  const revocation = await createFixture();
+  const secondSession = await openSession(revocation.service);
+  await revocation.service.execute(
+    prepared("browser.request_takeover", {
+      sessionId: secondSession,
+      reason: "Platform authentication required.",
+    }),
+    createLifecycle(),
+  );
+  const secondViewer = requireAvailableViewer(
+    await revocation.service.connectViewer({
+      principalId: "desktop-main-2",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  const accepted = requireAvailableViewer(
+    await revocation.service.acceptViewerTakeover({
+      ...secondViewer,
+      principalId: "desktop-main-2",
+    }),
+  );
+  revocation.engine.failNextNativeRevocation = new Error(
+    "BROWSER_ENGINE_FAILURE: native revocation unavailable",
+  );
+  await assert.rejects(
+    revocation.service.returnViewerControl({
+      ...secondViewer,
+      principalId: "desktop-main-2",
+      leaseId: accepted.inputLeaseId!,
+    }),
+    hasCode("BROWSER_ACTION_OUTCOME_UNKNOWN"),
+  );
+  assert.equal(revocation.engine.closed.length, 1);
+});
+
+test("Desktop native handoff timer uses the injected clock and revokes an expired lease without another viewer call", async () => {
+  let now = new Date();
+  const engine = new FakeEngine();
+  engine.onNativePresentation = () => {
+    now = new Date(now.getTime() + 31_000);
+  };
+  const fixture = await createFixture({
+    engine,
+    now: () => now,
+    scheduleExpiry: true,
+  });
+  const sessionId = await openSession(fixture.service);
+  await fixture.service.execute(
+    prepared("browser.request_takeover", {
+      sessionId,
+      reason: "Platform authentication required.",
+    }),
+    createLifecycle(),
+  );
+  const viewer = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  await fixture.service.acceptViewerTakeover({
+    ...viewer,
+    principalId: "desktop-main-1",
+  });
+  await waitFor(async () => engine.revokedNativeHandoffs.length === 1);
+  const afterExpiry = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  assert.equal(afterExpiry.sessionState, "human_control");
+  assert.equal(afterExpiry.inputLeaseId, undefined);
+  assert.equal(afterExpiry.nativeHandoffActive, undefined);
   await fixture.service.close();
 });
 
@@ -3154,7 +3297,7 @@ test("expired Session emits expiry and cleanup metrics", async () => {
   await fixture.service.close();
 });
 
-test("agent-browser launch uses explicit assets, empty Kestrel state, and keeps proxy secrets out of argv", () => {
+test("hosted/default agent-browser launch stays headless while packaged Desktop is headed and initially minimized", () => {
   const invocation = engineInvocation();
   const built = buildAgentBrowserCliInvocation({
     input: invocation,
@@ -3166,6 +3309,11 @@ test("agent-browser launch uses explicit assets, empty Kestrel state, and keeps 
   assert.equal(built.args.includes(invocation.proxy.proxyServer), true);
   assert.equal(built.args.includes("--namespace"), false);
   assert.equal(built.args.includes("--pin-tab"), true);
+  assert.equal(built.args.includes("--headed"), false);
+  assert.doesNotMatch(
+    String(built.args[built.args.indexOf("--args") + 1]),
+    /--start-minimized/u,
+  );
   assert.doesNotMatch(JSON.stringify(built.args), /proxy-user|proxy-secret/u);
   assert.equal(built.env.AGENT_BROWSER_PROXY_USERNAME, "proxy-user");
   assert.equal(built.env.AGENT_BROWSER_PROXY_PASSWORD, "proxy-secret");
@@ -3188,6 +3336,93 @@ test("agent-browser launch uses explicit assets, empty Kestrel state, and keeps 
   assert.equal(built.args.includes("upgrade"), false);
   assert.equal(built.args.includes("eval"), false);
   assert.equal(built.args.includes("--download-path"), false);
+
+  const desktop = buildAgentBrowserCliInvocation({
+    input: { ...invocation, nativeAuthenticationHandoff: true },
+    chromeExecutablePath: "/bundle/Chrome",
+    command: ["open", PREVIEW_URL],
+  });
+  assert.equal(desktop.args.includes("--headed"), true);
+  assert.match(
+    String(desktop.args[desktop.args.indexOf("--args") + 1]),
+    /--start-minimized/u,
+  );
+});
+
+test("native handoff presents and revokes only the exact private CDP window with verified state", async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const pageCalls: Array<{ targetId: string; method: string }> = [];
+  let state: "normal" | "minimized" = "minimized";
+  const send = async (
+    _cdpUrl: string,
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    calls.push({ method, params: structuredClone(params) });
+    if (method === "Browser.getWindowForTarget") return { windowId: 17 };
+    if (method === "Browser.setWindowBounds") {
+      state = asRecord(params.bounds).windowState as "normal" | "minimized";
+      return {};
+    }
+    if (method === "Browser.getWindowBounds") {
+      return { bounds: { windowState: state } };
+    }
+    throw new Error(`unexpected ${method}`);
+  };
+  const cdp = "ws://127.0.0.1:9222/devtools/browser/exact";
+  const concealed = await minimizeAgentBrowserNativeWindow(cdp, "target-1", send);
+  assert.deepEqual(concealed, { windowId: 17, targetId: "target-1" });
+  assert.equal(state, "minimized");
+  const presented = await presentAgentBrowserNativeWindow(
+    cdp,
+    "target-1",
+    send,
+    async (_cdpUrl, targetId, method) => {
+      pageCalls.push({ targetId, method });
+    },
+  );
+  assert.deepEqual(presented, concealed);
+  assert.equal(state, "normal");
+  assert.deepEqual(pageCalls, [
+    { targetId: "target-1", method: "Page.bringToFront" },
+  ]);
+  await revokeAgentBrowserNativeWindow(cdp, presented, send);
+  assert.equal(state, "minimized");
+  assert.deepEqual(calls[0], {
+    method: "Browser.getWindowForTarget",
+    params: { targetId: "target-1" },
+  });
+  assert.equal(
+    calls.every(
+      (call) =>
+        call.method === "Browser.getWindowForTarget" ||
+        call.method === "Browser.getWindowBounds" ||
+        call.method === "Browser.setWindowBounds",
+    ),
+    true,
+  );
+  assert.doesNotMatch(JSON.stringify(calls), /cdpUrl|proxy-secret|passkey|mfa/u);
+});
+
+test("native handoff presentation rolls the exact window back to minimized on failed verification", async () => {
+  const states: string[] = [];
+  await assert.rejects(
+    presentAgentBrowserNativeWindow(
+      "ws://127.0.0.1:9222/devtools/browser/exact",
+      "target-1",
+      async (_cdpUrl, method, params) => {
+        if (method === "Browser.getWindowForTarget") return { windowId: 9 };
+        if (method === "Browser.setWindowBounds") {
+          states.push(String(asRecord(params.bounds).windowState));
+          return {};
+        }
+        return { bounds: { windowState: "minimized" } };
+      },
+      async () => undefined,
+    ),
+    /presentation was not proven/u,
+  );
+  assert.deepEqual(states, ["normal", "minimized"]);
 });
 
 test("agent-browser adapter requires the exact accepted operation token before invocation", async () => {
@@ -3508,6 +3743,7 @@ async function createFixture(
       typeof DesktopBrowserService
     >[0]["projectRunRegistry"];
     now?: (() => Date) | undefined;
+    scheduleExpiry?: boolean | undefined;
     initialize?: boolean | undefined;
     withAuthorityAdmission?:
       | (<T>(action: () => Promise<T>) => Promise<T>)
@@ -3550,7 +3786,7 @@ async function createFixture(
             },
           },
     now: input.now,
-    scheduleExpiry: false,
+    scheduleExpiry: input.scheduleExpiry ?? false,
     randomId: input.randomId ?? (() => String(++id).padStart(8, "0")),
     projectRunRegistry:
       input.projectRunRegistry ??
@@ -3636,6 +3872,11 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
   resumeCommand?: Promise<void> | undefined;
   screenshotBytes?: number | undefined;
   readonly viewerInputs: unknown[] = [];
+  readonly nativeHandoffs: DesktopBrowserNativeHandoffAuthority[] = [];
+  readonly revokedNativeHandoffs: DesktopBrowserNativeHandoffAuthority[] = [];
+  failNextNativePresentation?: Error | undefined;
+  failNextNativeRevocation?: Error | undefined;
+  onNativePresentation?: (() => void) | undefined;
   viewerFrameBase64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xk1vAAAAAElFTkSuQmCC";
 
@@ -3810,6 +4051,30 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
 
   async dispatchViewerInput(input: { viewerInput: unknown }): Promise<void> {
     this.viewerInputs.push(structuredClone(input.viewerInput));
+  }
+
+  async presentNativeHandoff(input: {
+    authority: DesktopBrowserNativeHandoffAuthority;
+  }): Promise<DesktopBrowserNativeHandoffPresentation> {
+    if (this.failNextNativePresentation !== undefined) {
+      const error = this.failNextNativePresentation;
+      this.failNextNativePresentation = undefined;
+      throw error;
+    }
+    this.nativeHandoffs.push(structuredClone(input.authority));
+    this.onNativePresentation?.();
+    return { windowId: 41, targetId: "t1" };
+  }
+
+  async revokeNativeHandoff(input: {
+    authority: DesktopBrowserNativeHandoffAuthority;
+  }): Promise<void> {
+    if (this.failNextNativeRevocation !== undefined) {
+      const error = this.failNextNativeRevocation;
+      this.failNextNativeRevocation = undefined;
+      throw error;
+    }
+    this.revokedNativeHandoffs.push(structuredClone(input.authority));
   }
 
   emitDownload(): void {

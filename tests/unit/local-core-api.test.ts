@@ -34,6 +34,8 @@ import type {
   DesktopBrowserAcceptedOperation,
   DesktopBrowserEngineAdapter,
   DesktopBrowserEngineInvocation,
+  DesktopBrowserNativeHandoffAuthority,
+  DesktopBrowserNativeHandoffPresentation,
 } from "../../src/localCore/desktopBrowserService.js";
 import type {
   CreateLocalCoreBrowserEgressProxyInput,
@@ -190,6 +192,7 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
       const session = asLocalCoreRecord(opened.session);
       const sessionId = String(session.sessionId);
       const generation = Number(session.generation);
+      assert.equal(fixture.engine.openedWithNativeHandoff, true);
       await fixture.service.execute(
         localCoreBrowserCall("browser.request_takeover", {
           sessionId,
@@ -222,6 +225,16 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
       );
       const acceptedLeaseId = accepted.leaseId;
       assert.ok(acceptedLeaseId);
+      assert.deepEqual(fixture.engine.nativeHandoffAuthorities[0], {
+        sessionId,
+        generation,
+        threadId: fixture.threadId,
+        projectId: fixture.projectId,
+        principalId: fixture.principalId,
+        connectionId: connection.connectionId,
+        leaseId: acceptedLeaseId,
+        expiresAt: fixture.engine.nativeHandoffAuthorities[0]?.expiresAt,
+      });
       const hostileRenewalRequest = {
         ...connection,
         principalId: fixture.principalId,
@@ -255,6 +268,7 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
         principalId: fixture.principalId,
         leaseId: renewedLeaseId,
       });
+      assert.equal(fixture.engine.revokedNativeHandoffAuthorities.length, 1);
 
       await fixture.service.execute(
         localCoreBrowserCall("browser.request_takeover", {
@@ -3596,6 +3610,9 @@ test("Local Core API idle timeout resets after admitted request activity", async
 
 class PackagedViewerEvidenceEngine implements DesktopBrowserEngineAdapter {
   readonly viewerInputTexts: string[] = [];
+  readonly nativeHandoffAuthorities: DesktopBrowserNativeHandoffAuthority[] = [];
+  readonly revokedNativeHandoffAuthorities: DesktopBrowserNativeHandoffAuthority[] = [];
+  openedWithNativeHandoff = false;
 
   async acceptOperation(input: {
     sessionId: string;
@@ -3613,8 +3630,10 @@ class PackagedViewerEvidenceEngine implements DesktopBrowserEngineAdapter {
   releaseOperation(_operation: DesktopBrowserAcceptedOperation): void {}
 
   async open(
-    _input: DesktopBrowserEngineInvocation & { destination: string },
-  ): Promise<void> {}
+    input: DesktopBrowserEngineInvocation & { destination: string },
+  ): Promise<void> {
+    this.openedWithNativeHandoff = input.nativeAuthenticationHandoff === true;
+  }
 
   async command(): Promise<{ stdout: string; stderr: string }> {
     return { stdout: "", stderr: "" };
@@ -3631,6 +3650,21 @@ class PackagedViewerEvidenceEngine implements DesktopBrowserEngineAdapter {
     if (input.viewerInput.text !== undefined) {
       this.viewerInputTexts.push(input.viewerInput.text);
     }
+  }
+
+  async presentNativeHandoff(input: {
+    authority: DesktopBrowserNativeHandoffAuthority;
+  }): Promise<DesktopBrowserNativeHandoffPresentation> {
+    this.nativeHandoffAuthorities.push(structuredClone(input.authority));
+    return { windowId: 52, targetId: "packaged-active-target" };
+  }
+
+  async revokeNativeHandoff(input: {
+    authority: DesktopBrowserNativeHandoffAuthority;
+  }): Promise<void> {
+    this.revokedNativeHandoffAuthorities.push(
+      structuredClone(input.authority),
+    );
   }
 
   async close(_input: DesktopBrowserEngineInvocation): Promise<void> {}

@@ -86,6 +86,7 @@ export class HostedBrowserEgressRegistry {
   readonly #dial: Dial;
   readonly #requestUpstream: RequestUpstream;
   #listening: Promise<void> | undefined;
+  #shutdown: Promise<void> | undefined;
   #closed = false;
 
   constructor(input: {
@@ -124,8 +125,11 @@ export class HostedBrowserEgressRegistry {
   }
 
   async install(input: SessionBinding): Promise<HostedBrowserGatewayProxyBindingV1> {
+    this.#assertInstallAllowed(input);
     this.#prune();
+    this.#assertInstallAllowed(input);
     await this.#start();
+    this.#assertInstallAllowed(input);
     const existing = this.#sessions.get(input.sessionId);
     if (existing) {
       existing.assertSameSession(input);
@@ -136,12 +140,14 @@ export class HostedBrowserEgressRegistry {
       }
       return existing.launchBinding;
     }
-    const proxy = new HostedBrowserGatewayProxy(
+    let proxy!: HostedBrowserGatewayProxy;
+    proxy = new HostedBrowserGatewayProxy(
       input,
       this.#advertisedHost,
       this.#resolve,
       this.#dial,
       this.#requestUpstream,
+      () => this.#sessions.get(input.sessionId) === proxy,
     );
     this.#sessions.set(input.sessionId, proxy);
     return proxy.launchBinding;
@@ -213,20 +219,11 @@ export class HostedBrowserEgressRegistry {
   }
 
   async closeAll(): Promise<void> {
-    const proxies = [...this.#sessions.values()];
-    this.#sessions.clear();
-    await Promise.allSettled(proxies.map((proxy) => this.#retire(proxy)));
-    await Promise.allSettled(
-      [...this.#retiring.values()].map((proxy) => this.#retire(proxy)),
-    );
-    if (this.#closed) return;
-    this.#closed = true;
-    if (this.#listening) {
-      await new Promise<void>((resolve) => {
-        this.#server.close(() => resolve());
-        this.#server.closeAllConnections();
-      });
+    if (!this.#shutdown) {
+      this.#closed = true;
+      this.#shutdown = this.#finishShutdown();
     }
+    await this.#shutdown;
   }
 
   async #start(): Promise<void> {
@@ -262,6 +259,33 @@ export class HostedBrowserEgressRegistry {
     ) this.#retiring.delete(retirementKey);
   }
 
+  #assertInstallAllowed(input: SessionBinding): void {
+    if (
+      this.#closed ||
+      this.#retiring.has(exactSessionKey(input))
+    ) throw new Error("BROWSER_SESSION_LOST");
+  }
+
+  async #finishShutdown(): Promise<void> {
+    const proxies = [
+      ...new Set([
+        ...this.#sessions.values(),
+        ...this.#retiring.values(),
+      ]),
+    ];
+    this.#sessions.clear();
+    await Promise.allSettled(proxies.map((proxy) => this.#retire(proxy)));
+    await Promise.allSettled(
+      [...this.#retiring.values()].map((proxy) => this.#retire(proxy)),
+    );
+    if (this.#listening) {
+      await new Promise<void>((resolve) => {
+        this.#server.close(() => resolve());
+        this.#server.closeAllConnections();
+      });
+    }
+  }
+
   #prune(): void {
     const now = Date.now();
     for (const [sessionId, proxy] of this.#sessions) {
@@ -277,6 +301,7 @@ class HostedBrowserGatewayProxy {
   readonly #resolve: ResolveAddresses;
   readonly #dial: Dial;
   readonly #requestUpstream: RequestUpstream;
+  readonly #isCurrent: () => boolean;
   #binding: SessionBinding;
   #closed = false;
 
@@ -286,6 +311,7 @@ class HostedBrowserGatewayProxy {
     resolve: ResolveAddresses,
     dial: Dial,
     requestUpstream: RequestUpstream,
+    isCurrent: () => boolean,
   ) {
     validateSessionBinding(binding);
     this.#binding = copyBinding(binding);
@@ -293,6 +319,7 @@ class HostedBrowserGatewayProxy {
     this.#resolve = resolve;
     this.#dial = dial;
     this.#requestUpstream = requestUpstream;
+    this.#isCurrent = isCurrent;
     this.#credential = credentialFor(binding);
   }
 
@@ -416,16 +443,15 @@ class HostedBrowserGatewayProxy {
       if (!allows(this.#binding.mode, this.#binding.authority, destination)) {
         throw new Error("blocked");
       }
-      const addresses = [...(await this.#resolve(destination.hostname))];
-      assertPublicResolvedAddresses(addresses);
-      if (
-        revision !== this.revision ||
-        !allows(this.#binding.mode, this.#binding.authority, destination)
-      ) throw new Error("blocked");
-      const selected = addresses[0];
-      if (!selected) throw new Error("blocked");
+      if (client.destroyed) throw new Error("blocked");
       const activeConnection = this.#reserve(destination, client);
       connection = activeConnection;
+      const addresses = [...(await this.#resolve(destination.hostname))];
+      assertPublicResolvedAddresses(addresses);
+      this.#assertReservationCurrent(activeConnection, revision);
+      const selected = addresses[0];
+      if (!selected) throw new Error("blocked");
+      this.#assertReservationCurrent(activeConnection, revision);
       const upstream = this.#dial({ address: selected, port: destination.port });
       activeConnection.attach(upstream);
       upstream.once("error", () => activeConnection.close());
@@ -437,8 +463,8 @@ class HostedBrowserGatewayProxy {
         upstream.pipe(client);
       });
     } catch {
-      connection?.close();
-      rejectSocket(client);
+      if (connection?.active) connection.release();
+      if (!client.destroyed) rejectSocket(client);
     }
   }
 
@@ -466,18 +492,23 @@ class HostedBrowserGatewayProxy {
       if (!allows(this.#binding.mode, this.#binding.authority, destination)) {
         throw new Error("blocked");
       }
+      if (request.aborted || request.socket.destroyed || response.destroyed) {
+        throw new Error("blocked");
+      }
+      const activeConnection = this.#reserve(destination, request.socket);
+      connection = activeConnection;
+      request.once("aborted", activeConnection.close);
+      response.once("close", () => {
+        if (!response.writableEnded) activeConnection.close();
+      });
       const addresses = [...(await this.#resolve(destination.hostname))];
       assertPublicResolvedAddresses(addresses);
-      if (
-        revision !== this.revision ||
-        !allows(this.#binding.mode, this.#binding.authority, destination)
-      ) throw new Error("blocked");
+      this.#assertReservationCurrent(activeConnection, revision);
       const selected = addresses[0];
       if (!selected) throw new Error("blocked");
       const headers = sanitizeHeaders(request.headers);
       headers.host = `${destination.hostname}:${destination.port}`;
-      const activeConnection = this.#reserve(destination, request.socket);
-      connection = activeConnection;
+      this.#assertReservationCurrent(activeConnection, revision);
       const upstream = this.#requestUpstream({
         host: selected.address,
         family: selected.family,
@@ -507,20 +538,32 @@ class HostedBrowserGatewayProxy {
       });
       upstream.once("error", () => activeConnection.close());
       upstream.once("timeout", () => activeConnection.close());
-      request.once("aborted", () => activeConnection.close());
-      response.once("close", () => {
-        if (!response.writableEnded) activeConnection.close();
-      });
       request.pipe(upstream);
     } catch {
-      connection?.close();
-      rejectHttp(response);
+      if (connection?.active) connection.release();
+      if (!response.destroyed && !response.writableEnded) rejectHttp(response);
     }
+  }
+
+  #assertReservationCurrent(connection: Connection, revision: string): void {
+    if (
+      !connection.active ||
+      this.#closed ||
+      !this.#isCurrent() ||
+      Date.parse(this.#binding.hardExpiresAt) <= Date.now() ||
+      revision !== this.revision ||
+      !allows(this.#binding.mode, this.#binding.authority, connection.destination)
+    ) throw new Error("blocked");
   }
 
   #reserve(destination: Destination, ...resources: TrackedResource[]): Connection {
     // Adoption must be able to invalidate the request before any allocator can
     // attach a socket and make the authorized operation observable upstream.
+    if (
+      this.#closed ||
+      !this.#isCurrent() ||
+      Date.parse(this.#binding.hardExpiresAt) <= Date.now()
+    ) throw new Error("blocked");
     let closed = false;
     let closing = false;
     const attached = new Set<TrackedResource>();
