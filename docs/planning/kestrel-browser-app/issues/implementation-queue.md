@@ -4,6 +4,11 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
+- [Wire Desktop viewer lifecycle evidence](04a-wire-desktop-viewer-lifecycle-evidence.md)
+- [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md)
+- [Complete native authentication takeover](04c-complete-native-authentication-takeover.md)
+- [Enforce Gateway-only Browser worker egress](05a-enforce-gateway-only-worker-egress.md)
+- [Close the in-flight Gateway revocation race](05b-close-inflight-gateway-revocation-race.md)
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
@@ -14,12 +19,11 @@ None.
 
 ## Blocked
 
-None.
+- [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — review found missing production lifecycle evidence, lost authority cleanup after transient Local Core failure, and no native authentication handoff; blocked on issues 04a-04c
+- [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — review found unenforced direct-egress denial and an in-flight revocation race; blocked on issues 05a-05b
 
 ## Implemented
 
-- [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — implementation, focused contracts, portable validation, and a real local worker-image smoke are green; the exact published image, live Fly session canary, and direct-egress namespace proof remain before `Done`
-- [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — implementation, focused contracts, typechecks, and portable validation are green; signed packaged viewer evidence and the native passkey-chooser canary remain before `Done`
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 
 ## Done
