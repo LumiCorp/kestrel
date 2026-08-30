@@ -594,6 +594,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   readonly #viewerExpiries = new Map<string, {
     timer: ReturnType<typeof setTimeout>;
     claims: HostedBrowserViewerTicketClaimsV1;
+    retirementEstablished: boolean;
   }>();
   readonly #viewerAdmissions = new Map<string, HostedBrowserViewerTicketClaimsV1>();
   readonly #retiredViewerConnections = new Map<string, { expiresAt: string }>();
@@ -865,7 +866,11 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       delay,
     );
     timer.unref?.();
-    this.#viewerExpiries.set(claims.connectionId, { timer, claims });
+    this.#viewerExpiries.set(claims.connectionId, {
+      timer,
+      claims,
+      retirementEstablished: false,
+    });
   }
 
   async #expireViewerConnection(
@@ -873,8 +878,11 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   ): Promise<void> {
     const entry = this.#viewerExpiries.get(claims.connectionId);
     if (!entry || entry.claims !== claims) return;
-    this.#retireViewerConnection(claims);
     try {
+      if (!entry.retirementEstablished) {
+        this.#retireViewerConnection(claims);
+        entry.retirementEstablished = true;
+      }
       await this.#service?.cleanupViewerConnection({
         principalId: claims.actorId,
         threadId: claims.threadId,

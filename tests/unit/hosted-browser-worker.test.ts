@@ -1116,7 +1116,7 @@ test("AgentBrowserHostedWorkerEngine fail-closes a retained viewer before accept
 });
 
 test("hosted worker lease expiry retries exact cleanup until the worker proves release", async () => {
-  const now = new Date("2026-08-30T12:00:00.000Z");
+  let now = new Date("2026-08-30T12:00:00.000Z");
   const timers: Array<{ handler: () => void; delay: number; cleared: boolean }> = [];
   let cleanupCalls = 0;
   const fakeService = {
@@ -1226,6 +1226,15 @@ test("hosted worker lease expiry retries exact cleanup until the worker proves r
   );
   await assert.rejects(
     engine.viewer({
+      action: "renew",
+      claims,
+      connectionId: claims.connectionId,
+      leaseId: "lease-1",
+    }),
+    hasBrowserCode("BROWSER_VIEWER_AUTHORITY_EXPIRED"),
+  );
+  await assert.rejects(
+    engine.viewer({
       action: "connect",
       claims,
       connectionId: claims.connectionId,
@@ -1234,16 +1243,23 @@ test("hosted worker lease expiry retries exact cleanup until the worker proves r
   );
   const retry = timers.find((timer) => timer.delay === 1_000 && !timer.cleared);
   assert.ok(retry);
+  now = new Date(now.getTime() + 61_000);
+  const replacement = viewerClaims("user-1", "capacity-replacement", now);
+  await engine.viewer({
+    action: "connect",
+    claims: replacement,
+    connectionId: replacement.connectionId,
+  });
   retry.handler();
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(cleanupCalls, 2);
   await assert.rejects(
     engine.viewer({
-      action: "frame",
-      claims,
-      connectionId: claims.connectionId,
+      action: "connect",
+      claims: replacement,
+      connectionId: replacement.connectionId,
     }),
-    hasBrowserCode("BROWSER_VIEWER_AUTHORITY_EXPIRED"),
+    hasBrowserCode("BROWSER_SESSION_LOST"),
   );
   await engine.destroy();
 });
