@@ -15,6 +15,7 @@ interface FakeOpenRouterScenarioState {
   delayResolvers: Set<() => void>;
   failedAttempts: number;
   waitingCallId?: string | undefined;
+  commitStep: number;
 }
 
 export async function startFakeOpenRouterServer(
@@ -25,6 +26,7 @@ export async function startFakeOpenRouterServer(
     delayReleased: false,
     delayResolvers: new Set(),
     failedAttempts: 0,
+    commitStep: 0,
   };
   const sockets = new Set<Socket>();
   const server = http.createServer((request, response) => {
@@ -206,6 +208,7 @@ async function handleFakeOpenRouterRequest(
     scenarios.delayResolvers.clear();
     scenarios.delayReleased = false;
     scenarios.failedAttempts = 0;
+    scenarios.commitStep = 0;
     delete scenarios.waitingCallId;
     response.writeHead(204, { connection: "close" });
     response.end();
@@ -269,9 +272,11 @@ async function handleFakeOpenRouterRequest(
       : null;
   const toolMode = finalizeToolName !== null || qualificationToolName !== null;
   const callId = parsed.metadata?.callId ?? `request-${requests.length}`;
-  process.stderr.write(
-    `[fake-openrouter] url=${request.url ?? "none"} schema=${schemaName ?? "none"} tools=${[...toolNames].join(",") || "none"}\n`,
-  );
+  if (modeSource.includes("fake-openrouter-commit-journey") === false) {
+    process.stderr.write(
+      `[fake-openrouter] url=${request.url ?? "none"} schema=${schemaName ?? "none"} tools=${[...toolNames].join(",") || "none"}\n`,
+    );
+  }
 
   if (
     request.url?.endsWith("/v1/responses") &&
@@ -317,6 +322,28 @@ async function handleFakeOpenRouterRequest(
   }
 
   requests.push({ schemaName: schemaName ?? "tool_call", userMessage });
+
+  if (schemaName === "kestrel_user_reply_intent") {
+    response.writeHead(200, {
+      "content-type": "application/json",
+      connection: "close",
+    });
+    response.end(JSON.stringify({
+      model: PRODUCT_CONTRACT_MODEL,
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            kind: "mode_switch",
+            proceed: true,
+            interactionMode: "build",
+            confidence: "high",
+            reason: "operator_approved_mode_switch",
+          }),
+        },
+      }],
+    }));
+    return;
+  }
 
   if (schemaName === "qualification_probe") {
     response.writeHead(200, {
@@ -388,6 +415,66 @@ async function handleFakeOpenRouterRequest(
       await new Promise<void>((resolve) => {
         scenarios.delayResolvers.add(resolve);
       });
+    }
+  }
+
+  if (modeSource.includes("fake-openrouter-commit-journey")) {
+    const modeToolName = toolNames.has("kestrel_request_mode_switch")
+      ? "kestrel_request_mode_switch"
+      : toolNames.has("kestrel.request_mode_switch")
+        ? "kestrel.request_mode_switch"
+        : undefined;
+    if (modeToolName !== undefined && toolNames.has("exec_command") === false) {
+      scenarios.commitStep = 0;
+      writeToolCallResponse(response, parsed.stream === true, {
+        callId: `fake-mode-call-${requests.length}`,
+        name: modeToolName,
+        input: {
+          requiredToolClass: "external_side_effect",
+          requiredCapabilities: ["dev.shell"],
+          reason: "A local Git commit requires the Build shell.",
+        },
+      });
+      return;
+    }
+    if (toolNames.has("exec_command")) {
+      const commands = [
+        "git status --short",
+        "git add -- intended.txt",
+        "git diff --cached --name-status",
+        "git commit -m 'Commit intended change'",
+        "git rev-parse HEAD",
+        "git status --short",
+      ];
+      const command = commands[scenarios.commitStep];
+      if (command !== undefined) {
+        scenarios.commitStep += 1;
+        writeToolCallResponse(response, parsed.stream === true, {
+          callId: `fake-commit-call-${requests.length}`,
+          name: "exec_command",
+          input: {
+            command,
+            assistantProgress: `Running commit verification step ${scenarios.commitStep}.`,
+          },
+        });
+        return;
+      }
+      const commitFinalizeToolName = toolNames.has("kestrel_finalize")
+        ? "kestrel_finalize"
+        : toolNames.has("kestrel.finalize")
+          ? "kestrel.finalize"
+          : undefined;
+      if (commitFinalizeToolName !== undefined) {
+        writeToolCallResponse(response, parsed.stream === true, {
+          callId: `fake-commit-finalize-${requests.length}`,
+          name: commitFinalizeToolName,
+          input: {
+            status: "goal_satisfied",
+            message: "Committed intended.txt and left unrelated files untracked.",
+          },
+        });
+        return;
+      }
     }
   }
 
@@ -537,6 +624,63 @@ async function handleFakeOpenRouterRequest(
       ],
     }),
   );
+}
+
+function writeToolCallResponse(
+  response: ServerResponse,
+  stream: boolean,
+  call: { callId: string; name: string; input: Record<string, unknown> },
+): void {
+  const args = JSON.stringify(call.input);
+  if (stream) {
+    response.writeHead(200, {
+      "content-type": "text/event-stream",
+      connection: "close",
+    });
+    response.write(`data: ${JSON.stringify({
+      model: PRODUCT_CONTRACT_MODEL,
+      choices: [{
+        delta: {
+          role: "assistant",
+          tool_calls: [{
+            index: 0,
+            id: call.callId,
+            type: "function",
+            function: { name: call.name, arguments: args },
+          }],
+        },
+      }],
+    })}\n\n`);
+    response.end("data: [DONE]\n\n");
+    return;
+  }
+  response.writeHead(200, {
+    "content-type": "application/json",
+    connection: "close",
+  });
+  response.end(JSON.stringify({
+    model: PRODUCT_CONTRACT_MODEL,
+    output: [{
+      content: [{
+        id: call.callId,
+        type: "function_call",
+        name: call.name,
+        arguments: args,
+      }],
+    }],
+    choices: [{
+      finish_reason: "tool_calls",
+      message: {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: call.callId,
+          type: "function",
+          function: { name: call.name, arguments: args },
+        }],
+      },
+    }],
+  }));
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<string> {

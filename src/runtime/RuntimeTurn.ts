@@ -19,6 +19,8 @@ import {
   alignExecutionPolicyWithMode,
   normalizeInteractionMode,
 } from "../mode/contracts.js";
+import type { ModeResolutionV1 } from "../mode/contracts.js";
+import type { UserReplyIntent } from "./userReplyIntent.js";
 
 export type RuntimeTurnActorType = "end_user" | "operator" | "service";
 
@@ -63,6 +65,8 @@ export interface RuntimeTurnInput {
   noninteractive?: boolean | undefined;
   attachments?: RunTurnAttachment[] | undefined;
   resumeBlockedRun?: boolean | undefined;
+  userReplyIntent?: UserReplyIntent | undefined;
+  modeResolution?: ModeResolutionV1 | undefined;
   resumeRequestId?: string | undefined;
   recoveryOptionId?: string | undefined;
   decision?: "decline" | "approve_once" | "remember_approval" | undefined;
@@ -253,6 +257,12 @@ export function materializeCompiledRuntimeTurn(
       : {}),
     ...(prepared.input.resumeBlockedRun === true
       ? { resumeBlockedRun: true }
+      : {}),
+    ...(prepared.input.userReplyIntent !== undefined
+      ? { userReplyIntent: prepared.input.userReplyIntent }
+      : {}),
+    ...(prepared.input.modeResolution !== undefined
+      ? { modeResolution: prepared.input.modeResolution }
       : {}),
     ...(prepared.input.resumeRequestId !== undefined
       ? { resumeRequestId: prepared.input.resumeRequestId }

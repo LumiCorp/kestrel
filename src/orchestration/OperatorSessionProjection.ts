@@ -25,6 +25,7 @@ import type {
   ThreadStatusSnapshot,
 } from "./contracts.js";
 import type { ShellPresetId } from "../profile/runtimeProfile.js";
+import type { ActSubmode, InteractionMode, ModeResolutionV1 } from "../mode/contracts.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import {
   SESSION_ENVIRONMENT_IDENTITY_CONFLICT_CODE,
@@ -216,6 +217,9 @@ export interface OperatorSessionProjection {
   threadId?: string | undefined;
   currentStepAgent?: string | undefined;
   updatedAt?: string | undefined;
+  interactionMode?: InteractionMode | undefined;
+  actSubmode?: ActSubmode | undefined;
+  modeResolution?: ModeResolutionV1 | undefined;
   waitFor?: NormalizedOutput["waitFor"] | undefined;
   activeAssembly?: OperatorAssemblySummary | undefined;
   operatorInbox?: OperatorInboxSummary | undefined;
@@ -301,6 +305,10 @@ export async function buildOperatorSessionProjection(
   const visibleTodos = normalizeVisibleTodoState(
     asRecord(input.session.state.agent)?.visibleTodos,
   );
+  const agentState = asRecord(input.session.state.agent);
+  const interactionMode = readInteractionMode(agentState?.interactionMode);
+  const actSubmode = readActSubmode(agentState?.actSubmode);
+  const modeResolution = readModeResolution(agentState?.latestModeResolution);
 
   return {
     sessionId: input.sessionId,
@@ -312,6 +320,9 @@ export async function buildOperatorSessionProjection(
         : {}),
     ...(input.session.currentStepAgent !== undefined ? { currentStepAgent: input.session.currentStepAgent } : {}),
     ...(updatedAt !== undefined ? { updatedAt } : {}),
+    ...(interactionMode !== undefined ? { interactionMode } : {}),
+    ...(actSubmode !== undefined ? { actSubmode } : {}),
+    ...(modeResolution !== undefined ? { modeResolution } : {}),
     ...(waitFor !== undefined ? { waitFor } : {}),
     ...(focusedThreadStatus !== null
       ? { activeAssembly: toOperatorAssemblySummary(focusedThreadStatus) }
@@ -354,6 +365,39 @@ export async function buildOperatorSessionProjection(
     ...(operatorView?.supervision !== undefined ? { supervision: toSupervisionSummary(operatorView.supervision) } : {}),
     ...(focusedThreadId !== undefined ? { focusedThreadId } : {}),
     ...(operatorView !== null ? { operatorThreadView: operatorView } : {}),
+  };
+}
+
+function readInteractionMode(value: unknown): InteractionMode | undefined {
+  return value === "chat" || value === "plan" || value === "build" ? value : undefined;
+}
+
+function readActSubmode(value: unknown): ActSubmode | undefined {
+  return value === "strict" || value === "safe" || value === "full_auto" ? value : undefined;
+}
+
+function readModeResolution(value: unknown): ModeResolutionV1 | undefined {
+  const resolution = asRecord(value);
+  const interactionMode = readInteractionMode(resolution?.interactionMode);
+  const actSubmode = readActSubmode(resolution?.actSubmode);
+  const source = resolution?.source;
+  const disposition = resolution?.disposition;
+  if (
+    resolution?.version !== "mode_resolution_v1" ||
+    typeof resolution.requestId !== "string" ||
+    typeof resolution.runId !== "string" ||
+    interactionMode === undefined ||
+    (source !== "explicit_command" && source !== "classified_reply") ||
+    (disposition !== "resume" && disposition !== "decline" && disposition !== "clarify")
+  ) return;
+  return {
+    version: "mode_resolution_v1",
+    requestId: resolution.requestId,
+    runId: resolution.runId,
+    interactionMode,
+    ...(actSubmode !== undefined ? { actSubmode } : {}),
+    source,
+    disposition,
   };
 }
 

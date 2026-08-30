@@ -50,6 +50,7 @@ export const USER_REPLY_INTENT_SCHEMA: Record<string, unknown> = {
     proceed: { type: "boolean" },
     decision: { type: "string", enum: ["approve", "deny"] },
     interactionMode: { type: "string", enum: ["chat", "plan", "build"] },
+    actSubmode: { type: "string", enum: ["strict", "safe", "full_auto"] },
     confidence: { type: "string", enum: ["high", "low"] },
     reason: { type: "string" },
   },
@@ -66,6 +67,7 @@ export function readUserReplyIntent(value: unknown): UserReplyIntent | undefined
   const proceed = typeof record?.proceed === "boolean" ? record.proceed : undefined;
   const decision = readDecision(record?.decision);
   const interactionMode = readInteractionMode(record?.interactionMode);
+  const actSubmode = readActSubmode(record?.actSubmode);
   const reason = readString(record?.reason);
   return {
     kind,
@@ -73,6 +75,7 @@ export function readUserReplyIntent(value: unknown): UserReplyIntent | undefined
     ...(proceed !== undefined ? { proceed } : {}),
     ...(decision !== undefined ? { decision } : {}),
     ...(interactionMode !== undefined ? { interactionMode } : {}),
+    ...(actSubmode !== undefined ? { actSubmode } : {}),
     ...(reason !== undefined ? { reason } : {}),
   };
 }
@@ -186,7 +189,7 @@ export function renderUserReplyIntentPrompt(context: {
     "",
     "<classification_rules>",
     "Choose kind='continue' only when the user unambiguously wants the paused run to proceed without adding a new instruction.",
-    "Choose kind='mode_switch' only when the user unambiguously accepts or requests the mode needed by the wait contract; include interactionMode when known.",
+    "Choose kind='mode_switch' when the user unambiguously accepts, denies, or explicitly selects a mode in response to a mode-blocked wait. Set proceed=true for acceptance or selection and proceed=false for a clear denial; include interactionMode when known.",
     "Choose kind='approval_decision' only for a user.approval wait and only when the reply clearly approves or denies the pending approval; include decision='approve' or decision='deny'.",
     "Choose kind='provide_information' when the reply answers the paused question or gives a narrower instruction instead of simply resuming.",
     "Choose kind='unrelated' for unrelated, mixed, contradictory, or uncertain replies.",
@@ -306,6 +309,10 @@ function readDecision(value: unknown): UserReplyIntentDecision | undefined {
 
 function readInteractionMode(value: unknown): UserReplyIntentInteractionMode | undefined {
   return value === "chat" || value === "plan" || value === "build" ? value : undefined;
+}
+
+function readActSubmode(value: unknown): UserReplyIntentActSubmode | undefined {
+  return value === "strict" || value === "safe" || value === "full_auto" ? value : undefined;
 }
 
 function readString(value: unknown): string | undefined {

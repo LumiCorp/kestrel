@@ -29,6 +29,7 @@ export interface KestrelAgentToolSurfaceInput {
   controlToolNames?: readonly string[] | undefined;
   finalizeStatuses?: readonly KestrelAgentFinalizeStatus[] | undefined;
   cannotSatisfyReasonCodes?: readonly KestrelAgentCannotSatisfyReasonCode[] | undefined;
+  modeSwitchRequiredCapabilities?: readonly string[] | undefined;
 }
 
 export type KestrelAgentToolResultStatus =
@@ -177,13 +178,20 @@ const CONTROL_TOOLS: ModelToolSpec[] = [
           type: "string",
           enum: ["planning_write", "sandboxed_only", "external_side_effect"],
         },
+        requiredCapabilities: {
+          type: "array",
+          minItems: 1,
+          uniqueItems: true,
+          items: { type: "string", minLength: 1 },
+          description: "Exact capability classes required by the next action. Every capability must belong to the same configured tool selected by requiredToolClass.",
+        },
         reason: {
           type: "string",
           minLength: 1,
           description: "Concise user-facing explanation of the concrete action that requires the mode change.",
         },
       },
-      required: ["requiredToolClass", "reason"],
+      required: ["requiredToolClass", "requiredCapabilities", "reason"],
     },
   },
   {
@@ -311,6 +319,33 @@ function augmentTopLevelActionAlternatives(
 
 function buildControlToolsForSurface(input: KestrelAgentToolSurfaceInput): ModelToolSpec[] {
   let controlTools = CONTROL_TOOLS;
+  const modeSwitchRequiredCapabilities = input.modeSwitchRequiredCapabilities;
+  if (modeSwitchRequiredCapabilities !== undefined) {
+    const allowedCapabilities = [...new Set(modeSwitchRequiredCapabilities)]
+      .map((capability) => capability.trim())
+      .filter((capability) => capability.length > 0);
+    controlTools = controlTools.map((tool) => {
+      if (tool.name !== "kestrel.request_mode_switch") {
+        return tool;
+      }
+      return {
+        ...tool,
+        inputSchema: {
+          ...tool.inputSchema,
+          properties: {
+            ...(asRecord(tool.inputSchema.properties) ?? {}),
+            requiredCapabilities: {
+              type: "array",
+              minItems: 1,
+              uniqueItems: true,
+              items: { type: "string", enum: allowedCapabilities },
+              description: "Exact capability classes required by the next action. Every capability must belong to the same configured tool selected by requiredToolClass.",
+            },
+          },
+        },
+      };
+    });
+  }
   const finalizeStatuses = input.finalizeStatuses;
   if (finalizeStatuses !== undefined) {
     const allowedStatuses = [...new Set(finalizeStatuses)]

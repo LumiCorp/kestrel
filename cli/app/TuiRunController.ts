@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import {
   buildWaitingSystemText,
   extractWaitPrompt,
+  isModeBlockedWait,
   readExactReview,
   resolveExactReviewOptionId,
 } from "./waitForPrompt.js";
@@ -23,6 +24,7 @@ import {
   createTuiClientCapabilities,
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
+  alignExecutionPolicyWithMode,
   normalizeInteractionMode,
   AGENT_STEP_IDS,
   type NormalizedOutput,
@@ -76,6 +78,8 @@ export interface StartActiveTurnInput {
   forceFreshTurn?: boolean | undefined;
   checkpointRecoveryAttempted?: boolean | undefined;
   queueRequested?: boolean | undefined;
+  requestedInteractionMode?: "chat" | "plan" | "build" | undefined;
+  requestedActSubmode?: "strict" | "safe" | "full_auto" | undefined;
 }
 
 class ModeRetryNotAcceptedError extends Error {
@@ -424,13 +428,25 @@ export class TuiRunController {
     const submittingSession = readSubmittingSession();
     if (submittingSession === undefined) return false;
     const submittedPendingWait = submittingSession.pendingWaitFor;
+    const requiresAuthoritativeModeResolution = input.resumeBlockedRun === true && (
+      input.requestedInteractionMode !== undefined
+      || isModeBlockedWait(submittedPendingWait)
+    );
     const pendingWait = input.forceFreshTurn === true ? undefined : submittedPendingWait;
+    const pendingReplyReconciliationRequestId = submittingSession.pendingRunRequestId?.trim();
+    if (
+      pendingReplyReconciliationRequestId !== undefined
+      && pendingReplyReconciliationRequestId.length > 0
+      && input.resumeBlockedRun !== true
+    ) {
+      return false;
+    }
     const exactReview = readExactReview(pendingWait);
     if (input.resumeBlockedRun === true && exactReview.kind === "invalid_review") {
       throw new Error(`${exactReview.error} Use /stop to end the waiting run.`);
     }
     const resumeRequestId = input.resumeBlockedRun === true
-      ? pendingWait?.interaction?.requestId?.trim()
+      ? pendingWait?.interaction?.requestId?.trim() ?? pendingReplyReconciliationRequestId
       : undefined;
     const recoveryOptionId = input.resumeBlockedRun === true
       ? resolveExactReviewOptionId(pendingWait, input.submittedMessage)
@@ -477,7 +493,11 @@ export class TuiRunController {
     const exactDecisionWait = exactReview.kind === "structured_review";
     const clearSubmittedWait = submittedPendingWait !== undefined
       && (exactDecisionWait === false || recoveryOptionId !== undefined);
-    const threadId = submittingSession.focusedThreadId ?? `thread-main:${submittingSession.sessionId}`;
+    const threadId = (
+      pendingReplyReconciliationRequestId !== undefined
+        ? submittingSession.pendingRunThreadId
+        : undefined
+    ) ?? submittingSession.focusedThreadId ?? `thread-main:${submittingSession.sessionId}`;
     let authoritativeView = this.conversationViews.get(threadId);
     if (authoritativeView === undefined && state.running) {
       authoritativeView = await this.refreshConversationView(threadId);
@@ -763,6 +783,12 @@ export class TuiRunController {
             requestId: resumeRequestId,
             message: input.submittedMessage,
             completionMode: "accepted",
+            ...(input.requestedInteractionMode !== undefined
+              ? { interactionMode: input.requestedInteractionMode }
+              : {}),
+            ...(input.requestedActSubmode !== undefined
+              ? { actSubmode: input.requestedActSubmode }
+              : {}),
             ...(recoveryOptionId !== undefined ? { recoveryOptionId } : {}),
           },
           metadata,
@@ -827,6 +853,22 @@ export class TuiRunController {
         const routedRunId = response.payload.runId;
         const activeViewRunId = response.payload.view.activeRun?.runId;
         const startedRoute = response.payload.disposition === "started";
+        const routedStatus = routedRunId === undefined
+          ? undefined
+          : exactRunStatusFromView(response.payload.view, routedRunId);
+        const exactStartedRouteEvidence = routedRunId !== undefined
+          && (
+            activeViewRunId === routedRunId
+            || (
+              (routedStatus === "COMPLETED" || routedStatus === "FAILED")
+              && hasExactMessageTerminalTurn(response.payload.view, {
+                runId: routedRunId,
+                messageId: submissionMessageId,
+                threadId,
+                status: routedStatus,
+              })
+            )
+          );
         let pendingQueueSubmission = queueSubmission
           ? findPendingQueueSubmission(
               readSubmittingSession()?.pendingQueueSubmissions,
@@ -859,11 +901,7 @@ export class TuiRunController {
           )
           || (
             startedRoute
-            && (
-              routedRunId === undefined
-              || activeViewRunId === undefined
-              || routedRunId !== activeViewRunId
-            )
+            && exactStartedRouteEvidence === false
           )
           || (
             response.payload.disposition !== "queued"
@@ -893,9 +931,6 @@ export class TuiRunController {
         }
         const disposition = response.payload.disposition;
         const awaitingQueuedRun = disposition === "queued";
-        const routedStatus = routedRunId === undefined
-          ? undefined
-          : exactRunStatusFromView(response.payload.view, routedRunId);
         const authoritativeRunActive = awaitingQueuedRun
           ? response.payload.view.activeRun?.status === "RUNNING"
           : routedStatus === "RUNNING";
@@ -924,7 +959,7 @@ export class TuiRunController {
         }
         const exactTerminalRoute = terminalStatus === undefined
           || pendingQueueSubmission === undefined
-          || hasExactQueuedTerminalTurn(response.payload.view, {
+          || hasExactMessageTerminalTurn(response.payload.view, {
             ...pendingQueueSubmission,
             status: terminalStatus,
           });
@@ -1053,6 +1088,7 @@ export class TuiRunController {
         const acceptedViewStatus = acceptedRunId === undefined || response.payload.view === undefined
           ? undefined
           : exactRunStatusFromView(response.payload.view, acceptedRunId);
+        const authoritativeModeResolution = response.payload.modeResolution;
         if (
           response.payload.threadId !== threadId
           || (response.threadId !== undefined && response.threadId !== threadId)
@@ -1083,6 +1119,20 @@ export class TuiRunController {
             && resultRunId !== acceptedRunId
           )
           || (
+            authoritativeModeResolution !== undefined && (
+              authoritativeModeResolution.requestId !== resumeRequestId
+              || authoritativeModeResolution.runId !== acceptedRunId
+            )
+          )
+          || (
+            requiresAuthoritativeModeResolution
+            && authoritativeModeResolution === undefined
+          )
+          || (
+            input.requestedInteractionMode !== undefined
+            && authoritativeModeResolution?.interactionMode !== input.requestedInteractionMode
+          )
+          || (
             response.payload.result !== undefined
             && response.payload.result.output.sessionId !== submittingSessionId
           )
@@ -1095,7 +1145,9 @@ export class TuiRunController {
           )
         ) {
           responseIdentityRejected = true;
-          throw new Error("Local Core returned operator control with mismatched session, thread, or run identity.");
+          throw new Error(
+            "Local Core returned operator control with mismatched session, thread, run, or mode-resolution identity.",
+          );
         }
         requestAccepted = true;
         if (response.payload.view !== undefined) {
@@ -1127,6 +1179,13 @@ export class TuiRunController {
         const acceptedTerminalStatus = acceptedViewStatus === "COMPLETED" || acceptedViewStatus === "FAILED"
           ? acceptedViewStatus
           : undefined;
+        const acceptedModePolicy = authoritativeModeResolution === undefined
+          ? undefined
+          : alignExecutionPolicyWithMode({
+              executionPolicy: readSubmittingSession()?.executionPolicy,
+              interactionMode: authoritativeModeResolution.interactionMode,
+              actSubmode: authoritativeModeResolution.actSubmode,
+            });
         await setResponseSessionState({
           started: true,
           focusedThreadId: threadId,
@@ -1135,6 +1194,15 @@ export class TuiRunController {
             : undefined,
           pendingRunRequestId: undefined,
           pendingRunThreadId: undefined,
+          ...(authoritativeModeResolution !== undefined
+            ? {
+                interactionMode: authoritativeModeResolution.interactionMode,
+                actSubmode: authoritativeModeResolution.actSubmode,
+                ...(acceptedModePolicy !== undefined
+                  ? { executionPolicy: acceptedModePolicy }
+                  : {}),
+              }
+            : {}),
           ...(acceptedRunId !== undefined
             ? {
                 acceptedRunId,
@@ -2068,16 +2136,37 @@ export class TuiRunController {
           ? undefined
           : exactRunStatusFromView(recoveredView, exactRunId);
         const terminalRunMatches = recoveredRunStatus === "COMPLETED" || recoveredRunStatus === "FAILED";
+        const recoveredModeDescription = requiresAuthoritativeModeResolution && exactRunId !== undefined
+          ? await this.context.client.sendCommand(
+              "session.describe",
+              { sessionId: submittingSessionId },
+              this.context.getActiveRunnerMetadata(),
+            ).catch(() => undefined)
+          : undefined;
+        const recoveredModeResolution = recoveredModeDescription?.type === "session.described"
+          ? recoveredModeDescription.payload.modeResolution
+          : undefined;
+        const recoveredModeIdentityMatches = requiresAuthoritativeModeResolution === false || (
+          recoveredModeDescription?.type === "session.described"
+          && recoveredModeDescription.payload.sessionId === submittingSessionId
+          && recoveredModeDescription.payload.interactionMode === recoveredModeResolution?.interactionMode
+          && recoveredModeResolution?.requestId === resumeRequestId
+          && recoveredModeResolution.runId === exactRunId
+        );
         if (
           recoveredView !== undefined
           && exactRoute !== undefined
           && exactRunId !== undefined
           && viewIdentityMatches
           && (activeRunMatches || terminalRunMatches)
+          && recoveredModeIdentityMatches
         ) {
           const waiting = recoveredRunStatus === "WAITING";
           requestAccepted = true;
           if (await this.installConversationView(recoveredView) === false) return false;
+          if (recoveredModeDescription?.type === "session.described") {
+            await this.context.syncSessionFromDescribePayload(recoveredModeDescription.payload);
+          }
           if (readSubmittingSession()?.delegation !== undefined) {
             await this.context.syncBackgroundSessionProgress({
               sessionId: submittingSessionId,
@@ -4070,7 +4159,7 @@ function exactRunStatusFromView(
   return terminalTurn?.status;
 }
 
-function hasExactQueuedTerminalTurn(
+function hasExactMessageTerminalTurn(
   view: OperatorThreadView,
   candidate: {
     runId: string;
@@ -4107,7 +4196,7 @@ function hasExactQueuedRunEvidence(
   ) ?? [];
   if (matchingRoutes.length !== 1) return false;
   if (candidate.status === "COMPLETED" || candidate.status === "FAILED") {
-    return hasExactQueuedTerminalTurn(view, {
+    return hasExactMessageTerminalTurn(view, {
       ...candidate,
       status: candidate.status,
     });

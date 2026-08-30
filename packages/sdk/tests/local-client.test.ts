@@ -490,6 +490,115 @@ test("LocalRunnerTransport keeps conversation streams open through the routing e
   assert.deepEqual(seen, ["run.completed", "conversation.message.routed"]);
 });
 
+test("LocalRunnerTransport streams accepted operator controls", async (t) => {
+  let requestedPath: string | undefined;
+  const { socketPath, close } = await startLocalCoreServer(async (request, response) => {
+    requestedPath = request.url;
+    const command = JSON.parse(await readRequestBody(request)) as { id: string };
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write(toSse("operator.controlled", {
+      id: "evt-local-operator-accepted",
+      type: "operator.controlled",
+      ts: new Date().toISOString(),
+      commandId: command.id,
+      sessionId: "session-local-operator",
+      threadId: "thread-local-operator",
+      runId: "run-local-operator",
+      payload: {
+        sessionId: "session-local-operator",
+        threadId: "thread-local-operator",
+        runId: "run-local-operator",
+        disposition: "accepted",
+      },
+    }));
+    response.write(toSse("run.started", {
+      id: "evt-local-operator-started",
+      type: "run.started",
+      ts: new Date().toISOString(),
+      commandId: command.id,
+      sessionId: "session-local-operator",
+      threadId: "thread-local-operator",
+      runId: "run-local-operator",
+      payload: {
+        sessionId: "session-local-operator",
+        runId: "run-local-operator",
+        eventType: "user.reply",
+      },
+    }));
+    response.write(toSse("run.tool.started", {
+      id: "evt-local-operator-tool-started",
+      type: "run.tool.started",
+      ts: new Date().toISOString(),
+      commandId: command.id,
+      runId: "run-local-operator",
+      payload: {
+        update: {
+          version: "v1",
+          runId: "run-local-operator",
+          sessionId: "session-local-operator",
+          ts: new Date().toISOString(),
+          seq: 1,
+          toolCallId: "tool-local-operator",
+          toolName: "exec_command",
+          phase: "started",
+        },
+      },
+    }));
+    response.end(toSse("run.completed", {
+      id: "evt-local-operator-completed",
+      type: "run.completed",
+      ts: new Date().toISOString(),
+      commandId: command.id,
+      sessionId: "session-local-operator",
+      threadId: "thread-local-operator",
+      runId: "run-local-operator",
+      payload: {
+        result: {
+          assistantText: "Done.",
+          output: {
+            status: "COMPLETED",
+            sessionId: "session-local-operator",
+            runId: "run-local-operator",
+            errors: [],
+          },
+        },
+      },
+    }));
+  });
+  t.after(close);
+  const client = new ProtocolClient(new LocalRunnerTransport({
+    socketPath,
+    authToken: "local-bearer-token",
+  }));
+  t.after(async () => client.close());
+  const streamed: string[] = [];
+  let resolveTerminal!: () => void;
+  const terminal = new Promise<void>((resolve) => { resolveTerminal = resolve; });
+  client.onEvent((event) => {
+    streamed.push(event.type);
+    if (event.type === "run.completed") resolveTerminal();
+  });
+
+  const response = await client.sendCommand("operator.control", {
+    action: "reply",
+    threadId: "thread-local-operator",
+    requestId: "request-local-operator",
+    message: "/mode build",
+    completionMode: "accepted",
+  });
+
+  assert.equal(requestedPath, "/runtime/v2/commands/stream");
+  assert.equal(response.type, "operator.controlled");
+  assert.equal(response.payload.runId, "run-local-operator");
+  await terminal;
+  assert.deepEqual(streamed, [
+    "operator.controlled",
+    "run.started",
+    "run.tool.started",
+    "run.completed",
+  ]);
+});
+
 test("KestrelClient rejects a local run stream that ends before a terminal event", async (t) => {
   const { socketPath, close } = await startLocalCoreServer(async (request, response) => {
     assert.equal(request.url, "/runtime/v2/commands/stream");

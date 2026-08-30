@@ -1723,6 +1723,163 @@ test("KestrelChatRuntime acknowledges an accepted reply before its resumed turn 
   await runtime.close();
 });
 
+test("KestrelChatRuntime resolves explicit and natural mode replies before immediate resumed completion", async () => {
+  for (const scenario of [
+    { label: "explicit", message: "/mode build", interactionMode: "build" as const, source: "explicit_command" as const },
+    { label: "natural", message: "Yes, switch to Build and continue.", source: "classified_reply" as const },
+  ]) {
+    let capturedReply: Record<string, unknown> | undefined;
+    let persistedModeResolution: Record<string, unknown> | undefined;
+    let classifierCalls = 0;
+    const now = new Date().toISOString();
+    const sessionId = `session-mode-${scenario.label}`;
+    const threadId = `thread-mode-${scenario.label}`;
+    const requestId = `request-mode-${scenario.label}`;
+    const runtime = createTestRuntime(profile, {
+      create: () => ({
+        kestrel: {
+          getSession: async () => ({
+            sessionId,
+            version: 1,
+            state: { agent: { interactionMode: "chat" } },
+            updatedAt: now,
+          }),
+          persistModeResolution: async (_sessionId: string, resolution: Record<string, unknown>) => {
+            assert.notEqual(capturedReply, undefined);
+            persistedModeResolution = resolution;
+          },
+        } as unknown as Kestrel,
+        threadRuntime: {
+          getThreadStatus: async () => ({
+            thread: { threadId, sessionId, title: "Mode reply", status: "WAITING" as const, createdAt: now, updatedAt: now },
+            openRequests: [{
+              requestId,
+              eventType: "user.reply",
+              metadata: {
+                reason: "planner_mode_blocked",
+                requiredToolClass: "external_side_effect",
+                requiredCapabilities: ["dev.shell"],
+              },
+            }],
+          }),
+          subscribe: () => ({ unsubscribe() {} }),
+          replyToRequest: async (input: Record<string, unknown>) => {
+            capturedReply = input;
+            const runtimeTurn = input.runtimeTurn as { runId: string };
+            return {
+              thread: { threadId, sessionId, title: "Mode reply", status: "COMPLETED" as const, createdAt: now, updatedAt: now },
+              output: completedOutput(sessionId, runtimeTurn.runId),
+              assistantText: "Committed the requested files.",
+            };
+          },
+          getOperatorThreadView: async () => ({
+            thread: { threadId, sessionId, title: "Mode reply", status: "COMPLETED" as const, createdAt: now, updatedAt: now },
+            childThreads: [],
+          }),
+          listOperatorInbox: async () => ({
+            items: [],
+            summary: { total: 0, actionable: 0, approvals: 0, userInputs: 0, checkpoints: 0, childBlockers: 0, stalled: 0, assemblyProposals: 0, compatibilityAlerts: 0 },
+          }),
+        } as unknown as ThreadRuntime,
+        entryStepAgent: "example.step",
+        classifyUserReplyIntent: async () => {
+          classifierCalls += 1;
+          return {
+            kind: "mode_switch" as const,
+            proceed: true,
+            interactionMode: "build" as const,
+            confidence: "high" as const,
+            reason: "operator_approved_mode_switch",
+          };
+        },
+        close: async () => {},
+      }),
+    });
+
+    const response = await runtime.performAcceptedOperatorAction({
+      action: "reply",
+      threadId,
+      requestId,
+      message: scenario.message,
+      ...(scenario.interactionMode !== undefined ? { interactionMode: scenario.interactionMode } : {}),
+    });
+
+    assert.equal(response.accepted.disposition, "completed");
+    assert.equal(response.accepted.modeResolution?.requestId, requestId);
+    assert.equal(response.accepted.modeResolution?.runId, response.accepted.runId);
+    assert.equal(response.accepted.modeResolution?.interactionMode, "build");
+    assert.equal(response.accepted.modeResolution?.source, scenario.source);
+    assert.equal(response.accepted.modeResolution?.disposition, "resume");
+    assert.deepEqual(persistedModeResolution, response.accepted.modeResolution);
+    const runtimeTurn = capturedReply?.runtimeTurn as Record<string, unknown>;
+    assert.equal(capturedReply?.interactionMode, "build");
+    assert.equal(runtimeTurn.resumeBlockedRun, true);
+    assert.deepEqual(runtimeTurn.modeResolution, response.accepted.modeResolution);
+    assert.equal(classifierCalls, scenario.label === "natural" ? 1 : 0);
+    await runtime.close();
+  }
+});
+
+test("KestrelChatRuntime does not persist a rejected mode reply", async () => {
+  const now = new Date().toISOString();
+  let persisted = false;
+  const runtime = createTestRuntime(profile, {
+    create: () => ({
+      kestrel: {
+        getSession: async () => ({
+          sessionId: "session-mode-rejected",
+          version: 1,
+          state: { agent: { interactionMode: "chat" } },
+          updatedAt: now,
+        }),
+        persistModeResolution: async () => {
+          persisted = true;
+        },
+      } as unknown as Kestrel,
+      threadRuntime: {
+        getThreadStatus: async () => ({
+          thread: {
+            threadId: "thread-mode-rejected",
+            sessionId: "session-mode-rejected",
+            title: "Rejected mode reply",
+            status: "WAITING" as const,
+            createdAt: now,
+            updatedAt: now,
+          },
+          openRequests: [{
+            requestId: "request-mode-rejected",
+            eventType: "user.reply",
+            metadata: {
+              reason: "planner_mode_blocked",
+              requiredToolClass: "external_side_effect",
+              requiredCapabilities: ["dev.shell"],
+            },
+          }],
+        }),
+        subscribe: () => ({ unsubscribe() {} }),
+        replyToRequest: async () => {
+          throw new Error("THREAD_RUN_ALREADY_ACTIVE");
+        },
+      } as unknown as ThreadRuntime,
+      entryStepAgent: "example.step",
+      close: async () => {},
+    }),
+  });
+
+  await assert.rejects(
+    runtime.performAcceptedOperatorAction({
+      action: "reply",
+      threadId: "thread-mode-rejected",
+      requestId: "request-mode-rejected",
+      message: "/mode build",
+      interactionMode: "build",
+    }),
+    /THREAD_RUN_ALREADY_ACTIVE/u,
+  );
+  assert.equal(persisted, false);
+  await runtime.close();
+});
+
 test("KestrelChatRuntime accepts retry with the reserved Mission Control run identity", async () => {
   let threadListener:
     | ((event: {

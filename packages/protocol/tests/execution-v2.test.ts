@@ -1894,6 +1894,60 @@ test("canonical event parser validates exact session assembly environment identi
   );
 });
 
+test("canonical events carry and validate authoritative mode resolutions", () => {
+  const modeResolution = {
+    version: "mode_resolution_v1" as const,
+    requestId: "request-mode-1",
+    runId: "run-mode-1",
+    interactionMode: "build" as const,
+    actSubmode: "safe" as const,
+    source: "explicit_command" as const,
+    disposition: "resume" as const,
+  };
+  const controlled = parseRunnerEventV2({
+    id: "event-mode-controlled",
+    type: "operator.controlled",
+    ts: "2026-07-13T12:00:00.000Z",
+    runId: "run-mode-1",
+    payload: {
+      sessionId: "session-1",
+      threadId: "thread-main:session-1",
+      runId: "run-mode-1",
+      disposition: "accepted",
+      modeResolution,
+    },
+  });
+  assert.deepEqual(controlled.payload.modeResolution, modeResolution);
+
+  const described = parseRunnerEventV2({
+    id: "event-mode-described",
+    type: "session.described",
+    ts: "2026-07-13T12:00:00.000Z",
+    payload: {
+      sessionId: "session-1",
+      version: 2,
+      interactionMode: "build",
+      actSubmode: "safe",
+      modeResolution,
+    },
+  });
+  assert.equal(described.payload.interactionMode, "build");
+  assert.deepEqual(described.payload.modeResolution, modeResolution);
+
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event-mode-invalid",
+      type: "operator.controlled",
+      ts: "2026-07-13T12:00:00.000Z",
+      payload: {
+        threadId: "thread-main:session-1",
+        modeResolution: { ...modeResolution, requestId: "" },
+      },
+    }),
+    /modeResolution\.requestId/u,
+  );
+});
+
 test("canonical event parser normalizes terminal assistant text without changing payload data", () => {
   const finalizedPayload = {
     deploymentId: "deployment-1",

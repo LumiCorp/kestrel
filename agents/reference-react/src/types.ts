@@ -294,6 +294,7 @@ export interface SwitchModeAction {
 export interface RequestModeSwitchAction {
   kind: "request_mode_switch";
   requiredToolClass: "planning_write" | "sandboxed_only" | "external_side_effect";
+  requiredCapabilities: string[];
   reason: string;
 }
 

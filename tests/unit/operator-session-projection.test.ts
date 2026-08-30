@@ -327,6 +327,42 @@ test("buildOperatorSessionProjection exposes normalized visible todos", async ()
   });
 });
 
+test("buildOperatorSessionProjection exposes durable mode and latest resolution", async () => {
+  const projection = await buildOperatorSessionProjection({
+    sessionId: "session-mode",
+    session: {
+      version: 4,
+      state: {
+        agent: {
+          interactionMode: "build",
+          actSubmode: "safe",
+          latestModeResolution: {
+            version: "mode_resolution_v1",
+            requestId: "request-1",
+            runId: "run-2",
+            interactionMode: "build",
+            actSubmode: "safe",
+            source: "classified_reply",
+            disposition: "resume",
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(projection.interactionMode, "build");
+  assert.equal(projection.actSubmode, "safe");
+  assert.deepEqual(projection.modeResolution, {
+    version: "mode_resolution_v1",
+    requestId: "request-1",
+    runId: "run-2",
+    interactionMode: "build",
+    actSubmode: "safe",
+    source: "classified_reply",
+    disposition: "resume",
+  });
+});
+
 test("buildOperatorSessionProjection preserves legacy import metadata in fallback main-thread creation", async () => {
   let startedWith: Record<string, unknown> | undefined;
   const thread = buildThread("session-imported");
