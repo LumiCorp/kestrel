@@ -16,6 +16,10 @@ None.
 
 ## Implemented
 
+None.
+
+## Done
+
 - [Bind the developer shell to Local Core storage authority](01-bind-developer-shell-storage-authority.md)
 - [Preserve standalone developer-shell store resolution](02-preserve-standalone-store-resolution.md)
 - [Make incompatible developer-shell replacement exclusive](03-make-incompatible-service-replacement-exclusive.md)
@@ -46,7 +50,3 @@ None.
 - [Guard delayed lifecycle signals with child liveness](28-guard-delayed-lifecycle-signals.md)
 - [Own developer-shell maintenance failures](29-own-maintenance-failures.md)
 - [Join maintenance settlement before cleanup](30-join-maintenance-settlement-before-cleanup.md)
-
-## Done
-
-None.
