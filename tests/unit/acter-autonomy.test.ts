@@ -140,6 +140,7 @@ function buildLocalPreparedBrowserCall(input: {
   authorityRevision: string;
   decision: "allow" | "approval_required";
   hostedIdentity?: boolean | undefined;
+  runId?: string | undefined;
 }) {
   const descriptor = defaultToolCatalog.getDescriptorRef(input.toolName);
   assert.ok(descriptor);
@@ -154,7 +155,7 @@ function buildLocalPreparedBrowserCall(input: {
   });
   return parsePreparedToolCallV1({
     version: "v1",
-    runId: "run-1",
+    runId: input.runId ?? "run-1",
     sessionId: "session-1",
     callId: input.callId,
     activation,
@@ -200,6 +201,7 @@ function buildHostedPreparedBrowserCall(input: {
   capabilities: readonly string[];
   executionClass: "read_only" | "external_side_effect";
   decision?: "allow" | "approval_required" | undefined;
+  runId?: string | undefined;
 }) {
   const descriptor = defaultToolCatalog.getDescriptorRef(input.toolName);
   assert.ok(descriptor);
@@ -235,7 +237,7 @@ function buildHostedPreparedBrowserCall(input: {
   };
   return parsePreparedToolCallV1({
     version: "v1",
-    runId: "run-1",
+    runId: input.runId ?? "run-1",
     sessionId: "session-1",
     callId: input.callId,
     activation,
@@ -1608,6 +1610,8 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
         let policyRevision = hashCanonical({ label, revision: 1 });
         let preparations = 0;
         const releasedPreparedCallIds: string[] = [];
+        const authorityOperations: string[] = [];
+        const resumeRunId = `run-resume-${label}`;
         const io: StepIO = {
           useModel: async () => { throw new Error("not expected"); },
           inspectTool: async () => ({
@@ -1617,6 +1621,7 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
           }),
           prepareToolForApproval: async (_name, _input, approval) => {
             preparations += 1;
+            authorityOperations.push(`prepare:${policyDecision}`);
             const combinedRevision = hashCanonical({
               upstreamPolicyRevision: approval.policyRevision,
               browserPolicyRevision: policyRevision,
@@ -1632,6 +1637,7 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
                     capabilities: approval.capabilities,
                     executionClass: "external_side_effect",
                     decision: "allow",
+                    runId: resumeRunId,
                   })
                 : buildLocalPreparedBrowserCall({
                     toolName,
@@ -1640,6 +1646,7 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
                     policyRevision: combinedRevision,
                     authorityRevision: approval.authorityRevision,
                     decision: "allow",
+                    runId: resumeRunId,
                   });
             }
             return hosted
@@ -1663,6 +1670,7 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
           },
           releasePreparedToolCall: async (preparedToolCall) => {
             releasedPreparedCallIds.push(preparedToolCall.callId);
+            authorityOperations.push(`release:${preparedToolCall.callId}`);
           },
           useTool: async () => { throw new Error("Browser call must be durable"); },
         };
@@ -1693,8 +1701,10 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
 
         policyDecision = nextDecision;
         policyRevision = hashCanonical({ label, revision: 2 });
+        authorityOperations.length = 0;
         const resumed = await createExecWaitApprovalStep(config)(
           buildContext({
+            runId: resumeRunId,
             session: {
               ...buildContext().session,
               state: { agent: waitingAgent },
@@ -1734,6 +1744,13 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
           nextDecision === "allow" ? [`prepared-${label}`] : [],
           label,
         );
+        if (nextDecision === "allow") {
+          assert.deepEqual(
+            authorityOperations,
+            [`release:prepared-${label}`, "prepare:allow"],
+            label,
+          );
+        }
 
         if (!hosted && !batch && nextDecision === "allow") {
           const kestrel = new Kestrel({
@@ -1757,7 +1774,7 @@ test("pending Browser policy transitions resume or block the exact Desktop and h
           }).engine;
           const resolved = await engine.resolveEffects(
             resumed.effects ?? [],
-            "run-1",
+            resumeRunId,
             2,
             modePayload,
             {
@@ -1857,6 +1874,7 @@ test("pending Browser allow blocks missing or drifted current Desktop and hosted
           "approval_required";
         let policyRevision = hashCanonical({ label, revision: 1 });
         let preparations = 0;
+        const releasedPreparedCallIds: string[] = [];
         const io: StepIO = {
           useModel: async () => { throw new Error("not expected"); },
           inspectTool: async () => ({
@@ -1962,7 +1980,9 @@ test("pending Browser allow blocks missing or drifted current Desktop and hosted
             }
             return current as ReturnType<typeof buildLocalPreparedBrowserCall>;
           },
-          releasePreparedToolCall: async () => {},
+          releasePreparedToolCall: async (preparedToolCall) => {
+            releasedPreparedCallIds.push(preparedToolCall.callId);
+          },
           useTool: async () => {
             throw new Error("drifted Browser call must not execute");
           },
@@ -2017,22 +2037,28 @@ test("pending Browser allow blocks missing or drifted current Desktop and hosted
         );
 
         assert.equal(preparations, drift === "missing" ? 1 : 2, label);
-        assert.ok((resumed.effects?.length ?? 0) >= 1, label);
+        assert.equal(
+          resumed.effects?.length ?? 0,
+          drift === "missing" ? 0 : 1,
+          label,
+        );
         assert.ok(
-          resumed.effects?.every(
+          (resumed.effects ?? []).every(
             (effect) => effect.type === "release_prepared_tool_call",
           ),
           label,
         );
-        assert.equal(
-          (resumed.effects?.[0]?.payload as Record<string, any>)
-            .preparedToolCall.callId,
-          `prepared-pending-${label}`,
-          label,
-        );
-        assert.equal(
-          resumed.effects?.length,
-          drift === "missing" ? 1 : 2,
+        if (drift !== "missing") {
+          assert.equal(
+            (resumed.effects?.[0]?.payload as Record<string, any>)
+              .preparedToolCall.callId,
+            `prepared-current-${label}`,
+            label,
+          );
+        }
+        assert.deepEqual(
+          releasedPreparedCallIds,
+          [`prepared-pending-${label}`],
           label,
         );
         assert.notEqual(resumed.waitFor?.kind, "approval", label);
@@ -2041,7 +2067,7 @@ test("pending Browser allow blocks missing or drifted current Desktop and hosted
   }
 });
 
-test("pending Browser allow release failure never dispatches and releases each current preparation", async () => {
+test("pending Browser allow releases stale authority before reprepare and recovers its single cleanup after restart", async () => {
   const toolName = "browser.request_grant" as const;
   const toolInput = {
     sessionId: "browser-session-1",
@@ -2104,7 +2130,15 @@ test("pending Browser allow release failure never dispatches and releases each c
     let policyRevision = hashCanonical({ label, revision: 1 });
     let preparations = 0;
     let dispatches = 0;
-    const releasedCurrentCalls: string[] = [];
+    let releaseAttempts = 0;
+    const releasedCallIds: string[] = [];
+    const releaseAuthority = async (preparedToolCall: { callId: string }) => {
+      releaseAttempts += 1;
+      if (releaseAttempts <= 2) {
+        throw new Error(`planned stale release failure:${label}:${releaseAttempts}`);
+      }
+      releasedCallIds.push(preparedToolCall.callId);
+    };
     const io: StepIO = {
       useModel: async () => { throw new Error("not expected"); },
       inspectTool: async () => ({
@@ -2159,12 +2193,7 @@ test("pending Browser allow release failure never dispatches and releases each c
               decision: "allow",
             });
       },
-      releasePreparedToolCall: async (preparedToolCall) => {
-        if (preparedToolCall.callId === `prepared-pending-${label}`) {
-          throw new Error(`planned stale release failure:${label}`);
-        }
-        releasedCurrentCalls.push(preparedToolCall.callId);
-      },
+      releasePreparedToolCall: releaseAuthority,
       useTool: async () => {
         dispatches += 1;
         throw new Error("release failure must prevent dispatch");
@@ -2191,43 +2220,119 @@ test("pending Browser allow release failure never dispatches and releases each c
     policyDecision = "allow";
     policyRevision = hashCanonical({ label, revision: 2 });
 
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      await assert.rejects(
-        () => createExecWaitApprovalStep(config)(
-          buildContext({
-            session: {
-              ...buildContext().session,
-              state: { agent: structuredClone(waitingAgent) },
-              currentStepAgent: "agent.exec.wait_approval",
-            },
-            event: {
-              id: `evt-${label}-${attempt}`,
-              type: "user.approval",
-              sessionId: "session-1",
-              payload: {
-                ...modePayload,
-                decision: "approve_once",
-                approvalId: pendingApproval.approvalId,
-              },
-            },
-          }),
-          io,
-        ),
-        (error) =>
-          error instanceof RuntimeFailure &&
-          error.code === "PREPARED_TOOL_AUTHORITY_RELEASE_FAILED" &&
-          error.details?.classification === "cleanup" &&
-          error.details?.cause === `planned stale release failure:${label}` &&
-          error.details?.currentPreparationReleased === true,
-        `${label}:${attempt}`,
-      );
-    }
+    const cleanupTransition = await createExecWaitApprovalStep(config)(
+      buildContext({
+        runId: `resume-${label}`,
+        session: {
+          ...buildContext().session,
+          state: { agent: structuredClone(waitingAgent) },
+          currentStepAgent: "agent.exec.wait_approval",
+        },
+        event: {
+          id: `evt-${label}`,
+          type: "user.approval",
+          sessionId: "session-1",
+          payload: {
+            ...modePayload,
+            decision: "approve_once",
+            approvalId: pendingApproval.approvalId,
+          },
+        },
+      }),
+      io,
+    );
 
+    assert.equal(cleanupTransition.status, "COMPLETED", label);
+    assert.equal(cleanupTransition.waitFor, undefined, label);
+    assert.equal(cleanupTransition.effects?.length, 1, label);
+    assert.equal(cleanupTransition.effects?.[0]?.type, "release_prepared_tool_call", label);
+    const cleanupEffect = cleanupTransition.effects?.[0];
+    assert.ok(cleanupEffect, label);
+    const cleanupEffectIdempotencyKey = cleanupEffect.idempotencyKey;
+    assert.ok(cleanupEffectIdempotencyKey, label);
+    assert.equal(
+      (cleanupEffect.payload.preparedToolCall as Record<string, unknown>).callId,
+      `prepared-pending-${label}`,
+      label,
+    );
+    const cleanup = cleanupEffect.payload.preparedApprovalCleanup as Record<string, unknown>;
+    assert.equal(cleanup.version, "runner_prepared_approval_cleanup_v1", label);
     assert.equal(dispatches, 0, label);
-    assert.equal(preparations, 3, label);
-    assert.deepEqual(
-      releasedCurrentCalls,
-      [`prepared-current-${label}-2`, `prepared-current-${label}-3`],
+    assert.equal(preparations, 1, label);
+    assert.equal(releaseAttempts, 1, label);
+
+    const store = new InMemorySessionStore();
+    const session = await store.ensureSession("session-1");
+    await store.patchSessionState({
+      sessionId: "session-1",
+      expectedVersion: session.version,
+      statePatch: {
+        agent: {
+          terminal: {
+            status: "COMPLETED",
+            finalStepAgent: "agent.exec.wait_approval",
+            finalizedAt: "2026-08-29T12:00:01.000Z",
+            reasonCode: cleanup.failureCode,
+            message: cleanup.failureMessage,
+            preparedApprovalCleanup: {
+              version: "prepared_approval_cleanup_terminal_v1",
+              releaseEffectIdempotencyKey: cleanupEffectIdempotencyKey,
+              cleanup,
+            },
+          },
+        },
+      },
+    });
+    (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({
+      runId: `resume-${label}`,
+      sessionId: "session-1",
+      stepIndex: 2,
+      ...structuredClone(cleanupEffect),
+      status: "PENDING",
+      createdAt: "2026-08-29T12:00:00.000Z",
+    });
+    let engineDispatches = 0;
+    let modelCalls = 0;
+    const gateway = {
+      ...adaptLegacyTestToolGateway({
+        call: async () => {
+          engineDispatches += 1;
+          throw new Error("cleanup must not dispatch Browser authority");
+        },
+      }),
+      releasePreparedToolCall: releaseAuthority,
+    };
+    const createCleanupRuntime = () => new Kestrel({
+      store,
+      toolGateway: gateway,
+      modelGateway: new RetryingModelGateway(async () => {
+        modelCalls += 1;
+        throw new Error("cleanup must not use a model");
+      }),
+    });
+    const firstRecovery = await createCleanupRuntime().run({
+      id: `evt-cleanup-first-${label}`,
+      type: "user.approval",
+      sessionId: "session-1",
+      payload: { preparedApprovalCleanup: cleanup },
+    });
+    const restartedRecovery = await createCleanupRuntime().run({
+      id: `evt-cleanup-restart-${label}`,
+      type: "user.approval",
+      sessionId: "session-1",
+      payload: { preparedApprovalCleanup: cleanup },
+    });
+
+    assert.equal(firstRecovery.status, "FAILED", label);
+    assert.equal(restartedRecovery.status, "COMPLETED", label);
+    assert.equal(preparations, 1, label);
+    assert.equal(releaseAttempts, 3, label);
+    assert.deepEqual(releasedCallIds, [`prepared-pending-${label}`], label);
+    assert.equal(engineDispatches, 0, label);
+    assert.equal(modelCalls, 0, label);
+    assert.equal(
+      (await store.getEffectResult(cleanupEffectIdempotencyKey))?.status,
+      "DONE",
       label,
     );
   }

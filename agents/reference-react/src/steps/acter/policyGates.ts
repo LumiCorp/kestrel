@@ -839,18 +839,52 @@ async function maybeRequireToolApproval(input: {
         });
       }
       if (input.trustedPolicyDecision === "allow") {
+        if (input.io.releasePreparedToolCall === undefined) {
+          return toToolApprovalPolicyChangedTransition({
+            ...input,
+            approvalId: asString(currentPendingApproval.approvalId)!,
+            preparedToolCall: persistedPreparedToolCall,
+            availabilityReason: "approval_policy",
+            approvalReasonCode:
+              input.effectiveDecision?.approvalDisposition.reasonCode,
+          });
+        }
+        try {
+          await input.io.releasePreparedToolCall(persistedPreparedToolCall);
+        } catch (staleReleaseError) {
+          const approvalId = asString(currentPendingApproval.approvalId)!;
+          return toPreparedApprovalCleanupTransition({
+            ...input,
+            approvalId,
+            preparedToolCall: persistedPreparedToolCall,
+            cleanup: parseRunnerPreparedApprovalCleanupV1({
+              version: "runner_prepared_approval_cleanup_v1",
+              organizationId:
+                persistedPreparedToolCall.stableAuthority?.organizationId ??
+                cleanupRequestOrganizationId(input.eventPayload ?? {}) ??
+                "desktop-local",
+              threadId: input.sessionId,
+              turnId: input.runId,
+              interactionId: approvalId,
+              requestId: approvalId,
+              failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED",
+              failureMessage:
+                "The stale prepared Browser authority must be released before current authority can be prepared.",
+            }),
+          });
+        }
         const currentPreparation = input.preparedToolCall === undefined
           ? input.io.prepareToolForApproval === undefined
             ? undefined
             : await prepareExactToolCallForPolicyGate({
-                io: input.io,
-                toolName: input.toolName,
-                toolInput: input.toolInput,
-                policyRevision: runtimePolicyRevision,
-                authorityRevision: upstreamApprovalAuthorityRevision,
-                capabilities: input.requiredApprovalCapabilities ?? [],
-                toolIntent: input.toolIntent,
-              })
+                  io: input.io,
+                  toolName: input.toolName,
+                  toolInput: input.toolInput,
+                  policyRevision: runtimePolicyRevision,
+                  authorityRevision: upstreamApprovalAuthorityRevision,
+                  capabilities: input.requiredApprovalCapabilities ?? [],
+                  toolIntent: input.toolIntent,
+                })
           : {
               kind: "prepared" as const,
               preparedToolCall: input.preparedToolCall,
@@ -881,57 +915,11 @@ async function maybeRequireToolApproval(input: {
           return toToolApprovalPolicyChangedTransition({
             ...input,
             approvalId: asString(currentPendingApproval.approvalId)!,
-            preparedToolCall: persistedPreparedToolCall,
-            ...(currentPreparedToolCall === undefined
-              ? {}
-              : { additionalPreparedToolCalls: [currentPreparedToolCall] }),
+            preparedToolCall: currentPreparedToolCall,
             availabilityReason: "approval_policy",
             approvalReasonCode:
               input.effectiveDecision?.approvalDisposition.reasonCode,
           });
-        }
-        if (input.io.releasePreparedToolCall === undefined) {
-          return toToolApprovalPolicyChangedTransition({
-            ...input,
-            approvalId: asString(currentPendingApproval.approvalId)!,
-            preparedToolCall: persistedPreparedToolCall,
-            additionalPreparedToolCalls: [currentPreparedToolCall],
-            availabilityReason: "approval_policy",
-            approvalReasonCode:
-              input.effectiveDecision?.approvalDisposition.reasonCode,
-          });
-        }
-        try {
-          await input.io.releasePreparedToolCall(persistedPreparedToolCall);
-        } catch (staleReleaseError) {
-          let currentReleaseError: unknown;
-          try {
-            await input.io.releasePreparedToolCall(currentPreparedToolCall);
-          } catch (error) {
-            currentReleaseError = error;
-          }
-          throw createRuntimeFailure(
-            "PREPARED_TOOL_AUTHORITY_RELEASE_FAILED",
-            "The stale prepared Browser authority could not be released before current authority adoption.",
-            {
-              subsystem: "react",
-              classification: "cleanup",
-              recoverable: true,
-              stalePreparedInvocationId: persistedPreparedToolCall.callId,
-              currentPreparedInvocationId: currentPreparedToolCall.callId,
-              cause: staleReleaseError instanceof Error
-                ? staleReleaseError.message
-                : String(staleReleaseError),
-              ...(currentReleaseError === undefined
-                ? { currentPreparationReleased: true }
-                : {
-                    currentPreparationReleased: false,
-                    currentReleaseCause: currentReleaseError instanceof Error
-                      ? currentReleaseError.message
-                      : String(currentReleaseError),
-                  }),
-            },
-          );
         }
         return { preparedToolCall: currentPreparedToolCall };
       }
@@ -1580,8 +1568,7 @@ function toToolApprovalPolicyChangedTransition(input: {
   approvalId: string;
   toolName: string;
   toolClass: ToolExecutionClass;
-  preparedToolCall: PreparedToolCallV1;
-  additionalPreparedToolCalls?: readonly PreparedToolCallV1[] | undefined;
+  preparedToolCall?: PreparedToolCallV1 | undefined;
   availabilityReason: EffectiveToolDecisionV1["availabilityReason"];
   approvalReasonCode?: ToolApprovalDispositionV1["reasonCode"] | undefined;
 }): Transition {
@@ -1606,15 +1593,16 @@ function toToolApprovalPolicyChangedTransition(input: {
     stepIndex: input.stepIndex,
     activeRegion: input.activeRegion,
     phase: "THINK",
-    effects: [
-      input.preparedToolCall,
-      ...(input.additionalPreparedToolCalls ?? []),
-    ].map((preparedToolCall) => ({
-        type: "release_prepared_tool_call",
-        payload: { preparedToolCall },
-        idempotencyKey: `${preparedToolCall.callId}:release`,
-        failurePolicy: "STOP" as const,
-      })),
+    effects: input.preparedToolCall === undefined
+      ? undefined
+      : [
+          {
+            type: "release_prepared_tool_call",
+            payload: { preparedToolCall: input.preparedToolCall },
+            idempotencyKey: `${input.preparedToolCall.callId}:release`,
+            failurePolicy: "STOP" as const,
+          },
+        ],
     reactPatch: {
       lastActionResult,
       observations: appendAgentObservation(input.reactState, lastActionResult),
@@ -2429,7 +2417,6 @@ function preparedBrowserAllowMatchesPendingOperation(input: {
       current.effectiveInput,
       pending.effectiveInput,
     ) &&
-    pending.runId === input.runId &&
     current.runId === input.runId &&
     pending.sessionId === input.sessionId &&
     current.sessionId === input.sessionId &&
