@@ -2055,6 +2055,16 @@ test("pending Browser allow blocks missing or drifted current Desktop and hosted
             `prepared-current-${label}`,
             label,
           );
+          assert.equal(
+            (
+              resumed.effects?.[0]?.payload.preparedApprovalCleanup as
+                | Record<string, unknown>
+                | undefined
+            )?.version,
+            "runner_prepared_approval_cleanup_v1",
+            label,
+          );
+          assert.equal(resumed.status, "COMPLETED", label);
         }
         assert.deepEqual(
           releasedPreparedCallIds,
@@ -2073,8 +2083,13 @@ test("pending Browser allow releases stale authority before reprepare and recove
     sessionId: "browser-session-1",
     destination: "https://new.example.com",
   };
-  for (const hosted of [false, true]) {
-    const label = hosted ? "hosted" : "desktop";
+  for (const [hosted, failurePoint] of [
+    [false, "stale"],
+    [false, "rejected_current"],
+    [true, "stale"],
+    [true, "rejected_current"],
+  ] as const) {
+    const label = `${hosted ? "hosted" : "desktop"}-${failurePoint}`;
     const authorityRevision = hashCanonical({ browserAuthority: label });
     const config = {
       ...buildExecConfig(),
@@ -2134,7 +2149,12 @@ test("pending Browser allow releases stale authority before reprepare and recove
     const releasedCallIds: string[] = [];
     const releaseAuthority = async (preparedToolCall: { callId: string }) => {
       releaseAttempts += 1;
-      if (releaseAttempts <= 2) {
+      if (
+        (failurePoint === "stale" && releaseAttempts <= 2) ||
+        (failurePoint === "rejected_current" &&
+          preparedToolCall.callId.startsWith("prepared-current-") &&
+          releaseAttempts === 2)
+      ) {
         throw new Error(`planned stale release failure:${label}:${releaseAttempts}`);
       }
       releasedCallIds.push(preparedToolCall.callId);
@@ -2173,10 +2193,13 @@ test("pending Browser allow releases stale authority before reprepare and recove
               });
         }
         const callId = `prepared-current-${label}-${preparations}`;
+        const preparedInput = failurePoint === "rejected_current"
+          ? { ...toolInput, destination: "https://wrong.example.com" }
+          : toolInput;
         return hosted
           ? buildHostedPreparedBrowserCall({
               toolName,
-              effectiveInput: toolInput,
+              effectiveInput: preparedInput,
               callId,
               policyRevision: combinedRevision,
               authorityRevision: approval.authorityRevision,
@@ -2186,7 +2209,7 @@ test("pending Browser allow releases stale authority before reprepare and recove
             })
           : buildLocalPreparedBrowserCall({
               toolName,
-              effectiveInput: toolInput,
+              effectiveInput: preparedInput,
               callId,
               policyRevision: combinedRevision,
               authorityRevision: approval.authorityRevision,
@@ -2252,13 +2275,15 @@ test("pending Browser allow releases stale authority before reprepare and recove
     assert.ok(cleanupEffectIdempotencyKey, label);
     assert.equal(
       (cleanupEffect.payload.preparedToolCall as Record<string, unknown>).callId,
-      `prepared-pending-${label}`,
+      failurePoint === "stale"
+        ? `prepared-pending-${label}`
+        : `prepared-current-${label}-2`,
       label,
     );
     const cleanup = cleanupEffect.payload.preparedApprovalCleanup as Record<string, unknown>;
     assert.equal(cleanup.version, "runner_prepared_approval_cleanup_v1", label);
     assert.equal(dispatches, 0, label);
-    assert.equal(preparations, 1, label);
+    assert.equal(preparations, failurePoint === "stale" ? 1 : 2, label);
     assert.equal(releaseAttempts, 1, label);
 
     const store = new InMemorySessionStore();
@@ -2325,9 +2350,18 @@ test("pending Browser allow releases stale authority before reprepare and recove
 
     assert.equal(firstRecovery.status, "FAILED", label);
     assert.equal(restartedRecovery.status, "COMPLETED", label);
-    assert.equal(preparations, 1, label);
+    assert.equal(preparations, failurePoint === "stale" ? 1 : 2, label);
     assert.equal(releaseAttempts, 3, label);
-    assert.deepEqual(releasedCallIds, [`prepared-pending-${label}`], label);
+    assert.deepEqual(
+      releasedCallIds,
+      failurePoint === "stale"
+        ? [`prepared-pending-${label}`]
+        : [
+            `prepared-pending-${label}`,
+            `prepared-current-${label}-2`,
+          ],
+      label,
+    );
     assert.equal(engineDispatches, 0, label);
     assert.equal(modelCalls, 0, label);
     assert.equal(

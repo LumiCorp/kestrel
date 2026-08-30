@@ -895,8 +895,16 @@ async function maybeRequireToolApproval(input: {
                 currentPreparation.preparedToolCall,
               )
             : undefined;
+        if (currentPreparedToolCall === undefined) {
+          return toToolApprovalPolicyChangedTransition({
+            ...input,
+            approvalId: asString(currentPendingApproval.approvalId)!,
+            availabilityReason: "approval_policy",
+            approvalReasonCode:
+              input.effectiveDecision?.approvalDisposition.reasonCode,
+          });
+        }
         if (
-          currentPreparedToolCall === undefined ||
           !preparedBrowserAllowMatchesPendingOperation({
             pendingPreparedToolCall: persistedPreparedToolCall,
             currentPreparedToolCall,
@@ -912,13 +920,25 @@ async function maybeRequireToolApproval(input: {
             eventPayload: input.eventPayload,
           })
         ) {
-          return toToolApprovalPolicyChangedTransition({
+          const approvalId = asString(currentPendingApproval.approvalId)!;
+          return toPreparedApprovalCleanupTransition({
             ...input,
-            approvalId: asString(currentPendingApproval.approvalId)!,
+            approvalId,
             preparedToolCall: currentPreparedToolCall,
-            availabilityReason: "approval_policy",
-            approvalReasonCode:
-              input.effectiveDecision?.approvalDisposition.reasonCode,
+            cleanup: parseRunnerPreparedApprovalCleanupV1({
+              version: "runner_prepared_approval_cleanup_v1",
+              organizationId:
+                currentPreparedToolCall.stableAuthority?.organizationId ??
+                cleanupRequestOrganizationId(input.eventPayload ?? {}) ??
+                "desktop-local",
+              threadId: input.sessionId,
+              turnId: input.runId,
+              interactionId: approvalId,
+              requestId: approvalId,
+              failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED",
+              failureMessage:
+                "The current prepared Browser authority did not match the approved operation and must be released.",
+            }),
           });
         }
         return { preparedToolCall: currentPreparedToolCall };
