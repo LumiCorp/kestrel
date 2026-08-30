@@ -945,6 +945,55 @@ test("hosted worker viewer channel accepts only the exact signed actor and forwa
   await worker.close();
 });
 
+test("hosted worker reports transient frame unavailability while an agent operation owns the engine", async () => {
+  const prepared = preparedNavigate();
+  const capability = operationCapabilityFor(prepared, "revision-1");
+  let viewerCalls = 0;
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async execute(_input, lifecycle) {
+        await lifecycle.acknowledgeDispatch();
+        throw new Error("BROWSER_DESTINATION_BLOCKED");
+      },
+      async adopt() { return 0; },
+      async viewer() {
+        viewerCalls += 1;
+        throw new Error("viewer must not run concurrently");
+      },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const request = (path: string, body: unknown) => fetch(
+    `http://[::1]:${port}${path}`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+  );
+
+  const accepted = await request("/v1/operations/accept", {
+    capability,
+    prepared,
+    authority,
+  });
+  assert.equal(accepted.status, 200);
+  const frame = await request("/v1/viewer", {
+    ticket: viewerTicket("user-1"),
+    action: "frame",
+    connectionId: "connection-1",
+  });
+
+  assert.equal(frame.status, 400);
+  assert.deepEqual(await frame.json(), {
+    error: {
+      code: "BROWSER_VIEWER_FRAME_UNAVAILABLE",
+      details: { browserOutcomeKnown: true },
+    },
+  });
+  assert.equal(viewerCalls, 0);
+  await worker.close();
+});
+
 test("hosted worker cleanup requires a fixed-key capability bound to exact connection and purpose", async () => {
   const cleaned: string[] = [];
   const worker = startHostedBrowserWorker({

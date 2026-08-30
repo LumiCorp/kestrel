@@ -56,7 +56,7 @@ function viewerRequest(input?: {
   ticketProjectId?: string;
   environmentId?: string;
   appName?: string;
-  action?: "connect" | "input";
+  action?: "connect" | "frame" | "input";
   ticketConnectionId?: string;
   instructionConnectionId?: string | undefined;
   omitInstructionConnection?: boolean;
@@ -444,6 +444,33 @@ test("browser viewer control preserves the exact pre-effect worker lease-expiry 
   });
   assert.equal(capture.status, 400);
   assert.match(capture.body, /BROWSER_VIEWER_AUTHORITY_EXPIRED/u);
+});
+
+test("browser viewer control preserves transient frame unavailability from the worker", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const input = viewerRequest({ nowSeconds: now, action: "frame" });
+  const capture = responseCapture();
+  await handleBrowserViewerControl({
+    request: incoming(input.body, input.token),
+    response: capture.response,
+    publicKey: environmentPublicKey,
+    environmentId: "env-1",
+    expectedAppName: "environment-app",
+    fetchImpl: (async () => new Response(JSON.stringify({
+      error: {
+        code: "BROWSER_VIEWER_FRAME_UNAVAILABLE",
+        details: { browserOutcomeKnown: true },
+      },
+    }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch,
+  });
+
+  assert.equal(capture.status, 400);
+  assert.deepEqual(JSON.parse(capture.body), {
+    error: { code: "BROWSER_VIEWER_FRAME_UNAVAILABLE" },
+  });
 });
 
 test("Web-shaped Router requests preserve ticket and lease expiry from the real worker boundary", async () => {

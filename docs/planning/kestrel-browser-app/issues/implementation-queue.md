@@ -4,7 +4,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
 
@@ -24,6 +23,7 @@ None.
 
 ## Implemented
 
+- [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md) — bounded transport scheduling, strict client parsing, and concurrent-operation frame handling pass 102 focused tests
 - [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — remaining review findings are assigned to the existing 06b lifecycle and 06c scheduling owners
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)
 - [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)

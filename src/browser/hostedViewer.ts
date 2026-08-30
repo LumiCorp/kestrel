@@ -9,6 +9,7 @@ import {
 } from "./hostedViewerProtocol.js";
 
 export {
+  HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE,
   HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
   type HostedBrowserViewerClientMessageV1,
   type HostedBrowserViewerServerMessageV1,

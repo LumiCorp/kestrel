@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type WebSocket from "ws";
 import {
+  HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE,
   HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
   type HostedBrowserViewerClientMessageV1,
 } from "../../../../src/browser/hostedViewerProtocol.js";
@@ -29,7 +30,7 @@ test("close waits for a pending connect success and disconnects the late exact c
   assert.equal(socket.closeCalls, 1);
   assert.equal(socket.sent.length, 0);
   assert.equal(timers.intervalHandlers.length, 0);
-  assert.equal(timers.timeoutHandlers.length, 0);
+  assert.equal(timers.timeoutHandlers.length, 1);
 });
 
 test("close waits for a pending outcome-unknown connect and runs its exact retry once", async () => {
@@ -88,7 +89,7 @@ test("a synchronous state send failure still disconnects and cannot install time
 
   assert.equal(connection.disconnects, 1);
   assert.equal(timers.intervalHandlers.length, 0);
-  assert.equal(timers.timeoutHandlers.length, 0);
+  assert.equal(timers.timeoutHandlers.length, 1);
 });
 
 test("an outcome-unknown frame is typed and its retry survives socket send failure", async () => {
@@ -131,7 +132,7 @@ test("concurrent close and error events share one settlement and one exact disco
   assert.equal(connection.disconnects, 1);
   assert.equal(socket.closeCalls, 1);
   assert.equal(timers.clearedIntervals, 2);
-  assert.equal(timers.clearedTimeouts, 1);
+  assert.equal(timers.clearedTimeouts, 2);
 });
 
 test("explicit return closes the socket and frame authority immediately", async () => {
@@ -165,7 +166,7 @@ test("explicit return closes the socket and frame authority immediately", async 
 
   assert.equal(connection.disconnects, 1);
   assert.equal(timers.clearedIntervals, 2);
-  assert.equal(timers.clearedTimeouts, 1);
+  assert.equal(timers.clearedTimeouts, 2);
 });
 
 test("authority revalidation continues independently of frame capture", async () => {
@@ -187,6 +188,254 @@ test("authority revalidation continues independently of frame capture", async ()
 
   assert.equal(revalidations, 1);
   assert.equal(connection.disconnects, 1);
+});
+
+test("a silent peer is closed at the explicit authentication deadline without worker work", async () => {
+  const socket = new FakeSocket();
+  const timers = fakeTimers();
+  let connects = 0;
+  const controller = attach(socket, async () => {
+    connects += 1;
+    return fakeConnection().value;
+  }, timers);
+
+  assert.equal(timers.timeoutHandlers.length, 1);
+  timers.timeoutHandlers[0]?.();
+  await controller.whenClosed();
+
+  assert.equal(connects, 0);
+  assert.equal(socket.closeCalls, 1);
+});
+
+test("a malformed first message closes without worker work", async () => {
+  const socket = new FakeSocket();
+  let connects = 0;
+  const controller = attach(
+    socket,
+    async () => {
+      connects += 1;
+      return fakeConnection().value;
+    },
+    fakeTimers(),
+    () => { throw new Error("invalid"); },
+  );
+
+  socket.emitMessage();
+  await controller.whenClosed();
+
+  assert.equal(connects, 0);
+  assert.equal(socket.closeCalls, 1);
+});
+
+test("slow capture stays single-flight and late completion cannot delay or outlive close", async () => {
+  const socket = new FakeSocket();
+  const timers = fakeTimers();
+  const connection = fakeConnection();
+  const captured = deferred<Awaited<ReturnType<HostedBrowserViewerConnection["frame"]>>>();
+  connection.frame = () => captured.promise;
+  const controller = attach(socket, async () => connection.value, timers);
+
+  socket.emitMessage();
+  await waitFor(() => timers.intervalHandlers.length === 2);
+  timers.intervalHandlers[1]?.();
+  timers.intervalHandlers[1]?.();
+  timers.intervalHandlers[1]?.();
+  assert.equal(connection.frameCalls, 1);
+
+  socket.emitClose();
+  await controller.whenClosed();
+  assert.equal(connection.disconnects, 1);
+
+  captured.resolve(frameMessage(1));
+  await nextTurn();
+  assert.equal(socket.sent.filter((value) => JSON.parse(value).type === "frame").length, 0);
+});
+
+test("buffered output pauses capture and retains at most one unsent frame", async () => {
+  const socket = new FakeSocket();
+  const timers = fakeTimers();
+  const connection = fakeConnection();
+  const captured = deferred<Awaited<ReturnType<HostedBrowserViewerConnection["frame"]>>>();
+  connection.frame = () => captured.promise;
+  const controller = attach(socket, async () => connection.value, timers);
+
+  socket.emitMessage();
+  await waitFor(() => timers.intervalHandlers.length === 2);
+  socket.bufferedAmount = 1;
+  timers.intervalHandlers[1]?.();
+  timers.intervalHandlers[1]?.();
+  assert.equal(connection.frameCalls, 0);
+
+  socket.bufferedAmount = 0;
+  timers.intervalHandlers[1]?.();
+  socket.bufferedAmount = 1;
+  captured.resolve(frameMessage(1));
+  await nextTurn();
+  timers.intervalHandlers[1]?.();
+  assert.equal(connection.frameCalls, 1);
+  assert.equal(socket.sent.filter((value) => JSON.parse(value).type === "frame").length, 0);
+
+  socket.bufferedAmount = 0;
+  timers.intervalHandlers[1]?.();
+  assert.equal(connection.frameCalls, 1);
+  assert.equal(socket.sent.filter((value) => JSON.parse(value).type === "frame").length, 1);
+  await controller.close(1000, "test complete");
+});
+
+test("buffered output coalesces state responses instead of growing socket output", async () => {
+  const socket = new FakeSocket();
+  const timers = fakeTimers();
+  const connection = fakeConnection();
+  const messages: HostedBrowserViewerClientMessageV1[] = [
+    authenticateMessage(),
+    pointerMessage("down", 1),
+    pointerMessage("up", 2),
+  ];
+  const controller = attach(socket, async () => connection.value, timers, () => messages.shift()!);
+
+  socket.emitMessage();
+  await waitFor(() => timers.intervalHandlers.length === 2);
+  socket.bufferedAmount = 1;
+  socket.emitMessage();
+  socket.emitMessage();
+  await waitFor(() => connection.dispatched.length === 2);
+  assert.equal(socket.sent.length, 1);
+
+  socket.bufferedAmount = 0;
+  timers.intervalHandlers[1]?.();
+  assert.equal(socket.sent.length, 2);
+  assert.equal(connection.frameCalls, 0);
+  await controller.close(1000, "test complete");
+});
+
+test("renewal and return control run ahead of pending input", async () => {
+  const socket = new FakeSocket();
+  const connection = fakeConnection();
+  const firstInput = deferred<Awaited<ReturnType<HostedBrowserViewerConnection["dispatch"]>>>();
+  let dispatches = 0;
+  connection.dispatch = async () => {
+    dispatches += 1;
+    if (dispatches === 1) return firstInput.promise;
+    return stateMessage(connection.value);
+  };
+  const messages: HostedBrowserViewerClientMessageV1[] = [
+    authenticateMessage(),
+    pointerMessage("down", 1),
+    pointerMessage("up", 2),
+    { version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION, type: "renew_lease", leaseId: "lease-1" },
+    { version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION, type: "return_control", leaseId: "lease-1" },
+  ];
+  const controller = attach(socket, async () => connection.value, fakeTimers(), () => messages.shift()!);
+
+  socket.emitMessage();
+  await waitFor(() => socket.sent.length === 1);
+  for (let index = 0; index < 4; index += 1) socket.emitMessage();
+  await waitFor(() => connection.dispatched.length === 1);
+  firstInput.resolve(stateMessage(connection.value));
+  await waitFor(() => connection.dispatched.length === 4);
+
+  assert.deepEqual(connection.dispatched.slice(0, 3).map((message) => message.type), [
+    "input",
+    "renew_lease",
+    "return_control",
+  ]);
+  assert.deepEqual(connection.dispatched.slice(3).map((message) =>
+    message.type === "input" ? message.input.phase : message.type), ["up"]);
+  await controller.close(1000, "test complete");
+});
+
+test("pointer-move flood coalesces to the latest pending move", async () => {
+  const socket = new FakeSocket();
+  const connection = fakeConnection();
+  const firstInput = deferred<Awaited<ReturnType<HostedBrowserViewerConnection["dispatch"]>>>();
+  connection.dispatch = async () => connection.dispatched.length === 1
+    ? firstInput.promise
+    : stateMessage(connection.value);
+  const messages: HostedBrowserViewerClientMessageV1[] = [authenticateMessage(), pointerMessage("down", 0)];
+  for (let index = 1; index <= 100; index += 1) messages.push(pointerMessage("move", index));
+  const controller = attach(socket, async () => connection.value, fakeTimers(), () => messages.shift()!);
+
+  socket.emitMessage();
+  await waitFor(() => socket.sent.length === 1);
+  socket.emitMessage();
+  await waitFor(() => connection.dispatched.length === 1);
+  for (let index = 0; index < 100; index += 1) socket.emitMessage();
+  firstInput.resolve(stateMessage(connection.value));
+  await waitFor(() => connection.dispatched.length === 2);
+
+  const latest = connection.dispatched[1];
+  assert.equal(latest?.type, "input");
+  assert.equal(latest?.type === "input" && latest.input.kind === "pointer" ? latest.input.x : -1, 100);
+  await controller.close(1000, "test complete");
+});
+
+test("non-coalescible input is capped and closes an abusive peer", async () => {
+  const socket = new FakeSocket();
+  const connection = fakeConnection();
+  const firstInput = deferred<Awaited<ReturnType<HostedBrowserViewerConnection["dispatch"]>>>();
+  connection.dispatch = async () => firstInput.promise;
+  const messages: HostedBrowserViewerClientMessageV1[] = [authenticateMessage()];
+  for (let index = 0; index < 66; index += 1) messages.push(keyboardMessage(index));
+  const controller = attach(socket, async () => connection.value, fakeTimers(), () => messages.shift()!);
+
+  socket.emitMessage();
+  await waitFor(() => socket.sent.length === 1);
+  for (let index = 0; index < 66; index += 1) socket.emitMessage();
+  await controller.whenClosed();
+
+  assert.equal(connection.dispatched.length, 1);
+  assert.equal(connection.disconnects, 1);
+  assert.equal(socket.closeCalls, 1);
+  firstInput.resolve(stateMessage(connection.value));
+});
+
+test("control messages share the explicit pending-memory bound", async () => {
+  const socket = new FakeSocket();
+  const connection = fakeConnection();
+  const firstInput = deferred<Awaited<ReturnType<HostedBrowserViewerConnection["dispatch"]>>>();
+  connection.dispatch = async () => firstInput.promise;
+  const messages: HostedBrowserViewerClientMessageV1[] = [
+    authenticateMessage(),
+    pointerMessage("down", 0),
+  ];
+  for (let index = 0; index < 65; index += 1) {
+    messages.push({
+      version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+      type: "renew_lease",
+      leaseId: `lease-${index}`,
+    });
+  }
+  const controller = attach(socket, async () => connection.value, fakeTimers(), () => messages.shift()!);
+
+  socket.emitMessage();
+  await waitFor(() => socket.sent.length === 1);
+  socket.emitMessage();
+  await waitFor(() => connection.dispatched.length === 1);
+  for (let index = 0; index < 65; index += 1) socket.emitMessage();
+  await controller.whenClosed();
+
+  assert.equal(connection.dispatched.length, 1);
+  assert.equal(connection.disconnects, 1);
+  assert.equal(socket.closeCalls, 1);
+  firstInput.resolve(stateMessage(connection.value));
+});
+
+test("ordinary agent-operation frame unavailability skips a frame without closing", async () => {
+  const socket = new FakeSocket();
+  const connection = fakeConnection();
+  const timers = fakeTimers();
+  connection.frame = async () => { throw new Error(HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE); };
+  const controller = attach(socket, async () => connection.value, timers);
+
+  socket.emitMessage();
+  await waitFor(() => timers.intervalHandlers.length === 2);
+  timers.intervalHandlers[1]?.();
+  await nextTurn();
+
+  assert.equal(connection.frameCalls, 1);
+  assert.equal(connection.disconnects, 0);
+  assert.equal(socket.closeCalls, 0);
+  await controller.close(1000, "test complete");
 });
 
 function attach(
@@ -211,8 +460,67 @@ function authenticateMessage(): HostedBrowserViewerClientMessageV1 {
   };
 }
 
+function pointerMessage(
+  phase: "move" | "down" | "up",
+  x: number,
+): HostedBrowserViewerClientMessageV1 {
+  return {
+    version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+    type: "input",
+    leaseId: "lease-1",
+    input: {
+      version: "desktop_browser_viewer_input_v1",
+      kind: "pointer",
+      phase,
+      x,
+      y: x,
+      button: "left",
+    },
+  };
+}
+
+function keyboardMessage(index: number): HostedBrowserViewerClientMessageV1 {
+  return {
+    version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+    type: "input",
+    leaseId: "lease-1",
+    input: {
+      version: "desktop_browser_viewer_input_v1",
+      kind: "keyboard",
+      phase: "down",
+      key: `key-${index}`,
+    },
+  };
+}
+
+function stateMessage(connection: HostedBrowserViewerConnection) {
+  return {
+    version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+    type: "state" as const,
+    state: connection.state,
+  };
+}
+
+function frameMessage(sequence: number) {
+  return {
+    version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+    type: "frame" as const,
+    frame: {
+      version: "desktop_browser_viewer_frame_v1" as const,
+      sessionId: "session-1",
+      generation: 1,
+      sequence,
+      capturedAt: "2026-08-30T12:00:00.000Z",
+      mediaType: "image/png" as const,
+      dataBase64: "iVBORw0KGgo=",
+    },
+  };
+}
+
 function fakeConnection() {
   let disconnects = 0;
+  let frameCalls = 0;
+  const dispatched: HostedBrowserViewerClientMessageV1[] = [];
   let frame: HostedBrowserViewerConnection["frame"] = async () => ({
     version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
     type: "frame" as const,
@@ -261,12 +569,20 @@ function fakeConnection() {
     },
     async disconnect() { disconnects += 1; },
     revalidate: () => revalidate(),
-    dispatch: (message: HostedBrowserViewerClientMessageV1) => dispatch(message),
-    frame: () => frame(),
+    dispatch: (message: HostedBrowserViewerClientMessageV1) => {
+      dispatched.push(message);
+      return dispatch(message);
+    },
+    frame: () => {
+      frameCalls += 1;
+      return frame();
+    },
   } as unknown as HostedBrowserViewerConnection;
   return {
     value,
     get disconnects() { return disconnects; },
+    get frameCalls() { return frameCalls; },
+    dispatched,
     set frame(next: typeof frame) { frame = next; },
     set dispatch(next: typeof dispatch) { dispatch = next; },
     set revalidate(next: typeof revalidate) { revalidate = next; },
@@ -293,6 +609,7 @@ function fakeTimers() {
 
 class FakeSocket {
   readyState = 1;
+  bufferedAmount = 0;
   sent: string[] = [];
   closeCalls = 0;
   sendThrows = false;

@@ -221,6 +221,26 @@ test("worker loss during viewing closes the Browser Session instead of restoring
   assert.equal(fixture.session.state, "lost");
 });
 
+test("ordinary agent-operation frame unavailability preserves the Browser Session", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  fixture.frameUnavailable = true;
+
+  await assert.rejects(
+    connection.frame(),
+    /BROWSER_VIEWER_FRAME_UNAVAILABLE/u,
+  );
+
+  assert.equal(fixture.session.state, "ready");
+  assert.deepEqual(fixture.terminations, []);
+  assert.equal(fixture.liveConnections.size, 1);
+});
+
 test("an uncertain connect releases the exact preselected connection without closing the Browser Session", async () => {
   const fixture = createFixture();
   fixture.connectResponseLost = true;
@@ -1175,6 +1195,7 @@ function createFixture(options: { requestAuthorized?: boolean } = {}) {
   }> = [];
   const liveConnections = new Set<string>();
   let workerLost = false;
+  let frameUnavailable = false;
   let connectResponseLost = false;
   let disconnectLost = false;
   let invalidConnectState = false;
@@ -1196,6 +1217,9 @@ function createFixture(options: { requestAuthorized?: boolean } = {}) {
           ? {}
           : { connectionId: input.connectionId }),
       });
+      if (frameUnavailable && input.action === "frame") {
+        throw new Error("BROWSER_VIEWER_FRAME_UNAVAILABLE");
+      }
       if (workerLost) throw new Error("BROWSER_ENGINE_FAILURE");
       if (crossExpiryAction === input.action && crossExpiryAt) {
         currentNow = crossExpiryAt;
@@ -1293,6 +1317,8 @@ function createFixture(options: { requestAuthorized?: boolean } = {}) {
     set workerState(value) { workerState = value; },
     get workerLost() { return workerLost; },
     set workerLost(value) { workerLost = value; },
+    get frameUnavailable() { return frameUnavailable; },
+    set frameUnavailable(value) { frameUnavailable = value; },
     get connectResponseLost() { return connectResponseLost; },
     set connectResponseLost(value) { connectResponseLost = value; },
     get disconnectLost() { return disconnectLost; },

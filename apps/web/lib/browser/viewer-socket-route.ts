@@ -1,5 +1,7 @@
 import type WebSocket from "ws";
 import {
+  HOSTED_BROWSER_VIEWER_AUTHENTICATE_TIMEOUT_MS,
+  HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE,
   HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
   type HostedBrowserViewerClientMessageV1,
   type HostedBrowserViewerServerMessageV1,
@@ -12,12 +14,18 @@ import {
 const DEFAULT_FRAME_INTERVAL_MS = 750;
 const DEFAULT_AUTHORITY_REVALIDATION_INTERVAL_MS = 2000;
 
-type ViewerSocket = Pick<WebSocket, "close" | "on" | "readyState" | "send">;
+type ViewerSocket = Pick<WebSocket, "bufferedAmount" | "close" | "on" | "readyState" | "send">;
 type TimerHandle = ReturnType<typeof setTimeout>;
 type ConnectOutcome =
   | { kind: "connected"; connection: HostedBrowserViewerConnection }
   | { kind: "outcome_unknown"; error: HostedBrowserViewerOutcomeUnknownError }
   | { kind: "failed"; error: unknown };
+type AuthenticatedViewerMessage = Exclude<
+  HostedBrowserViewerClientMessageV1,
+  { type: "authenticate" }
+>;
+
+const MAX_PENDING_VIEWER_QUEUE = 64;
 
 export interface HostedBrowserViewerSocketController {
   close(code: number, reason: string): Promise<void>;
@@ -47,17 +55,26 @@ export function attachHostedBrowserViewerSocket(input: {
   let pendingConnect: Promise<ConnectOutcome> | undefined;
   let cleanupRetry: (() => Promise<boolean>) | undefined;
   let frameTimer: TimerHandle | undefined;
+  let authenticateTimer: TimerHandle | undefined;
   let authorityTimer: TimerHandle | undefined;
   let authorityPollTimer: TimerHandle | undefined;
   let closeIntent: { code: number; reason: string } | undefined;
   let closeSettlement: Promise<void> | undefined;
-  let tail: Promise<void> = Promise.resolve();
+  let frameInFlight = false;
+  let pendingState: Extract<HostedBrowserViewerServerMessageV1, { type: "state" }> | undefined;
+  let pendingFrame: HostedBrowserViewerServerMessageV1 | undefined;
+  let drainingMessages = false;
+  let drainPromise: Promise<void> | undefined;
+  const controlQueue: AuthenticatedViewerMessage[] = [];
+  const inputQueue: Array<Extract<AuthenticatedViewerMessage, { type: "input" }>> = [];
 
   const clearTimers = () => {
     if (frameTimer) timers.clearInterval(frameTimer);
+    if (authenticateTimer) timers.clearTimeout(authenticateTimer);
     if (authorityTimer) timers.clearTimeout(authorityTimer);
     if (authorityPollTimer) timers.clearInterval(authorityPollTimer);
     frameTimer = undefined;
+    authenticateTimer = undefined;
     authorityTimer = undefined;
     authorityPollTimer = undefined;
   };
@@ -103,7 +120,7 @@ export function attachHostedBrowserViewerSocket(input: {
       clearTimers();
     }
     if (!closeSettlement) {
-      const queuedWork = waitForQueuedWork ? tail : undefined;
+      const queuedWork = waitForQueuedWork ? drainPromise : undefined;
       closeSettlement = Promise.resolve().then(() => settleClose(queuedWork));
     }
     return closeSettlement;
@@ -161,23 +178,84 @@ export function attachHostedBrowserViewerSocket(input: {
     );
   };
 
-  const enqueue = (work: () => Promise<void>) => {
-    tail = tail.then(work).catch(() => {});
+  const frameUnavailable = (error: unknown) =>
+    error instanceof Error &&
+    error.message === HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE;
+
+  const flushPendingState = () => {
+    if (
+      !pendingState ||
+      closeIntent ||
+      input.socket.readyState !== 1 ||
+      input.socket.bufferedAmount !== 0
+    ) return;
+    const state = pendingState;
+    pendingState = undefined;
+    if (!sendBestEffort(state)) {
+      void close(1011, "viewer transport failed", false);
+    }
+  };
+
+  const flushPendingFrame = () => {
+    const hadPendingState = pendingState !== undefined;
+    flushPendingState();
+    if (hadPendingState) return;
+    if (
+      !pendingFrame ||
+      closeIntent ||
+      drainingMessages ||
+      controlQueue.length > 0 ||
+      inputQueue.length > 0 ||
+      input.socket.readyState !== 1 ||
+      input.socket.bufferedAmount !== 0
+    ) return;
+    const frame = pendingFrame;
+    pendingFrame = undefined;
+    if (!sendBestEffort(frame)) {
+      void close(1011, "viewer transport failed", false);
+    }
+  };
+
+  const captureFrame = () => {
+    const hadPendingState = pendingState !== undefined;
+    flushPendingState();
+    if (hadPendingState) return;
+    const hadPendingFrame = pendingFrame !== undefined;
+    flushPendingFrame();
+    if (hadPendingFrame) return;
+    if (
+      closeIntent ||
+      !connection ||
+      frameInFlight ||
+      pendingFrame ||
+      drainingMessages ||
+      controlQueue.length > 0 ||
+      inputQueue.length > 0 ||
+      input.socket.bufferedAmount !== 0
+    ) return;
+    frameInFlight = true;
+    const active = connection;
+    void active.frame().then(
+      (frame) => {
+        frameInFlight = false;
+        if (closeIntent || connection !== active) return;
+        pendingFrame = frame;
+        flushPendingFrame();
+      },
+      async (error: unknown) => {
+        frameInFlight = false;
+        if (closeIntent || frameUnavailable(error)) return;
+        await fail(error, "viewer authority unavailable");
+      },
+    );
   };
 
   const startFrames = () => {
     if (closeIntent || frameTimer) return;
-    frameTimer = timers.setInterval(() => {
-      enqueue(async () => {
-        if (!connection || closeIntent) return;
-        try {
-          const sent = await sendOrClose(await connection.frame());
-          if (!sent) return;
-        } catch (error) {
-          await fail(error, "viewer authority unavailable");
-        }
-      });
-    }, input.frameIntervalMs ?? DEFAULT_FRAME_INTERVAL_MS);
+    frameTimer = timers.setInterval(
+      captureFrame,
+      input.frameIntervalMs ?? DEFAULT_FRAME_INTERVAL_MS,
+    );
   };
 
   const startAuthorityRevalidation = () => {
@@ -194,58 +272,142 @@ export function attachHostedBrowserViewerSocket(input: {
     }, input.authorityRevalidationIntervalMs ?? DEFAULT_AUTHORITY_REVALIDATION_INTERVAL_MS);
   };
 
-  input.socket.on("message", (data) => {
-    enqueue(async () => {
+  const processAuthenticatedMessage = async (message: AuthenticatedViewerMessage) => {
+    if (!connection || closeIntent) return;
+    try {
+      const response = await connection.dispatch(message);
       if (closeIntent) return;
-      try {
-        const message = input.parseMessage(data);
-        if (!connection) {
-          if (message.type !== "authenticate") throw new Error("BROWSER_SESSION_LOST");
-          const attempt = Promise.resolve()
-            .then(() => input.connect(message.ticket))
-            .then<ConnectOutcome, ConnectOutcome>(
-              (connected) => ({ kind: "connected", connection: connected }),
-              (error: unknown) => error instanceof HostedBrowserViewerOutcomeUnknownError
-                ? { kind: "outcome_unknown", error }
-                : { kind: "failed", error },
-            );
-          // Publish the attempt before awaiting or dispatching its first async effect.
-          pendingConnect = attempt;
-          const outcome = await attempt;
-          if (closeIntent) return;
-          pendingConnect = undefined;
-          if (outcome.kind === "outcome_unknown") {
-            await fail(outcome.error, "viewer authorization failed");
-            return;
-          }
-          if (outcome.kind === "failed") throw outcome.error;
-          connection = outcome.connection;
-          const sent = await sendOrClose({
-            version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
-            type: "state",
-            state: connection.state,
-          });
-          if (!(sent && !closeIntent)) return;
-          scheduleConnectionExpiry();
-          startAuthorityRevalidation();
-          startFrames();
-          return;
-        }
+      let sent: boolean;
+      if (
+        response.type === "state" &&
+        (pendingState !== undefined || input.socket.bufferedAmount !== 0)
+      ) {
+        pendingState = response;
+        sent = true;
+      } else {
+        sent = await sendOrClose(response);
+      }
+      if (!(sent && !closeIntent)) return;
+      if (response.type === "closed") {
+        await close(1000, "browser session closed", false);
+        return;
+      }
+      scheduleConnectionExpiry();
+    } catch (error) {
+      await fail(error, "viewer authorization failed");
+    }
+  };
 
-        const response = await connection.dispatch(message);
-        if (closeIntent) return;
-        const sent = await sendOrClose(response);
-        if (!(sent && !closeIntent)) return;
-        if (response.type === "closed") {
-          await close(1000, "browser session closed", false);
-          return;
-        }
-        scheduleConnectionExpiry();
-      } catch (error) {
-        await fail(error, "viewer authorization failed");
+  const drainMessages = () => {
+    if (drainingMessages || closeIntent) return;
+    drainingMessages = true;
+    const running = (async () => {
+      while (!closeIntent) {
+        const message = controlQueue.shift() ?? inputQueue.shift();
+        if (!message) return;
+        await processAuthenticatedMessage(message);
+      }
+    })();
+    drainPromise = running.finally(() => {
+      drainingMessages = false;
+      if (!closeIntent && (controlQueue.length > 0 || inputQueue.length > 0)) {
+        drainMessages();
+      } else {
+        flushPendingFrame();
       }
     });
+  };
+
+  const enqueueAuthenticatedMessage = (message: AuthenticatedViewerMessage) => {
+    if (message.type !== "input") {
+      if (controlQueue.length >= MAX_PENDING_VIEWER_QUEUE) {
+        void close(1008, "viewer control limit exceeded", false);
+        return;
+      }
+      controlQueue.push(message);
+      drainMessages();
+      return;
+    }
+    const trailing = inputQueue.at(-1);
+    if (
+      message.input.kind === "pointer" &&
+      message.input.phase === "move" &&
+      trailing?.input.kind === "pointer" &&
+      trailing.input.phase === "move"
+    ) {
+      inputQueue[inputQueue.length - 1] = message;
+      return;
+    }
+    if (inputQueue.length >= MAX_PENDING_VIEWER_QUEUE) {
+      void close(1008, "viewer input limit exceeded", false);
+      return;
+    }
+    inputQueue.push(message);
+    drainMessages();
+  };
+
+  const finishConnect = async (attempt: Promise<ConnectOutcome>) => {
+    const outcome = await attempt;
+    if (closeIntent) return;
+    pendingConnect = undefined;
+    if (outcome.kind === "outcome_unknown") {
+      await fail(outcome.error, "viewer authorization failed");
+      return;
+    }
+    if (outcome.kind === "failed") {
+      await fail(outcome.error, "viewer authorization failed");
+      return;
+    }
+    connection = outcome.connection;
+    const sent = await sendOrClose({
+      version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+      type: "state",
+      state: connection.state,
+    });
+    if (!(sent && !closeIntent)) return;
+    scheduleConnectionExpiry();
+    startAuthorityRevalidation();
+    startFrames();
+  };
+
+  input.socket.on("message", (data) => {
+    if (closeIntent) return;
+    let message: HostedBrowserViewerClientMessageV1;
+    try {
+      message = input.parseMessage(data);
+    } catch {
+      void close(1008, "viewer authorization failed", false);
+      return;
+    }
+    if (!connection) {
+      if (message.type !== "authenticate" || pendingConnect) {
+        void close(1008, "viewer authorization failed", false);
+        return;
+      }
+      if (authenticateTimer) timers.clearTimeout(authenticateTimer);
+      authenticateTimer = undefined;
+      const attempt = Promise.resolve()
+        .then(() => input.connect(message.ticket))
+        .then<ConnectOutcome, ConnectOutcome>(
+          (connected) => ({ kind: "connected", connection: connected }),
+          (error: unknown) => error instanceof HostedBrowserViewerOutcomeUnknownError
+            ? { kind: "outcome_unknown", error }
+            : { kind: "failed", error },
+        );
+      pendingConnect = attempt;
+      void finishConnect(attempt);
+      return;
+    }
+    if (message.type === "authenticate") {
+      void close(1008, "viewer authorization failed", false);
+      return;
+    }
+    enqueueAuthenticatedMessage(message);
   });
+  authenticateTimer = timers.setTimeout(
+    () => void close(1008, "viewer authentication timed out", false),
+    HOSTED_BROWSER_VIEWER_AUTHENTICATE_TIMEOUT_MS,
+  );
   input.socket.on("close", () => void close(1000, "viewer disconnected"));
   input.socket.on("error", () => void close(1011, "viewer transport failed"));
 

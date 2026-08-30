@@ -10,8 +10,9 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  HOSTED_BROWSER_VIEWER_MAX_SERVER_MESSAGE_BYTES,
   HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
-  type HostedBrowserViewerServerMessageV1,
+  parseHostedBrowserViewerServerMessage,
 } from "../../../../src/browser/hostedViewerProtocol";
 import type {
   DesktopBrowserViewerFrameV1,
@@ -35,6 +36,11 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
   const socketRef = useRef<WebSocket | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const availabilityAbortRef = useRef<AbortController | null>(null);
+  const viewerIdentityRef = useRef<{
+    sessionId: string;
+    generation: number;
+    connectionId: string;
+  } | null>(null);
 
   useEffect(() => {
     if (transportState !== "closed") return;
@@ -85,6 +91,8 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
     socketRef.current?.close(1000, "viewer reconnecting");
     setTransportState("connecting");
     setFrame(null);
+    setState(null);
+    viewerIdentityRef.current = null;
     setCleanupUnknown(null);
     const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/browser-viewer`, {
       method: "POST",
@@ -109,20 +117,49 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
       }));
     });
     socket.addEventListener("message", (event) => {
-      const message = JSON.parse(String(event.data)) as HostedBrowserViewerServerMessageV1;
-      if (message.type === "state") setState(message.state);
-      if (message.type === "frame") setFrame(message.frame);
-      if (message.type === "error") {
-        setCleanupUnknown(hostedBrowserViewerCleanupUnknownPresentation(message.code));
-        socket.close();
+      try {
+        const serialized = String(event.data);
+        if (serialized.length > HOSTED_BROWSER_VIEWER_MAX_SERVER_MESSAGE_BYTES) {
+          throw new Error("BROWSER_SESSION_LOST");
+        }
+        const identity = viewerIdentityRef.current;
+        const message = parseHostedBrowserViewerServerMessage(
+          JSON.parse(serialized),
+          {
+            threadId,
+            ...(identity ?? {}),
+          },
+        );
+        if (!identity && message.type === "frame") {
+          throw new Error("BROWSER_SESSION_LOST");
+        }
+        if (message.type === "state") {
+          viewerIdentityRef.current = {
+            sessionId: message.state.sessionId!,
+            generation: message.state.generation!,
+            connectionId: message.state.connectionId!,
+          };
+          setState(message.state);
+        }
+        if (message.type === "frame") setFrame(message.frame);
+        if (message.type === "error") {
+          setCleanupUnknown(hostedBrowserViewerCleanupUnknownPresentation(message.code));
+          socket.close();
+        }
+        if (message.type === "closed") socket.close();
+      } catch {
+        viewerIdentityRef.current = null;
+        setState(null);
+        setFrame(null);
+        socket.close(1008, "invalid viewer message");
       }
-      if (message.type === "closed") socket.close();
     });
     socket.addEventListener("close", () => {
       if (socketRef.current === socket) socketRef.current = null;
       setTransportState("closed");
       setState(null);
       setFrame(null);
+      viewerIdentityRef.current = null;
     });
   }, [availability.cleanupPending, threadId]);
 

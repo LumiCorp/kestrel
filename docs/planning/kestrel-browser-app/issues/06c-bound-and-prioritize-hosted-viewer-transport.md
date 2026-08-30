@@ -61,3 +61,28 @@ or input authority.
 ## Depends on
 
 [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md).
+
+## Implementation evidence
+
+- The versioned WebSocket route now closes silent or malformed pre-authentication
+  peers on the shared 10-second deadline without starting viewer worker work.
+- Frame observation is single-flight with at most one pending frame. Capture is
+  paused while socket output is buffered, state responses coalesce to one latest
+  pending state, and close intent discards late captures without joining the
+  frame task into exact disconnect settlement.
+- Control messages run ahead of queued input. Pending pointer moves coalesce,
+  keyboard and pointer down/up order is retained, and both input and control
+  queues close the peer at the explicit 64-message bound.
+- The worker and Router preserve typed
+  `BROWSER_VIEWER_FRAME_UNAVAILABLE` while an accepted agent operation or
+  revision adoption owns the Browser engine. Web skips that observation without
+  invoking the 06b authority-loss path; ordinary worker loss still fail-closes.
+- The shared server-message parser rejects unknown keys/types, invalid state or
+  frame identity, non-canonical timestamps, invalid frame data, and oversized
+  payloads. The client requires state before frames and clears identity, state,
+  and frame presentation on malformed input.
+- The exact protocol, Vercel route, Web lifecycle/client, Router, worker, and
+  Browser Session command passes 102 tests. Root, Web, and Environment Router
+  TypeScript checks, scoped Web lint, and `git diff --check` pass. The broad Web
+  lint remains baseline-red on 149 unrelated existing diagnostics; no 06c file
+  is among the scoped lint failures.

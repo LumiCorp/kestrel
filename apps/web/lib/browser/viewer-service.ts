@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED,
+  HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE,
   HOSTED_BROWSER_VIEWER_AUDIENCE,
   HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
   HOSTED_BROWSER_VIEWER_TICKET_TTL_MS,
@@ -317,6 +318,7 @@ export class HostedBrowserViewerService {
         connection.state.connectionId,
       );
     } catch (error) {
+      if (isViewerFrameUnavailable(error)) throw error;
       if (connection.expiryHandled) throw error;
       if (isViewerAuthorityExpired(error)) {
         await this.#expireConnection(connection, error);
@@ -875,6 +877,11 @@ function sameCleanupScope(
 function isViewerAuthorityExpired(error: unknown): boolean {
   return error instanceof Error &&
     error.message === HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED;
+}
+
+function isViewerFrameUnavailable(error: unknown): boolean {
+  return error instanceof Error &&
+    error.message === HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE;
 }
 function isViewerState(value: unknown): value is DesktopBrowserViewerStateV1 {
   return Boolean(value && typeof value === "object" && (value as { version?: unknown }).version === "desktop_browser_viewer_state_v1");

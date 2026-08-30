@@ -22,6 +22,7 @@ import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
 import { verifyHostedBrowserCapabilitySignature } from "./hostedCapability.js";
 import {
   HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED,
+  HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE,
   verifyHostedBrowserViewerCleanupCapability,
   verifyHostedBrowserViewerTicket,
   type HostedBrowserViewerCleanupCapabilityV1,
@@ -453,6 +454,9 @@ export function startHostedBrowserWorker(input: {
         }
         if (Date.parse(claims.expiresAt) <= Date.now()) {
           throw knownWorkerFailure(HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED);
+        }
+        if ((accepted.size !== 0 || revisionInstalling) && action === "frame") {
+          throw knownWorkerFailure(HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE);
         }
         if (revisionInstalling || accepted.size !== 0) {
           throw new Error("BROWSER_ENGINE_FAILURE");

@@ -7,6 +7,7 @@ const MAX_BROWSER_VIEWER_RESPONSE_BYTES = 28 * 1024 * 1024;
 const BROWSER_VIEWER_TIMEOUT_MS = 12_000;
 const VIEWER_AUDIENCE = "kestrel-one-browser-viewer";
 const VIEWER_AUTHORITY_EXPIRED = "BROWSER_VIEWER_AUTHORITY_EXPIRED";
+const VIEWER_FRAME_UNAVAILABLE = "BROWSER_VIEWER_FRAME_UNAVAILABLE";
 
 type ViewerAction =
   | "connect"
@@ -93,6 +94,10 @@ export async function handleBrowserViewerControl(input: {
   }
 
   const cleanup = envelope.version === "hosted_browser_viewer_cleanup_router_envelope_v1";
+  const routedViewerAction =
+    envelope.version === "hosted_browser_viewer_router_envelope_v1"
+      ? envelope.instruction.action
+      : undefined;
   let workerRequest: Record<string, unknown>;
   if (envelope.version === "hosted_browser_viewer_cleanup_router_envelope_v1") {
     workerRequest = {
@@ -146,8 +151,12 @@ export async function handleBrowserViewerControl(input: {
       const parsed = JSON.parse(body.toString("utf8")) as {
         error?: { code?: unknown } | undefined;
       };
-      if (parsed.error?.code === VIEWER_AUTHORITY_EXPIRED) {
-        return writeError(input.response, worker.status, VIEWER_AUTHORITY_EXPIRED);
+      if (
+        parsed.error?.code === VIEWER_AUTHORITY_EXPIRED ||
+        (routedViewerAction === "frame" &&
+          parsed.error?.code === VIEWER_FRAME_UNAVAILABLE)
+      ) {
+        return writeError(input.response, worker.status, parsed.error.code);
       }
     } catch {
       // A malformed worker error is ordinary downstream uncertainty.
