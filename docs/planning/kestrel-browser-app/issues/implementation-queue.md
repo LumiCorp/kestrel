@@ -4,6 +4,9 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
+- [Accept the real QA WebSocket proxy form](05j-accept-real-qa-websocket-proxy-form.md)
+- [Terminalize rejected upgrade sockets](05k-terminalize-rejected-upgrade-sockets.md)
+- [Separate upload progress from the response-header timeout](05l-separate-upload-progress-from-response-header-timeout.md)
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
@@ -12,25 +15,25 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Blocked
 
-- [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — packaged lifecycle evidence is proven; blocked on authority-loss retry and native authentication issues 04b-04c
-- [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md) — review found process-memory-only authority can be stranded or inherited across Desktop restart; blocked on issue 04e
-- [Complete native authentication takeover](04c-complete-native-authentication-takeover.md) — review found expired presentation and target-window drift; blocked on issue 04g and signed platform-authenticator canary
-- [Persist Desktop viewer authority loss across restart](04e-persist-viewer-authority-loss-across-restart.md) — review found an unjournaled connection crash window and non-convergent post-unlink sync failure; blocked on issue 04f
+- [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — implementation is review-clean; blocked only on issue 04c's signed platform-authenticator canary
+- [Complete native authentication takeover](04c-complete-native-authentication-takeover.md) — code path is review-clean; blocked on signed platform-authenticator canary
 - [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — blocked on issues 05a-05g and the remaining live Fly canaries
 - [Enforce Gateway-only Browser worker egress](05a-enforce-gateway-only-worker-egress.md) — input/output policy and routed image smoke are review-clean; blocked on live Fly proof
-- [Close the in-flight Gateway revocation race](05b-close-inflight-gateway-revocation-race.md) — pre-DNS lifecycle is closed; blocked on QA WebSocket and timeout issues 05d and 05g
+- [Close the in-flight Gateway revocation race](05b-close-inflight-gateway-revocation-race.md) — pre-DNS lifecycle is closed; blocked on QA WebSocket and timeout repairs 05j-05l
 
 ## Implemented
 
-- [Close Desktop viewer journal crash windows](04f-close-viewer-journal-crash-windows.md) — focused restart, authority-loss, and journal convergence tests are green; awaiting independent review
-- [Revalidate native handoff presentation](04g-revalidate-native-handoff-presentation.md) — focused lease-expiry and exact-window lifecycle tests are green; awaiting independent review
-- [Proxy authorized QA WebSockets](05d-proxy-authorized-qa-websockets.md) — focused authenticated upgrade, revocation, and rebinding tests are green; awaiting independent review
-- [Enforce Gateway connection timeouts](05g-enforce-gateway-connection-timeouts.md) — focused DNS, connect, header, body-idle, and established-stream lifecycle tests are green; awaiting independent review
+- [Proxy authorized QA WebSockets](05d-proxy-authorized-qa-websockets.md) — review found the real `ws://` wire form and rejected-socket lifecycle gaps; blocked on issues 05j-05k
+- [Enforce Gateway connection timeouts](05g-enforce-gateway-connection-timeouts.md) — review found progressing request uploads are treated as stalled response headers; blocked on issue 05l
 - [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 
 ## Done
 
+- [Revalidate native handoff presentation](04g-revalidate-native-handoff-presentation.md)
+- [Close Desktop viewer journal crash windows](04f-close-viewer-journal-crash-windows.md)
+- [Persist Desktop viewer authority loss across restart](04e-persist-viewer-authority-loss-across-restart.md)
+- [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md)
 - [Reserve Gateway work before DNS](05c-reserve-gateway-work-before-dns.md)
 - [Serialize Gateway retirement and shutdown](05i-serialize-gateway-retirement-and-shutdown.md)
 - [Complete exact Browser egress close cleanup](05h-complete-exact-egress-close-cleanup.md)
