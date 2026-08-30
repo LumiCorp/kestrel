@@ -167,9 +167,22 @@ test("Browser lifecycle reconciliation is environment-scoped, race-safe, and met
   );
   const afterRejectedTouch = await store.read(staleOpening.sessionId);
   assert.equal(afterRejectedTouch?.session.state, "opening");
+  await assert.rejects(
+    store.markTerminal({
+      sessionId: staleOpening.sessionId,
+      expectedGeneration: staleOpening.generation,
+      expectedMachineId: id("machine", "wrong"),
+      state: "lost",
+      reason: "BROWSER_SESSION_LOST",
+      now: new Date("2026-08-30T12:00:59Z"),
+    }),
+    /BROWSER_SESSION_LOST/u,
+  );
+  assert.equal((await store.read(staleOpening.sessionId))?.session.state, "opening");
   await store.markTerminal({
     sessionId: staleOpening.sessionId,
     expectedGeneration: staleOpening.generation,
+    expectedMachineId: id("machine", "a"),
     state: "lost",
     reason: "BROWSER_SESSION_LOST",
     now: new Date("2026-08-30T12:01:00Z"),

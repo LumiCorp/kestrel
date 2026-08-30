@@ -435,7 +435,7 @@ test("hosted viewer takeover accepts typed input without native Desktop handoff"
   await fixture.service.close();
 });
 
-test("a fully bound proposed hosted viewer connection is created once and exact duplicate delivery is idempotent", async () => {
+test("a fully bound hosted viewer is idempotent and a different proposed connection fail-closes retained authority", async () => {
   const fixture = await createFixture({ nativeAuthenticationHandoff: false });
   const sessionId = await openSession(fixture.service);
   const exact = {
@@ -464,13 +464,6 @@ test("a fully bound proposed hosted viewer connection is created once and exact 
   );
   await assert.rejects(
     fixture.service.connectViewer({
-      ...exact,
-      connectionId: "cross-ticket-connection",
-    }),
-    hasCode("BROWSER_SESSION_LOST"),
-  );
-  await assert.rejects(
-    fixture.service.connectViewer({
       principalId: exact.principalId,
       threadId: exact.threadId,
       projectId: exact.projectId,
@@ -483,10 +476,21 @@ test("a fully bound proposed hosted viewer connection is created once and exact 
     hasCode("BROWSER_SESSION_LOST"),
   );
 
-  const stillExact = requireAvailableViewer(
-    await fixture.service.connectViewer(exact),
+  await assert.rejects(
+    fixture.service.connectViewer({
+      ...exact,
+      connectionId: "cross-ticket-connection",
+    }),
+    hasCode("BROWSER_SESSION_LOST"),
   );
-  assert.equal(stillExact.connectionId, exact.connectionId);
+  assert.equal((await fixture.service.connectViewer(exact)).available, false);
+  await assert.rejects(
+    fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      createLifecycle(),
+    ),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
   await fixture.service.close();
 });
 

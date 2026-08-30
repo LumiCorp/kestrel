@@ -871,12 +871,15 @@ export class HostedBrowserService implements BrowserServicePort {
       origin.environmentId !== this.options.requestAuthority.environmentId ||
       origin.userId !== this.options.requestAuthority.userId
     ) throw this.#failure("BROWSER_SESSION_LOST");
-    await this.#terminate(
-      record.session,
-      record.resource,
-      input.reason === "closed_by_user" ? "closed" : "lost",
-      input.reason,
-    );
+    const terminal = await this.options.store.markTerminal({
+      sessionId: record.session.sessionId,
+      expectedGeneration: input.generation,
+      expectedMachineId: record.resource.machineId,
+      state: input.reason === "closed_by_user" ? "closed" : "lost",
+      reason: input.reason,
+      now: this.#now(),
+    });
+    await this.#cleanup(terminal, record.resource);
   }
 
   async #open(

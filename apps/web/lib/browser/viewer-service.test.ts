@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
-import { HostedBrowserViewerService } from "./viewer-service";
+import {
+  HostedBrowserViewerOutcomeUnknownError,
+  HostedBrowserViewerService,
+} from "./viewer-service";
 import type { BrowserSessionV1 } from "../../../../src/browser/contracts.js";
+import type { HostedBrowserResourceRecord } from "./store";
 import type { HostedBrowserViewerTicketStorePort } from "./viewer-transient-store";
 import type { HostedBrowserViewerWorkerPort } from "./viewer-worker-client";
 
@@ -117,10 +121,41 @@ test("an uncertain connect releases the exact preselected connection without clo
   );
 });
 
-test("unknown exact cleanup after an uncertain connect fail-closes once", async () => {
+test("an uncertain connect without disconnect or durable terminal proof returns unknown and retains exact cleanup identity", async () => {
   const fixture = createFixture();
   fixture.connectResponseLost = true;
   fixture.disconnectLost = true;
+  fixture.terminationFailure = "before_terminal";
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+
+  let unknown: HostedBrowserViewerOutcomeUnknownError | undefined;
+  try {
+    await fixture.service.connect(issued.ticket);
+    assert.fail("connect must not report a handled failure without cleanup proof");
+  } catch (error) {
+    assert.ok(error instanceof HostedBrowserViewerOutcomeUnknownError);
+    unknown = error;
+  }
+  assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
+  assert.equal(fixture.session.state, "ready");
+  assert.equal(fixture.liveConnections.size, 1);
+  assert.doesNotMatch(JSON.stringify(fixture.evidence), /browser_viewer_authority_lost/u);
+
+  fixture.disconnectLost = false;
+  assert.ok(unknown);
+  assert.equal(await unknown.retryCleanup(), true);
+  assert.equal(fixture.liveConnections.size, 0);
+});
+
+test("cleanup failure after the exact durable terminal transition remains proven fail-close", async () => {
+  const fixture = createFixture();
+  fixture.connectResponseLost = true;
+  fixture.disconnectLost = true;
+  fixture.terminationFailure = "after_terminal";
   const issued = await fixture.service.mintTicket({
     organizationId: "org-1",
     actorId: "user-1",
@@ -131,7 +166,9 @@ test("unknown exact cleanup after an uncertain connect fail-closes once", async 
     fixture.service.connect(issued.ticket),
     /BROWSER_ENGINE_FAILURE/u,
   );
-  assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
+  assert.equal(fixture.session.state, "lost");
+  assert.ok(fixture.resource.cleanupRequestedAt);
+  assert.match(JSON.stringify(fixture.evidence), /browser_viewer_authority_lost/u);
 });
 
 test("an invalid connect state releases the exact connection and fail-closes once", async () => {
@@ -168,7 +205,7 @@ function createFixture() {
     idleExpiresAt: "2026-08-30T12:30:00.000Z",
     hardExpiresAt: "2026-08-30T19:00:00.000Z",
   };
-  const resource = {
+  const resource: HostedBrowserResourceRecord = {
     sessionId: "session-1",
     originatingTurnId: "turn-1",
     previewLeaseId: null,
@@ -196,6 +233,7 @@ function createFixture() {
   let connectResponseLost = false;
   let disconnectLost = false;
   let invalidConnectState = false;
+  let terminationFailure: "before_terminal" | "after_terminal" | undefined;
   let workerState = viewerState("ready", true);
   const worker: HostedBrowserViewerWorkerPort = {
     async invoke(input) {
@@ -266,6 +304,7 @@ function createFixture() {
     terminations,
     workerCalls,
     liveConnections,
+    resource,
     accessAllowed: true,
     get workerState() { return workerState; },
     set workerState(value) { workerState = value; },
@@ -277,6 +316,8 @@ function createFixture() {
     set disconnectLost(value) { disconnectLost = value; },
     get invalidConnectState() { return invalidConnectState; },
     set invalidConnectState(value) { invalidConnectState = value; },
+    get terminationFailure() { return terminationFailure; },
+    set terminationFailure(value) { terminationFailure = value; },
     service: undefined as unknown as HostedBrowserViewerService,
   };
   fixture.service = new HostedBrowserViewerService({
@@ -295,7 +336,19 @@ function createFixture() {
       },
     },
     lifecycle: {
-      async terminateViewerSession(input) { terminations.push(input.reason); },
+      async terminateViewerSession(input) {
+        terminations.push(input.reason);
+        if (terminationFailure === "before_terminal") {
+          throw new Error("terminal transition unavailable");
+        }
+        if (terminationFailure === "after_terminal") {
+          session.state = "lost";
+          session.terminalReason = "BROWSER_SESSION_LOST";
+          session.updatedAt = currentNow.toISOString();
+          resource.cleanupRequestedAt = currentNow;
+          throw new Error("machine cleanup unavailable");
+        }
+      },
     },
     access: { async authorize() { return fixture.accessAllowed; } },
     tickets,

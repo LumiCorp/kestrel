@@ -931,7 +931,7 @@ test("hosted worker viewer channel accepts only the exact signed actor and forwa
   await worker.close();
 });
 
-test("AgentBrowserHostedWorkerEngine composes with DesktopBrowserService for one exact idempotent hosted viewer connection", async (t) => {
+test("AgentBrowserHostedWorkerEngine fail-closes a retained viewer before accepting a different proposed connection", async (t) => {
   const homePath = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-hosted-viewer-composition-"),
   );
@@ -1006,6 +1006,12 @@ test("AgentBrowserHostedWorkerEngine composes with DesktopBrowserService for one
     }),
     hasBrowserCode("BROWSER_SESSION_LOST"),
   );
+  const terminal = await engine.viewer({
+    action: "connect",
+    claims,
+    connectionId,
+  });
+  assert.equal((terminal as { available?: boolean }).available, false);
   await assert.rejects(
     engine.viewer({
       action: "connect",
@@ -1013,7 +1019,6 @@ test("AgentBrowserHostedWorkerEngine composes with DesktopBrowserService for one
     }),
     hasBrowserCode("BROWSER_SESSION_LOST"),
   );
-  await engine.viewer({ action: "close", claims, connectionId });
   await engine.destroy();
 });
 

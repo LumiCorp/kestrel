@@ -602,6 +602,17 @@ export class DesktopBrowserService implements BrowserServicePort {
           return this.#viewerState(runtime, proposed);
         }
         if (
+          expectedConnection === undefined &&
+          runtime.viewerConnections.size > 0
+        ) {
+          this.#viewerEvent(runtime, "rejection", "connection_identity");
+          await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST");
+          throw browserFailure(
+            "BROWSER_SESSION_LOST",
+            "A different Browser viewer connection retained authority.",
+          );
+        }
+        if (
           expectedConnection?.principalId !== principalId ||
           expectedConnection.projectId !== projectId
         ) {

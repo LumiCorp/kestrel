@@ -170,6 +170,28 @@ test("startup failure confirms cleanup only after terminal intent and deletion",
   assert.equal(fixture.cleanupConfirmed, 1);
 });
 
+test("viewer termination commits the exact terminal generation before machine cleanup", async () => {
+  const fixture = serviceFixture("ready", "allow", {
+    machineDeleteFailure: true,
+  });
+
+  await assert.rejects(
+    fixture.service.terminateViewerSession({
+      sessionId: fixture.session.sessionId,
+      generation: fixture.session.generation,
+      reason: "BROWSER_SESSION_LOST",
+    }),
+    /machine cleanup unavailable/u,
+  );
+  assert.equal(fixture.session.state, "lost");
+  assert.equal(fixture.session.terminalReason, "BROWSER_SESSION_LOST");
+  assert.deepEqual(fixture.terminalMarks, [{
+    expectedGeneration: 1,
+    expectedMachineId: "machine-1",
+  }]);
+  assert.equal(fixture.cleanupConfirmed, 0);
+});
+
 test("only successful validated open completion promotes the stored session to ready", async () => {
   const fixture = serviceFixture("opening", "allow");
   const prepared = preparedOpen();
@@ -445,6 +467,7 @@ function serviceFixture(
     terminalRaceOnReady?: boolean;
     startupWaitFailure?: boolean;
     terminalOnRead?: boolean;
+    machineDeleteFailure?: boolean;
   } = {},
 ) {
   let session = parseBrowserSessionV1({
@@ -478,6 +501,10 @@ function serviceFixture(
   let cleanupConfirmed = 0;
   let touches = 0;
   const stateTransitions: string[] = [];
+  const terminalMarks: Array<{
+    expectedGeneration: number | undefined;
+    expectedMachineId: string | undefined;
+  }> = [];
   const preparedArtifacts: unknown[] = [];
   const authorizedArtifacts: Array<{
     generation: number;
@@ -525,6 +552,10 @@ function serviceFixture(
       },
       async adoptRevision() {},
       async markTerminal(input) {
+        terminalMarks.push({
+          expectedGeneration: input.expectedGeneration,
+          expectedMachineId: input.expectedMachineId,
+        });
         if (["closed", "expired", "lost", "failed"].includes(session.state)) {
           return session;
         }
@@ -558,7 +589,12 @@ function serviceFixture(
       async createBrowserMachine() { throw new Error("not used"); },
       async listBrowserMachines() { return []; },
       async getMachine() { return null; },
-      async deleteMachine(input) { deletedMachines.push(input.machineId); },
+      async deleteMachine(input) {
+        deletedMachines.push(input.machineId);
+        if (options.machineDeleteFailure) {
+          throw new Error("machine cleanup unavailable");
+        }
+      },
       async waitForMachine(input) {
         if (options.startupWaitFailure && input.state === "started") {
           throw new Error("startup failed");
@@ -636,6 +672,7 @@ function serviceFixture(
     authorizedArtifacts,
     canonicalizedArtifacts,
     stateTransitions,
+    terminalMarks,
   };
 }
 

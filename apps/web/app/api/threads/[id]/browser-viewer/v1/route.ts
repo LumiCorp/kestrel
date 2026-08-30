@@ -7,7 +7,10 @@ import {
   verifyHostedBrowserViewerTicket,
 } from "../../../../../../../../src/browser/hostedViewer.js";
 import { resolveHostedBrowserViewerService } from "@/lib/browser/viewer-composition";
-import type { HostedBrowserViewerConnection } from "@/lib/browser/viewer-service";
+import {
+  HostedBrowserViewerOutcomeUnknownError,
+  type HostedBrowserViewerConnection,
+} from "@/lib/browser/viewer-service";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 
@@ -42,6 +45,7 @@ async function attachHostedBrowserViewer(
   },
 ) {
   let connection: HostedBrowserViewerConnection | undefined;
+  let uncertainConnect: HostedBrowserViewerOutcomeUnknownError | undefined;
   let frameTimer: ReturnType<typeof setInterval> | undefined;
   let authorityTimer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
@@ -55,6 +59,9 @@ async function attachHostedBrowserViewer(
     const active = connection;
     connection = undefined;
     if (active) await active.disconnect().catch(() => {});
+    const uncertain = uncertainConnect;
+    uncertainConnect = undefined;
+    if (uncertain) await uncertain.retryCleanup().catch(() => false);
     if (socket.readyState === 1 || socket.readyState === 0) {
       socket.close(code, reason);
     }
@@ -133,11 +140,16 @@ async function attachHostedBrowserViewer(
           return;
         }
         scheduleConnectionExpiry();
-      } catch {
+      } catch (error) {
+        if (error instanceof HostedBrowserViewerOutcomeUnknownError) {
+          uncertainConnect = error;
+        }
         send({
           version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
           type: "error",
-          code: "BROWSER_SESSION_LOST",
+          code: error instanceof HostedBrowserViewerOutcomeUnknownError
+            ? error.code
+            : "BROWSER_SESSION_LOST",
         });
         await close(1008, "viewer authorization failed");
       }

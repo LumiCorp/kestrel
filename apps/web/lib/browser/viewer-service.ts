@@ -67,6 +67,18 @@ export interface HostedBrowserViewerEvidencePort {
   }): void;
 }
 
+export class HostedBrowserViewerOutcomeUnknownError extends Error {
+  readonly code = "BROWSER_ACTION_OUTCOME_UNKNOWN" as const;
+
+  constructor(
+    readonly retryCleanup: () => Promise<boolean>,
+    options?: ErrorOptions,
+  ) {
+    super("BROWSER_ACTION_OUTCOME_UNKNOWN", options);
+    this.name = "HostedBrowserViewerOutcomeUnknownError";
+  }
+}
+
 export class HostedBrowserViewerService {
   readonly #publicKeyPem: string;
 
@@ -160,12 +172,14 @@ export class HostedBrowserViewerService {
         claims.connectionId,
       );
     } catch (error) {
-      const released = await this.#releaseUncertainConnect(
-        authority,
-        token,
-        claims,
-      );
-      if (!released) await this.#failClosed(claims);
+      try {
+        await this.#resolveUncertainConnect(authority, token, claims);
+      } catch (cleanupError) {
+        throw new HostedBrowserViewerOutcomeUnknownError(
+          () => this.#retryUncertainConnectCleanup(authority, token, claims),
+          { cause: cleanupError },
+        );
+      }
       throw error;
     }
     if (!(isViewerState(state) && sameViewerState(state, claims))) {
@@ -360,12 +374,66 @@ export class HostedBrowserViewerService {
 
   async #failClosed(claims: HostedBrowserViewerTicketClaimsV1) {
     await this.options.tickets.revoke(claims.nonce).catch(() => {});
-    await this.options.lifecycle.terminateViewerSession({
-      sessionId: claims.sessionId,
-      generation: claims.generation,
-      reason: "BROWSER_SESSION_LOST",
-    }).catch(() => {});
-    this.#evidence("authority_lost", claims);
+    try {
+      await this.options.lifecycle.terminateViewerSession({
+        sessionId: claims.sessionId,
+        generation: claims.generation,
+        reason: "BROWSER_SESSION_LOST",
+      });
+      this.#evidence("authority_lost", claims);
+      return;
+    } catch (error) {
+      const terminal = await this.#readExactDurableTerminal(claims);
+      if (!terminal) {
+        throw new HostedBrowserViewerOutcomeUnknownError(
+          async () => false,
+          { cause: error },
+        );
+      }
+      if (
+        terminal.session.state === "lost" &&
+        terminal.session.terminalReason === "BROWSER_SESSION_LOST"
+      ) {
+        this.#evidence("authority_lost", claims);
+      }
+    }
+  }
+
+  async #readExactDurableTerminal(
+    claims: HostedBrowserViewerTicketClaimsV1,
+  ) {
+    const record = await this.options.store.read(claims.sessionId).catch(() => null);
+    if (
+      !record?.resource ||
+      record.session.sessionId !== claims.sessionId ||
+      record.session.generation !== claims.generation ||
+      record.resource.machineGeneration !== claims.generation ||
+      record.resource.cleanupRequestedAt === null ||
+      !isTerminalSession(record.session)
+    ) return null;
+    return record;
+  }
+
+  async #resolveUncertainConnect(
+    authority: AuthorizedViewer,
+    ticket: string,
+    claims: HostedBrowserViewerTicketClaimsV1,
+  ): Promise<void> {
+    if (await this.#releaseUncertainConnect(authority, ticket, claims)) return;
+    await this.#failClosed(claims);
+  }
+
+  async #retryUncertainConnectCleanup(
+    authority: AuthorizedViewer,
+    ticket: string,
+    claims: HostedBrowserViewerTicketClaimsV1,
+  ): Promise<boolean> {
+    try {
+      await this.#resolveUncertainConnect(authority, ticket, claims);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async #releaseUncertainConnect(
@@ -439,4 +507,10 @@ function sameViewerState(state: DesktopBrowserViewerStateV1, claims: HostedBrows
 }
 function sameViewerFrame(frame: DesktopBrowserViewerFrameV1, claims: HostedBrowserViewerTicketClaimsV1) {
   return frame.sessionId === claims.sessionId && frame.generation === claims.generation && frame.mediaType === "image/png";
+}
+function isTerminalSession(session: BrowserSessionV1) {
+  return session.state === "closed" ||
+    session.state === "expired" ||
+    session.state === "lost" ||
+    session.state === "failed";
 }
