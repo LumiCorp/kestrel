@@ -1339,6 +1339,119 @@ test("hosted Browser gateway bounds a stalled upload body and releases its reser
   }
 });
 
+for (const action of [
+  "request-body timeout",
+  "revision loss",
+  "exact close",
+  "hard expiry",
+  "client loss",
+  "Gateway close",
+] as const) {
+  test(`hosted Browser gateway retains an unfinished early-response upload through ${action}`, { timeout: 5_000 }, async () => {
+    const upstreamClosed = deferred<void>();
+    const upstreamSockets = new Set<Socket>();
+    let requestCount = 0;
+    const upstream = http.createServer((_request, response) => {
+      requestCount += 1;
+      response.writeHead(200, {
+        "content-length": 5,
+        "content-type": "text/plain",
+      });
+      response.end("early");
+    });
+    upstream.on("connection", (socket) => {
+      upstreamSockets.add(socket);
+      socket.once("close", () => {
+        upstreamSockets.delete(socket);
+        upstreamClosed.resolve();
+      });
+    });
+    await listen(upstream);
+    const upstreamPort = (upstream.address() as AddressInfo).port;
+    const upstreamAgent = new http.Agent({ keepAlive: true });
+    const registry = new HostedBrowserEgressRegistry({
+      gatewayMachineId: "gateway-machine-1",
+      appName: "kestrel-env-test",
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      requestUpstream: (options) => http.request({
+        ...options,
+        host: "127.0.0.1",
+        family: 4,
+        port: upstreamPort,
+        agent: upstreamAgent,
+      }),
+      timeouts: {
+        dnsMs: 100,
+        connectMs: 100,
+        requestBodyIdleMs: action === "request-body timeout" ? 80 : 1_000,
+        headersMs: 100,
+        bodyIdleMs: 100,
+      },
+    });
+    let upload: Awaited<ReturnType<typeof openEarlyResponseUpload>> | undefined;
+    try {
+      const binding = await registry.install({
+        ...session(qaAuthority()),
+        mode: "qa",
+        ...(action === "hard expiry"
+          ? { hardExpiresAt: new Date(Date.now() + 250).toISOString() }
+          : {}),
+      });
+      upload = await openEarlyResponseUpload(binding);
+      assert.match(upload.response, /^HTTP\/1\.1 200/u);
+      assert.match(upload.response, /\r\n\r\nearly$/u);
+      assert.equal(upload.socket.destroyed, false);
+      assert.equal(requestCount, 1);
+      const browserClosed = waitForSocketClose(upload.socket);
+
+      if (action === "revision loss") {
+        const adopted = await registry.adopt({
+          sessionId: binding.sessionId,
+          generation: binding.generation,
+          authority: {
+            ...qaAuthority(),
+            qaTarget: null,
+            effectiveAllowlistRevision: "revision-2",
+          },
+        });
+        assert.equal(adopted.closedUnauthorizedConnections, 1);
+      } else if (action === "exact close") {
+        assert.equal(await registry.closeExact({
+          sessionId: binding.sessionId,
+          generation: binding.generation,
+        }), true);
+      } else if (action === "client loss") {
+        upload.socket.destroy();
+      } else if (action === "Gateway close") {
+        await registry.closeAll();
+      }
+
+      await browserClosed;
+      await upstreamClosed.promise;
+      assert.equal(upstreamSockets.size, 0);
+
+      if (action === "request-body timeout" || action === "client loss") {
+        const adopted = await registry.adopt({
+          sessionId: binding.sessionId,
+          generation: binding.generation,
+          authority: {
+            ...qaAuthority(),
+            qaTarget: null,
+            effectiveAllowlistRevision: "revision-2",
+          },
+        });
+        assert.equal(adopted.closedUnauthorizedConnections, 0);
+      }
+    } finally {
+      upload?.socket.destroy();
+      upstreamAgent.destroy();
+      for (const socket of upstreamSockets) socket.destroy();
+      await registry.closeAll();
+      await close(upstream);
+    }
+  });
+}
+
 function session(nextAuthority: HostedBrowserGatewayAuthorityV1) {
   return {
     threadId: "thread-1",
@@ -1487,6 +1600,30 @@ function startStreamingProxyUpload(
   });
   request.flushHeaders();
   return { request, response };
+}
+
+async function openEarlyResponseUpload(
+  binding: Awaited<ReturnType<HostedBrowserEgressRegistry["install"]>>,
+): Promise<{ socket: Socket; response: string }> {
+  const proxy = new URL(binding.proxyServer);
+  const socket = net.connect({ host: "127.0.0.1", port: Number(proxy.port) });
+  const authorization = Buffer.from(
+    `${binding.username}:${binding.password}`,
+    "utf8",
+  ).toString("base64");
+  socket.write([
+    "POST http://qa.example.com:8080/upload HTTP/1.1",
+    "Host: qa.example.com:8080",
+    "Content-Length: 5",
+    "Connection: keep-alive",
+    `Proxy-Authorization: Basic ${authorization}`,
+    "",
+    "a",
+  ].join("\r\n"));
+  return {
+    socket,
+    response: await readSocketUntil(socket, "\r\n\r\nearly"),
+  };
 }
 
 async function readSocketUntil(socket: Socket, expected: string): Promise<string> {

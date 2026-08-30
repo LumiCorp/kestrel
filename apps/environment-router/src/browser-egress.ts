@@ -565,24 +565,43 @@ class HostedBrowserGatewayProxy {
         activeConnection,
         this.#timeouts.connectMs,
       );
+      let browserRequestFinished = false;
+      let upstreamRequestFinished = false;
+      let requestFinished = false;
       let responseReceived = false;
+      let responseFinished = false;
       let clearRequestBodyDeadline = armConnectionDeadline(
         activeConnection,
         this.#timeouts.requestBodyIdleMs,
       );
       let clearHeaderDeadline = () => {};
       const recordRequestBodyProgress = () => {
-        if (responseReceived) return;
+        if (requestFinished) return;
         clearRequestBodyDeadline();
         clearRequestBodyDeadline = armConnectionDeadline(
           activeConnection,
           this.#timeouts.requestBodyIdleMs,
         );
       };
+      const finishRequestIfTerminal = () => {
+        if (
+          requestFinished ||
+          !browserRequestFinished ||
+          !upstreamRequestFinished
+        ) return;
+        requestFinished = true;
+        clearRequestBodyDeadline();
+        if (responseFinished) activeConnection.release();
+      };
       request.on("data", recordRequestBodyProgress);
+      request.once("end", () => {
+        browserRequestFinished = true;
+        finishRequestIfTerminal();
+      });
       upstream.on("drain", recordRequestBodyProgress);
       upstream.once("finish", () => {
-        clearRequestBodyDeadline();
+        upstreamRequestFinished = true;
+        finishRequestIfTerminal();
         if (!responseReceived && activeConnection.active) {
           clearHeaderDeadline = armConnectionDeadline(
             activeConnection,
@@ -601,7 +620,6 @@ class HostedBrowserGatewayProxy {
       upstream.once("response", (upstreamResponse) => {
         responseReceived = true;
         clearConnectDeadline();
-        clearRequestBodyDeadline();
         clearHeaderDeadline();
         if (!activeConnection.active) {
           upstreamResponse.destroy();
@@ -625,7 +643,8 @@ class HostedBrowserGatewayProxy {
         upstreamResponse.pipe(response);
         upstreamResponse.once("end", () => {
           clearBodyDeadline();
-          activeConnection.release();
+          responseFinished = true;
+          if (requestFinished) activeConnection.release();
         });
         upstreamResponse.once("aborted", () => activeConnection.close());
         upstreamResponse.once("error", () => activeConnection.close());

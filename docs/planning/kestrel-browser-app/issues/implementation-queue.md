@@ -4,7 +4,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Close an unfinished upload after an early response](05m-close-unfinished-upload-after-early-response.md)
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
@@ -21,6 +20,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Implemented
 
+- [Close an unfinished upload after an early response](05m-close-unfinished-upload-after-early-response.md) — early responses preserve the exact request reservation through body completion or authority loss; awaiting independent review
 - [Enforce Gateway connection timeouts](05g-enforce-gateway-connection-timeouts.md) — request/response timeout phases are distinct; blocked on the early-response cleanup issue 05m
 - [Separate upload progress from the response-header timeout](05l-separate-upload-progress-from-response-header-timeout.md) — review found early response completion can untrack an unfinished Browser request; blocked on issue 05m
 - [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
