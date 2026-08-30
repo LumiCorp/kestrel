@@ -1192,6 +1192,38 @@ test("hosted worker lease expiry retries exact cleanup until the worker proves r
   leaseTimer.handler();
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(cleanupCalls, 1);
+  await assert.rejects(
+    engine.viewer({
+      action: "frame",
+      claims,
+      connectionId: claims.connectionId,
+    }),
+    hasBrowserCode("BROWSER_VIEWER_AUTHORITY_EXPIRED"),
+  );
+  await assert.rejects(
+    engine.viewer({
+      action: "input",
+      claims,
+      connectionId: claims.connectionId,
+      leaseId: "lease-1",
+      viewerInput: {
+        version: "desktop_browser_viewer_input_v1",
+        kind: "keyboard",
+        phase: "down",
+        key: "x",
+        text: "x",
+      },
+    }),
+    hasBrowserCode("BROWSER_VIEWER_AUTHORITY_EXPIRED"),
+  );
+  await assert.rejects(
+    engine.viewer({
+      action: "connect",
+      claims,
+      connectionId: claims.connectionId,
+    }),
+    hasBrowserCode("BROWSER_SESSION_LOST"),
+  );
   const retry = timers.find((timer) => timer.delay === 1_000 && !timer.cleared);
   assert.ok(retry);
   retry.handler();

@@ -873,6 +873,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   ): Promise<void> {
     const entry = this.#viewerExpiries.get(claims.connectionId);
     if (!entry || entry.claims !== claims) return;
+    this.#retireViewerConnection(claims);
     try {
       await this.#service?.cleanupViewerConnection({
         principalId: claims.actorId,
@@ -884,7 +885,6 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       });
       if (this.#viewerExpiries.get(claims.connectionId) === entry) {
         this.#viewerExpiries.delete(claims.connectionId);
-        this.#retireViewerConnection(claims);
       }
     } catch {
       if (this.#viewerExpiries.get(claims.connectionId) !== entry) return;
