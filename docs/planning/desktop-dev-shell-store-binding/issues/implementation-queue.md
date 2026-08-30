@@ -37,6 +37,7 @@ None.
 - [Cancel shutdown-blocking requests before replacement times out](19-cancel-shutdown-blocking-requests.md)
 - [Align the supervisor environment regression with private control stripping](20-align-supervisor-environment-regression.md)
 - [Await child settlement before service cleanup completes](21-await-child-settlement-before-cleanup.md)
+- [Terminate a starting child when shutdown interrupts initial persistence](22-terminate-starting-child-on-shutdown.md)
 
 ## Done
 

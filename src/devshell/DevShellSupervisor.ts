@@ -410,7 +410,26 @@ export class DevShellSupervisor {
     }
     this.processes.set(processId, running);
     this.attachChildListeners(running);
-    await this.persistLiveProcessRecord(running);
+    let shutdownKillTimer: NodeJS.Timeout | undefined;
+    const stopStartingProcess = () => {
+      if (input.strictMultiline === true) {
+        running.forcedFailureReason = "Developer shell service shutdown interrupted the command.";
+      } else {
+        running.stopRequested = true;
+      }
+      signalProcessTree(running.child, "SIGTERM");
+      shutdownKillTimer = setTimeout(() => {
+        if (isProcessRunning(running.child)) signalProcessTree(running.child, "SIGKILL");
+      }, 1000);
+      shutdownKillTimer.unref();
+    };
+    options.shutdownSignal?.addEventListener("abort", stopStartingProcess, { once: true });
+    try {
+      await this.persistLiveProcessRecord(running);
+    } finally {
+      options.shutdownSignal?.removeEventListener("abort", stopStartingProcess);
+      if (shutdownKillTimer !== undefined) clearTimeout(shutdownKillTimer);
+    }
     return running;
   }
 

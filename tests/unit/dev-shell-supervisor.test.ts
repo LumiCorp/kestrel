@@ -1782,6 +1782,42 @@ test("DevShellSupervisor close waits for terminal process persistence to settle"
   }
 });
 
+test("shutdown abort terminates a child while its initial process record is pending", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-start-abort-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  const childPidPath = path.join(workspaceRootPath, "child.pid");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const store = new BlockingInitialDevShellStore();
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"));
+  const shutdown = new AbortController();
+  await supervisor.initialize();
+  let runPromise: Promise<unknown> | undefined;
+  try {
+    runPromise = supervisor.runCommand({
+      workspaceRoot,
+      command: `${JSON.stringify(process.execPath)} -e 'const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(childPidPath)},String(process.pid));process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'`,
+      timeoutMs: 60_000,
+    }, { shutdownSignal: shutdown.signal });
+    await store.initialWriteStarted;
+    await waitForFile(childPidPath, 1000);
+    const childPid = Number.parseInt((await readFile(childPidPath, "utf8")).trim(), 10);
+    assert.equal(isPidRunning(childPid), true);
+
+    shutdown.abort();
+    await waitForPidExit(childPid, 2_000);
+    assert.equal(isPidRunning(childPid), false);
+
+    store.releaseInitialWrite();
+    const result = await runPromise as { status: string; failureReason?: string | undefined };
+    assert.equal(result.status, "FAILED");
+    assert.match(result.failureReason ?? "", /service shutdown interrupted/u);
+  } finally {
+    store.releaseInitialWrite();
+    await Promise.allSettled([runPromise, supervisor.close()]);
+  }
+});
+
 async function createSupervisor(now?: () => Date): Promise<{
   supervisor: DevShellSupervisor;
   workspaceRoot: string;
@@ -1822,6 +1858,47 @@ class BlockingTerminalDevShellStore implements DevShellProcessStore {
     if (record.status !== "RUNNING") {
       this.resolveTerminalWriteStarted();
       await this.terminalWriteReleased;
+    }
+    await this.delegate.upsertProcess(record);
+  }
+
+  getProcess(processId: string): Promise<DevShellProcessRecord | null> {
+    return this.delegate.getProcess(processId);
+  }
+
+  listProcesses(input?: {
+    status?: DevShellProcessStatus[] | undefined;
+  }): Promise<DevShellProcessRecord[]> {
+    return this.delegate.listProcesses(input);
+  }
+}
+
+class BlockingInitialDevShellStore implements DevShellProcessStore {
+  private readonly delegate = new InMemoryDevShellStore();
+  readonly initialWriteStarted: Promise<void>;
+  private readonly initialWriteReleased: Promise<void>;
+  private resolveInitialWriteStarted!: () => void;
+  private resolveInitialWriteReleased!: () => void;
+  private blocked = false;
+
+  constructor() {
+    this.initialWriteStarted = new Promise((resolve) => {
+      this.resolveInitialWriteStarted = resolve;
+    });
+    this.initialWriteReleased = new Promise((resolve) => {
+      this.resolveInitialWriteReleased = resolve;
+    });
+  }
+
+  releaseInitialWrite(): void {
+    this.resolveInitialWriteReleased();
+  }
+
+  async upsertProcess(record: DevShellProcessRecord): Promise<void> {
+    if (record.status === "RUNNING" && this.blocked === false) {
+      this.blocked = true;
+      this.resolveInitialWriteStarted();
+      await this.initialWriteReleased;
     }
     await this.delegate.upsertProcess(record);
   }
