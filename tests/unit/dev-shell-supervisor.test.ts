@@ -1338,6 +1338,77 @@ test("idle maintenance owns store failures and clears them after a successful re
   }
 });
 
+test("idle maintenance keeps terminal settlement failures degraded across sweeps", async () => {
+  let now = new Date("2026-08-15T12:00:00.000Z");
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-maintenance-terminal-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const store = new FailingTerminalDevShellStore();
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"), () => now);
+  await supervisor.initialize();
+  try {
+    const started = await supervisor.startProcess({
+      workspaceRoot,
+      command: "sleep 30",
+      yieldTimeMs: 10,
+      idleTimeoutMs: 1_000,
+    });
+    const processId = started.processId!;
+    store.failTerminalWrites();
+    now = new Date("2026-08-15T12:00:02.000Z");
+
+    await (supervisor as unknown as { runIdleMaintenance(): Promise<void> }).runIdleMaintenance();
+    assert.match((supervisor.getMaintenanceFailure() as Error).message, /terminal evidence write failed/u);
+    assert.equal(supervisor.hasActiveProcesses(), true);
+    assert.equal((await store.getProcess(processId))?.status, "RUNNING");
+
+    await (supervisor as unknown as { runIdleMaintenance(): Promise<void> }).runIdleMaintenance();
+    assert.match((supervisor.getMaintenanceFailure() as Error).message, /terminal evidence write failed/u);
+    assert.equal(supervisor.hasActiveProcesses(), true);
+  } finally {
+    await Promise.allSettled([supervisor.close()]);
+  }
+});
+
+test("close waits for an owned in-flight maintenance sweep", async () => {
+  let now = new Date("2026-08-16T12:00:00.000Z");
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dev-shell-maintenance-close-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const store = new BlockingMaintenanceDevShellStore();
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"), () => now);
+  await supervisor.initialize();
+  let closePromise: Promise<void> | undefined;
+  try {
+    const started = await supervisor.startProcess({ workspaceRoot, command: "sleep 30", yieldTimeMs: 10 });
+    await supervisor.retainProcess({
+      processId: started.processId!,
+      leaseId: "workspace-preview:maintenance-close",
+      kind: "workspace_preview",
+      expiresAt: "2026-08-16T12:01:00.000Z",
+    });
+    now = new Date("2026-08-16T12:01:00.000Z");
+    store.blockNextWrite();
+    const maintenance = (supervisor as unknown as { runIdleMaintenance(): Promise<void> }).runIdleMaintenance();
+    await store.blockedWriteStarted;
+    let closeCompleted = false;
+    closePromise = supervisor.close().then(() => {
+      closeCompleted = true;
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    assert.equal(closeCompleted, false);
+
+    store.releaseBlockedWrite();
+    await Promise.all([maintenance, closePromise]);
+    assert.equal(closeCompleted, true);
+  } finally {
+    store.releaseBlockedWrite();
+    await Promise.allSettled([closePromise, supervisor.close()]);
+  }
+});
+
 test("InMemoryDevShellStore deep clones source-write guard results", async () => {
   const store = new InMemoryDevShellStore();
   const now = new Date().toISOString();
@@ -2055,7 +2126,10 @@ test("close retains failed ownership while terminating every captured child", as
       await supervisor.stopProcess({ processId: first.processId! });
       const retained = (supervisor as any).processes.get(first.processId);
       retained.record.expiresAt = new Date(0).toISOString();
-      await (supervisor as any).expireIdleProcesses();
+      await assert.rejects(
+        (supervisor as any).expireIdleProcesses(),
+        /first terminal process write failed/u,
+      );
       await assert.rejects(supervisor.close(), /first terminal process write failed/u);
     } finally {
       (process as any).kill = originalKill;
@@ -2261,6 +2335,74 @@ class FirstTerminalFailureDevShellStore implements DevShellProcessStore {
     ) {
       this.terminalFailureInjected = true;
       throw new Error("first terminal process write failed");
+    }
+    await this.delegate.upsertProcess(record);
+  }
+
+  getProcess(processId: string): Promise<DevShellProcessRecord | null> {
+    return this.delegate.getProcess(processId);
+  }
+
+  listProcesses(input?: {
+    status?: DevShellProcessStatus[] | undefined;
+  }): Promise<DevShellProcessRecord[]> {
+    return this.delegate.listProcesses(input);
+  }
+}
+
+class FailingTerminalDevShellStore implements DevShellProcessStore {
+  private readonly delegate = new InMemoryDevShellStore();
+  private failingTerminalWrites = false;
+
+  failTerminalWrites(): void {
+    this.failingTerminalWrites = true;
+  }
+
+  async upsertProcess(record: DevShellProcessRecord): Promise<void> {
+    if (record.status !== "RUNNING" && this.failingTerminalWrites) {
+      throw new Error("terminal evidence write failed");
+    }
+    await this.delegate.upsertProcess(record);
+  }
+
+  getProcess(processId: string): Promise<DevShellProcessRecord | null> {
+    return this.delegate.getProcess(processId);
+  }
+
+  listProcesses(input?: {
+    status?: DevShellProcessStatus[] | undefined;
+  }): Promise<DevShellProcessRecord[]> {
+    return this.delegate.listProcesses(input);
+  }
+}
+
+class BlockingMaintenanceDevShellStore implements DevShellProcessStore {
+  private readonly delegate = new InMemoryDevShellStore();
+  private shouldBlockNextWrite = false;
+  blockedWriteStarted: Promise<void> = Promise.resolve();
+  private blockedWriteReleased: Promise<void> = Promise.resolve();
+  private resolveBlockedWriteStarted = () => {};
+  private resolveBlockedWriteReleased = () => {};
+
+  blockNextWrite(): void {
+    this.shouldBlockNextWrite = true;
+    this.blockedWriteStarted = new Promise((resolve) => {
+      this.resolveBlockedWriteStarted = resolve;
+    });
+    this.blockedWriteReleased = new Promise((resolve) => {
+      this.resolveBlockedWriteReleased = resolve;
+    });
+  }
+
+  releaseBlockedWrite(): void {
+    this.resolveBlockedWriteReleased();
+  }
+
+  async upsertProcess(record: DevShellProcessRecord): Promise<void> {
+    if (this.shouldBlockNextWrite) {
+      this.shouldBlockNextWrite = false;
+      this.resolveBlockedWriteStarted();
+      await this.blockedWriteReleased;
     }
     await this.delegate.upsertProcess(record);
   }

@@ -136,6 +136,9 @@ export class DevShellSupervisor {
 
   async close(): Promise<void> {
     clearInterval(this.idleInterval);
+    if (this.maintenanceSweep !== undefined) {
+      await this.maintenanceSweep;
+    }
     const processes = [...this.processes.values()];
     const results = await Promise.allSettled(processes.map(async (process) => {
       if (process.wallTimeout !== undefined) {
@@ -1212,6 +1215,7 @@ export class DevShellSupervisor {
           await waitForProcessExit(process.child, 500);
         }
       }
+      await process.settlement;
     }
   }
 

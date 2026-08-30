@@ -45,6 +45,7 @@ None.
 - [Do not re-signal dead retained children](27-do-not-resignal-dead-retained-children.md)
 - [Guard delayed lifecycle signals with child liveness](28-guard-delayed-lifecycle-signals.md)
 - [Own developer-shell maintenance failures](29-own-maintenance-failures.md)
+- [Join maintenance settlement before cleanup](30-join-maintenance-settlement-before-cleanup.md)
 
 ## Done
 
