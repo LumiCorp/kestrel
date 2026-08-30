@@ -304,6 +304,35 @@ export class HostedBrowserStore {
     if (updated.length !== 1) throw new Error("BROWSER_SESSION_LOST");
   }
 
+  async transitionViewerControl(input: {
+    sessionId: string;
+    generation: number;
+    from: "ready" | "human_control";
+    to: "ready" | "human_control";
+    now: Date;
+  }): Promise<BrowserSessionV1> {
+    const [updated] = await this.database
+      .update(schema.browserSessions)
+      .set({
+        state: input.to,
+        updatedAt: input.now,
+        lastActivityAt: input.now,
+        idleExpiresAt: sql`least(${schema.browserSessions.hardExpiresAt}, ${input.now.toISOString()}::timestamptz + interval '30 minutes')`,
+      })
+      .where(
+        and(
+          eq(schema.browserSessions.sessionId, input.sessionId),
+          eq(schema.browserSessions.generation, input.generation),
+          eq(schema.browserSessions.state, input.from),
+          sql`${schema.browserSessions.idleExpiresAt} > ${input.now.toISOString()}::timestamptz`,
+          sql`${schema.browserSessions.hardExpiresAt} > ${input.now.toISOString()}::timestamptz`,
+        ),
+      )
+      .returning();
+    if (!updated) throw new Error("BROWSER_SESSION_LOST");
+    return parseBrowserSessionV1(fromSessionRow(updated));
+  }
+
   async adoptRevision(input: {
     sessionId: string;
     expectedRevision: string;

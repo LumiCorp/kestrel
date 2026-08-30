@@ -22,6 +22,7 @@ import {
 import { useSWRConfig } from "swr";
 import { unstable_serialize } from "swr/infinite";
 import { ChatHeader } from "@/components/chatbot/chat-header";
+import { HostedBrowserViewer } from "@/components/browser/hosted-browser-viewer";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -716,6 +717,10 @@ function ChatShell({
             onRuntimeResponse={onRuntimeInteractionResponse}
             threadId={threadId}
           />
+        )}
+
+        {isReadonly || !threadExists ? null : (
+          <HostedBrowserViewer threadId={threadId} />
         )}
 
         <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl flex-col gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">

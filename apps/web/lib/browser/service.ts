@@ -853,6 +853,32 @@ export class HostedBrowserService implements BrowserServicePort {
     }
   }
 
+  async terminateViewerSession(input: {
+    sessionId: string;
+    generation: number;
+    reason: "closed_by_user" | "BROWSER_SESSION_LOST";
+  }): Promise<void> {
+    const record = await this.options.store.read(input.sessionId);
+    if (
+      !record?.resource ||
+      record.session.generation !== input.generation ||
+      (record.session.state !== "ready" &&
+        record.session.state !== "human_control")
+    ) throw this.#failure("BROWSER_SESSION_LOST");
+    const origin = await this.options.store.resolveCurrentOrigin(input.sessionId);
+    if (
+      origin.organizationId !== this.options.requestAuthority.organizationId ||
+      origin.environmentId !== this.options.requestAuthority.environmentId ||
+      origin.userId !== this.options.requestAuthority.userId
+    ) throw this.#failure("BROWSER_SESSION_LOST");
+    await this.#terminate(
+      record.session,
+      record.resource,
+      input.reason === "closed_by_user" ? "closed" : "lost",
+      input.reason,
+    );
+  }
+
   async #open(
     prepared: PreparedToolCallV1,
     origin: HostedBrowserOriginAuthority,

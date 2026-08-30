@@ -386,6 +386,55 @@ test("Desktop takeover stays pending until viewer acceptance and blocks the agen
   await fixture.service.close();
 });
 
+test("hosted viewer takeover accepts typed input without native Desktop handoff", async () => {
+  const fixture = await createFixture({ nativeAuthenticationHandoff: false });
+  const sessionId = await openSession(fixture.service);
+  await fixture.service.execute(
+    prepared("browser.request_takeover", {
+      sessionId,
+      reason: "Authentication requires the signed-in person.",
+    }),
+    createLifecycle(),
+  );
+  const viewer = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "hosted-actor-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  const accepted = requireAvailableViewer(
+    await fixture.service.acceptViewerTakeover({
+      ...viewer,
+      principalId: "hosted-actor-1",
+    }),
+  );
+  assert.equal(accepted.sessionState, "human_control");
+  assert.equal(accepted.nativeHandoffActive, false);
+  assert.equal(fixture.engine.nativeHandoffs.length, 0);
+  await fixture.service.sendViewerInput({
+    ...viewer,
+    principalId: "hosted-actor-1",
+    leaseId: accepted.inputLeaseId!,
+    viewerInput: {
+      version: "desktop_browser_viewer_input_v1",
+      kind: "keyboard",
+      phase: "down",
+      key: "a",
+      text: "a",
+    },
+  });
+  assert.equal(fixture.engine.viewerInputs.length, 1);
+  const returned = await fixture.service.returnViewerControl({
+    ...viewer,
+    principalId: "hosted-actor-1",
+    leaseId: accepted.inputLeaseId!,
+  });
+  assert.equal(returned.sessionState, "ready");
+  assert.equal(fixture.engine.revokedNativeHandoffs.length, 0);
+  await fixture.service.close();
+});
+
 test("Desktop human control survives disconnect and lease expiry until an authorized reconnect explicitly returns it", async () => {
   let now = new Date("2026-08-29T12:00:00.000Z");
   const viewerEvents: DesktopBrowserViewerEventV1[] = [];
@@ -3983,6 +4032,7 @@ async function createFixture(
     authorityResolver?: DesktopBrowserAuthorityResolver | undefined;
     metrics?: DesktopBrowserMetric[] | undefined;
     viewerEvents?: DesktopBrowserViewerEventV1[] | undefined;
+    nativeAuthenticationHandoff?: boolean | undefined;
     uploadStream?: {
       open(input: {
         threadId: string;
@@ -4060,6 +4110,10 @@ async function createFixture(
               input.viewerEvents!.push(event);
             },
           },
+    nativeAuthenticationHandoff:
+      input.nativeAuthenticationHandoff === undefined
+        ? true
+        : input.nativeAuthenticationHandoff,
     now: input.now,
     scheduleExpiry: input.scheduleExpiry ?? false,
     randomId: input.randomId ?? (() => String(++id).padStart(8, "0")),

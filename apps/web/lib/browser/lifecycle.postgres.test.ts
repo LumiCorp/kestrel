@@ -92,6 +92,42 @@ test("Browser lifecycle reconciliation is environment-scoped, race-safe, and met
   assert.ok(
     [id("machine", "c1"), id("machine", "c2")].includes(winner!.machineId),
   );
+  const openingViewerSession = await store.read(id("session", "c"));
+  assert.ok(openingViewerSession);
+  await store.updateSession({
+    ...openingViewerSession.session,
+    state: "ready",
+  });
+  const humanControl = await store.transitionViewerControl({
+    sessionId: id("session", "c"),
+    generation: 1,
+    from: "ready",
+    to: "human_control",
+    now: new Date("2026-08-30T12:00:10Z"),
+  });
+  assert.equal(humanControl.state, "human_control");
+  await assert.rejects(
+    store.transitionViewerControl({
+      sessionId: id("session", "c"),
+      generation: 1,
+      from: "ready",
+      to: "human_control",
+      now: new Date("2026-08-30T12:00:11Z"),
+    }),
+    /BROWSER_SESSION_LOST/u,
+  );
+  assert.equal(
+    (
+      await store.transitionViewerControl({
+        sessionId: id("session", "c"),
+        generation: 1,
+        from: "human_control",
+        to: "ready",
+        now: new Date("2026-08-30T12:00:12Z"),
+      })
+    ).state,
+    "ready",
+  );
   const scoped = await store.listForReconciliation({
     organizationId,
     environmentId: id("env", "a"),

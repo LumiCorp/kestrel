@@ -687,6 +687,7 @@ export class DesktopBrowserService implements BrowserServicePort {
       }
       if (
         activeLease !== undefined &&
+        runtime.engine.nativeAuthenticationHandoff === true &&
         (runtime.nativeHandoff === undefined ||
           runtime.nativeHandoff.authority.sessionId !== runtime.session.sessionId ||
           runtime.nativeHandoff.authority.generation !== runtime.session.generation ||
@@ -3171,11 +3172,12 @@ export class DesktopBrowserService implements BrowserServicePort {
     }
     const handoff = runtime.nativeHandoff;
     if (
-      handoff === undefined ||
-      handoff.authority.sessionId !== runtime.session.sessionId ||
-      handoff.authority.generation !== runtime.session.generation ||
-      handoff.authority.connectionId !== connection.connectionId ||
-      handoff.authority.leaseId !== lease.leaseId
+      runtime.engine.nativeAuthenticationHandoff === true &&
+      (handoff === undefined ||
+        handoff.authority.sessionId !== runtime.session.sessionId ||
+        handoff.authority.generation !== runtime.session.generation ||
+        handoff.authority.connectionId !== connection.connectionId ||
+        handoff.authority.leaseId !== lease.leaseId)
     ) {
       await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
         () => undefined,
@@ -3223,6 +3225,9 @@ export class DesktopBrowserService implements BrowserServicePort {
     connection: DesktopBrowserViewerConnection,
     lease: DesktopBrowserInputLease,
   ): Promise<void> {
+    // Hosted viewers deliver typed input inside the authenticated web surface.
+    // Only packaged Desktop uses a separately presented native Chrome window.
+    if (runtime.engine.nativeAuthenticationHandoff !== true) return;
     const present = this.#engine.presentNativeHandoff;
     const revoke = this.#engine.revokeNativeHandoff;
     if (present === undefined || revoke === undefined) {

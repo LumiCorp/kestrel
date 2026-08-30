@@ -29,6 +29,11 @@ import {
   requireImmutableHostedBrowserWorkerImage,
 } from "../../src/browser/runtimeReleaseManifest.js";
 import type { BrowserEffectiveDomainAuthorityV1 } from "../../src/browser/domainAuthority.js";
+import {
+  HOSTED_BROWSER_VIEWER_AUDIENCE,
+  HOSTED_BROWSER_VIEWER_TICKET_VERSION,
+  issueHostedBrowserViewerTicket,
+} from "../../src/browser/hostedViewer.js";
 
 const keys = generateKeyPairSync("ed25519");
 const privateKeyPem = keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
@@ -823,6 +828,67 @@ test("failed revision installation clears its barrier for a later exact accept",
   await worker.close();
 });
 
+test("hosted worker viewer channel accepts only the exact signed actor and forwards typed input", async () => {
+  const calls: Array<{ action: string; text?: string }> = [];
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async execute() { throw new Error("not called"); },
+      async adopt() { return 0; },
+      async viewer(input) {
+        const text = input.viewerInput?.kind === "keyboard"
+          ? input.viewerInput.text
+          : undefined;
+        calls.push({ action: input.action, ...(text === undefined ? {} : { text }) });
+        return input.action === "input"
+          ? {
+              version: "desktop_browser_viewer_state_v1",
+              available: true,
+              threadId: "thread-1",
+              projectId: "project-1",
+              sessionId: "browser-session-1",
+              generation: 1,
+              connectionId: "connection-1",
+              sessionState: "human_control",
+              takeoverRequested: false,
+              inputLeaseId: "lease-1",
+              inputLeaseExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+              nativeHandoffActive: false,
+            }
+          : null;
+      },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const request = (body: unknown) => fetch(`http://[::1]:${port}/v1/viewer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const ticket = viewerTicket("user-1");
+  const secret = "KSTRL-MFA-SENTINEL-8372";
+  const result = await request({
+    ticket,
+    action: "input",
+    connectionId: "connection-1",
+    leaseId: "lease-1",
+    viewerInput: {
+      version: "desktop_browser_viewer_input_v1",
+      kind: "keyboard",
+      phase: "down",
+      key: "8",
+      text: secret,
+    },
+  });
+  assert.equal(result.status, 200);
+  assert.deepEqual(calls, [{ action: "input", text: secret }]);
+  assert.equal((await request({ ticket: viewerTicket("other"), action: "connect" })).status, 400);
+  assert.equal(calls.length, 1);
+  await worker.close();
+});
+
 function preparedNavigate() {
   const descriptor = defaultToolCatalog.getDescriptorRef("browser.navigate");
   assert.ok(descriptor);
@@ -942,6 +1008,28 @@ function revisionCapabilityFor(revision: string) {
       operationId: `revision:${revision}`,
       effectiveAllowlistRevision: revision,
       expiresAt: new Date(Date.now() + 30_000).toISOString(),
+    },
+  });
+}
+
+function viewerTicket(actorId: string) {
+  const now = new Date();
+  return issueHostedBrowserViewerTicket({
+    privateKeyPem,
+    now,
+    claims: {
+      version: HOSTED_BROWSER_VIEWER_TICKET_VERSION,
+      audience: HOSTED_BROWSER_VIEWER_AUDIENCE,
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      threadId: "thread-1",
+      sessionId: "browser-session-1",
+      generation: 1,
+      actorId,
+      nonce: `viewer-ticket-${actorId}`,
+      issuedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     },
   });
 }

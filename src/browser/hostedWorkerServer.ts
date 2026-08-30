@@ -20,6 +20,16 @@ import {
 } from "../kestrel/contracts/tool-invocation.js";
 import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
 import { verifyHostedBrowserCapabilitySignature } from "./hostedCapability.js";
+import {
+  verifyHostedBrowserViewerTicket,
+  type HostedBrowserViewerTicketClaimsV1,
+} from "./hostedViewer.js";
+import {
+  parseDesktopBrowserViewerInputRequest,
+  type DesktopBrowserViewerFrameV1,
+  type DesktopBrowserViewerInputV1,
+  type DesktopBrowserViewerStateV1,
+} from "../desktopShell/contracts.js";
 import { DesktopBrowserService } from "../localCore/desktopBrowserService.js";
 import type { DesktopAttachmentMetadata } from "../localCore/desktopAttachments.js";
 import {
@@ -99,6 +109,13 @@ export interface HostedBrowserWorkerEngine {
     gatewayProxy?: HostedBrowserGatewayProxyBindingV1 | undefined;
     gatewayClosedUnauthorizedConnections?: number | undefined;
   }): Promise<number>;
+  viewer?(input: {
+    action: "connect" | "frame" | "accept" | "renew" | "input" | "return" | "disconnect" | "close";
+    claims: HostedBrowserViewerTicketClaimsV1;
+    connectionId?: string | undefined;
+    leaseId?: string | undefined;
+    viewerInput?: DesktopBrowserViewerInputV1 | undefined;
+  }): Promise<DesktopBrowserViewerStateV1 | DesktopBrowserViewerFrameV1 | null>;
   destroy(): Promise<void>;
 }
 
@@ -409,6 +426,39 @@ export function startHostedBrowserWorker(input: {
           closedUnauthorizedConnections,
         });
       }
+      if (pathname === "/v1/viewer") {
+        const record = requireRecord(body);
+        const claims = verifyHostedBrowserViewerTicket({
+          token: requiredString(record.ticket),
+          publicKeyPem: config.capabilityPublicKeyPem,
+        });
+        if (
+          claims.organizationId !== config.organizationId ||
+          claims.environmentId !== config.environmentId ||
+          claims.projectId !== config.projectId ||
+          claims.actorId !== config.userId ||
+          claims.threadId !== config.threadId ||
+          claims.sessionId !== config.sessionId ||
+          claims.generation !== config.generation ||
+          revisionInstalling ||
+          accepted.size !== 0
+        ) throw new Error("BROWSER_SESSION_LOST");
+        const action = requireViewerAction(record.action);
+        if (!engine.viewer) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+        return writeJson(response, 200, await engine.viewer({
+          action,
+          claims,
+          ...(record.connectionId === undefined
+            ? {}
+            : { connectionId: requiredString(record.connectionId) }),
+          ...(record.leaseId === undefined
+            ? {}
+            : { leaseId: requiredString(record.leaseId) }),
+          ...(record.viewerInput === undefined
+            ? {}
+            : { viewerInput: requireViewerInput(record.viewerInput) }),
+        }));
+      }
       return writeError(response, 404, "BROWSER_ENGINE_FAILURE");
     } catch (error) {
       const code = readCode(error);
@@ -498,8 +548,7 @@ class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
     this.#installGatewayProxy(input.gatewayProxy, input.authority, operation);
     if (
       operation === "browser.upload" ||
-      operation === "browser.download" ||
-      operation === "browser.request_takeover"
+      operation === "browser.download"
     ) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
     if (!this.#service) {
       if (operation !== "browser.open" || !input.session) {
@@ -565,6 +614,52 @@ class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
       cause: input.cause,
     });
     return receipt.closedUnauthorizedConnections;
+  }
+
+  async viewer(input: {
+    action: "connect" | "frame" | "accept" | "renew" | "input" | "return" | "disconnect" | "close";
+    claims: HostedBrowserViewerTicketClaimsV1;
+    connectionId?: string | undefined;
+    leaseId?: string | undefined;
+    viewerInput?: DesktopBrowserViewerInputV1 | undefined;
+  }): Promise<DesktopBrowserViewerStateV1 | DesktopBrowserViewerFrameV1 | null> {
+    const service = this.#service;
+    if (!(service && this.#session)) throw new Error("BROWSER_SESSION_LOST");
+    const binding = {
+      principalId: input.claims.actorId,
+      threadId: input.claims.threadId,
+      projectId: input.claims.projectId,
+      sessionId: input.claims.sessionId,
+      generation: input.claims.generation,
+    };
+    if (input.action === "connect") {
+      return service.connectViewer(binding);
+    }
+    const connectionId = requiredString(input.connectionId);
+    const connected = { ...binding, connectionId };
+    if (input.action === "frame") return service.readViewerFrame(connected);
+    if (input.action === "accept") return service.acceptViewerTakeover(connected);
+    if (input.action === "disconnect") {
+      await service.disconnectViewer(connected);
+      return null;
+    }
+    if (input.action === "close") {
+      await service.closeViewerSession(connected);
+      return null;
+    }
+    const leaseId = requiredString(input.leaseId);
+    if (input.action === "renew") {
+      return service.renewViewerInputLease({ ...connected, leaseId });
+    }
+    if (input.action === "return") {
+      return service.returnViewerControl({ ...connected, leaseId });
+    }
+    if (!input.viewerInput) throw new Error("BROWSER_SESSION_LOST");
+    return service.sendViewerInput({
+      ...connected,
+      leaseId,
+      viewerInput: input.viewerInput,
+    });
   }
 
   async destroy(): Promise<void> {
@@ -1004,6 +1099,37 @@ function requireRecord(value: unknown): Record<string, unknown> {
 function requiredString(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) throw new Error("BROWSER_ENGINE_FAILURE");
   return value.trim();
+}
+
+function requireViewerAction(value: unknown) {
+  if (
+    value !== "connect" &&
+    value !== "frame" &&
+    value !== "accept" &&
+    value !== "renew" &&
+    value !== "input" &&
+    value !== "return" &&
+    value !== "disconnect" &&
+    value !== "close"
+  ) throw new Error("BROWSER_SESSION_LOST");
+  return value;
+}
+
+function requireViewerInput(value: unknown): DesktopBrowserViewerInputV1 {
+  try {
+    return parseDesktopBrowserViewerInputRequest({
+      version: "desktop_browser_viewer_request_v1",
+      threadId: "hosted-worker-boundary",
+      projectId: "hosted-worker-boundary",
+      sessionId: "hosted-worker-boundary",
+      generation: 1,
+      connectionId: "hosted-worker-boundary",
+      leaseId: "hosted-worker-boundary",
+      input: value,
+    }).input;
+  } catch {
+    throw new Error("BROWSER_SESSION_LOST");
+  }
 }
 
 function requiredEnv(env: NodeJS.ProcessEnv, name: string) {

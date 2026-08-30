@@ -1793,6 +1793,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/threads/[id]/browser-viewer/route.ts",
+    "/api/threads/:id/browser-viewer",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/threads/[id]/browser-viewer/v1/route.ts",
+    "/api/threads/:id/browser-viewer/v1",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/threads/[id]/turns/route.ts",
     "/api/threads/:id/turns",
     "threads",

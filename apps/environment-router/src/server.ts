@@ -16,6 +16,7 @@ import { handleAppRelay } from "./app-relay.js";
 import { PreviewRelay } from "./preview-relay.js";
 import { handleWorkspaceIdle } from "./workspace-idle.js";
 import { handleBrowserRevisionControl } from "./browser-revision.js";
+import { handleBrowserViewerControl } from "./browser-viewer.js";
 import { HostedBrowserEgressRegistry } from "./browser-egress.js";
 
 const ENVIRONMENT_GATEWAY_CONTRACT_REVISION = 3;
@@ -121,6 +122,16 @@ const server = createServer(async (request, response) => {
   }
   if (request.method === "POST" && pathname === "/internal/browser/revision") {
     await handleBrowserRevisionControl({
+      request,
+      response,
+      publicKey,
+      environmentId,
+      expectedAppName,
+    });
+    return;
+  }
+  if (request.method === "POST" && pathname === "/internal/browser/viewer") {
+    await handleBrowserViewerControl({
       request,
       response,
       publicKey,
