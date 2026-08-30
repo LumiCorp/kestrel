@@ -92,7 +92,35 @@ async function runService(): Promise<void> {
   }
 
   let shuttingDown = false;
+  let activeRequests = 0;
+  const drainWaiters = new Set<() => void>();
+  const beginRequest = (allowDuringShutdown: boolean): (() => void) | undefined => {
+    if (shuttingDown) return allowDuringShutdown ? () => {} : undefined;
+    activeRequests += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      activeRequests -= 1;
+      if (activeRequests === 0) {
+        for (const resolve of drainWaiters) resolve();
+        drainWaiters.clear();
+      }
+    };
+  };
+  const waitForRequestDrain = async (): Promise<void> => {
+    if (activeRequests === 0) return;
+    await new Promise<void>((resolve) => drainWaiters.add(resolve));
+  };
   const server = http.createServer((request, response) => {
+    const isShutdownRequest =
+      request.method === "POST" &&
+      new URL(request.url ?? "/", "http://unix").pathname === "/service/shutdown";
+    const endRequest = beginRequest(isShutdownRequest);
+    if (endRequest === undefined) {
+      writeJson(response, 503, { error: "service_shutting_down" });
+      return;
+    }
     void handleRequest(
       supervisor,
       storeBinding,
@@ -101,9 +129,13 @@ async function runService(): Promise<void> {
       () => shutdown(),
       () => shuttingDown,
     ).catch((error) => {
-      writeJson(response, 500, {
-        error: asRuntimeError(error),
-      });
+      if (response.headersSent === false) {
+        writeJson(response, 500, {
+          error: asRuntimeError(error),
+        });
+      }
+    }).finally(() => {
+      endRequest();
     });
   });
 
@@ -138,6 +170,7 @@ async function runService(): Promise<void> {
   const shutdown = () => {
     shuttingDown = true;
     shutdownPromise ??= (async () => {
+      await waitForRequestDrain();
       await supervisor.close();
       await storeHandle.close();
       await new Promise<void>((resolve) => {
@@ -275,12 +308,16 @@ export async function handleRequest(
   }
 
   if (method === "POST" && url.pathname === "/shell/run") {
-    writeJson(response, 200, await supervisor.runCommand(await readJson(request) as unknown as DevShellRunInput));
+    const body = await readJson(request) as unknown as DevShellRunInput;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
+    writeJson(response, 200, await supervisor.runCommand(body));
     return;
   }
 
   if (method === "POST" && url.pathname === "/processes/start") {
-    writeJson(response, 200, await supervisor.startProcess(await readJson(request) as unknown as DevProcessStartInput));
+    const body = await readJson(request) as unknown as DevProcessStartInput;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
+    writeJson(response, 200, await supervisor.startProcess(body));
     return;
   }
 
@@ -305,6 +342,7 @@ export async function handleRequest(
       DevProcessRetentionPromoteInput,
       "processId"
     >;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
     writeJson(
       response,
       200,
@@ -332,12 +370,14 @@ export async function handleRequest(
 
   if (method === "POST" && action === "retention") {
     const body = await readJson(request) as unknown as Omit<DevProcessRetainInput, "processId">;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
     writeJson(response, 200, await supervisor.retainProcess({ ...body, processId }));
     return;
   }
 
   if (method === "POST" && action === "write") {
     const body = await readJson(request) as unknown as Omit<DevProcessWriteInput, "processId">;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
     writeJson(response, 200, await supervisor.writeProcess({
       ...body,
       processId,
@@ -347,6 +387,7 @@ export async function handleRequest(
 
   if (method === "POST" && action === "write_and_read") {
     const body = await readJson(request) as unknown as Omit<DevProcessWriteAndReadInput, "processId">;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
     writeJson(response, 200, await supervisor.writeAndReadProcess({
       ...body,
       processId,
@@ -372,6 +413,7 @@ export async function handleRequest(
 
   if (method === "POST" && action === "stop") {
     const body = await readJson(request) as unknown as Omit<DevProcessStopInput, "processId">;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
     writeJson(response, 200, await supervisor.stopProcess({
       ...body,
       processId,
@@ -380,6 +422,15 @@ export async function handleRequest(
   }
 
   writeJson(response, 405, { error: "method_not_allowed" });
+}
+
+function rejectShuttingDownRequest(
+  response: http.ServerResponse,
+  isShuttingDown: () => boolean,
+): boolean {
+  if (isShuttingDown() === false) return false;
+  writeJson(response, 503, { error: "service_shutting_down" });
+  return true;
 }
 
 function createHealthPayload(storeBinding: DevShellStoreBinding): DevShellHealth {

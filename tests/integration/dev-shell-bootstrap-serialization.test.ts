@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
+import http from "node:http";
 import { createRequire } from "node:module";
 import { lstat, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -10,6 +11,7 @@ import { pathToFileURL } from "node:url";
 import { LocalDevShellService } from "../../src/devshell/LocalDevShellService.js";
 import { DEV_SHELL_SERVICE_PROTOCOL_VERSION } from "../../src/devshell/contracts.js";
 import { acquireDevShellBootstrapAuthority } from "../../src/devshell/bootstrapAuthority.js";
+import { buildDevShellRequestIdentityHeaders } from "../../src/devshell/requestIdentity.js";
 
 test("a cross-instance high-contention cold burst shares one SQLite service", async () => {
   const baseDir = await mkdtemp(
@@ -158,6 +160,66 @@ test("real replacement keeps its proven endpoint until active-process cleanup co
       await first.stopProcess({ processId, waitMs: 2_000 }).catch(() => {});
     }
     await Promise.allSettled([first.close(), replacement.close()]);
+  }
+});
+
+test("a partially delivered authenticated command cannot dispatch after shutdown admission closes", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "ldss-drain-"));
+  const markerPath = path.join(baseDir, "late-command-ran");
+  const binding = { driver: "sqlite" as const, revision: "binding-current" };
+  const service = new LocalDevShellService(baseDir, {
+    storeBinding: binding,
+    startupTimeoutMs: 10_000,
+    pollIntervalMs: 10,
+  }) as any;
+  try {
+    const ready = await service.runCommand({
+      workspaceRoot: baseDir,
+      command: "printf ready",
+      timeoutMs: 2_000,
+    });
+    assert.equal(ready.status, "COMPLETED");
+
+    const body = JSON.stringify({
+      workspaceRoot: baseDir,
+      command: `printf reached > ${JSON.stringify(markerPath)}`,
+      timeoutMs: 2_000,
+    });
+    let request!: http.ClientRequest;
+    const responsePromise = new Promise<{ statusCode: number | undefined; body: string }>((resolve, reject) => {
+      request = http.request({
+        socketPath: service.socketPath,
+        method: "POST",
+        path: "/shell/run",
+        headers: {
+          ...buildDevShellRequestIdentityHeaders(binding),
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+        },
+      }, (response) => {
+        let responseBody = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => { responseBody += chunk; });
+        response.on("end", () => resolve({ statusCode: response.statusCode, body: responseBody }));
+      });
+      request.once("error", reject);
+      request.flushHeaders();
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const shutdown = await service.performRequest("POST", "/service/shutdown");
+    assert.deepEqual(shutdown, { status: "shutting_down" });
+    const repeatedShutdown = await service.performRequest("POST", "/service/shutdown");
+    assert.deepEqual(repeatedShutdown, { status: "shutting_down" });
+    request.end(body);
+
+    const delayed = await responsePromise;
+    assert.equal(delayed.statusCode, 503);
+    assert.match(delayed.body, /service_shutting_down/u);
+    await assert.rejects(readFile(markerPath, "utf8"), /ENOENT/u);
+  } finally {
+    await service.close();
   }
 });
 
