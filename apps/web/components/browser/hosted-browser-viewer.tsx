@@ -10,7 +10,7 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  HOSTED_BROWSER_VIEWER_MAX_SERVER_MESSAGE_BYTES,
+  HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
   HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
   parseHostedBrowserViewerServerMessage,
 } from "../../../../src/browser/hostedViewerProtocol";
@@ -120,7 +120,10 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
     socket.addEventListener("message", (event) => {
       try {
         const serialized = String(event.data);
-        if (serialized.length > HOSTED_BROWSER_VIEWER_MAX_SERVER_MESSAGE_BYTES) {
+        if (
+          new TextEncoder().encode(serialized).byteLength >
+            HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES
+        ) {
           throw new Error("BROWSER_SESSION_LOST");
         }
         const identity = viewerIdentityRef.current;

@@ -47,6 +47,10 @@ import {
   type DesktopBrowserEngineAdapter,
 } from "../../src/localCore/desktopBrowserService.js";
 import type { BrowserSessionV1 } from "../../src/browser/contracts.js";
+import {
+  HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
+  HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES,
+} from "../../src/browser/hostedViewerProtocol.js";
 
 const keys = generateKeyPairSync("ed25519");
 const privateKeyPem = keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
@@ -71,6 +75,58 @@ const authority: BrowserEffectiveDomainAuthorityV1 = {
 
 test("hosted worker uses the settled 20 MiB serialized payload ceiling", () => {
   assert.equal(HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES, 20 * 1024 * 1024);
+});
+
+test("hosted worker carries a 20 MiB raw viewer frame and rejects one byte over before transport", async () => {
+  const encodedLength = 4 * Math.ceil(HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES / 3);
+  let dataBase64 = `${"A".repeat(encodedLength - 1)}=`;
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async execute() { throw new Error("not called"); },
+      async adopt() { return 0; },
+      async viewer() {
+        return {
+          version: "desktop_browser_viewer_frame_v1",
+          sessionId: "browser-session-1",
+          generation: 1,
+          sequence: 1,
+          capturedAt: new Date().toISOString(),
+          mediaType: "image/png",
+          dataBase64,
+        };
+      },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const request = () => fetch(`http://[::1]:${port}/v1/viewer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ticket: viewerTicket("user-1"),
+      action: "frame",
+      connectionId: "connection-1",
+    }),
+  });
+
+  const exact = await request();
+  assert.equal(exact.status, 200);
+  const exactBytes = new Uint8Array(await exact.arrayBuffer());
+  assert.ok(exactBytes.byteLength > HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES);
+  assert.ok(exactBytes.byteLength <= HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES);
+
+  dataBase64 = "A".repeat(encodedLength);
+  const oversized = await request();
+  assert.equal(oversized.status, 400);
+  assert.deepEqual(await oversized.json(), {
+    error: {
+      code: "BROWSER_ARTIFACT_TOO_LARGE",
+      details: { browserOutcomeKnown: true },
+    },
+  });
+  await worker.close();
 });
 
 test("hosted worker uses one short fixed worker-local home root", () => {

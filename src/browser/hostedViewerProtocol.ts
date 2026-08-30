@@ -3,11 +3,19 @@ import type {
   DesktopBrowserViewerInputV1,
   DesktopBrowserViewerStateV1,
 } from "../desktopShell/contracts.js";
+import {
+  HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
+  HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES,
+} from "@kestrel-agents/protocol";
+
+export {
+  HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
+  HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES,
+};
 
 export const HOSTED_BROWSER_VIEWER_ROUTE_VERSION =
   "hosted_browser_viewer_route_v1" as const;
 export const HOSTED_BROWSER_VIEWER_AUTHENTICATE_TIMEOUT_MS = 10_000;
-export const HOSTED_BROWSER_VIEWER_MAX_SERVER_MESSAGE_BYTES = 28 * 1024 * 1024;
 export const HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE =
   "BROWSER_VIEWER_FRAME_UNAVAILABLE" as const;
 
@@ -110,6 +118,57 @@ export function parseHostedBrowserViewerServerMessage(
   throw invalidViewerMessage();
 }
 
+export function hostedBrowserViewerPngBase64ByteLength(
+  value: unknown,
+): number | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length < 4 ||
+    value.length % 4 !== 0
+  ) return;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  const encodedLength = value.length - padding;
+  for (let index = 0; index < encodedLength; index += 1) {
+    if (viewerBase64Value(value.charCodeAt(index)) < 0) return;
+  }
+  if (
+    padding === 2 &&
+    (viewerBase64Value(value.charCodeAt(encodedLength - 1)) & 15) !== 0
+  ) {
+    return;
+  }
+  if (
+    padding === 1 &&
+    (viewerBase64Value(value.charCodeAt(encodedLength - 1)) & 3) !== 0
+  ) {
+    return;
+  }
+  return value.length / 4 * 3 - padding;
+}
+
+function viewerBase64Value(code: number): number {
+  if (code >= 65 && code <= 90) return code - 65;
+  if (code >= 97 && code <= 122) return code - 71;
+  if (code >= 48 && code <= 57) return code + 4;
+  if (code === 43) return 62;
+  if (code === 47) return 63;
+  return -1;
+}
+
+export function serializeHostedBrowserViewerServerMessage(
+  message: HostedBrowserViewerServerMessageV1,
+): string {
+  const serialized = JSON.stringify(message);
+  if (message.type === "frame") {
+    if (
+      new TextEncoder().encode(serialized).byteLength >
+        HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES
+    ) throw new Error("BROWSER_ARTIFACT_TOO_LARGE");
+    parseHostedBrowserViewerServerMessage(message);
+  }
+  return serialized;
+}
+
 function viewerRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalidViewerMessage();
   return value as Record<string, unknown>;
@@ -134,21 +193,8 @@ function viewerTimestamp(value: unknown): value is string {
 }
 
 function viewerCanonicalBase64(value: unknown): value is string {
-  if (
-    typeof value !== "string" ||
-    value.length < 4 ||
-    value.length > HOSTED_BROWSER_VIEWER_MAX_SERVER_MESSAGE_BYTES ||
-    value.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
-  ) return false;
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  if (value.endsWith("==")) {
-    return (alphabet.indexOf(value.at(-3)!) & 15) === 0;
-  }
-  if (value.endsWith("=")) {
-    return (alphabet.indexOf(value.at(-2)!) & 3) === 0;
-  }
-  return true;
+  const bytes = hostedBrowserViewerPngBase64ByteLength(value);
+  return bytes !== undefined && bytes <= HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES;
 }
 
 function invalidViewerMessage() {

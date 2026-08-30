@@ -1,13 +1,15 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { verifyEnvironmentToolCredential } from "@lumi/kestrel-environment-auth";
+import { HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES } from "@kestrel-agents/protocol";
 
 const MAX_BROWSER_VIEWER_REQUEST_BYTES = 64 * 1024;
-const MAX_BROWSER_VIEWER_RESPONSE_BYTES = 28 * 1024 * 1024;
+const MAX_BROWSER_VIEWER_CONTROL_RESPONSE_BYTES = 20 * 1024 * 1024;
 const BROWSER_VIEWER_TIMEOUT_MS = 12_000;
 const VIEWER_AUDIENCE = "kestrel-one-browser-viewer";
 const VIEWER_AUTHORITY_EXPIRED = "BROWSER_VIEWER_AUTHORITY_EXPIRED";
 const VIEWER_FRAME_UNAVAILABLE = "BROWSER_VIEWER_FRAME_UNAVAILABLE";
+const VIEWER_FRAME_TOO_LARGE = "BROWSER_ARTIFACT_TOO_LARGE";
 
 type ViewerAction =
   | "connect"
@@ -147,14 +149,18 @@ export async function handleBrowserViewerControl(input: {
   }
   if (!worker.ok) {
     try {
-      const body = await readBoundedBrowserViewerWorkerBody(worker);
+      const body = await readBoundedBrowserViewerWorkerBody(
+        worker,
+        routedViewerAction === "frame",
+      );
       const parsed = JSON.parse(body.toString("utf8")) as {
         error?: { code?: unknown } | undefined;
       };
       if (
         parsed.error?.code === VIEWER_AUTHORITY_EXPIRED ||
         (routedViewerAction === "frame" &&
-          parsed.error?.code === VIEWER_FRAME_UNAVAILABLE)
+          (parsed.error?.code === VIEWER_FRAME_UNAVAILABLE ||
+            parsed.error?.code === VIEWER_FRAME_TOO_LARGE))
       ) {
         return writeError(input.response, worker.status, parsed.error.code);
       }
@@ -165,7 +171,10 @@ export async function handleBrowserViewerControl(input: {
   }
   let responseBody: Buffer;
   try {
-    responseBody = await readBoundedBrowserViewerWorkerBody(worker);
+    responseBody = await readBoundedBrowserViewerWorkerBody(
+      worker,
+      routedViewerAction === "frame",
+    );
   } catch {
     return writeError(input.response, 503, "BROWSER_VIEWER_UNAVAILABLE");
   }
@@ -272,11 +281,15 @@ export function authorizeBrowserViewerControl(input: {
 
 export async function readBoundedBrowserViewerWorkerBody(
   response: Response,
+  frame = false,
 ): Promise<Buffer> {
+  const maxBytes = frame
+    ? HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES
+    : MAX_BROWSER_VIEWER_CONTROL_RESPONSE_BYTES;
   const declaredLength = Number(response.headers.get("content-length") ?? "0");
   if (
     Number.isFinite(declaredLength) &&
-    declaredLength > MAX_BROWSER_VIEWER_RESPONSE_BYTES
+    declaredLength > maxBytes
   ) {
     throw new Error("Browser viewer response is too large.");
   }
@@ -288,8 +301,8 @@ export async function readBoundedBrowserViewerWorkerBody(
     const item = await reader.read();
     if (item.done) break;
     length += item.value.byteLength;
-    if (length > MAX_BROWSER_VIEWER_RESPONSE_BYTES) {
-      await reader.cancel().catch(() => undefined);
+    if (length > maxBytes) {
+      await reader.cancel().catch(() => {});
       throw new Error("Browser viewer response is too large.");
     }
     chunks.push(item.value);

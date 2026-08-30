@@ -29,6 +29,13 @@ import {
   type HostedBrowserViewerTicketClaimsV1,
 } from "./hostedViewer.js";
 import {
+  HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
+  HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES,
+  HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+  hostedBrowserViewerPngBase64ByteLength,
+  parseHostedBrowserViewerServerMessage,
+} from "./hostedViewerProtocol.js";
+import {
   parseDesktopBrowserViewerInputRequest,
   type DesktopBrowserViewerFrameV1,
   type DesktopBrowserViewerInputV1,
@@ -542,7 +549,24 @@ export function startHostedBrowserWorker(input: {
         try {
           const output = await engine.viewer(viewerInput);
           if (terminating) throw new Error("BROWSER_SESSION_LOST");
-          return writeJson(response, 200, output);
+          const record = requireRecord(output);
+          const rawBytes = hostedBrowserViewerPngBase64ByteLength(
+            record.dataBase64,
+          );
+          if (
+            rawBytes !== undefined &&
+            rawBytes > HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES
+          ) throw knownWorkerFailure("BROWSER_ARTIFACT_TOO_LARGE");
+          const frame = parseHostedBrowserViewerServerMessage({
+            version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+            type: "frame",
+            frame: record,
+          }, {
+            sessionId: config.sessionId,
+            generation: config.generation,
+          });
+          if (frame.type !== "frame") throw new Error("BROWSER_SESSION_LOST");
+          return writeViewerFrameJson(response, frame.frame);
         } finally {
           if (viewerFrameSettlement === frameSettlement.promise) {
             viewerFrameSettlement = undefined;
@@ -1605,6 +1629,28 @@ function writeJson(response: ServerResponse, status: number, value: unknown) {
     return;
   }
   response.writeHead(status, { "cache-control": "no-store", "content-type": "application/json" });
+  response.end(serialized);
+}
+
+function writeViewerFrameJson(
+  response: ServerResponse,
+  frame: DesktopBrowserViewerFrameV1,
+) {
+  const serialized = Buffer.from(JSON.stringify(frame));
+  if (
+    serialized.byteLength > HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES
+  ) {
+    return writeError(
+      response,
+      413,
+      "BROWSER_ARTIFACT_TOO_LARGE",
+      { browserOutcomeKnown: true },
+    );
+  }
+  response.writeHead(200, {
+    "cache-control": "no-store",
+    "content-type": "application/json",
+  });
   response.end(serialized);
 }
 

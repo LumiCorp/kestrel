@@ -12,6 +12,7 @@ import {
   ENVIRONMENT_TOOL_CREDENTIAL_VERSION,
   signEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
+import { HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES } from "@kestrel-agents/protocol";
 import {
   issueHostedBrowserViewerCleanupCapability,
   issueHostedBrowserViewerTicket,
@@ -473,6 +474,33 @@ test("browser viewer control preserves transient frame unavailability from the w
   });
 });
 
+test("browser viewer control preserves a bounded oversized-frame rejection", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const input = viewerRequest({ nowSeconds: now, action: "frame" });
+  const capture = responseCapture();
+  await handleBrowserViewerControl({
+    request: incoming(input.body, input.token),
+    response: capture.response,
+    publicKey: environmentPublicKey,
+    environmentId: "env-1",
+    expectedAppName: "environment-app",
+    fetchImpl: (async () => new Response(JSON.stringify({
+      error: {
+        code: "BROWSER_ARTIFACT_TOO_LARGE",
+        details: { browserOutcomeKnown: true },
+      },
+    }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch,
+  });
+
+  assert.equal(capture.status, 400);
+  assert.deepEqual(JSON.parse(capture.body), {
+    error: { code: "BROWSER_ARTIFACT_TOO_LARGE" },
+  });
+});
+
 test("Web-shaped Router requests preserve ticket and lease expiry from the real worker boundary", async () => {
   let viewerCalls = 0;
   const worker = startHostedBrowserWorker({
@@ -491,7 +519,7 @@ test("Web-shaped Router requests preserve ticket and lease expiry from the real 
       capabilityPublicKeyPem: viewerPublicKey,
       gatewayHost: "gateway-machine-1.vm.browser-workers.internal",
       gatewayAddress: "127.0.0.1",
-      gatewayPort: 43109,
+      gatewayPort: 43_109,
       engineExecutablePath: process.execPath,
       chromeExecutablePath: process.execPath,
       port: 0,
@@ -549,14 +577,29 @@ test("browser viewer control fails closed on worker timeout/failure and bounded 
   assert.equal(unavailable.status, 503);
   assert.match(unavailable.body, /BROWSER_VIEWER_UNAVAILABLE/u);
 
-  await assert.rejects(
-    readBoundedBrowserViewerWorkerBody(
-      new Response("too large", {
-        headers: { "content-length": String(28 * 1024 * 1024 + 1) },
-      }),
-    ),
-    /too large/u,
+  const exactFrame = await readBoundedBrowserViewerWorkerBody(
+    new Response(Buffer.alloc(HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES)),
+    true,
   );
+  assert.equal(
+    exactFrame.byteLength,
+    HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
+  );
+  await assert.rejects(readBoundedBrowserViewerWorkerBody(
+    new Response("too large", {
+      headers: {
+        "content-length": String(
+          HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES + 1,
+        ),
+      },
+    }),
+    true,
+  ), /too large/u);
+  await assert.rejects(readBoundedBrowserViewerWorkerBody(
+    new Response("too large", {
+      headers: { "content-length": String(20 * 1024 * 1024 + 1) },
+    }),
+  ), /too large/u);
 
   const oversized = responseCapture();
   const oversizedRequest = Readable.from([

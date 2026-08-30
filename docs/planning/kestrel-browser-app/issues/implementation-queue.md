@@ -14,7 +14,6 @@ None.
 ## Blocked
 
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — blocked on issues 06a-06e and the live Vercel/PostgreSQL/combined hosted proof
-- [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — blocked on issue 06c
 - [Prove hosted passkey takeover](06e-prove-hosted-passkey-takeover.md) — blocked on issue 06d and the client-side WebAuthn delivery boundary
 - [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — implementation is review-clean; blocked only on issue 04c's signed platform-authenticator canary
 - [Complete native authentication takeover](04c-complete-native-authentication-takeover.md) — code path is review-clean; blocked on signed platform-authenticator canary
@@ -23,7 +22,7 @@ None.
 
 ## Implemented
 
-- [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md) — final worker-admission repairs pass 108 focused tests
+- [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — one shared 20 MiB raw PNG bound and derived dedicated viewer-envelope bound pass 117 focused transport and lifecycle tests; awaiting independent review
 - [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — remaining review findings are assigned to the existing 06b lifecycle and 06c scheduling owners
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)
 - [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)
@@ -32,6 +31,7 @@ None.
 
 ## Done
 
+- [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md) — approved at `554be10e8`; final worker-admission repairs pass 108 focused tests
 - [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — policy A and post-reconciliation authority rereads pass the focused Web lifecycle regressions
 - [Close an unfinished upload after an early response](05m-close-unfinished-upload-after-early-response.md)
 - [Separate upload progress from the response-header timeout](05l-separate-upload-progress-from-response-header-timeout.md)

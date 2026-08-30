@@ -35,6 +35,7 @@ import {
 } from "../browser/contracts.js";
 import { resolveBrowserToolExecutionClass } from "../browser/browserAppContract.fixture.js";
 import { HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED } from "../browser/hostedViewer.js";
+import { HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES } from "../browser/hostedViewerProtocol.js";
 import {
   BROWSER_EFFECTIVE_DOMAIN_AUTHORITY_VERSION,
   BROWSER_QA_TARGET_VERSION,
@@ -80,7 +81,6 @@ const MAX_BROWSER_TABS = 100;
 const DESKTOP_BROWSER_SESSION_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const DESKTOP_BROWSER_INPUT_LEASE_MS = 30_000;
-const DESKTOP_BROWSER_VIEWER_FRAME_MAX_BYTES = 20 * 1024 * 1024;
 
 export interface DesktopBrowserAuthorityResolutionInput {
   runId: string;
@@ -5332,7 +5332,7 @@ function extractTransientPngBase64(stdout: string): string {
   const bytes = Buffer.from(encoded, "base64");
   if (
     bytes.byteLength === 0 ||
-    bytes.byteLength > DESKTOP_BROWSER_VIEWER_FRAME_MAX_BYTES ||
+    bytes.byteLength > HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES ||
     !bytes.subarray(0, 8).equals(
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     ) ||

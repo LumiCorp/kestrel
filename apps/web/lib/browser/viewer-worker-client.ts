@@ -6,6 +6,7 @@ import {
   ENVIRONMENT_TOOL_CREDENTIAL_VERSION,
   signEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
+import { HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES } from "@kestrel-agents/protocol";
 import {
   HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE,
   HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION,
@@ -19,7 +20,7 @@ import type {
 } from "../../../../src/desktopShell/contracts.js";
 import type { HostedBrowserViewerCleanupScopeV1 } from "./viewer-transient-store";
 
-const MAX_VIEWER_RESPONSE_BYTES = 28 * 1024 * 1024;
+const MAX_VIEWER_CONTROL_RESPONSE_BYTES = 20 * 1024 * 1024;
 const VIEWER_REQUEST_TIMEOUT_MS = 15_000;
 
 export type HostedBrowserViewerWorkerAction =
@@ -154,10 +155,10 @@ export class HostedBrowserViewerWorkerClient
       },
     );
     if (!response.ok) throw new Error(await readWorkerError(response));
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > MAX_VIEWER_RESPONSE_BYTES) {
-      throw new Error("BROWSER_ENGINE_FAILURE");
-    }
+    const bytes = await readBoundedHostedBrowserViewerWorkerResponse(
+      response,
+      input.action === "frame",
+    );
     return JSON.parse(new TextDecoder().decode(bytes)) as
       | DesktopBrowserViewerStateV1
       | DesktopBrowserViewerFrameV1
@@ -265,6 +266,22 @@ export class HostedBrowserViewerWorkerClient
       throw new Error("BROWSER_ENGINE_FAILURE");
     }
   }
+}
+
+export async function readBoundedHostedBrowserViewerWorkerResponse(
+  response: Response,
+  frame: boolean,
+): Promise<Uint8Array> {
+  const maxBytes = frame
+    ? HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES
+    : MAX_VIEWER_CONTROL_RESPONSE_BYTES;
+  const declaredLength = Number(response.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error("BROWSER_ENGINE_FAILURE");
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength > maxBytes) throw new Error("BROWSER_ENGINE_FAILURE");
+  return bytes;
 }
 
 async function readWorkerError(response: Response) {

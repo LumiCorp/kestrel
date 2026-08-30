@@ -3,6 +3,8 @@ import test from "node:test";
 import type WebSocket from "ws";
 import {
   HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE,
+  HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
+  HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES,
   HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
   type HostedBrowserViewerClientMessageV1,
 } from "../../../../src/browser/hostedViewerProtocol.js";
@@ -328,6 +330,57 @@ test("buffered output pauses capture and retains at most one unsent frame", asyn
   assert.equal(connection.frameCalls, 1);
   assert.equal(socket.sent.filter((value) => JSON.parse(value).type === "frame").length, 1);
   await controller.close(1000, "test complete");
+});
+
+test("WebSocket admission sends a raw-limit frame within the derived envelope bound", async () => {
+  const socket = new FakeSocket();
+  const timers = fakeTimers();
+  const connection = fakeConnection();
+  const encodedLength = 4 * Math.ceil(HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES / 3);
+  connection.frame = async () => ({
+    ...frameMessage(1),
+    frame: {
+      ...frameMessage(1).frame,
+      dataBase64: `${"A".repeat(encodedLength - 1)}=`,
+    },
+  });
+  const controller = attach(socket, async () => connection.value, timers);
+
+  socket.emitMessage();
+  await waitFor(() => timers.intervalHandlers.length === 2);
+  timers.intervalHandlers[1]?.();
+  await waitFor(() => socket.sent.some((value) => JSON.parse(value).type === "frame"));
+  const serialized = socket.sent.find((value) => JSON.parse(value).type === "frame")!;
+  assert.ok(Buffer.byteLength(serialized) <=
+    HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES);
+  await controller.close(1000, "test complete");
+});
+
+test("WebSocket admission rejects one raw frame byte over and exact-releases authority", async () => {
+  const socket = new FakeSocket();
+  const timers = fakeTimers();
+  const connection = fakeConnection();
+  const encodedLength = 4 * Math.ceil(HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES / 3);
+  connection.frame = async () => ({
+    ...frameMessage(1),
+    frame: {
+      ...frameMessage(1).frame,
+      dataBase64: "A".repeat(encodedLength),
+    },
+  });
+  const controller = attach(socket, async () => connection.value, timers);
+
+  socket.emitMessage();
+  await waitFor(() => timers.intervalHandlers.length === 2);
+  timers.intervalHandlers[1]?.();
+  await waitFor(() => socket.closeCalls === 1);
+  await controller.whenClosed();
+
+  assert.equal(
+    socket.sent.filter((value) => JSON.parse(value).type === "frame").length,
+    0,
+  );
+  assert.equal(connection.disconnects, 1);
 });
 
 test("buffered output coalesces state responses instead of growing socket output", async () => {

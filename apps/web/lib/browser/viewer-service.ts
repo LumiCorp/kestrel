@@ -14,10 +14,10 @@ import {
   type HostedBrowserViewerTicketClaimsV1,
 } from "../../../../src/browser/hostedViewer.js";
 import type {
-  DesktopBrowserViewerFrameV1,
   DesktopBrowserViewerStateV1,
 } from "../../../../src/desktopShell/contracts.js";
 import type { BrowserSessionV1 } from "../../../../src/browser/contracts.js";
+import { parseHostedBrowserViewerServerMessage } from "../../../../src/browser/hostedViewerProtocol.js";
 import type { HostedBrowserOriginAuthority, HostedBrowserResourceRecord } from "./store";
 import type {
   HostedBrowserViewerCleanupPendingV1,
@@ -329,11 +329,21 @@ export class HostedBrowserViewerService {
     if (this.#knownExpiryPassed(connection, true)) {
       await this.#expireConnection(connection);
     }
-    if (!(isViewerFrame(frame) && sameViewerFrame(frame, connection.claims))) {
+    let message: HostedBrowserViewerServerMessageV1;
+    try {
+      message = parseHostedBrowserViewerServerMessage({
+        version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+        type: "frame",
+        frame,
+      }, {
+        sessionId: connection.claims.sessionId,
+        generation: connection.claims.generation,
+      });
+    } catch {
       await this.#revokeAndFailClosed(connection);
       throw new Error("BROWSER_SESSION_LOST");
     }
-    return { version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION, type: "frame", frame };
+    return message;
   }
 
   async revalidate(connection: HostedBrowserViewerConnection): Promise<void> {
@@ -886,14 +896,8 @@ function isViewerFrameUnavailable(error: unknown): boolean {
 function isViewerState(value: unknown): value is DesktopBrowserViewerStateV1 {
   return Boolean(value && typeof value === "object" && (value as { version?: unknown }).version === "desktop_browser_viewer_state_v1");
 }
-function isViewerFrame(value: unknown): value is DesktopBrowserViewerFrameV1 {
-  return Boolean(value && typeof value === "object" && (value as { version?: unknown }).version === "desktop_browser_viewer_frame_v1");
-}
 function sameViewerState(state: DesktopBrowserViewerStateV1, claims: HostedBrowserViewerTicketClaimsV1) {
   return state.available === true && state.threadId === claims.threadId && state.projectId === claims.projectId && state.sessionId === claims.sessionId && state.generation === claims.generation && state.connectionId === claims.connectionId;
-}
-function sameViewerFrame(frame: DesktopBrowserViewerFrameV1, claims: HostedBrowserViewerTicketClaimsV1) {
-  return frame.sessionId === claims.sessionId && frame.generation === claims.generation && frame.mediaType === "image/png";
 }
 function isTerminalSession(session: BrowserSessionV1) {
   return session.state === "closed" ||

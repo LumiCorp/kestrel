@@ -40,3 +40,27 @@ relay. Its worker, Router, Web client, and WebSocket bounds must derive from one
 ## Depends on
 
 [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md).
+
+## Implementation evidence
+
+- The canonical protocol package now owns the single 20 MiB raw PNG maximum
+  and its derived base64-plus-8-KiB-envelope maximum. Worker, Router, Web
+  service/client, WebSocket admission, and the Desktop capture validator all
+  consume those shared values.
+- The worker measures canonical base64 before serializing a viewer frame and
+  returns the bounded `BROWSER_ARTIFACT_TOO_LARGE` result at one raw byte over.
+  Its dedicated viewer-frame writer admits the derived envelope while ordinary
+  worker control responses and the ordinary App relay retain their independent
+  20 MiB serialized ceilings.
+- Router and Web use the derived response ceiling only for the authenticated
+  `frame` action. The shared parser revalidates raw size and exact frame identity
+  before Web can send it, and an oversized frame follows the settled exact
+  revoke-and-fail-close lifecycle without a partial send, retry, alternate
+  transport, or retained frame.
+- Exact raw-limit, raw-plus-one, derived-envelope, control-bound, Router, Web,
+  worker, and WebSocket lifecycle coverage passes 117 focused tests. Root and
+  Environment Router TypeScript checks and `git diff --check` pass. The scoped
+  protocol/Web lint checks pass; Router lint reaches two pre-existing
+  complexity diagnostics outside the 06d hunks. Web typecheck reaches only the
+  pre-existing runtime-profile and hosted personal OAuth test errors already
+  recorded by the hosted viewer work.

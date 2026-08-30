@@ -3,6 +3,7 @@ import {
   HOSTED_BROWSER_VIEWER_AUTHENTICATE_TIMEOUT_MS,
   HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE,
   HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
+  serializeHostedBrowserViewerServerMessage,
   type HostedBrowserViewerClientMessageV1,
   type HostedBrowserViewerServerMessageV1,
 } from "../../../../src/browser/hostedViewerProtocol.js";
@@ -128,7 +129,7 @@ export function attachHostedBrowserViewerSocket(input: {
   const sendBestEffort = (message: HostedBrowserViewerServerMessageV1) => {
     if (input.socket.readyState !== 1) return false;
     try {
-      input.socket.send(JSON.stringify(message));
+      input.socket.send(serializeHostedBrowserViewerServerMessage(message));
       return true;
     } catch {
       return false;

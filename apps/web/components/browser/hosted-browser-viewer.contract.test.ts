@@ -53,7 +53,7 @@ test("web viewer exposes acceptance, typed input, reconnect, explicit return, an
 
 test("web viewer validates every server message and clears stale state on rejection", () => {
   const component = read("components/browser/hosted-browser-viewer.tsx");
-  assert.match(component, /HOSTED_BROWSER_VIEWER_MAX_SERVER_MESSAGE_BYTES/u);
+  assert.match(component, /HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES/u);
   assert.match(component, /parseHostedBrowserViewerServerMessage/u);
   assert.match(component, /viewerIdentityRef/u);
   assert.match(component, /projectId: message\.state\.projectId/u);

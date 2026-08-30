@@ -6,6 +6,7 @@ import {
   HostedBrowserViewerService,
 } from "./viewer-service";
 import type { BrowserSessionV1 } from "../../../../src/browser/contracts.js";
+import { HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES } from "../../../../src/browser/hostedViewerProtocol.js";
 import type { HostedBrowserResourceRecord } from "./store";
 import type {
   HostedBrowserViewerCleanupPendingV1,
@@ -239,6 +240,27 @@ test("ordinary agent-operation frame unavailability preserves the Browser Sessio
   assert.equal(fixture.session.state, "ready");
   assert.deepEqual(fixture.terminations, []);
   assert.equal(fixture.liveConnections.size, 1);
+});
+
+test("Web accepts the raw viewer-frame boundary and exact-releases authority one byte over", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  const encodedLength = 4 * Math.ceil(HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES / 3);
+  fixture.frameDataBase64 = `${"A".repeat(encodedLength - 1)}=`;
+  assert.equal((await connection.frame()).type, "frame");
+  assert.deepEqual(fixture.terminations, []);
+  assert.equal(fixture.liveConnections.size, 1);
+
+  fixture.frameDataBase64 = "A".repeat(encodedLength);
+  await assert.rejects(connection.frame(), /BROWSER_SESSION_LOST/u);
+  assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
+  assert.equal(fixture.session.state, "lost");
+  assert.equal(fixture.liveConnections.size, 0);
 });
 
 test("an uncertain connect releases the exact preselected connection without closing the Browser Session", async () => {
@@ -1200,6 +1222,7 @@ function createFixture(options: { requestAuthorized?: boolean } = {}) {
   let disconnectLost = false;
   let invalidConnectState = false;
   let invalidFrame = false;
+  let frameDataBase64 = "iVBORw0KGgo=";
   let authorizeThrows = false;
   let environmentReady = true;
   let crossExpiryAction: string | undefined;
@@ -1252,7 +1275,7 @@ function createFixture(options: { requestAuthorized?: boolean } = {}) {
         sequence: 1,
         capturedAt: currentNow.toISOString(),
         mediaType: "image/png",
-        dataBase64: "iVBORw0KGgo=",
+        dataBase64: frameDataBase64,
       };
       if (input.action === "accept") {
         workerState = viewerState(
@@ -1319,6 +1342,8 @@ function createFixture(options: { requestAuthorized?: boolean } = {}) {
     set workerLost(value) { workerLost = value; },
     get frameUnavailable() { return frameUnavailable; },
     set frameUnavailable(value) { frameUnavailable = value; },
+    get frameDataBase64() { return frameDataBase64; },
+    set frameDataBase64(value) { frameDataBase64 = value; },
     get connectResponseLost() { return connectResponseLost; },
     set connectResponseLost(value) { connectResponseLost = value; },
     get disconnectLost() { return disconnectLost; },
