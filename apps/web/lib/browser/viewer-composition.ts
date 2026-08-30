@@ -8,6 +8,7 @@ import { HostedBrowserPolicy } from "./policy";
 import { resolveHostedBrowserServiceForAuthority } from "./composition";
 import { HostedBrowserStore } from "./store";
 import { HostedBrowserViewerService } from "./viewer-service";
+import { resolveHostedBrowserViewerRequester } from "./viewer-composition-access";
 import {
   composeHostedBrowserViewerLifecycle,
   createCleanupSafeHostedBrowserViewerLifecycle,
@@ -46,15 +47,14 @@ export async function resolveHostedBrowserViewerService(input: {
     pending.scope.generation === active.session.generation &&
     pending.scope.machineId === active.resource.machineId,
   );
-  const requestMatchesOriginActor =
-    origin.organizationId === input.organizationId &&
-    origin.threadId === input.threadId &&
-    origin.userId === input.actorId;
-  if (
-    origin.organizationId !== input.organizationId ||
-    origin.threadId !== input.threadId ||
-    !(requestMatchesOriginActor || pendingMatchesOrigin)
-  ) throw new Error("BROWSER_SESSION_LOST");
+  const requester = resolveHostedBrowserViewerRequester({
+    organizationId: input.organizationId,
+    actorId: input.actorId,
+    threadId: input.threadId,
+    origin,
+    accessibleProjectId: requestAccess?.thread.projectId ?? undefined,
+  });
+  const { requestMatchesOriginActor, cleanupBypass } = requester;
   const environment = await knowledgeDb.query.environments.findFirst({
     where: and(
       eq(schema.environments.id, origin.environmentId),
@@ -72,7 +72,6 @@ export async function resolveHostedBrowserViewerService(input: {
     pending?.scope.appName === environment?.flyAppName;
   const workerCleanupUsable = workerRouteUsable &&
     (requestMatchesOriginActor || !pending || pendingMatchesEnvironment);
-  const cleanupBypass = requestMatchesOriginActor || pendingMatchesOrigin;
   if (!(environmentReady || cleanupBypass)) {
     throw new Error("BROWSER_SERVICE_UNAVAILABLE");
   }

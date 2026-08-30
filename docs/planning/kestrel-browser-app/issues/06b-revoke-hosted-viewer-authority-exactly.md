@@ -137,3 +137,32 @@ depend on an expired user ticket granting a new action.
   errors listed above. PostgreSQL remains unrun because
   `KESTREL_ENVIRONMENT_DB_TEST_URL` is not configured.
 - Per the repair-turn instruction, `pnpm validate:process` was not rerun.
+
+### Final independent-review repair evidence
+
+- The exact focused Web lifecycle, retained-marker, authorized-replacement,
+  socket, Redis, status, and UI command passes 62 tests.
+- Web creates the exact `connect_unknown` record before worker dispatch and
+  retains it for the live connection. Marker failure prevents worker authority;
+  marker-clear failure blocks replacement until a later exact reconciliation.
+  Availability polling is aborted while the socket is connecting or open.
+- A current replacement actor reaches only the non-disclosing fail-close path,
+  and only after current Thread access proves the same organization, Project,
+  and Thread. Actors without that proof remain rejected.
+- Router authorization validates the complete signed viewer identity without
+  using expiry as an identity failure. A real Web-shaped Router-to-worker test
+  proves exact ticket and worker-lease expiry remain the typed pre-effect
+  `BROWSER_VIEWER_AUTHORITY_EXPIRED` result rather than generic unavailability.
+- The exact Router, ticket, and worker command passes 32 tests. Worker cleanup
+  retires exact connection identities even before worker service construction;
+  disconnect, expiry, return, close, and authority loss retire before success.
+  Retirement persists through signed expiry, rejects delayed replay, protects a
+  replacement identity, and fails closed at the explicit 4,096-entry bound.
+- The exact Local Core Browser service command passes 85 tests, including exact
+  principal enforcement for Session-wide authority loss. Two packaged Local
+  Core composition regressions also pass.
+- Root and Environment Router typechecks pass, scoped Web lint and
+  `git diff --check` pass. Web typecheck reaches only the pre-existing
+  runtime-profile and hosted OAuth test errors listed above. PostgreSQL remains
+  unrun because `KESTREL_ENVIRONMENT_DB_TEST_URL` is not configured.
+- Per the repair-turn instruction, `pnpm validate:process` was not rerun.

@@ -78,6 +78,80 @@ test("only the originating actor gets a one-use viewer ticket and can accept, re
   assert.deepEqual(fixture.terminations, ["closed_by_user"]);
 });
 
+test("a proven live connection retains its marker until later exact convergence", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  assert.equal(fixture.cleanupPending?.reason, "connect_unknown");
+  assert.equal(fixture.liveConnections.has(connection.claims.connectionId), true);
+
+  fixture.cleanupClearFailure = true;
+  fixture.terminationFailure = "before_terminal";
+  const unavailable = await fixture.service.status({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  assert.deepEqual(unavailable, {
+    version: "hosted_browser_viewer_route_v1",
+    available: false,
+    cleanupPending: true,
+  });
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.equal(fixture.session.state, "ready");
+
+  fixture.cleanupClearFailure = false;
+  fixture.terminationFailure = undefined;
+  const recovered = await fixture.service.status({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  assert.equal(recovered.available, true);
+  assert.equal(fixture.cleanupPending, null);
+});
+
+test("return marker-clear failure blocks replacement until exact old authority converges", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  await connection.dispatch({
+    version: "hosted_browser_viewer_route_v1",
+    type: "accept_takeover",
+  });
+  fixture.cleanupClearFailure = true;
+  await connection.dispatch({
+    version: "hosted_browser_viewer_route_v1",
+    type: "return_control",
+    leaseId: connection.state.inputLeaseId!,
+  });
+  assert.equal(fixture.session.state, "ready");
+  assert.equal(fixture.cleanupPending?.scope.connectionId, connection.claims.connectionId);
+  await assert.rejects(fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  }), /BROWSER_ACTION_OUTCOME_UNKNOWN/u);
+
+  fixture.cleanupClearFailure = false;
+  const replacementTicket = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const replacement = await fixture.service.connect(replacementTicket.ticket);
+  assert.notEqual(replacement.claims.connectionId, connection.claims.connectionId);
+  assert.equal(fixture.cleanupPending?.scope.connectionId, replacement.claims.connectionId);
+});
+
 test("authorization loss during frame delivery closes the Browser Session instead of restoring agent control", async () => {
   const fixture = createFixture();
   const issued = await fixture.service.mintTicket({ organizationId: "org-1", actorId: "user-1", threadId: "thread-1" });
@@ -426,22 +500,23 @@ test("failed established disconnect remains cleanup-pending and blocks ticket mi
   assert.equal(fixture.liveConnections.size, 0);
 });
 
-test("cleanup-marker failure falls back to durable exact Session fail-close", async () => {
+test("cleanup-marker failure prevents worker viewer authority from being created", async () => {
   const fixture = createFixture();
   const issued = await fixture.service.mintTicket({
     organizationId: "org-1",
     actorId: "user-1",
     threadId: "thread-1",
   });
-  const connection = await fixture.service.connect(issued.ticket);
-  fixture.disconnectLost = true;
   fixture.cleanupMarkerFailure = true;
 
-  await connection.disconnect();
+  await assert.rejects(
+    fixture.service.connect(issued.ticket),
+    /BROWSER_ACTION_OUTCOME_UNKNOWN/u,
+  );
 
-  assert.equal(fixture.session.state, "lost");
-  assert.ok(fixture.resource.cleanupRequestedAt);
-  assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
+  assert.equal(fixture.session.state, "ready");
+  assert.deepEqual(fixture.workerCalls, []);
+  assert.deepEqual(fixture.terminations, []);
   assert.equal(fixture.cleanupPending, null);
 });
 
@@ -777,7 +852,7 @@ test("authority loss promotes pending cleanup and requires durable fail-close af
   const connection = await fixture.service.connect(issued.ticket);
   fixture.disconnectLost = true;
   await assert.rejects(connection.disconnect(), HostedBrowserViewerOutcomeUnknownError);
-  assert.equal(fixture.cleanupPending?.reason, "disconnect_unknown");
+  assert.equal(fixture.cleanupPending?.reason, "connect_unknown");
 
   fixture.disconnectLost = false;
   fixture.accessAllowed = false;
@@ -870,6 +945,48 @@ test("worker authority-loss proof closes the Redis and PostgreSQL double-failure
   assert.ok(fixture.workerCalls.some((call) =>
     call.action === "cleanup" && call.purpose === "authority_loss"));
   assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
+});
+
+test("a proven connected marker never becomes ordinary availability through Redis and PostgreSQL outage recovery", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  assert.equal(fixture.cleanupPending?.reason, "connect_unknown");
+
+  fixture.accessAllowed = false;
+  fixture.cleanupMarkerFailure = true;
+  fixture.terminationFailure = "before_terminal";
+  await assert.rejects(connection.revalidate(), /BROWSER_SESSION_LOST/u);
+  assert.equal(fixture.cleanupPending?.reason, "connect_unknown");
+  assert.equal(fixture.liveConnections.size, 0);
+  fixture.reloadService();
+  await assert.rejects(fixture.service.status({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  }), /BROWSER_SESSION_LOST/u);
+
+  fixture.cleanupMarkerFailure = false;
+  await assert.rejects(fixture.service.status({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  }), /BROWSER_SESSION_LOST/u);
+  assert.equal(fixture.cleanupPending?.reason, "authority_loss");
+  assert.equal(fixture.session.state, "ready");
+
+  fixture.terminationFailure = undefined;
+  await assert.rejects(fixture.service.status({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  }), /BROWSER_SESSION_LOST/u);
+  assert.equal(fixture.session.state, "lost");
+  assert.equal(fixture.cleanupPending, null);
 });
 
 test("a terminal Session clears its pending marker even without an active authority", async () => {
@@ -1076,6 +1193,7 @@ function createFixture(options: { requestAuthorized?: boolean } = {}) {
   };
   const evidence: unknown[] = [];
   const terminations: string[] = [];
+  let buildService: () => HostedBrowserViewerService;
   const fixture = {
     session,
     workerInputs,
@@ -1122,9 +1240,12 @@ function createFixture(options: { requestAuthorized?: boolean } = {}) {
     loseResponseAfter(action: string) {
       responseLostAfterAction = action;
     },
+    reloadService() {
+      fixture.service = buildService();
+    },
     service: undefined as unknown as HostedBrowserViewerService,
   };
-  fixture.service = new HostedBrowserViewerService({
+  buildService = () => new HostedBrowserViewerService({
     store: {
       async readActiveForThread(threadId) { return threadId === session.threadId ? { session, resource } : null; },
       async read(sessionId) { return sessionId === session.sessionId ? { session, resource } : null; },
@@ -1174,6 +1295,7 @@ function createFixture(options: { requestAuthorized?: boolean } = {}) {
     requestAuthorized: options.requestAuthorized ?? true,
     now: () => currentNow,
   });
+  fixture.service = buildService();
   return fixture;
 }
 

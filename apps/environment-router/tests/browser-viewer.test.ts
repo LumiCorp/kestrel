@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
@@ -20,6 +22,7 @@ import {
   handleBrowserViewerControl,
   readBoundedBrowserViewerWorkerBody,
 } from "../src/browser-viewer.js";
+import { startHostedBrowserWorker } from "../../../src/browser/hostedWorkerServer.js";
 
 const environmentKeys = generateKeyPairSync("ed25519");
 const environmentPrivateKey = environmentKeys.privateKey
@@ -48,6 +51,7 @@ test("the Environment Router owns a dedicated Browser viewer control route", () 
 
 function viewerRequest(input?: {
   nowSeconds?: number;
+  ticketIssuedAtSeconds?: number;
   envelopeProjectId?: string;
   ticketProjectId?: string;
   environmentId?: string;
@@ -63,9 +67,10 @@ function viewerRequest(input?: {
   const ticketConnectionId = input?.ticketConnectionId ?? "connection-1";
   const instructionConnectionId =
     input?.instructionConnectionId ?? "connection-1";
+  const ticketIssuedAt = input?.ticketIssuedAtSeconds ?? issuedAt;
   const viewerTicket = issueHostedBrowserViewerTicket({
     privateKeyPem: viewerPrivateKey,
-    now: new Date(issuedAt * 1000),
+    now: new Date(ticketIssuedAt * 1000),
     claims: {
       version: "hosted_browser_viewer_ticket_v1",
       audience: "kestrel-one-browser-viewer",
@@ -78,8 +83,8 @@ function viewerRequest(input?: {
       actorId: "user-1",
       connectionId: ticketConnectionId,
       nonce: "viewer-nonce-1",
-      issuedAt: new Date(issuedAt * 1000).toISOString(),
-      expiresAt: new Date((issuedAt + 60) * 1000).toISOString(),
+      issuedAt: new Date(ticketIssuedAt * 1000).toISOString(),
+      expiresAt: new Date((ticketIssuedAt + 60) * 1000).toISOString(),
     },
   });
   const envelope = {
@@ -395,6 +400,108 @@ test("browser viewer control forwards only the worker instruction to the exact p
   });
   assert.equal(capture.status, 200);
   assert.deepEqual(JSON.parse(capture.body), { ok: true });
+});
+
+test("browser viewer control authenticates an expired exact ticket and preserves the worker expiry code", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const input = viewerRequest({ nowSeconds: now, ticketIssuedAtSeconds: now - 61 });
+  const capture = responseCapture();
+  await handleBrowserViewerControl({
+    request: incoming(input.body, input.token),
+    response: capture.response,
+    publicKey: environmentPublicKey,
+    environmentId: "env-1",
+    expectedAppName: "environment-app",
+    fetchImpl: (async () => new Response(JSON.stringify({
+      error: { code: "BROWSER_VIEWER_AUTHORITY_EXPIRED" },
+    }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch,
+  });
+  assert.equal(capture.status, 400);
+  assert.deepEqual(JSON.parse(capture.body), {
+    error: { code: "BROWSER_VIEWER_AUTHORITY_EXPIRED" },
+  });
+});
+
+test("browser viewer control preserves the exact pre-effect worker lease-expiry code", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const input = viewerRequest({ nowSeconds: now });
+  const capture = responseCapture();
+  await handleBrowserViewerControl({
+    request: incoming(input.body, input.token),
+    response: capture.response,
+    publicKey: environmentPublicKey,
+    environmentId: "env-1",
+    expectedAppName: "environment-app",
+    fetchImpl: (async () => new Response(JSON.stringify({
+      error: { code: "BROWSER_VIEWER_AUTHORITY_EXPIRED" },
+    }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch,
+  });
+  assert.equal(capture.status, 400);
+  assert.match(capture.body, /BROWSER_VIEWER_AUTHORITY_EXPIRED/u);
+});
+
+test("Web-shaped Router requests preserve ticket and lease expiry from the real worker boundary", async () => {
+  let viewerCalls = 0;
+  const worker = startHostedBrowserWorker({
+    config: {
+      sessionId: "browser-session-1",
+      generation: 3,
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      engineRevision: "v0.35.0",
+      chromeRevision: "152.0.7977.54",
+      effectiveAllowlistRevision: "revision-1",
+      imageDigest: `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
+      capabilityPublicKeyPem: viewerPublicKey,
+      gatewayHost: "gateway-machine-1.vm.browser-workers.internal",
+      gatewayAddress: "127.0.0.1",
+      gatewayPort: 43109,
+      engineExecutablePath: process.execPath,
+      chromeExecutablePath: process.execPath,
+      port: 0,
+    },
+    engine: {
+      async execute() { throw new Error("not called"); },
+      async adopt() { return 0; },
+      async viewer() {
+        viewerCalls += 1;
+        throw new Error("BROWSER_VIEWER_AUTHORITY_EXPIRED");
+      },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const throughWorker = (async (_url: string | URL | Request, init?: RequestInit) =>
+    await fetch(`http://[::1]:${port}/v1/viewer`, init)) as typeof fetch;
+  const now = Math.floor(Date.now() / 1000);
+  for (const input of [
+    viewerRequest({ nowSeconds: now, ticketIssuedAtSeconds: now - 61 }),
+    viewerRequest({ nowSeconds: now }),
+  ]) {
+    const capture = responseCapture();
+    await handleBrowserViewerControl({
+      request: incoming(input.body, input.token),
+      response: capture.response,
+      publicKey: environmentPublicKey,
+      environmentId: "env-1",
+      expectedAppName: "environment-app",
+      fetchImpl: throughWorker,
+    });
+    assert.equal(capture.status, 400);
+    assert.match(capture.body, /BROWSER_VIEWER_AUTHORITY_EXPIRED/u);
+  }
+  assert.equal(viewerCalls, 1);
+  await worker.close();
 });
 
 test("browser viewer control fails closed on worker timeout/failure and bounded request or response bodies", async () => {

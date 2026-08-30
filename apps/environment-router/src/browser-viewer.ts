@@ -6,6 +6,7 @@ const MAX_BROWSER_VIEWER_REQUEST_BYTES = 64 * 1024;
 const MAX_BROWSER_VIEWER_RESPONSE_BYTES = 28 * 1024 * 1024;
 const BROWSER_VIEWER_TIMEOUT_MS = 12_000;
 const VIEWER_AUDIENCE = "kestrel-one-browser-viewer";
+const VIEWER_AUTHORITY_EXPIRED = "BROWSER_VIEWER_AUTHORITY_EXPIRED";
 
 type ViewerAction =
   | "connect"
@@ -140,7 +141,17 @@ export async function handleBrowserViewerControl(input: {
     return writeError(input.response, 503, "BROWSER_VIEWER_UNAVAILABLE");
   }
   if (!worker.ok) {
-    await worker.body?.cancel().catch(() => undefined);
+    try {
+      const body = await readBoundedBrowserViewerWorkerBody(worker);
+      const parsed = JSON.parse(body.toString("utf8")) as {
+        error?: { code?: unknown } | undefined;
+      };
+      if (parsed.error?.code === VIEWER_AUTHORITY_EXPIRED) {
+        return writeError(input.response, worker.status, VIEWER_AUTHORITY_EXPIRED);
+      }
+    } catch {
+      // A malformed worker error is ordinary downstream uncertainty.
+    }
     return writeError(input.response, 503, "BROWSER_VIEWER_UNAVAILABLE");
   }
   let responseBody: Buffer;
@@ -452,8 +463,7 @@ function verifyViewerTicket(token: string, publicKeyPem: string, now?: number) {
     !Number.isFinite(issuedAt) ||
     !Number.isFinite(expiresAt) ||
     expiresAt - issuedAt !== 60_000 ||
-    issuedAt > nowMilliseconds + 5000 ||
-    expiresAt <= nowMilliseconds
+    issuedAt > nowMilliseconds + 5000
   ) {
     throw new Error("Browser viewer ticket is invalid.");
   }

@@ -1086,12 +1086,11 @@ test("AgentBrowserHostedWorkerEngine fail-closes a retained viewer before accept
     claims,
     connectionId,
   });
-  const duplicate = await engine.viewer({
+  await assert.rejects(engine.viewer({
     action: "connect",
     claims,
     connectionId,
-  });
-  assert.deepEqual(duplicate, first);
+  }), hasBrowserCode("BROWSER_SESSION_LOST"));
   assert.equal(
     (first as { connectionId?: string }).connectionId,
     connectionId,
@@ -1105,16 +1104,11 @@ test("AgentBrowserHostedWorkerEngine fail-closes a retained viewer before accept
     }),
     hasBrowserCode("BROWSER_SESSION_LOST"),
   );
-  const terminal = await engine.viewer({
-    action: "connect",
-    claims,
-    connectionId,
-  });
-  assert.equal((terminal as { available?: boolean }).available, false);
   await assert.rejects(
     engine.viewer({
       action: "connect",
       claims,
+      connectionId,
     }),
     hasBrowserCode("BROWSER_SESSION_LOST"),
   );
@@ -1211,6 +1205,91 @@ test("hosted worker lease expiry retries exact cleanup until the worker proves r
     }),
     hasBrowserCode("BROWSER_VIEWER_AUTHORITY_EXPIRED"),
   );
+  await engine.destroy();
+});
+
+test("hosted worker retires exact viewer identities, protects replacements, and fails closed at the bound", async () => {
+  let now = new Date("2026-08-30T12:00:00.000Z");
+  const connected: string[] = [];
+  const fakeService = {
+    async initialize() {},
+    async execute() { return null; },
+    async connectViewer(input: { connectionId: string }) {
+      connected.push(input.connectionId);
+      return {
+        version: "desktop_browser_viewer_state_v1" as const,
+        available: true,
+        threadId: "thread-1",
+        projectId: "project-1",
+        sessionId: "browser-session-1",
+        generation: 1,
+        connectionId: input.connectionId,
+        sessionState: "ready" as const,
+        takeoverRequested: true,
+      };
+    },
+    async cleanupViewerConnection() {},
+    async close() {},
+  };
+  const config = workerConfig();
+  const engine = new AgentBrowserHostedWorkerEngine(config, {
+    now: () => now,
+    viewerRetirementLimit: 2,
+    createDesktopBrowserService() {
+      return fakeService as unknown as DesktopBrowserService;
+    },
+  });
+  const delayed = viewerClaims("user-1", "delayed-connection", now);
+  await engine.viewerCleanup(viewerCleanupClaims("delayed-connection", "disconnect", now));
+  await engine.execute(
+    {
+      prepared: preparedOpen(),
+      authority,
+      session: openingHostedSession(),
+      gatewayProxy: hostedGatewayProxy(config),
+    },
+    { async acknowledgeDispatch() {}, async persistCompletedResult() {} },
+  );
+  await assert.rejects(
+    engine.viewer({ action: "connect", claims: delayed, connectionId: delayed.connectionId }),
+    hasBrowserCode("BROWSER_SESSION_LOST"),
+  );
+
+  const replacement = viewerClaims("user-1", "replacement-connection", now);
+  await engine.viewer({
+    action: "connect",
+    claims: replacement,
+    connectionId: replacement.connectionId,
+  });
+  await engine.viewer({
+    action: "disconnect",
+    claims: replacement,
+    connectionId: replacement.connectionId,
+  });
+  await assert.rejects(
+    engine.viewer({
+      action: "connect",
+      claims: replacement,
+      connectionId: replacement.connectionId,
+    }),
+    hasBrowserCode("BROWSER_SESSION_LOST"),
+  );
+  assert.deepEqual(connected, ["replacement-connection"]);
+
+  const bounded = viewerClaims("user-1", "bounded-connection", now);
+  await assert.rejects(
+    engine.viewer({ action: "connect", claims: bounded, connectionId: bounded.connectionId }),
+    hasBrowserCode("BROWSER_SERVICE_UNAVAILABLE"),
+  );
+
+  now = new Date(now.getTime() + 61_000);
+  const afterExpiry = viewerClaims("user-1", "after-expiry-connection", now);
+  await engine.viewer({
+    action: "connect",
+    claims: afterExpiry,
+    connectionId: afterExpiry.connectionId,
+  });
+  assert.deepEqual(connected, ["replacement-connection", "after-expiry-connection"]);
   await engine.destroy();
 });
 
@@ -1441,6 +1520,30 @@ function viewerCleanupCapability(
       expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     },
   });
+}
+
+function viewerCleanupClaims(
+  connectionId: string,
+  purpose: "disconnect" | "authority_loss",
+  now = new Date(),
+) {
+  return {
+    version: HOSTED_BROWSER_VIEWER_CLEANUP_CAPABILITY_VERSION,
+    audience: HOSTED_BROWSER_VIEWER_CLEANUP_AUDIENCE,
+    action: "cleanup" as const,
+    purpose,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    threadId: "thread-1",
+    sessionId: "browser-session-1",
+    generation: 1,
+    actorId: "user-1",
+    connectionId,
+    nonce: `viewer-cleanup-${connectionId}`,
+    issuedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+  } as const;
 }
 
 function viewerClaims(

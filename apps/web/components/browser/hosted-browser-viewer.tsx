@@ -34,13 +34,18 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
     useState<HostedBrowserViewerCleanupUnknownPresentation | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const availabilityAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    if (transportState !== "closed") return;
     let cancelled = false;
+    const controller = new AbortController();
+    availabilityAbortRef.current = controller;
     const refresh = async () => {
       try {
         const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/browser-viewer`, {
           cache: "no-store",
+          signal: controller.signal,
         });
         const result = await classifyHostedBrowserViewerAvailabilityResponse(response);
         if (result.kind === "transient") return;
@@ -64,14 +69,19 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
     const timer = window.setInterval(refresh, 2000);
     return () => {
       cancelled = true;
+      controller.abort();
+      if (availabilityAbortRef.current === controller) {
+        availabilityAbortRef.current = null;
+      }
       window.clearInterval(timer);
     };
-  }, [threadId]);
+  }, [threadId, transportState]);
 
   useEffect(() => () => socketRef.current?.close(1000, "viewer unmounted"), []);
 
   const connect = useCallback(async () => {
     if (availability.cleanupPending) return;
+    availabilityAbortRef.current?.abort();
     socketRef.current?.close(1000, "viewer reconnecting");
     setTransportState("connecting");
     setFrame(null);

@@ -1104,6 +1104,15 @@ test("authority loss terminalizes the exact Session even after disconnect and re
     principalId: "desktop-main-1",
   })).connectionId, replacement.connectionId);
 
+  await assert.rejects(
+    fixture.service.loseViewerAuthority({
+      ...retired,
+      principalId: "different-principal",
+    }),
+    hasCode("BROWSER_SESSION_LOST"),
+  );
+  assert.equal(fixture.engine.closed.length, 0);
+
   await fixture.service.loseViewerAuthority({
     ...retired,
     principalId: "desktop-main-1",

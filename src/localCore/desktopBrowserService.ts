@@ -1042,10 +1042,11 @@ export class DesktopBrowserService implements BrowserServicePort {
       const selected = active.viewerConnections.get(connectionId);
       const principalMatches = selected
         ? selected.principalId === principalId && selected.projectId === projectId
-        : active.viewerConnections.size === 0 ||
-          [...active.viewerConnections.values()].some((connection) =>
+        : [...active.viewerConnections.values()].some((connection) =>
             connection.principalId === principalId &&
-            connection.projectId === projectId);
+            connection.projectId === projectId) ||
+          (active.viewerConnections.size === 0 &&
+            active.authority.userId === principalId);
       if (!principalMatches) {
         throw browserFailure(
           "BROWSER_SESSION_LOST",

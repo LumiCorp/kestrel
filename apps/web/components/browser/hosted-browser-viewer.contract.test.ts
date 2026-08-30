@@ -58,7 +58,8 @@ test("cleanup reconciliation bypass is exact and cannot expose viewer status aft
   assert.match(composition, /pending\.scope\.actorId === origin\.userId/u);
   assert.match(composition, /pending\?\.scope\.appName === environment\?\.flyAppName/u);
   assert.match(composition, /origin\.userId === input\.actorId/u);
-  assert.match(composition, /requestMatchesOriginActor \|\| pendingMatchesOrigin/u);
+  assert.match(composition, /resolveHostedBrowserViewerRequester/u);
+  assert.match(composition, /accessibleProjectId: requestAccess\?\.thread\.projectId/u);
   assert.match(composition, /unavailableViewerWorker/u);
   assert.match(composition, /currentEnvironment\?\.status !== "ready"/u);
   assert.match(composition, /currentEnvironment\.flyAppName !== appName/u);
@@ -67,6 +68,8 @@ test("cleanup reconciliation bypass is exact and cannot expose viewer status aft
   assert.match(composition, /requestAuthorized,/u);
   assert.match(service, /this\.options\.requestAuthorized === false/u);
   assert.match(service, /throw new Error\("BROWSER_SESSION_LOST"\)/u);
+  const component = read("components/browser/hosted-browser-viewer.tsx");
+  assert.match(component, /if \(transportState !== "closed"\) return/u);
 });
 
 test("Kestrel One Mobile has no Browser viewer route, socket, or takeover action", () => {

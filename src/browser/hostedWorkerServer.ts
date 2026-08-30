@@ -577,7 +577,10 @@ export type AgentBrowserHostedWorkerEngineOptions = {
   now?: (() => Date) | undefined;
   setTimeout?: typeof setTimeout | undefined;
   clearTimeout?: typeof clearTimeout | undefined;
+  viewerRetirementLimit?: number | undefined;
 };
+
+export const HOSTED_BROWSER_VIEWER_RETIREMENT_LIMIT = 4096;
 
 export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine {
   readonly #config: HostedBrowserWorkerConfig;
@@ -592,10 +595,9 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     timer: ReturnType<typeof setTimeout>;
     claims: HostedBrowserViewerTicketClaimsV1;
   }>();
-  readonly #expiredViewerConnections = new Map<
-    string,
-    HostedBrowserViewerTicketClaimsV1
-  >();
+  readonly #viewerAdmissions = new Map<string, HostedBrowserViewerTicketClaimsV1>();
+  readonly #retiredViewerConnections = new Map<string, { expiresAt: string }>();
+  readonly #viewerRetirementLimit: number;
   #authority: BrowserEffectiveDomainAuthorityV1 | undefined;
   #session: BrowserSessionV1 | undefined;
   #service: DesktopBrowserService | undefined;
@@ -615,6 +617,11 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     this.#now = options.now ?? (() => new Date());
     this.#setTimeout = options.setTimeout ?? setTimeout;
     this.#clearTimeout = options.clearTimeout ?? clearTimeout;
+    this.#viewerRetirementLimit = options.viewerRetirementLimit ??
+      HOSTED_BROWSER_VIEWER_RETIREMENT_LIMIT;
+    if (!Number.isSafeInteger(this.#viewerRetirementLimit) || this.#viewerRetirementLimit < 1) {
+      throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+    }
   }
 
   async execute(input: {
@@ -720,14 +727,31 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       if (connectionId !== input.claims.connectionId) {
         throw new Error("BROWSER_SESSION_LOST");
       }
-      this.#expiredViewerConnections.delete(connectionId);
-      const state = await service.connectViewer({ ...binding, connectionId });
+      this.#pruneViewerRetirements();
+      const identity = viewerConnectionIdentity(input.claims);
+      if (
+        this.#retiredViewerConnections.has(identity) ||
+        this.#viewerAdmissions.has(identity)
+      ) throw new Error("BROWSER_SESSION_LOST");
+      if (
+        this.#retiredViewerConnections.size + this.#viewerAdmissions.size >=
+          this.#viewerRetirementLimit
+      ) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+      this.#viewerAdmissions.set(identity, input.claims);
+      let state: DesktopBrowserViewerStateV1;
+      try {
+        state = await service.connectViewer({ ...binding, connectionId });
+      } catch (error) {
+        this.#viewerAdmissions.delete(identity);
+        throw error;
+      }
       this.#scheduleViewerExpiry(input.claims, state);
       return state;
     }
     const connectionId = requiredString(input.connectionId);
-    const expired = this.#expiredViewerConnections.get(connectionId);
-    if (expired && sameViewerTicketIdentity(expired, input.claims)) {
+    this.#pruneViewerRetirements();
+    const identity = viewerConnectionIdentity(input.claims);
+    if (this.#retiredViewerConnections.has(identity)) {
       throw knownWorkerFailure(HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED);
     }
     const connected = { ...binding, connectionId };
@@ -738,11 +762,13 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       return state;
     }
     if (input.action === "disconnect") {
+      this.#retireViewerConnection(input.claims);
       await service.cleanupViewerConnection(connected);
       this.#clearViewerExpiry(connectionId);
       return null;
     }
     if (input.action === "close") {
+      this.#retireViewerConnection(input.claims);
       await service.closeViewerSession(connected);
       this.#clearViewerExpiry(connectionId);
       return null;
@@ -755,6 +781,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     }
     if (input.action === "return") {
       const state = await service.returnViewerControl({ ...connected, leaseId });
+      this.#retireViewerConnection(input.claims);
       await service.cleanupViewerConnection(connected);
       this.#clearViewerExpiry(connectionId);
       return state;
@@ -772,8 +799,15 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   async viewerCleanup(
     claims: HostedBrowserViewerCleanupCapabilityV1,
   ): Promise<void> {
-    const service = this.#service;
-    if (!(service && this.#session)) return;
+    if (
+      claims.organizationId !== this.#config.organizationId ||
+      claims.environmentId !== this.#config.environmentId ||
+      claims.projectId !== this.#config.projectId ||
+      claims.threadId !== this.#config.threadId ||
+      claims.sessionId !== this.#config.sessionId ||
+      claims.generation !== this.#config.generation ||
+      claims.actorId !== this.#config.userId
+    ) throw new Error("BROWSER_SESSION_LOST");
     const exact = {
       principalId: claims.actorId,
       threadId: claims.threadId,
@@ -782,6 +816,18 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       generation: claims.generation,
       connectionId: claims.connectionId,
     };
+    if (claims.purpose === "authority_loss") {
+      for (const admitted of [...this.#viewerAdmissions.values()]) {
+        if (sameViewerPrincipal(admitted, claims)) {
+          this.#retireViewerConnection(admitted);
+        }
+      }
+      this.#retireViewerConnection(claims);
+    } else {
+      this.#retireViewerConnection(claims);
+    }
+    const service = this.#service;
+    if (!(service && this.#session)) return;
     if (claims.purpose === "authority_loss") {
       await service.loseViewerAuthority(exact);
     } else {
@@ -795,7 +841,8 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       this.#clearTimeout(entry.timer);
     }
     this.#viewerExpiries.clear();
-    this.#expiredViewerConnections.clear();
+    this.#viewerAdmissions.clear();
+    this.#retiredViewerConnections.clear();
     await this.#service?.close().catch(() => {});
     await rm(this.#runtimeRoot, { recursive: true, force: true });
   }
@@ -836,7 +883,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       });
       if (this.#viewerExpiries.get(claims.connectionId) === entry) {
         this.#viewerExpiries.delete(claims.connectionId);
-        this.#expiredViewerConnections.set(claims.connectionId, claims);
+        this.#retireViewerConnection(claims);
       }
     } catch {
       if (this.#viewerExpiries.get(claims.connectionId) !== entry) return;
@@ -852,6 +899,30 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     const entry = this.#viewerExpiries.get(connectionId);
     if (entry) this.#clearTimeout(entry.timer);
     this.#viewerExpiries.delete(connectionId);
+  }
+
+  #retireViewerConnection(
+    claims: Pick<HostedBrowserViewerTicketClaimsV1,
+      "organizationId" | "environmentId" | "projectId" | "threadId" |
+      "sessionId" | "generation" | "actorId" | "connectionId" | "expiresAt">,
+  ): void {
+    this.#pruneViewerRetirements();
+    const identity = viewerConnectionIdentity(claims);
+    const admitted = this.#viewerAdmissions.delete(identity);
+    if (this.#retiredViewerConnections.has(identity)) return;
+    if (!admitted && this.#retiredViewerConnections.size >= this.#viewerRetirementLimit) {
+      throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+    }
+    this.#retiredViewerConnections.set(identity, { expiresAt: claims.expiresAt });
+  }
+
+  #pruneViewerRetirements(): void {
+    const now = this.#now().getTime();
+    for (const [identity, retired] of this.#retiredViewerConnections) {
+      if (Date.parse(retired.expiresAt) <= now) {
+        this.#retiredViewerConnections.delete(identity);
+      }
+    }
   }
 
   #createService(session: BrowserSessionV1): DesktopBrowserService {
@@ -1319,9 +1390,30 @@ function requireViewerAction(value: unknown) {
   return value;
 }
 
-function sameViewerTicketIdentity(
-  left: HostedBrowserViewerTicketClaimsV1,
-  right: HostedBrowserViewerTicketClaimsV1,
+function viewerConnectionIdentity(
+  claims: Pick<HostedBrowserViewerTicketClaimsV1,
+    "organizationId" | "environmentId" | "projectId" | "threadId" |
+    "sessionId" | "generation" | "actorId" | "connectionId">,
+): string {
+  return JSON.stringify([
+    claims.organizationId,
+    claims.environmentId,
+    claims.projectId,
+    claims.threadId,
+    claims.sessionId,
+    claims.generation,
+    claims.actorId,
+    claims.connectionId,
+  ]);
+}
+
+function sameViewerPrincipal(
+  left: Pick<HostedBrowserViewerTicketClaimsV1,
+    "organizationId" | "environmentId" | "projectId" | "threadId" |
+    "sessionId" | "generation" | "actorId">,
+  right: Pick<HostedBrowserViewerTicketClaimsV1,
+    "organizationId" | "environmentId" | "projectId" | "threadId" |
+    "sessionId" | "generation" | "actorId">,
 ): boolean {
   return left.organizationId === right.organizationId &&
     left.environmentId === right.environmentId &&
@@ -1329,9 +1421,7 @@ function sameViewerTicketIdentity(
     left.threadId === right.threadId &&
     left.sessionId === right.sessionId &&
     left.generation === right.generation &&
-    left.actorId === right.actorId &&
-    left.connectionId === right.connectionId &&
-    left.nonce === right.nonce;
+    left.actorId === right.actorId;
 }
 
 function requireViewerInput(value: unknown): DesktopBrowserViewerInputV1 {

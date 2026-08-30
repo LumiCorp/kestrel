@@ -213,6 +213,15 @@ export class HostedBrowserViewerService {
       await this.#failClosed(claims);
       throw new Error("BROWSER_SESSION_LOST");
     }
+    const scope = cleanupScope(authority, claims, this.options.appName);
+    let pending: HostedBrowserViewerCleanupPendingV1;
+    try {
+      pending = await this.#markCleanupPending(scope, "connect_unknown");
+    } catch (error) {
+      // The marker is the durable owner for any authority the worker may create.
+      // Never dispatch connect without it.
+      throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN", { cause: error });
+    }
     let state: Awaited<ReturnType<HostedBrowserViewerWorkerPort["invoke"]>>;
     try {
       state = await this.#worker(
@@ -223,16 +232,10 @@ export class HostedBrowserViewerService {
       );
     } catch (error) {
       try {
-        await this.#resolveUncertainConnect(authority, claims);
-      } catch (cleanupError) {
-        const scope = cleanupScope(authority, claims, this.options.appName);
-        let pending: HostedBrowserViewerCleanupPendingV1;
-        try {
-          pending = await this.#markCleanupPending(scope, "connect_unknown");
-        } catch {
-          await this.#failClosed(claims);
-          throw error;
+        if (!(await this.#reconcilePendingRecord(pending))) {
+          throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
         }
+      } catch (cleanupError) {
         throw new HostedBrowserViewerOutcomeUnknownError(
           () => this.#retryPendingCleanup(pending),
           { cause: cleanupError },
@@ -242,16 +245,11 @@ export class HostedBrowserViewerService {
     }
     if (!(isViewerState(state) && sameViewerState(state, claims))) {
       try {
-        await this.#resolveInvalidConnect(authority, claims);
-      } catch (cleanupError) {
-        const scope = cleanupScope(authority, claims, this.options.appName);
-        let pending: HostedBrowserViewerCleanupPendingV1;
-        try {
-          pending = await this.#markCleanupPending(scope, "authority_loss");
-        } catch {
-          await this.#failClosed(claims);
-          throw new Error("BROWSER_SESSION_LOST");
+        pending = await this.#markCleanupPending(scope, "authority_loss");
+        if (!(await this.#reconcilePendingRecord(pending))) {
+          throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
         }
+      } catch (cleanupError) {
         throw new HostedBrowserViewerOutcomeUnknownError(
           () => this.#retryPendingCleanup(pending),
           { cause: cleanupError },
@@ -265,7 +263,8 @@ export class HostedBrowserViewerService {
       token,
       claims,
       state,
-      cleanupScope(authority, claims, this.options.appName),
+      scope,
+      pending,
     );
   }
 
@@ -326,20 +325,10 @@ export class HostedBrowserViewerService {
       await this.#cleanupExact(connection.cleanupScope);
       connection.revoked = true;
       this.#evidence("disconnected", connection.claims);
+      await this.#requireMarkerCleared(connection.cleanupPending);
     } catch (error) {
-      let pending: HostedBrowserViewerCleanupPendingV1;
-      try {
-        pending = await this.#markCleanupPending(
-          connection.cleanupScope,
-          "disconnect_unknown",
-        );
-      } catch {
-        await this.#failClosed(connection.claims);
-        connection.revoked = true;
-        return;
-      }
       throw new HostedBrowserViewerOutcomeUnknownError(
-        () => this.#retryPendingCleanup(pending),
+        () => this.#retryPendingCleanup(connection.cleanupPending),
         { cause: error },
       );
     }
@@ -358,6 +347,7 @@ export class HostedBrowserViewerService {
         reason: "closed_by_user",
       });
       connection.revoked = true;
+      await this.#clearCleanupPending(connection.cleanupPending).catch(() => false);
       this.#evidence("closed", connection.claims);
       return { version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION, type: "closed", reason: "closed_by_user" };
     }
@@ -397,6 +387,7 @@ export class HostedBrowserViewerService {
         now: this.#now(),
       });
       connection.revoked = true;
+      await this.#clearCleanupPending(connection.cleanupPending).catch(() => false);
       this.#evidence(message.type, connection.claims);
       return {
         version: HOSTED_BROWSER_VIEWER_ROUTE_VERSION,
@@ -530,6 +521,14 @@ export class HostedBrowserViewerService {
     expected: HostedBrowserViewerCleanupPendingV1,
   ): Promise<boolean> {
     return await this.options.tickets.clearCleanupPending(expected);
+  }
+
+  async #requireMarkerCleared(
+    expected: HostedBrowserViewerCleanupPendingV1,
+  ): Promise<void> {
+    if (!(await this.#clearCleanupPending(expected))) {
+      throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+    }
   }
 
   async #reconcileDisconnectedAuthorityLoss(
@@ -689,20 +688,10 @@ export class HostedBrowserViewerService {
       await this.#cleanupExact(connection.cleanupScope);
       connection.revoked = true;
       this.#evidence("expired", connection.claims);
+      await this.#requireMarkerCleared(connection.cleanupPending);
     } catch (error) {
-      let pending: HostedBrowserViewerCleanupPendingV1;
-      try {
-        pending = await this.#markCleanupPending(
-          connection.cleanupScope,
-          "disconnect_unknown",
-        );
-      } catch {
-        await this.#failClosed(connection.claims);
-        connection.revoked = true;
-        throw new Error("BROWSER_SESSION_LOST");
-      }
       throw new HostedBrowserViewerOutcomeUnknownError(
-        () => this.#retryPendingCleanup(pending),
+        () => this.#retryPendingCleanup(connection.cleanupPending),
         { cause: cause ?? error },
       );
     }
@@ -767,22 +756,6 @@ export class HostedBrowserViewerService {
     return record;
   }
 
-  async #resolveUncertainConnect(
-    authority: AuthorizedViewer,
-    claims: HostedBrowserViewerTicketClaimsV1,
-  ): Promise<void> {
-    if (await this.#releaseUncertainConnect(authority, claims)) return;
-    await this.#failClosed(claims);
-  }
-
-  async #resolveInvalidConnect(
-    authority: AuthorizedViewer,
-    claims: HostedBrowserViewerTicketClaimsV1,
-  ): Promise<void> {
-    await this.#releaseUncertainConnect(authority, claims);
-    await this.#failClosed(claims);
-  }
-
   async #retryFailClosed(
     claims: Pick<
       HostedBrowserViewerTicketClaimsV1,
@@ -791,21 +764,6 @@ export class HostedBrowserViewerService {
   ): Promise<boolean> {
     try {
       await this.#failClosed(claims);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  async #releaseUncertainConnect(
-    authority: AuthorizedViewer,
-    claims: HostedBrowserViewerTicketClaimsV1,
-  ): Promise<boolean> {
-    try {
-      await this.#cleanupExact(
-        cleanupScope(authority, claims, this.options.appName),
-      );
-      this.#evidence("uncertain_connect_released", claims);
       return true;
     } catch {
       return false;
@@ -831,6 +789,7 @@ export class HostedBrowserViewerConnection {
     readonly claims: HostedBrowserViewerTicketClaimsV1,
     public state: DesktopBrowserViewerStateV1,
     readonly cleanupScope: HostedBrowserViewerCleanupScopeV1,
+    readonly cleanupPending: HostedBrowserViewerCleanupPendingV1,
   ) {}
   revoked = false;
   expiryHandled = false;
