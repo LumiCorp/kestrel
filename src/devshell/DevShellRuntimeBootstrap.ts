@@ -8,6 +8,7 @@ import {
 import { runDevShellDatabaseMigrations } from "./DevShellDatabaseMigrations.js";
 import { PostgresDevShellStore } from "./PostgresDevShellStore.js";
 import { DevShellSupervisor } from "./DevShellSupervisor.js";
+import type { DevShellStoreBinding } from "./storeBinding.js";
 
 interface RecoverableDevShellStoreHandle {
   driver: string;
@@ -70,6 +71,7 @@ export function createDevShellStoreRecoveryPath(
 export async function createInitializedDevShellRuntime(input: {
   repoRoot: string;
   sqlitePath: string;
+  storeBinding: DevShellStoreBinding;
   onStoreQuarantined?: ((input: { sqlitePath: string; recoveryPath: string }) => void | Promise<void>) | undefined;
 }): Promise<{
   storeHandle: SqlExecutorStoreHandle;
@@ -130,8 +132,15 @@ async function initializeAttempt<
 async function createDevShellStoreHandle(input: {
   repoRoot: string;
   sqlitePath: string;
+  storeBinding: DevShellStoreBinding;
 }): Promise<SqlExecutorStoreHandle> {
-  const storeHandle = createSqlExecutorFromEnv({ sqlitePath: input.sqlitePath });
+  const storeHandle = createSqlExecutorFromEnv({
+    driver: input.storeBinding.driver,
+    sqlitePath: input.sqlitePath,
+    ...(input.storeBinding.driver === "postgres"
+      ? { databaseUrl: input.storeBinding.databaseUrl }
+      : {}),
+  });
   if (storeHandle.driver !== "postgres") {
     return storeHandle;
   }

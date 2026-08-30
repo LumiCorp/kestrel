@@ -97,7 +97,10 @@ import {
 } from "./desktopAttachments.js";
 import { syncDesktopThreadWorkspace } from "./desktopThreadWorkspace.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
-import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
+import {
+  createLocalCoreDevShellStoreBinding,
+  createLocalCoreRunnerRuntimeFactory,
+} from "./executionRuntime.js";
 import {
   patchLocalCoreLocalSettings,
   readLocalCoreLocalSettings,
@@ -930,6 +933,7 @@ async function createExecutionBundle(input: {
     runtimeFactory = createLocalCoreRunnerRuntimeFactory(storeHandle.store, {
       runtimeEnvironmentResolver,
       homePath: input.status.home.homePath,
+      devShellStoreBinding: createLocalCoreDevShellStoreBinding(storeHandle),
       ...(input.options.credentialStore !== undefined
         ? { credentialStore: input.options.credentialStore }
         : {}),
