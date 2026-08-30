@@ -24,7 +24,7 @@ _None._
 
 ## Implemented
 
-- [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — focused Web, Router, worker, and Local Core gates are green; PostgreSQL is unrun without its test URL and the broad process gate is recorded as inconclusive in the issue
+- [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — independent-review cleanup convergence repairs and focused gates are recorded in the issue
 - [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — remaining review findings are assigned to the existing 06b lifecycle and 06c scheduling owners
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)
 - [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)

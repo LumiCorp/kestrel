@@ -46,7 +46,8 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
         const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/browser-viewer`, {
           cache: "no-store",
         });
-        const value = response.ok ? (await response.json()) as Availability : { available: false };
+        if (!response.ok) return;
+        const value = (await response.json()) as Availability;
         if (!cancelled) {
           setAvailability(value);
           setCleanupUnknown(value.cleanupPending
@@ -56,7 +57,8 @@ export function HostedBrowserViewer({ threadId }: { threadId: string }) {
             : null);
         }
       } catch {
-        if (!cancelled) setAvailability({ available: false });
+        // Keep the last server-authoritative cleanup state across transient
+        // polling failures. Only a successful status response may clear it.
       }
     };
     void refresh();

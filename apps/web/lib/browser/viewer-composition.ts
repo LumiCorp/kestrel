@@ -8,6 +8,10 @@ import { HostedBrowserPolicy } from "./policy";
 import { resolveHostedBrowserServiceForAuthority } from "./composition";
 import { HostedBrowserStore } from "./store";
 import { HostedBrowserViewerService } from "./viewer-service";
+import {
+  composeHostedBrowserViewerLifecycle,
+  createCleanupSafeHostedBrowserViewerLifecycle,
+} from "./viewer-lifecycle";
 import { RedisHostedBrowserViewerTicketStore } from "./viewer-transient-store";
 import { HostedBrowserViewerWorkerClient } from "./viewer-worker-client";
 
@@ -28,19 +32,23 @@ export async function resolveHostedBrowserViewerService(input: {
     input.actorId,
     input.organizationId,
   );
+  const pendingMatchesOrigin = Boolean(
+    pending?.scope.organizationId === origin.organizationId &&
+    pending.scope.environmentId === origin.environmentId &&
+    pending.scope.projectId === origin.projectId &&
+    pending.scope.threadId === origin.threadId &&
+    pending.scope.runId === origin.runId &&
+    pending.scope.actorId === origin.userId &&
+    pending.scope.sessionId === active.session.sessionId &&
+    pending.scope.generation === active.session.generation &&
+    pending.scope.machineId === active.resource.machineId,
+  );
   if (
     origin.organizationId !== input.organizationId ||
     origin.threadId !== input.threadId ||
-    requestAccess?.thread.projectId !== origin.projectId ||
-    (origin.userId !== input.actorId &&
-      !(
-        pending?.scope.organizationId === origin.organizationId &&
-        pending.scope.environmentId === origin.environmentId &&
-        pending.scope.projectId === origin.projectId &&
-        pending.scope.threadId === origin.threadId &&
-        pending.scope.sessionId === active.session.sessionId &&
-        pending.scope.generation === active.session.generation
-      ))
+    (!pendingMatchesOrigin &&
+      (requestAccess?.thread.projectId !== origin.projectId ||
+        origin.userId !== input.actorId))
   ) throw new Error("BROWSER_SESSION_LOST");
   const environment = await knowledgeDb.query.environments.findFirst({
     where: and(
@@ -52,18 +60,40 @@ export async function resolveHostedBrowserViewerService(input: {
   if (
     !environment ||
     environment.provider !== "fly" ||
-    environment.status !== "ready" ||
     !environment.flyAppName ||
     !environment.routerUrl
   ) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+  const environmentReady = environment.status === "ready";
+  const pendingMatchesEnvironment = pendingMatchesOrigin &&
+    pending?.scope.appName === environment.flyAppName;
+  if (!(environmentReady || pendingMatchesEnvironment)) {
+    throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+  }
+  const requestAuthorized = environmentReady &&
+    requestAccess?.thread.projectId === origin.projectId &&
+    origin.userId === input.actorId;
+  if (!(requestAuthorized || pendingMatchesEnvironment)) {
+    throw new Error("BROWSER_SESSION_LOST");
+  }
   const privateKeyPem = required("KESTREL_BROWSER_CAPABILITY_PRIVATE_KEY");
   const viewerPublicKeyPem = createPublicKey(privateKeyPem)
     .export({ type: "spki", format: "pem" })
     .toString();
-  const lifecycle = await resolveHostedBrowserServiceForAuthority({
-    organizationId: origin.organizationId,
-    environmentId: origin.environmentId,
-    userId: origin.userId,
+  const lifecycle = await composeHostedBrowserViewerLifecycle({
+    environmentReady,
+    createReady: () => resolveHostedBrowserServiceForAuthority({
+      organizationId: origin.organizationId,
+      environmentId: origin.environmentId,
+      userId: origin.userId,
+    }),
+    createCleanupSafe: () => createCleanupSafeHostedBrowserViewerLifecycle({
+      store,
+      authority: {
+        organizationId: origin.organizationId,
+        environmentId: origin.environmentId,
+        userId: origin.userId,
+      },
+    }),
   });
   const policy = new HostedBrowserPolicy(store);
   return new HostedBrowserViewerService({
@@ -79,8 +109,22 @@ export async function resolveHostedBrowserViewerService(input: {
     publicKeyPem: viewerPublicKeyPem,
     appName: environment.flyAppName,
     routerUrl: environment.routerUrl,
+    requestAuthorized,
     access: {
       async authorize(authority) {
+        const currentEnvironment = await knowledgeDb.query.environments.findFirst({
+          where: and(
+            eq(schema.environments.id, authority.origin.environmentId),
+            eq(schema.environments.organizationId, authority.organizationId),
+          ),
+          columns: { status: true, provider: true, flyAppName: true, routerUrl: true },
+        });
+        if (
+          currentEnvironment?.status !== "ready" ||
+          currentEnvironment.provider !== "fly" ||
+          currentEnvironment.flyAppName !== environment.flyAppName ||
+          currentEnvironment.routerUrl !== environment.routerUrl
+        ) return false;
         const access = await getThreadAccessForUser(
           authority.threadId,
           authority.actorId,

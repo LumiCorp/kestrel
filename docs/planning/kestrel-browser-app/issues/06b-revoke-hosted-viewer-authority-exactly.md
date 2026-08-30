@@ -83,3 +83,31 @@ depend on an expired user ticket granting a new action.
   packed-consumer preparation, and its first TUI PTY journey. It then emitted no
   output for 50 seconds during the remaining PTY journeys and was interrupted;
   this broad gate is inconclusive rather than passing.
+
+### Independent-review repair evidence
+
+- Focused Web lifecycle, cleanup-safe composition, Redis abstraction, socket,
+  status, and UI contracts pass: 48 tests.
+- Ticket and lease rejection races exact-clean without failing a
+  `human_control` Session. Successful return, input, and renewal responses remain
+  authoritative when their response crosses the same boundary.
+- Cleanup-pending records have no time-based disappearance, promote
+  `authority_loss` atomically, and use exact compare-and-delete so stale cleanup
+  cannot clear a promoted or replacement record.
+- Proven worker cleanup remains proven when Redis marker deletion fails. The
+  stale marker continues to block replacement authority until a later exact
+  reconciliation clears it.
+- Thread-access and non-ready Environment reconciliation uses a non-disclosing,
+  exact cleanup-only path. The non-ready path durably fail-closes through the
+  existing PostgreSQL `markTerminal` CAS without invoking ready-only Fly
+  composition.
+- Transient authorization-read failures remain service uncertainty; explicit
+  access, policy, App, and Environment readiness loss exact-clean and fail-close.
+- Focused Environment Router and hosted worker contracts still pass: 26 tests.
+- Focused Local Core Browser service contracts still pass: 84 tests.
+- Root and Environment Router typechecks and scoped Web lint pass. The Web
+  typecheck still reaches only the pre-existing unrelated runtime-profile and
+  hosted OAuth test errors.
+- The PostgreSQL lifecycle test remains unrun because
+  `KESTREL_ENVIRONMENT_DB_TEST_URL` is not configured. Per the repair-turn
+  instruction, `pnpm validate:process` was not rerun.

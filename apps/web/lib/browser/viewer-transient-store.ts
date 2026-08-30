@@ -3,22 +3,35 @@ import { createClient, type RedisClientType } from "redis";
 
 const VIEWER_TICKET_PREFIX = "kestrel-one:browser-viewer-ticket:v1:";
 const VIEWER_CLEANUP_PREFIX = "kestrel-one:browser-viewer-cleanup:v1:";
-const VIEWER_CLEANUP_TTL_SECONDS = 24 * 60 * 60;
 let client: RedisClientType | null = null;
 let connecting: Promise<RedisClientType> | null = null;
+
+export interface HostedBrowserViewerRedisPort {
+  set(
+    key: string,
+    value: string,
+    options?: { EX?: number | undefined; NX?: boolean | undefined },
+  ): Promise<string | null>;
+  get(key: string): Promise<string | null>;
+  del(key: string): Promise<number>;
+  sendCommand(command: string[]): Promise<unknown>;
+  eval(
+    script: string,
+    options: { keys: string[]; arguments: string[] },
+  ): Promise<unknown>;
+}
 
 export interface HostedBrowserViewerTicketStorePort {
   issue(input: { nonce: string; token: string; ttlSeconds: number }): Promise<void>;
   consume(input: { nonce: string; token: string }): Promise<boolean>;
   revoke(nonce: string): Promise<void>;
   readCleanupPending(threadId: string): Promise<HostedBrowserViewerCleanupPendingV1 | null>;
-  markCleanupPending(input: HostedBrowserViewerCleanupPendingV1): Promise<void>;
-  clearCleanupPending(input: {
-    threadId: string;
-    sessionId: string;
-    generation: number;
-    connectionId: string;
-  }): Promise<void>;
+  markCleanupPending(
+    input: HostedBrowserViewerCleanupPendingV1,
+  ): Promise<HostedBrowserViewerCleanupPendingV1>;
+  clearCleanupPending(
+    expected: HostedBrowserViewerCleanupPendingV1,
+  ): Promise<boolean>;
 }
 
 export type HostedBrowserViewerCleanupScopeV1 = {
@@ -45,8 +58,10 @@ export type HostedBrowserViewerCleanupPendingV1 = {
 
 export class RedisHostedBrowserViewerTicketStore
   implements HostedBrowserViewerTicketStorePort {
+  constructor(private readonly redisOverride?: HostedBrowserViewerRedisPort) {}
+
   async issue(input: { nonce: string; token: string; ttlSeconds: number }) {
-    const redis = await viewerRedis();
+    const redis = await this.#redis();
     const result = await redis.set(
       key(input.nonce),
       digest(input.token),
@@ -56,53 +71,103 @@ export class RedisHostedBrowserViewerTicketStore
   }
 
   async consume(input: { nonce: string; token: string }) {
-    const redis = await viewerRedis();
+    const redis = await this.#redis();
     const value = await redis.sendCommand(["GETDEL", key(input.nonce)]);
     return value !== null && String(value) === digest(input.token);
   }
 
   async revoke(nonce: string) {
-    await (await viewerRedis()).del(key(nonce));
+    await (await this.#redis()).del(key(nonce));
   }
 
   async readCleanupPending(threadId: string) {
-    const value = await (await viewerRedis()).get(cleanupKey(threadId));
+    const value = await (await this.#redis()).get(cleanupKey(threadId));
     return value === null ? null : parseCleanupPending(value);
   }
 
   async markCleanupPending(input: HostedBrowserViewerCleanupPendingV1) {
     const parsed = parseCleanupPending(JSON.stringify(input));
-    const redis = await viewerRedis();
+    const redis = await this.#redis();
     const serialized = JSON.stringify(parsed);
-    const result = await redis.set(cleanupKey(parsed.scope.threadId), serialized, {
-      EX: VIEWER_CLEANUP_TTL_SECONDS,
-      NX: true,
+    const scope = parsed.scope;
+    const result = await redis.eval(MARK_CLEANUP_PENDING_SCRIPT, {
+      keys: [cleanupKey(scope.threadId)],
+      arguments: [
+        serialized,
+        parsed.reason,
+        scope.organizationId,
+        scope.environmentId,
+        scope.projectId,
+        scope.threadId,
+        scope.runId,
+        scope.actorId,
+        scope.sessionId,
+        String(scope.generation),
+        scope.connectionId,
+        scope.appName,
+        scope.machineId,
+      ],
     });
-    if (result === "OK") return;
-    const existing = await redis.get(cleanupKey(parsed.scope.threadId));
-    if (existing === null || !sameCleanupIdentity(parseCleanupPending(existing), parsed)) {
+    if (typeof result !== "string") {
       throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
     }
+    return parseCleanupPending(result);
   }
 
-  async clearCleanupPending(input: {
-    threadId: string;
-    sessionId: string;
-    generation: number;
-    connectionId: string;
-  }) {
-    const redis = await viewerRedis();
-    const cleanup = await this.readCleanupPending(input.threadId);
-    if (
-      cleanup &&
-      cleanup.scope.sessionId === input.sessionId &&
-      cleanup.scope.generation === input.generation &&
-      cleanup.scope.connectionId === input.connectionId
-    ) {
-      await redis.del(cleanupKey(input.threadId));
-    }
+  async clearCleanupPending(expected: HostedBrowserViewerCleanupPendingV1) {
+    const parsed = parseCleanupPending(JSON.stringify(expected));
+    const result = await (await this.#redis()).eval(
+      CLEAR_CLEANUP_PENDING_SCRIPT,
+      {
+        keys: [cleanupKey(parsed.scope.threadId)],
+        arguments: [JSON.stringify(parsed)],
+      },
+    );
+    return result === 1;
+  }
+
+  async #redis(): Promise<HostedBrowserViewerRedisPort> {
+    return this.redisOverride ?? await viewerRedis() as unknown as HostedBrowserViewerRedisPort;
   }
 }
+
+export const MARK_CLEANUP_PENDING_SCRIPT = `
+  local existing = redis.call("GET", KEYS[1])
+  if not existing then
+    redis.call("SET", KEYS[1], ARGV[1])
+    return ARGV[1]
+  end
+  local ok, record = pcall(cjson.decode, existing)
+  if not ok or not record.scope then
+    return redis.error_reply("invalid cleanup-pending record")
+  end
+  local scope = record.scope
+  if scope.organizationId ~= ARGV[3]
+    or scope.environmentId ~= ARGV[4]
+    or scope.projectId ~= ARGV[5]
+    or scope.threadId ~= ARGV[6]
+    or scope.runId ~= ARGV[7]
+    or scope.actorId ~= ARGV[8]
+    or scope.sessionId ~= ARGV[9]
+    or tostring(scope.generation) ~= ARGV[10]
+    or scope.connectionId ~= ARGV[11]
+    or scope.appName ~= ARGV[12]
+    or scope.machineId ~= ARGV[13] then
+    return redis.error_reply("cleanup-pending identity conflict")
+  end
+  if ARGV[2] == "authority_loss" and record.reason ~= "authority_loss" then
+    redis.call("SET", KEYS[1], ARGV[1])
+    return ARGV[1]
+  end
+  return existing
+`;
+
+export const CLEAR_CLEANUP_PENDING_SCRIPT = `
+  if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+  end
+  return 0
+`;
 
 async function viewerRedis() {
   if (client?.isReady) return client;
@@ -210,23 +275,6 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]) {
   const expected = new Set(keys);
   return Object.keys(value).length === expected.size &&
     Object.keys(value).every((key) => expected.has(key));
-}
-
-function sameCleanupIdentity(
-  left: HostedBrowserViewerCleanupPendingV1,
-  right: HostedBrowserViewerCleanupPendingV1,
-) {
-  return left.scope.organizationId === right.scope.organizationId &&
-    left.scope.environmentId === right.scope.environmentId &&
-    left.scope.projectId === right.scope.projectId &&
-    left.scope.threadId === right.scope.threadId &&
-    left.scope.runId === right.scope.runId &&
-    left.scope.actorId === right.scope.actorId &&
-    left.scope.sessionId === right.scope.sessionId &&
-    left.scope.generation === right.scope.generation &&
-    left.scope.connectionId === right.scope.connectionId &&
-    left.scope.appName === right.scope.appName &&
-    left.scope.machineId === right.scope.machineId;
 }
 
 function digest(token: string) {

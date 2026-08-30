@@ -7,7 +7,10 @@ import {
 } from "./viewer-service";
 import type { BrowserSessionV1 } from "../../../../src/browser/contracts.js";
 import type { HostedBrowserResourceRecord } from "./store";
-import type { HostedBrowserViewerTicketStorePort } from "./viewer-transient-store";
+import type {
+  HostedBrowserViewerCleanupScopeV1,
+  HostedBrowserViewerTicketStorePort,
+} from "./viewer-transient-store";
 import type { HostedBrowserViewerWorkerPort } from "./viewer-worker-client";
 
 const keys = generateKeyPairSync("ed25519");
@@ -84,6 +87,51 @@ test("authorization loss during frame delivery closes the Browser Session instea
   await assert.rejects(connection.frame(), /BROWSER_SESSION_LOST/u);
   assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
   assert.equal(fixture.session.state, "lost");
+  assert.equal(fixture.liveConnections.size, 0);
+});
+
+test("a transient authorization read failure is not converted into authority loss", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  await connection.dispatch({
+    version: "hosted_browser_viewer_route_v1",
+    type: "accept_takeover",
+  });
+  fixture.authorizeThrows = true;
+
+  await assert.rejects(
+    connection.revalidate(),
+    /transient authorization read failure/u,
+  );
+
+  assert.equal(fixture.session.state, "human_control");
+  assert.deepEqual(fixture.terminations, []);
+  assert.equal(fixture.liveConnections.size, 1);
+});
+
+test("connected Environment readiness loss exact-cleans and fail-closes", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  await connection.dispatch({
+    version: "hosted_browser_viewer_route_v1",
+    type: "accept_takeover",
+  });
+  fixture.environmentReady = false;
+
+  await assert.rejects(connection.revalidate(), /BROWSER_SESSION_LOST/u);
+
+  assert.equal(fixture.session.state, "lost");
+  assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
   assert.equal(fixture.liveConnections.size, 0);
 });
 
@@ -451,8 +499,267 @@ test("a response-lost established disconnect stays pending until an idempotent c
   );
 });
 
-function createFixture() {
-  const currentNow = new Date("2026-08-30T12:00:00.000Z");
+test("a frame rejection crossing ticket expiry exact-cleans without failing a human-control Session", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  await connection.dispatch({
+    version: "hosted_browser_viewer_route_v1",
+    type: "accept_takeover",
+  });
+  fixture.crossExpiry("frame", "2026-08-30T12:01:00.000Z");
+
+  await assert.rejects(connection.frame(), /BROWSER_SESSION_LOST/u);
+
+  assert.equal(fixture.session.state, "human_control");
+  assert.deepEqual(fixture.terminations, []);
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.equal(connection.revoked, true);
+  assert.ok(fixture.workerCalls.some((call) => call.action === "cleanup"));
+});
+
+test("a frame rejection crossing lease expiry exact-cleans without failing a human-control Session", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  await connection.dispatch({
+    version: "hosted_browser_viewer_route_v1",
+    type: "accept_takeover",
+  });
+  fixture.crossExpiry("frame", "2026-08-30T12:00:30.000Z");
+
+  await assert.rejects(connection.frame(), /BROWSER_SESSION_LOST/u);
+
+  assert.equal(fixture.session.state, "human_control");
+  assert.deepEqual(fixture.terminations, []);
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.equal(connection.revoked, true);
+});
+
+for (const action of ["input", "renew"] as const) {
+  test(`${action} rejection crossing lease expiry exact-cleans without failing human control`, async () => {
+    const fixture = createFixture();
+    const issued = await fixture.service.mintTicket({
+      organizationId: "org-1",
+      actorId: "user-1",
+      threadId: "thread-1",
+    });
+    const connection = await fixture.service.connect(issued.ticket);
+    await connection.dispatch({
+      version: "hosted_browser_viewer_route_v1",
+      type: "accept_takeover",
+    });
+    fixture.crossExpiry(action, "2026-08-30T12:00:30.000Z");
+
+    await assert.rejects(
+      connection.dispatch(action === "renew"
+        ? {
+            version: "hosted_browser_viewer_route_v1",
+            type: "renew_lease",
+            leaseId: connection.state.inputLeaseId!,
+          }
+        : {
+            version: "hosted_browser_viewer_route_v1",
+            type: "input",
+            leaseId: connection.state.inputLeaseId!,
+            input: {
+              version: "desktop_browser_viewer_input_v1",
+              kind: "keyboard",
+              phase: "down",
+              key: "x",
+            },
+          }),
+      /BROWSER_SESSION_LOST/u,
+    );
+
+    assert.equal(fixture.session.state, "human_control");
+    assert.deepEqual(fixture.terminations, []);
+    assert.equal(fixture.liveConnections.size, 0);
+    assert.equal(connection.revoked, true);
+  });
+}
+
+test("a successful return crossing lease expiry still completes the durable ready transition", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  await connection.dispatch({
+    version: "hosted_browser_viewer_route_v1",
+    type: "accept_takeover",
+  });
+  fixture.crossSuccess("return", "2026-08-30T12:00:30.000Z");
+
+  const returned = await connection.dispatch({
+    version: "hosted_browser_viewer_route_v1",
+    type: "return_control",
+    leaseId: connection.state.inputLeaseId!,
+  });
+
+  assert.equal(returned.type, "closed");
+  assert.equal(fixture.session.state, "ready");
+  assert.deepEqual(fixture.terminations, []);
+  assert.equal(connection.revoked, true);
+});
+
+for (const action of ["input", "renew"] as const) {
+  test(`a successful ${action} crossing lease expiry remains an authoritative worker result`, async () => {
+    const fixture = createFixture();
+    const issued = await fixture.service.mintTicket({
+      organizationId: "org-1",
+      actorId: "user-1",
+      threadId: "thread-1",
+    });
+    const connection = await fixture.service.connect(issued.ticket);
+    await connection.dispatch({
+      version: "hosted_browser_viewer_route_v1",
+      type: "accept_takeover",
+    });
+    fixture.crossSuccess(action, "2026-08-30T12:00:30.000Z");
+
+    const result = await connection.dispatch(action === "renew"
+      ? {
+          version: "hosted_browser_viewer_route_v1",
+          type: "renew_lease",
+          leaseId: connection.state.inputLeaseId!,
+        }
+      : {
+          version: "hosted_browser_viewer_route_v1",
+          type: "input",
+          leaseId: connection.state.inputLeaseId!,
+          input: {
+            version: "desktop_browser_viewer_input_v1",
+            kind: "keyboard",
+            phase: "down",
+            key: "x",
+          },
+        });
+
+    assert.equal(result.type, "state");
+    assert.equal(fixture.session.state, "human_control");
+    assert.deepEqual(fixture.terminations, []);
+    assert.equal(connection.revoked, false);
+  });
+}
+
+test("proven worker cleanup survives Redis clear failure without terminalizing a healthy Session", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  await connection.dispatch({
+    version: "hosted_browser_viewer_route_v1",
+    type: "accept_takeover",
+  });
+  fixture.disconnectLost = true;
+  await assert.rejects(connection.disconnect(), HostedBrowserViewerOutcomeUnknownError);
+  fixture.disconnectLost = false;
+  fixture.cleanupClearFailure = true;
+
+  const pending = await fixture.service.status({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+
+  assert.equal(pending.cleanupPending, true);
+  assert.equal(fixture.session.state, "human_control");
+  assert.deepEqual(fixture.terminations, []);
+  assert.equal(fixture.liveConnections.size, 0);
+
+  fixture.cleanupClearFailure = false;
+  const converged = await fixture.service.status({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  assert.equal(converged.available, true);
+  assert.equal(fixture.cleanupPending, null);
+});
+
+test("authority loss promotes pending cleanup and requires durable fail-close after worker cleanup", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({
+    organizationId: "org-1",
+    actorId: "user-1",
+    threadId: "thread-1",
+  });
+  const connection = await fixture.service.connect(issued.ticket);
+  fixture.disconnectLost = true;
+  await assert.rejects(connection.disconnect(), HostedBrowserViewerOutcomeUnknownError);
+  assert.equal(fixture.cleanupPending?.reason, "disconnect_unknown");
+
+  fixture.disconnectLost = false;
+  fixture.accessAllowed = false;
+  fixture.terminationFailure = "before_terminal";
+  await assert.rejects(connection.revalidate(), HostedBrowserViewerOutcomeUnknownError);
+
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.equal(fixture.cleanupPending?.reason, "authority_loss");
+  assert.equal(fixture.session.state, "ready");
+
+  fixture.terminationFailure = undefined;
+  const reconciled = await fixture.service.status({
+    organizationId: "org-1",
+    actorId: "replacement-user",
+    threadId: "thread-1",
+  });
+  assert.equal(reconciled.available, false);
+  assert.equal(fixture.session.state, "lost");
+  assert.equal(fixture.cleanupPending, null);
+});
+
+test("an unauthorized status request reconciles exact authority loss without exposing viewer status", async () => {
+  const fixture = createFixture({ requestAuthorized: false });
+  fixture.cleanupPending = {
+    version: "hosted_browser_viewer_cleanup_pending_v1",
+    reason: "authority_loss",
+    requestedAt: "2026-08-30T12:00:00.000Z",
+    scope: {
+      version: "hosted_browser_viewer_cleanup_scope_v1",
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      actorId: "user-1",
+      sessionId: "session-1",
+      generation: 1,
+      connectionId: "connection-1",
+      appName: "browser-app",
+      machineId: "machine-1",
+    },
+  };
+
+  await assert.rejects(
+    fixture.service.status({
+      organizationId: "org-1",
+      actorId: "replacement-user",
+      threadId: "thread-1",
+    }),
+    /BROWSER_SESSION_LOST/u,
+  );
+
+  assert.equal(fixture.session.state, "lost");
+  assert.equal(fixture.cleanupPending, null);
+});
+
+function createFixture(options: { requestAuthorized?: boolean } = {}) {
+  let currentNow = new Date("2026-08-30T12:00:00.000Z");
   const session: BrowserSessionV1 = {
     version: "browser_session_v1",
     sessionId: "session-1",
@@ -482,6 +789,7 @@ function createFixture() {
   const ticketValues = new Map<string, string>();
   let cleanupPending: Awaited<ReturnType<HostedBrowserViewerTicketStorePort["readCleanupPending"]>> = null;
   let cleanupMarkerFailure = false;
+  let cleanupClearFailure = false;
   let cleanupResponseLost = false;
   const tickets: HostedBrowserViewerTicketStorePort = {
     async issue(input) { ticketValues.set(input.nonce, input.token); },
@@ -496,18 +804,19 @@ function createFixture() {
     },
     async markCleanupPending(input) {
       if (cleanupMarkerFailure) throw new Error("redis unavailable");
-      if (cleanupPending && cleanupPending.scope.connectionId !== input.scope.connectionId) {
+      if (cleanupPending && !sameTestCleanupScope(cleanupPending.scope, input.scope)) {
         throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
       }
-      cleanupPending = input;
+      if (!cleanupPending || input.reason === "authority_loss") {
+        cleanupPending = input;
+      }
+      return cleanupPending;
     },
-    async clearCleanupPending(input) {
-      if (
-        cleanupPending?.scope.threadId === input.threadId &&
-        cleanupPending.scope.sessionId === input.sessionId &&
-        cleanupPending.scope.generation === input.generation &&
-        cleanupPending.scope.connectionId === input.connectionId
-      ) cleanupPending = null;
+    async clearCleanupPending(expected) {
+      if (cleanupClearFailure) throw new Error("redis unavailable");
+      if (JSON.stringify(cleanupPending) !== JSON.stringify(expected)) return false;
+      cleanupPending = null;
+      return true;
     },
   };
   const workerInputs: Array<{ text?: string }> = [];
@@ -518,6 +827,12 @@ function createFixture() {
   let disconnectLost = false;
   let invalidConnectState = false;
   let invalidFrame = false;
+  let authorizeThrows = false;
+  let environmentReady = true;
+  let crossExpiryAction: string | undefined;
+  let crossExpiryAt: Date | undefined;
+  let crossSuccessAction: string | undefined;
+  let crossSuccessAt: Date | undefined;
   let terminationFailure: "before_terminal" | "after_terminal" | undefined;
   let workerState = viewerState("ready", true);
   const worker: HostedBrowserViewerWorkerPort = {
@@ -529,6 +844,14 @@ function createFixture() {
           : { connectionId: input.connectionId }),
       });
       if (workerLost) throw new Error("BROWSER_ENGINE_FAILURE");
+      if (crossExpiryAction === input.action && crossExpiryAt) {
+        currentNow = crossExpiryAt;
+        liveConnections.delete(input.connectionId!);
+        throw new Error("BROWSER_SESSION_LOST");
+      }
+      if (crossSuccessAction === input.action && crossSuccessAt) {
+        currentNow = crossSuccessAt;
+      }
       if (input.action === "connect") {
         liveConnections.add(input.connectionId!);
         workerState = {
@@ -598,6 +921,10 @@ function createFixture() {
     liveConnections,
     resource,
     accessAllowed: true,
+    get authorizeThrows() { return authorizeThrows; },
+    set authorizeThrows(value) { authorizeThrows = value; },
+    get environmentReady() { return environmentReady; },
+    set environmentReady(value) { environmentReady = value; },
     get workerState() { return workerState; },
     set workerState(value) { workerState = value; },
     get workerLost() { return workerLost; },
@@ -613,10 +940,21 @@ function createFixture() {
     get terminationFailure() { return terminationFailure; },
     set terminationFailure(value) { terminationFailure = value; },
     get cleanupPending() { return cleanupPending; },
+    set cleanupPending(value) { cleanupPending = value; },
     get cleanupMarkerFailure() { return cleanupMarkerFailure; },
     set cleanupMarkerFailure(value) { cleanupMarkerFailure = value; },
+    get cleanupClearFailure() { return cleanupClearFailure; },
+    set cleanupClearFailure(value) { cleanupClearFailure = value; },
     get cleanupResponseLost() { return cleanupResponseLost; },
     set cleanupResponseLost(value) { cleanupResponseLost = value; },
+    crossExpiry(action: string, at: string) {
+      crossExpiryAction = action;
+      crossExpiryAt = new Date(at);
+    },
+    crossSuccess(action: string, at: string) {
+      crossSuccessAction = action;
+      crossSuccessAt = new Date(at);
+    },
     service: undefined as unknown as HostedBrowserViewerService,
   };
   fixture.service = new HostedBrowserViewerService({
@@ -653,7 +991,12 @@ function createFixture() {
         resource.cleanupRequestedAt = currentNow;
       },
     },
-    access: { async authorize() { return fixture.accessAllowed; } },
+    access: {
+      async authorize() {
+        if (authorizeThrows) throw new Error("transient authorization read failure");
+        return fixture.accessAllowed && environmentReady;
+      },
+    },
     tickets,
     worker,
     evidence: { emit(name, metadata) { evidence.push({ name, metadata }); } },
@@ -661,6 +1004,7 @@ function createFixture() {
     publicKeyPem,
     appName: "browser-app",
     routerUrl: "https://router.example.test",
+    requestAuthorized: options.requestAuthorized ?? true,
     now: () => currentNow,
   });
   return fixture;
@@ -688,4 +1032,11 @@ function viewerState(
       nativeHandoffActive: false,
     } : {}),
   };
+}
+
+function sameTestCleanupScope(
+  left: HostedBrowserViewerCleanupScopeV1,
+  right: HostedBrowserViewerCleanupScopeV1,
+) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
