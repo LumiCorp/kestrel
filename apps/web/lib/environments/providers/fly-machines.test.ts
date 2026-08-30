@@ -43,6 +43,7 @@ test("dedicated Browser Machines are ephemeral, private, immutable, and volume-f
   const digest = `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`;
   await client.createBrowserMachine({
     appName: "browser-workers",
+    gatewayMachineId: "gateway-machine-1",
     organizationId: "org-1",
     environmentId: "env-1",
     projectId: "project-1",
@@ -71,6 +72,11 @@ test("dedicated Browser Machines are ephemeral, private, immutable, and volume-f
   assert.equal(body?.config.env.PORT, "43105");
   assert.equal(body?.config.env.KESTREL_BROWSER_EGRESS_PROXY_URL, undefined);
   assert.equal(
+    body?.config.env.KESTREL_BROWSER_EGRESS_GATEWAY_HOST,
+    "gateway-machine-1.vm.browser-workers.internal",
+  );
+  assert.equal(body?.config.env.KESTREL_BROWSER_EGRESS_GATEWAY_PORT, "43109");
+  assert.equal(
     body?.config.env.KESTREL_BROWSER_EGRESS_OWNER,
     "environment_gateway",
   );
@@ -97,6 +103,7 @@ test("dedicated Browser Machines reject immutable images from another repository
   await assert.rejects(
     client.createBrowserMachine({
       appName: "browser-workers",
+      gatewayMachineId: "gateway-machine-1",
       organizationId: "org-1",
       environmentId: "env-1",
       projectId: "project-1",
@@ -115,6 +122,37 @@ test("dedicated Browser Machines reject immutable images from another repository
   );
 });
 
+test("dedicated Browser Machines reject an invalid Gateway Machine identity", async () => {
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async () => {
+      assert.fail("provider request must not run");
+    }) as unknown as typeof fetch,
+  });
+  await assert.rejects(
+    client.createBrowserMachine({
+      appName: "browser-workers",
+      gatewayMachineId: "../../foreign-machine",
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      sessionId: "session-1",
+      generation: 3,
+      region: "iad",
+      runtimeImageDigest:
+        `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
+      engineRevision: "v0.35.0",
+      chromeRevision: "152.0.7977.54",
+      effectiveAllowlistRevision: "revision-1",
+      capabilityPublicKeyPem: environmentTicketPublicKey,
+    }),
+    /Gateway Machine identity is invalid/u,
+  );
+});
+
 test("dedicated Browser Machines reject caller-asserted runtime revision drift", async () => {
   const client = new FlyMachinesClient({
     token: "test-token",
@@ -126,6 +164,7 @@ test("dedicated Browser Machines reject caller-asserted runtime revision drift",
   await assert.rejects(
     client.createBrowserMachine({
       appName: "browser-workers",
+      gatewayMachineId: "gateway-machine-1",
       organizationId: "org-1",
       environmentId: "env-1",
       projectId: "project-1",

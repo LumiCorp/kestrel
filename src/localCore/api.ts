@@ -108,6 +108,7 @@ import {
   createLocalCoreRunnerRuntimeFactory,
 } from "./executionRuntime.js";
 import { DesktopBrowserService } from "./desktopBrowserService.js";
+import { createLocalCoreDesktopBrowserViewerEventSink } from "./desktopBrowserViewerEvidence.js";
 import { LocalCoreDesktopBrowserAuthorityResolver } from "./desktopBrowserAuthority.js";
 import type { BrowserServicePort } from "../browser/contracts.js";
 import { getDesktopBrowserRuntimeExecutableRelativePaths } from "../browser/runtimeReleaseManifest.js";
@@ -1173,6 +1174,9 @@ function createPackagedDesktopBrowserService(input: {
       homePath: input.homePath,
       account: input.account,
       environments: input.desktopEnvironments,
+    }),
+    viewerEvents: createLocalCoreDesktopBrowserViewerEventSink({
+      homePath: input.homePath,
     }),
     withAuthorityAdmission: input.withAuthorityAdmission,
   });

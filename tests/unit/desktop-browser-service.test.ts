@@ -461,11 +461,13 @@ test("Desktop human control survives disconnect and lease expiry until an author
   assert.ok(viewerEvents.some((event) => event.name === "expiry"));
   assert.ok(viewerEvents.some((event) => event.name === "disconnect"));
   assert.ok(viewerEvents.some((event) => event.name === "lease_renewal"));
+  assert.ok(viewerEvents.some((event) => event.name === "rejection"));
   await fixture.service.close();
 });
 
 test("Desktop viewer authority loss and engine loss terminate human control instead of resuming the agent", async () => {
-  const fixture = await createFixture();
+  const viewerEvents: DesktopBrowserViewerEventV1[] = [];
+  const fixture = await createFixture({ viewerEvents });
   const sessionId = await openSession(fixture.service);
   await fixture.service.execute(
     prepared("browser.request_takeover", {
@@ -495,8 +497,10 @@ test("Desktop viewer authority loss and engine loss terminate human control inst
     })).available,
     false,
   );
+  assert.ok(viewerEvents.some((event) => event.name === "cleanup"));
 
-  const second = await createFixture();
+  const secondViewerEvents: DesktopBrowserViewerEventV1[] = [];
+  const second = await createFixture({ viewerEvents: secondViewerEvents });
   const secondSession = await openSession(second.service);
   await second.service.execute(
     prepared("browser.request_takeover", {
@@ -517,6 +521,10 @@ test("Desktop viewer authority loss and engine loss terminate human control inst
     principalId: "desktop-main-2",
   });
   assert.equal(second.engine.closed.length, 1);
+  assert.ok(
+    secondViewerEvents.some((event) => event.name === "authorization_loss"),
+  );
+  assert.ok(secondViewerEvents.some((event) => event.name === "cleanup"));
   await assert.rejects(
     second.service.execute(
       prepared("browser.snapshot", { sessionId: secondSession }),

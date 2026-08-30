@@ -165,6 +165,7 @@ export class HostedBrowserService implements BrowserServicePort {
         userId: string;
       };
       appName: string;
+      gatewayMachineId: string;
       region: string;
       runtimeImageDigest: string;
       now?: (() => Date) | undefined;
@@ -952,6 +953,7 @@ export class HostedBrowserService implements BrowserServicePort {
       }
       const machineInput: BrowserMachineProvisioningInput = {
         appName: this.options.appName,
+        gatewayMachineId: this.options.gatewayMachineId,
         organizationId: origin.organizationId,
         environmentId: origin.environmentId,
         projectId: origin.projectId,

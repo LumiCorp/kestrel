@@ -216,6 +216,19 @@ export type DesktopBrowserViewerEventName =
   | "authorization_loss"
   | "cleanup";
 
+export type DesktopBrowserViewerEventReason =
+  | "principal_conflict"
+  | "lease_conflict"
+  | "request_missing"
+  | "connection_identity"
+  | "project_identity"
+  | "qa_authority_changed"
+  | "authority_changed"
+  | "session_expired"
+  | "input_lease"
+  | "principal_changed"
+  | Exclude<BrowserSessionV1["terminalReason"], undefined>;
+
 export interface DesktopBrowserViewerEventV1 {
   version: "desktop_browser_viewer_event_v1";
   name: DesktopBrowserViewerEventName;
@@ -224,11 +237,12 @@ export interface DesktopBrowserViewerEventV1 {
   generation: number;
   threadId: string;
   projectId: string;
-  reason?: string | undefined;
+  reason?: DesktopBrowserViewerEventReason | undefined;
 }
 
 export interface DesktopBrowserViewerEventSink {
   record(event: DesktopBrowserViewerEventV1): void;
+  flush?(): Promise<void>;
 }
 
 export interface DesktopBrowserEngineInvocation {
@@ -429,6 +443,11 @@ export class DesktopBrowserService implements BrowserServicePort {
   async close(): Promise<void> {
     const candidates = [...this.#active.values()];
     await this.#closeAuthorityCandidates(candidates);
+    try {
+      await this.#options.viewerEvents?.flush?.();
+    } catch {
+      // Viewer evidence flushing cannot change Browser shutdown behavior.
+    }
   }
 
   async closeAuthority(input: {
@@ -2976,7 +2995,7 @@ export class DesktopBrowserService implements BrowserServicePort {
   #viewerEvent(
     runtime: ActiveDesktopBrowserRuntime,
     name: DesktopBrowserViewerEventName,
-    reason?: string,
+    reason?: DesktopBrowserViewerEventReason,
   ): void {
     try {
       this.#options.viewerEvents?.record({

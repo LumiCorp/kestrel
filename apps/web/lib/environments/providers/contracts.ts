@@ -107,6 +107,7 @@ export type WorkspaceMachineProvisioningInput = {
 
 export type BrowserMachineProvisioningInput = {
   appName: string;
+  gatewayMachineId: string;
   organizationId: string;
   environmentId: string;
   projectId: string;

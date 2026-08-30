@@ -620,6 +620,7 @@ function serviceFixture(
       userId: "user-1",
     },
     appName: "kestrel-env-test",
+    gatewayMachineId: "gateway-machine-1",
     region: "iad",
     runtimeImageDigest: imageDigest,
     now: () => now,

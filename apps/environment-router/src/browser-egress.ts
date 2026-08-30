@@ -1,17 +1,20 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
 import http, {
+  type ClientRequest,
   type IncomingMessage,
   type OutgoingHttpHeaders,
+  type RequestOptions,
   type Server,
 } from "node:http";
-import net, { isIP, type AddressInfo, type Socket } from "node:net";
+import net, { isIP, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { domainToASCII } from "node:url";
 import { assertPublicResolvedAddresses } from "@kestrel/mcp-security";
 
 const MAX_HEADER_BYTES = 32 * 1024;
 const AUTH_REALM = "Kestrel Hosted Browser";
+export const HOSTED_BROWSER_EGRESS_PROXY_PORT = 43_109;
 
 type BrowserMode = "qa" | "operator";
 export type HostedBrowserGatewayAuthorityV1 = {
@@ -58,22 +61,38 @@ type SessionBinding = {
 };
 
 type Destination = { scheme: "http" | "https"; hostname: string; port: number };
-type Connection = { destination: Destination; close(): void; release(): void };
+type TrackedResource = {
+  destroy(): void;
+  once(event: "close", listener: () => void): unknown;
+};
+type Connection = {
+  destination: Destination;
+  readonly active: boolean;
+  attach(resource: TrackedResource, watchClose?: boolean): boolean;
+  close(): void;
+  release(): void;
+};
 type ResolvedAddress = { address: string; family: 4 | 6 };
 type ResolveAddresses = (hostname: string) => Promise<readonly ResolvedAddress[]>;
 type Dial = (input: { address: ResolvedAddress; port: number }) => Socket;
+type RequestUpstream = (options: RequestOptions) => ClientRequest;
 
 export class HostedBrowserEgressRegistry {
   readonly #sessions = new Map<string, HostedBrowserGatewayProxy>();
+  readonly #server: Server;
   readonly #advertisedHost: string;
   readonly #resolve: ResolveAddresses;
   readonly #dial: Dial;
+  readonly #requestUpstream: RequestUpstream;
+  #listening: Promise<void> | undefined;
+  #closed = false;
 
   constructor(input: {
     gatewayMachineId: string;
     appName: string;
     resolve?: ResolveAddresses | undefined;
     dial?: Dial | undefined;
+    requestUpstream?: RequestUpstream | undefined;
   }) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(input.gatewayMachineId)) {
       throw new Error("Hosted Browser gateway Machine identity is invalid.");
@@ -85,10 +104,27 @@ export class HostedBrowserEgressRegistry {
       `${input.gatewayMachineId}.vm.${input.appName}.internal`;
     this.#resolve = input.resolve ?? resolveAddresses;
     this.#dial = input.dial ?? dialAddress;
+    this.#requestUpstream = input.requestUpstream ?? ((options) => http.request(options));
+    this.#server = http.createServer(
+      { maxHeaderSize: MAX_HEADER_BYTES, requireHostHeader: true },
+      (request, response) => {
+        const proxy = this.#proxyFor(request);
+        if (proxy) void proxy.request(request, response);
+        else rejectAuthenticationResponse(response);
+      },
+    );
+    this.#server.on("connect", (request, client, head) => {
+      const proxy = this.#proxyFor(request);
+      if (proxy) void proxy.connect(request, client, head);
+      else rejectAuthentication(client);
+    });
+    this.#server.on("upgrade", (_request, socket) => rejectSocket(socket));
+    this.#server.on("clientError", (_error, socket) => rejectSocket(socket));
   }
 
   async install(input: SessionBinding): Promise<HostedBrowserGatewayProxyBindingV1> {
     this.#prune();
+    await this.#start();
     const existing = this.#sessions.get(input.sessionId);
     if (existing) {
       existing.assertSameSession(input);
@@ -104,8 +140,8 @@ export class HostedBrowserEgressRegistry {
       this.#advertisedHost,
       this.#resolve,
       this.#dial,
+      this.#requestUpstream,
     );
-    await proxy.start();
     this.#sessions.set(input.sessionId, proxy);
     return proxy.launchBinding;
   }
@@ -158,6 +194,38 @@ export class HostedBrowserEgressRegistry {
     const proxies = [...this.#sessions.values()];
     this.#sessions.clear();
     await Promise.allSettled(proxies.map((proxy) => proxy.close()));
+    if (this.#closed) return;
+    this.#closed = true;
+    if (this.#listening) {
+      await new Promise<void>((resolve) => {
+        this.#server.close(() => resolve());
+        this.#server.closeAllConnections();
+      });
+    }
+  }
+
+  async #start(): Promise<void> {
+    if (this.#closed) throw new Error("BROWSER_SESSION_LOST");
+    this.#listening ??= new Promise<void>((resolve, reject) => {
+      const failed = (error: Error) => reject(error);
+      this.#server.once("error", failed);
+      this.#server.listen(
+        { host: "::", port: HOSTED_BROWSER_EGRESS_PROXY_PORT, exclusive: true },
+        () => {
+          this.#server.off("error", failed);
+          resolve();
+        },
+      );
+    });
+    await this.#listening;
+  }
+
+  #proxyFor(request: IncomingMessage): HostedBrowserGatewayProxy | undefined {
+    this.#prune();
+    for (const proxy of this.#sessions.values()) {
+      if (proxy.authenticates(request)) return proxy;
+    }
+    return undefined;
   }
 
   #prune(): void {
@@ -169,14 +237,13 @@ export class HostedBrowserEgressRegistry {
 }
 
 class HostedBrowserGatewayProxy {
-  readonly #server: Server;
   readonly #connections = new Set<Connection>();
   readonly #credential: { username: string; password: string; authorization: string };
   readonly #advertisedHost: string;
   readonly #resolve: ResolveAddresses;
   readonly #dial: Dial;
+  readonly #requestUpstream: RequestUpstream;
   #binding: SessionBinding;
-  #address: AddressInfo | undefined;
   #closed = false;
 
   constructor(
@@ -184,32 +251,24 @@ class HostedBrowserGatewayProxy {
     advertisedHost: string,
     resolve: ResolveAddresses,
     dial: Dial,
+    requestUpstream: RequestUpstream,
   ) {
     validateSessionBinding(binding);
     this.#binding = copyBinding(binding);
     this.#advertisedHost = advertisedHost;
     this.#resolve = resolve;
     this.#dial = dial;
+    this.#requestUpstream = requestUpstream;
     this.#credential = credentialFor(binding);
-    this.#server = http.createServer(
-      { maxHeaderSize: MAX_HEADER_BYTES, requireHostHeader: true },
-      (request, response) => {
-        void this.#request(request, response);
-      },
-    );
-    this.#server.on("connect", (request, client, head) => {
-      void this.#connect(request, client, head);
-    });
-    this.#server.on("upgrade", (_request, socket) => rejectSocket(socket));
-    this.#server.on("clientError", (_error, socket) => rejectSocket(socket));
   }
 
   get revision() { return this.#binding.authority.effectiveAllowlistRevision; }
   get hardExpiresAt() { return this.#binding.hardExpiresAt; }
 
   get launchBinding(): HostedBrowserGatewayProxyBindingV1 {
-    if (this.#closed || !this.#address) throw new Error("BROWSER_SESSION_LOST");
-    const proxyServer = `http://${this.#advertisedHost}:${this.#address.port}`;
+    if (this.#closed) throw new Error("BROWSER_SESSION_LOST");
+    const proxyServer =
+      `http://${this.#advertisedHost}:${HOSTED_BROWSER_EGRESS_PROXY_PORT}`;
     return {
       version: "hosted_browser_gateway_proxy_binding_v1",
       proxyServer,
@@ -230,18 +289,8 @@ class HostedBrowserGatewayProxy {
     };
   }
 
-  async start(): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const failed = (error: Error) => reject(error);
-      this.#server.once("error", failed);
-      this.#server.listen({ host: "::", port: 0, exclusive: true }, () => {
-        this.#server.off("error", failed);
-        resolve();
-      });
-    });
-    const address = this.#server.address();
-    if (!address || typeof address === "string") throw new Error("BROWSER_SERVICE_UNAVAILABLE");
-    this.#address = address;
+  authenticates(request: IncomingMessage): boolean {
+    return authenticated(request, this.#credential.authorization);
   }
 
   assertSameSession(input: SessionBinding): void {
@@ -308,20 +357,16 @@ class HostedBrowserGatewayProxy {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    this.#address = undefined;
     for (const connection of [...this.#connections]) connection.close();
-    await new Promise<void>((resolve) => {
-      this.#server.close(() => resolve());
-      this.#server.closeAllConnections();
-    });
   }
 
-  async #connect(request: IncomingMessage, client: Duplex, head: Buffer) {
+  async connect(request: IncomingMessage, client: Duplex, head: Buffer) {
     if (!authenticated(request, this.#credential.authorization)) {
       rejectAuthentication(client);
       return;
     }
     let destination: Destination;
+    let connection: Connection | undefined;
     try {
       destination = parseConnect(request.url);
       const revision = this.revision;
@@ -336,22 +381,25 @@ class HostedBrowserGatewayProxy {
       ) throw new Error("blocked");
       const selected = addresses[0];
       if (!selected) throw new Error("blocked");
+      const activeConnection = this.#reserve(destination, client);
+      connection = activeConnection;
       const upstream = this.#dial({ address: selected, port: destination.port });
-      const connection = this.#track(destination, client, upstream);
-      upstream.once("error", () => connection.close());
+      activeConnection.attach(upstream);
+      upstream.once("error", () => activeConnection.close());
       upstream.once("connect", () => {
-        if (client.destroyed || upstream.destroyed) return;
+        if (!activeConnection.active || client.destroyed || upstream.destroyed) return;
         client.write("HTTP/1.1 200 Connection Established\r\nProxy-Agent: Kestrel\r\n\r\n");
         if (head.byteLength > 0) upstream.write(head);
         client.pipe(upstream);
         upstream.pipe(client);
       });
     } catch {
+      connection?.close();
       rejectSocket(client);
     }
   }
 
-  async #request(request: IncomingMessage, response: http.ServerResponse) {
+  async request(request: IncomingMessage, response: http.ServerResponse) {
     if (!authenticated(request, this.#credential.authorization)) {
       response.writeHead(407, {
         "proxy-authenticate": `Basic realm="${AUTH_REALM}"`,
@@ -360,6 +408,7 @@ class HostedBrowserGatewayProxy {
       response.end();
       return;
     }
+    let connection: Connection | undefined;
     try {
       const url = new URL(request.url ?? "");
       if (url.protocol !== "http:" || url.username || url.password || url.hash) {
@@ -384,7 +433,9 @@ class HostedBrowserGatewayProxy {
       if (!selected) throw new Error("blocked");
       const headers = sanitizeHeaders(request.headers);
       headers.host = `${destination.hostname}:${destination.port}`;
-      const upstream = http.request({
+      const activeConnection = this.#reserve(destination, request.socket);
+      connection = activeConnection;
+      const upstream = this.#requestUpstream({
         host: selected.address,
         family: selected.family,
         port: destination.port,
@@ -393,43 +444,71 @@ class HostedBrowserGatewayProxy {
         headers,
         agent: false,
       });
-      let connection: Connection | undefined;
+      activeConnection.attach(upstream, false);
       upstream.once("socket", (socket) => {
-        connection = this.#track(destination, request.socket, socket);
+        activeConnection.attach(socket);
       });
       upstream.once("response", (upstreamResponse) => {
+        if (!activeConnection.active) {
+          upstreamResponse.destroy();
+          return;
+        }
         response.writeHead(
           upstreamResponse.statusCode ?? 502,
           sanitizeHeaders(upstreamResponse.headers),
         );
         upstreamResponse.pipe(response);
-        upstreamResponse.once("end", () => connection?.release());
+        upstreamResponse.once("end", () => activeConnection.release());
+        upstreamResponse.once("aborted", () => activeConnection.close());
+        upstreamResponse.once("error", () => activeConnection.close());
       });
-      upstream.once("error", () => connection?.close());
+      upstream.once("error", () => activeConnection.close());
+      upstream.once("timeout", () => activeConnection.close());
+      request.once("aborted", () => activeConnection.close());
+      response.once("close", () => {
+        if (!response.writableEnded) activeConnection.close();
+      });
       request.pipe(upstream);
     } catch {
+      connection?.close();
       rejectHttp(response);
     }
   }
 
-  #track(destination: Destination, ...sockets: Array<Socket | Duplex>): Connection {
+  #reserve(destination: Destination, ...resources: TrackedResource[]): Connection {
+    // Adoption must be able to invalidate the request before any allocator can
+    // attach a socket and make the authorized operation observable upstream.
     let closed = false;
+    const attached = new Set<TrackedResource>();
     const connection: Connection = {
       destination,
+      get active() { return !closed; },
+      attach: (resource, watchClose = true) => {
+        if (closed) {
+          resource.destroy();
+          return false;
+        }
+        if (attached.has(resource)) return true;
+        attached.add(resource);
+        if (watchClose) resource.once("close", connection.close);
+        return true;
+      },
       close: () => {
         if (closed) return;
         closed = true;
         this.#connections.delete(connection);
-        for (const socket of sockets) socket.destroy();
+        for (const resource of attached) resource.destroy();
+        attached.clear();
       },
       release: () => {
         if (closed) return;
         closed = true;
         this.#connections.delete(connection);
+        attached.clear();
       },
     };
     this.#connections.add(connection);
-    for (const socket of sockets) socket.once("close", connection.close);
+    for (const resource of resources) connection.attach(resource);
     return connection;
   }
 }
@@ -565,6 +644,13 @@ function sanitizeHeaders(
 }
 function rejectAuthentication(socket: Duplex) {
   socket.end(`HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="${AUTH_REALM}"\r\nConnection: close\r\n\r\n`);
+}
+function rejectAuthenticationResponse(response: http.ServerResponse) {
+  response.writeHead(407, {
+    "proxy-authenticate": `Basic realm="${AUTH_REALM}"`,
+    connection: "close",
+  });
+  response.end();
 }
 function rejectSocket(socket: Duplex) {
   socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");

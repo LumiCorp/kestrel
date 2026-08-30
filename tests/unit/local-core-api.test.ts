@@ -19,6 +19,7 @@ import path from "node:path";
 import {
   LOCAL_CORE_DESKTOP_PROFILE_ID,
   DesktopBrowserService,
+  LocalCoreDesktopBrowserViewerEventSink,
   LocalCoreApiError,
   LocalCoreClient,
   acquireCoreLock,
@@ -29,6 +30,10 @@ import {
   resolveLocalCorePaths,
   startLocalCoreApiServer,
 } from "../../src/localCore/index.js";
+import type {
+  DesktopBrowserViewerEventName,
+  DesktopBrowserViewerEventV1,
+} from "../../src/localCore/desktopBrowserService.js";
 import { LOCAL_CORE_RUNTIME_CONFIGURATION_FILE_NAME } from "../../src/localCore/runtimeConfiguration.js";
 import { parseLocalCoreSystemShutdownRequest } from "../../src/localCore/contracts.js";
 import type { DesktopBrowserPersonalDomainsV1 } from "../../src/desktopShell/contracts.js";
@@ -149,6 +154,108 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
       }),
       undefined,
     );
+  });
+
+  test("packaged Desktop Browser viewer lifecycle evidence reaches the durable metadata-only diagnostic sink", async () => {
+    const home = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-core-browser-viewer-evidence-"),
+    );
+    const sink = new LocalCoreDesktopBrowserViewerEventSink({ homePath: home });
+    const names: DesktopBrowserViewerEventName[] = [
+      "request",
+      "acceptance",
+      "lease_issue",
+      "lease_renewal",
+      "disconnect",
+      "return",
+      "rejection",
+      "expiry",
+      "authorization_loss",
+      "cleanup",
+    ];
+    const passwordSentinel = "viewer-password-unique-9Y!";
+    const mfaSentinel = "viewer-mfa-unique-734921";
+
+    for (const [generation, name] of names.entries()) {
+      sink.record({
+        version: "desktop_browser_viewer_event_v1",
+        name,
+        at: `2026-08-30T12:00:${String(generation).padStart(2, "0")}.000Z`,
+        sessionId: `browser-session-${generation}`,
+        generation,
+        threadId: `thread-${generation}`,
+        projectId: `project-${generation}`,
+        ...(name === "rejection" ? { reason: "lease_conflict" } : {}),
+        password: passwordSentinel,
+        mfaCode: mfaSentinel,
+        input: { text: passwordSentinel },
+        url: `https://${mfaSentinel}.invalid/`,
+        engineEndpoint: passwordSentinel,
+        proxyEndpoint: mfaSentinel,
+      } as DesktopBrowserViewerEventV1);
+    }
+    await sink.flush();
+
+    const raw = await readFile(
+      path.join(home, "logs", "tui-diagnostics.log"),
+      "utf8",
+    );
+    for (const [generation, name] of names.entries()) {
+      assert.match(raw, new RegExp(`summary: ${name}\\n`, "u"));
+      assert.match(raw, new RegExp(`"name":"${name}"`, "u"));
+      assert.match(
+        raw,
+        new RegExp(`"sessionId":"browser-session-${generation}"`, "u"),
+      );
+      assert.match(raw, new RegExp(`"generation":${generation}`, "u"));
+      assert.match(
+        raw,
+        new RegExp(
+          `"at":"2026-08-30T12:00:${String(generation).padStart(2, "0")}\\.000Z"`,
+          "u",
+        ),
+      );
+      assert.match(
+        raw,
+        new RegExp(`"threadId":"thread-${generation}"`, "u"),
+      );
+      assert.match(
+        raw,
+        new RegExp(`"projectId":"project-${generation}"`, "u"),
+      );
+    }
+    assert.match(raw, /"reason":"lease_conflict"/u);
+    assert.doesNotMatch(raw, new RegExp(passwordSentinel, "u"));
+    assert.doesNotMatch(raw, new RegExp(mfaSentinel, "u"));
+    assert.doesNotMatch(
+      raw,
+      /password|mfaCode|input|url|engineEndpoint|proxyEndpoint/u,
+    );
+  });
+
+  test("packaged Desktop Browser viewer evidence failures stay non-fatal and silent", async () => {
+    const rejectedPayloadSentinel = "rejected-viewer-secret-9Y!734921";
+    const sink = new LocalCoreDesktopBrowserViewerEventSink({
+      homePath: "/unused",
+      store: {
+        async append() {
+          throw new Error(rejectedPayloadSentinel);
+        },
+      },
+    });
+
+    assert.doesNotThrow(() =>
+      sink.record({
+        version: "desktop_browser_viewer_event_v1",
+        name: "request",
+        at: "2026-08-30T12:00:00.000Z",
+        sessionId: "browser-session-1",
+        generation: 1,
+        threadId: "thread-1",
+        projectId: "project-1",
+      }),
+    );
+    await assert.doesNotReject(sink.flush());
   });
 
   test("Local Core code-update shutdown requires its exact confirmation contract", () => {

@@ -28,7 +28,12 @@ Before publishing anything:
    `deploy/fly/kestrel-one-browser-worker/Dockerfile` for `linux/amd64` and run
    `deploy/fly/kestrel-one-browser-worker/smoke.sh` against that exact local
    image. The image smoke must prove the pinned engine and Chrome revisions,
-   nonroot/read-only operation, exact control operations, and clean close.
+   nonroot/read-only operation, exact control operations, and clean close. The
+   smoke runs the worker on an otherwise routed network and must also prove
+   that its namespace firewall denies steady-state DNS, direct public and
+   private traffic, and another port on the exact Gateway Machine while
+   authenticated Browser navigation succeeds through the pinned Gateway
+   address and dedicated TCP port 43109.
 5. Choose a new readable tag. Record the operator, start time, production
    revision, prior `KESTREL_BROWSER_WORKER_IMAGE` digest, candidate tag, and
    intended canary organization, Environment, Project, Thread, and target. Do
@@ -85,11 +90,15 @@ origin. The canary must:
    observe the same resolved image identity from Fly;
 3. become ready only after the worker self-measures agent-browser `v0.35.0` and
    Chrome for Testing `152.0.7977.54`;
-4. complete open, navigation or inspection, one Thread-authorized screenshot,
+4. prove the worker booted its nftables ceiling on Fly, resolved and pinned the
+   exact current Gateway Machine address, dropped to uid/gid 10001 with no
+   effective capabilities, and cannot reach DNS, a direct public destination,
+   an unauthorized Environment Machine, or another port on the Gateway;
+5. complete open, navigation or inspection, one Thread-authorized screenshot,
    and close through the ordinary Browser App path;
-5. preserve the exact session ID and generation through capability and worker
+6. preserve the exact session ID and generation through capability and worker
    evidence without exposing the worker address or credential; and
-6. reach a terminal session state, confirm the labeled Machine is absent, and
+7. reach a terminal session state, confirm the labeled Machine is absent, and
    confirm cleanup of profile, proxy authority, and capabilities.
 
 Record this unified release-evidence canary as `browser-worker-session` with

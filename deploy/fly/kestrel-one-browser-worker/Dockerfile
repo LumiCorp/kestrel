@@ -68,6 +68,8 @@ RUN apt-get update \
     libxfixes3 \
     libxkbcommon0 \
     libxrandr2 \
+    nftables \
+    util-linux \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 10001 kestrel-browser \
   && useradd --system --uid 10001 --gid 10001 --home-dir /nonexistent --no-create-home kestrel-browser
@@ -75,7 +77,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=build /opt/kestrel /app
 COPY --from=runtime-assets /opt/kestrel/browser-runtime /opt/kestrel/browser-runtime
+COPY --chmod=0755 deploy/fly/kestrel-one-browser-worker/entrypoint.sh /usr/local/bin/kestrel-browser-worker-entrypoint
 
-USER 10001:10001
 EXPOSE 43105
-CMD ["node", "/app/dist/src/browser/hostedWorkerMain.js"]
+ENTRYPOINT ["/usr/local/bin/kestrel-browser-worker-entrypoint"]

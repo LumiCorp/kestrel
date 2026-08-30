@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { isIP } from "node:net";
 import path from "node:path";
 import {
   BROWSER_RUNTIME_RELEASE_MANIFEST,
@@ -62,6 +63,9 @@ export type HostedBrowserWorkerConfig = {
   effectiveAllowlistRevision: string;
   imageDigest: string;
   capabilityPublicKeyPem: string;
+  gatewayHost: string;
+  gatewayAddress: string;
+  gatewayPort: number;
   engineExecutablePath: string;
   chromeExecutablePath: string;
   port: number;
@@ -134,7 +138,7 @@ export function startHostedBrowserWorker(input: {
         const authority = requireAuthority(record.authority);
         const gatewayProxy = record.gatewayProxy === undefined
           ? undefined
-          : requireGatewayProxyBinding(record.gatewayProxy);
+          : requireGatewayProxyBinding(record.gatewayProxy, config);
         const operation = prepared.activation.descriptor.toolId;
         const capability = requiredString(record.capability);
         const claims = verifyHostedBrowserCapabilitySignature({
@@ -349,7 +353,7 @@ export function startHostedBrowserWorker(input: {
         const capability = requiredString(record.capability);
         const gatewayProxy = record.gatewayProxy === undefined
           ? undefined
-          : requireGatewayProxyBinding(record.gatewayProxy);
+          : requireGatewayProxyBinding(record.gatewayProxy, config);
         const gatewayClosedUnauthorizedConnections =
           record.gatewayClosedUnauthorizedConnections === undefined
             ? undefined
@@ -456,6 +460,9 @@ export function hostedBrowserWorkerConfigFromEnv(
     chromeRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.chrome.revision,
     imageDigest: requiredEnv(env, "KESTREL_BROWSER_WORKER_IMAGE_DIGEST"),
     capabilityPublicKeyPem: requiredEnv(env, "KESTREL_BROWSER_CAPABILITY_PUBLIC_KEY"),
+    gatewayHost: requiredEnv(env, "KESTREL_BROWSER_EGRESS_GATEWAY_HOST"),
+    gatewayAddress: requiredEnv(env, "KESTREL_BROWSER_EGRESS_GATEWAY_ADDRESS"),
+    gatewayPort: Number(requiredEnv(env, "KESTREL_BROWSER_EGRESS_GATEWAY_PORT")),
     engineExecutablePath: path.join(runtimeRoot, release.engine.executableRelativePath),
     chromeExecutablePath: path.join(runtimeRoot, release.chrome.executableRelativePath),
     port: Number(env.PORT ?? "43105"),
@@ -789,6 +796,11 @@ function validateConfig(config: HostedBrowserWorkerConfig) {
     config.engineRevision !== BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision ||
     config.chromeRevision !== BROWSER_RUNTIME_RELEASE_MANIFEST.chrome.revision ||
     !config.effectiveAllowlistRevision.trim() ||
+    !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}\.vm\.[a-z0-9][a-z0-9-]{0,62}\.internal$/u.test(
+      config.gatewayHost,
+    ) ||
+    isIP(config.gatewayAddress) === 0 ||
+    config.gatewayPort !== 43_109 ||
     !Number.isInteger(config.port) || config.port < 0 || config.port > 65_535
   ) throw new Error("Hosted Browser worker configuration is invalid.");
   return {
@@ -894,6 +906,7 @@ function requireAuthority(value: unknown): BrowserEffectiveDomainAuthorityV1 {
 
 function requireGatewayProxyBinding(
   value: unknown,
+  config: HostedBrowserWorkerConfig,
 ): HostedBrowserGatewayProxyBindingV1 {
   const record = requireRecord(value);
   const chromiumFlags = record.chromiumFlags;
@@ -919,11 +932,19 @@ function requireGatewayProxyBinding(
     url.search ||
     url.hash ||
     !url.port ||
-    !url.hostname.endsWith(".internal")
+    url.hostname !== config.gatewayHost ||
+    Number(url.port) !== config.gatewayPort
+  ) throw new Error("BROWSER_ENGINE_FAILURE");
+  const pinnedProxyServer =
+    `http://${isIP(config.gatewayAddress) === 6 ? `[${config.gatewayAddress}]` : config.gatewayAddress}:${config.gatewayPort}`;
+  const expectedProxyFlag = `--proxy-server=${record.proxyServer}`;
+  if (
+    !chromiumFlags.includes(expectedProxyFlag) ||
+    chromiumFlags.filter((flag) => flag.startsWith("--proxy-server=")).length !== 1
   ) throw new Error("BROWSER_ENGINE_FAILURE");
   return {
     version: "hosted_browser_gateway_proxy_binding_v1",
-    proxyServer: record.proxyServer,
+    proxyServer: pinnedProxyServer,
     username: requiredString(record.username),
     password: requiredString(record.password),
     threadId: requiredString(record.threadId),
@@ -931,7 +952,9 @@ function requireGatewayProxyBinding(
     generation: record.generation as number,
     effectiveAllowlistRevision:
       requiredString(record.effectiveAllowlistRevision),
-    chromiumFlags: chromiumFlags as string[],
+    chromiumFlags: chromiumFlags.map((flag) =>
+      flag === expectedProxyFlag ? `--proxy-server=${pinnedProxyServer}` : flag
+    ) as string[],
   };
 }
 

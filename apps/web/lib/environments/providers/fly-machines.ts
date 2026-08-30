@@ -1542,6 +1542,12 @@ function workspaceMachineConfig(
 }
 
 function browserMachineConfig(input: BrowserMachineProvisioningInput) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(input.gatewayMachineId)) {
+    throw new EnvironmentProviderError(
+      "FLY_PROVIDER_REJECTED",
+      "Browser worker Environment Gateway Machine identity is invalid.",
+    );
+  }
   if (!Number.isInteger(input.generation) || input.generation < 1) {
     throw new EnvironmentProviderError(
       "FLY_PROVIDER_REJECTED",
@@ -1586,6 +1592,9 @@ function browserMachineConfig(input: BrowserMachineProvisioningInput) {
       PORT: "43105",
       KESTREL_BROWSER_DIRECT_EGRESS: "disabled",
       KESTREL_BROWSER_EGRESS_OWNER: "environment_gateway",
+      KESTREL_BROWSER_EGRESS_GATEWAY_HOST:
+        `${input.gatewayMachineId}.vm.${input.appName}.internal`,
+      KESTREL_BROWSER_EGRESS_GATEWAY_PORT: "43109",
       KESTREL_BROWSER_QUIC: "disabled",
       KESTREL_BROWSER_WEBRTC: "disabled",
       KESTREL_BROWSER_EVALUATION: "disabled",

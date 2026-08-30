@@ -36,13 +36,15 @@ export async function resolveHostedBrowserServiceForAuthority(input: {
       status: true,
       region: true,
       flyAppName: true,
+      flyGatewayMachineId: true,
     },
   });
   if (
     !environment ||
     environment.provider !== "fly" ||
     environment.status !== "ready" ||
-    !environment.flyAppName
+    !environment.flyAppName ||
+    !environment.flyGatewayMachineId
   ) {
     throw new Error("BROWSER_SERVICE_UNAVAILABLE");
   }
@@ -69,6 +71,7 @@ export async function resolveHostedBrowserServiceForAuthority(input: {
       userId: input.userId,
     },
     appName: environment.flyAppName,
+    gatewayMachineId: environment.flyGatewayMachineId,
     region: environment.region,
     runtimeImageDigest,
   });

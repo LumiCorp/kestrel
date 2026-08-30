@@ -16,6 +16,7 @@ import {
 test("hosted Browser image build is pinned, nonroot, compiled, and runtime-fetch free", async () => {
   const [
     dockerfile,
+    entrypoint,
     metadataSource,
     smoke,
     imageCatalogSource,
@@ -23,6 +24,7 @@ test("hosted Browser image build is pinned, nonroot, compiled, and runtime-fetch
     stagingReadme,
   ] = await Promise.all([
     readFile("deploy/fly/kestrel-one-browser-worker/Dockerfile", "utf8"),
+    readFile("deploy/fly/kestrel-one-browser-worker/entrypoint.sh", "utf8"),
     readFile("deploy/fly/kestrel-one-browser-worker/image-build.json", "utf8"),
     readFile("deploy/fly/kestrel-one-browser-worker/smoke.sh", "utf8"),
     readFile("deploy/fly/image-catalog.json", "utf8"),
@@ -75,23 +77,42 @@ test("hosted Browser image build is pinned, nonroot, compiled, and runtime-fetch
   assert.match(dockerfile, /pnpm run build/u);
   assert.match(
     dockerfile,
-    /CMD \["node", "\/app\/dist\/src\/browser\/hostedWorkerMain\.js"\]/u,
+    /ENTRYPOINT \["\/usr\/local\/bin\/kestrel-browser-worker-entrypoint"\]/u,
   );
-  assert.match(dockerfile, /USER 10001:10001/u);
+  assert.doesNotMatch(dockerfile, /^USER /mu);
+  assert.match(entrypoint, /policy drop/u);
+  assert.match(entrypoint, /udp dport 53 drop/u);
+  assert.match(entrypoint, /tcp dport 53 drop/u);
+  assert.match(entrypoint, /tcp dport %s accept/u);
+  assert.match(entrypoint, /KESTREL_BROWSER_EGRESS_GATEWAY_ADDRESS/u);
+  assert.match(entrypoint, /--reuid=10001/u);
+  assert.match(entrypoint, /--regid=10001/u);
+  assert.match(entrypoint, /--bounding-set=-all/u);
+  assert.match(entrypoint, /--no-new-privs/u);
   assert.match(dockerfile, /org\.opencontainers\.image\.source/u);
   assert.match(dockerfile, /org\.opencontainers\.image\.revision/u);
   assert.match(dockerfile, new RegExp(hostedRelease.engine.sha256, "u"));
   assert.match(dockerfile, new RegExp(hostedRelease.chrome.sha256, "u"));
   assert.doesNotMatch(dockerfile, /\bcurl\b|\bwget\b|agent-browser install/u);
-  assert.match(smoke, /docker network create --internal/u);
+  assert.match(smoke, /docker network create "\$network_name"/u);
   const workerRun = smoke.slice(
     smoke.indexOf('worker_container="$(docker run --detach'),
-    smoke.indexOf("# Docker does not publish host ports"),
+    smoke.indexOf("# A credential-free TCP relay"),
   );
   assert.doesNotMatch(workerRun, /--publish/u);
+  assert.match(workerRun, /--cap-add NET_ADMIN/u);
+  assert.match(workerRun, /KESTREL_BROWSER_EGRESS_GATEWAY_PORT=43109/u);
   assert.match(smoke, /credential-free TCP relay/u);
   assert.match(smoke, /--network bridge/u);
   assert.match(smoke, /docker network connect "\$network_name"/u);
+  assert.match(smoke, /steady-state Browser worker DNS unexpectedly succeeded/u);
+  assert.match(
+    smoke,
+    /KESTREL_BROWSER_SMOKE_GATEWAY_ADDRESS, 43110/u,
+  );
+  assert.match(smoke, /direct connection unexpectedly reached/u);
+  assert.match(smoke, /gateway accepted missing credentials/u);
+  assert.match(smoke, /Gateway loss stays closed/u);
   assert.match(smoke, /--platform linux\/amd64/u);
   assert.match(smoke, /chrome="\$\{chrome%/u);
   assert.match(

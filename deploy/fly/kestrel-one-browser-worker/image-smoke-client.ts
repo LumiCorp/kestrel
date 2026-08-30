@@ -136,7 +136,8 @@ export async function runHostedBrowserImageSmokeControl(input: {
   });
   const gatewayProxy = {
     version: "hosted_browser_gateway_proxy_binding_v1",
-    proxyServer: "http://browser-smoke-gateway.internal:43107",
+    proxyServer:
+      "http://gateway-machine-1.vm.browser-workers.internal:43109",
     username: "kestrel-browser-smoke",
     password: "kestrel-browser-smoke-secret",
     threadId: IDENTITY.threadId,
@@ -144,7 +145,7 @@ export async function runHostedBrowserImageSmokeControl(input: {
     generation: IDENTITY.generation,
     effectiveAllowlistRevision,
     chromiumFlags: [
-      "--proxy-server=http://browser-smoke-gateway.internal:43107",
+      "--proxy-server=http://gateway-machine-1.vm.browser-workers.internal:43109",
       "--proxy-bypass-list=<-loopback>",
       "--disable-quic",
       "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",

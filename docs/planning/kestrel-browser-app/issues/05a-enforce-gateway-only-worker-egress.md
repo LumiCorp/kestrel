@@ -26,3 +26,24 @@ The hosted Browser worker Machine/network deployment owns the outbound ceiling. 
 ## Depends on
 
 None.
+
+## Implemented boundary
+
+- Browser Machine provisioning binds the worker to the owning Environment's
+  exact Gateway Machine hostname and dedicated shared proxy port 43109.
+- The image entrypoint resolves one Gateway address before untrusted code
+  starts, installs a default-drop nftables output chain that explicitly denies
+  DNS and permits only that address and port, then drops to uid/gid 10001 with
+  an empty capability set and `no_new_privs`.
+- The hosted worker rejects a proxy binding for any other host or port and
+  replaces the validated internal hostname with the init-pinned address before
+  Chrome starts. Environment Gateway still selects the exact session policy by
+  authenticated per-session proxy credentials on the shared listener.
+- The routed local image smoke proves direct public, private/east-west,
+  steady-state DNS, and alternate Gateway-port attempts fail from the worker
+  namespace while the authenticated Browser path succeeds.
+
+Exact live Fly proof remains required: the candidate Machine must demonstrate
+init-time nftables authority is available in the guest, privilege is dropped
+before the worker becomes ready, direct probes remain denied, and a real
+Gateway-authorized preview and public HTTPS/443 canary both succeed.

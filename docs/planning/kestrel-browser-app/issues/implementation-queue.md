@@ -4,11 +4,8 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Wire Desktop viewer lifecycle evidence](04a-wire-desktop-viewer-lifecycle-evidence.md)
 - [Retry Desktop viewer authority loss](04b-retry-desktop-viewer-authority-loss.md)
 - [Complete native authentication takeover](04c-complete-native-authentication-takeover.md)
-- [Enforce Gateway-only Browser worker egress](05a-enforce-gateway-only-worker-egress.md)
-- [Close the in-flight Gateway revocation race](05b-close-inflight-gateway-revocation-race.md)
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md)
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
@@ -24,6 +21,9 @@ None.
 
 ## Implemented
 
+- [Wire Desktop viewer lifecycle evidence](04a-wire-desktop-viewer-lifecycle-evidence.md) — packaged composition and metadata-only durable evidence coverage are green; independent review remains before `Done`
+- [Enforce Gateway-only Browser worker egress](05a-enforce-gateway-only-worker-egress.md) — the exact-IP/port nftables ceiling and routed local image smoke are green; live Fly init capability and real preview/public HTTPS canaries remain before `Done`
+- [Close the in-flight Gateway revocation race](05b-close-inflight-gateway-revocation-race.md) — revocation-visible reservations and delayed HTTP/CONNECT interleavings are green; independent review remains before `Done`
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 
 ## Done
