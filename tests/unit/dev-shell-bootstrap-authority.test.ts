@@ -108,6 +108,35 @@ test("developer-shell bootstrap authority distinguishes same-process instances b
   }
 });
 
+test("concurrent publication with identical owner evidence uses private staging paths", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "dev-shell-authority-same-evidence-"),
+  );
+  const authorityPath = path.join(root, "bootstrap-authority");
+  const attempts = await Promise.all([
+    acquireDevShellBootstrapAuthority({
+      authorityPath,
+      ownerToken: "shared-owner",
+      timeoutMs: 30,
+      pollIntervalMs: 2,
+    }),
+    acquireDevShellBootstrapAuthority({
+      authorityPath,
+      ownerToken: "shared-owner",
+      timeoutMs: 30,
+      pollIntervalMs: 2,
+    }),
+  ]);
+
+  assert.equal(attempts.filter((result) => result.status === "acquired").length, 1);
+  assert.deepEqual(
+    attempts.find((result) => result.status === "unavailable"),
+    { status: "unavailable", reason: "wait_timeout", ownerPid: process.pid },
+  );
+  const acquired = attempts.find((result) => result.status === "acquired");
+  if (acquired?.status === "acquired") await acquired.lease.release();
+});
+
 test("bootstrap authority release preserves an exact replacement target", async () => {
   const root = await mkdtemp(
     path.join(os.tmpdir(), "dev-shell-authority-replace-"),

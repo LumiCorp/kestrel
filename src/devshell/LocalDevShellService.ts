@@ -128,7 +128,6 @@ export class LocalDevShellService implements DevShellServicePort {
   private readonly storeBinding: DevShellStoreBinding | undefined;
   private readonly missingStoreDatabaseUrl: boolean;
   private readonly bootstrapAuthorityPath: string;
-  private readonly bootstrapAuthorityToken: string;
   private ownedChild: ChildProcess | undefined;
 
   constructor(
@@ -152,7 +151,6 @@ export class LocalDevShellService implements DevShellServicePort {
       ? readOptionalEnvPath("KESTREL_DEV_SHELL_STATUS_PATH", this.env) ?? path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE)
       : path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE);
     this.bootstrapAuthorityPath = `${this.socketPath}.bootstrap-authority`;
-    this.bootstrapAuthorityToken = createDevShellBootstrapAuthorityToken();
     this.startupTimeoutMs =
       options.startupTimeoutMs ??
       readOptionalPositiveIntegerEnv("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS", this.env) ??
@@ -416,7 +414,7 @@ export class LocalDevShellService implements DevShellServicePort {
 
     const authority = await acquireDevShellBootstrapAuthority({
       authorityPath: this.bootstrapAuthorityPath,
-      ownerToken: this.bootstrapAuthorityToken,
+      ownerToken: createDevShellBootstrapAuthorityToken(),
       timeoutMs: this.startupTimeoutMs,
       pollIntervalMs: this.pollIntervalMs,
     });

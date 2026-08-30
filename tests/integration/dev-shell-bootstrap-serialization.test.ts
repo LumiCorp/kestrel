@@ -147,6 +147,46 @@ test("LocalDevShellService serializes simultaneous same-binding cold starts", as
   assert.equal(spawnCount, 1);
 });
 
+test("one LocalDevShellService serializes its own simultaneous cold requests", async () => {
+  const baseDir = await mkdtemp(
+    path.join(os.tmpdir(), "local-dev-shell-one-client-concurrent-"),
+  );
+  const binding = { driver: "sqlite" as const, revision: "binding-shared" };
+  const service = new LocalDevShellService(baseDir, {
+    storeBinding: binding,
+    startupTimeoutMs: 2_000,
+    pollIntervalMs: 2,
+  }) as any;
+  let health: Record<string, unknown> | undefined;
+  let spawnCount = 0;
+
+  service.performRequest = async (method: string, pathname: string) => {
+    if (method === "GET" && pathname === "/health") {
+      if (health === undefined) throw new Error("not ready");
+      return health;
+    }
+    if (method === "POST" && pathname === "/shell/run") {
+      return completedRunResult("shared");
+    }
+    throw new Error(`unexpected request ${method} ${pathname}`);
+  };
+  service.spawnService = async () => {
+    spawnCount += 1;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    health = compatibleHealth(binding);
+    return fakeRunningChild();
+  };
+
+  const [first, second] = await Promise.all([
+    service.runCommand({ workspaceRoot: ".", command: "echo first" }),
+    service.runCommand({ workspaceRoot: ".", command: "echo second" }),
+  ]);
+
+  assert.equal(first.status, "COMPLETED");
+  assert.equal(second.status, "COMPLETED");
+  assert.equal(spawnCount, 1);
+});
+
 test("LocalDevShellService serializes competing-binding replacements", async () => {
   const baseDir = await mkdtemp(
     path.join(os.tmpdir(), "local-dev-shell-competing-binding-"),

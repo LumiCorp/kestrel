@@ -25,6 +25,7 @@ None.
 - [Make bootstrap authority crash-safe and child-owned](07-make-bootstrap-authority-crash-safe.md)
 - [Use cooperative service shutdown instead of numeric PID signaling](08-use-cooperative-service-shutdown.md)
 - [Parse bootstrap authority evidence strictly](09-parse-authority-evidence-strictly.md)
+- [Serialize same-client bootstrap attempts](10-serialize-same-client-bootstrap-attempts.md)
 
 ## Done
 

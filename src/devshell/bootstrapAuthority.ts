@@ -92,8 +92,7 @@ function createLease(authorityPath: string, initial: Owner): DevShellBootstrapAu
 }
 
 async function publish(authorityPath: string, owner: Owner, hook?: FaultHook): Promise<boolean> {
-  const prepared = `${authorityPath}.publish-${owner.pid}-${owner.token}`;
-  await rm(prepared, { recursive: true, force: true });
+  const prepared = `${authorityPath}.publish-${owner.pid}-${owner.token}-${randomUUID()}`;
   await mkdir(prepared); await symlink(owner.evidence, path.join(prepared, OWNER_ENTRY));
   await hook?.("publication_prepared");
   if ((await readState(authorityPath)).kind !== "missing") { await rm(prepared, { recursive: true, force: true }); return false; }
