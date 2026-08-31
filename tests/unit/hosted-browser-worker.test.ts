@@ -330,6 +330,80 @@ test("hosted worker prepares, streams, and retires one exact quarantined downloa
   await worker.close();
 });
 
+test("hosted worker consumes download byte authority before a failing stream open", async () => {
+  const effect = preparedDownloadEffect(Buffer.from("unavailable download"));
+  const prepared = preparedDownload(effect);
+  const operationCapability = operationCapabilityFor(prepared, "revision-1");
+  const requestBody = {
+    version: "browser_download_preparation_v1" as const,
+    runId: "run-1",
+    threadId: "thread-1",
+    effectiveInput: prepared.effectiveInput,
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  };
+  const preparationCapability = issueHostedBrowserDownloadPreparationCapability({
+    privateKeyPem,
+    claims: {
+      version: HOSTED_BROWSER_DOWNLOAD_PREPARATION_CAPABILITY_VERSION,
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      sessionId: "browser-session-1",
+      generation: 1,
+      pendingDownloadId: effect.pendingDownloadId,
+      effectRevision: hashCanonical(requestBody),
+      expiresAt: new Date(Date.now() + 30_000).toISOString(),
+    },
+  });
+  let openedStreams = 0;
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async prepareDownload() { return effect; },
+      async openDownload() {
+        openedStreams += 1;
+        throw new Error("planned stream open failure");
+      },
+      async commitDownload() {},
+      async cancelDownload() {},
+      async execute(_input, lifecycle) {
+        await lifecycle.acknowledgeDispatch();
+        throw new Error("must not invoke");
+      },
+      async adopt() { return 0; },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const preparedResponse = await fetch(`http://[::1]:${port}/v1/download/prepare`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ request: requestBody, capability: preparationCapability }),
+  });
+  assert.equal(preparedResponse.status, 200);
+  const accepted = await fetch(`http://[::1]:${port}/v1/operations/accept`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capability: operationCapability, prepared, authority }),
+  });
+  assert.equal(accepted.status, 200, await accepted.text());
+  const openBytes = () => fetch(`http://[::1]:${port}/v1/download/bytes`, {
+    method: "POST",
+    headers: {
+      "x-kestrel-browser-operation-id": prepared.callId,
+      "x-kestrel-browser-operation-capability": operationCapability,
+    },
+  });
+  assert.equal((await openBytes()).status, 400);
+  assert.equal((await openBytes()).status, 400);
+  assert.equal(openedStreams, 1);
+  await worker.close();
+});
+
 test("hosted worker releases a denied prepared download without accepting an operation", async () => {
   const effect = preparedDownloadEffect();
   const operationId = "call-denied-download";

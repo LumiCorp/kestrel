@@ -57,22 +57,26 @@ export interface HostedBrowserArtifactFilePort {
     operationId: string; organizationId: string; threadId: string; userId: string;
     sessionId: string; generation: number; pendingDownloadId: string;
     filename: string; declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
     body: NodeJS.ReadableStream;
   }): Promise<void>;
   reserveDownload?(input: {
     operationId: string; organizationId: string; threadId: string; userId: string;
     sessionId: string; generation: number; pendingDownloadId: string;
     filename: string; declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
   }): Promise<"reserved" | "in_progress" | "staged" | "promoted">;
   cancelDownload?(input: {
     operationId: string; organizationId: string; threadId: string; userId: string;
     sessionId: string; generation: number; pendingDownloadId: string;
     filename: string; declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
   }): Promise<void>;
   commitDownload?(input: {
     operationId: string; organizationId: string; threadId: string; userId: string;
     sessionId: string; generation: number; pendingDownloadId: string;
     filename: string; declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
   }): Promise<HostedBrowserArtifactFileV1>;
   readDownloadPromotion?(input: {
     operationId: string; fileId: string; organizationId: string; threadId: string;
@@ -210,6 +214,7 @@ export class HostedBrowserArtifactAuthority {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
     body: NodeJS.ReadableStream;
   }): Promise<void> {
     await this.#downloadReconciliation;
@@ -226,6 +231,7 @@ export class HostedBrowserArtifactAuthority {
       declaredMediaType: input.declaredMediaType,
       sizeBytes: input.sizeBytes,
       sha256: input.sha256,
+      expiresAt: input.expiresAt,
       body: input.body,
     });
   }
@@ -234,6 +240,7 @@ export class HostedBrowserArtifactAuthority {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
   }): Promise<"reserved" | "in_progress" | "staged" | "promoted"> {
     await this.#downloadReconciliation;
     if (!this.options.files.reserveDownload) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
@@ -249,6 +256,7 @@ export class HostedBrowserArtifactAuthority {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
   }): Promise<void> {
     await this.#downloadReconciliation;
     if (!this.options.files.cancelDownload) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
@@ -264,6 +272,7 @@ export class HostedBrowserArtifactAuthority {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
   }): Promise<BrowserAuthorizedArtifactV1> {
     await this.#downloadReconciliation;
     if (!this.options.files.commitDownload) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
@@ -279,6 +288,7 @@ export class HostedBrowserArtifactAuthority {
       declaredMediaType: input.declaredMediaType,
       sizeBytes: input.sizeBytes,
       sha256: input.sha256,
+      expiresAt: input.expiresAt,
     });
     if (
       file.organizationId !== input.origin.organizationId ||

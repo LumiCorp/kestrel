@@ -308,7 +308,16 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
               );
             }
             const runtime = context.runtime;
-            if (!runtime?.threadId) {
+            const stableAuthority = prepared.stableAuthority;
+            const authority = runtime?.threadId
+              ? resolveBrowserHostAuthority(context, runtime)
+              : stableAuthority === undefined
+                ? undefined
+                : {
+                    threadId: stableAuthority.threadId,
+                    projectId: stableAuthority.projectId,
+                  };
+            if (authority === undefined) {
               throw browserFailure(
                 "BROWSER_SERVICE_UNAVAILABLE",
                 "Browser download release requires trusted Thread authority.",
@@ -317,7 +326,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
             }
             await service.releasePreparedDownload(
               prepared,
-              resolveBrowserHostAuthority(context, runtime),
+              authority,
             );
           },
         }

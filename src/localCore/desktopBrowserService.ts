@@ -5667,6 +5667,7 @@ export async function installAgentBrowserDownloadInterception(
       filename: string;
       normalizedSourceOrigin: string;
       receivedBytes: number;
+      completing: boolean;
     }>();
     const barriers = new Map<
       number,
@@ -5843,15 +5844,17 @@ export async function installAgentBrowserDownloadInterception(
             filename: sanitizeBrowserDownloadFilename(params.suggestedFilename),
             normalizedSourceOrigin: normalizeBrowserDownloadSourceOrigin(params.url),
             receivedBytes: 0,
+            completing: false,
           });
           return;
         }
         if (message.method !== "Browser.downloadProgress") return;
         const guid = requireBrowserDownloadGuid(params.guid);
         const pending = pendingDownloads.get(guid);
-        if (!pending) return;
+        if (!pending || pending.completing) return;
         const state = params.state;
         const receivedBytes = params.receivedBytes;
+        if (state === "completed") pending.completing = true;
         eventTail = eventTail.then(async () => {
         const ownedPath = path.join(quarantineRoot, guid);
         if (
@@ -5902,29 +5905,30 @@ export async function installAgentBrowserDownloadInterception(
           return;
         }
         if (state !== "completed") return;
-        pendingDownloads.delete(guid);
-        const measured = await measureOwnedBrowserDownload(
-          ownedPath,
-          DESKTOP_MAX_ATTACHMENT_BYTES,
-        );
-        const createdAt = now().toISOString();
-        const download: DesktopBrowserInterceptedDownload = {
-          downloadId: `download-${digest({ guid })}`,
-          browserGuid: guid,
-          filename: pending.filename,
-          declaredMediaType: "application/octet-stream",
-          normalizedSourceOrigin: pending.normalizedSourceOrigin,
-          measuredBytes: measured.measuredBytes,
-          sha256: measured.sha256,
-          createdAt,
-          expiresAt: new Date(
-            Date.parse(createdAt) + BROWSER_DOWNLOAD_RETENTION_MS,
-          ).toISOString(),
-          ownedPath,
-        };
         try {
+          const measured = await measureOwnedBrowserDownload(
+            ownedPath,
+            DESKTOP_MAX_ATTACHMENT_BYTES,
+          );
+          const createdAt = now().toISOString();
+          const download: DesktopBrowserInterceptedDownload = {
+            downloadId: `download-${digest({ guid })}`,
+            browserGuid: guid,
+            filename: pending.filename,
+            declaredMediaType: "application/octet-stream",
+            normalizedSourceOrigin: pending.normalizedSourceOrigin,
+            measuredBytes: measured.measuredBytes,
+            sha256: measured.sha256,
+            createdAt,
+            expiresAt: new Date(
+              Date.parse(createdAt) + BROWSER_DOWNLOAD_RETENTION_MS,
+            ).toISOString(),
+            ownedPath,
+          };
           await onDownloadIntercepted(download);
+          pendingDownloads.delete(guid);
         } catch (error) {
+          pendingDownloads.delete(guid);
           await rm(ownedPath, { force: true }).catch(() => undefined);
           throw error;
         }

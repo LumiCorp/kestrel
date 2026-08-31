@@ -634,6 +634,68 @@ test("hosted download response-loss replay does not reopen reserved worker bytes
   assert.deepEqual(fixture.stagedDownloads, []);
 });
 
+test("hosted download open failure cancels the exact reservation with its original expiry", async () => {
+  const fixture = serviceFixture("ready", "allow", { downloadOpenFailure: true });
+  const request = {
+    version: "browser_download_preparation_v1" as const,
+    runId: "run-1",
+    threadId: "thread-1",
+    effectiveInput: {
+      sessionId: "browser-session-1",
+      generation: 1,
+      pendingDownloadId: "download-1",
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  };
+  const effect = await fixture.service.prepareDownload(request);
+  const prepared = preparedDownload(effect);
+  const receipt = acceptedReceipt(
+    prepared.callId,
+    "browser-session-1",
+    now,
+    new Date(now.getTime() + 30_000),
+    "browser.download",
+  );
+  await assert.rejects(
+    fixture.service.dispatchAcceptedOperation(prepared, request.authority, receipt),
+    /worker byte stream unavailable/u,
+  );
+  assert.deepEqual(fixture.reservedDownloadExpiries, [effect.expiresAt]);
+  assert.deepEqual(fixture.cancelledDownloadExpiries, [effect.expiresAt]);
+  assert.equal(fixture.openedDownloads, 1);
+});
+
+test("hosted download reports unknown when exact reservation rollback cannot be proven", async () => {
+  const fixture = serviceFixture("ready", "allow", {
+    downloadOpenFailure: true,
+    downloadCancelFailure: true,
+  });
+  const request = {
+    version: "browser_download_preparation_v1" as const,
+    runId: "run-1",
+    threadId: "thread-1",
+    effectiveInput: {
+      sessionId: "browser-session-1",
+      generation: 1,
+      pendingDownloadId: "download-1",
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  };
+  const effect = await fixture.service.prepareDownload(request);
+  const prepared = preparedDownload(effect);
+  const receipt = acceptedReceipt(
+    prepared.callId,
+    "browser-session-1",
+    now,
+    new Date(now.getTime() + 30_000),
+    "browser.download",
+  );
+  await assert.rejects(
+    fixture.service.dispatchAcceptedOperation(prepared, request.authority, receipt),
+    (error: unknown) => readCode(error) === "BROWSER_ACTION_OUTCOME_UNKNOWN",
+  );
+});
+
 function serviceFixture(
   state: "opening" | "ready",
   decision: "allow" | "deny",
@@ -643,6 +705,8 @@ function serviceFixture(
     terminalOnRead?: boolean;
     machineDeleteFailure?: boolean;
     downloadCommitFailure?: boolean;
+    downloadOpenFailure?: boolean;
+    downloadCancelFailure?: boolean;
     downloadReservation?: "reserved" | "staged" | "promoted";
   } = {},
 ) {
@@ -691,6 +755,8 @@ function serviceFixture(
   const transferredUploads: Array<{ operationId: string; bytes: Buffer }> = [];
   const preparedDownloads: unknown[] = [];
   const stagedDownloads: Array<{ operationId: string; bytes: Buffer }> = [];
+  const reservedDownloadExpiries: string[] = [];
+  const cancelledDownloadExpiries: string[] = [];
   let openedDownloads = 0;
   const committedDownloads: string[] = [];
   const downloadBytes = Buffer.from("hosted-download");
@@ -835,10 +901,14 @@ function serviceFixture(
         for await (const chunk of input.body) chunks.push(Buffer.from(chunk));
         stagedDownloads.push({ operationId: input.operationId, bytes: Buffer.concat(chunks) });
       },
-      async reserveDownload() {
+      async reserveDownload(input) {
+        reservedDownloadExpiries.push(input.expiresAt);
         return options.downloadReservation ?? "reserved";
       },
-      async cancelDownload() {},
+      async cancelDownload(input) {
+        cancelledDownloadExpiries.push(input.expiresAt);
+        if (options.downloadCancelFailure) throw new Error("download rollback unavailable");
+      },
       async commitDownload(input) {
         if (options.downloadCommitFailure === true) {
           throw new Error("visibility commit response lost");
@@ -914,6 +984,7 @@ function serviceFixture(
       },
       async open() {
         openedDownloads += 1;
+        if (options.downloadOpenFailure) throw new Error("worker byte stream unavailable");
         return Readable.from(downloadBytes);
       },
     },
@@ -947,6 +1018,8 @@ function serviceFixture(
     transferredUploads,
     preparedDownloads,
     stagedDownloads,
+    reservedDownloadExpiries,
+    cancelledDownloadExpiries,
     get openedDownloads() { return openedDownloads; },
     committedDownloads,
     stateTransitions,

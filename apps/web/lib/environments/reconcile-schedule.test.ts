@@ -38,6 +38,9 @@ test("Vercel invokes the authenticated Environment reconciliation route every mi
 test("scheduled Environment reconciliation uses the shared advisory lock", async () => {
   const events: string[] = [];
   const result = await runScheduledEnvironmentReconciliation({
+    reconcileBrowserDownloads: async () => {
+      events.push("browser-downloads");
+    },
     reconcile: async () => {
       events.push("reconcile");
       return {
@@ -65,7 +68,13 @@ test("scheduled Environment reconciliation uses the shared advisory lock", async
     }),
   });
 
-  assert.deepEqual(events, ["acquire", "reconcile", "release", "close"]);
+  assert.deepEqual(events, [
+    "acquire",
+    "browser-downloads",
+    "reconcile",
+    "release",
+    "close",
+  ]);
   assert.equal(result.acquired, true);
   assert.deepEqual(result.result, {
     operationCount: 1,
@@ -82,6 +91,9 @@ test("scheduled Environment reconciliation uses the shared advisory lock", async
 test("scheduled Environment reconciliation skips overlap without running", async () => {
   let reconciled = false;
   const result = await runScheduledEnvironmentReconciliation({
+    reconcileBrowserDownloads: async () => {
+      throw new Error("An overlapping run must not reconcile downloads.");
+    },
     reconcile: async () => {
       reconciled = true;
       return {

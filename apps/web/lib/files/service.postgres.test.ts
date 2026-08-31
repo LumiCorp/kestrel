@@ -189,6 +189,7 @@ test(
       declaredMediaType: "text/plain",
       sizeBytes: bytes.byteLength,
       sha256,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     };
 
     context.after(async () => {
@@ -226,6 +227,12 @@ test(
     });
 
     assert.equal(await files.reserveHostedBrowserDownload(identity), "reserved");
+    const [reservedExpiry] = await sql<Array<{ expiresAt: Date }>>`
+      SELECT "expires_at" AS "expiresAt"
+      FROM "browser_download_staged_objects"
+      WHERE "operation_id" = ${identity.operationId}
+    `;
+    assert.equal(reservedExpiry?.expiresAt.toISOString(), identity.expiresAt);
     await files.stageHostedBrowserDownload({ ...identity, body: Readable.from(bytes) });
     const [first, replay] = await Promise.all([
       files.commitHostedBrowserDownload(identity),
@@ -278,6 +285,21 @@ test(
       "files", organizationId, uncommittedBlobId, "original",
     );
     assert.equal(await getStorageAdapter().objectExists(uncommittedKey), true);
+    for (let index = 0; index < 20; index += 1) {
+      await sql`
+        INSERT INTO "browser_download_staged_objects" (
+          "operation_id", "organization_id", "thread_id", "user_id",
+          "session_id", "generation", "pending_download_id", "sha256",
+          "effect_revision", "object_key", "state", "expires_at"
+        ) VALUES (
+          ${`browser-download-cleaned-${String(index).padStart(2, "0")}-${suffix}`},
+          ${organizationId}, ${threadId}, ${userId}, ${identity.sessionId}, 1,
+          ${`pending-cleaned-${index}-${suffix}`}, ${sha256}, ${"c".repeat(64)},
+          ${`browser-download-cleaned/${index}/${suffix}`}, 'cleaned',
+          now() - interval '1 minute'
+        )
+      `;
+    }
     await sql`
       UPDATE "browser_download_staged_objects"
       SET "expires_at" = now() - interval '1 minute'
@@ -290,6 +312,27 @@ test(
       WHERE "operation_id" = ${uncommitted.operationId}
     `;
     assert.equal(cleanupState?.state, "cleaned");
+    const sessionLost = {
+      ...identity,
+      operationId: `browser-download-session-lost-${suffix}`,
+      pendingDownloadId: `pending-session-lost-${suffix}`,
+      expiresAt: new Date(Date.now() + 25 * 60 * 1000).toISOString(),
+    };
+    assert.equal(await files.reserveHostedBrowserDownload(sessionLost), "reserved");
+    await files.stageHostedBrowserDownload({ ...sessionLost, body: Readable.from(bytes) });
+    const sessionLostBlobId = `blob-browser-${createHash("sha256").update(JSON.stringify({
+      organizationId,
+      sessionId: sessionLost.sessionId,
+      generation: sessionLost.generation,
+      pendingDownloadId: sessionLost.pendingDownloadId,
+      sha256,
+    })).digest("hex")}`;
+    const sessionLostKey = getStorageAdapter().buildObjectKey(
+      "files", organizationId, sessionLostBlobId, "original",
+    );
+    assert.equal(await getStorageAdapter().objectExists(sessionLostKey), true);
+    await files.reconcileHostedBrowserDownloadStaging();
+    assert.equal(await getStorageAdapter().objectExists(sessionLostKey), false);
     const cancelled = {
       ...identity,
       operationId: `browser-download-cancelled-${suffix}`,

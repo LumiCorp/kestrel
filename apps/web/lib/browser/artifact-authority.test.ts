@@ -183,6 +183,7 @@ test("hosted Browser download promotion returns and authorizes one ordinary Thre
     declaredMediaType: "text/plain",
     sizeBytes: bytes.byteLength,
     sha256,
+    expiresAt: "2026-08-30T12:30:00.000Z",
   };
   await fixture.authority.stageDownload({ ...input, body: Readable.from(bytes) });
   const artifact = await fixture.authority.commitDownload(input);

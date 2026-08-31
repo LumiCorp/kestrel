@@ -1235,30 +1235,37 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   async releasePreparedToolCall(prepared: PreparedToolCallV1): Promise<void> {
-    const key = preparedExecutionKey(prepared);
+    const exactPrepared = parsePreparedToolCallV1(prepared);
+    const key = preparedExecutionKey(exactPrepared);
     const existingRelease = this.releasingPreparedExecutions.get(key);
     if (existingRelease !== undefined) {
       await existingRelease;
       return;
     }
-    if (this.executingPreparedExecutionKeys.has(key)) return;
-    const source = this.preparedExecutions.get(key);
+    if (
+      this.closed ||
+      this.isPreparedExecutionTerminal(exactPrepared, key) ||
+      this.executingPreparedExecutionKeys.has(key)
+    ) return;
+    const retainedSource = this.preparedExecutions.get(key);
+    const source =
+      retainedSource ?? this.rehydratePreparedReleaseExecution(exactPrepared);
     if (source === undefined) {
-      if (this.closed || this.isPreparedExecutionTerminal(prepared, key))
-        return;
-      this.markPreparedExecutionTerminal(prepared, key);
+      this.markPreparedExecutionTerminal(exactPrepared, key);
       return;
     }
-    if (this.closed) return;
     const release = Promise.resolve().then(async () => {
-      await source.releasePrepared?.(prepared);
-      this.markPreparedExecutionTerminal(prepared, key);
+      await source.releasePrepared?.(exactPrepared);
+      this.markPreparedExecutionTerminal(exactPrepared, key);
       await source.release?.();
     });
     this.releasingPreparedExecutions.set(key, release);
     try {
       await release;
-      if (this.preparedExecutions.get(key) === source) {
+      if (
+        retainedSource !== undefined &&
+        this.preparedExecutions.get(key) === source
+      ) {
         this.preparedExecutions.delete(key);
       }
     } finally {
@@ -2118,6 +2125,60 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     return this.createPinnedExecutionSource(
       descriptor,
       input.activation,
+      runContext,
+    );
+  }
+
+  /**
+   * Rebuilds only a fixed built-in release hook after process restart. The
+   * prepared activation and stable hosted authority remain the identity; the
+   * current execution ticket supplies transport authority and is never read
+   * from persisted prepared-call input.
+   */
+  private rehydratePreparedReleaseExecution(
+    prepared: PreparedToolCallV1,
+  ): PinnedExecutionSource | undefined {
+    const descriptor = this.builtInDescriptors.get(
+      prepared.activation.descriptor.toolId,
+    );
+    if (
+      descriptor === undefined ||
+      hashCanonical(toToolDescriptorRefV1(descriptor)) !==
+        hashCanonical(prepared.activation.descriptor)
+    ) return;
+    const stable = prepared.stableAuthority;
+    const executionTicket =
+      this.executionTicketsByRun.get(prepared.runId) ??
+      this.resolveUnambiguousSessionExecutionTicket(prepared.sessionId);
+    const runContext: ToolRunContext | undefined =
+      stable === undefined || executionTicket === undefined
+        ? undefined
+        : {
+            runId: prepared.runId,
+            sessionId: prepared.sessionId,
+            payload: {
+              actor: stable.actor,
+              hostedApprovalAuthority: {
+                organizationId: stable.organizationId,
+                environmentId: stable.environmentId,
+                projectId: stable.projectId,
+                threadId: stable.threadId,
+              },
+              mcpContext: {
+                organizationId: stable.organizationId,
+                environmentId: stable.environmentId,
+                projectId: stable.projectId,
+                threadId: stable.threadId,
+                ...(typeof stable.resourceAuthority.gatewayUrl === "string"
+                  ? { gatewayUrl: stable.resourceAuthority.gatewayUrl }
+                  : {}),
+              },
+            },
+            sessionState: {},
+          };
+    return this.createPinnedExecutionSource(
+      descriptor,
+      prepared.activation,
       runContext,
     );
   }

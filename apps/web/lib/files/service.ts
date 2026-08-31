@@ -72,9 +72,8 @@ export interface HostedBrowserDownloadFileIdentity {
   declaredMediaType: string;
   sizeBytes: number;
   sha256: string;
+  expiresAt: string;
 }
-
-const HOSTED_BROWSER_DOWNLOAD_STAGING_RETENTION_MS = 30 * 60 * 1000;
 
 export async function reserveHostedBrowserDownload(
   input: HostedBrowserDownloadFileIdentity,
@@ -92,6 +91,8 @@ export async function reserveHostedBrowserDownload(
   const existing = await findHostedBrowserDownloadStage(input);
   if (existing) return requireMatchingHostedBrowserDownloadStage(existing, input);
   const now = new Date();
+  const expiresAt = new Date(input.expiresAt);
+  if (expiresAt <= now) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
   try {
     await knowledgeDb.insert(schema.browserDownloadStagedObjects).values({
       operationId: input.operationId,
@@ -106,7 +107,7 @@ export async function reserveHostedBrowserDownload(
       objectKey,
       state: "receiving",
       fileId: null,
-      expiresAt: new Date(now.getTime() + HOSTED_BROWSER_DOWNLOAD_STAGING_RETENTION_MS),
+      expiresAt,
       createdAt: now,
       updatedAt: now,
     });
@@ -307,11 +308,34 @@ export async function commitHostedBrowserDownload(
 
 async function cleanupExpiredHostedBrowserDownloads(now = new Date()): Promise<number> {
   const expired = await knowledgeDb.select().from(schema.browserDownloadStagedObjects)
-    .where(lt(schema.browserDownloadStagedObjects.expiresAt, now))
+    .where(and(
+      inArray(schema.browserDownloadStagedObjects.state, [
+        "receiving",
+        "staged",
+        "cleanup_pending",
+      ]),
+      or(
+        eq(schema.browserDownloadStagedObjects.state, "cleanup_pending"),
+        lt(schema.browserDownloadStagedObjects.expiresAt, now),
+        sql`not exists (
+          select 1
+          from ${schema.browserSessions}
+          where ${schema.browserSessions.sessionId} = ${schema.browserDownloadStagedObjects.sessionId}
+            and ${schema.browserSessions.generation} = ${schema.browserDownloadStagedObjects.generation}
+            and ${schema.browserSessions.state} in ('opening', 'ready', 'human_control', 'closing')
+        )`,
+      ),
+    ))
+    .orderBy(
+      schema.browserDownloadStagedObjects.expiresAt,
+      schema.browserDownloadStagedObjects.operationId,
+    )
     .limit(20);
   for (const row of expired) {
-    if (row.state === "promoted" || row.state === "cleaned") continue;
-    await cleanupHostedBrowserDownload(row);
+    await cleanupHostedBrowserDownload({
+      ...row,
+      expiresAt: row.expiresAt.toISOString(),
+    });
   }
   return expired.length;
 }
@@ -464,6 +488,7 @@ function validateHostedBrowserDownloadIdentity(input: HostedBrowserDownloadFileI
   if (!Number.isSafeInteger(input.generation) || input.generation < 1) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
   validateFileSize(input.sizeBytes);
   if (!/^[0-9a-f]{64}$/u.test(input.sha256)) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+  if (Number.isNaN(Date.parse(input.expiresAt))) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
 }
 
 function hostedBrowserDownloadBlobId(input: HostedBrowserDownloadFileIdentity): string {
@@ -499,6 +524,7 @@ function hostedBrowserDownloadEffectRevision(input: HostedBrowserDownloadFileIde
     declaredMediaType: normalizeMediaType(input.declaredMediaType) ?? "application/octet-stream",
     sizeBytes: input.sizeBytes,
     sha256: input.sha256,
+    expiresAt: input.expiresAt,
   })).digest("hex");
 }
 

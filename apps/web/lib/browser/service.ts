@@ -160,22 +160,26 @@ export interface HostedBrowserArtifactPort {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
     body: NodeJS.ReadableStream;
   }): Promise<void>;
   reserveDownload?(input: {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
   }): Promise<"reserved" | "in_progress" | "staged" | "promoted">;
   cancelDownload?(input: {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
   }): Promise<void>;
   commitDownload?(input: {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
+    expiresAt: string;
   }): Promise<BrowserAuthorizedArtifactV1>;
 }
 
@@ -700,6 +704,7 @@ export class HostedBrowserService implements BrowserServicePort {
         declaredMediaType: effect.declaredMediaType,
         sizeBytes: effect.measuredBytes,
         sha256: effect.sha256,
+        expiresAt: effect.expiresAt,
       };
       const reservation = await this.options.artifacts.reserveDownload(artifactIdentity);
       if (reservation === "in_progress") {
@@ -717,33 +722,42 @@ export class HostedBrowserService implements BrowserServicePort {
           machine: acceptedInstruction.machine,
         };
       }
-      const source = await this.options.downloads.open({
-        routerUrl: this.options.routerUrl,
-        organizationId: origin.organizationId,
-        environmentId: origin.environmentId,
-        projectId: origin.projectId,
-        userId: origin.userId,
-        threadId: origin.threadId,
-        runId: prepared.runId,
-        sessionId: record.session.sessionId,
-        appName: this.options.appName,
-        machineId: record.resource.machineId,
-        operationId: prepared.callId,
-        capability: acceptedInstruction.capability,
-        sizeBytes: effect.measuredBytes,
-        sha256: effect.sha256,
-        ...(signal ? { signal } : {}),
-      });
+      let source: NodeJS.ReadableStream | undefined;
       try {
+        source = await this.options.downloads.open({
+          routerUrl: this.options.routerUrl,
+          organizationId: origin.organizationId,
+          environmentId: origin.environmentId,
+          projectId: origin.projectId,
+          userId: origin.userId,
+          threadId: origin.threadId,
+          runId: prepared.runId,
+          sessionId: record.session.sessionId,
+          appName: this.options.appName,
+          machineId: record.resource.machineId,
+          operationId: prepared.callId,
+          capability: acceptedInstruction.capability,
+          sizeBytes: effect.measuredBytes,
+          sha256: effect.sha256,
+          ...(signal ? { signal } : {}),
+        });
         await this.options.artifacts.stageDownload({
           ...artifactIdentity,
           body: source,
         });
       } catch (error) {
-        await this.options.artifacts.cancelDownload?.(artifactIdentity).catch(() => {});
+        try {
+          if (!this.options.artifacts.cancelDownload) {
+            throw this.#failure("BROWSER_ACTION_OUTCOME_UNKNOWN");
+          }
+          await this.options.artifacts.cancelDownload(artifactIdentity);
+        } catch {
+          throw this.#failure("BROWSER_ACTION_OUTCOME_UNKNOWN");
+        }
         throw error;
       } finally {
-        (source as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.();
+        (source as (NodeJS.ReadableStream & { destroy?: () => void }) | undefined)
+          ?.destroy?.();
       }
     }
     return {
@@ -818,6 +832,7 @@ export class HostedBrowserService implements BrowserServicePort {
           declaredMediaType: effect.declaredMediaType,
           sizeBytes: effect.measuredBytes,
           sha256: effect.sha256,
+          expiresAt: effect.expiresAt,
         });
         const { version: _artifactAuthorityVersion, ...artifactOutput } = artifact;
         output = {

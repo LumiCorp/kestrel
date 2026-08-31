@@ -3911,6 +3911,182 @@ test("download quarantine bounds measured in-progress bytes and item reservation
   assert.equal(cancellations, 16);
 });
 
+test("completed downloads remain reserved until measured admission settles", { timeout: 5_000 }, async (t) => {
+  const quarantinePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-download-completion-reservation-"));
+  t.after(() => rm(quarantinePath, { recursive: true, force: true }));
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  t.after(() => new Promise<void>((resolve) => {
+    for (const client of server.clients) client.terminate();
+    server.close(() => resolve());
+  }));
+  const address = server.address();
+  if (address === null || typeof address === "string") assert.fail("download completion fixture did not bind TCP");
+  const completingGuid = "123e4567-e89b-42d3-a456-426614174201";
+  const interleavedGuid = "123e4567-e89b-42d3-a456-426614174202";
+  let connectedSocket: import("ws").WebSocket | undefined;
+  let releaseAdmission!: () => void;
+  const admissionBarrier = new Promise<void>((resolve) => {
+    releaseAdmission = resolve;
+  });
+  let admissionStarted!: () => void;
+  const admissionStartedPromise = new Promise<void>((resolve) => {
+    admissionStarted = resolve;
+  });
+  let cancellations = 0;
+  let cancellationObserved!: () => void;
+  const cancellationObservedPromise = new Promise<void>((resolve) => {
+    cancellationObserved = resolve;
+  });
+  let barriers = 0;
+  server.on("connection", (socket) => {
+    connectedSocket = socket;
+    socket.on("message", async (raw) => {
+      const command = JSON.parse(raw.toString("utf8")) as { id: number; method: string };
+      if (command.method === "Browser.cancelDownload") {
+        cancellations += 1;
+        cancellationObserved();
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+        return;
+      }
+      if (command.method !== "Browser.setDownloadBehavior") return;
+      barriers += 1;
+      if (barriers === 1) {
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+        return;
+      }
+      if (barriers > 2) {
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+        return;
+      }
+      await writeFile(path.join(quarantinePath, completingGuid), "download");
+      socket.send(JSON.stringify({
+        method: "Browser.downloadWillBegin",
+        params: { guid: completingGuid, suggestedFilename: "settling.bin", url: "https://example.com/file" },
+      }));
+      socket.send(JSON.stringify({
+        method: "Browser.downloadProgress",
+        params: { guid: completingGuid, state: "completed", receivedBytes: 8 },
+      }));
+      socket.send(JSON.stringify({ id: command.id, result: {} }));
+    });
+  });
+  const interception = await installAgentBrowserDownloadInterception(
+    `ws://127.0.0.1:${address.port}/devtools/browser/test`,
+    quarantinePath,
+    async () => {
+      admissionStarted();
+      await admissionBarrier;
+    },
+    () => ({ count: 19, measuredBytes: 0 }),
+  );
+  t.after(() => interception.stop());
+  const synchronized = interception.synchronize();
+  await admissionStartedPromise;
+  connectedSocket?.send(JSON.stringify({
+    method: "Browser.downloadWillBegin",
+    params: { guid: interleavedGuid, suggestedFilename: "interleaved.bin", url: "https://example.com/file" },
+  }));
+  await cancellationObservedPromise;
+  const interleavedSynchronization = interception.synchronize();
+  releaseAdmission();
+  const itemResults = await Promise.allSettled([
+    synchronized,
+    interleavedSynchronization,
+  ]);
+  const itemFailure = itemResults.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  assert.match(String(itemFailure?.reason), /item limit was reached/u);
+  assert.equal(cancellations, 1);
+});
+
+test("interleaved progress observes completed-byte admission before accepting more bytes", { timeout: 5_000 }, async (t) => {
+  const quarantinePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-download-completion-bytes-"));
+  t.after(() => rm(quarantinePath, { recursive: true, force: true }));
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  t.after(() => new Promise<void>((resolve) => {
+    for (const client of server.clients) client.terminate();
+    server.close(() => resolve());
+  }));
+  const address = server.address();
+  if (address === null || typeof address === "string") assert.fail("download byte fixture did not bind TCP");
+  const completingGuid = "123e4567-e89b-42d3-a456-426614174211";
+  const interleavedGuid = "123e4567-e89b-42d3-a456-426614174212";
+  let completedBytes = 410 * 1024 * 1024;
+  let releaseAdmission!: () => void;
+  const admissionBarrier = new Promise<void>((resolve) => {
+    releaseAdmission = resolve;
+  });
+  let admissionStarted!: () => void;
+  const admissionStartedPromise = new Promise<void>((resolve) => {
+    admissionStarted = resolve;
+  });
+  let connectedSocket: import("ws").WebSocket | undefined;
+  let cancellations = 0;
+  let barriers = 0;
+  server.on("connection", (socket) => {
+    connectedSocket = socket;
+    socket.on("message", async (raw) => {
+      const command = JSON.parse(raw.toString("utf8")) as { id: number; method: string };
+      if (command.method === "Browser.cancelDownload") {
+        cancellations += 1;
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+        return;
+      }
+      if (command.method !== "Browser.setDownloadBehavior") return;
+      barriers += 1;
+      if (barriers === 1) {
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+        return;
+      }
+      if (barriers > 2) {
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+        return;
+      }
+      await writeFile(path.join(quarantinePath, completingGuid), "download");
+      socket.send(JSON.stringify({ method: "Browser.downloadWillBegin", params: {
+        guid: completingGuid, suggestedFilename: "settling.bin", url: "https://example.com/file",
+      } }));
+      socket.send(JSON.stringify({ method: "Browser.downloadProgress", params: {
+        guid: completingGuid, state: "completed", receivedBytes: 90 * 1024 * 1024,
+      } }));
+      socket.send(JSON.stringify({ id: command.id, result: {} }));
+    });
+  });
+  const interception = await installAgentBrowserDownloadInterception(
+    `ws://127.0.0.1:${address.port}/devtools/browser/test`,
+    quarantinePath,
+    async () => {
+      admissionStarted();
+      await admissionBarrier;
+      completedBytes = 500 * 1024 * 1024;
+    },
+    () => ({ count: 0, measuredBytes: completedBytes }),
+  );
+  t.after(() => interception.stop());
+  const synchronized = interception.synchronize();
+  await admissionStartedPromise;
+  connectedSocket?.send(JSON.stringify({ method: "Browser.downloadWillBegin", params: {
+    guid: interleavedGuid, suggestedFilename: "interleaved.bin", url: "https://example.com/file",
+  } }));
+  connectedSocket?.send(JSON.stringify({ method: "Browser.downloadProgress", params: {
+    guid: interleavedGuid, state: "inProgress", receivedBytes: 1,
+  } }));
+  const interleavedSynchronization = interception.synchronize();
+  releaseAdmission();
+  const byteResults = await Promise.allSettled([
+    synchronized,
+    interleavedSynchronization,
+  ]);
+  const byteFailure = byteResults.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  assert.match(String(byteFailure?.reason), /quarantine file limit/u);
+  assert.equal(cancellations, 1);
+});
+
 test("daemon cleanup accepts only the exact exited agent-browser zombie identity", () => {
   assert.equal(
     desktopBrowserZombieCommandMatches(

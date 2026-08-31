@@ -23,6 +23,7 @@ import {
 } from "../../src/kestrel/contracts/tool-contract.js";
 import type { PreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
 import { derivePreparedToolApprovalAuthorityRevisionV1 } from "../../src/io/ToolInvocationSupport.js";
+import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import {
   buildRunToolEvent,
   buildRunToolUpdate,
@@ -1211,6 +1212,85 @@ test("QA Browser upload and download still prepare their exact approval waits", 
       );
     }
   }
+});
+
+test("Browser download denial rehydrates the exact release hook after process restart", async () => {
+  let releaseAttempts = 0;
+  let quarantinePresent = true;
+  let failBeforeCleanup = true;
+  const original = new UnifiedToolRegistry({
+    allowlist: ["browser.download"],
+    context: { browserService: passiveBrowserPort() },
+  });
+  const { prepared } = await prepareBrowserCall(
+    original,
+    "browser.download",
+    validInputs["browser.download"],
+    { decision: "approval_required", approval: true },
+  );
+  await original.close();
+
+  const restarted = new UnifiedToolRegistry({
+    allowlist: ["browser.download"],
+    context: {
+      kestrelOne: {
+        appRelayUrl: "https://relay.example.test",
+        appRelayToken: "relay-token",
+      },
+      fetchImpl: (async (
+        request: Parameters<typeof fetch>[0],
+        init?: Parameters<typeof fetch>[1],
+      ) => {
+        releaseAttempts += 1;
+        const url = new URL(String(request));
+        assert.equal(
+          url.pathname,
+          `/internal/apps/${encodeURIComponent(prepared.runId)}` +
+            "/api/runtime/apps/built_in.browser/download/auto/control/release-download",
+        );
+        assert.equal(init?.headers && new Headers(init.headers).get("authorization"), "Bearer relay-token");
+        const body = JSON.parse(String(init?.body)) as {
+          prepared: PreparedToolCallV1;
+          authority: { threadId: string; projectId?: string };
+        };
+        assert.equal(body.prepared.callId, prepared.callId);
+        assert.equal(body.authority.threadId, prepared.stableAuthority?.threadId);
+        assert.equal(body.authority.projectId, prepared.stableAuthority?.projectId);
+        if (failBeforeCleanup) {
+          return Response.json(
+            { error: { code: "BROWSER_SERVICE_UNAVAILABLE" } },
+            { status: 500 },
+          );
+        }
+        quarantinePresent = false;
+        return Response.json({ released: true });
+      }) as unknown as typeof fetch,
+    },
+  });
+  const executionTicket = [
+    "header",
+    Buffer.from(JSON.stringify({ runId: prepared.runId }), "utf8").toString("base64url"),
+    "signature",
+  ].join(".");
+  await restarted.refreshForRuntimeTurn({
+    runId: prepared.runId,
+    sessionId: prepared.sessionId,
+    mcpAuthorization: { executionTicket },
+  });
+  await assert.rejects(
+    restarted.releasePreparedToolCall(prepared),
+    (error: unknown) =>
+      error instanceof RuntimeFailure &&
+      error.code === "BROWSER_SERVICE_UNAVAILABLE",
+  );
+  assert.equal(quarantinePresent, true);
+  failBeforeCleanup = false;
+  await restarted.releasePreparedToolCall(prepared);
+  assert.equal(quarantinePresent, false);
+  assert.equal(releaseAttempts, 2);
+  await restarted.releasePreparedToolCall(prepared);
+  assert.equal(releaseAttempts, 2);
+  await restarted.close();
 });
 
 test("Browser upload cannot replace the trusted active-turn attachment with model input", async () => {

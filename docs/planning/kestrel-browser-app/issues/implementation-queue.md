@@ -8,8 +8,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Blocked
 
-- [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md) — five review repairs are green; blocked only because pinned Chrome exposes no live exact download-GUID-to-response-media-type binding, and a Chromium protocol/runtime asset change requires separate approval
-
+- [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md) — all implementation and lifecycle repairs are green; blocked only on the exact pinned Chrome download-GUID-to-response-media-type protocol decision documented in the issue
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md) — seven review repairs are green; blocked on an exact read-only pinned agent-browser `targetRef`-to-element-tag seam needed to prove the target is actually `input[type=file]` without a heuristic or mutating upload preflight
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — blocked on issues 06a-06e and the live Vercel/PostgreSQL/combined hosted proof
 - [Prove hosted passkey takeover](06e-prove-hosted-passkey-takeover.md) — blocked on the client-side WebAuthn delivery boundary
