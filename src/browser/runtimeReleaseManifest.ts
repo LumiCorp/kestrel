@@ -27,7 +27,7 @@ export const BROWSER_RUNTIME_RELEASE_MANIFEST = Object.freeze({
             "third_party/agent-browser/v0.35.0-kestrel.1/agent-browser-darwin-arm64",
         }),
         sha256:
-          "8b8bd5ca449676b819f310d3a281a1ebc2160a29fb1dbfb456298170ece96099",
+          "c83020bcbb694e5caa9775eff67efba00c35f8e2e367873da03482ca614e5aa9",
         sourceFileName: "agent-browser-darwin-arm64",
         executableRelativePath: "agent-browser",
       }),
@@ -55,7 +55,7 @@ export const BROWSER_RUNTIME_RELEASE_MANIFEST = Object.freeze({
             "third_party/agent-browser/v0.35.0-kestrel.1/agent-browser-linux-x64",
         }),
         sha256:
-          "5b2dbebc79f669e06c0eef6749ae3a086c1c8f3421659a90288467d999e2d881",
+          "b1dce5177ea0ab51cf6fcfa33d73196cc2f8ef8816bae418a3a6421da03e65d5",
         sourceFileName: "agent-browser-linux-x64",
         executableRelativePath: "agent-browser",
       }),

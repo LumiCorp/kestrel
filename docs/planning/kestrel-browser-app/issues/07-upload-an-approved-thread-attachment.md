@@ -136,6 +136,12 @@ Add shared, Desktop, hosted, process, PostgreSQL, Chromium, approval, and cleanu
   either value. Kestrel requires `localName === "input"` and `type === "file"`;
   a selector/role heuristic, a second independently resolved read, or a mutating
   upload preflight is not used.
+- Object-resolving commands now require a parsed ref's cached backend-node
+  identity. If that node has become stale, both inspection and upload fail
+  without the upstream accessibility role/name fallback. A real pinned-Chrome
+  regression
+  replaces an approved input with an identically labeled clone, collects the
+  original node, and proves neither command follows the replacement.
 - The darwin-arm64 and linux-x64 release binaries are repository-owned,
   SHA-256-pinned runtime assets. Both staging lanes copy and verify only those
   exact bytes before the containing Desktop package or hosted worker image is

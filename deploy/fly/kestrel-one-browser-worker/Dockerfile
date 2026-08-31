@@ -22,7 +22,7 @@ RUN apt-get update \
 WORKDIR /staged
 COPY deploy/fly/kestrel-one-browser-worker/runtime/linux-x64/agent-browser-linux-x64 ./agent-browser-linux-x64
 COPY deploy/fly/kestrel-one-browser-worker/runtime/linux-x64/chrome-linux64.zip ./chrome-linux64.zip
-RUN echo "5b2dbebc79f669e06c0eef6749ae3a086c1c8f3421659a90288467d999e2d881  agent-browser-linux-x64" | sha256sum --check --strict - \
+RUN echo "b1dce5177ea0ab51cf6fcfa33d73196cc2f8ef8816bae418a3a6421da03e65d5  agent-browser-linux-x64" | sha256sum --check --strict - \
   && echo "88af83664e1e5f79dc1c1378d0699b98dddd69690a748addf4ccbe322bfacedf  chrome-linux64.zip" | sha256sum --check --strict - \
   && install -D --mode=0755 agent-browser-linux-x64 /opt/kestrel/browser-runtime/agent-browser \
   && unzip -q chrome-linux64.zip -d /tmp/chrome \

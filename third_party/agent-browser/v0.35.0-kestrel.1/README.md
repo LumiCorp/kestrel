@@ -10,7 +10,9 @@ Browser v1 and the small source patch used to build them.
   `get local-name <selector-or-ref>` command. It resolves through
   agent-browser's private reference map, then reads the browser-owned
   `DOM.describeNode` local name and `type` attribute for that exact CDP object
-  in one response. Page JavaScript cannot shadow either value.
+  in one response. Parsed refs require their cached backend-node identity;
+  stale refs fail instead of falling back to role/name matching. The same
+  exact-ref rule protects upload. Page JavaScript cannot shadow either value.
 - Kestrel version: `0.35.0-kestrel.1`
 - License: Apache-2.0; the upstream license is included as `LICENSE`.
 

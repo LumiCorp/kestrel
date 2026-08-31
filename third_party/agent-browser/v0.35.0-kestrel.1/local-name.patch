@@ -122,11 +122,200 @@ index 2af51d5..248771f 100644
  async fn handle_isvisible(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
      let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
      let session_id = mgr.active_session_id()?.to_string();
+diff --git a/cli/src/native/e2e_tests.rs b/cli/src/native/e2e_tests.rs
+index 9e5aee1..0192361 100644
+--- a/cli/src/native/e2e_tests.rs
++++ b/cli/src/native/e2e_tests.rs
+@@ -3880,13 +3880,13 @@ async fn e2e_inspect() {
+ }
+
+ // ---------------------------------------------------------------------------
+-// Stale ref fallback (#805): clicking a ref after the DOM has been replaced
+-// should fall back to role/name lookup instead of failing.
++// Kestrel exact refs: a stale ref must not follow an identical role/name
++// replacement for either inspection or file upload.
+ // ---------------------------------------------------------------------------
+
+ #[tokio::test]
+ #[ignore]
+-async fn e2e_click_stale_ref_falls_back_to_role_name() {
++async fn e2e_stale_ref_fails_closed_for_description_and_upload() {
+     let mut state = DaemonState::new();
+
+     let resp = execute_command(
+@@ -3896,19 +3896,25 @@ async fn e2e_click_stale_ref_falls_back_to_role_name() {
+     .await;
+     assert_success(&resp);
+
+-    // Navigate to a page with a button that replaces the DOM when clicked.
++    // Navigate to a page whose button replaces the approved file input with
++    // an identical accessible replacement.
+     let html = r#"data:text/html,<body>
+         <div id="c">
+             <button onclick="
+                 var c = document.getElementById('c');
+                 c.innerHTML = '';
+-                var b = document.createElement('button');
+-                b.textContent = 'Target';
+-                b.onclick = function() { document.title = 'clicked'; };
+-                c.appendChild(b);
++                var label = document.createElement('label');
++                label.htmlFor = 'target';
++                label.textContent = 'Target';
++                var input = document.createElement('input');
++                input.id = 'target';
++                input.type = 'file';
++                c.appendChild(label);
++                c.appendChild(input);
+                 document.title = 'replaced';
+             ">Replace</button>
+-            <button>Target</button>
++            <label for="target">Target</label>
++            <input id="target" type="file">
+         </div>
+     </body>"#;
+
+@@ -3929,7 +3935,7 @@ async fn e2e_click_stale_ref_falls_back_to_role_name() {
+     );
+     assert!(
+         snapshot.contains("Target"),
+-        "Snapshot should contain Target button"
++        "Snapshot should contain Target file input"
+     );
+
+     // Click "Replace" — this removes all DOM nodes and recreates them,
+@@ -3947,25 +3953,50 @@ async fn e2e_click_stale_ref_falls_back_to_role_name() {
+     assert_success(&resp);
+     assert_eq!(get_data(&resp)["title"], "replaced");
+
+-    // Now click the stale "Target" ref. Before the fix this returned:
+-    //   "CDP error (DOM.getBoxModel): Could not compute box model."
+-    // After the fix it falls back to role/name lookup and succeeds.
++    // Release the detached original node so its cached backend identity is
++    // observably stale and the old role/name fallback would select the clone.
++    let browser = state.browser.as_ref().unwrap();
++    let session_id = browser.active_session_id().unwrap().to_string();
++    browser
++        .client
++        .send_command("HeapProfiler.collectGarbage", None, Some(&session_id))
++        .await
++        .unwrap();
++
++    // The stale ref must not inspect the identical replacement.
+     let resp = execute_command(
+-        &json!({ "id": "6", "action": "click", "selector": "e2" }),
++        &json!({ "id": "6", "action": "getlocalname", "selector": "e2" }),
+         &mut state,
+     )
+     .await;
+-    assert_success(&resp);
+-    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
++    assert_eq!(resp["success"], false);
++    assert!(resp["error"]
++        .as_str()
++        .unwrap_or_default()
++        .contains("Stale ref"));
+
+-    // Verify the fallback click hit the right (recreated) button.
+-    let resp = execute_command(&json!({ "id": "7", "action": "title" }), &mut state).await;
+-    assert_success(&resp);
+-    assert_eq!(
+-        get_data(&resp)["title"],
+-        "clicked",
+-        "Stale ref should have been resolved via role/name fallback"
+-    );
++    // The same stale ref must also fail before uploading to the replacement.
++    let upload_path = std::env::temp_dir().join(format!(
++        "agent-browser-stale-ref-upload-{}",
++        std::process::id()
++    ));
++    std::fs::write(&upload_path, b"must-not-upload").unwrap();
++    let resp = execute_command(
++        &json!({
++            "id": "7",
++            "action": "upload",
++            "selector": "e2",
++            "files": [upload_path.to_string_lossy()]
++        }),
++        &mut state,
++    )
++    .await;
++    let _ = std::fs::remove_file(&upload_path);
++    assert_eq!(resp["success"], false);
++    assert!(resp["error"]
++        .as_str()
++        .unwrap_or_default()
++        .contains("Stale ref"));
+
+     let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
+     assert_success(&resp);
 diff --git a/cli/src/native/element.rs b/cli/src/native/element.rs
-index 799814a..a991c71 100644
+index 799814a..1d66cea 100644
 --- a/cli/src/native/element.rs
 +++ b/cli/src/native/element.rs
-@@ -912,6 +912,54 @@ pub async fn get_element_attribute(
+@@ -491,54 +491,25 @@ pub async fn resolve_element_object_id(
+         let effective_session_id =
+             resolve_frame_session(entry.frame_id.as_deref(), session_id, iframe_sessions);
+
+-        // Try cached backend_node_id first (fast path)
+-        if let Some(backend_node_id) = entry.backend_node_id {
+-            let result: Result<DomResolveNodeResult, String> = client
+-                .send_command_typed(
+-                    "DOM.resolveNode",
+-                    &DomResolveNodeParams {
+-                        backend_node_id: Some(backend_node_id),
+-                        node_id: None,
+-                        object_group: Some("agent-browser".to_string()),
+-                    },
+-                    Some(effective_session_id),
+-                )
+-                .await;
+-
+-            if let Ok(r) = result {
+-                if let Some(object_id) = r.object.object_id {
+-                    return Ok((object_id, effective_session_id.to_string()));
+-                }
+-            }
+-            // backend_node_id is stale; re-query the accessibility tree below
+-        }
+-
+-        // Fallback: re-query the accessibility tree to find a fresh node by role/name
+-        let fresh_id = find_node_id_by_role_name(
+-            client,
+-            session_id,
+-            &entry.role,
+-            &entry.name,
+-            entry.nth,
+-            entry.frame_id.as_deref(),
+-            iframe_sessions,
+-        )
+-        .await?;
++        let backend_node_id = entry
++            .backend_node_id
++            .ok_or_else(|| format!("Ref {} has no exact backend node identity", ref_id))?;
+         let result: DomResolveNodeResult = client
+             .send_command_typed(
+                 "DOM.resolveNode",
+                 &DomResolveNodeParams {
+-                    backend_node_id: Some(fresh_id),
++                    backend_node_id: Some(backend_node_id),
+                     node_id: None,
+                     object_group: Some("agent-browser".to_string()),
+                 },
+                 Some(effective_session_id),
+             )
+-            .await?;
++            .await
++            .map_err(|_| format!("Stale ref: {}", ref_id))?;
+         let object_id = result
+             .object
+             .object_id
+-            .ok_or_else(|| format!("No objectId for ref {}", ref_id))?;
++            .ok_or_else(|| format!("Stale ref: {}", ref_id))?;
+         return Ok((object_id, effective_session_id.to_string()));
+     }
+
+@@ -912,6 +883,54 @@ pub async fn get_element_attribute(
      Ok(result.result.value.unwrap_or(Value::Null))
  }
 

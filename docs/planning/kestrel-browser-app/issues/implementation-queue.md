@@ -24,7 +24,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Done
 
-- [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md) — approved with one atomic browser-owned `localName` plus `type` read, strict envelope parsing, SHA-pinned darwin-arm64/linux-x64 assets, and 185 focused tests passing
+- [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md) — independently approved with exact object-resolving ref identity, replacement-element fail-close proof, SHA-pinned darwin-arm64/linux-x64 assets, and 148 focused tests passing
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md) — approved after expiry, ready-state monotonicity, promotion-cleanup serialization, and known-versus-unknown claim-lifecycle review; 86 focused tests pass
 - [Define the hosted passkey boundary](06e-prove-hosted-passkey-takeover.md) — hosted v1 is explicitly limited to passwords, typed one-time codes, and page-rendered SSO/MFA; real platform passkeys remain a signed Desktop v1 capability
 - [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — approved at `7d1a8feb0`; shared bounds, exact pinned-Session CDP lifecycle, and deterministic plus real-Chromium capture proofs are green
