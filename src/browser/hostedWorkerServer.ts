@@ -86,6 +86,12 @@ type AcceptedOperation = {
   downloadBytesConsumed: boolean;
 };
 
+type HostedBrowserViewerAdmission = {
+  claims: HostedBrowserViewerTicketClaimsV1;
+  established: boolean;
+  settlement?: Promise<DesktopBrowserViewerStateV1> | undefined;
+};
+
 export type HostedBrowserWorkerConfig = {
   sessionId: string;
   generation: number;
@@ -897,7 +903,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     claims: HostedBrowserViewerTicketClaimsV1;
     retirementEstablished: boolean;
   }>();
-  readonly #viewerAdmissions = new Map<string, HostedBrowserViewerTicketClaimsV1>();
+  readonly #viewerAdmissions = new Map<string, HostedBrowserViewerAdmission>();
   readonly #retiredViewerConnections = new Map<string, { expiresAt: string }>();
   readonly #viewerRetirementLimit: number;
   #retiredViewerAuthorityExpiresAt = 0;
@@ -1220,23 +1226,37 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       const identity = viewerConnectionIdentity(input.claims);
       if (
         this.#retiredViewerAuthorityExpiresAt > this.#now().getTime() ||
-        this.#retiredViewerConnections.has(identity) ||
-        this.#viewerAdmissions.has(identity)
+        this.#retiredViewerConnections.has(identity)
       ) throw new Error("BROWSER_SESSION_LOST");
+      const admitted = this.#viewerAdmissions.get(identity);
+      if (admitted) {
+        if (!sameViewerTicket(admitted.claims, input.claims)) {
+          throw new Error("BROWSER_SESSION_LOST");
+        }
+        return await this.#settleViewerConnect({
+          service,
+          binding,
+          connectionId,
+          identity,
+          admission: admitted,
+        });
+      }
       if (
         this.#retiredViewerConnections.size + this.#viewerAdmissions.size >=
           this.#viewerRetirementLimit
       ) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
-      this.#viewerAdmissions.set(identity, input.claims);
-      let state: DesktopBrowserViewerStateV1;
-      try {
-        state = await service.connectViewer({ ...binding, connectionId });
-      } catch (error) {
-        this.#viewerAdmissions.delete(identity);
-        throw error;
-      }
-      this.#scheduleViewerExpiry(input.claims, state);
-      return state;
+      const admission: HostedBrowserViewerAdmission = {
+        claims: input.claims,
+        established: false,
+      };
+      this.#viewerAdmissions.set(identity, admission);
+      return await this.#settleViewerConnect({
+        service,
+        binding,
+        connectionId,
+        identity,
+        admission,
+      });
     }
     const connectionId = requiredString(input.connectionId);
     this.#pruneViewerRetirements();
@@ -1322,6 +1342,90 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       await service.cleanupViewerConnection(exact);
     }
     this.#clearViewerExpiry(claims.connectionId);
+  }
+
+  async #settleViewerConnect(input: {
+    service: DesktopBrowserService;
+    binding: {
+      principalId: string;
+      threadId: string;
+      projectId: string;
+      sessionId: string;
+      generation: number;
+    };
+    connectionId: string;
+    identity: string;
+    admission: HostedBrowserViewerAdmission;
+  }): Promise<DesktopBrowserViewerStateV1> {
+    if (input.admission.settlement) return await input.admission.settlement;
+    const previouslyEstablished = input.admission.established;
+    let settlement!: Promise<DesktopBrowserViewerStateV1>;
+    settlement = (async () => {
+      try {
+        const state = await input.service.connectViewer({
+          ...input.binding,
+          connectionId: input.connectionId,
+        });
+        if (
+          state.available !== true ||
+          state.connectionId !== input.connectionId
+        ) throw new Error("BROWSER_SESSION_LOST");
+        const admissionCurrent =
+          this.#viewerAdmissions.get(input.identity) === input.admission;
+        const ticketExpired =
+          Date.parse(input.admission.claims.expiresAt) <= this.#now().getTime();
+        const authorityRetired =
+          this.#retiredViewerAuthorityExpiresAt > this.#now().getTime();
+        const connectionRetired =
+          this.#retiredViewerConnections.has(input.identity);
+        if (
+          !admissionCurrent ||
+          ticketExpired ||
+          authorityRetired ||
+          connectionRetired
+        ) {
+          const ownsExpiryCleanup = admissionCurrent && ticketExpired;
+          if (ownsExpiryCleanup) {
+            this.#scheduleViewerExpiry(input.admission.claims, state);
+            this.#retireViewerConnection(input.admission.claims);
+            const expiry = this.#viewerExpiries.get(input.connectionId);
+            if (expiry?.claims === input.admission.claims) {
+              expiry.retirementEstablished = true;
+            }
+          }
+          try {
+            await input.service.cleanupViewerConnection({
+              ...input.binding,
+              connectionId: input.connectionId,
+            });
+            if (ownsExpiryCleanup) {
+              this.#clearViewerExpiry(input.connectionId);
+            }
+          } catch {
+            throw new Error("BROWSER_SESSION_LOST");
+          }
+          throw new Error("BROWSER_SESSION_LOST");
+        }
+        input.admission.established = true;
+        this.#scheduleViewerExpiry(input.admission.claims, state);
+        return state;
+      } catch (error) {
+        if (this.#viewerAdmissions.get(input.identity) === input.admission) {
+          if (previouslyEstablished) {
+            this.#retireViewerConnection(input.admission.claims);
+          } else {
+            this.#viewerAdmissions.delete(input.identity);
+          }
+        }
+        throw error;
+      } finally {
+        if (input.admission.settlement === settlement) {
+          input.admission.settlement = undefined;
+        }
+      }
+    })();
+    input.admission.settlement = settlement;
+    return await settlement;
   }
 
   async destroy(): Promise<void> {
@@ -1442,11 +1546,11 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   ): void {
     let expiresAt = Date.parse(claims.expiresAt);
     for (const admitted of this.#viewerAdmissions.values()) {
-      if (!sameViewerPrincipal(admitted, claims)) {
+      if (!sameViewerPrincipal(admitted.claims, claims)) {
         throw new Error("BROWSER_SESSION_LOST");
       }
-      expiresAt = Math.max(expiresAt, Date.parse(admitted.expiresAt));
-      this.#clearViewerExpiry(admitted.connectionId);
+      expiresAt = Math.max(expiresAt, Date.parse(admitted.claims.expiresAt));
+      this.#clearViewerExpiry(admitted.claims.connectionId);
     }
     this.#viewerAdmissions.clear();
     this.#retiredViewerAuthorityExpiresAt = Math.max(
@@ -2089,6 +2193,13 @@ function sameViewerPrincipal(
     left.sessionId === right.sessionId &&
     left.generation === right.generation &&
     left.actorId === right.actorId;
+}
+
+function sameViewerTicket(
+  left: HostedBrowserViewerTicketClaimsV1,
+  right: HostedBrowserViewerTicketClaimsV1,
+): boolean {
+  return hashCanonical(left) === hashCanonical(right);
 }
 
 function requireViewerInput(value: unknown): DesktopBrowserViewerInputV1 {

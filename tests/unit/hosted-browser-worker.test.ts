@@ -2149,7 +2149,7 @@ test("hosted worker cleanup requires a fixed-key capability bound to exact conne
   await worker.close();
 });
 
-test("AgentBrowserHostedWorkerEngine fail-closes a retained viewer before accepting a different proposed connection", async (t) => {
+test("AgentBrowserHostedWorkerEngine shares exact live connects and fail-closes a different proposed connection", async (t) => {
   const homePath = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-hosted-viewer-composition-"),
   );
@@ -2174,14 +2174,26 @@ test("AgentBrowserHostedWorkerEngine fail-closes a retained viewer before accept
     },
   };
   const config = workerConfig();
+  let releaseFirstConnect!: () => void;
+  const firstConnectGate = new Promise<void>((resolve) => {
+    releaseFirstConnect = resolve;
+  });
+  let connectCalls = 0;
   const engine = new AgentBrowserHostedWorkerEngine(config, {
     createDesktopBrowserService(options) {
-      return new DesktopBrowserService({
+      const service = new DesktopBrowserService({
         ...options,
         homePath,
         engine: adapter,
         nativeAuthenticationHandoff: false,
       });
+      const connectViewer = service.connectViewer.bind(service);
+      service.connectViewer = async (input) => {
+        connectCalls += 1;
+        if (connectCalls === 1) await firstConnectGate;
+        return await connectViewer(input);
+      };
+      return service;
     },
   });
   const session = openingHostedSession();
@@ -2200,20 +2212,35 @@ test("AgentBrowserHostedWorkerEngine fail-closes a retained viewer before accept
   const connectionId = "hosted-composed-connection-1";
   const claims = viewerClaims("user-1", connectionId);
 
-  const first = await engine.viewer({
+  const firstPromise = engine.viewer({
     action: "connect",
     claims,
     connectionId,
   });
-  await assert.rejects(engine.viewer({
+  const concurrentDuplicatePromise = engine.viewer({
     action: "connect",
     claims,
     connectionId,
-  }), hasBrowserCode("BROWSER_SESSION_LOST"));
+  });
+  await Promise.resolve();
+  assert.equal(connectCalls, 1);
+  releaseFirstConnect();
+  const [first, concurrentDuplicate] = await Promise.all([
+    firstPromise,
+    concurrentDuplicatePromise,
+  ]);
   assert.equal(
     (first as { connectionId?: string }).connectionId,
     connectionId,
   );
+  assert.deepEqual(concurrentDuplicate, first);
+  const sequentialDuplicate = await engine.viewer({
+    action: "connect",
+    claims,
+    connectionId,
+  });
+  assert.deepEqual(sequentialDuplicate, first);
+  assert.equal(connectCalls, 2);
 
   await assert.rejects(
     engine.viewer({
@@ -2231,6 +2258,113 @@ test("AgentBrowserHostedWorkerEngine fail-closes a retained viewer before accept
     }),
     hasBrowserCode("BROWSER_SESSION_LOST"),
   );
+  await engine.destroy();
+});
+
+test("AgentBrowserHostedWorkerEngine rejects shared connect settlement after ticket expiry", async () => {
+  let now = new Date("2026-08-30T12:00:00.000Z");
+  const timers: Array<{ handler: () => void; delay: number; cleared: boolean }> = [];
+  let releaseConnect!: () => void;
+  const connectGate = new Promise<void>((resolve) => {
+    releaseConnect = resolve;
+  });
+  let connectCalls = 0;
+  let cleanupCalls = 0;
+  const fakeService = {
+    async initialize() {},
+    async execute() { return null; },
+    async connectViewer(input: { connectionId: string }) {
+      connectCalls += 1;
+      await connectGate;
+      return {
+        version: "desktop_browser_viewer_state_v1" as const,
+        available: true,
+        threadId: "thread-1",
+        projectId: "project-1",
+        sessionId: "browser-session-1",
+        generation: 1,
+        connectionId: input.connectionId,
+        sessionState: "ready" as const,
+        takeoverRequested: true,
+      };
+    },
+    async cleanupViewerConnection() {
+      cleanupCalls += 1;
+      if (cleanupCalls === 1) throw new Error("transient cleanup failure");
+    },
+    async close() {},
+  };
+  const fakeSetTimeout = ((handler: () => void, delay?: number) => {
+    const record = { handler, delay: delay ?? 0, cleared: false };
+    timers.push(record);
+    return { unref() {} } as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  const fakeClearTimeout = ((_handle: ReturnType<typeof setTimeout>) => {
+    const timer = [...timers].reverse().find((candidate) => !candidate.cleared);
+    if (timer) timer.cleared = true;
+  }) as typeof clearTimeout;
+  const config = workerConfig();
+  const engine = new AgentBrowserHostedWorkerEngine(config, {
+    now: () => now,
+    setTimeout: fakeSetTimeout,
+    clearTimeout: fakeClearTimeout,
+    viewerRetirementLimit: 1,
+    createDesktopBrowserService() {
+      return fakeService as unknown as DesktopBrowserService;
+    },
+  });
+  await engine.execute(
+    {
+      prepared: preparedOpen(),
+      authority,
+      session: openingHostedSession(),
+      gatewayProxy: hostedGatewayProxy(config),
+    },
+    { async acknowledgeDispatch() {}, async persistCompletedResult() {} },
+  );
+  const claims = viewerClaims("user-1", "expiring-connect", now);
+  const first = engine.viewer({
+    action: "connect",
+    claims,
+    connectionId: claims.connectionId,
+  });
+  const duplicate = engine.viewer({
+    action: "connect",
+    claims,
+    connectionId: claims.connectionId,
+  });
+  await Promise.resolve();
+  assert.equal(connectCalls, 1);
+  now = new Date(Date.parse(claims.expiresAt));
+  releaseConnect();
+  const settled = await Promise.allSettled([first, duplicate]);
+  assert.deepEqual(
+    settled.map((result) =>
+      result.status === "rejected" && hasBrowserCode("BROWSER_SESSION_LOST")(result.reason)
+    ),
+    [true, true],
+  );
+  assert.equal(cleanupCalls, 1);
+  const cleanupRetry = timers.find((timer) => timer.delay === 1 && !timer.cleared);
+  assert.ok(cleanupRetry);
+  const replacement = viewerClaims("user-1", "replacement-at-capacity", now);
+  const replacementState = await engine.viewer({
+    action: "connect",
+    claims: replacement,
+    connectionId: replacement.connectionId,
+  });
+  assert.equal(
+    (replacementState as { connectionId?: string }).connectionId,
+    replacement.connectionId,
+  );
+  cleanupRetry.handler();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(cleanupCalls, 2);
+  assert.deepEqual(await engine.viewer({
+    action: "connect",
+    claims: replacement,
+    connectionId: replacement.connectionId,
+  }), replacementState);
   await engine.destroy();
 });
 
@@ -2364,7 +2498,7 @@ test("hosted worker lease expiry retries exact cleanup until the worker proves r
   assert.ok(retry);
   now = new Date(now.getTime() + 61_000);
   const replacement = viewerClaims("user-1", "capacity-replacement", now);
-  await engine.viewer({
+  const replacementState = await engine.viewer({
     action: "connect",
     claims: replacement,
     connectionId: replacement.connectionId,
@@ -2372,14 +2506,11 @@ test("hosted worker lease expiry retries exact cleanup until the worker proves r
   retry.handler();
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(cleanupCalls, 2);
-  await assert.rejects(
-    engine.viewer({
-      action: "connect",
-      claims: replacement,
-      connectionId: replacement.connectionId,
-    }),
-    hasBrowserCode("BROWSER_SESSION_LOST"),
-  );
+  assert.deepEqual(await engine.viewer({
+    action: "connect",
+    claims: replacement,
+    connectionId: replacement.connectionId,
+  }), replacementState);
   await engine.destroy();
 });
 

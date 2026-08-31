@@ -8,7 +8,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Blocked
 
-- [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — hosted v1 authentication scope is settled; blocked on remaining 06a-06d review and the live Vercel/PostgreSQL/combined hosted proof
+- [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — hosted v1 authentication scope and issues 06a-06e are review-complete; blocked only on the live Vercel/PostgreSQL/combined hosted proof
 - [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — implementation is review-clean; blocked only on issue 04c's signed platform-authenticator canary
 - [Complete native authentication takeover](04c-complete-native-authentication-takeover.md) — code path is review-clean; blocked on signed platform-authenticator canary
 - [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — blocked on issues 05a-05g and the remaining live Fly canaries
@@ -16,14 +16,14 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Implemented
 
-- [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — remaining review findings are assigned to the existing 06b lifecycle and 06c scheduling owners
-- [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)
-- [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)
 - [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
 - [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 
 ## Done
 
+- [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — independently approved; socket close waits for connect settlement and lifecycle findings remain owned by 06b/06c
+- [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md) — independently approved with exact cleanup or Session fail-close for uncertain connection establishment
+- [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md) — independently approved with shared in-flight exact connects, settled Local Core revalidation, expiry cleanup convergence, and bounded replacement-capacity proof; 38 hosted-worker tests pass
 - [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md) — independently approved with exact object-resolving ref identity, replacement-element fail-close proof, SHA-pinned darwin-arm64/linux-x64 assets, and 148 focused tests passing
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md) — approved after expiry, ready-state monotonicity, promotion-cleanup serialization, and known-versus-unknown claim-lifecycle review; 86 focused tests pass
 - [Define the hosted passkey boundary](06e-prove-hosted-passkey-takeover.md) — hosted v1 is explicitly limited to passwords, typed one-time codes, and page-rendered SSO/MFA; real platform passkeys remain a signed Desktop v1 capability

@@ -50,6 +50,27 @@ first worker effect; the worker must not invent authority after dispatch.
 - Focused ticket, Web service, Router, hosted-worker, and Local Core viewer tests
   pass.
 
+## Implementation evidence
+
+- The signed ticket carries one exact proposed connection identity through Web,
+  Router, worker, and Local Core validation.
+- Concurrent delivery of that exact ticket shares one in-flight settlement;
+  settled duplicates re-enter Local Core's exact idempotent connect seam. A
+  different ticket, connection, or principal cannot inherit the connection.
+- Disconnect, authority loss, termination, and ticket expiry invalidate the
+  admission before a delayed connect can publish. Late settlement is cleaned by
+  exact connection identity and rejects fail-closed.
+- Expiry cleanup retains its retry owner across an unknown cleanup result. Its
+  established retirement does not re-enter capacity accounting, so a
+  replacement connection may occupy the bounded slot while cleanup of the old
+  identity still converges.
+- The real `AgentBrowserHostedWorkerEngine` and `DesktopBrowserService`
+  composition regression proves one initial connection, a shared concurrent
+  duplicate, a sequential exact duplicate, and rejection of a different
+  proposed connection. The hosted-worker suite passes 38 tests, TypeScript and
+  diff checks pass, and independent ordinary/adversarial review approved the
+  result.
+
 ## Depends on
 
 [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md).
