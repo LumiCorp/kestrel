@@ -1,5 +1,6 @@
 import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionRecord, AssemblyChangeProposalRecord, ContextCheckpointRecord, ContextPolicyDefinitionRecord, ContextSummaryArtifactRecord, ConversationTurnTerminalEnvelopeV1, DelegationRecord, InteractionRequestRecord, OperatorAttentionRecord, OperatorFocusRecord, SpecialistDefinitionRecord, ThreadAssemblyRecord, ThreadCompactionEventRecord, ThreadRecord } from "../kestrel/contracts/orchestration.js";
 import {
+  assertMatchingThreadAssemblyRetry,
   compareThreadAssemblyRecordsNewestFirst,
   orderThreadAssemblyRecordAfter,
   selectLatestThreadAssemblyRecord,
@@ -285,6 +286,13 @@ export class InMemoryOrchestrationStore implements OrchestrationStore {
   }
 
   async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<ThreadAssemblyRecord> {
+    const duplicate = [...this.threadAssemblies.values()]
+      .flat()
+      .find((candidate) => candidate.recordId === record.recordId);
+    if (duplicate !== undefined) {
+      assertMatchingThreadAssemblyRetry(record, duplicate);
+      return clone(duplicate);
+    }
     const existing = this.threadAssemblies.get(record.threadId) ?? [];
     const persisted = orderThreadAssemblyRecordAfter(
       record,

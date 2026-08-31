@@ -9,6 +9,7 @@ import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionR
 import type { OrchestrationStore } from "./contracts.js";
 import { readSubAgentResultEnvelope } from "./subAgentResult.js";
 import {
+  assertMatchingThreadAssemblyRetry,
   compareThreadAssemblyRecordsNewestFirst,
   orderThreadAssemblyRecordAfter,
 } from "./threadAssemblyOrdering.js";
@@ -884,6 +885,17 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
       if (thread.rows[0] === undefined) {
         throw new Error(`Cannot append assembly record for unknown thread ${record.threadId}.`);
       }
+      const duplicate = await transaction.query<Record<string, unknown>>(
+        `SELECT record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at
+           FROM orchestration_thread_assembly_records
+          WHERE record_id = $1`,
+        [record.recordId],
+      );
+      if (duplicate.rows[0] !== undefined) {
+        const persisted = mapThreadAssemblyRow(duplicate.rows[0]);
+        assertMatchingThreadAssemblyRetry(record, persisted);
+        return persisted;
+      }
       const latest = await transaction.query<Record<string, unknown>>(
         `SELECT record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at
            FROM orchestration_thread_assembly_records
@@ -914,7 +926,18 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
       );
       const insertedRow = inserted.rows[0];
       if (insertedRow === undefined) {
-        throw new Error(`Thread assembly record ${record.recordId} already exists.`);
+        const racedDuplicate = await transaction.query<Record<string, unknown>>(
+          `SELECT record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at
+             FROM orchestration_thread_assembly_records
+            WHERE record_id = $1`,
+          [record.recordId],
+        );
+        if (racedDuplicate.rows[0] === undefined) {
+          throw new Error(`Thread assembly record ${record.recordId} was not persisted.`);
+        }
+        const racedPersisted = mapThreadAssemblyRow(racedDuplicate.rows[0]);
+        assertMatchingThreadAssemblyRetry(record, racedPersisted);
+        return racedPersisted;
       }
       return mapThreadAssemblyRow(insertedRow);
     });
