@@ -937,7 +937,7 @@ export interface ThreadStore {
   upsertAssemblyBundle(record: AssemblyBundleRecord): Promise<void>;
   getAssemblyBundle(bundleId: string): Promise<AssemblyBundleRecord | null>;
   listAssemblyBundles(input?: { source?: AssemblyBundleRecord["source"] | undefined }): Promise<AssemblyBundleRecord[]>;
-  appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<void>;
+  appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<ThreadAssemblyRecord>;
   listThreadAssemblyRecords(threadId: string): Promise<ThreadAssemblyRecord[]>;
   upsertAssemblyChangeProposal(record: AssemblyChangeProposalRecord): Promise<void>;
   getAssemblyChangeProposal(proposalId: string): Promise<AssemblyChangeProposalRecord | null>;
@@ -971,7 +971,7 @@ export interface AssemblyStore {
   upsertAssemblyBundle(record: AssemblyBundleRecord): Promise<void>;
   getAssemblyBundle(bundleId: string): Promise<AssemblyBundleRecord | null>;
   listAssemblyBundles(input?: { source?: AssemblyBundleRecord["source"] | undefined }): Promise<AssemblyBundleRecord[]>;
-  appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<void>;
+  appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<ThreadAssemblyRecord>;
   listThreadAssemblyRecords(threadId: string): Promise<ThreadAssemblyRecord[]>;
   upsertAssemblyChangeProposal(record: AssemblyChangeProposalRecord): Promise<void>;
   getAssemblyChangeProposal(proposalId: string): Promise<AssemblyChangeProposalRecord | null>;

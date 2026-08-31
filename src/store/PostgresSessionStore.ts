@@ -4571,7 +4571,7 @@ export class PostgresSessionStore implements SessionStore {
     return this.orchestrationStore.listAssemblyBundles(input);
   }
 
-  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<void> {
+  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<ThreadAssemblyRecord> {
     await this.ensureSchemaV3();
     return this.orchestrationStore.appendThreadAssemblyRecord(record);
   }

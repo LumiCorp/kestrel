@@ -8,7 +8,10 @@ import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionR
 
 import type { OrchestrationStore } from "./contracts.js";
 import { readSubAgentResultEnvelope } from "./subAgentResult.js";
-import { compareThreadAssemblyRecordsNewestFirst } from "./threadAssemblyOrdering.js";
+import {
+  compareThreadAssemblyRecordsNewestFirst,
+  orderThreadAssemblyRecordAfter,
+} from "./threadAssemblyOrdering.js";
 
 export class PostgresOrchestrationStore implements OrchestrationStore {
   private readonly db: SqlExecutor;
@@ -863,23 +866,58 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
     return result.rows.map((row) => mapAssemblyBundleRow(row));
   }
 
-  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<void> {
+  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<ThreadAssemblyRecord> {
     await this.ensureSchema();
-    await this.db.query(
-      `INSERT INTO orchestration_thread_assembly_records
-        (record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::timestamptz)
-       ON CONFLICT (record_id) DO NOTHING`,
-      [
-        record.recordId,
-        record.threadId,
-        record.bundleId,
-        record.cause,
-        record.authority,
-        stringifySanitizedJson(record.metadata ?? null),
-        normalizeTimestampString(record.createdAt),
-      ],
-    );
+    if (typeof this.db.transaction !== "function") {
+      throw new Error(
+        "Thread assembly append requires a transactional SQL executor.",
+      );
+    }
+    return this.db.transaction(async (transaction) => {
+      const thread = await transaction.query<{ thread_id: string }>(
+        `SELECT thread_id
+           FROM orchestration_threads
+          WHERE thread_id = $1
+          FOR UPDATE`,
+        [record.threadId],
+      );
+      if (thread.rows[0] === undefined) {
+        throw new Error(`Cannot append assembly record for unknown thread ${record.threadId}.`);
+      }
+      const latest = await transaction.query<Record<string, unknown>>(
+        `SELECT record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at
+           FROM orchestration_thread_assembly_records
+          WHERE thread_id = $1
+          ORDER BY created_at DESC, record_id DESC
+          LIMIT 1`,
+        [record.threadId],
+      );
+      const persisted = orderThreadAssemblyRecordAfter(
+        record,
+        latest.rows[0] === undefined ? undefined : mapThreadAssemblyRow(latest.rows[0]),
+      );
+      const inserted = await transaction.query<Record<string, unknown>>(
+        `INSERT INTO orchestration_thread_assembly_records
+          (record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::timestamptz)
+         ON CONFLICT (record_id) DO NOTHING
+         RETURNING record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at`,
+        [
+          persisted.recordId,
+          persisted.threadId,
+          persisted.bundleId,
+          persisted.cause,
+          persisted.authority,
+          stringifySanitizedJson(persisted.metadata ?? null),
+          normalizeTimestampString(persisted.createdAt),
+        ],
+      );
+      const insertedRow = inserted.rows[0];
+      if (insertedRow === undefined) {
+        throw new Error(`Thread assembly record ${record.recordId} already exists.`);
+      }
+      return mapThreadAssemblyRow(insertedRow);
+    });
   }
 
   async listThreadAssemblyRecords(threadId: string): Promise<ThreadAssemblyRecord[]> {

@@ -1889,7 +1889,7 @@ export class InMemorySessionStore implements SessionStore {
 
   async appendThreadAssemblyRecord(
     record: Parameters<InMemoryOrchestrationStore["appendThreadAssemblyRecord"]>[0],
-  ): Promise<void> {
+  ): ReturnType<InMemoryOrchestrationStore["appendThreadAssemblyRecord"]> {
     return this.orchestrationStore.appendThreadAssemblyRecord(record);
   }
 

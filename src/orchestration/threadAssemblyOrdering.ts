@@ -19,3 +19,21 @@ export function selectLatestThreadAssemblyRecord(
 ): ThreadAssemblyRecord | undefined {
   return [...records].sort(compareThreadAssemblyRecordsNewestFirst)[0];
 }
+
+export function orderThreadAssemblyRecordAfter(
+  record: ThreadAssemblyRecord,
+  previous: ThreadAssemblyRecord | undefined,
+): ThreadAssemblyRecord {
+  if (previous === undefined) {
+    return record;
+  }
+  const proposedMillis = Date.parse(record.createdAt);
+  const previousMillis = Date.parse(previous.createdAt);
+  if (Number.isFinite(proposedMillis) === false || Number.isFinite(previousMillis) === false) {
+    throw new Error("Thread assembly timestamps must be valid ISO-8601 timestamps.");
+  }
+  return {
+    ...record,
+    createdAt: new Date(Math.max(proposedMillis, previousMillis + 1)).toISOString(),
+  };
+}

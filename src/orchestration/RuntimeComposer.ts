@@ -51,7 +51,7 @@ export class RuntimeComposer {
       ) {
         return existing;
       }
-      const record: ThreadAssemblyRecord = {
+      const record = await this.store.appendThreadAssemblyRecord({
         recordId: `assembly-record-${randomUUID()}`,
         threadId: input.thread.threadId,
         bundleId: defaultBundle.bundleId,
@@ -62,8 +62,7 @@ export class RuntimeComposer {
           previousRecordId: existing.record.recordId,
         },
         createdAt: new Date().toISOString(),
-      };
-      await this.store.appendThreadAssemblyRecord(record);
+      });
       return { record, bundle: defaultBundle };
     }
 
@@ -84,7 +83,7 @@ export class RuntimeComposer {
       bundle = defaultBundle;
     }
 
-    const record: ThreadAssemblyRecord = {
+    const record = await this.store.appendThreadAssemblyRecord({
       recordId: `assembly-record-${randomUUID()}`,
       threadId: input.thread.threadId,
       bundleId: bundle?.bundleId ?? "implicit/legacy",
@@ -94,8 +93,7 @@ export class RuntimeComposer {
         implicitLegacy: bundle === undefined,
       },
       createdAt: new Date().toISOString(),
-    };
-    await this.store.appendThreadAssemblyRecord(record);
+    });
     return {
       record,
       ...(bundle !== undefined ? { bundle } : {}),
@@ -480,30 +478,20 @@ export class RuntimeComposer {
     record: ThreadAssemblyRecord;
     bundle: AssemblyBundleRecord;
   }> {
-    const current = await this.getActiveAssembly(input.threadId);
-    const record: ThreadAssemblyRecord = {
+    const record = await this.store.appendThreadAssemblyRecord({
       recordId: `assembly-record-${randomUUID()}`,
       threadId: input.threadId,
       bundleId: input.bundle.bundleId,
       cause: input.cause,
       authority: input.authority,
       ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
-      createdAt: nextAssemblyRecordTimestamp(current?.record.createdAt),
-    };
-    await this.store.appendThreadAssemblyRecord(record);
+      createdAt: new Date().toISOString(),
+    });
     return {
       record,
       bundle: input.bundle,
     };
   }
-}
-
-function nextAssemblyRecordTimestamp(previous: string | undefined): string {
-  const now = Date.now();
-  const previousMillis = previous === undefined ? Number.NaN : Date.parse(previous);
-  return new Date(
-    Number.isFinite(previousMillis) ? Math.max(now, previousMillis + 1) : now,
-  ).toISOString();
 }
 
 function shouldMigrateLegacyDesktopAssembly(
