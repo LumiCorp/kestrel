@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
@@ -97,6 +97,7 @@ test("hosted worker prepares and stages one exact approved attachment upload", a
       attachmentId: effect.attachmentId,
       filename: effect.filename,
       declaredMediaType: effect.declaredMediaType,
+      detectedMediaType: effect.detectedMediaType,
       sizeBytes: effect.sizeBytes,
       sha256: effect.sha256,
     },
@@ -218,6 +219,95 @@ test("hosted upload byte authority is consumed at transfer start and cannot be r
     hasBrowserCode("BROWSER_ACTION_OUTCOME_UNKNOWN"),
   );
   await engine.destroy();
+});
+
+test("hosted upload cancellation aborts accepted execution and proves exact worker cleanup", async () => {
+  const effect = preparedUploadEffect(Buffer.from("approved attachment"));
+  const prepared = preparedUpload(effect);
+  const capability = operationCapabilityFor(prepared, "revision-1");
+  let executionSignal: AbortSignal | undefined;
+  let cancelledOperationId: string | undefined;
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async execute(_input, lifecycle) {
+        executionSignal = lifecycle.signal;
+        await new Promise<void>((_resolve, reject) => {
+          lifecycle.signal?.addEventListener("abort", () => reject(
+            lifecycle.signal?.reason ?? new Error("BROWSER_ACTION_CANCELLED"),
+          ), { once: true });
+        });
+        assert.fail("cancelled upload execution must not continue");
+      },
+      async cancelUpload(operationId) {
+        cancelledOperationId = operationId;
+      },
+      async adopt() { return 0; },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const request = (pathname: string) => fetch(`http://[::1]:${port}${pathname}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      capability,
+      ...(pathname.endsWith("/accept") ? { prepared, authority } : { operationId: prepared.callId }),
+    }),
+  });
+  assert.equal((await request("/v1/operations/accept")).status, 200);
+  const cancelled = await request("/v1/operations/cancel");
+  assert.equal(cancelled.status, 200);
+  assert.deepEqual(await cancelled.json(), {
+    cancelled: true,
+    operationId: prepared.callId,
+  });
+  assert.equal(executionSignal?.aborted, true);
+  assert.equal(cancelledOperationId, prepared.callId);
+  await worker.close();
+});
+
+test("hosted upload cancellation removes only the exact staged operation and permits a new operation", async (t) => {
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-hosted-upload-cancel-"));
+  t.after(async () => await rm(runtimeRoot, { recursive: true, force: true }));
+  const bytes = Buffer.from("approved attachment");
+  const effect = preparedUploadEffect(bytes);
+  const engine = new AgentBrowserHostedWorkerEngine(workerConfig(), { runtimeRoot });
+  await engine.receiveUpload({
+    operationId: "call-upload-a",
+    effect,
+    body: Readable.from(bytes),
+  });
+  await engine.cancelUpload("call-upload-a");
+  assert.deepEqual(
+    (await readdir(runtimeRoot)).filter((name) => name.startsWith("hosted-upload-")),
+    [],
+  );
+  await engine.receiveUpload({
+    operationId: "call-upload-b",
+    effect,
+    body: Readable.from(bytes),
+  });
+  await engine.cancelUpload("call-upload-b");
+  await engine.destroy();
+});
+
+test("hosted worker reconstruction removes exact upload residue without touching unrelated files", async (t) => {
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-hosted-upload-restart-"));
+  t.after(async () => await rm(runtimeRoot, { recursive: true, force: true }));
+  const bytes = Buffer.from("approved attachment");
+  const first = new AgentBrowserHostedWorkerEngine(workerConfig(), { runtimeRoot });
+  await first.receiveUpload({
+    operationId: "call-upload-response-lost",
+    effect: preparedUploadEffect(bytes),
+    body: Readable.from(bytes),
+  });
+  await writeFile(path.join(runtimeRoot, "profile-state"), "preserve");
+  const reconstructed = new AgentBrowserHostedWorkerEngine(workerConfig(), { runtimeRoot });
+  await reconstructed.cancelUpload("call-no-staged-bytes");
+  assert.deepEqual(await readdir(runtimeRoot), ["profile-state"]);
+  await reconstructed.destroy();
 });
 
 test("hosted worker carries a 20 MiB raw viewer frame and rejects one byte over before transport", async () => {
@@ -2060,6 +2150,7 @@ function preparedUploadEffect(bytes = Buffer.from("approved attachment")) {
     attachmentId: "attachment-1",
     filename: "evidence.txt",
     declaredMediaType: "text/plain",
+    detectedMediaType: "text/plain",
     sizeBytes: bytes.byteLength,
     sha256: createHash("sha256").update(bytes).digest("hex"),
     sessionId: "browser-session-1",

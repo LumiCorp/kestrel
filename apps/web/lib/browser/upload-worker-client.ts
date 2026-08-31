@@ -43,6 +43,7 @@ export interface HostedBrowserUploadWorkerPort {
     sizeBytes: number;
     sha256: string;
     body: NodeJS.ReadableStream;
+    signal?: AbortSignal | undefined;
   }): Promise<void>;
 }
 
@@ -76,26 +77,30 @@ export class HostedBrowserUploadWorkerClient implements HostedBrowserUploadWorke
       sha256: input.sha256,
     };
     const binding = Buffer.from(JSON.stringify(envelope));
-    const response = await this.#request(
-      input,
-      "browser.upload.bytes",
-      binding,
-      "/internal/browser/upload/bytes",
-      {
-        "content-type": "application/octet-stream",
-        "content-length": String(input.sizeBytes),
-        "x-kestrel-browser-upload-envelope": binding.toString("base64url"),
-      },
-      input.body,
-    );
-    const result = await response.json() as { staged?: unknown; operationId?: unknown };
-    if (result.staged !== true || result.operationId !== input.operationId) {
-      throw new Error("BROWSER_ENGINE_FAILURE");
+    try {
+      const response = await this.#request(
+        input,
+        "browser.upload.bytes",
+        binding,
+        "/internal/browser/upload/bytes",
+        {
+          "content-type": "application/octet-stream",
+          "content-length": String(input.sizeBytes),
+          "x-kestrel-browser-upload-envelope": binding.toString("base64url"),
+        },
+        input.body,
+      );
+      const result = await readBoundedJson(response);
+      if (result.staged !== true || result.operationId !== input.operationId) {
+        throw new Error("BROWSER_ENGINE_FAILURE");
+      }
+    } finally {
+      destroyReadable(input.body);
     }
   }
 
   async #request(
-    input: { organizationId: string; environmentId: string; userId: string; threadId: string; runId: string; sessionId: string; routerUrl: string },
+    input: { organizationId: string; environmentId: string; userId: string; threadId: string; runId: string; sessionId: string; routerUrl: string; signal?: AbortSignal | undefined },
     operation: "browser.upload.prepare" | "browser.upload.bytes",
     binding: Buffer,
     pathname: string,
@@ -132,13 +137,39 @@ export class HostedBrowserUploadWorkerClient implements HostedBrowserUploadWorke
         headers: { authorization: `Bearer ${token}`, ...headers },
         body: (body ?? binding) as unknown as BodyInit,
         redirect: "error",
-        signal: AbortSignal.timeout(60_000),
+        signal: input.signal
+          ? AbortSignal.any([input.signal, AbortSignal.timeout(60_000)])
+          : AbortSignal.timeout(60_000),
         ...(body ? ({ duplex: "half" } as Record<string, unknown>) : {}),
       },
     );
-    if (!response.ok) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+    if (!response.ok) {
+      const error = await readBoundedJson(response).catch(() => null);
+      const code = error && typeof error.error === "object" && error.error !== null &&
+          typeof (error.error as Record<string, unknown>).code === "string"
+        ? (error.error as Record<string, unknown>).code as string
+        : "BROWSER_SERVICE_UNAVAILABLE";
+      throw new Error(/^BROWSER_[A-Z0-9_]+$/u.test(code)
+        ? code
+        : "BROWSER_SERVICE_UNAVAILABLE");
+    }
     return response;
   }
+}
+
+async function readBoundedJson(response: Response): Promise<Record<string, unknown>> {
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength > 128 * 1024) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+  const value = JSON.parse(bytes.toString("utf8")) as unknown;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("BROWSER_ENGINE_FAILURE");
+  }
+  return value as Record<string, unknown>;
+}
+
+function destroyReadable(body: NodeJS.ReadableStream): void {
+  const readable = body as NodeJS.ReadableStream & { destroy?: (error?: Error) => void };
+  readable.destroy?.();
 }
 
 function scope(input: {

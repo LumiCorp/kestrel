@@ -1194,6 +1194,7 @@ export function createPackagedDesktopBrowserService(input: {
     attachmentStore,
     uploadStream: {
       async open(request) {
+        request.signal?.throwIfAborted();
         const [attachment] = await attachmentStore.resolve(
           request.threadId,
           [request.attachmentId],
@@ -1205,7 +1206,9 @@ export function createPackagedDesktopBrowserService(input: {
         ) {
           throw new Error("Desktop Browser attachment stream is unavailable.");
         }
-        return createReadStream(attachment.path);
+        return createReadStream(attachment.path, {
+          ...(request.signal ? { signal: request.signal } : {}),
+        });
       },
     },
     nativeAuthenticationHandoff: true,

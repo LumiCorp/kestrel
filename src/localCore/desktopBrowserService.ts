@@ -141,11 +141,13 @@ export interface DesktopBrowserInterceptedDownload {
 
 export interface DesktopBrowserUploadStreamHook {
   open(input: {
+    operationId: string;
     threadId: string;
     sessionId: string;
     generation: number;
     attachmentId: string;
     maximumBytes: number;
+    signal?: AbortSignal | undefined;
   }): Promise<AsyncIterable<Uint8Array>>;
 }
 
@@ -180,6 +182,7 @@ export interface DesktopBrowserEngineAdapter {
       targetRef: string;
       ownedPath: string;
       acceptedOperation: DesktopBrowserAcceptedOperation;
+      signal?: AbortSignal | undefined;
     },
   ): Promise<void>;
   close(
@@ -1196,7 +1199,8 @@ export class DesktopBrowserService implements BrowserServicePort {
           threadId: input.threadId,
           attachmentId,
           filename: resolved.filename,
-          declaredMediaType: input.attachment.declaredMediaType,
+          declaredMediaType: resolved.declaredMediaType ?? "application/octet-stream",
+          detectedMediaType: resolved.detectedMediaType ?? resolved.mimeType,
           sizeBytes: resolved.sizeBytes,
           sha256: resolved.sha256,
           sessionId,
@@ -2124,6 +2128,7 @@ export class DesktopBrowserService implements BrowserServicePort {
       attachmentId: effect.attachmentId,
       filename: effect.filename,
       declaredMediaType: effect.declaredMediaType,
+      detectedMediaType: effect.detectedMediaType,
       sizeBytes: effect.sizeBytes,
       sha256: effect.sha256,
     });
@@ -2163,19 +2168,22 @@ export class DesktopBrowserService implements BrowserServicePort {
           "approved_target",
         );
       }
-      await lifecycle.acknowledgeDispatch();
+      lifecycle.signal?.throwIfAborted();
       const stream = await uploadStream.open({
+        operationId: prepared.callId,
         threadId: effect.threadId,
         sessionId: effect.sessionId,
         generation: effect.generation,
         attachmentId: effect.attachmentId,
         maximumBytes: DESKTOP_MAX_ATTACHMENT_BYTES,
+        ...(lifecycle.signal ? { signal: lifecycle.signal } : {}),
       });
       const handle = await open(ownedPath, "wx", 0o600);
       const hash = createHash("sha256");
       let bytes = 0;
       try {
         for await (const value of stream) {
+          lifecycle.signal?.throwIfAborted();
           const chunk = Buffer.from(value);
           bytes += chunk.byteLength;
           if (bytes > DESKTOP_MAX_ATTACHMENT_BYTES || bytes > effect.sizeBytes) {
@@ -2188,6 +2196,7 @@ export class DesktopBrowserService implements BrowserServicePort {
           hash.update(chunk);
           await handle.write(chunk);
         }
+        lifecycle.signal?.throwIfAborted();
         await handle.sync();
       } finally {
         await handle.close();
@@ -2203,6 +2212,7 @@ export class DesktopBrowserService implements BrowserServicePort {
         attachmentId: effect.attachmentId,
         filename: effect.filename,
         declaredMediaType: effect.declaredMediaType,
+        detectedMediaType: effect.detectedMediaType,
         sizeBytes: effect.sizeBytes,
         sha256: effect.sha256,
       });
@@ -2229,11 +2239,14 @@ export class DesktopBrowserService implements BrowserServicePort {
           "The Browser engine upload operation is unavailable.",
         );
       }
+      lifecycle.signal?.throwIfAborted();
+      await lifecycle.acknowledgeDispatch();
       await this.#engine.uploadFile({
         ...runtime.engine,
         targetRef: effect.targetRef,
         ownedPath,
         acceptedOperation: accepted,
+        ...(lifecycle.signal ? { signal: lifecycle.signal } : {}),
       });
       runtime.snapshots.clear();
       runtime.continuations.clear();
@@ -2244,6 +2257,10 @@ export class DesktopBrowserService implements BrowserServicePort {
         generation: runtime.session.generation,
         outcome: "uploaded",
         attachmentId: effect.attachmentId,
+        filename: sanitizeBrowserUploadResultFilename(effect.filename),
+        bytes: effect.sizeBytes,
+        sha256: effect.sha256,
+        targetRef: effect.targetRef,
       });
       await lifecycle.persistCompletedResult(output);
       return output;
@@ -3246,6 +3263,8 @@ export class DesktopBrowserService implements BrowserServicePort {
             threadId,
             filename: expected.filename,
             mimeType: expected.declaredMediaType,
+            declaredMediaType: expected.declaredMediaType,
+            detectedMediaType: expected.detectedMediaType,
             sizeBytes: expected.sizeBytes,
             sha256: expected.sha256,
           };
@@ -3266,7 +3285,8 @@ export class DesktopBrowserService implements BrowserServicePort {
       resolved.attachmentId !== expected.attachmentId ||
       resolved.threadId !== threadId ||
       resolved.filename !== expected.filename ||
-      resolved.mimeType !== expected.declaredMediaType ||
+      (resolved.declaredMediaType ?? "application/octet-stream") !== expected.declaredMediaType ||
+      (resolved.detectedMediaType ?? resolved.mimeType) !== expected.detectedMediaType ||
       resolved.sizeBytes !== expected.sizeBytes ||
       resolved.sha256 !== expected.sha256
     ) {
@@ -4663,25 +4683,23 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
   ): Promise<{ targetRef: string; targetLabel: string }> {
     this.#assertAccepted(input, input.acceptedOperation);
     const targetRef = requireEngineRef(input.targetRef);
-    const type = extractScalar(
+    const type = extractOptionalAgentAttribute(
       (await this.#run(input, ["get", "attr", targetRef, "type"])).stdout,
-      "value",
-    ).toLowerCase();
+    )?.toLowerCase();
     if (type !== "file") {
       throw new Error("BROWSER_TARGET_STALE: target is not input[type=file].");
     }
     let accessibleLabel: string | undefined;
     try {
-      accessibleLabel = extractScalar(
+      accessibleLabel = extractOptionalAgentAttribute(
         (await this.#run(input, ["get", "attr", targetRef, "aria-label"])).stdout,
-        "value",
-      ).trim();
+      )?.trim();
     } catch {
       accessibleLabel = undefined;
     }
     return {
       targetRef,
-      targetLabel: (accessibleLabel || `File input ${targetRef}`).slice(0, 512),
+      targetLabel: (accessibleLabel || "File input").slice(0, 512),
     };
   }
 
@@ -4690,6 +4708,7 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
       targetRef: string;
       ownedPath: string;
       acceptedOperation: DesktopBrowserAcceptedOperation;
+      signal?: AbortSignal | undefined;
     },
   ): Promise<void> {
     this.#assertAccepted(input, input.acceptedOperation);
@@ -4699,7 +4718,9 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     if (path.dirname(ownedPath) !== runtimeRoot) {
       throw new Error("BROWSER_ENGINE_FAILURE: upload staging path is not owned.");
     }
-    await this.#run(input, ["upload", targetRef, ownedPath]);
+    await this.#run(input, ["upload", targetRef, ownedPath], {
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
   }
 
   async captureViewerFrame(
@@ -4939,6 +4960,7 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     options: {
       timeoutMs?: number | undefined;
       captureLaunchProcessGroup?: boolean | undefined;
+      signal?: AbortSignal | undefined;
     } = {},
   ): Promise<DesktopBrowserEngineCommandResult> {
     const launch = buildAgentBrowserCliInvocation({
@@ -4959,6 +4981,7 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
               input.launchProcessGroupId = pid;
             }
           : undefined,
+      ...(options.signal ? { signal: options.signal } : {}),
     });
   }
 }
@@ -6118,6 +6141,7 @@ export async function spawnAndCollect(input: {
   timeoutMs: number;
   detached?: boolean | undefined;
   onSpawn?: ((pid: number) => void) | undefined;
+  signal?: AbortSignal | undefined;
 }): Promise<DesktopBrowserEngineCommandResult> {
   return await new Promise((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
@@ -6135,14 +6159,29 @@ export async function spawnAndCollect(input: {
     let stdout = "";
     let stderr = "";
     let settled = false;
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill("SIGKILL");
+      reject(input.signal?.reason instanceof Error
+        ? input.signal.reason
+        : new Error("BROWSER_ACTION_CANCELLED"));
+    };
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      input.signal?.removeEventListener("abort", abort);
       child.kill("SIGKILL");
       reject(
         new Error("BROWSER_ENGINE_TIMEOUT: agent-browser did not respond."),
       );
     }, input.timeoutMs);
+    if (input.signal?.aborted) {
+      abort();
+      return;
+    }
+    input.signal?.addEventListener("abort", abort, { once: true });
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
@@ -6155,12 +6194,14 @@ export async function spawnAndCollect(input: {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      input.signal?.removeEventListener("abort", abort);
       reject(error);
     });
     child.once("close", (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      input.signal?.removeEventListener("abort", abort);
       const result = {
         stdout,
         stderr,
@@ -6787,6 +6828,14 @@ function browserOutput(
   };
 }
 
+function sanitizeBrowserUploadResultFilename(value: string): string {
+  const filename = path.basename(value.replaceAll("\\", "/"))
+    .replace(/[\u0000-\u001f\u007f]/gu, "")
+    .trim()
+    .slice(0, 255);
+  return filename || "attachment";
+}
+
 function requirePublicDestination(target: Record<string, unknown>): string {
   if (target.kind !== "public_url") {
     throw browserFailure(
@@ -7100,6 +7149,20 @@ function extractScalar(stdout: string, field: string): string {
   const value =
     record?.[field] ?? nested?.[field] ?? record?.value ?? nested?.value;
   return typeof value === "string" ? value : stdout.trim();
+}
+
+function extractOptionalAgentAttribute(stdout: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout) as unknown;
+  } catch {
+    return undefined;
+  }
+  const outer = requireOptionalRecord(parsed);
+  if (!outer) return;
+  const data = requireOptionalRecord(outer.data);
+  const value = data?.value ?? outer.value;
+  return typeof value === "string" ? value : undefined;
 }
 
 function extractEngineContent(

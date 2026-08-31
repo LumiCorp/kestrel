@@ -17,6 +17,18 @@ const preparedGrant = {
   activation: { descriptor: { toolId: "browser.request_grant" } },
 } as unknown as PreparedToolCallV1;
 
+const preparedUpload = {
+  ...prepared,
+  activation: { descriptor: { toolId: "browser.upload" } },
+  effectiveInput: {
+    sessionId: "browser-session-1",
+    generation: 1,
+    snapshotId: "snapshot-1",
+    targetRef: "@e1",
+    attachmentId: "attachment-1",
+  },
+} as unknown as PreparedToolCallV1;
+
 test("hosted Browser transport acknowledges only after exact worker acceptance", async () => {
   const events: string[] = [];
   const requests: string[] = [];
@@ -70,6 +82,67 @@ test("hosted Browser transport acknowledges only after exact worker acceptance",
   assert.match(requests[1] ?? "", /control\/invoke$/u);
   assert.match(requests[2] ?? "", /control\/commit$/u);
   assert.equal((output as Record<string, unknown>).outcome, "navigated");
+});
+
+test("hosted upload acknowledges only after the dedicated byte transfer is staged", async () => {
+  const events: string[] = [];
+  let invokes = 0;
+  const service = createKestrelOneBrowserService({
+    kestrelOne: {
+      appRelayUrl: "https://relay.example.test",
+      appRelayToken: "relay-token-1",
+      executionRunId: "run-1",
+    },
+    fetchImpl: (async (url) => {
+      if (String(url).endsWith("/control/accept")) {
+        events.push("accepted");
+        return Response.json({
+          version: "hosted_browser_dispatch_receipt_v1",
+          receiptId: "receipt-upload-1",
+          operationId: "call-1",
+          operation: "browser.upload",
+        });
+      }
+      if (String(url).endsWith("/control/invoke")) {
+        invokes += 1;
+        if (invokes === 1) {
+          events.push("staged");
+          return Response.json({
+            version: "hosted_browser_upload_staged_receipt_v1",
+            receiptId: "receipt-upload-1",
+            operationId: "call-1",
+            operation: "browser.upload",
+          });
+        }
+        events.push("invoked");
+        return Response.json({
+          version: "hosted_browser_invocation_result_v1",
+          output: { outcome: "uploaded" },
+          commitReceipt: {
+            version: "hosted_browser_commit_receipt_v1",
+            receiptId: "receipt-upload-1",
+            operationId: "call-1",
+            operation: "browser.upload",
+          },
+        });
+      }
+      events.push("committed");
+      return Response.json({ committed: true });
+    }) as typeof fetch,
+  });
+  await service.execute(preparedUpload, {
+    authority: { threadId: "thread-1", projectId: "project-1" },
+    async acknowledgeDispatch() { events.push("acknowledged"); },
+    async persistCompletedResult() { events.push("persisted"); },
+  });
+  assert.deepEqual(events, [
+    "accepted",
+    "staged",
+    "acknowledged",
+    "invoked",
+    "persisted",
+    "committed",
+  ]);
 });
 
 test("invalid acceptance never acknowledges or invokes", async () => {

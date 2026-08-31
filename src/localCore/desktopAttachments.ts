@@ -255,6 +255,8 @@ export class DesktopAttachmentStore {
           attachmentId: entry.attachmentId,
           threadId: entry.threadId,
           filename: entry.filename,
+          declaredMediaType: entry.declaredMimeType ?? "application/octet-stream",
+          detectedMediaType: entry.detectedMimeType,
           mimeType: entry.mimeType,
           sizeBytes: entry.sizeBytes,
           sha256: entry.sha256,

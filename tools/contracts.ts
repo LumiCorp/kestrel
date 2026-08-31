@@ -147,7 +147,10 @@ export interface RuntimeToolRunContext {
 export interface RuntimeToolAttachmentMetadata {
   attachmentId: string;
   filename: string;
-  mimeType: string;
+  /** User-declared, untrusted media type. */
+  declaredMediaType: string;
+  /** Host-validated media type. */
+  detectedMediaType: string;
   sizeBytes: number;
   sha256: string;
 }

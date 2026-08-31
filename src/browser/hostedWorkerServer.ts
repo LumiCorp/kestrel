@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import path from "node:path";
@@ -70,6 +70,7 @@ type AcceptedOperation = {
   cancelInvoke: (error: Error) => void;
   commit: () => void;
   cancelCommit: (error: Error) => void;
+  abort: AbortController;
   acknowledged: Promise<void>;
   result: Promise<unknown>;
   acceptOutcome: Promise<unknown>;
@@ -116,6 +117,7 @@ export interface HostedBrowserWorkerEngine {
     session?: BrowserSessionV1 | undefined;
     gatewayProxy?: HostedBrowserGatewayProxyBindingV1 | undefined;
   }, lifecycle: {
+    signal?: AbortSignal | undefined;
     acknowledgeDispatch(): Promise<void>;
     persistCompletedResult(output: unknown): Promise<void>;
   }): Promise<unknown>;
@@ -131,6 +133,7 @@ export interface HostedBrowserWorkerEngine {
     effect: BrowserUploadPreparedEffectV1;
     body: AsyncIterable<Uint8Array>;
   }): Promise<void>;
+  cancelUpload?(operationId: string): Promise<void>;
   viewer?(input: {
     action: "connect" | "frame" | "accept" | "renew" | "input" | "return" | "disconnect" | "close";
     claims: HostedBrowserViewerTicketClaimsV1;
@@ -295,8 +298,10 @@ export function startHostedBrowserWorker(input: {
         const commitGate = deferred<void>();
         const acknowledged = deferred<void>();
         const result = deferred<unknown>();
+        const abort = new AbortController();
         void gate.promise.catch(() => {});
         void commitGate.promise.catch(() => {});
+        void acknowledged.promise.catch(() => {});
         void result.promise.catch(() => {});
         let dispatchAcknowledged = false;
         const operationInput = {
@@ -309,6 +314,7 @@ export function startHostedBrowserWorker(input: {
           deadline,
         };
         const execution = engine.execute(operationInput, {
+          signal: abort.signal,
           async acknowledgeDispatch() {
             dispatchAcknowledged = true;
             acknowledged.resolve();
@@ -333,7 +339,7 @@ export function startHostedBrowserWorker(input: {
             readDetails(error)?.browserOutcomeKnown !== true
           ) {
             void loseControl();
-          } else {
+          } else if (operation !== "browser.upload") {
             clearTimeout(deadline);
             accepted.delete(prepared.callId);
           }
@@ -342,14 +348,16 @@ export function startHostedBrowserWorker(input: {
         // The execution promise is owned by /invoke; suppress an unhandled
         // rejection if the engine fails before the caller receives acceptance.
         void execution.catch(() => {});
-        const acceptOutcome = Promise.race([
+        const acceptOutcome = operation === "browser.upload"
+          ? Promise.resolve(acceptanceResponse(config, prepared.callId))
+          : Promise.race([
           acknowledged.promise.then(() =>
             acceptanceResponse(config, prepared.callId)
           ),
           result.promise.then((output) =>
             completionBeforeDispatchResponse(config, prepared.callId, output)
           ),
-        ]);
+          ]);
         const acceptedOperation: AcceptedOperation = {
           ...operationInput,
           execution,
@@ -357,6 +365,7 @@ export function startHostedBrowserWorker(input: {
           cancelInvoke: gate.reject,
           commit: commitGate.resolve,
           cancelCommit: commitGate.reject,
+          abort,
           acknowledged: acknowledged.promise,
           result: result.promise,
           acceptOutcome,
@@ -463,6 +472,13 @@ export function startHostedBrowserWorker(input: {
         ) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
         const cancelledPhase = operation.phase;
         operation.phase = "cancelling";
+        operation.abort.abort(new Error("BROWSER_ACTION_CANCELLED"));
+        if (operation.prepared.activation.descriptor.toolId === "browser.upload") {
+          if (typeof engine.cancelUpload !== "function") {
+            throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+          }
+          await engine.cancelUpload(operationId);
+        }
         if (cancelledPhase === "accepted") {
           operation.cancelInvoke(knownWorkerFailure("BROWSER_DESTINATION_BLOCKED"));
         } else {
@@ -738,6 +754,7 @@ export type AgentBrowserHostedWorkerEngineOptions = {
   setTimeout?: typeof setTimeout | undefined;
   clearTimeout?: typeof clearTimeout | undefined;
   viewerRetirementLimit?: number | undefined;
+  runtimeRoot?: string | undefined;
 };
 
 export const HOSTED_BROWSER_VIEWER_RETIREMENT_LIMIT = 4096;
@@ -765,7 +782,9 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   #service: DesktopBrowserService | undefined;
   readonly #screenshots = new HostedRelayScreenshotStore();
   readonly #uploads = new Map<string, { effect: BrowserUploadPreparedEffectV1; path: string }>();
+  readonly #uploadWaiters = new Map<string, ReturnType<typeof deferred<{ effect: BrowserUploadPreparedEffectV1; path: string }>>>();
   readonly #consumedUploadAuthorities = new Set<string>();
+  readonly #uploadReconciliation: Promise<void>;
   #gatewayProxy: HostedBrowserGatewayProxyBindingV1 | undefined;
   #remoteProxy: RemoteGatewayBrowserProxy | undefined;
 
@@ -774,7 +793,8 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     options: AgentBrowserHostedWorkerEngineOptions = {},
   ) {
     this.#config = config;
-    this.#runtimeRoot = HOSTED_BROWSER_WORKER_HOME_PATH;
+    this.#runtimeRoot = options.runtimeRoot ?? HOSTED_BROWSER_WORKER_HOME_PATH;
+    this.#uploadReconciliation = reconcileHostedUploadResidue(this.#runtimeRoot);
     this.#createDesktopBrowserService =
       options.createDesktopBrowserService ??
       ((serviceOptions) => new DesktopBrowserService(serviceOptions));
@@ -794,9 +814,12 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     session?: BrowserSessionV1 | undefined;
     gatewayProxy?: HostedBrowserGatewayProxyBindingV1 | undefined;
   }, lifecycle: {
+    signal?: AbortSignal | undefined;
     acknowledgeDispatch(): Promise<void>;
     persistCompletedResult(output: unknown): Promise<void>;
   }): Promise<unknown> {
+    await this.#uploadReconciliation;
+    lifecycle.signal?.throwIfAborted();
     this.#authority = input.authority;
     const operation = input.prepared.activation.descriptor.toolId;
     this.#installGatewayProxy(input.gatewayProxy, input.authority, operation);
@@ -822,6 +845,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
         projectId: input.authority.projectId,
         projectRoot,
       },
+      ...(lifecycle.signal ? { signal: lifecycle.signal } : {}),
       acknowledgeDispatch: lifecycle.acknowledgeDispatch,
       persistCompletedResult: async (output) => {
         const relayed = operation === "browser.capture"
@@ -839,6 +863,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   async prepareUpload(
     input: BrowserUploadPreparationRequestV1,
   ): Promise<BrowserUploadPreparedEffectV1> {
+    await this.#uploadReconciliation;
     if (!(this.#service && this.#session)) throw new Error("BROWSER_SESSION_LOST");
     if (
       input.threadId !== this.#config.threadId ||
@@ -853,6 +878,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     effect: BrowserUploadPreparedEffectV1;
     body: AsyncIterable<Uint8Array>;
   }): Promise<void> {
+    await this.#uploadReconciliation;
     if (this.#consumedUploadAuthorities.has(input.operationId)) {
       throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
     }
@@ -862,6 +888,10 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       `hosted-upload-${createHash("sha256").update(input.operationId).digest("hex")}.bin`,
     );
     await mkdir(this.#runtimeRoot, { recursive: true, mode: 0o700 });
+    const waiter = this.#uploadWaiters.get(input.operationId) ??
+      deferred<{ effect: BrowserUploadPreparedEffectV1; path: string }>();
+    void waiter.promise.catch(() => {});
+    this.#uploadWaiters.set(input.operationId, waiter);
     const handle = await open(pathName, "wx", 0o600);
     const hash = createHash("sha256");
     let size = 0;
@@ -879,14 +909,28 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     } catch (error) {
       await handle.close().catch(() => {});
       await rm(pathName, { force: true }).catch(() => {});
+      waiter.reject(error instanceof Error ? error : new Error("BROWSER_ENGINE_FAILURE"));
       throw error;
     }
     await handle.close();
     if (size !== input.effect.sizeBytes || hash.digest("hex") !== input.effect.sha256) {
       await rm(pathName, { force: true }).catch(() => {});
+      waiter.reject(new Error("BROWSER_ENGINE_FAILURE"));
       throw new Error("BROWSER_ENGINE_FAILURE");
     }
-    this.#uploads.set(input.operationId, { effect: input.effect, path: pathName });
+    const staged = { effect: input.effect, path: pathName };
+    this.#uploads.set(input.operationId, staged);
+    waiter.resolve(staged);
+  }
+
+  async cancelUpload(operationId: string): Promise<void> {
+    await this.#uploadReconciliation;
+    const waiter = this.#uploadWaiters.get(operationId);
+    this.#uploadWaiters.delete(operationId);
+    waiter?.reject(new Error("BROWSER_ACTION_CANCELLED"));
+    const upload = this.#uploads.get(operationId);
+    this.#uploads.delete(operationId);
+    if (upload) await rm(upload.path, { force: true });
   }
 
   async adopt(input: {
@@ -1058,6 +1102,10 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     this.#retiredViewerConnections.clear();
     this.#retiredViewerAuthorityExpiresAt = 0;
     this.#uploads.clear();
+    for (const waiter of this.#uploadWaiters.values()) {
+      waiter.reject(new Error("BROWSER_SESSION_LOST"));
+    }
+    this.#uploadWaiters.clear();
     this.#consumedUploadAuthorities.clear();
     await this.#service?.close().catch(() => {});
     await rm(this.#runtimeRoot, { recursive: true, force: true });
@@ -1222,17 +1270,24 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       attachmentStore: this.#screenshots,
       uploadStream: {
         open: async (request) => {
-          const matches = [...this.#uploads.entries()].filter(([, upload]) =>
-            upload.effect.threadId === request.threadId &&
-            upload.effect.sessionId === request.sessionId &&
-            upload.effect.generation === request.generation &&
-            upload.effect.attachmentId === request.attachmentId &&
-            upload.effect.sizeBytes <= request.maximumBytes
-          );
-          if (matches.length !== 1) throw new Error("BROWSER_SESSION_LOST");
-          const [operationId, upload] = matches[0]!;
-          this.#uploads.delete(operationId);
-          const source = createReadStream(upload.path);
+          const waiter = this.#uploadWaiters.get(request.operationId) ??
+            deferred<{ effect: BrowserUploadPreparedEffectV1; path: string }>();
+          void waiter.promise.catch(() => {});
+          this.#uploadWaiters.set(request.operationId, waiter);
+          const upload = this.#uploads.get(request.operationId) ??
+            await abortable(waiter.promise, request.signal);
+          if (
+            upload.effect.threadId !== request.threadId ||
+            upload.effect.sessionId !== request.sessionId ||
+            upload.effect.generation !== request.generation ||
+            upload.effect.attachmentId !== request.attachmentId ||
+            upload.effect.sizeBytes > request.maximumBytes
+          ) throw new Error("BROWSER_SESSION_LOST");
+          this.#uploads.delete(request.operationId);
+          this.#uploadWaiters.delete(request.operationId);
+          const source = createReadStream(upload.path, {
+            ...(request.signal ? { signal: request.signal } : {}),
+          });
           return (async function* () {
             try {
               for await (const chunk of source) yield Buffer.from(chunk);
@@ -1499,6 +1554,41 @@ function deferred<T>() {
     reject = nextReject;
   });
   return { promise, resolve, reject };
+}
+
+async function reconcileHostedUploadResidue(runtimeRoot: string): Promise<void> {
+  await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
+  const entries = await readdir(runtimeRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!/^hosted-upload-[0-9a-f]{64}\.bin$/u.test(entry.name)) continue;
+    const candidate = path.join(runtimeRoot, entry.name);
+    const info = await lstat(candidate);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) continue;
+    await rm(candidate);
+  }
+}
+
+async function abortable<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return await promise;
+  signal.throwIfAborted();
+  let rejectAbort!: (error: Error) => void;
+  const onAbort = () => rejectAbort(
+    signal.reason instanceof Error
+      ? signal.reason
+      : new Error("BROWSER_ACTION_CANCELLED"),
+  );
+  const aborted = new Promise<T>((_resolve, reject) => {
+    rejectAbort = reject;
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
 }
 
 function hostedProjectRoot(projectId: string) {

@@ -2781,13 +2781,16 @@ function projectActiveTurnAttachmentMetadata(value: unknown) {
     const record = asRecord(candidate);
     const attachmentId = asNonEmptyString(record?.attachmentId);
     const filename = asNonEmptyString(record?.filename);
-    const mimeType = asNonEmptyString(record?.mimeType);
+    const declaredMediaType = asNonEmptyString(record?.declaredMediaType) ??
+      "application/octet-stream";
+    const detectedMediaType = asNonEmptyString(record?.detectedMediaType) ??
+      asNonEmptyString(record?.mimeType);
     const sha256 = asNonEmptyString(record?.sha256);
     const sizeBytes = record?.sizeBytes;
     if (
       attachmentId === undefined ||
       filename === undefined ||
-      mimeType === undefined ||
+      detectedMediaType === undefined ||
       sha256 === undefined ||
       !/^[0-9a-f]{64}$/u.test(sha256) ||
       !Number.isSafeInteger(sizeBytes) ||
@@ -2796,7 +2799,8 @@ function projectActiveTurnAttachmentMetadata(value: unknown) {
     return {
       attachmentId,
       filename,
-      mimeType,
+      declaredMediaType,
+      detectedMediaType,
       sizeBytes: Number(sizeBytes),
       sha256,
     };

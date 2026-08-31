@@ -197,6 +197,10 @@ const validOutputs: Record<
     ...commonOperationOutput("browser.upload"),
     outcome: "uploaded",
     attachmentId: "attachment-1",
+    filename: "notes.txt",
+    bytes: 10,
+    sha256: "c".repeat(64),
+    targetRef: "ref-1",
   },
   "browser.download": {
     ...commonOperationOutput("browser.download"),
@@ -1914,6 +1918,7 @@ function passiveBrowserPort(): BrowserServicePort {
         attachmentId: input.attachment.attachmentId,
         filename: input.attachment.filename,
         declaredMediaType: input.attachment.declaredMediaType,
+        detectedMediaType: input.attachment.detectedMediaType,
         sizeBytes: input.attachment.sizeBytes,
         sha256: input.attachment.sha256,
         sessionId: String(input.effectiveInput.sessionId),

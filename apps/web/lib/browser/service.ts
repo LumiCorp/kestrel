@@ -184,10 +184,11 @@ export class HostedBrowserService implements BrowserServicePort {
         attachmentId: string;
         threadId: string;
         filename: string;
-        mimeType: string;
+        declaredMediaType: string;
+        detectedMediaType: string;
         sizeBytes: number;
         sha256: string;
-        openStream(): Promise<NodeJS.ReadableStream>;
+        openStream(signal?: AbortSignal): Promise<NodeJS.ReadableStream>;
       }>;
       now?: (() => Date) | undefined;
     },
@@ -252,7 +253,8 @@ export class HostedBrowserService implements BrowserServicePort {
       attachment.threadId !== input.threadId ||
       attachment.attachmentId !== input.attachment.attachmentId ||
       attachment.filename !== input.attachment.filename ||
-      attachment.mimeType !== input.attachment.declaredMediaType ||
+      attachment.declaredMediaType !== input.attachment.declaredMediaType ||
+      attachment.detectedMediaType !== input.attachment.detectedMediaType ||
       attachment.sizeBytes !== input.attachment.sizeBytes ||
       attachment.sha256 !== input.attachment.sha256
     ) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
@@ -367,6 +369,7 @@ export class HostedBrowserService implements BrowserServicePort {
     prepared: PreparedToolCallV1,
     authority: BrowserOperationLifecycleV1["authority"],
     receipt: HostedBrowserDispatchReceiptV1,
+    signal?: AbortSignal,
   ): Promise<HostedBrowserRelayInstructionV1> {
     const operation = prepared.activation.descriptor.toolId;
     const accepted = receipt.worker;
@@ -487,7 +490,8 @@ export class HostedBrowserService implements BrowserServicePort {
       if (
         attachment.threadId !== effect.threadId ||
         attachment.filename !== effect.filename ||
-        attachment.mimeType !== effect.declaredMediaType ||
+        attachment.declaredMediaType !== effect.declaredMediaType ||
+        attachment.detectedMediaType !== effect.detectedMediaType ||
         attachment.sizeBytes !== effect.sizeBytes ||
         attachment.sha256 !== effect.sha256 ||
         effect.sessionId !== record.session.sessionId ||
@@ -508,7 +512,8 @@ export class HostedBrowserService implements BrowserServicePort {
         capability: acceptedInstruction.capability,
         sizeBytes: effect.sizeBytes,
         sha256: effect.sha256,
-        body: await attachment.openStream(),
+        body: await attachment.openStream(signal),
+        ...(signal ? { signal } : {}),
       });
     }
     return {

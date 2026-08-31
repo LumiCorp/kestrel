@@ -72,6 +72,7 @@ export async function handleHostedBrowserControl(input: {
             prepared,
             parseHostAuthority(record.authority),
             parseDispatchReceipt(record.receipt, prepared.callId),
+            input.request.signal,
           ),
         );
       }

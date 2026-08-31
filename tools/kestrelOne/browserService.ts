@@ -25,6 +25,13 @@ type CommitReceipt = {
   operation: string;
 };
 
+type UploadStagedReceipt = {
+  version: "hosted_browser_upload_staged_receipt_v1";
+  receiptId: string;
+  operationId: string;
+  operation: "browser.upload";
+};
+
 export function createKestrelOneBrowserService(
   context: SharedToolContext,
 ): BrowserServicePort {
@@ -86,11 +93,21 @@ export function createKestrelOneBrowserService(
       }
       const receipt = accepted as DispatchReceipt;
       assertDispatchReceipt(receipt, prepared);
+      let invokeReceipt: DispatchReceipt | UploadStagedReceipt = receipt;
+      if (prepared.activation.descriptor.toolId === "browser.upload") {
+        const staged = await request(capability, "invoke", {
+          prepared,
+          authority: lifecycle.authority,
+          receipt,
+        }) as UploadStagedReceipt;
+        assertUploadStagedReceipt(staged, prepared, receipt);
+        invokeReceipt = staged;
+      }
       await lifecycle.acknowledgeDispatch();
       const invocation = requireRecord(await request(capability, "invoke", {
         prepared,
         authority: lifecycle.authority,
-        receipt,
+        receipt: invokeReceipt,
       }));
       if (invocation.version !== "hosted_browser_invocation_result_v1") {
         throw new RuntimeFailure(
@@ -124,6 +141,25 @@ export function createKestrelOneBrowserService(
       );
     },
   };
+}
+
+function assertUploadStagedReceipt(
+  staged: UploadStagedReceipt,
+  prepared: PreparedToolCallV1,
+  accepted: DispatchReceipt,
+): void {
+  if (
+    staged?.version !== "hosted_browser_upload_staged_receipt_v1" ||
+    staged.receiptId !== accepted.receiptId ||
+    staged.operationId !== prepared.callId ||
+    staged.operation !== "browser.upload"
+  ) {
+    throw new RuntimeFailure(
+      "BROWSER_ENGINE_FAILURE",
+      "Hosted Browser upload staging receipt is invalid.",
+      { subsystem: "browser", classification: "runtime", recoverable: false },
+    );
+  }
 }
 
 function readPreDispatchResult(

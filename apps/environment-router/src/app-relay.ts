@@ -57,8 +57,9 @@ type BrowserRelayReceipt = {
     generation: number;
   };
   instruction: BrowserPrivateInstruction;
+  invokeInstruction?: BrowserPrivateInstruction | undefined;
   worker?: Record<string, unknown> | undefined;
-  phase: "accepting" | "accepted" | "authorizing" | "invoked" | "commit_pending";
+  phase: "accepting" | "accepted" | "authorizing" | "upload_staged" | "invoked" | "commit_pending";
   requestHash: string;
 };
 
@@ -729,9 +730,17 @@ async function handleBrowserInvokeRelay(input: {
     : "";
   pruneBrowserReceipts();
   const retained = browserRelayReceipts.get(receiptId);
+  const stagedContinuation = publicReceipt.version ===
+      "hosted_browser_upload_staged_receipt_v1" &&
+    publicReceipt.receiptId === receiptId &&
+    retained?.instruction.operation === "browser.upload" &&
+    publicReceipt.operationId === retained.instruction.operationId &&
+    publicReceipt.operation === retained.instruction.operation;
   if (
     !retained ||
-    retained.phase !== "accepted" ||
+    (stagedContinuation
+      ? retained.phase !== "upload_staged"
+      : retained.phase !== "accepted") ||
     !retained.worker ||
     retained.expiresAt <= Date.now() ||
     retained.runId !== input.runId ||
@@ -740,7 +749,7 @@ async function handleBrowserInvokeRelay(input: {
     writeError(input.response, 409, "BROWSER_ACTION_OUTCOME_UNKNOWN");
     return;
   }
-  retained.phase = "authorizing";
+  retained.phase = stagedContinuation ? "upload_staged" : "authorizing";
   const privateReceipt = {
     version: "hosted_browser_relay_acceptance_v1",
     receiptId,
@@ -751,53 +760,70 @@ async function handleBrowserInvokeRelay(input: {
     ...publicBody,
     receipt: privateReceipt,
   }));
-  let authorized: Response;
   let instruction: BrowserPrivateInstruction;
-  try {
-    authorized = await requestControlPlane({
-      ...input,
-      body: privateBody,
-    });
-  } catch {
-    browserRelayReceipts.delete(receiptId);
-    await cancelPrivateBrowserOperation(input, retained.instruction).catch(() => {});
-    writeJson(input.response, 503, {
-      error: {
-        code: "BROWSER_SERVICE_UNAVAILABLE",
-        details: { browserOutcomeKnown: true },
-      },
-    });
-    return;
-  }
-  if (!authorized.ok) {
-    if (await isKnownBrowserOutcomeResponse(authorized)) {
-      browserRelayReceipts.delete(receiptId);
-      await cancelPrivateBrowserOperation(input, retained.instruction).catch(() => {});
-      return writeFetchResponse(input.response, authorized);
+  if (stagedContinuation) {
+    if (!retained.invokeInstruction) {
+      writeError(input.response, 409, "BROWSER_ACTION_OUTCOME_UNKNOWN");
+      return;
     }
-    browserRelayReceipts.delete(receiptId);
-    await cancelPrivateBrowserOperation(input, retained.instruction).catch(() => {});
-    writeJson(input.response, 503, {
-      error: {
-        code: "BROWSER_SERVICE_UNAVAILABLE",
-        details: { browserOutcomeKnown: true },
-      },
-    });
-    return;
-  }
-  try {
-    instruction = parseBrowserPrivateInstruction(await authorized.json(), "invoke");
-    assertSameBrowserInvocationInstruction(instruction, retained.instruction);
-  } catch {
-    browserRelayReceipts.delete(receiptId);
-    await cancelPrivateBrowserOperation(input, retained.instruction).catch(() => {});
-    writeJson(input.response, 503, {
-      error: {
-        code: "BROWSER_ENGINE_FAILURE",
-        details: { browserOutcomeKnown: true },
-      },
-    });
-    return;
+    instruction = retained.invokeInstruction;
+  } else {
+    let authorized: Response;
+    try {
+      authorized = await requestControlPlane({
+        ...input,
+        body: privateBody,
+      });
+    } catch {
+      const cancelled = await provePrivateBrowserCancellation(input, retained.instruction);
+      browserRelayReceipts.delete(receiptId);
+      writeJson(input.response, cancelled ? 503 : 409, {
+        error: {
+          code: cancelled ? "BROWSER_SERVICE_UNAVAILABLE" : "BROWSER_ACTION_OUTCOME_UNKNOWN",
+          details: { browserOutcomeKnown: cancelled },
+        },
+      });
+      return;
+    }
+    if (!authorized.ok) {
+      const known = await isKnownBrowserOutcomeResponse(authorized);
+      const cancelled = await provePrivateBrowserCancellation(input, retained.instruction);
+      browserRelayReceipts.delete(receiptId);
+      if (known && cancelled) return writeFetchResponse(input.response, authorized);
+      writeJson(input.response, cancelled ? 503 : 409, {
+        error: {
+          code: cancelled ? "BROWSER_SERVICE_UNAVAILABLE" : "BROWSER_ACTION_OUTCOME_UNKNOWN",
+          details: { browserOutcomeKnown: cancelled },
+        },
+      });
+      return;
+    }
+    try {
+      instruction = parseBrowserPrivateInstruction(await authorized.json(), "invoke");
+      assertSameBrowserInvocationInstruction(instruction, retained.instruction);
+    } catch {
+      const cancelled = await provePrivateBrowserCancellation(input, retained.instruction);
+      browserRelayReceipts.delete(receiptId);
+      writeJson(input.response, cancelled ? 503 : 409, {
+        error: {
+          code: cancelled ? "BROWSER_ENGINE_FAILURE" : "BROWSER_ACTION_OUTCOME_UNKNOWN",
+          details: { browserOutcomeKnown: cancelled },
+        },
+      });
+      return;
+    }
+    if (instruction.operation === "browser.upload") {
+      retained.invokeInstruction = instruction;
+      retained.phase = "upload_staged";
+      retained.expiresAt = Date.now() + BROWSER_RECEIPT_TTL_MS;
+      writeJson(input.response, 200, {
+        version: "hosted_browser_upload_staged_receipt_v1",
+        receiptId,
+        operationId: instruction.operationId,
+        operation: instruction.operation,
+      });
+      return;
+    }
   }
   retained.phase = "invoked";
   let worker: Response;
@@ -954,7 +980,7 @@ async function cancelPrivateBrowserOperation(
   instruction: BrowserPrivateInstruction,
   reason?: "BROWSER_ARTIFACT_TOO_LARGE",
 ) {
-  await callPrivateBrowserWorker({
+  return await callPrivateBrowserWorker({
     instruction,
     action: "cancel",
     body: {
@@ -965,6 +991,25 @@ async function cancelPrivateBrowserOperation(
     signal: AbortSignal.timeout(3_000),
     fetchImpl: input.workerFetchImpl,
   });
+}
+
+async function provePrivateBrowserCancellation(
+  input: Parameters<typeof handleBrowserInvokeRelay>[0],
+  instruction: BrowserPrivateInstruction,
+): Promise<boolean> {
+  if (instruction.operation !== "browser.upload") {
+    await cancelPrivateBrowserOperation(input, instruction).catch(() => undefined);
+    return true;
+  }
+  try {
+    const response = await cancelPrivateBrowserOperation(input, instruction);
+    if (!response.ok) return false;
+    const result = requireRecord(await readBoundedWorkerJson(response));
+    return result.cancelled === true &&
+      result.operationId === instruction.operationId;
+  } catch {
+    return false;
+  }
 }
 
 async function notifyBrowserUnknown(

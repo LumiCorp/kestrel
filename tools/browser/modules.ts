@@ -216,7 +216,8 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           attachment: {
             attachmentId: attachment.attachmentId,
             filename: attachment.filename,
-            declaredMediaType: attachment.mimeType,
+            declaredMediaType: attachment.declaredMediaType,
+            detectedMediaType: attachment.detectedMediaType,
             sizeBytes: attachment.sizeBytes,
             sha256: attachment.sha256,
           },
@@ -228,7 +229,8 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
         preparedEffect.threadId !== runtime.threadId ||
         preparedEffect.attachmentId !== attachment.attachmentId ||
         preparedEffect.filename !== attachment.filename ||
-        preparedEffect.declaredMediaType !== attachment.mimeType ||
+        preparedEffect.declaredMediaType !== attachment.declaredMediaType ||
+        preparedEffect.detectedMediaType !== attachment.detectedMediaType ||
         preparedEffect.sizeBytes !== attachment.sizeBytes ||
         preparedEffect.sha256 !== attachment.sha256 ||
         preparedEffect.sessionId !== input.sessionId ||
@@ -404,6 +406,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
         try {
           const output = await browserService.execute(prepared, {
             authority: resolveBrowserHostAuthority(context, runtime),
+            ...(context.signal ? { signal: context.signal } : {}),
             async acknowledgeDispatch() {
               if (!effectful || dispatchAcknowledged) return;
               await context.acknowledgeExternalEffect?.();

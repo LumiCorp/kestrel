@@ -8,10 +8,9 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## In progress
 
-None.
-
 ## Blocked
 
+- [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md) — seven review repairs are green; blocked on an exact read-only pinned agent-browser `targetRef`-to-element-tag seam needed to prove the target is actually `input[type=file]` without a heuristic or mutating upload preflight
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — blocked on issues 06a-06e and the live Vercel/PostgreSQL/combined hosted proof
 - [Prove hosted passkey takeover](06e-prove-hosted-passkey-takeover.md) — blocked on the client-side WebAuthn delivery boundary
 - [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — implementation is review-clean; blocked only on issue 04c's signed platform-authenticator canary
@@ -21,7 +20,6 @@ None.
 
 ## Implemented
 
-- [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md) — implemented awaiting independent review; exact active-turn approval authority and dedicated Desktop/hosted upload transport pass 174 focused tests
 - [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — remaining review findings are assigned to the existing 06b lifecycle and 06c scheduling owners
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)
 - [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)

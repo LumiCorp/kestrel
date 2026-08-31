@@ -92,10 +92,11 @@ export async function resolveHostedBrowserServiceForAuthority(input: {
         attachmentId: attachment.attachmentId,
         threadId: attachment.threadId ?? "",
         filename: attachment.filename,
-        mimeType: attachment.mimeType,
+        declaredMediaType: attachment.declaredMediaType ?? "application/octet-stream",
+        detectedMediaType: attachment.detectedMediaType ?? attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
         sha256: attachment.sha256,
-        async openStream() {
+        async openStream(signal?: AbortSignal) {
           if (typeof attachment.data === "string") {
             return Readable.from(Buffer.from(attachment.data, "base64"));
           }
@@ -104,7 +105,9 @@ export async function resolveHostedBrowserServiceForAuthority(input: {
           }
           const response = await fetch(attachment.sourceUrl, {
             redirect: "error",
-            signal: AbortSignal.timeout(30_000),
+            signal: signal
+              ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+              : AbortSignal.timeout(30_000),
           });
           if (!(response.ok && response.body)) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
           return Readable.fromWeb(response.body as never);

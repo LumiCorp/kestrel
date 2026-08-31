@@ -23,6 +23,7 @@ test("Browser upload approval presents only the exact approval-hashed effect", (
         attachmentId: "attachment-1",
         filename: "evidence.txt",
         declaredMediaType: "text/plain",
+        detectedMediaType: "text/plain",
         sizeBytes: 19,
         sha256: "a".repeat(64),
         sessionId: "browser-session-1",

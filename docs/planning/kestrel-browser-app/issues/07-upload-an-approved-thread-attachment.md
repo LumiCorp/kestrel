@@ -90,3 +90,47 @@ Add shared, Desktop, hosted, process, PostgreSQL, Chromium, approval, and cleanu
   suites; `pnpm validate:chromium` passes the production build and 28 of 32
   product tests, with four unrelated appearance, brand, Thread-shell, and
   workflow-canvas failures.
+
+### Independent-review repair evidence
+
+- Desktop now opens, measures, hashes, syncs, and revalidates the exact active-turn
+  attachment before acknowledging Browser dispatch. Cancellation is projected
+  through staging and the pinned CLI process, and owned staging is removed on
+  cancellation or failure.
+- Hosted upload acceptance now separates byte staging from Browser dispatch.
+  Web transfers and destroys the source stream, the Router returns an exact
+  operation-bound staging continuation, and Kestrel One acknowledges only after
+  that transfer succeeds. A failed transfer is known pre-effect only after the
+  worker proves cancellation of the exact operation; otherwise it remains an
+  unknown outcome.
+- The worker indexes staging by exact operation identity, removes the exact file
+  on cancellation, supports a same-attachment retry under a new operation ID,
+  and reconciles only its own filename-shaped staging residue on reconstruction.
+  Worker cancellation aborts both a waiting transfer and accepted execution.
+- Prepared authority now binds the owning record's distinct untrusted declared
+  media type and detected media type. Stable success metadata is limited to the
+  attachment ID, sanitized filename, measured byte count, SHA-256, Session
+  generation, and target reference. Typed Browser errors remain typed through
+  the hosted transfer client, and error bodies remain bounded.
+- Label parsing accepts only the pinned CLI's structured attribute value. A null
+  or malformed accessible label becomes the generic `File input`; wrapper JSON,
+  origins, URLs, and target references are never used as labels.
+- The focused combined shared/Desktop/hosted/Web/Router/approval suite passes
+  199 tests (198 passed and one optional real-Chromium CDP probe skipped). The
+  hosted source-stream suite passes 2 of 2. Root typecheck/build, Environment
+  Router typecheck/build, frozen-lockfile verification, scoped Web lint, and
+  `git diff --check` pass.
+
+### Remaining exact-target blocker
+
+The pinned agent-browser v0.35.0 public CLI does not expose a read-only mapping
+from `targetRef` to element tag/local name. `snapshot --json` publishes the
+reference's role and accessible name while retaining its backend node identity
+inside the daemon; `get attr` resolves the reference internally but can only
+return an attribute; and `get html` returns inner HTML. Kestrel's owned CDP seam
+has the active target but not agent-browser's private reference map. Therefore
+the current exact `type="file"` attribute check cannot also prove the referenced
+node is actually an `input`. Completion remains blocked until the pinned wrapper
+adds an exact read-only tag/local-name or reference-description command (or an
+equivalent exact ref-to-node identity seam). A selector/role heuristic and a
+mutating upload preflight are explicitly not accepted substitutes.

@@ -755,6 +755,10 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
           generation: { type: "integer", minimum: 1 },
           outcome: constString("uploaded"),
           attachmentId: stringId("Uploaded Thread attachment ID."),
+          filename: stringId("Sanitized uploaded filename."),
+          bytes: { type: "integer", minimum: 0 },
+          sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
+          targetRef: stringId("Exact snapshot-scoped file-input ref."),
         },
         [
           "version",
@@ -763,6 +767,10 @@ export const BROWSER_APP_CONTRACT_FIXTURE = Object.freeze({
           "generation",
           "outcome",
           "attachmentId",
+          "filename",
+          "bytes",
+          "sha256",
+          "targetRef",
         ],
       ),
       {

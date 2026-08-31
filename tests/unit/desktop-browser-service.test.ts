@@ -2968,6 +2968,8 @@ test("approved active-turn upload revalidates exact metadata and target before o
           attachmentId: "file-1",
           threadId,
           filename: "evidence.txt",
+          declaredMediaType: "text/plain",
+          detectedMediaType: "text/plain",
           mimeType: "text/plain",
           sizeBytes: bytes.byteLength,
           sha256,
@@ -3007,6 +3009,7 @@ test("approved active-turn upload revalidates exact metadata and target before o
       attachmentId: "file-1",
       filename: "evidence.txt",
       declaredMediaType: "text/plain",
+      detectedMediaType: "text/plain",
       sizeBytes: bytes.byteLength,
       sha256,
     },
@@ -3031,6 +3034,10 @@ test("approved active-turn upload revalidates exact metadata and target before o
     generation: 1,
     outcome: "uploaded",
     attachmentId: "file-1",
+    filename: "evidence.txt",
+    bytes: bytes.byteLength,
+    sha256,
+    targetRef: "@e1",
   });
   assert.deepEqual(lifecycle.events, ["ack", "persist"]);
   assert.equal(uploadStreamsOpened, 1);
@@ -3060,6 +3067,8 @@ test("changed attachment metadata rejects before upload bytes are opened", async
           attachmentId: "file-1",
           threadId,
           filename: "evidence.txt",
+          declaredMediaType: "text/plain",
+          detectedMediaType: "text/plain",
           mimeType: "text/plain",
           sizeBytes: bytes.byteLength,
           sha256: resolutions === 1 ? sha256 : "b".repeat(64),
@@ -3094,6 +3103,7 @@ test("changed attachment metadata rejects before upload bytes are opened", async
       attachmentId: "file-1",
       filename: "evidence.txt",
       declaredMediaType: "text/plain",
+      detectedMediaType: "text/plain",
       sizeBytes: bytes.byteLength,
       sha256,
     },
@@ -3135,6 +3145,8 @@ test("upload stream integrity failure preserves the failure and removes owned st
           attachmentId: "file-1",
           threadId,
           filename: "evidence.txt",
+          declaredMediaType: "text/plain",
+          detectedMediaType: "text/plain",
           mimeType: "text/plain",
           sizeBytes: expected.byteLength,
           sha256,
@@ -3167,6 +3179,7 @@ test("upload stream integrity failure preserves the failure and removes owned st
       attachmentId: "file-1",
       filename: "evidence.txt",
       declaredMediaType: "text/plain",
+      detectedMediaType: "text/plain",
       sizeBytes: expected.byteLength,
       sha256,
     },
@@ -3188,7 +3201,88 @@ test("upload stream integrity failure preserves the failure and removes owned st
     fixture.service.execute(upload, lifecycle),
     hasCode("BROWSER_SERVICE_UNAVAILABLE"),
   );
-  assert.deepEqual(lifecycle.events, ["ack"]);
+  assert.deepEqual(lifecycle.events, []);
+  assert.deepEqual(fixture.engine.uploadedFiles, []);
+  assert.equal(
+    (await readdir(invocation.runtimePath)).some((name) => name.startsWith("upload-")),
+    false,
+  );
+  await fixture.service.close();
+});
+
+test("upload cancellation during staging stops before acknowledgement and removes owned staging", async () => {
+  const bytes = Buffer.from("approved attachment bytes");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const controller = new AbortController();
+  const fixture = await createFixture({
+    attachmentStore: {
+      async importPath() { throw new Error("not used"); },
+      async list() { return []; },
+      async resolve(threadId) {
+        return [{
+          attachmentId: "file-1",
+          threadId,
+          filename: "evidence.txt",
+          declaredMediaType: "text/plain",
+          detectedMediaType: "text/plain",
+          mimeType: "text/plain",
+          sizeBytes: bytes.byteLength,
+          sha256,
+        }];
+      },
+    },
+    uploadStream: {
+      async open() {
+        return (async function* () {
+          yield bytes.subarray(0, 4);
+          controller.abort(new Error("cancelled"));
+          yield bytes.subarray(4);
+        })();
+      },
+    },
+  });
+  const sessionId = await openSession(fixture.service);
+  const invocation = fixture.engine.opened[0]!;
+  const snapshot = asRecord(await fixture.service.execute(
+    prepared("browser.snapshot", { sessionId }),
+    createLifecycle(),
+  ));
+  const effect = await fixture.service.prepareUpload({
+    version: "browser_upload_preparation_v1",
+    runId: "run-upload-cancelled",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    effectiveInput: {
+      sessionId,
+      generation: 1,
+      snapshotId: snapshot.snapshotId,
+      targetRef: "@e1",
+      attachmentId: "file-1",
+    },
+    attachment: {
+      attachmentId: "file-1",
+      filename: "evidence.txt",
+      declaredMediaType: "text/plain",
+      detectedMediaType: "text/plain",
+      sizeBytes: bytes.byteLength,
+      sha256,
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  });
+  const upload = prepared("browser.upload", {
+    sessionId,
+    generation: 1,
+    snapshotId: snapshot.snapshotId,
+    targetRef: "@e1",
+    attachmentId: "file-1",
+  });
+  upload.inputAdapters = [{
+    adapterId: "kestrel.browser-upload-effect:v1",
+    metadata: { ...effect },
+  }];
+  const lifecycle = createLifecycle({ signal: controller.signal });
+  await assert.rejects(fixture.service.execute(upload, lifecycle), /cancelled/u);
+  assert.deepEqual(lifecycle.events, []);
   assert.deepEqual(fixture.engine.uploadedFiles, []);
   assert.equal(
     (await readdir(invocation.runtimePath)).some((name) => name.startsWith("upload-")),
@@ -4215,6 +4309,50 @@ test("agent-browser adapter uploads only an exact Browser-owned staged file thro
   });
   const args = (await readFile(argumentsPath, "utf8")).trim().split("\n");
   assert.deepEqual(args.slice(-3), ["upload", "@e1", stagedPath]);
+  adapter.releaseOperation(accepted);
+});
+
+test("agent-browser file-input label parsing never falls back to wrapper JSON or origin", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-upload-label-"));
+  t.after(async () => await rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "agent-browser-label-fixture");
+  await writeFile(
+    executable,
+    `#!/bin/sh
+case "$*" in
+  *"get attr @e1 type"*) printf '%s\\n' '{"success":true,"data":{"value":"file","origin":"https://example.test"},"error":null}' ;;
+  *"get attr @e1 aria-label"*) printf '%s\\n' '{"success":true,"data":{"value":null,"origin":"https://secret.example/token"},"error":null}' ;;
+  *) exit 2 ;;
+esac
+`,
+  );
+  await chmod(executable, 0o755);
+  const invocation = {
+    ...engineInvocation(),
+    runtimePath: path.join(root, "runtime"),
+    profilePath: path.join(root, "runtime", "profile"),
+    configPath: path.join(root, "runtime", "config"),
+    screenshotPath: path.join(root, "runtime", "screenshot.png"),
+    blockedDownloadPath: path.join(root, "runtime", "downloads-disabled"),
+  };
+  await mkdir(invocation.runtimePath, { recursive: true, mode: 0o700 });
+  const adapter = new AgentBrowserCliAdapter({
+    engineExecutablePath: executable,
+    chromeExecutablePath: "/usr/bin/true",
+  });
+  const accepted = await adapter.acceptOperation({
+    ...invocation,
+    operationId: "call-upload-label",
+    grantGeneration: invocation.proxy.generation,
+  });
+  assert.deepEqual(await adapter.describeFileInput({
+    ...invocation,
+    targetRef: "@e1",
+    acceptedOperation: accepted,
+  }), {
+    targetRef: "@e1",
+    targetLabel: "File input",
+  });
   adapter.releaseOperation(accepted);
 });
 
@@ -5601,6 +5739,7 @@ function createLifecycle(
     projectId?: string;
     projectRoot?: string;
     threadId?: string;
+    signal?: AbortSignal;
   } = {},
 ) {
   const events: string[] = [];
@@ -5610,6 +5749,7 @@ function createLifecycle(
       projectId: input.projectId ?? "project-1",
       projectRoot: input.projectRoot ?? PROJECT_ROOT,
     },
+    ...(input.signal ? { signal: input.signal } : {}),
     events,
     async acknowledgeDispatch() {
       events.push("ack");

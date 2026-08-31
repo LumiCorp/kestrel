@@ -125,7 +125,10 @@ export interface BrowserServicePort {
 export interface BrowserUploadAttachmentMetadataV1 {
   attachmentId: string;
   filename: string;
+  /** User-declared media type. This value is untrusted display metadata. */
   declaredMediaType: string;
+  /** Host-validated media type used for execution binding. */
+  detectedMediaType: string;
   sizeBytes: number;
   sha256: string;
 }
@@ -147,6 +150,7 @@ export interface BrowserUploadPreparedEffectV1 {
   attachmentId: string;
   filename: string;
   declaredMediaType: string;
+  detectedMediaType: string;
   sizeBytes: number;
   sha256: string;
   sessionId: string;
@@ -170,6 +174,7 @@ export function parseBrowserUploadPreparedEffectV1(
       "attachmentId",
       "filename",
       "declaredMediaType",
+      "detectedMediaType",
       "sizeBytes",
       "sha256",
       "sessionId",
@@ -198,6 +203,7 @@ export function parseBrowserUploadPreparedEffectV1(
     attachmentId: requireString(record.attachmentId, "BrowserUploadPreparedEffectV1.attachmentId"),
     filename: requireString(record.filename, "BrowserUploadPreparedEffectV1.filename"),
     declaredMediaType: requireString(record.declaredMediaType, "BrowserUploadPreparedEffectV1.declaredMediaType"),
+    detectedMediaType: requireString(record.detectedMediaType, "BrowserUploadPreparedEffectV1.detectedMediaType"),
     sizeBytes: requireNonNegativeSafeInteger(record.sizeBytes, "BrowserUploadPreparedEffectV1.sizeBytes"),
     sha256,
     sessionId: requireString(record.sessionId, "BrowserUploadPreparedEffectV1.sessionId"),
@@ -271,6 +277,7 @@ export interface BrowserPolicyResolutionV1 {
 
 export interface BrowserOperationLifecycleV1 {
   readonly authority: BrowserHostExecutionAuthorityV1;
+  readonly signal?: AbortSignal | undefined;
   acknowledgeDispatch(): Promise<void>;
   persistCompletedResult(rawOutput: unknown): Promise<void>;
 }
@@ -918,7 +925,8 @@ export function validateBrowserResultAuthority(
   }
   if (
     toolName === "browser.upload" &&
-    output.attachmentId !== prepared.effectiveInput.attachmentId
+    (output.attachmentId !== prepared.effectiveInput.attachmentId ||
+      output.targetRef !== prepared.effectiveInput.targetRef)
   ) {
     throw new Error(
       "Browser upload result attachment does not match the prepared call.",

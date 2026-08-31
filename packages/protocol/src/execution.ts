@@ -432,6 +432,10 @@ export interface RunnerTurnFile {
   attachmentId: string;
   threadId?: string | undefined;
   filename: string;
+  /** User-declared, untrusted media type retained for approval presentation. */
+  declaredMediaType?: string | undefined;
+  /** Host-validated media type used for execution binding. */
+  detectedMediaType?: string | undefined;
   mimeType: string;
   sizeBytes: number;
   sha256: string;
