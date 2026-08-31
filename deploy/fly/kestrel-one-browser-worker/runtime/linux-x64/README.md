@@ -11,13 +11,15 @@ Stage them from the repository root with:
 pnpm run browser:runtime:stage:hosted
 ```
 
-The staging command downloads only the exact upstream HTTPS URLs in
-`src/browser/runtimeReleaseManifest.ts`, verifies their checked-in SHA-256
-digests, and atomically installs verified bytes here. A missing download or wrong
-digest fails the command without replacing a previously verified asset.
+The staging command copies the exact repository-owned patched agent-browser
+binary and downloads the exact Chrome-for-Testing HTTPS asset named in
+`src/browser/runtimeReleaseManifest.ts`. It verifies both checked-in SHA-256
+digests and atomically installs only verified bytes here. A missing source or
+wrong digest fails without replacing a previously verified asset.
 
-The staged binaries are ignored and must not be committed. The Docker build
-independently verifies both pinned SHA-256 values before copying either
+The staged runtime directory is generated and ignored; the repository-owned
+agent-browser source binary lives under `third_party/agent-browser/`. The Docker
+build independently verifies both pinned SHA-256 values before copying either
 executable into the runtime image. The final image then uses Kestrel's normal
 image smoke and immutable repository-digest release evidence; there is no
-separate upstream asset-signature receipt in v1.
+separate patch-specific signature receipt in v1.

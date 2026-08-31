@@ -151,8 +151,12 @@ function checkDesktopBuilderConfiguration(): void {
     BROWSER_RUNTIME_RELEASE_MANIFEST.targets[DESKTOP_BROWSER_RUNTIME_TARGET].engine,
     BROWSER_RUNTIME_RELEASE_MANIFEST.targets[DESKTOP_BROWSER_RUNTIME_TARGET].chrome,
   ]) {
-    if (!asset.url.startsWith("https://") || !/^[0-9a-f]{64}$/u.test(asset.sha256)) {
-      errors.push("Desktop Browser release assets must declare exact HTTPS sources and SHA-256 digests.");
+    const exactSource = asset.source.kind === "https"
+      ? asset.source.url.startsWith("https://") && !asset.source.url.includes("latest")
+      : !path.isAbsolute(asset.source.relativePath) &&
+        !asset.source.relativePath.split(path.sep).includes("..");
+    if (!exactSource || !/^[0-9a-f]{64}$/u.test(asset.sha256)) {
+      errors.push("Desktop Browser release assets must declare exact immutable sources and SHA-256 digests.");
     }
   }
   const packagerSource = readFileSync(path.join(ROOT, "scripts", "package-desktop.ts"), "utf8");

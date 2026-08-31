@@ -91,7 +91,7 @@ origin. The canary must:
 1. create exactly one Browser Session and one labeled, no-volume Fly Machine;
 2. record the candidate repository digest in `browser_session_resources` and
    observe the same resolved image identity from Fly;
-3. become ready only after the worker self-measures agent-browser `v0.35.0` and
+3. become ready only after the worker self-measures agent-browser `v0.35.0-kestrel.1` and
    Chrome for Testing `152.0.7977.54`;
 4. prove the worker booted its default-drop input and output nftables ceiling
    on Fly, resolved and pinned the exact current Gateway Machine as both its

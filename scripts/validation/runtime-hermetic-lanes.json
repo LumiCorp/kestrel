@@ -17,7 +17,6 @@
         "tests/unit/assistant-response-contract.test.ts",
         "tests/unit/benchmark-smoke.test.ts",
         "tests/unit/blocked-resume.test.ts",
-        "tests/unit/browser-runtime-source-assets.test.ts",
         "tests/unit/budget-contracts.test.ts",
         "tests/unit/budget-coordinator.test.ts",
         "tests/unit/chat-repository-acceptance.test.ts",

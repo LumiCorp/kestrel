@@ -4701,7 +4701,7 @@ test("agent-browser file-input label parsing never falls back to wrapper JSON or
     executable,
     `#!/bin/sh
 case "$*" in
-  *"get attr @e1 type"*) printf '%s\\n' '{"success":true,"data":{"value":"file","origin":"https://example.test"},"error":null}' ;;
+  *"get local-name @e1"*) printf '%s\\n' '{"success":true,"data":{"localName":"input","type":"file"},"error":null}' ;;
   *"get attr @e1 aria-label"*) printf '%s\\n' '{"success":true,"data":{"value":null,"origin":"https://secret.example/token"},"error":null}' ;;
   *) exit 2 ;;
 esac
@@ -4735,6 +4735,99 @@ esac
     targetLabel: "File input",
   });
   adapter.releaseOperation(accepted);
+});
+
+test("agent-browser file-input description rejects a non-input ref even when it reports type=file", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-upload-tag-"));
+  t.after(async () => await rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "agent-browser-tag-fixture");
+  await writeFile(
+    executable,
+    `#!/bin/sh
+case "$*" in
+  *"get local-name @e1"*) printf '%s\\n' '{"success":true,"data":{"localName":"button","type":"file"},"error":null}' ;;
+  *) exit 2 ;;
+esac
+`,
+  );
+  await chmod(executable, 0o755);
+  const invocation = {
+    ...engineInvocation(),
+    runtimePath: path.join(root, "runtime"),
+    profilePath: path.join(root, "runtime", "profile"),
+    configPath: path.join(root, "runtime", "config"),
+    screenshotPath: path.join(root, "runtime", "screenshot.png"),
+    blockedDownloadPath: path.join(root, "runtime", "downloads-disabled"),
+  };
+  await mkdir(invocation.runtimePath, { recursive: true, mode: 0o700 });
+  const adapter = new AgentBrowserCliAdapter({
+    engineExecutablePath: executable,
+    chromeExecutablePath: "/usr/bin/true",
+  });
+  const accepted = await adapter.acceptOperation({
+    ...invocation,
+    operationId: "call-upload-tag",
+    grantGeneration: invocation.proxy.generation,
+  });
+  await assert.rejects(
+    adapter.describeFileInput({
+      ...invocation,
+      targetRef: "@e1",
+      acceptedOperation: accepted,
+    }),
+    /target is not input\[type=file\]/u,
+  );
+  adapter.releaseOperation(accepted);
+});
+
+test("agent-browser file-input description rejects failed and noncanonical local-name envelopes", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-tag-envelope-"));
+  t.after(async () => await rm(root, { recursive: true, force: true }));
+  const responses = [
+    '{"success":false,"data":{"localName":"input","type":"file"},"error":"forged"}',
+    '{"success":true,"data":{},"localName":"input","error":null}',
+    '{"success":true,"data":{"localName":"input"},"type":"file","error":null}',
+  ];
+  for (const [index, response] of responses.entries()) {
+    const executable = path.join(root, `agent-browser-envelope-fixture-${index}`);
+    await writeFile(
+      executable,
+      `#!/bin/sh
+case "$*" in
+  *"get local-name @e1"*) printf '%s\\n' '${response}' ;;
+  *) exit 2 ;;
+esac
+`,
+    );
+    await chmod(executable, 0o755);
+    const invocation = {
+      ...engineInvocation(),
+      runtimePath: path.join(root, `runtime-${index}`),
+      profilePath: path.join(root, `runtime-${index}`, "profile"),
+      configPath: path.join(root, `runtime-${index}`, "config"),
+      screenshotPath: path.join(root, `runtime-${index}`, "screenshot.png"),
+      blockedDownloadPath: path.join(root, `runtime-${index}`, "downloads-disabled"),
+    };
+    await mkdir(invocation.runtimePath, { recursive: true, mode: 0o700 });
+    const adapter = new AgentBrowserCliAdapter({
+      engineExecutablePath: executable,
+      chromeExecutablePath: "/usr/bin/true",
+    });
+    const accepted = await adapter.acceptOperation({
+      ...invocation,
+      operationId: `call-upload-envelope-${index}`,
+      grantGeneration: invocation.proxy.generation,
+    });
+    await assert.rejects(
+      adapter.describeFileInput({
+        ...invocation,
+        targetRef: "@e1",
+        acceptedOperation: accepted,
+      }),
+      /BROWSER_ENGINE_FAILURE/u,
+    );
+    adapter.releaseOperation(accepted);
+  }
 });
 
 test("agent-browser cleanup treats a missing pre-PID socket as already clean", async () => {

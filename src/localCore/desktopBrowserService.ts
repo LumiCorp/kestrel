@@ -87,7 +87,8 @@ const COMMAND_TIMEOUT_MS = 30_000;
 const MAX_ENGINE_OUTPUT_BYTES = 512 * 1024;
 const MAX_PAGE_OUTPUT_CHARS = 32_768;
 const MAX_ENGINE_PAGE_OUTPUT_CHARS = 128 * 1024;
-const ENGINE_REVISION = "agent-browser:v0.35.0+chrome:152.0.7977.54";
+const ENGINE_REVISION =
+  "agent-browser:v0.35.0-kestrel.1+chrome:152.0.7977.54";
 const TERMINAL_STATES = new Set(["closed", "expired", "lost", "failed"]);
 const AGENT_BROWSER_INTERNAL_SHUTDOWN_ACTION =
   "__agent_browser_internal_shutdown";
@@ -4966,7 +4967,7 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     },
   ): Promise<void> {
     this.#assertAccepted(input, input.acceptedOperation);
-    // v0.35.0 exposes the Browser CDP URL but has no deny-download CLI flag.
+    // v0.35.0-kestrel.1 exposes the Browser CDP URL but has no deny-download CLI flag.
     // Launch without remote content, install Browser-level denial, then navigate.
     await this.#openStep("launch", () =>
       this.#run(input, ["open", "about:blank"], {
@@ -5026,16 +5027,24 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
   ): Promise<{ targetRef: string; targetLabel: string }> {
     this.#assertAccepted(input, input.acceptedOperation);
     const targetRef = requireEngineRef(input.targetRef);
-    const type = extractOptionalAgentAttribute(
-      (await this.#run(input, ["get", "attr", targetRef, "type"])).stdout,
-    )?.toLowerCase();
-    if (type !== "file") {
+    const description = (await this.#run(
+      input,
+      ["get", "local-name", targetRef],
+    )).stdout;
+    const localName = extractSuccessfulAgentString(
+      description,
+      "localName",
+    ).toLowerCase();
+    const type = extractSuccessfulAgentString(description, "type").toLowerCase();
+    if (localName !== "input" || type !== "file") {
       throw new Error("BROWSER_TARGET_STALE: target is not input[type=file].");
     }
     let accessibleLabel: string | undefined;
     try {
-      accessibleLabel = extractOptionalAgentAttribute(
+      accessibleLabel = extractSuccessfulAgentString(
         (await this.#run(input, ["get", "attr", targetRef, "aria-label"])).stdout,
+        "value",
+        true,
       )?.trim();
     } catch {
       accessibleLabel = undefined;
@@ -7809,6 +7818,13 @@ function extractScalar(stdout: string, field: string): string {
 }
 
 function extractOptionalAgentAttribute(stdout: string): string | undefined {
+  return extractOptionalAgentString(stdout, "value");
+}
+
+function extractOptionalAgentString(
+  stdout: string,
+  field: string,
+): string | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout) as unknown;
@@ -7818,8 +7834,39 @@ function extractOptionalAgentAttribute(stdout: string): string | undefined {
   const outer = requireOptionalRecord(parsed);
   if (!outer) return;
   const data = requireOptionalRecord(outer.data);
-  const value = data?.value ?? outer.value;
+  const value = data?.[field] ?? outer[field];
   return typeof value === "string" ? value : undefined;
+}
+
+function extractSuccessfulAgentString(
+  stdout: string,
+  field: string,
+): string;
+function extractSuccessfulAgentString(
+  stdout: string,
+  field: string,
+  allowNull: true,
+): string | undefined;
+function extractSuccessfulAgentString(
+  stdout: string,
+  field: string,
+  allowNull = false,
+): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout) as unknown;
+  } catch {
+    throw new Error("BROWSER_ENGINE_FAILURE: agent-browser returned invalid JSON.");
+  }
+  const outer = requireOptionalRecord(parsed);
+  const data = requireOptionalRecord(outer?.data);
+  if (outer?.success !== true || outer.error !== null || data === undefined) {
+    throw new Error("BROWSER_ENGINE_FAILURE: agent-browser returned an unsuccessful response.");
+  }
+  const value = data[field];
+  if (typeof value === "string") return value;
+  if (allowNull && value === null) return undefined;
+  throw new Error("BROWSER_ENGINE_FAILURE: agent-browser returned invalid response data.");
 }
 
 function extractEngineContent(

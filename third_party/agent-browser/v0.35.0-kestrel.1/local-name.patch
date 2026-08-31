@@ -1,0 +1,183 @@
+diff --git a/cli/Cargo.lock b/cli/Cargo.lock
+index 6cc9033..661ebb9 100644
+--- a/cli/Cargo.lock
++++ b/cli/Cargo.lock
+@@ -45,7 +45,7 @@ dependencies = [
+
+ [[package]]
+ name = "agent-browser"
+-version = "0.35.0"
++version = "0.35.0-kestrel.1"
+ dependencies = [
+  "aes-gcm",
+  "async-trait",
+diff --git a/cli/Cargo.toml b/cli/Cargo.toml
+index ca5460c..aa77363 100644
+--- a/cli/Cargo.toml
++++ b/cli/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "agent-browser"
+-version = "0.35.0"
++version = "0.35.0-kestrel.1"
+ edition = "2021"
+ description = "Fast browser automation CLI for AI agents"
+ license = "Apache-2.0"
+diff --git a/cli/src/commands.rs b/cli/src/commands.rs
+index 6f995f4..48904a1 100644
+--- a/cli/src/commands.rs
++++ b/cli/src/commands.rs
+@@ -2502,7 +2502,17 @@ fn parse_diff(rest: &[&str], id: &str) -> Result<Value, ParseError> {
+
+ fn parse_get(rest: &[&str], id: &str) -> Result<Value, ParseError> {
+     const VALID: &[&str] = &[
+-        "text", "html", "value", "attr", "url", "title", "count", "box", "styles", "cdp-url",
++        "text",
++        "html",
++        "value",
++        "attr",
++        "local-name",
++        "url",
++        "title",
++        "count",
++        "box",
++        "styles",
++        "cdp-url",
+     ];
+
+     match rest.first().copied() {
+@@ -2538,6 +2548,13 @@ fn parse_get(rest: &[&str], id: &str) -> Result<Value, ParseError> {
+             })?;
+             Ok(json!({ "id": id, "action": "getattribute", "selector": sel, "attribute": attr }))
+         }
++        Some("local-name") => {
++            let sel = rest.get(1).ok_or_else(|| ParseError::MissingArguments {
++                context: "get local-name".to_string(),
++                usage: "get local-name <selector>",
++            })?;
++            Ok(json!({ "id": id, "action": "getlocalname", "selector": sel }))
++        }
+         Some("url") => Ok(json!({ "id": id, "action": "url" })),
+         Some("cdp-url") => Ok(json!({ "id": id, "action": "cdp_url" })),
+         Some("title") => Ok(json!({ "id": id, "action": "title" })),
+@@ -2568,7 +2585,8 @@ fn parse_get(rest: &[&str], id: &str) -> Result<Value, ParseError> {
+         }),
+         None => Err(ParseError::MissingArguments {
+             context: "get".to_string(),
+-            usage: "get <text|html|value|attr|url|title|count|box|styles|cdp-url> [args...]",
++            usage:
++                "get <text|html|value|attr|local-name|url|title|count|box|styles|cdp-url> [args...]",
+         }),
+     }
+ }
+@@ -5807,6 +5825,13 @@ mod tests {
+         assert_eq!(cmd["action"], "cdp_url");
+     }
+
++    #[test]
++    fn test_get_local_name() {
++        let cmd = parse_command(&args("get local-name @e17"), &default_flags()).unwrap();
++        assert_eq!(cmd["action"], "getlocalname");
++        assert_eq!(cmd["selector"], "@e17");
++    }
++
+     // === Batch Tests ===
+
+     #[test]
+diff --git a/cli/src/native/actions.rs b/cli/src/native/actions.rs
+index 2af51d5..248771f 100644
+--- a/cli/src/native/actions.rs
++++ b/cli/src/native/actions.rs
+@@ -2557,6 +2557,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
+         "wait" => handle_wait(cmd, state).await,
+         "gettext" => handle_gettext(cmd, state).await,
+         "getattribute" => handle_getattribute(cmd, state).await,
++        "getlocalname" => handle_getlocalname(cmd, state).await,
+         "isvisible" => handle_isvisible(cmd, state).await,
+         "isenabled" => handle_isenabled(cmd, state).await,
+         "ischecked" => handle_ischecked(cmd, state).await,
+@@ -5600,6 +5601,25 @@ async fn handle_getattribute(cmd: &Value, state: &mut DaemonState) -> Result<Val
+     Ok(json!({ "value": value, "origin": url }))
+ }
+
++async fn handle_getlocalname(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
++    let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
++    let session_id = mgr.active_session_id()?.to_string();
++    let selector = cmd
++        .get("selector")
++        .and_then(|v| v.as_str())
++        .ok_or("Missing 'selector' parameter")?;
++
++    let (local_name, input_type) = super::element::get_element_local_name_and_type(
++        &mgr.client,
++        &session_id,
++        &state.ref_map,
++        selector,
++        &state.iframe_sessions,
++    )
++    .await?;
++    Ok(json!({ "localName": local_name, "type": input_type }))
++}
++
+ async fn handle_isvisible(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
+     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
+     let session_id = mgr.active_session_id()?.to_string();
+diff --git a/cli/src/native/element.rs b/cli/src/native/element.rs
+index 799814a..a991c71 100644
+--- a/cli/src/native/element.rs
++++ b/cli/src/native/element.rs
+@@ -912,6 +912,54 @@ pub async fn get_element_attribute(
+     Ok(result.result.value.unwrap_or(Value::Null))
+ }
+
++pub async fn get_element_local_name_and_type(
++    client: &CdpClient,
++    session_id: &str,
++    ref_map: &RefMap,
++    selector_or_ref: &str,
++    iframe_sessions: &HashMap<String, String>,
++) -> Result<(String, Option<String>), String> {
++    let (object_id, effective_session_id) = resolve_element_object_id(
++        client,
++        session_id,
++        ref_map,
++        selector_or_ref,
++        iframe_sessions,
++    )
++    .await?;
++
++    let described = client
++        .send_command(
++            "DOM.describeNode",
++            Some(serde_json::json!({ "objectId": object_id })),
++            Some(&effective_session_id),
++        )
++        .await?;
++
++    let node = described
++        .get("node")
++        .ok_or_else(|| "Element description is unavailable".to_string())?;
++    let local_name = node
++        .get("localName")
++        .and_then(|value| value.as_str())
++        .filter(|value| !value.is_empty())
++        .map(str::to_string)
++        .ok_or_else(|| "Element localName is unavailable".to_string())?;
++    let attributes = node
++        .get("attributes")
++        .and_then(|value| value.as_array())
++        .ok_or_else(|| "Element attributes are unavailable".to_string())?;
++    if attributes.len() % 2 != 0 {
++        return Err("Element attributes are invalid".to_string());
++    }
++    let input_type = attributes.chunks_exact(2).find_map(|pair| {
++        (pair[0].as_str() == Some("type"))
++            .then(|| pair[1].as_str().map(str::to_string))
++            .flatten()
++    });
++    Ok((local_name, input_type))
++}
++
+ pub async fn is_element_visible(
+     client: &CdpClient,
+     session_id: &str,

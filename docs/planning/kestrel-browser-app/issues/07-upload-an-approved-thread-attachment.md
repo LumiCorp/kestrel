@@ -124,16 +124,28 @@ Add shared, Desktop, hosted, process, PostgreSQL, Chromium, approval, and cleanu
   Router typecheck/build, frozen-lockfile verification, scoped Web lint, and
   `git diff --check` pass.
 
-### Remaining exact-target blocker
+### Exact-target completion evidence
 
-The pinned agent-browser v0.35.0 public CLI does not expose a read-only mapping
-from `targetRef` to element tag/local name. `snapshot --json` publishes the
-reference's role and accessible name while retaining its backend node identity
-inside the daemon; `get attr` resolves the reference internally but can only
-return an attribute; and `get html` returns inner HTML. Kestrel's owned CDP seam
-has the active target but not agent-browser's private reference map. Therefore
-the current exact `type="file"` attribute check cannot also prove the referenced
-node is actually an `input`. Completion remains blocked until the pinned wrapper
-adds an exact read-only tag/local-name or reference-description command (or an
-equivalent exact ref-to-node identity seam). A selector/role heuristic and a
-mutating upload preflight are explicitly not accepted substitutes.
+- Kestrel maintains one source patch over exact upstream agent-browser commit
+  `585e740fcef069d74e21f0e88e8bf4ea7df34385` (`v0.35.0`). The patch adds only
+  the read-only `get local-name <selector-or-ref>` command and version-identifies
+  the result as `v0.35.0-kestrel.1`.
+- The command resolves through agent-browser's private reference map and asks
+  CDP `DOM.describeNode` for the browser-owned `node.localName` and `type`
+  attribute of that exact object in one response; page JavaScript cannot shadow
+  either value. Kestrel requires `localName === "input"` and `type === "file"`;
+  a selector/role heuristic, a second independently resolved read, or a mutating
+  upload preflight is not used.
+- The darwin-arm64 and linux-x64 release binaries are repository-owned,
+  SHA-256-pinned runtime assets. Both staging lanes copy and verify only those
+  exact bytes before the containing Desktop package or hosted worker image is
+  signed.
+- Source-patch compilation, exact manifest/staging/receipt tests, strict
+  success-envelope parsing, non-input and forged-envelope rejection,
+  installed-version measurement, root typecheck, and digest verification pass.
+  The repository-owned host binary executes the patched parser in the portable
+  suite; a real Darwin binary plus pinned-Chrome probe returned `input` for the
+  file input and `button` for a page-authored `button[type=file]`. Linux x64 is
+  built from the same applied patch with Rust 1.88.0, cargo-zigbuild 0.23.2, Zig
+  0.13.0, and the glibc 2.28 target; the Linux host test executes those exact
+  repository bytes when the portable suite runs on Linux.

@@ -33,7 +33,7 @@ engine="$(docker run --rm --platform linux/amd64 --read-only --entrypoint /opt/k
 chrome="$(docker run --rm --platform linux/amd64 --read-only --entrypoint /opt/kestrel/browser-runtime/chrome/chrome "$image" --version)"
 engine="${engine%"${engine##*[![:space:]]}"}"
 chrome="${chrome%"${chrome##*[![:space:]]}"}"
-if [[ "$engine" != "agent-browser 0.35.0" ]]; then
+if [[ "$engine" != "agent-browser 0.35.0-kestrel.1" ]]; then
   printf 'hosted Browser worker agent-browser revision mismatch\n' >&2
   exit 1
 fi

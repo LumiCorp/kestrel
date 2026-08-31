@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -37,7 +38,7 @@ const session = {
   threadId: "thread-1",
   mode: "operator",
   state: "ready",
-  engineRevision: "agent-browser:v0.35.0",
+  engineRevision: "agent-browser:v0.35.0-kestrel.1",
   generation: 1,
   effectiveAllowlistRevision: "allowlist-1",
   createdAt: "2026-08-29T12:00:00.000Z",
@@ -1875,7 +1876,10 @@ test("Browser origins and session semantics normalize before audit persistence",
 });
 
 test("runtime release manifest pins exact assets without latest aliases", () => {
-  assert.equal(BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision, "v0.35.0");
+  assert.equal(
+    BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision,
+    "v0.35.0-kestrel.1",
+  );
   assert.equal(
     BROWSER_RUNTIME_RELEASE_MANIFEST.chrome.revision,
     "152.0.7977.54",
@@ -1888,8 +1892,13 @@ test("runtime release manifest pins exact assets without latest aliases", () => 
     BROWSER_RUNTIME_RELEASE_MANIFEST.targets,
   )) {
     for (const asset of [target.engine, target.chrome]) {
-      assert.match(asset.url, /^https:\/\//u);
-      assert.doesNotMatch(asset.url, /latest/iu);
+      if (asset.source.kind === "https") {
+        assert.match(asset.source.url, /^https:\/\//u);
+        assert.doesNotMatch(asset.source.url, /latest/iu);
+      } else {
+        assert.equal(path.isAbsolute(asset.source.relativePath), false);
+        assert.doesNotMatch(asset.source.relativePath, /(?:^|\/)\.\.(?:\/|$)/u);
+      }
       assert.match(asset.sha256, /^[0-9a-f]{64}$/u);
     }
   }

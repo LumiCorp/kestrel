@@ -17,6 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   BROWSER_RUNTIME_RELEASE_MANIFEST,
@@ -32,7 +33,7 @@ import {
 export const DESKTOP_BROWSER_RUNTIME_RECEIPT_NAME =
   "kestrel-browser-runtime.json" as const;
 export const DESKTOP_BROWSER_RUNTIME_RECEIPT_VERSION =
-  "desktop_browser_runtime_receipt_v1" as const;
+  "desktop_browser_runtime_receipt_v2" as const;
 
 export interface DesktopBrowserRuntimeAssetSpec
   extends BrowserRuntimeSourceAssetSpec {
@@ -65,8 +66,8 @@ export interface DesktopBrowserRuntimeReceipt {
   engineRevision: string;
   chromeRevision: string;
   sources: {
-    engine: { url: string; sha256: string };
-    chrome: { url: string; sha256: string };
+    engine: BrowserRuntimeSourceAssetSpec;
+    chrome: BrowserRuntimeSourceAssetSpec;
   };
   executables: {
     engine: string;
@@ -219,8 +220,16 @@ export function createDesktopBrowserRuntimeReceipt(
     engineRevision: spec.engineRevision,
     chromeRevision: spec.chromeRevision,
     sources: {
-      engine: { url: spec.engine.url, sha256: spec.engine.sha256 },
-      chrome: { url: spec.chrome.url, sha256: spec.chrome.sha256 },
+      engine: {
+        source: spec.engine.source,
+        sha256: spec.engine.sha256,
+        sourceFileName: spec.engine.sourceFileName,
+      },
+      chrome: {
+        source: spec.chrome.source,
+        sha256: spec.chrome.sha256,
+        sourceFileName: spec.chrome.sourceFileName,
+      },
     },
     executables: {
       engine: spec.engine.executableRelativePath,
@@ -334,7 +343,12 @@ export function ensureVerifiedSourceAsset(
   asset: DesktopBrowserRuntimeAssetSpec,
   download?: ((url: string, destinationPath: string) => void) | undefined,
 ): void {
-  ensureVerifiedBrowserRuntimeSourceAsset(filePath, asset, download);
+  ensureVerifiedBrowserRuntimeSourceAsset(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."),
+    filePath,
+    asset,
+    download,
+  );
 }
 
 function removeExcludedRuntimePaths(

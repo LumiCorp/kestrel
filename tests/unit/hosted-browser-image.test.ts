@@ -55,7 +55,8 @@ test("hosted Browser image build is pinned, nonroot, compiled, and runtime-fetch
   );
   assert.equal("publicationStatus" in metadata, false);
   assert.match(packageSource, /"browser:runtime:stage:hosted"/u);
-  assert.match(stagingReadme, /exact upstream HTTPS URLs/u);
+  assert.match(stagingReadme, /repository-owned patched agent-browser/u);
+  assert.match(stagingReadme, /exact Chrome-for-Testing HTTPS asset/u);
   assert.doesNotMatch(
     `${metadataSource}\n${stagingReadme}`,
     /blocked_pending_signed_runtime_assets|trusted hosted Browser release key|signature receipt format/u,

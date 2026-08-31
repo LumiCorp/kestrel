@@ -46,13 +46,13 @@ function fixtureSpec(): DesktopBrowserRuntimeSpec {
     engineRevision: "engine-test",
     chromeRevision: "chrome-test",
     engine: {
-      url: "https://example.test/agent-browser",
+      source: { kind: "https", url: "https://example.test/agent-browser" },
       sha256: "a".repeat(64),
       sourceFileName: "agent-browser",
       executableRelativePath: "agent-browser",
     },
     chrome: {
-      url: "https://example.test/chrome.zip",
+      source: { kind: "https", url: "https://example.test/chrome.zip" },
       sha256: "b".repeat(64),
       sourceFileName: "chrome.zip",
       archiveRoot: "chrome",
@@ -99,9 +99,13 @@ test("Desktop Browser release stays explicitly darwin-arm64 while retaining host
   });
   const spec = desktopBrowserRuntimeSpec();
   for (const asset of [spec.engine, spec.chrome]) {
-    assert.match(asset.url, /^https:\/\//u);
     assert.match(asset.sha256, /^[0-9a-f]{64}$/u);
-    assert.doesNotMatch(asset.url, /latest/iu);
+    if (asset.source.kind === "https") {
+      assert.match(asset.source.url, /^https:\/\//u);
+      assert.doesNotMatch(asset.source.url, /latest/iu);
+    } else {
+      assert.equal(path.isAbsolute(asset.source.relativePath), false);
+    }
   }
   assert.deepEqual(spec.chrome.excludedRuntimeRelativePaths, [
     "chrome/Google Chrome for Testing.app/Contents/Frameworks/Google Chrome for Testing Framework.framework/Versions/152.0.7977.54/Resources/install.sh",
@@ -116,12 +120,14 @@ test("Desktop Browser runtime receipt binds every packaged file and exact source
     assert.equal(receipt.executableResolution, "explicit_packaged_paths_only");
     assert.deepEqual(receipt.sources, {
       engine: {
-        url: fixture.spec.engine.url,
+        source: fixture.spec.engine.source,
         sha256: fixture.spec.engine.sha256,
+        sourceFileName: fixture.spec.engine.sourceFileName,
       },
       chrome: {
-        url: fixture.spec.chrome.url,
+        source: fixture.spec.chrome.source,
         sha256: fixture.spec.chrome.sha256,
+        sourceFileName: fixture.spec.chrome.sourceFileName,
       },
     });
     assert.equal(receipt.files.length, 2);
@@ -174,7 +180,7 @@ test("Desktop packaging rejects absent and wrong-digest source assets before ext
           writeFileSync(destinationPath, "wrong", "utf8");
         },
       }),
-      /digest mismatch/u,
+      /repository asset is missing/u,
     );
     const spec = desktopBrowserRuntimeSpec();
     const sourceRoot = path.join(
@@ -185,6 +191,16 @@ test("Desktop packaging rejects absent and wrong-digest source assets before ext
       "browser-runtime-sources",
       spec.target,
     );
+    assert.equal(spec.engine.source.kind, "repository");
+    if (spec.engine.source.kind !== "repository") {
+      throw new Error("Desktop engine fixture must use a repository source.");
+    }
+    const repositoryEnginePath = path.join(
+      repoRoot,
+      spec.engine.source.relativePath,
+    );
+    mkdirSync(path.dirname(repositoryEnginePath), { recursive: true });
+    writeFileSync(repositoryEnginePath, "wrong", "utf8");
     mkdirSync(sourceRoot, { recursive: true });
     writeFileSync(path.join(sourceRoot, spec.engine.sourceFileName), "wrong", "utf8");
     writeFileSync(path.join(sourceRoot, spec.chrome.sourceFileName), "wrong", "utf8");
@@ -210,7 +226,10 @@ test("Desktop packaging acquires exact manifest URLs only when cached sources ar
   const filePath = path.join(root, "agent-browser");
   const bytes = Buffer.from("pinned-browser-source", "utf8");
   const asset = {
-    url: "https://downloads.example.test/agent-browser-v1",
+    source: {
+      kind: "https" as const,
+      url: "https://downloads.example.test/agent-browser-v1",
+    },
     sha256: createHash("sha256").update(bytes).digest("hex"),
     sourceFileName: "agent-browser",
     executableRelativePath: "agent-browser",
@@ -223,10 +242,10 @@ test("Desktop packaging acquires exact manifest URLs only when cached sources ar
   try {
     ensureVerifiedSourceAsset(filePath, asset, download);
     ensureVerifiedSourceAsset(filePath, asset, download);
-    assert.deepEqual(requests, [asset.url]);
+    assert.deepEqual(requests, [asset.source.url]);
     writeFileSync(filePath, "invalid-cache", "utf8");
     ensureVerifiedSourceAsset(filePath, asset, download);
-    assert.deepEqual(requests, [asset.url, asset.url]);
+    assert.deepEqual(requests, [asset.source.url, asset.source.url]);
     assert.deepEqual(readFileSync(filePath), bytes);
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -22,7 +22,7 @@ RUN apt-get update \
 WORKDIR /staged
 COPY deploy/fly/kestrel-one-browser-worker/runtime/linux-x64/agent-browser-linux-x64 ./agent-browser-linux-x64
 COPY deploy/fly/kestrel-one-browser-worker/runtime/linux-x64/chrome-linux64.zip ./chrome-linux64.zip
-RUN echo "b7a28c3a43a7008dd02585e2e60c391c08983f7a099149caed63c9f13f57b752  agent-browser-linux-x64" | sha256sum --check --strict - \
+RUN echo "5b2dbebc79f669e06c0eef6749ae3a086c1c8f3421659a90288467d999e2d881  agent-browser-linux-x64" | sha256sum --check --strict - \
   && echo "88af83664e1e5f79dc1c1378d0699b98dddd69690a748addf4ccbe322bfacedf  chrome-linux64.zip" | sha256sum --check --strict - \
   && install -D --mode=0755 agent-browser-linux-x64 /opt/kestrel/browser-runtime/agent-browser \
   && unzip -q chrome-linux64.zip -d /tmp/chrome \
@@ -36,7 +36,7 @@ ARG KESTREL_GIT_SHA=unknown
 LABEL org.opencontainers.image.source="https://github.com/LumiCorp/kestrel"
 LABEL org.opencontainers.image.version=$KESTREL_BUILD_ID
 LABEL org.opencontainers.image.revision=$KESTREL_GIT_SHA
-LABEL dev.kestrel.browser.engine="agent-browser:v0.35.0"
+LABEL dev.kestrel.browser.engine="agent-browser:v0.35.0-kestrel.1"
 LABEL dev.kestrel.browser.chrome="chrome-for-testing:152.0.7977.54"
 
 ENV HOME=/tmp/kestrel-browser-home

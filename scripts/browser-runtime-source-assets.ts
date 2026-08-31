@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -16,7 +17,9 @@ import {
 } from "../src/browser/runtimeReleaseManifest.js";
 
 export interface BrowserRuntimeSourceAssetSpec {
-  url: string;
+  source:
+    | { kind: "https"; url: string }
+    | { kind: "repository"; relativePath: string };
   sha256: string;
   sourceFileName: string;
 }
@@ -67,11 +70,13 @@ export function stageBrowserRuntimeSourceAssets(
   const chromePath = resolveSourceAssetPath(sourceRoot, release.chrome);
 
   ensureVerifiedBrowserRuntimeSourceAsset(
+    repoRoot,
     enginePath,
     release.engine,
     options.download,
   );
   ensureVerifiedBrowserRuntimeSourceAsset(
+    repoRoot,
     chromePath,
     release.chrome,
     options.download,
@@ -81,6 +86,7 @@ export function stageBrowserRuntimeSourceAssets(
 }
 
 export function ensureVerifiedBrowserRuntimeSourceAsset(
+  repoRoot: string,
   filePath: string,
   asset: BrowserRuntimeSourceAssetSpec,
   download: (
@@ -95,33 +101,68 @@ export function ensureVerifiedBrowserRuntimeSourceAsset(
   ) {
     return;
   }
-  if (new URL(asset.url).protocol !== "https:") {
-    throw new Error(
-      `Pinned Browser runtime source asset must use HTTPS: ${asset.url}`,
-    );
-  }
   mkdirSync(path.dirname(filePath), { recursive: true });
   const temporaryPath = path.join(
     path.dirname(filePath),
     `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.download`,
   );
   try {
-    download(asset.url, temporaryPath);
+    if (asset.source.kind === "repository") {
+      copyRepositoryAsset(repoRoot, asset.source.relativePath, temporaryPath);
+    } else {
+      if (new URL(asset.source.url).protocol !== "https:") {
+        throw new Error(
+          `Pinned Browser runtime source asset must use HTTPS: ${asset.source.url}`,
+        );
+      }
+      download(asset.source.url, temporaryPath);
+    }
     if (!existsSync(temporaryPath) || !lstatSync(temporaryPath).isFile()) {
       throw new Error(
-        `Pinned Browser runtime source download produced no regular file: ${asset.url}`,
+        `Pinned Browser runtime source acquisition produced no regular file: ${describeSource(asset)}`,
       );
     }
     const actual = hashFile(temporaryPath);
     if (actual !== asset.sha256) {
       throw new Error(
-        `Pinned Browser runtime source asset digest mismatch for ${asset.url}: expected ${asset.sha256}, received ${actual}`,
+        `Pinned Browser runtime source asset digest mismatch for ${describeSource(asset)}: expected ${asset.sha256}, received ${actual}`,
       );
     }
     renameSync(temporaryPath, filePath);
   } finally {
     rmSync(temporaryPath, { force: true });
   }
+}
+
+function copyRepositoryAsset(
+  repoRoot: string,
+  relativePath: string,
+  destinationPath: string,
+): void {
+  if (path.isAbsolute(relativePath) || relativePath.split(path.sep).includes("..")) {
+    throw new Error(
+      `Pinned Browser runtime repository asset path must stay inside the repository: ${relativePath}`,
+    );
+  }
+  const sourcePath = path.resolve(repoRoot, relativePath);
+  const resolvedRoot = path.resolve(repoRoot);
+  if (!sourcePath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new Error(
+      `Pinned Browser runtime repository asset path escaped the repository: ${relativePath}`,
+    );
+  }
+  if (!existsSync(sourcePath) || !lstatSync(sourcePath).isFile()) {
+    throw new Error(
+      `Pinned Browser runtime repository asset is missing: ${relativePath}`,
+    );
+  }
+  copyFileSync(sourcePath, destinationPath);
+}
+
+function describeSource(asset: BrowserRuntimeSourceAssetSpec): string {
+  return asset.source.kind === "https"
+    ? asset.source.url
+    : asset.source.relativePath;
 }
 
 function resolveSourceAssetPath(

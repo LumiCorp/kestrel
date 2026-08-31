@@ -10,6 +10,7 @@ import {
   EnvironmentProviderError,
   KESTREL_WORKSPACE_STOP_CONFIG,
 } from "./contracts";
+import { BROWSER_RUNTIME_RELEASE_MANIFEST } from "../../../../../src/browser/runtimeReleaseManifest.js";
 
 const environmentTicketPublicKey = generateKeyPairSync("ed25519")
   .publicKey.export({ type: "spki", format: "pem" })
@@ -53,8 +54,8 @@ test("dedicated Browser Machines are ephemeral, private, immutable, and volume-f
     generation: 3,
     region: "iad",
     runtimeImageDigest: digest,
-    engineRevision: "v0.35.0",
-    chromeRevision: "152.0.7977.54",
+    engineRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision,
+    chromeRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.chrome.revision,
     effectiveAllowlistRevision: "revision-1",
     capabilityPublicKeyPem: environmentTicketPublicKey,
   });
@@ -117,8 +118,8 @@ test("dedicated Browser Machines reject immutable images from another repository
       generation: 3,
       region: "iad",
       runtimeImageDigest: `registry.fly.io/other@sha256:${"a".repeat(64)}`,
-      engineRevision: "v0.35.0",
-      chromeRevision: "152.0.7977.54",
+      engineRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision,
+      chromeRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.chrome.revision,
       effectiveAllowlistRevision: "revision-1",
       capabilityPublicKeyPem: environmentTicketPublicKey,
     }),
@@ -148,8 +149,8 @@ test("dedicated Browser Machines reject an invalid Gateway Machine identity", as
       region: "iad",
       runtimeImageDigest:
         `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
-      engineRevision: "v0.35.0",
-      chromeRevision: "152.0.7977.54",
+      engineRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision,
+      chromeRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.chrome.revision,
       effectiveAllowlistRevision: "revision-1",
       capabilityPublicKeyPem: environmentTicketPublicKey,
     }),
