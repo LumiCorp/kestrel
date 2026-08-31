@@ -107,6 +107,9 @@ Add shared, Desktop, hosted, process, PostgreSQL, Chromium, approval, and cleanu
   on cancellation, supports a same-attachment retry under a new operation ID,
   and reconciles only its own filename-shaped staging residue on reconstruction.
   Worker cancellation aborts both a waiting transfer and accepted execution.
+  Cancellation records exact terminal state and waits for an in-flight receiver
+  to settle before returning, so a paused receiver cannot publish staging after
+  cancellation has reported success.
 - Prepared authority now binds the owning record's distinct untrusted declared
   media type and detected media type. Stable success metadata is limited to the
   attachment ID, sanitized filename, measured byte count, SHA-256, Session
@@ -116,7 +119,7 @@ Add shared, Desktop, hosted, process, PostgreSQL, Chromium, approval, and cleanu
   or malformed accessible label becomes the generic `File input`; wrapper JSON,
   origins, URLs, and target references are never used as labels.
 - The focused combined shared/Desktop/hosted/Web/Router/approval suite passes
-  199 tests (198 passed and one optional real-Chromium CDP probe skipped). The
+  200 tests (199 passed and one optional real-Chromium CDP probe skipped). The
   hosted source-stream suite passes 2 of 2. Root typecheck/build, Environment
   Router typecheck/build, frozen-lockfile verification, scoped Web lint, and
   `git diff --check` pass.

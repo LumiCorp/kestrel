@@ -293,6 +293,56 @@ test("hosted upload cancellation removes only the exact staged operation and per
   await engine.destroy();
 });
 
+test("hosted upload cancellation waits until an active receiver cannot publish staging", async (t) => {
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-hosted-upload-race-"));
+  t.after(async () => await rm(runtimeRoot, { recursive: true, force: true }));
+  const bytes = Buffer.from("approved attachment");
+  const effect = preparedUploadEffect(bytes);
+  const engine = new AgentBrowserHostedWorkerEngine(workerConfig(), { runtimeRoot });
+  let releaseReceiver!: () => void;
+  const receiverReleased = new Promise<void>((resolve) => {
+    releaseReceiver = resolve;
+  });
+  let firstChunkConsumed!: () => void;
+  const firstChunk = new Promise<void>((resolve) => {
+    firstChunkConsumed = resolve;
+  });
+  const receive = engine.receiveUpload({
+    operationId: "call-upload-race",
+    effect,
+    body: (async function* () {
+      yield bytes.subarray(0, 1);
+      firstChunkConsumed();
+      await receiverReleased;
+      yield bytes.subarray(1);
+    })(),
+  });
+  await firstChunk;
+  let cancelSettled = false;
+  const cancel = engine.cancelUpload("call-upload-race").then(() => {
+    cancelSettled = true;
+  });
+  await Promise.resolve();
+  assert.equal(cancelSettled, false);
+  releaseReceiver();
+  await assert.rejects(receive, hasBrowserCode("BROWSER_ACTION_CANCELLED"));
+  await cancel;
+  assert.equal(cancelSettled, true);
+  assert.deepEqual(
+    (await readdir(runtimeRoot)).filter((name) => name.startsWith("hosted-upload-")),
+    [],
+  );
+  await assert.rejects(
+    engine.receiveUpload({
+      operationId: "call-upload-race",
+      effect,
+      body: Readable.from(bytes),
+    }),
+    hasBrowserCode("BROWSER_ACTION_OUTCOME_UNKNOWN"),
+  );
+  await engine.destroy();
+});
+
 test("hosted worker reconstruction removes exact upload residue without touching unrelated files", async (t) => {
   const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-hosted-upload-restart-"));
   t.after(async () => await rm(runtimeRoot, { recursive: true, force: true }));

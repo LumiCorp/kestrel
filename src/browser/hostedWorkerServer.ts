@@ -783,6 +783,13 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   readonly #screenshots = new HostedRelayScreenshotStore();
   readonly #uploads = new Map<string, { effect: BrowserUploadPreparedEffectV1; path: string }>();
   readonly #uploadWaiters = new Map<string, ReturnType<typeof deferred<{ effect: BrowserUploadPreparedEffectV1; path: string }>>>();
+  readonly #uploadReceivers = new Map<string, {
+    cancelled: boolean;
+    iterator: AsyncIterator<Uint8Array>;
+    source: AsyncIterable<Uint8Array> & { destroy?: ((error?: Error) => void) | undefined };
+    settled: ReturnType<typeof deferred<void>>;
+  }>();
+  readonly #cancelledUploads = new Set<string>();
   readonly #consumedUploadAuthorities = new Set<string>();
   readonly #uploadReconciliation: Promise<void>;
   #gatewayProxy: HostedBrowserGatewayProxyBindingV1 | undefined;
@@ -879,24 +886,46 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     body: AsyncIterable<Uint8Array>;
   }): Promise<void> {
     await this.#uploadReconciliation;
-    if (this.#consumedUploadAuthorities.has(input.operationId)) {
+    if (
+      this.#cancelledUploads.has(input.operationId) ||
+      this.#consumedUploadAuthorities.has(input.operationId)
+    ) {
       throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
     }
     this.#consumedUploadAuthorities.add(input.operationId);
+    const source = input.body as AsyncIterable<Uint8Array> & {
+      destroy?: ((error?: Error) => void) | undefined;
+    };
+    const receiver = {
+      cancelled: false,
+      iterator: source[Symbol.asyncIterator](),
+      source,
+      settled: deferred<void>(),
+    };
+    void receiver.settled.promise.catch(() => {});
+    this.#uploadReceivers.set(input.operationId, receiver);
     const pathName = path.join(
       this.#runtimeRoot,
       `hosted-upload-${createHash("sha256").update(input.operationId).digest("hex")}.bin`,
     );
-    await mkdir(this.#runtimeRoot, { recursive: true, mode: 0o700 });
     const waiter = this.#uploadWaiters.get(input.operationId) ??
       deferred<{ effect: BrowserUploadPreparedEffectV1; path: string }>();
     void waiter.promise.catch(() => {});
     this.#uploadWaiters.set(input.operationId, waiter);
-    const handle = await open(pathName, "wx", 0o600);
-    const hash = createHash("sha256");
-    let size = 0;
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    let published = false;
     try {
-      for await (const value of input.body) {
+      await mkdir(this.#runtimeRoot, { recursive: true, mode: 0o700 });
+      if (receiver.cancelled) throw new Error("BROWSER_ACTION_CANCELLED");
+      handle = await open(pathName, "wx", 0o600);
+      const hash = createHash("sha256");
+      let size = 0;
+      while (true) {
+        if (receiver.cancelled) throw new Error("BROWSER_ACTION_CANCELLED");
+        const next = await receiver.iterator.next();
+        if (receiver.cancelled) throw new Error("BROWSER_ACTION_CANCELLED");
+        if (next.done) break;
+        const value = next.value;
         const chunk = Buffer.from(value);
         size += chunk.byteLength;
         if (size > input.effect.sizeBytes) {
@@ -906,28 +935,47 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
         await handle.write(chunk);
       }
       await handle.sync();
+      await handle.close();
+      handle = undefined;
+      if (
+        receiver.cancelled ||
+        size !== input.effect.sizeBytes ||
+        hash.digest("hex") !== input.effect.sha256
+      ) {
+        throw new Error(receiver.cancelled
+          ? "BROWSER_ACTION_CANCELLED"
+          : "BROWSER_ENGINE_FAILURE");
+      }
+      const staged = { effect: input.effect, path: pathName };
+      this.#uploads.set(input.operationId, staged);
+      published = true;
+      waiter.resolve(staged);
     } catch (error) {
-      await handle.close().catch(() => {});
-      await rm(pathName, { force: true }).catch(() => {});
       waiter.reject(error instanceof Error ? error : new Error("BROWSER_ENGINE_FAILURE"));
       throw error;
+    } finally {
+      await handle?.close().catch(() => {});
+      if (!published) await rm(pathName, { force: true }).catch(() => {});
+      if (this.#uploadReceivers.get(input.operationId) === receiver) {
+        this.#uploadReceivers.delete(input.operationId);
+      }
+      receiver.settled.resolve();
     }
-    await handle.close();
-    if (size !== input.effect.sizeBytes || hash.digest("hex") !== input.effect.sha256) {
-      await rm(pathName, { force: true }).catch(() => {});
-      waiter.reject(new Error("BROWSER_ENGINE_FAILURE"));
-      throw new Error("BROWSER_ENGINE_FAILURE");
-    }
-    const staged = { effect: input.effect, path: pathName };
-    this.#uploads.set(input.operationId, staged);
-    waiter.resolve(staged);
   }
 
   async cancelUpload(operationId: string): Promise<void> {
     await this.#uploadReconciliation;
+    this.#cancelledUploads.add(operationId);
     const waiter = this.#uploadWaiters.get(operationId);
     this.#uploadWaiters.delete(operationId);
     waiter?.reject(new Error("BROWSER_ACTION_CANCELLED"));
+    const receiver = this.#uploadReceivers.get(operationId);
+    if (receiver) {
+      receiver.cancelled = true;
+      receiver.source.destroy?.(new Error("BROWSER_ACTION_CANCELLED"));
+      void receiver.iterator.return?.().catch(() => {});
+      await receiver.settled.promise;
+    }
     const upload = this.#uploads.get(operationId);
     this.#uploads.delete(operationId);
     if (upload) await rm(upload.path, { force: true });
@@ -1102,6 +1150,18 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     this.#retiredViewerConnections.clear();
     this.#retiredViewerAuthorityExpiresAt = 0;
     this.#uploads.clear();
+    for (const receiver of this.#uploadReceivers.values()) {
+      receiver.cancelled = true;
+      receiver.source.destroy?.(new Error("BROWSER_SESSION_LOST"));
+      void receiver.iterator.return?.().catch(() => {});
+    }
+    await Promise.all(
+      [...this.#uploadReceivers.values()].map(async (receiver) => {
+        await receiver.settled.promise;
+      }),
+    );
+    this.#uploadReceivers.clear();
+    this.#cancelledUploads.clear();
     for (const waiter of this.#uploadWaiters.values()) {
       waiter.reject(new Error("BROWSER_SESSION_LOST"));
     }
@@ -1621,18 +1681,25 @@ function requiredHeader(request: IncomingMessage, name: string): string {
   return value;
 }
 
-async function* incomingBody(
+function incomingBody(
   request: IncomingMessage,
   maximumBytes: number,
-): AsyncIterable<Uint8Array> {
-  let bytes = 0;
-  for await (const value of request) {
-    const chunk = Buffer.from(value);
-    bytes += chunk.byteLength;
-    if (bytes > maximumBytes) throw new Error("BROWSER_ARTIFACT_TOO_LARGE");
-    yield chunk;
-  }
-  if (bytes !== maximumBytes) throw new Error("BROWSER_ENGINE_FAILURE");
+): AsyncIterable<Uint8Array> & { destroy(error?: Error): void } {
+  return {
+    destroy(error?: Error) {
+      request.destroy(error);
+    },
+    async *[Symbol.asyncIterator]() {
+      let bytes = 0;
+      for await (const value of request) {
+        const chunk = Buffer.from(value);
+        bytes += chunk.byteLength;
+        if (bytes > maximumBytes) throw new Error("BROWSER_ARTIFACT_TOO_LARGE");
+        yield chunk;
+      }
+      if (bytes !== maximumBytes) throw new Error("BROWSER_ENGINE_FAILURE");
+    },
+  };
 }
 
 function requirePreparedUploadEffect(
