@@ -2724,6 +2724,20 @@ export class KestrelChatRuntime {
     }
     const acceptedInteractionMode = resolvedModeReply?.modeResolution.interactionMode ?? input.interactionMode;
     const acceptedActSubmode = resolvedModeReply?.modeResolution.actSubmode ?? input.actSubmode;
+    const authoritativeView = await threadRuntime.getOperatorThreadView(input.threadId);
+    if (
+      authoritativeView === null ||
+      authoritativeView.thread.sessionId !== status.thread.sessionId
+    ) {
+      throw createRuntimeFailure(
+        "OPERATOR_REQUEST_WORKSPACE_AUTHORITY_UNAVAILABLE",
+        "Authoritative thread context is unavailable for this request reply.",
+        {
+          threadId: input.threadId,
+          sessionId: status.thread.sessionId,
+        },
+      );
+    }
 
     let resolveSubmitted!: () => void;
     const submitted = new Promise<void>((resolve) => {
@@ -2765,6 +2779,9 @@ export class KestrelChatRuntime {
         runId,
         message,
         eventType: request.eventType,
+        ...(authoritativeView.workspace !== undefined
+          ? { workspace: authoritativeView.workspace }
+          : {}),
         ...(resolvedModeReply !== undefined
           ? {
               resumeBlockedRun: resolvedModeReply.modeResolution.disposition === "resume",
