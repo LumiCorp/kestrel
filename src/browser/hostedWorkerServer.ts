@@ -29,7 +29,10 @@ import {
 import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
 import { verifyHostedBrowserCapabilitySignature } from "./hostedCapability.js";
 import { verifyHostedBrowserUploadPreparationCapability } from "./hostedUploadCapability.js";
-import { verifyHostedBrowserDownloadPreparationCapability } from "./hostedDownloadCapability.js";
+import {
+  verifyHostedBrowserDownloadPreparationCapability,
+  verifyHostedBrowserDownloadReleaseCapability,
+} from "./hostedDownloadCapability.js";
 import {
   HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED,
   HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE,
@@ -80,6 +83,7 @@ type AcceptedOperation = {
   result: Promise<unknown>;
   acceptOutcome: Promise<unknown>;
   phase: "accepted" | "invoked" | "pre_dispatch_result" | "committing" | "cancelling";
+  downloadBytesConsumed: boolean;
 };
 
 export type HostedBrowserWorkerConfig = {
@@ -229,8 +233,12 @@ export function startHostedBrowserWorker(input: {
           !operation ||
           operation.capability !== capability ||
           operation.prepared.activation.descriptor.toolId !== "browser.download" ||
-          typeof engine.openDownload !== "function"
+          typeof engine.openDownload !== "function" ||
+          operation.downloadBytesConsumed
         ) throw new Error("BROWSER_SESSION_LOST");
+        // Reserve the exact byte authority before opening the source. A
+        // concurrent request or response-loss replay must never open it twice.
+        operation.downloadBytesConsumed = true;
         const effect = requirePreparedDownloadEffect(operation.prepared);
         const source = await engine.openDownload({ operationId, effect });
         response.writeHead(200, {
@@ -245,6 +253,38 @@ export function startHostedBrowserWorker(input: {
       const body = await readJson(request);
       if (terminating && pathname !== "/v1/viewer-cleanup") {
         throw new Error("BROWSER_SESSION_LOST");
+      }
+      if (pathname === "/v1/download/release") {
+        const record = requireRecord(body);
+        const effect = parseBrowserDownloadPreparedEffectV1(record.effect);
+        const claims = verifyHostedBrowserDownloadReleaseCapability({
+          token: requiredString(record.capability),
+          publicKeyPem: config.capabilityPublicKeyPem,
+        });
+        if (
+          typeof engine.cancelDownload !== "function" ||
+          claims.organizationId !== config.organizationId ||
+          claims.environmentId !== config.environmentId ||
+          claims.projectId !== config.projectId ||
+          claims.userId !== config.userId ||
+          claims.threadId !== config.threadId ||
+          claims.sessionId !== config.sessionId ||
+          claims.generation !== config.generation ||
+          claims.operationId !== record.operationId ||
+          claims.pendingDownloadId !== effect.pendingDownloadId ||
+          claims.effectRevision !== hashCanonical(effect) ||
+          effect.threadId !== config.threadId ||
+          effect.sessionId !== config.sessionId ||
+          effect.generation !== config.generation
+        ) throw new Error("BROWSER_SESSION_LOST");
+        await engine.cancelDownload({
+          operationId: claims.operationId,
+          effect,
+        });
+        return writeJson(response, 200, {
+          released: true,
+          operationId: claims.operationId,
+        });
       }
       if (pathname === "/v1/operations/accept") {
         if (revisionInstalling) {
@@ -409,6 +449,7 @@ export function startHostedBrowserWorker(input: {
           result: result.promise,
           acceptOutcome,
           phase: "accepted",
+          downloadBytesConsumed: false,
         };
         accepted.set(prepared.callId, acceptedOperation);
         try {

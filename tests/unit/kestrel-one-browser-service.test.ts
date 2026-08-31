@@ -216,6 +216,27 @@ test("hosted download acknowledges only after the dedicated worker bytes are sta
   ]);
 });
 
+test("prepared download release uses the Browser-only cleanup action", async () => {
+  const requests: string[] = [];
+  const service = createKestrelOneBrowserService({
+    kestrelOne: {
+      appRelayUrl: "https://relay.example.test",
+      appRelayToken: "relay-token-1",
+      executionRunId: "run-1",
+    },
+    fetchImpl: (async (url) => {
+      requests.push(String(url));
+      return Response.json({ released: true, operationId: "call-1" });
+    }) as typeof fetch,
+  });
+  await service.releasePreparedDownload?.(
+    preparedDownload,
+    { threadId: "thread-1", projectId: "project-1" },
+  );
+  assert.equal(requests.length, 1);
+  assert.match(requests[0] ?? "", /control\/release-download$/u);
+});
+
 test("invalid acceptance never acknowledges or invokes", async () => {
   let acknowledged = false;
   let calls = 0;

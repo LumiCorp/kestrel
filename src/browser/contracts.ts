@@ -115,6 +115,10 @@ export interface BrowserServicePort {
   prepareDownload?(
     input: BrowserDownloadPreparationRequestV1,
   ): Promise<BrowserDownloadPreparedEffectV1>;
+  releasePreparedDownload?(
+    prepared: PreparedToolCallV1,
+    authority: BrowserHostExecutionAuthorityV1,
+  ): Promise<void>;
   execute(
     prepared: PreparedToolCallV1,
     lifecycle: BrowserOperationLifecycleV1,

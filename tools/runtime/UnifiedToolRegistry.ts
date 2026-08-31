@@ -146,6 +146,7 @@ type PinnedExecutionSource = {
   ) => (input: unknown) => Promise<unknown>;
   retain?: (() => void) | undefined;
   release?: (() => Promise<void> | void) | undefined;
+  releasePrepared?: ((prepared: PreparedToolCallV1) => Promise<void> | void) | undefined;
   transformInput?:
     | ((input: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>)
     | undefined;
@@ -1249,8 +1250,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       return;
     }
     if (this.closed) return;
-    this.markPreparedExecutionTerminal(prepared, key);
-    const release = Promise.resolve().then(() => source.release?.());
+    const release = Promise.resolve().then(async () => {
+      await source.releasePrepared?.(prepared);
+      this.markPreparedExecutionTerminal(prepared, key);
+      await source.release?.();
+    });
     this.releasingPreparedExecutions.set(key, release);
     try {
       await release;
@@ -1943,6 +1947,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               activeContext,
             )!,
         }),
+        releasePrepared: (prepared: PreparedToolCallV1) =>
+          defaultToolCatalog.releasePrepared(
+            descriptor.toolId,
+            prepared,
+            activeContext,
+          ),
         resolvePolicy: (input: Record<string, unknown>) =>
           defaultToolCatalog.resolvePolicy(descriptor.toolId, activeContext, input),
         transformInput: async (input) => {

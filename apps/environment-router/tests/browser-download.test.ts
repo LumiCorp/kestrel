@@ -72,6 +72,29 @@ test("Browser download preparation and bytes remain exact-body-bound dedicated R
   });
   assert.equal(streamed.status, 200);
   assert.deepEqual(streamed.body, bytes);
+
+  const releaseEnvelope = {
+    ...scope(),
+    version: "hosted_browser_download_release_router_envelope_v1",
+    operationId: "call-download-1",
+    capability: "signed-release-capability",
+    effect: { version: "browser_download_preparation_v1", pendingDownloadId: "download-1" },
+  };
+  const releaseBody = Buffer.from(JSON.stringify(releaseEnvelope));
+  const released = responseCapture();
+  await handleBrowserDownload({
+    request: incoming(releaseBody, credential(releaseBody, "browser.download.release")),
+    response: released.response,
+    publicKey,
+    environmentId: "env-1",
+    expectedAppName: "environment-app",
+    fetchImpl: (async (url, init) => {
+      assert.equal(String(url), "http://machine-1.vm.environment-app.internal:43105/v1/download/release");
+      assert.equal(Buffer.from(init?.body as Buffer).toString("utf8"), releaseBody.toString("utf8"));
+      return Response.json({ released: true, operationId: "call-download-1" });
+    }) as typeof fetch,
+  });
+  assert.equal(released.status, 200);
 });
 
 test("Browser download Router rejects changed scope and one byte over the canonical file limit", async () => {

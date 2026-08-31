@@ -508,6 +508,11 @@ export function createToolCatalog(
     input: Record<string, unknown>,
     context?: SharedToolContext | undefined,
   ) => map.get(name)?.prepareInputAdapter?.(input, context);
+  const releasePrepared = (
+    name: string,
+    prepared: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+    context: SharedToolContext,
+  ) => map.get(name)?.releasePrepared?.(prepared, context);
   const resolvePolicy = async (
     name: string,
     context: SharedToolContext,
@@ -527,6 +532,7 @@ export function createToolCatalog(
     resolveExecutionClass,
     getDurableExternalEffectDispatch,
     prepareInputAdapter,
+    releasePrepared,
     resolvePolicy,
   };
 }

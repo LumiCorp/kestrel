@@ -59,7 +59,9 @@ import type { HostedBrowserUploadWorkerPort } from "./upload-worker-client";
 import type { HostedBrowserDownloadWorkerPort } from "./download-worker-client";
 import {
   HOSTED_BROWSER_DOWNLOAD_PREPARATION_CAPABILITY_VERSION,
+  HOSTED_BROWSER_DOWNLOAD_RELEASE_CAPABILITY_VERSION,
   issueHostedBrowserDownloadPreparationCapability,
+  issueHostedBrowserDownloadReleaseCapability,
 } from "../../../../src/browser/hostedDownloadCapability.js";
 
 const IDLE_MS = 30 * 60_000;
@@ -159,6 +161,16 @@ export interface HostedBrowserArtifactPort {
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
     body: NodeJS.ReadableStream;
+  }): Promise<void>;
+  reserveDownload?(input: {
+    origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
+    generation: number; pendingDownloadId: string; filename: string;
+    declaredMediaType: string; sizeBytes: number; sha256: string;
+  }): Promise<"reserved" | "in_progress" | "staged" | "promoted">;
+  cancelDownload?(input: {
+    origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
+    generation: number; pendingDownloadId: string; filename: string;
+    declaredMediaType: string; sizeBytes: number; sha256: string;
   }): Promise<void>;
   commitDownload?(input: {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
@@ -387,6 +399,67 @@ export class HostedBrowserService implements BrowserServicePort {
     });
   }
 
+  async releasePreparedDownload(
+    prepared: PreparedToolCallV1,
+    authority: BrowserOperationLifecycleV1["authority"],
+  ): Promise<void> {
+    if (prepared.activation.descriptor.toolId !== "browser.download") {
+      throw this.#failure("BROWSER_DOWNLOAD_UNAVAILABLE");
+    }
+    if (!(this.options.routerUrl && this.options.downloads?.release)) {
+      throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+    }
+    const effect = requirePreparedDownloadEffect(prepared);
+    const origin = await this.#resolvePreparedOrigin({
+      runId: prepared.runId,
+      threadId: authority.threadId,
+      stableAuthority: prepared.stableAuthority,
+      hostProjectId: authority.projectId,
+    });
+    if (effect.threadId !== origin.threadId) throw this.#failure("BROWSER_DOWNLOAD_UNAVAILABLE");
+    const record = await this.options.store.read(effect.sessionId);
+    if (!record?.resource || record.session.generation !== effect.generation) return;
+    const storedOrigin = await this.options.store.resolveCurrentOrigin(effect.sessionId);
+    if (!sameBrowserIdentity(storedOrigin, origin)) {
+      throw this.#failure("BROWSER_SESSION_LOST");
+    }
+    const now = this.#now();
+    const capability = issueHostedBrowserDownloadReleaseCapability({
+      privateKeyPem: this.options.capabilityPrivateKeyPem,
+      now,
+      claims: {
+        version: HOSTED_BROWSER_DOWNLOAD_RELEASE_CAPABILITY_VERSION,
+        organizationId: origin.organizationId,
+        environmentId: origin.environmentId,
+        projectId: origin.projectId,
+        userId: origin.userId,
+        threadId: origin.threadId,
+        runId: prepared.runId,
+        sessionId: effect.sessionId,
+        generation: effect.generation,
+        operationId: prepared.callId,
+        pendingDownloadId: effect.pendingDownloadId,
+        effectRevision: hashCanonical(effect),
+        expiresAt: new Date(now.getTime() + OPERATION_CAPABILITY_MS).toISOString(),
+      },
+    });
+    await this.options.downloads.release({
+      routerUrl: this.options.routerUrl,
+      organizationId: origin.organizationId,
+      environmentId: origin.environmentId,
+      projectId: origin.projectId,
+      userId: origin.userId,
+      threadId: origin.threadId,
+      runId: prepared.runId,
+      sessionId: effect.sessionId,
+      appName: this.options.appName,
+      machineId: record.resource.machineId,
+      operationId: prepared.callId,
+      capability,
+      effect,
+    });
+  }
+
   async execute(
     prepared: PreparedToolCallV1,
     lifecycle: BrowserOperationLifecycleV1,
@@ -608,7 +681,8 @@ export class HostedBrowserService implements BrowserServicePort {
       if (!(
         this.options.routerUrl &&
         this.options.downloads &&
-        this.options.artifacts.stageDownload
+        this.options.artifacts.stageDownload &&
+        this.options.artifacts.reserveDownload
       )) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
       const effect = requirePreparedDownloadEffect(prepared);
       if (
@@ -616,6 +690,33 @@ export class HostedBrowserService implements BrowserServicePort {
         effect.sessionId !== record.session.sessionId ||
         effect.generation !== record.session.generation
       ) throw this.#failure("BROWSER_SESSION_LOST");
+      const artifactIdentity = {
+        origin,
+        operationId: prepared.callId,
+        sessionId: effect.sessionId,
+        generation: effect.generation,
+        pendingDownloadId: effect.pendingDownloadId,
+        filename: effect.filename,
+        declaredMediaType: effect.declaredMediaType,
+        sizeBytes: effect.measuredBytes,
+        sha256: effect.sha256,
+      };
+      const reservation = await this.options.artifacts.reserveDownload(artifactIdentity);
+      if (reservation === "in_progress") {
+        throw this.#failure("BROWSER_ACTION_OUTCOME_UNKNOWN");
+      }
+      if (reservation !== "reserved") {
+        return {
+          version: "hosted_browser_relay_instruction_v1",
+          phase: "invoke",
+          operationId: prepared.callId,
+          operation,
+          sessionId: record.session.sessionId,
+          generation: record.session.generation,
+          capability: acceptedInstruction.capability,
+          machine: acceptedInstruction.machine,
+        };
+      }
       const source = await this.options.downloads.open({
         routerUrl: this.options.routerUrl,
         organizationId: origin.organizationId,
@@ -635,17 +736,12 @@ export class HostedBrowserService implements BrowserServicePort {
       });
       try {
         await this.options.artifacts.stageDownload({
-          origin,
-          operationId: prepared.callId,
-          sessionId: effect.sessionId,
-          generation: effect.generation,
-          pendingDownloadId: effect.pendingDownloadId,
-          filename: effect.filename,
-          declaredMediaType: effect.declaredMediaType,
-          sizeBytes: effect.measuredBytes,
-          sha256: effect.sha256,
+          ...artifactIdentity,
           body: source,
         });
+      } catch (error) {
+        await this.options.artifacts.cancelDownload?.(artifactIdentity).catch(() => {});
+        throw error;
       } finally {
         (source as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.();
       }

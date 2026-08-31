@@ -160,7 +160,8 @@ const server = createServer(async (request, response) => {
   if (
     request.method === "POST" &&
     (pathname === "/internal/browser/download/prepare" ||
-      pathname === "/internal/browser/download/bytes")
+      pathname === "/internal/browser/download/bytes" ||
+      pathname === "/internal/browser/download/release")
   ) {
     await handleBrowserDownload({
       request,

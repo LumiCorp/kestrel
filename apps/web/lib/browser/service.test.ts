@@ -603,6 +603,37 @@ test("hosted download distinguishes invalid worker proof from an unknown visibil
   assert.deepEqual(fixture.terminalMarks, []);
 });
 
+test("hosted download response-loss replay does not reopen reserved worker bytes", async () => {
+  const fixture = serviceFixture("ready", "allow", { downloadReservation: "staged" });
+  const request = {
+    version: "browser_download_preparation_v1" as const,
+    runId: "run-1",
+    threadId: "thread-1",
+    effectiveInput: {
+      sessionId: "browser-session-1",
+      generation: 1,
+      pendingDownloadId: "download-1",
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  };
+  const effect = await fixture.service.prepareDownload(request);
+  const prepared = preparedDownload(effect);
+  const receipt = acceptedReceipt(
+    prepared.callId,
+    "browser-session-1",
+    now,
+    new Date(now.getTime() + 30_000),
+    "browser.download",
+  );
+  await fixture.service.dispatchAcceptedOperation(
+    prepared,
+    request.authority,
+    receipt,
+  );
+  assert.equal(fixture.openedDownloads, 0);
+  assert.deepEqual(fixture.stagedDownloads, []);
+});
+
 function serviceFixture(
   state: "opening" | "ready",
   decision: "allow" | "deny",
@@ -612,6 +643,7 @@ function serviceFixture(
     terminalOnRead?: boolean;
     machineDeleteFailure?: boolean;
     downloadCommitFailure?: boolean;
+    downloadReservation?: "reserved" | "staged" | "promoted";
   } = {},
 ) {
   let session = parseBrowserSessionV1({
@@ -659,6 +691,7 @@ function serviceFixture(
   const transferredUploads: Array<{ operationId: string; bytes: Buffer }> = [];
   const preparedDownloads: unknown[] = [];
   const stagedDownloads: Array<{ operationId: string; bytes: Buffer }> = [];
+  let openedDownloads = 0;
   const committedDownloads: string[] = [];
   const downloadBytes = Buffer.from("hosted-download");
   const service = new HostedBrowserService({
@@ -802,6 +835,10 @@ function serviceFixture(
         for await (const chunk of input.body) chunks.push(Buffer.from(chunk));
         stagedDownloads.push({ operationId: input.operationId, bytes: Buffer.concat(chunks) });
       },
+      async reserveDownload() {
+        return options.downloadReservation ?? "reserved";
+      },
+      async cancelDownload() {},
       async commitDownload(input) {
         if (options.downloadCommitFailure === true) {
           throw new Error("visibility commit response lost");
@@ -875,7 +912,10 @@ function serviceFixture(
           expiresAt: "2026-08-30T12:25:00.000Z",
         };
       },
-      async open() { return Readable.from(downloadBytes); },
+      async open() {
+        openedDownloads += 1;
+        return Readable.from(downloadBytes);
+      },
     },
     async resolveUploadAttachment(input) {
       assert.equal(input.turnId, "turn-1");
@@ -907,6 +947,7 @@ function serviceFixture(
     transferredUploads,
     preparedDownloads,
     stagedDownloads,
+    get openedDownloads() { return openedDownloads; },
     committedDownloads,
     stateTransitions,
     terminalMarks,

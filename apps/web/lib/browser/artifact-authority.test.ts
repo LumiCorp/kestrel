@@ -267,6 +267,10 @@ function createFixture() {
       assert.equal(bytes.byteLength, input.sizeBytes);
       assert.equal(createHash("sha256").update(bytes).digest("hex"), input.sha256);
     },
+    async reserveDownload() {
+      return "reserved" as const;
+    },
+    async cancelDownload() {},
     async commitDownload(input) {
       const existing = files.get("file-browser-download-1");
       if (existing) return existing;

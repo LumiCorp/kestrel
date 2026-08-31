@@ -88,6 +88,9 @@ export function createKestrelOneBrowserService(
         await request("download", "prepare-download", input),
       );
     },
+    async releasePreparedDownload(prepared, authority) {
+      await request("download", "release-download", { prepared, authority });
+    },
     async execute(prepared: PreparedToolCallV1, lifecycle) {
       const capability = prepared.activation.descriptor.toolId.slice(
         "browser.".length,

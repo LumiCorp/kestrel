@@ -25,7 +25,9 @@ import {
 } from "../../src/browser/hostedUploadCapability.js";
 import {
   HOSTED_BROWSER_DOWNLOAD_PREPARATION_CAPABILITY_VERSION,
+  HOSTED_BROWSER_DOWNLOAD_RELEASE_CAPABILITY_VERSION,
   issueHostedBrowserDownloadPreparationCapability,
+  issueHostedBrowserDownloadReleaseCapability,
 } from "../../src/browser/hostedDownloadCapability.js";
 import {
   HOSTED_BROWSER_WORKER_HOME_PATH,
@@ -232,6 +234,7 @@ test("hosted worker prepares, streams, and retires one exact quarantined downloa
     },
   });
   const retired: string[] = [];
+  let openedStreams = 0;
   const worker = startHostedBrowserWorker({
     config: workerConfig(),
     engine: {
@@ -240,6 +243,7 @@ test("hosted worker prepares, streams, and retires one exact quarantined downloa
         return effect;
       },
       async openDownload(input) {
+        openedStreams += 1;
         assert.equal(input.operationId, prepared.callId);
         assert.deepEqual(input.effect, effect);
         return Readable.from(bytes);
@@ -293,6 +297,15 @@ test("hosted worker prepares, streams, and retires one exact quarantined downloa
   assert.equal(streamed.status, 200);
   assert.equal(streamed.headers.get("x-kestrel-browser-download-sha256"), effect.sha256);
   assert.deepEqual(Buffer.from(await streamed.arrayBuffer()), bytes);
+  const replayedBytes = await fetch(`http://[::1]:${port}/v1/download/bytes`, {
+    method: "POST",
+    headers: {
+      "x-kestrel-browser-operation-id": prepared.callId,
+      "x-kestrel-browser-operation-capability": operationCapability,
+    },
+  });
+  assert.equal(replayedBytes.status, 400);
+  assert.equal(openedStreams, 1);
   const invoked = await jsonRequest("/v1/operations/invoke", {
     operationId: prepared.callId,
     capability: operationCapability,
@@ -314,6 +327,49 @@ test("hosted worker prepares, streams, and retires one exact quarantined downloa
       "x-kestrel-browser-operation-capability": operationCapability,
     },
   })).status, 400);
+  await worker.close();
+});
+
+test("hosted worker releases a denied prepared download without accepting an operation", async () => {
+  const effect = preparedDownloadEffect();
+  const operationId = "call-denied-download";
+  const released: string[] = [];
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async execute() { throw new Error("must not execute"); },
+      async adopt() { return 0; },
+      async cancelDownload(input) { released.push(input.operationId); },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const capability = issueHostedBrowserDownloadReleaseCapability({
+    privateKeyPem,
+    claims: {
+      version: HOSTED_BROWSER_DOWNLOAD_RELEASE_CAPABILITY_VERSION,
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      sessionId: "browser-session-1",
+      generation: 1,
+      operationId,
+      pendingDownloadId: effect.pendingDownloadId,
+      effectRevision: hashCanonical(effect),
+      expiresAt: new Date(Date.now() + 30_000).toISOString(),
+    },
+  });
+  const response = await fetch(`http://[::1]:${port}/v1/download/release`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capability, operationId, effect }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(released, [operationId]);
   await worker.close();
 });
 

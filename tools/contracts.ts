@@ -359,6 +359,10 @@ export interface SharedToolModule {
   ):
     | import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1
     | Promise<import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1>;
+  releasePrepared?(
+    prepared: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+    context: SharedToolContext,
+  ): Promise<void> | void;
   resolvePolicy?(
     context: SharedToolContext,
     input: Record<string, unknown>,
@@ -421,6 +425,11 @@ export interface ToolCatalog {
     | import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1
     | Promise<import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1>
     | undefined;
+  releasePrepared(
+    name: string,
+    prepared: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+    context: SharedToolContext,
+  ): Promise<void> | void | undefined;
   resolvePolicy(
     name: string,
     context: SharedToolContext,

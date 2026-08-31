@@ -19,22 +19,22 @@ export async function handleBrowserDownload(input: {
     const envelope = requireEnvelope(JSON.parse(body.toString("utf8")));
     authorize(input, body, envelope);
     const upstream = await (input.fetchImpl ?? fetch)(
-      new URL(`http://${envelope.machine.machineId}.vm.${envelope.machine.appName}.internal:43105${envelope.prepare ? "/v1/download/prepare" : "/v1/download/bytes"}`),
+      new URL(`http://${envelope.machine.machineId}.vm.${envelope.machine.appName}.internal:43105/v1/download/${envelope.action}`),
       {
         method: "POST",
-        headers: envelope.prepare
-          ? { "content-type": "application/json" }
-          : {
+        headers: envelope.action === "bytes"
+          ? {
               "content-type": "application/json",
               "x-kestrel-browser-operation-id": envelope.operationId!,
               "x-kestrel-browser-operation-capability": envelope.capability,
-            },
+            }
+          : { "content-type": "application/json" },
         body,
         redirect: "error",
         signal: AbortSignal.timeout(60_000),
       },
     );
-    if (envelope.prepare) return await relayBuffered(input.response, upstream);
+    if (envelope.action !== "bytes") return await relayBuffered(input.response, upstream);
     const declared = Number(upstream.headers.get("content-length") ?? "-1");
     if (
       !upstream.ok ||
@@ -62,7 +62,7 @@ export async function handleBrowserDownload(input: {
 }
 
 type Envelope = {
-  prepare: boolean;
+  action: "prepare" | "bytes" | "release";
   organizationId: string;
   environmentId: string;
   projectId: string;
@@ -85,7 +85,7 @@ function authorize(
   const token = input.request.headers.authorization?.match(/^Bearer ([^\s]+)$/u)?.[1];
   if (!token) throw new Error("missing credential");
   const credential = verifyEnvironmentToolCredential({ token, publicKey: input.publicKey });
-  const operation = envelope.prepare ? "browser.download.prepare" : "browser.download.bytes";
+  const operation = `browser.download.${envelope.action}`;
   const binding = `sha256:${createHash("sha256").update(body).digest("base64url")}`;
   if (
     credential.organizationId !== envelope.organizationId ||
@@ -107,13 +107,19 @@ function authorize(
 
 function requireEnvelope(value: unknown): Envelope & Record<string, unknown> {
   const record = requireRecord(value);
-  const prepare = record.version === "hosted_browser_download_prepare_router_envelope_v1";
-  if (!prepare && record.version !== "hosted_browser_download_bytes_router_envelope_v1") {
+  const action = record.version === "hosted_browser_download_prepare_router_envelope_v1"
+    ? "prepare"
+    : record.version === "hosted_browser_download_bytes_router_envelope_v1"
+      ? "bytes"
+      : record.version === "hosted_browser_download_release_router_envelope_v1"
+        ? "release"
+        : undefined;
+  if (!action) {
     throw new Error("invalid envelope");
   }
   const machine = requireRecord(record.machine);
   const result: Envelope = {
-    prepare,
+    action,
     organizationId: requiredString(record.organizationId),
     environmentId: requiredString(record.environmentId),
     projectId: requiredString(record.projectId),
@@ -127,14 +133,17 @@ function requireEnvelope(value: unknown): Envelope & Record<string, unknown> {
     },
     capability: requiredString(record.capability),
   };
-  if (prepare) {
+  if (action === "prepare") {
     requireRecord(record.request);
-  } else {
+  } else if (action === "bytes") {
     result.operationId = requiredString(record.operationId);
     if (!Number.isSafeInteger(record.sizeBytes) || Number(record.sizeBytes) < 0) throw new Error("invalid size");
     result.sizeBytes = Number(record.sizeBytes);
     if (typeof record.sha256 !== "string" || !/^[0-9a-f]{64}$/u.test(record.sha256)) throw new Error("invalid hash");
     result.sha256 = record.sha256;
+  } else {
+    result.operationId = requiredString(record.operationId);
+    requireRecord(record.effect);
   }
   return { ...record, ...result };
 }

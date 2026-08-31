@@ -28,6 +28,7 @@ export interface HostedBrowserArtifactFileV1 {
 }
 
 export interface HostedBrowserArtifactFilePort {
+  reconcileDownloads?(): Promise<void>;
   initialize(input: {
     fileId: string;
     threadId: string;
@@ -58,6 +59,16 @@ export interface HostedBrowserArtifactFilePort {
     filename: string; declaredMediaType: string; sizeBytes: number; sha256: string;
     body: NodeJS.ReadableStream;
   }): Promise<void>;
+  reserveDownload?(input: {
+    operationId: string; organizationId: string; threadId: string; userId: string;
+    sessionId: string; generation: number; pendingDownloadId: string;
+    filename: string; declaredMediaType: string; sizeBytes: number; sha256: string;
+  }): Promise<"reserved" | "in_progress" | "staged" | "promoted">;
+  cancelDownload?(input: {
+    operationId: string; organizationId: string; threadId: string; userId: string;
+    sessionId: string; generation: number; pendingDownloadId: string;
+    filename: string; declaredMediaType: string; sizeBytes: number; sha256: string;
+  }): Promise<void>;
   commitDownload?(input: {
     operationId: string; organizationId: string; threadId: string; userId: string;
     sessionId: string; generation: number; pendingDownloadId: string;
@@ -82,6 +93,7 @@ export interface HostedBrowserArtifactUploadInstructionV1 {
 
 export class HostedBrowserArtifactAuthority {
   readonly #publicKeyPem: string;
+  readonly #downloadReconciliation: Promise<void>;
 
   constructor(private readonly options: {
     files: HostedBrowserArtifactFilePort;
@@ -91,6 +103,8 @@ export class HostedBrowserArtifactAuthority {
     this.#publicKeyPem = createPublicKey(options.privateKeyPem)
       .export({ type: "spki", format: "pem" })
       .toString();
+    this.#downloadReconciliation = options.files.reconcileDownloads?.() ?? Promise.resolve();
+    void this.#downloadReconciliation.catch(() => {});
   }
 
   async prepareScreenshotUpload(input: {
@@ -198,6 +212,7 @@ export class HostedBrowserArtifactAuthority {
     declaredMediaType: string; sizeBytes: number; sha256: string;
     body: NodeJS.ReadableStream;
   }): Promise<void> {
+    await this.#downloadReconciliation;
     if (!this.options.files.stageDownload) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
     await this.options.files.stageDownload({
       operationId: input.operationId,
@@ -215,11 +230,42 @@ export class HostedBrowserArtifactAuthority {
     });
   }
 
+  async reserveDownload(input: {
+    origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
+    generation: number; pendingDownloadId: string; filename: string;
+    declaredMediaType: string; sizeBytes: number; sha256: string;
+  }): Promise<"reserved" | "in_progress" | "staged" | "promoted"> {
+    await this.#downloadReconciliation;
+    if (!this.options.files.reserveDownload) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+    return await this.options.files.reserveDownload({
+      ...input,
+      organizationId: input.origin.organizationId,
+      threadId: input.origin.threadId,
+      userId: input.origin.userId,
+    });
+  }
+
+  async cancelDownload(input: {
+    origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
+    generation: number; pendingDownloadId: string; filename: string;
+    declaredMediaType: string; sizeBytes: number; sha256: string;
+  }): Promise<void> {
+    await this.#downloadReconciliation;
+    if (!this.options.files.cancelDownload) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+    await this.options.files.cancelDownload({
+      ...input,
+      organizationId: input.origin.organizationId,
+      threadId: input.origin.threadId,
+      userId: input.origin.userId,
+    });
+  }
+
   async commitDownload(input: {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
   }): Promise<BrowserAuthorizedArtifactV1> {
+    await this.#downloadReconciliation;
     if (!this.options.files.commitDownload) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
     const file = await this.options.files.commitDownload({
       operationId: input.operationId,

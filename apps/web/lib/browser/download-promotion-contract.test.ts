@@ -10,6 +10,10 @@ const migration = fs.readFileSync(
   path.join(webRoot, "lib/db/migrations/0099_browser_download_promotions.sql"),
   "utf8",
 );
+const stagingMigration = fs.readFileSync(
+  path.join(webRoot, "lib/db/migrations/0100_browser_download_staging.sql"),
+  "utf8",
+);
 const journal = JSON.parse(fs.readFileSync(
   path.join(webRoot, "lib/db/migrations/meta/_journal.json"),
   "utf8",
@@ -43,4 +47,19 @@ test("Browser download promotion migration is additive and matches the exact res
   );
   assert.match(schema, /export const browserDownloadPromotions = pgTable/u);
   assert.match(schema, /effectRevision: text\("effect_revision"\)\.notNull\(\)/u);
+});
+
+test("Browser download staging migration durably owns unreferenced objects", () => {
+  for (const field of [
+    "operation_id", "object_key", "state", "expires_at", "file_id",
+  ]) assert.match(stagingMigration, new RegExp(`"${field}"`, "u"));
+  assert.match(stagingMigration, /cleanup_pending/u);
+  assert.match(stagingMigration, /browser_download_staged_objects_quarantine_idx/u);
+  assert.doesNotMatch(stagingMigration, /(?:^|\n)(?:DROP|DELETE|UPDATE|TRUNCATE)\s/u);
+  assert.ok(journal.entries.some((entry) => entry.tag === "0100_browser_download_staging"));
+  assert.equal(
+    historyLock["0100_browser_download_staging"],
+    `1787965200000:${createHash("sha256").update(stagingMigration).digest("hex")}`,
+  );
+  assert.match(schema, /export const browserDownloadStagedObjects = pgTable/u);
 });

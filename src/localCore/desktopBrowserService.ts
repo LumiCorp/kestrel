@@ -330,6 +330,9 @@ export interface DesktopBrowserEngineInvocation {
   onDownloadIntercepted?:
     | ((download: DesktopBrowserInterceptedDownload) => void | Promise<void>)
     | undefined;
+  getDownloadQuarantineUsage?:
+    | (() => { count: number; measuredBytes: number })
+    | undefined;
   stopDownloadInterception?: (() => void) | undefined;
   synchronizeDownloads?: (() => Promise<void>) | undefined;
 }
@@ -1310,6 +1313,34 @@ export class DesktopBrowserService implements BrowserServicePort {
     await this.#removePendingDownload(runtime, effect.pendingDownloadId);
   }
 
+  async releasePreparedDownload(
+    prepared: PreparedToolCallV1,
+    authority: BrowserHostExecutionAuthorityV1,
+  ): Promise<void> {
+    if (prepared.activation.descriptor.toolId !== "browser.download") {
+      throw this.#downloadUnavailable();
+    }
+    const adapters = prepared.inputAdapters.filter(
+      (adapter) => adapter.adapterId === "kestrel.browser-download-effect:v1",
+    );
+    if (adapters.length !== 1) throw this.#downloadUnavailable();
+    const effect = parseBrowserDownloadPreparedEffectV1(adapters[0]!.metadata);
+    if (effect.threadId !== authority.threadId) throw this.#downloadUnavailable();
+    const runtime = this.#active.get(effect.sessionId);
+    if (!runtime || runtime.session.generation !== effect.generation) return;
+    if (runtime.authority.projectId !== authority.projectId) {
+      throw this.#downloadUnavailable();
+    }
+    const download = runtime.interceptedDownloads.find(
+      (candidate) => candidate.downloadId === effect.pendingDownloadId,
+    );
+    if (!download) return;
+    if (hashCanonicalDownload(download) !== hashCanonicalDownload(effect)) {
+      throw this.#downloadUnavailable();
+    }
+    await this.#removePendingDownload(runtime, effect.pendingDownloadId);
+  }
+
   async execute(
     prepared: PreparedToolCallV1,
     lifecycle: BrowserOperationLifecycleV1,
@@ -1919,6 +1950,13 @@ export class DesktopBrowserService implements BrowserServicePort {
         ) => {
           await this.#admitDownload(runtime!, download);
         },
+        getDownloadQuarantineUsage: () => ({
+          count: runtime!.interceptedDownloads.length,
+          measuredBytes: runtime!.interceptedDownloads.reduce(
+            (total, download) => total + download.measuredBytes,
+            0,
+          ),
+        }),
       };
       activeRuntime.engine = launchedEngine;
       const acceptedOperation = await this.#engine.acceptOperation({
@@ -4952,6 +4990,7 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
         extractScalar(cdp.stdout, "cdpUrl"),
         input.blockedDownloadPath,
         input.onDownloadIntercepted ?? (() => undefined),
+        input.getDownloadQuarantineUsage,
       ),
     );
     input.stopDownloadInterception = interception.stop;
@@ -5598,6 +5637,11 @@ export async function installAgentBrowserDownloadInterception(
   onDownloadIntercepted: (
     download: DesktopBrowserInterceptedDownload,
   ) => void | Promise<void>,
+  getCompletedQuarantineUsage: () => {
+    count: number;
+    measuredBytes: number;
+  } = () => ({ count: 0, measuredBytes: 0 }),
+  now: () => Date = () => new Date(),
 ): Promise<{
   stop: () => void;
   synchronize: () => Promise<void>;
@@ -5622,7 +5666,7 @@ export async function installAgentBrowserDownloadInterception(
     const pendingDownloads = new Map<string, {
       filename: string;
       normalizedSourceOrigin: string;
-      createdAt: string;
+      receivedBytes: number;
     }>();
     const barriers = new Map<
       number,
@@ -5760,10 +5804,45 @@ export async function installAgentBrowserDownloadInterception(
         if (params === undefined) return;
         if (message.method === "Browser.downloadWillBegin") {
           const guid = requireBrowserDownloadGuid(params.guid);
+          const usage = getCompletedQuarantineUsage();
+          if (
+            !Number.isSafeInteger(usage.count) ||
+            usage.count < 0 ||
+            !Number.isSafeInteger(usage.measuredBytes) ||
+            usage.measuredBytes < 0
+          ) {
+            throw new Error(
+              "BROWSER_ENGINE_FAILURE: Browser download quarantine usage was invalid.",
+            );
+          }
+          if (
+            usage.count + pendingDownloads.size >=
+            DESKTOP_MAX_ATTACHMENTS_PER_MESSAGE
+          ) {
+            const ownedPath = path.join(quarantineRoot, guid);
+            socket.send(JSON.stringify({
+              id: ++nextCommandId,
+              method: "Browser.cancelDownload",
+              params: { guid },
+            }));
+            eventTail = eventTail.then(() => rm(ownedPath, { force: true })).catch(
+              (error) => {
+                eventFailure ??= error instanceof Error
+                  ? error
+                  : new Error("BROWSER_ENGINE_FAILURE");
+              },
+            );
+            eventFailure ??= browserFailure(
+              "BROWSER_ARTIFACT_TOO_LARGE",
+              "The Browser download quarantine item limit was reached.",
+              { browserOutcomeKnown: true, downloadIntercepted: true },
+            );
+            return;
+          }
           pendingDownloads.set(guid, {
             filename: sanitizeBrowserDownloadFilename(params.suggestedFilename),
             normalizedSourceOrigin: normalizeBrowserDownloadSourceOrigin(params.url),
-            createdAt: new Date().toISOString(),
+            receivedBytes: 0,
           });
           return;
         }
@@ -5777,7 +5856,32 @@ export async function installAgentBrowserDownloadInterception(
         const ownedPath = path.join(quarantineRoot, guid);
         if (
           typeof receivedBytes === "number" &&
-          receivedBytes > DESKTOP_MAX_ATTACHMENT_BYTES
+          (!Number.isSafeInteger(receivedBytes) ||
+            receivedBytes < pending.receivedBytes)
+        ) {
+          socket.send(JSON.stringify({
+            id: ++nextCommandId,
+            method: "Browser.cancelDownload",
+            params: { guid },
+          }));
+          pendingDownloads.delete(guid);
+          await rm(ownedPath, { force: true });
+          throw new Error(
+            "BROWSER_ENGINE_FAILURE: Browser download progress was invalid.",
+          );
+        }
+        if (typeof receivedBytes === "number") {
+          pending.receivedBytes = receivedBytes;
+        }
+        const completedUsage = getCompletedQuarantineUsage();
+        const inProgressBytes = [...pendingDownloads.values()].reduce(
+          (total, candidate) => total + candidate.receivedBytes,
+          0,
+        );
+        if (
+          pending.receivedBytes > DESKTOP_MAX_ATTACHMENT_BYTES ||
+          completedUsage.measuredBytes + inProgressBytes >
+            DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES
         ) {
           socket.send(JSON.stringify({
             id: ++nextCommandId,
@@ -5803,7 +5907,7 @@ export async function installAgentBrowserDownloadInterception(
           ownedPath,
           DESKTOP_MAX_ATTACHMENT_BYTES,
         );
-        const createdAt = pending.createdAt;
+        const createdAt = now().toISOString();
         const download: DesktopBrowserInterceptedDownload = {
           downloadId: `download-${digest({ guid })}`,
           browserGuid: guid,

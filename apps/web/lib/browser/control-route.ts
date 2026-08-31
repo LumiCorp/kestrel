@@ -58,6 +58,15 @@ export async function handleHostedBrowserControl(input: {
         return NextResponse.json(
           await service.prepareDownload(parseDownloadPreparationRequest(body)),
         );
+      case "release-download": {
+        const record = requireRecord(body);
+        const prepared = parsePreparedToolCallV1(record.prepared);
+        await service.releasePreparedDownload(
+          prepared,
+          parseHostAuthority(record.authority),
+        );
+        return NextResponse.json({ released: true, operationId: prepared.callId });
+      }
       case "accept": {
         const record = requireRecord(body);
         const prepared = parsePreparedToolCallV1(record.prepared);

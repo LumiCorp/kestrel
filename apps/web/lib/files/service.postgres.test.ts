@@ -225,6 +225,7 @@ test(
       }
     });
 
+    assert.equal(await files.reserveHostedBrowserDownload(identity), "reserved");
     await files.stageHostedBrowserDownload({ ...identity, body: Readable.from(bytes) });
     const [first, replay] = await Promise.all([
       files.commitHostedBrowserDownload(identity),
@@ -240,6 +241,23 @@ test(
         (SELECT count(*)::int FROM "file_scope_grants" WHERE "organization_id" = ${organizationId}) AS grants
     `;
     assert.deepEqual(counts, { promotions: 1, files: 1, grants: 1 });
+    const promotedBlobId = `blob-browser-${createHash("sha256").update(JSON.stringify({
+      organizationId,
+      sessionId: identity.sessionId,
+      generation: identity.generation,
+      pendingDownloadId: identity.pendingDownloadId,
+      sha256,
+    })).digest("hex")}`;
+    const promotedKey = getStorageAdapter().buildObjectKey(
+      "files", organizationId, promotedBlobId, "original",
+    );
+    await sql`
+      UPDATE "browser_download_staged_objects"
+      SET "expires_at" = now() - interval '1 minute'
+      WHERE "operation_id" = ${identity.operationId}
+    `;
+    await files.reconcileHostedBrowserDownloadStaging();
+    assert.equal(await getStorageAdapter().objectExists(promotedKey), true);
 
     const uncommitted = {
       ...identity,
@@ -247,6 +265,7 @@ test(
       threadId: deniedThreadId,
       pendingDownloadId: `pending-uncommitted-${suffix}`,
     };
+    assert.equal(await files.reserveHostedBrowserDownload(uncommitted), "reserved");
     await files.stageHostedBrowserDownload({ ...uncommitted, body: Readable.from(bytes) });
     const uncommittedBlobId = `blob-browser-${createHash("sha256").update(JSON.stringify({
       organizationId,
@@ -259,6 +278,37 @@ test(
       "files", organizationId, uncommittedBlobId, "original",
     );
     assert.equal(await getStorageAdapter().objectExists(uncommittedKey), true);
+    await sql`
+      UPDATE "browser_download_staged_objects"
+      SET "expires_at" = now() - interval '1 minute'
+      WHERE "operation_id" = ${uncommitted.operationId}
+    `;
+    await files.reconcileHostedBrowserDownloadStaging();
+    assert.equal(await getStorageAdapter().objectExists(uncommittedKey), false);
+    const [cleanupState] = await sql<Array<{ state: string }>>`
+      SELECT "state" FROM "browser_download_staged_objects"
+      WHERE "operation_id" = ${uncommitted.operationId}
+    `;
+    assert.equal(cleanupState?.state, "cleaned");
+    const cancelled = {
+      ...identity,
+      operationId: `browser-download-cancelled-${suffix}`,
+      pendingDownloadId: `pending-cancelled-${suffix}`,
+    };
+    assert.equal(await files.reserveHostedBrowserDownload(cancelled), "reserved");
+    await files.stageHostedBrowserDownload({ ...cancelled, body: Readable.from(bytes) });
+    const cancelledBlobId = `blob-browser-${createHash("sha256").update(JSON.stringify({
+      organizationId,
+      sessionId: cancelled.sessionId,
+      generation: cancelled.generation,
+      pendingDownloadId: cancelled.pendingDownloadId,
+      sha256,
+    })).digest("hex")}`;
+    const cancelledKey = getStorageAdapter().buildObjectKey(
+      "files", organizationId, cancelledBlobId, "original",
+    );
+    await files.cancelHostedBrowserDownload(cancelled);
+    assert.equal(await getStorageAdapter().objectExists(cancelledKey), false);
     await sql`DELETE FROM "threads" WHERE "id" = ${deniedThreadId}`;
     await assert.rejects(files.commitHostedBrowserDownload(uncommitted), /Thread not found/u);
     assert.equal(await getStorageAdapter().objectExists(uncommittedKey), false);

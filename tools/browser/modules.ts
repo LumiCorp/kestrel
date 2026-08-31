@@ -296,6 +296,32 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
         metadata: { ...preparedEffect },
       };
     },
+    ...(contract.toolId === "browser.download"
+      ? {
+          async releasePrepared(prepared, context) {
+            const service = requireBrowserServicePort(context.browserService);
+            if (typeof service.releasePreparedDownload !== "function") {
+              throw browserFailure(
+                "BROWSER_SERVICE_UNAVAILABLE",
+                "The active Browser host cannot release a prepared download.",
+                { recoverable: true, operation: contract.toolId },
+              );
+            }
+            const runtime = context.runtime;
+            if (!runtime?.threadId) {
+              throw browserFailure(
+                "BROWSER_SERVICE_UNAVAILABLE",
+                "Browser download release requires trusted Thread authority.",
+                { recoverable: true, operation: contract.toolId },
+              );
+            }
+            await service.releasePreparedDownload(
+              prepared,
+              resolveBrowserHostAuthority(context, runtime),
+            );
+          },
+        }
+      : {}),
     ...(contract.toolId === "browser.request_grant"
       ? {
           async resolvePolicy(context, input) {

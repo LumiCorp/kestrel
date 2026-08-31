@@ -39,6 +39,7 @@ import {
   type DesktopBrowserAcceptedOperation,
   type DesktopBrowserEngineAdapter,
   type DesktopBrowserEngineInvocation,
+  type DesktopBrowserInterceptedDownload,
   type DesktopBrowserMetric,
   type DesktopBrowserNativeHandoffAuthority,
   type DesktopBrowserNativeHandoffPresentation,
@@ -3450,6 +3451,56 @@ test("a download observed after command return remains preparable without termin
   await fixture.service.close();
 });
 
+test("releasing a denied prepared download removes only its exact quarantine authority", async () => {
+  const engine = new FakeEngine();
+  const fixture = await createFixture({ engine });
+  const sessionId = await openSession(fixture.service);
+  await engine.emitDownload();
+  const effect = await fixture.service.prepareDownload({
+    version: BROWSER_DOWNLOAD_PREPARATION_VERSION,
+    runId: "run-denied-download",
+    threadId: "thread-1",
+    effectiveInput: {
+      sessionId,
+      generation: 1,
+      pendingDownloadId: "late-download",
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  });
+  const call = prepared("browser.download", {
+    sessionId,
+    generation: 1,
+    pendingDownloadId: "late-download",
+  });
+  call.inputAdapters = [{
+    adapterId: "kestrel.browser-download-effect:v1",
+    metadata: { ...effect },
+  }];
+  await fixture.service.releasePreparedDownload(
+    call,
+    { threadId: "thread-1", projectId: "project-1" },
+  );
+  await fixture.service.releasePreparedDownload(
+    call,
+    { threadId: "thread-1", projectId: "project-1" },
+  );
+  await assert.rejects(
+    fixture.service.prepareDownload({
+      version: BROWSER_DOWNLOAD_PREPARATION_VERSION,
+      runId: "run-denied-download",
+      threadId: "thread-1",
+      effectiveInput: {
+        sessionId,
+        generation: 1,
+        pendingDownloadId: "late-download",
+      },
+      authority: { threadId: "thread-1", projectId: "project-1" },
+    }),
+    hasCode("BROWSER_DOWNLOAD_UNAVAILABLE"),
+  );
+  await fixture.service.close();
+});
+
 test("approved Desktop download promotion publishes one deterministic file before bounded cleanup", async () => {
   const engine = new FakeEngine();
   const fixture = await createFixture({ engine });
@@ -3693,7 +3744,7 @@ test(
     if (address === null || typeof address === "string") {
       assert.fail("download interception fixture did not bind TCP");
     }
-    const downloads: string[] = [];
+    const downloads: DesktopBrowserInterceptedDownload[] = [];
     server.on("connection", (socket) => {
       let commands = 0;
       socket.on("message", (raw) => {
@@ -3732,12 +3783,16 @@ test(
       `ws://127.0.0.1:${address.port}/devtools/browser/test`,
       quarantinePath,
       (download) => {
-        downloads.push(download.downloadId);
+        downloads.push(download);
       },
+      undefined,
+      () => new Date("2026-08-31T12:29:00.000Z"),
     );
     t.after(() => interception.stop());
     await interception.synchronize();
     assert.equal(downloads.length, 1);
+    assert.equal(downloads[0]?.createdAt, "2026-08-31T12:29:00.000Z");
+    assert.equal(downloads[0]?.expiresAt, "2026-08-31T12:59:00.000Z");
   },
 );
 
@@ -3799,6 +3854,61 @@ test("download admission and measured-size rejection remove only the exact quara
   await assert.rejects(interception.synchronize(), /exceeded the quarantine file limit/u);
   await assert.rejects(stat(path.join(quarantinePath, oversizedGuid)), { code: "ENOENT" });
   assert.equal(cancellationObserved, true);
+});
+
+test("download quarantine bounds measured in-progress bytes and item reservations", { timeout: 5_000 }, async (t) => {
+  const quarantinePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-download-progress-bounds-"));
+  t.after(() => rm(quarantinePath, { recursive: true, force: true }));
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  t.after(() => new Promise<void>((resolve) => {
+    for (const client of server.clients) client.terminate();
+    server.close(() => resolve());
+  }));
+  const address = server.address();
+  if (address === null || typeof address === "string") assert.fail("download bounds fixture did not bind TCP");
+  let barriers = 0;
+  let cancellations = 0;
+  server.on("connection", (socket) => {
+    socket.on("message", (raw) => {
+      const command = JSON.parse(raw.toString("utf8")) as { id: number; method: string };
+      if (command.method === "Browser.cancelDownload") {
+        cancellations += 1;
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+        return;
+      }
+      if (command.method !== "Browser.setDownloadBehavior") return;
+      barriers += 1;
+      if (barriers === 1) {
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+        return;
+      }
+      const guids = Array.from({ length: 21 }, (_, index) =>
+        `123e4567-e89b-42d3-a456-${String(index + 1).padStart(12, "0")}`,
+      );
+      for (const guid of guids) {
+        socket.send(JSON.stringify({
+          method: "Browser.downloadWillBegin",
+          params: { guid, suggestedFilename: `${guid}.bin`, url: "https://example.com/file" },
+        }));
+      }
+      for (const guid of guids) {
+        socket.send(JSON.stringify({
+          method: "Browser.downloadProgress",
+          params: { guid, state: "inProgress", receivedBytes: 90 * 1024 * 1024 },
+        }));
+      }
+      socket.send(JSON.stringify({ id: command.id, result: {} }));
+    });
+  });
+  const interception = await installAgentBrowserDownloadInterception(
+    `ws://127.0.0.1:${address.port}/devtools/browser/test`,
+    quarantinePath,
+    () => undefined,
+  );
+  t.after(() => interception.stop());
+  await assert.rejects(interception.synchronize(), /quarantine/u);
+  assert.equal(cancellations, 16);
 });
 
 test("daemon cleanup accepts only the exact exited agent-browser zombie identity", () => {

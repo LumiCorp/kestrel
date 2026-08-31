@@ -38,6 +38,11 @@ export interface HostedBrowserDownloadWorkerPort {
     sha256: string;
     signal?: AbortSignal;
   }): Promise<NodeJS.ReadableStream>;
+  release?(input: Scope & {
+    operationId: string;
+    capability: string;
+    effect: BrowserDownloadPreparedEffectV1;
+  }): Promise<void>;
 }
 
 export class HostedBrowserDownloadWorkerClient implements HostedBrowserDownloadWorkerPort {
@@ -75,9 +80,29 @@ export class HostedBrowserDownloadWorkerClient implements HostedBrowserDownloadW
     return Readable.fromWeb(response.body as never);
   }
 
+  async release(input: Scope & {
+    operationId: string;
+    capability: string;
+    effect: BrowserDownloadPreparedEffectV1;
+  }) {
+    const envelope = {
+      version: "hosted_browser_download_release_router_envelope_v1" as const,
+      ...scope(input),
+      operationId: input.operationId,
+      capability: input.capability,
+      effect: input.effect,
+    };
+    await this.#request(
+      input,
+      "browser.download.release",
+      envelope,
+      "/internal/browser/download/release",
+    );
+  }
+
   async #request(
     input: Scope & { signal?: AbortSignal },
-    operation: "browser.download.prepare" | "browser.download.bytes",
+    operation: "browser.download.prepare" | "browser.download.bytes" | "browser.download.release",
     envelope: Record<string, unknown>,
     pathname: string,
   ) {
