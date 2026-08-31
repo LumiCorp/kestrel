@@ -1,15 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { constants as fsConstants, realpathSync } from "node:fs";
 import { createConnection } from "node:net";
 import {
   chmod,
   lstat,
   mkdir,
+  open as openFile,
   readFile,
   rename,
   rm,
   stat,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -35,10 +37,7 @@ import {
 } from "../browser/contracts.js";
 import { resolveBrowserToolExecutionClass } from "../browser/browserAppContract.fixture.js";
 import { HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED } from "../browser/hostedViewer.js";
-import {
-  HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
-  HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES,
-} from "../browser/hostedViewerProtocol.js";
+import { HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES } from "../browser/hostedViewerProtocol.js";
 import {
   BROWSER_EFFECTIVE_DOMAIN_AUTHORITY_VERSION,
   BROWSER_QA_TARGET_VERSION,
@@ -4299,13 +4298,18 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
   async captureViewerFrame(
     input: DesktopBrowserEngineInvocation,
   ): Promise<{ mediaType: "image/png"; dataBase64: string }> {
-    const result = await this.#run(input, ["screenshot", "--base64"], {
-      stdoutMaxBytes: HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
-    });
-    return {
-      mediaType: "image/png",
-      dataBase64: extractTransientPngBase64(result.stdout),
-    };
+    const screenshotPath = requireOwnedViewerScreenshotPath(input);
+    await removeOwnedViewerScreenshot(screenshotPath);
+    try {
+      const result = await this.#run(input, ["screenshot", screenshotPath]);
+      requireExactViewerScreenshotResponse(result.stdout, screenshotPath);
+      return {
+        mediaType: "image/png",
+        dataBase64: (await readOwnedViewerPng(screenshotPath)).toString("base64"),
+      };
+    } finally {
+      await removeOwnedViewerScreenshot(screenshotPath);
+    }
   }
 
   async dispatchViewerInput(
@@ -4524,7 +4528,6 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     options: {
       timeoutMs?: number | undefined;
       captureLaunchProcessGroup?: boolean | undefined;
-      stdoutMaxBytes?: number | undefined;
     } = {},
   ): Promise<DesktopBrowserEngineCommandResult> {
     const launch = buildAgentBrowserCliInvocation({
@@ -4538,7 +4541,6 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
       cwd: input.runtimePath,
       env: launch.env,
       timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
-      stdoutMaxBytes: options.stdoutMaxBytes,
       detached: options.captureLaunchProcessGroup === true,
       onSpawn:
         options.captureLaunchProcessGroup === true
@@ -5321,48 +5323,118 @@ function viewerModifierMask(
     (modifiers?.includes("shift") ? 8 : 0);
 }
 
-function extractTransientPngBase64(stdout: string): string {
+function requireOwnedViewerScreenshotPath(
+  input: DesktopBrowserEngineInvocation,
+): string {
+  const runtimePath = path.resolve(input.runtimePath);
+  const screenshotPath = path.resolve(input.screenshotPath);
+  if (
+    path.dirname(screenshotPath) !== runtimePath ||
+    path.basename(screenshotPath) !== "screenshot.png"
+  ) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot path escaped its owned Session.",
+    );
+  }
+  return screenshotPath;
+}
+
+function requireExactViewerScreenshotResponse(
+  stdout: string,
+  expectedPath: string,
+): void {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
   } catch {
     throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer frame output was invalid.",
+      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot response was invalid.",
     );
   }
-  const encoded = findExactBase64Field(parsed);
-  if (encoded === undefined) {
+  const response = requireOptionalRecord(parsed);
+  const data = requireOptionalRecord(response?.data);
+  if (response?.success !== true || data?.path !== expectedPath) {
     throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer frame was unavailable.",
+      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot path was not proven.",
     );
   }
-  const bytes = Buffer.from(encoded, "base64");
+}
+
+async function readOwnedViewerPng(screenshotPath: string): Promise<Buffer> {
+  const before = await lstat(screenshotPath);
+  const uid = process.getuid?.();
   if (
-    bytes.byteLength === 0 ||
-    bytes.byteLength > HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES ||
-    !bytes.subarray(0, 8).equals(
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    ) ||
-    bytes.toString("base64") !== encoded.replace(/\s/gu, "")
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    (uid !== undefined && before.uid !== uid)
   ) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot was not an owned regular file.",
+    );
+  }
+  if (before.size > HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES) {
     throw new Error(
       "BROWSER_ENGINE_FAILURE: Browser viewer frame failed validation.",
     );
   }
-  return encoded.replace(/\s/gu, "");
+  const file = await openFile(
+    screenshotPath,
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+  );
+  try {
+    const opened = await file.stat();
+    if (
+      !opened.isFile() ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino ||
+      (uid !== undefined && opened.uid !== uid)
+    ) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: Browser viewer screenshot identity changed.",
+      );
+    }
+    const bytes = Buffer.allocUnsafe(
+      HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES + 1,
+    );
+    let length = 0;
+    while (length < bytes.byteLength) {
+      const read = await file.read(
+        bytes,
+        length,
+        bytes.byteLength - length,
+        length,
+      );
+      if (read.bytesRead === 0) break;
+      length += read.bytesRead;
+    }
+    const png = bytes.subarray(0, length);
+    if (
+      png.byteLength === 0 ||
+      png.byteLength > HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES ||
+      !png.subarray(0, 8).equals(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      )
+    ) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: Browser viewer frame failed validation.",
+      );
+    }
+    return png;
+  } finally {
+    await file.close();
+  }
 }
 
-function findExactBase64Field(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+async function removeOwnedViewerScreenshot(screenshotPath: string): Promise<void> {
+  try {
+    await unlink(screenshotPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot cleanup failed.",
+      { cause: error },
+    );
   }
-  const record = value as Record<string, unknown>;
-  for (const key of ["base64", "dataBase64", "data"]) {
-    if (typeof record[key] === "string" && record[key].length > 0) {
-      return record[key] as string;
-    }
-  }
-  return findExactBase64Field(record.data) ?? findExactBase64Field(record.result);
 }
 
 export async function spawnAndCollect(input: {
@@ -5372,7 +5444,6 @@ export async function spawnAndCollect(input: {
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
   detached?: boolean | undefined;
-  stdoutMaxBytes?: number | undefined;
   onSpawn?: ((pid: number) => void) | undefined;
 }): Promise<DesktopBrowserEngineCommandResult> {
   return await new Promise((resolve, reject) => {
@@ -5389,7 +5460,6 @@ export async function spawnAndCollect(input: {
     }
     if (child.pid !== undefined) input.onSpawn?.(child.pid);
     let stdout = "";
-    let stdoutBytes = 0;
     let stderr = "";
     let settled = false;
     const timer = setTimeout(() => {
@@ -5403,23 +5473,6 @@ export async function spawnAndCollect(input: {
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
-      if (settled) return;
-      if (input.stdoutMaxBytes !== undefined) {
-        stdoutBytes += Buffer.byteLength(chunk, "utf8");
-        if (stdoutBytes > input.stdoutMaxBytes) {
-          settled = true;
-          clearTimeout(timer);
-          child.kill("SIGKILL");
-          reject(
-            new Error(
-              "BROWSER_ENGINE_FAILURE: agent-browser output exceeded its bound.",
-            ),
-          );
-          return;
-        }
-        stdout += chunk;
-        return;
-      }
       stdout = appendBounded(stdout, chunk);
     });
     child.stderr?.on("data", (chunk: string) => {

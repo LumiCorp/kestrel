@@ -49,7 +49,7 @@ import {
   canonicalizePublicBrowserDestination,
   type BrowserEffectiveDomainAuthorityV1,
 } from "../../src/browser/domainAuthority.js";
-import { HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES } from "../../src/browser/hostedViewerProtocol.js";
+import { HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES } from "../../src/browser/hostedViewerProtocol.js";
 import type {
   BrowserOperationLifecycleV1,
   BrowserSessionV1,
@@ -4195,48 +4195,55 @@ test("engine command collection waits for stdio close after process exit", async
   assert.equal(result.stdout, "late-output");
 });
 
-test("viewer screenshot collection carries multi-MiB JSON and rejects output over its dedicated bound", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-viewer-output-"));
+test("viewer screenshot capture uses only its exact owned file contract", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-viewer-file-"));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
-  const frameBytes = 2 * 1024 * 1024;
-  const validExecutable = path.join(root, "valid-viewer-frame");
-  await writeFile(validExecutable, [
-    `#!${process.execPath}`,
-    `const bytes = Buffer.alloc(${String(frameBytes)});`,
-    "Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);",
-    "process.stdout.write(JSON.stringify({ dataBase64: bytes.toString(\"base64\") }));",
-    "",
-  ].join("\n"));
-  await chmod(validExecutable, 0o755);
-  const generic = await spawnAndCollect({
-    executable: validExecutable,
-    args: [],
-    cwd: root,
-    env: { PATH: "", LANG: "C.UTF-8" },
-    timeoutMs: 2000,
-  });
-  assert.equal(Buffer.byteLength(generic.stdout, "utf8"), 512 * 1024);
+  const screenshotPath = path.join(root, "screenshot.png");
   const invocation = {
     ...engineInvocation(),
     runtimePath: root,
     socketPath: root,
     profilePath: root,
     configPath: root,
+    screenshotPath,
   };
+  const fixtureHeader = [
+    `#!${process.execPath}`,
+    'const fs = require("node:fs");',
+    `const expectedPath = ${JSON.stringify(screenshotPath)};`,
+    'const commandIndex = process.argv.indexOf("screenshot");',
+    'if (commandIndex < 0 || process.argv[commandIndex + 1] !== expectedPath || process.argv.includes("--base64")) process.exit(9);',
+  ];
+
+  const validExecutable = path.join(root, "valid-viewer-frame");
+  await writeFile(validExecutable, [
+    ...fixtureHeader,
+    `const bytes = Buffer.alloc(${String(HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES)});`,
+    "Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);",
+    "fs.writeFileSync(expectedPath, bytes);",
+    "process.stdout.write(JSON.stringify({ success: true, data: { path: expectedPath }, error: null }));",
+  ].join("\n"));
+  await chmod(validExecutable, 0o755);
   const adapter = new AgentBrowserCliAdapter({
     engineExecutablePath: validExecutable,
     chromeExecutablePath: "/usr/bin/true",
   });
   const frame = await adapter.captureViewerFrame(invocation);
-  assert.equal(Buffer.from(frame.dataBase64, "base64").byteLength, frameBytes);
+  assert.equal(
+    Buffer.from(frame.dataBase64, "base64").byteLength,
+    HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES,
+  );
+  await assert.rejects(stat(screenshotPath), { code: "ENOENT" });
 
   const oversizedExecutable = path.join(root, "oversized-viewer-frame");
   await writeFile(oversizedExecutable, [
-    `#!${process.execPath}`,
-    `process.stdout.write(JSON.stringify({ dataBase64: "A".repeat(${String(HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES)}) }));`,
-    "",
+    ...fixtureHeader,
+    `const bytes = Buffer.alloc(${String(HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES + 1)});`,
+    "Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);",
+    "fs.writeFileSync(expectedPath, bytes);",
+    "process.stdout.write(JSON.stringify({ success: true, data: { path: expectedPath }, error: null }));",
   ].join("\n"));
   await chmod(oversizedExecutable, 0o755);
   const oversizedAdapter = new AgentBrowserCliAdapter({
@@ -4245,8 +4252,68 @@ test("viewer screenshot collection carries multi-MiB JSON and rejects output ove
   });
   await assert.rejects(
     oversizedAdapter.captureViewerFrame(invocation),
-    /output exceeded its bound/u,
+    /frame failed validation/u,
   );
+  await assert.rejects(stat(screenshotPath), { code: "ENOENT" });
+
+  const mismatchPath = path.join(root, "untrusted.png");
+  const mismatchExecutable = path.join(root, "mismatched-viewer-frame");
+  await writeFile(mismatchExecutable, [
+    ...fixtureHeader,
+    "const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);",
+    "fs.writeFileSync(expectedPath, bytes);",
+    `fs.writeFileSync(${JSON.stringify(mismatchPath)}, bytes);`,
+    `process.stdout.write(JSON.stringify({ success: true, data: { path: ${JSON.stringify(mismatchPath)} }, error: null }));`,
+  ].join("\n"));
+  await chmod(mismatchExecutable, 0o755);
+  const mismatchAdapter = new AgentBrowserCliAdapter({
+    engineExecutablePath: mismatchExecutable,
+    chromeExecutablePath: "/usr/bin/true",
+  });
+  await assert.rejects(
+    mismatchAdapter.captureViewerFrame(invocation),
+    /path was not proven/u,
+  );
+  await assert.rejects(stat(screenshotPath), { code: "ENOENT" });
+  assert.equal((await stat(mismatchPath)).isFile(), true);
+
+  const symlinkTarget = path.join(root, "symlink-target.png");
+  await writeFile(
+    symlinkTarget,
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  );
+  const symlinkExecutable = path.join(root, "symlink-viewer-frame");
+  await writeFile(symlinkExecutable, [
+    ...fixtureHeader,
+    `fs.symlinkSync(${JSON.stringify(symlinkTarget)}, expectedPath);`,
+    "process.stdout.write(JSON.stringify({ success: true, data: { path: expectedPath }, error: null }));",
+  ].join("\n"));
+  await chmod(symlinkExecutable, 0o755);
+  const symlinkAdapter = new AgentBrowserCliAdapter({
+    engineExecutablePath: symlinkExecutable,
+    chromeExecutablePath: "/usr/bin/true",
+  });
+  await assert.rejects(
+    symlinkAdapter.captureViewerFrame(invocation),
+    /not an owned regular file/u,
+  );
+  await assert.rejects(stat(screenshotPath), { code: "ENOENT" });
+  assert.equal((await stat(symlinkTarget)).isFile(), true);
+
+  const genericExecutable = path.join(root, "generic-large-output");
+  await writeFile(genericExecutable, [
+    `#!${process.execPath}`,
+    'process.stdout.write("x".repeat(2 * 1024 * 1024));',
+  ].join("\n"));
+  await chmod(genericExecutable, 0o755);
+  const generic = await spawnAndCollect({
+    executable: genericExecutable,
+    args: [],
+    cwd: root,
+    env: { PATH: "", LANG: "C.UTF-8" },
+    timeoutMs: 2000,
+  });
+  assert.equal(Buffer.byteLength(generic.stdout, "utf8"), 512 * 1024);
 });
 
 async function createFixture(

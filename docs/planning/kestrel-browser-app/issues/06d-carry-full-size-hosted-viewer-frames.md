@@ -67,18 +67,24 @@ relay. Its worker, Router, Web client, and WebSocket bounds must derive from one
 
 ### Independent-review repair evidence
 
-- Real Desktop `screenshot --base64` collection now opts into the shared
-  serialized viewer-frame maximum, which includes the bounded agent-browser
-  JSON wrapper. The generic command stdout collector remains at 512 KiB. A
-  real process-backed regression proves a 2 MiB PNG reaches frame parsing,
-  generic collection still truncates at its original bound, and screenshot
-  output above the dedicated bound kills the child and rejects without parsing
-  a partial frame.
+- Pinned agent-browser v0.35.0 (`585e740fcef069d74e21f0e88e8bf4ea7df34385`)
+  viewer capture now uses its real
+  `screenshot <path>` contract with one exact per-Session path inside the
+  Browser-owned runtime root. The adapter requires the returned `data.path` to
+  equal that requested path, rejects symlinks/non-files and changed file
+  identity, reads at most 20 MiB plus one byte before base64 encoding, and
+  removes only that exact owned path on success or failure. There is no retry,
+  fallback, alternate path trust, or widened command output collector.
+- A real process-backed fixture shaped like the pinned CLI response proves an
+  exact 20 MiB owned PNG succeeds, 20 MiB plus one is rejected before base64,
+  mismatched paths and symlinks are rejected without deleting their targets,
+  every exact owned screenshot is cleaned up, and generic stdout remains
+  bounded at 512 KiB.
 - Environment Router uses the derived viewer-frame response bound only after a
   successful `frame` response. Every non-OK response, including a typed frame
   error, retains the ordinary 20 MiB control-response bound.
 - The repaired exact protocol, Router, Web, worker, and lifecycle command passes
-  118 tests, and the real Desktop collector regression passes independently.
+  118 tests, and the real Desktop owned-file regression passes independently.
   Root and Environment Router TypeScript checks remain green. Scoped lint
   reaches only the previously recorded diagnostics outside the repair hunks,
   and `git diff --check` passes.
