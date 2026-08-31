@@ -17,7 +17,6 @@ export async function seedTuiHome(home: string): Promise<void> {
         name: "ops-root",
         sessionId: OPS_FIXTURE_IDS.root.sessionId,
         profileId: "kestrel",
-        environmentPresetId: "cli_dev_local",
         createdAt: now,
         updatedAt: now,
         started: true,
