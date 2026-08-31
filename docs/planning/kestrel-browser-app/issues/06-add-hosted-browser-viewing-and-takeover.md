@@ -2,7 +2,7 @@
 
 ## Useful outcome
 
-The person whose hosted turn opened the Browser Session can watch it in Kestrel One web, accept an agent takeover request, enter password, passkey, single-use-code, SSO, or MFA input, and explicitly return control. Thread access or Environment administration alone does not grant viewer access.
+The person whose hosted turn opened the Browser Session can watch it in Kestrel One web, accept an agent takeover request, enter passwords, single-use codes, and page-rendered SSO or MFA input, and explicitly return control. Hosted v1 does not proxy the person's local platform authenticator into remote Chromium; real passkeys remain a Desktop v1 capability until a future privileged hosted client owns that ceremony. Thread access or Environment administration alone does not grant viewer access.
 
 Kestrel One Mobile remains approval and authorized-artifact capable but gains no native browser takeover. This slice delivers hosted takeover from the [Kestrel Browser App Product Brief](../../kestrel-browser-app-product-brief.md).
 
@@ -24,7 +24,7 @@ Kestrel One Mobile remains approval and authorized-artifact capable but gains no
 
 Issue 05 provides the worker, originating actor authority, session, and control plane. Existing execution/App routes do not authorize viewer access. Use the current Thread authorization service under `apps/web/lib/threads/`.
 
-Add route, ticket, WebSocket, authorization, worker, PostgreSQL, web viewer, and Chromium tests. Send unique sentinel password and MFA values through the viewer. Assert that the browser receives them and that every persistent or diagnostic surface excludes them. Cover ticket replay/expiry, wrong actor/Thread/tenant, exclusive control, renewal, disconnect, reconnect, explicit return, close, authorization loss, and worker loss. Run focused suites, `pnpm validate`, `pnpm validate:process`, `pnpm validate:postgres`, and `pnpm validate:chromium`.
+Add route, ticket, WebSocket, authorization, worker, PostgreSQL, web viewer, and Chromium tests. Send unique sentinel password, one-time-code, and page-rendered MFA values through the viewer. Assert that the browser receives them and that every persistent or diagnostic surface excludes them. Cover ticket replay/expiry, wrong actor/Thread/tenant, exclusive control, renewal, disconnect, reconnect, explicit return, close, authorization loss, and worker loss. Prove the hosted UI makes no local-platform-passkey promise. Run focused suites, `pnpm validate`, `pnpm validate:process`, `pnpm validate:postgres`, and `pnpm validate:chromium`.
 
 ## Done when
 
@@ -32,7 +32,8 @@ Add route, ticket, WebSocket, authorization, worker, PostgreSQL, web viewer, and
 - One-use 60-second tickets reveal no worker address or engine credential.
 - The agent can request takeover, but only the viewer can accept it or return control.
 - Disconnect or lease expiry leaves the session in human control and keeps agent actions blocked.
-- Login and MFA complete in the existing session, and sentinel secrets appear in no model-visible, persistent, or diagnostic surface.
+- Password, one-time-code, and page-rendered SSO/MFA login complete in the existing session, and sentinel secrets appear in no model-visible, persistent, or diagnostic surface.
+- Hosted v1 exposes no virtual, synthesized, or local-platform-passkey proxy path.
 - Authorization loss, App disablement, close, expiry, and worker loss terminate viewer authority without silently resuming the agent.
 - Kestrel One Mobile exposes no browser viewer or takeover control.
 - Focused coverage and required validation gates pass.

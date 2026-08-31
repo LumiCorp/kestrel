@@ -1,11 +1,13 @@
-# Prove hosted passkey takeover
+# Define the hosted passkey boundary
 
-## Failed behavior
+## Settled product boundary
 
-The hosted viewer currently forwards screenshots plus pointer and keyboard
-events. That is sufficient for passwords and typed one-time codes, but it does
+The hosted viewer forwards screenshots plus pointer and keyboard events. That
+supports passwords, typed one-time codes, and page-rendered SSO/MFA, but it does
 not forward a passkey assertion from the person's local authenticator to remote
-Chromium. The Issue 06 passkey promise is therefore unimplemented and untested.
+Chromium. Hosted v1 therefore makes no real-passkey promise. Real platform
+passkeys remain a signed Desktop v1 capability and may be added later only
+through a privileged hosted client that owns the local ceremony.
 
 ## Affected flow
 
@@ -15,35 +17,31 @@ authenticator. Chromium's remote-desktop Web Authentication proxy is the owning
 browser surface for a genuine remote authenticator ceremony; any implementation
 must preserve relying-party origin checks and user verification.
 
-## Repair requirements
+## Boundary requirements
 
-- Use Chromium's supported remote-desktop Web Authentication proxy contract for
-  genuine hosted passkey assertions, or narrow the product promise explicitly
-  before implementation. Do not use virtual test credentials as production
-  passkeys and do not export private key material.
-- Bind each ceremony to the active viewer actor, Thread, Browser Session,
-  generation, exact worker connection, target RP ID, challenge, and expiry.
-- Require a fresh visible user gesture and local platform-authenticator consent.
-  The model, worker, and a second viewer cannot approve the ceremony.
-- Keep challenge/response material transient and out of model IO, prepared
-  effects, transcripts, events, logs, traces, metrics, audits, analytics, crash
-  reports, and errors. Persist only bounded metadata that a ceremony occurred.
-- Cancel the ceremony on return, close, disconnect, expiry, authorization loss,
-  generation change, or worker loss. Never fall back to a virtual authenticator,
-  password capture, or an unrelated local origin.
-- Add a real hosted Chromium regression using a platform authenticator or an
-  explicitly approved cross-device passkey flow. A CDP virtual-authenticator
-  test alone is not acceptance proof.
+- Remove passkeys from the hosted v1 useful outcome, acceptance evidence, and
+  user-facing capability claims while preserving passwords, typed one-time
+  codes, and page-rendered SSO/MFA.
+- Do not add a CDP virtual authenticator, export credential private material, or
+  describe a synthetic assertion as a user passkey.
+- Keep the future contract explicit: any hosted passkey implementation needs a
+  privileged local client, relying-party origin preservation, local user
+  verification and consent, exact ceremony binding, cancellation, and
+  secret-safe transient transport.
+- Preserve Issue 04/04c as the real signed Desktop platform-authenticator proof.
 
 ## Done when
 
-- The originating viewer completes a real passkey ceremony in the existing
-  hosted Browser Session without exposing credential secrets to Kestrel.
-- Wrong actor, RP ID, challenge, Session, generation, connection, replay, and
-  expired ceremony attempts fail closed.
-- Cancellation and sentinel scans prove no retained ceremony authority or
-  secret-bearing durable/diagnostic data.
-- Required hosted Chromium and live combined proofs pass.
+- The Product Brief and Issue 06 promise only password, one-time-code, and
+  page-rendered SSO/MFA takeover for hosted v1.
+- No hosted virtual or local-platform-passkey proxy is introduced.
+- Issue 04/04c retain the signed Desktop passkey acceptance proof.
+
+## Decision evidence
+
+The product owner approved this boundary on 2026-08-31. The Product Brief and
+Issue 06 now state it directly; no runtime implementation is required for this
+policy-only closure.
 
 ## Depends on
 

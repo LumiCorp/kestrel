@@ -26,10 +26,13 @@ domain without asking again. Projects may narrow the Environment-level access.
 Navigation, clicks, typing, and screenshots inside the effective allowlist do
 not create approval prompts.
 
-Passwords, single-use codes, passkeys, SSO, and MFA remain human actions. The
-person can take exclusive control of the live browser, authenticate directly,
-and return control to the agent without placing authentication input in a tool
-call, transcript, trace, or durable log.
+Passwords, single-use codes, page-rendered SSO, and MFA remain human actions on
+both hosts. The person can take exclusive control of the live browser,
+authenticate directly, and return control to the agent without placing
+authentication input in a tool call, transcript, trace, or durable log. Real
+platform-passkey and native authentication-chooser flows are a Desktop v1
+capability; hosted v1 does not proxy a person's local authenticator into remote
+Chromium and requires a future privileged hosted client for that capability.
 
 ## Outcomes and Delivery Boundary
 
@@ -147,8 +150,10 @@ prevents new network requests to the removed destination.
 
 ### Authenticate through human takeover
 
-The agent reaches a password, SSO, passkey, or MFA step and requests takeover.
-The signed-in person receives exclusive input control in the live viewer.
+The agent reaches a password, one-time-code, page-rendered SSO, or MFA step and
+requests takeover. On Desktop this also includes platform-passkey and native
+authentication chooser steps. The signed-in person receives exclusive input
+control in the live viewer.
 Kestrel rejects agent actions while human control is active.
 
 Authentication input travels directly from the viewer to the browser. Kestrel
@@ -345,8 +350,12 @@ returns the existing exact result when Kestrel has a completed result.
   signed-in person.
 - Agent browser actions must fail with `BROWSER_HUMAN_CONTROL_ACTIVE` while the
   person has control.
-- Password, passkey, MFA, SSO, and other takeover input must travel directly
-  between the viewer and browser.
+- Password, one-time-code, page-rendered MFA/SSO, and other takeover input must
+  travel directly between the viewer and browser. Desktop platform-passkey and
+  native chooser input must remain inside the signed Desktop/browser boundary.
+- Hosted v1 must not claim or synthesize local platform-passkey support. A real
+  hosted passkey flow requires a future privileged client that preserves
+  relying-party origin, local user verification, and ceremony cancellation.
 - Takeover input must not enter a tool call, transcript, trace annotation,
   audit value, or durable log.
 - Ordinary agent fill and type operations must use existing prepared tool input
@@ -403,8 +412,9 @@ returns the existing exact result when Kestrel has a completed result.
 - Can operate any remembered domain across eligible Projects in the same
   Environment without repeated approval prompts.
 - Reviews and approves only Thread file uploads and download promotion.
-- Takes control for passwords, SSO, passkeys, MFA, and other authentication
-  input, then explicitly returns control to the agent.
+- Takes control for passwords, one-time codes, page-rendered SSO/MFA, and other
+  authentication input, then explicitly returns control to the agent. On
+  Desktop, this includes real platform-passkey and native chooser flows.
 - Can close a browser session at any time.
 
 ### Environment and Project administrators

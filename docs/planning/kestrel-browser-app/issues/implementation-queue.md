@@ -8,10 +8,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Blocked
 
-- [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md) — receiving-transfer lease and crash-safe cleanup repairs are green; blocked only on the exact Chrome download-GUID-to-response-media-type protocol decision
-- [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md) — seven review repairs are green; blocked on an exact read-only pinned agent-browser `targetRef`-to-element-tag seam needed to prove the target is actually `input[type=file]` without a heuristic or mutating upload preflight
-- [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — blocked on issues 06a-06e and the live Vercel/PostgreSQL/combined hosted proof
-- [Prove hosted passkey takeover](06e-prove-hosted-passkey-takeover.md) — blocked on the client-side WebAuthn delivery boundary
+- [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — hosted v1 authentication scope is settled; blocked on remaining 06a-06d review and the live Vercel/PostgreSQL/combined hosted proof
 - [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — implementation is review-clean; blocked only on issue 04c's signed platform-authenticator canary
 - [Complete native authentication takeover](04c-complete-native-authentication-takeover.md) — code path is review-clean; blocked on signed platform-authenticator canary
 - [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — blocked on issues 05a-05g and the remaining live Fly canaries
@@ -27,6 +24,9 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Done
 
+- [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md) — approved with one atomic browser-owned `localName` plus `type` read, strict envelope parsing, SHA-pinned darwin-arm64/linux-x64 assets, and 185 focused tests passing
+- [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md) — approved after expiry, ready-state monotonicity, promotion-cleanup serialization, and known-versus-unknown claim-lifecycle review; 86 focused tests pass
+- [Define the hosted passkey boundary](06e-prove-hosted-passkey-takeover.md) — hosted v1 is explicitly limited to passwords, typed one-time codes, and page-rendered SSO/MFA; real platform passkeys remain a signed Desktop v1 capability
 - [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — approved at `7d1a8feb0`; shared bounds, exact pinned-Session CDP lifecycle, and deterministic plus real-Chromium capture proofs are green
 - [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md) — approved at `554be10e8`; final worker-admission repairs pass 108 focused tests
 - [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — policy A and post-reconciliation authority rereads pass the focused Web lifecycle regressions
