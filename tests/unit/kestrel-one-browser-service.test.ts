@@ -29,6 +29,16 @@ const preparedUpload = {
   },
 } as unknown as PreparedToolCallV1;
 
+const preparedDownload = {
+  ...prepared,
+  activation: { descriptor: { toolId: "browser.download" } },
+  effectiveInput: {
+    sessionId: "browser-session-1",
+    generation: 1,
+    pendingDownloadId: "download-1",
+  },
+} as unknown as PreparedToolCallV1;
+
 test("hosted Browser transport acknowledges only after exact worker acceptance", async () => {
   const events: string[] = [];
   const requests: string[] = [];
@@ -131,6 +141,67 @@ test("hosted upload acknowledges only after the dedicated byte transfer is stage
     }) as typeof fetch,
   });
   await service.execute(preparedUpload, {
+    authority: { threadId: "thread-1", projectId: "project-1" },
+    async acknowledgeDispatch() { events.push("acknowledged"); },
+    async persistCompletedResult() { events.push("persisted"); },
+  });
+  assert.deepEqual(events, [
+    "accepted",
+    "staged",
+    "acknowledged",
+    "invoked",
+    "persisted",
+    "committed",
+  ]);
+});
+
+test("hosted download acknowledges only after the dedicated worker bytes are staged", async () => {
+  const events: string[] = [];
+  let invokes = 0;
+  const service = createKestrelOneBrowserService({
+    kestrelOne: {
+      appRelayUrl: "https://relay.example.test",
+      appRelayToken: "relay-token-1",
+      executionRunId: "run-1",
+    },
+    fetchImpl: (async (url) => {
+      if (String(url).endsWith("/control/accept")) {
+        events.push("accepted");
+        return Response.json({
+          version: "hosted_browser_dispatch_receipt_v1",
+          receiptId: "receipt-download-1",
+          operationId: "call-1",
+          operation: "browser.download",
+        });
+      }
+      if (String(url).endsWith("/control/invoke")) {
+        invokes += 1;
+        if (invokes === 1) {
+          events.push("staged");
+          return Response.json({
+            version: "hosted_browser_download_staged_receipt_v1",
+            receiptId: "receipt-download-1",
+            operationId: "call-1",
+            operation: "browser.download",
+          });
+        }
+        events.push("invoked");
+        return Response.json({
+          version: "hosted_browser_invocation_result_v1",
+          output: { version: "hosted_browser_download_result_v1" },
+          commitReceipt: {
+            version: "hosted_browser_commit_receipt_v1",
+            receiptId: "receipt-download-1",
+            operationId: "call-1",
+            operation: "browser.download",
+          },
+        });
+      }
+      events.push("committed");
+      return Response.json({ committed: true });
+    }) as typeof fetch,
+  });
+  await service.execute(preparedDownload, {
     authority: { threadId: "thread-1", projectId: "project-1" },
     async acknowledgeDispatch() { events.push("acknowledged"); },
     async persistCompletedResult() { events.push("persisted"); },

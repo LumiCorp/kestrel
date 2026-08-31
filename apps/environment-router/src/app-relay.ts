@@ -59,7 +59,7 @@ type BrowserRelayReceipt = {
   instruction: BrowserPrivateInstruction;
   invokeInstruction?: BrowserPrivateInstruction | undefined;
   worker?: Record<string, unknown> | undefined;
-  phase: "accepting" | "accepted" | "authorizing" | "upload_staged" | "invoked" | "commit_pending";
+  phase: "accepting" | "accepted" | "authorizing" | "upload_staged" | "download_staged" | "invoked" | "commit_pending";
   requestHash: string;
 };
 
@@ -730,16 +730,19 @@ async function handleBrowserInvokeRelay(input: {
     : "";
   pruneBrowserReceipts();
   const retained = browserRelayReceipts.get(receiptId);
-  const stagedContinuation = publicReceipt.version ===
-      "hosted_browser_upload_staged_receipt_v1" &&
+  const stagedContinuation = (
+      publicReceipt.version === "hosted_browser_upload_staged_receipt_v1" ||
+      publicReceipt.version === "hosted_browser_download_staged_receipt_v1"
+    ) &&
     publicReceipt.receiptId === receiptId &&
-    retained?.instruction.operation === "browser.upload" &&
+    (retained?.instruction.operation === "browser.upload" ||
+      retained?.instruction.operation === "browser.download") &&
     publicReceipt.operationId === retained.instruction.operationId &&
     publicReceipt.operation === retained.instruction.operation;
   if (
     !retained ||
     (stagedContinuation
-      ? retained.phase !== "upload_staged"
+      ? (retained.phase !== "upload_staged" && retained.phase !== "download_staged")
       : retained.phase !== "accepted") ||
     !retained.worker ||
     retained.expiresAt <= Date.now() ||
@@ -749,7 +752,7 @@ async function handleBrowserInvokeRelay(input: {
     writeError(input.response, 409, "BROWSER_ACTION_OUTCOME_UNKNOWN");
     return;
   }
-  retained.phase = stagedContinuation ? "upload_staged" : "authorizing";
+  retained.phase = stagedContinuation ? retained.phase : "authorizing";
   const privateReceipt = {
     version: "hosted_browser_relay_acceptance_v1",
     receiptId,
@@ -812,12 +815,16 @@ async function handleBrowserInvokeRelay(input: {
       });
       return;
     }
-    if (instruction.operation === "browser.upload") {
+    if (instruction.operation === "browser.upload" || instruction.operation === "browser.download") {
       retained.invokeInstruction = instruction;
-      retained.phase = "upload_staged";
+      retained.phase = instruction.operation === "browser.upload"
+        ? "upload_staged"
+        : "download_staged";
       retained.expiresAt = Date.now() + BROWSER_RECEIPT_TTL_MS;
       writeJson(input.response, 200, {
-        version: "hosted_browser_upload_staged_receipt_v1",
+        version: instruction.operation === "browser.upload"
+          ? "hosted_browser_upload_staged_receipt_v1"
+          : "hosted_browser_download_staged_receipt_v1",
         receiptId,
         operationId: instruction.operationId,
         operation: instruction.operation,
@@ -997,7 +1004,7 @@ async function provePrivateBrowserCancellation(
   input: Parameters<typeof handleBrowserInvokeRelay>[0],
   instruction: BrowserPrivateInstruction,
 ): Promise<boolean> {
-  if (instruction.operation !== "browser.upload") {
+  if (instruction.operation !== "browser.upload" && instruction.operation !== "browser.download") {
     await cancelPrivateBrowserOperation(input, instruction).catch(() => undefined);
     return true;
   }

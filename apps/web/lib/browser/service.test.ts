@@ -508,6 +508,101 @@ test("hosted capture authenticates the operation before storing relayed bytes", 
   assert.equal(fixture.canonicalizedArtifacts.length, 0);
 });
 
+test("hosted download stages dedicated bytes before dispatch and commits one canonical Thread artifact", async () => {
+  const fixture = serviceFixture("ready", "allow");
+  const request = {
+    version: "browser_download_preparation_v1" as const,
+    runId: "run-1",
+    threadId: "thread-1",
+    effectiveInput: {
+      sessionId: "browser-session-1",
+      generation: 1,
+      pendingDownloadId: "download-1",
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  };
+  const effect = await fixture.service.prepareDownload(request);
+  const prepared = preparedDownload(effect);
+  const receipt = acceptedReceipt(
+    prepared.callId,
+    "browser-session-1",
+    now,
+    new Date(now.getTime() + 30_000),
+    "browser.download",
+  );
+  const instruction = await fixture.service.dispatchAcceptedOperation(
+    prepared,
+    { threadId: "thread-1", projectId: "project-1" },
+    receipt,
+  );
+  assert.equal(instruction.phase, "invoke");
+  assert.equal(fixture.preparedDownloads.length, 1);
+  assert.deepEqual(fixture.stagedDownloads, [{
+    operationId: prepared.callId,
+    bytes: Buffer.from("hosted-download"),
+  }]);
+  const output = await fixture.service.completeAcceptedOperation(
+    prepared,
+    { threadId: "thread-1", projectId: "project-1" },
+    receipt,
+    { version: "hosted_browser_download_result_v1", download: effect },
+  );
+  assert.equal((output as Record<string, unknown>).operation, "browser.download");
+  assert.equal(
+    ((output as Record<string, unknown>).artifact as Record<string, unknown>).kind,
+    "browser-download",
+  );
+  assert.deepEqual(fixture.committedDownloads, [prepared.callId]);
+});
+
+test("hosted download distinguishes invalid worker proof from an unknown visibility commit", async () => {
+  const fixture = serviceFixture("ready", "allow", { downloadCommitFailure: true });
+  const request = {
+    version: "browser_download_preparation_v1" as const,
+    runId: "run-1",
+    threadId: "thread-1",
+    effectiveInput: {
+      sessionId: "browser-session-1",
+      generation: 1,
+      pendingDownloadId: "download-1",
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  };
+  const effect = await fixture.service.prepareDownload(request);
+  const prepared = preparedDownload(effect);
+  const receipt = acceptedReceipt(
+    prepared.callId,
+    "browser-session-1",
+    now,
+    new Date(now.getTime() + 30_000),
+    "browser.download",
+  );
+  await fixture.service.dispatchAcceptedOperation(
+    prepared,
+    { threadId: "thread-1", projectId: "project-1" },
+    receipt,
+  );
+  await assert.rejects(
+    fixture.service.completeAcceptedOperation(
+      prepared,
+      { threadId: "thread-1", projectId: "project-1" },
+      receipt,
+      { version: "hosted_browser_download_result_v1", download: effect },
+    ),
+    (error: unknown) => readCode(error) === "BROWSER_ACTION_OUTCOME_UNKNOWN",
+  );
+  await assert.rejects(
+    fixture.service.completeAcceptedOperation(
+      prepared,
+      { threadId: "thread-1", projectId: "project-1" },
+      receipt,
+      { version: "hosted_browser_download_result_v1", download: { ...effect, sha256: "a".repeat(64) } },
+    ),
+    (error: unknown) => readCode(error) === "BROWSER_DOWNLOAD_UNAVAILABLE",
+  );
+  assert.deepEqual(fixture.terminalMarks, []);
+});
+
 function serviceFixture(
   state: "opening" | "ready",
   decision: "allow" | "deny",
@@ -516,6 +611,7 @@ function serviceFixture(
     startupWaitFailure?: boolean;
     terminalOnRead?: boolean;
     machineDeleteFailure?: boolean;
+    downloadCommitFailure?: boolean;
   } = {},
 ) {
   let session = parseBrowserSessionV1({
@@ -561,6 +657,10 @@ function serviceFixture(
   const canonicalizedArtifacts: Array<{ bytes: Buffer; sha256: string }> = [];
   const preparedUploads: unknown[] = [];
   const transferredUploads: Array<{ operationId: string; bytes: Buffer }> = [];
+  const preparedDownloads: unknown[] = [];
+  const stagedDownloads: Array<{ operationId: string; bytes: Buffer }> = [];
+  const committedDownloads: string[] = [];
+  const downloadBytes = Buffer.from("hosted-download");
   const service = new HostedBrowserService({
     store: {
       async resolveOrigin() { return origin; },
@@ -697,6 +797,26 @@ function serviceFixture(
           sha256: input.sha256,
         };
       },
+      async stageDownload(input) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of input.body) chunks.push(Buffer.from(chunk));
+        stagedDownloads.push({ operationId: input.operationId, bytes: Buffer.concat(chunks) });
+      },
+      async commitDownload(input) {
+        if (options.downloadCommitFailure === true) {
+          throw new Error("visibility commit response lost");
+        }
+        committedDownloads.push(input.operationId);
+        return {
+          version: "browser_authorized_artifact_v1",
+          id: `file-browser-${"d".repeat(64)}`,
+          title: input.filename,
+          kind: "browser-download",
+          mediaType: input.declaredMediaType,
+          bytes: input.sizeBytes,
+          sha256: input.sha256,
+        };
+      },
     },
     metrics: { emit() {} },
     capabilityPrivateKeyPem: privateKeyPem,
@@ -737,6 +857,26 @@ function serviceFixture(
         transferredUploads.push({ operationId: input.operationId, bytes: Buffer.concat(chunks) });
       },
     },
+    downloads: {
+      async prepare(input) {
+        preparedDownloads.push(input);
+        return {
+          version: "browser_download_preparation_v1",
+          threadId: input.request.threadId,
+          sessionId: String(input.request.effectiveInput.sessionId),
+          generation: Number(input.request.effectiveInput.generation),
+          pendingDownloadId: String(input.request.effectiveInput.pendingDownloadId),
+          filename: "report.bin",
+          measuredBytes: downloadBytes.byteLength,
+          sha256: createHash("sha256").update(downloadBytes).digest("hex"),
+          declaredMediaType: "application/octet-stream",
+          normalizedSourceOrigin: "https://example.com",
+          createdAt: "2026-08-30T11:55:00.000Z",
+          expiresAt: "2026-08-30T12:25:00.000Z",
+        };
+      },
+      async open() { return Readable.from(downloadBytes); },
+    },
     async resolveUploadAttachment(input) {
       assert.equal(input.turnId, "turn-1");
       assert.equal(input.attachmentId, "attachment-1");
@@ -765,6 +905,9 @@ function serviceFixture(
     canonicalizedArtifacts,
     preparedUploads,
     transferredUploads,
+    preparedDownloads,
+    stagedDownloads,
+    committedDownloads,
     stateTransitions,
     terminalMarks,
   };
@@ -848,6 +991,38 @@ function preparedUpload(effect: Awaited<ReturnType<HostedBrowserService["prepare
     },
     inputAdapters: [{
       adapterId: "kestrel.browser-upload-effect:v1",
+      metadata: { ...effect },
+    }],
+    policy: {
+      decision: "allow",
+      policyRevision: hashCanonical({ revision: 1 }),
+      reasonCode: "environment_policy",
+    },
+    preparedAt: now.toISOString(),
+  });
+}
+
+function preparedDownload(effect: Awaited<ReturnType<HostedBrowserService["prepareDownload"]>>) {
+  const descriptor = defaultToolCatalog.getDescriptorRef("browser.download");
+  assert.ok(descriptor);
+  return parsePreparedToolCallV1({
+    version: "v1",
+    runId: "run-1",
+    sessionId: "runtime-session-1",
+    callId: "call-download-1",
+    activation: createToolActivationRefV1({
+      descriptor,
+      registryGeneration: "hosted-service-test",
+      scopeFingerprint: fingerprintToolScopeV1({ hostedBrowser: true }),
+    }),
+    origin: { kind: "trusted_runtime", producerId: "test", adapterId: "test" },
+    effectiveInput: {
+      sessionId: effect.sessionId,
+      generation: effect.generation,
+      pendingDownloadId: effect.pendingDownloadId,
+    },
+    inputAdapters: [{
+      adapterId: "kestrel.browser-download-effect:v1",
       metadata: { ...effect },
     }],
     policy: {

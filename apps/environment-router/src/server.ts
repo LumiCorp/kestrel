@@ -18,6 +18,7 @@ import { handleWorkspaceIdle } from "./workspace-idle.js";
 import { handleBrowserRevisionControl } from "./browser-revision.js";
 import { handleBrowserViewerControl } from "./browser-viewer.js";
 import { handleBrowserUpload } from "./browser-upload.js";
+import { handleBrowserDownload } from "./browser-download.js";
 import { HostedBrowserEgressRegistry } from "./browser-egress.js";
 
 const ENVIRONMENT_GATEWAY_CONTRACT_REVISION = 3;
@@ -153,6 +154,20 @@ const server = createServer(async (request, response) => {
       environmentId,
       expectedAppName,
       prepare: pathname.endsWith("/prepare"),
+    });
+    return;
+  }
+  if (
+    request.method === "POST" &&
+    (pathname === "/internal/browser/download/prepare" ||
+      pathname === "/internal/browser/download/bytes")
+  ) {
+    await handleBrowserDownload({
+      request,
+      response,
+      publicKey,
+      environmentId,
+      expectedAppName,
     });
     return;
   }

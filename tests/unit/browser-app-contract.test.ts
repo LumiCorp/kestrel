@@ -1827,20 +1827,23 @@ async function prepareBrowserCall(
   const effectiveRawInput =
     toolName === "browser.open" ? rawInput : { generation: 1, ...rawInput };
   const sequence = nextBrowserCallSequence++;
-  const activeTurnPayload = toolName === "browser.upload"
+  const activeTurnPayload = toolName === "browser.upload" || toolName === "browser.download"
     ? {
         metadata: {
           threadId: `prepared-session-${sequence}`,
-          turnId: `turn-${sequence}`,
-          activeTurnId: `turn-${sequence}`,
+          ...(toolName === "browser.upload"
+            ? { turnId: `turn-${sequence}`, activeTurnId: `turn-${sequence}` }
+            : {}),
         },
-        attachments: [{
-          attachmentId: policy.activeAttachmentId ?? "attachment-1",
-          filename: "evidence.txt",
-          mimeType: "text/plain",
-          sizeBytes: 8,
-          sha256: "a".repeat(64),
-        }],
+        ...(toolName === "browser.upload"
+          ? { attachments: [{
+              attachmentId: policy.activeAttachmentId ?? "attachment-1",
+              filename: "evidence.txt",
+              mimeType: "text/plain",
+              sizeBytes: 8,
+              sha256: "a".repeat(64),
+            }] }
+          : {}),
       }
     : {};
   const runContext = {
@@ -1927,6 +1930,23 @@ function passiveBrowserPort(): BrowserServicePort {
         documentRevision: "document-1",
         targetRef: String(input.effectiveInput.targetRef),
         targetLabel: "Fixture attachment",
+      };
+    },
+    async prepareDownload(input) {
+      const createdAt = "2026-08-30T12:00:00.000Z";
+      return {
+        version: "browser_download_preparation_v1",
+        threadId: input.threadId,
+        sessionId: String(input.effectiveInput.sessionId),
+        generation: Number(input.effectiveInput.generation),
+        pendingDownloadId: String(input.effectiveInput.pendingDownloadId),
+        filename: "report.bin",
+        measuredBytes: 10,
+        sha256: "b".repeat(64),
+        declaredMediaType: "application/octet-stream",
+        normalizedSourceOrigin: "https://example.com",
+        createdAt,
+        expiresAt: "2026-08-30T12:30:00.000Z",
       };
     },
     async execute() {

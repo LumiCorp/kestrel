@@ -971,6 +971,52 @@ export const fileScopeGrants = pgTable(
   ],
 );
 
+export const browserDownloadPromotions = pgTable(
+  "browser_download_promotions",
+  {
+    operationId: text("operation_id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull(),
+    generation: integer("generation").notNull(),
+    pendingDownloadId: text("pending_download_id").notNull(),
+    sha256: text("sha256").notNull(),
+    effectRevision: text("effect_revision").notNull(),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => kestrelFiles.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("browser_download_promotions_file_idx").on(table.fileId),
+    uniqueIndex("browser_download_promotions_quarantine_idx").on(
+      table.organizationId,
+      table.sessionId,
+      table.generation,
+      table.pendingDownloadId,
+    ),
+    index("browser_download_promotions_thread_idx").on(table.threadId),
+    check(
+      "browser_download_promotions_generation_check",
+      sql`${table.generation} > 0`,
+    ),
+    check(
+      "browser_download_promotions_sha256_check",
+      sql`${table.sha256} ~ '^[a-f0-9]{64}$'`,
+    ),
+    check(
+      "browser_download_promotions_effect_revision_check",
+      sql`${table.effectRevision} ~ '^[a-f0-9]{64}$'`,
+    ),
+  ],
+);
+
 export const fileRepresentations = pgTable(
   "file_representations",
   {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync } from "node:crypto";
+import { Readable } from "node:stream";
 import test from "node:test";
 
 import { BROWSER_ARTIFACT_AUTHORIZATION_VERSION } from "../../../../src/browser/contracts.js";
@@ -168,6 +169,54 @@ test("hosted screenshot authority rejects oversize and cross-scope canonicalizat
   }), undefined);
 });
 
+test("hosted Browser download promotion returns and authorizes one ordinary Thread artifact", async () => {
+  const fixture = createFixture();
+  const bytes = Buffer.from("download bytes");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const input = {
+    origin,
+    operationId: "call-download-1",
+    sessionId: "browser-session-1",
+    generation: 1,
+    pendingDownloadId: "download-1",
+    filename: "report.txt",
+    declaredMediaType: "text/plain",
+    sizeBytes: bytes.byteLength,
+    sha256,
+  };
+  await fixture.authority.stageDownload({ ...input, body: Readable.from(bytes) });
+  const artifact = await fixture.authority.commitDownload(input);
+  assert.deepEqual(artifact, {
+    version: "browser_authorized_artifact_v1",
+    id: "file-browser-download-1",
+    title: "report.txt",
+    kind: "browser-download",
+    mediaType: "text/plain",
+    bytes: bytes.byteLength,
+    sha256,
+  });
+  const authorization = {
+    version: BROWSER_ARTIFACT_AUTHORIZATION_VERSION,
+    runId: origin.runId,
+    threadId: origin.threadId,
+    callId: input.operationId,
+    toolName: "browser.download",
+    sessionId: input.sessionId,
+    artifactId: artifact.id,
+    artifactKind: "browser-download",
+    origin,
+    generation: 1,
+  } as const;
+  assert.deepEqual(await fixture.authority.authorize(authorization), {
+    ...artifact,
+    url: `/api/files/${artifact.id}/content`,
+  });
+  assert.equal(await fixture.authority.authorize({
+    ...authorization,
+    callId: "call-download-other",
+  }), undefined);
+});
+
 function createFixture() {
   const files = new Map<string, HostedBrowserArtifactFileV1>();
   let now = new Date("2026-08-30T12:00:00.000Z");
@@ -210,6 +259,39 @@ function createFixture() {
         input.threadId !== origin.threadId
       ) throw new Error("not found");
       return file;
+    },
+    async stageDownload(input) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of input.body) chunks.push(Buffer.from(chunk));
+      const bytes = Buffer.concat(chunks);
+      assert.equal(bytes.byteLength, input.sizeBytes);
+      assert.equal(createHash("sha256").update(bytes).digest("hex"), input.sha256);
+    },
+    async commitDownload(input) {
+      const existing = files.get("file-browser-download-1");
+      if (existing) return existing;
+      const file: HostedBrowserArtifactFileV1 = {
+        id: "file-browser-download-1",
+        organizationId: input.organizationId,
+        uploaderUserId: input.userId,
+        filename: input.filename,
+        declaredMediaType: input.declaredMediaType,
+        detectedMediaType: input.declaredMediaType,
+        sizeBytes: input.sizeBytes,
+        sha256: input.sha256,
+        lifecycleState: "ready",
+      };
+      files.set(file.id, file);
+      return file;
+    },
+    async readDownloadPromotion(input) {
+      if (
+        input.operationId !== "call-download-1" ||
+        input.fileId !== "file-browser-download-1" ||
+        input.sessionId !== "browser-session-1" ||
+        input.generation !== 1
+      ) return;
+      return files.get(input.fileId);
     },
   };
   return {

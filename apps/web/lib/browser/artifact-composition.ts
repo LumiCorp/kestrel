@@ -1,8 +1,11 @@
 import "server-only";
 
 import {
+  commitHostedBrowserDownload,
   getThreadFileForUser,
   initializeThreadFile,
+  stageHostedBrowserDownload,
+  readHostedBrowserDownloadPromotion,
   uploadThreadFile,
 } from "@/lib/files/service";
 import { HostedBrowserArtifactAuthority } from "./artifact-authority";
@@ -34,6 +37,9 @@ export function createHostedBrowserArtifactAuthority(
         singleUseDraft: true,
       }),
       read: getThreadFileForUser,
+      stageDownload: stageHostedBrowserDownload,
+      commitDownload: commitHostedBrowserDownload,
+      readDownloadPromotion: readHostedBrowserDownloadPromotion,
     },
   });
 }

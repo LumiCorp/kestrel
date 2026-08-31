@@ -4,6 +4,7 @@ import { lstat, mkdir, open, readFile, readdir, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import {
   BROWSER_RUNTIME_RELEASE_MANIFEST,
   getHostedBrowserRuntimeRelease,
@@ -11,8 +12,11 @@ import {
 } from "./runtimeReleaseManifest.js";
 import {
   BROWSER_SERVICE_PORT_VERSION,
+  parseBrowserDownloadPreparedEffectV1,
   parseBrowserUploadPreparedEffectV1,
   parseBrowserSessionV1,
+  type BrowserDownloadPreparationRequestV1,
+  type BrowserDownloadPreparedEffectV1,
   type BrowserSessionV1,
   type BrowserUploadPreparationRequestV1,
   type BrowserUploadPreparedEffectV1,
@@ -25,6 +29,7 @@ import {
 import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
 import { verifyHostedBrowserCapabilitySignature } from "./hostedCapability.js";
 import { verifyHostedBrowserUploadPreparationCapability } from "./hostedUploadCapability.js";
+import { verifyHostedBrowserDownloadPreparationCapability } from "./hostedDownloadCapability.js";
 import {
   HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED,
   HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE,
@@ -128,6 +133,19 @@ export interface HostedBrowserWorkerEngine {
     gatewayClosedUnauthorizedConnections?: number | undefined;
   }): Promise<number>;
   prepareUpload?(input: BrowserUploadPreparationRequestV1): Promise<BrowserUploadPreparedEffectV1>;
+  prepareDownload?(input: BrowserDownloadPreparationRequestV1): Promise<BrowserDownloadPreparedEffectV1>;
+  openDownload?(input: {
+    operationId: string;
+    effect: BrowserDownloadPreparedEffectV1;
+  }): Promise<NodeJS.ReadableStream>;
+  commitDownload?(input: {
+    operationId: string;
+    effect: BrowserDownloadPreparedEffectV1;
+  }): Promise<void>;
+  cancelDownload?(input: {
+    operationId: string;
+    effect: BrowserDownloadPreparedEffectV1;
+  }): Promise<void>;
   receiveUpload?(input: {
     operationId: string;
     effect: BrowserUploadPreparedEffectV1;
@@ -202,6 +220,27 @@ export function startHostedBrowserWorker(input: {
           body: incomingBody(request, effect.sizeBytes),
         });
         return writeJson(response, 200, { staged: true, operationId });
+      }
+      if (pathname === "/v1/download/bytes") {
+        const operationId = requiredHeader(request, "x-kestrel-browser-operation-id");
+        const capability = requiredHeader(request, "x-kestrel-browser-operation-capability");
+        const operation = accepted.get(operationId);
+        if (
+          !operation ||
+          operation.capability !== capability ||
+          operation.prepared.activation.descriptor.toolId !== "browser.download" ||
+          typeof engine.openDownload !== "function"
+        ) throw new Error("BROWSER_SESSION_LOST");
+        const effect = requirePreparedDownloadEffect(operation.prepared);
+        const source = await engine.openDownload({ operationId, effect });
+        response.writeHead(200, {
+          "cache-control": "no-store",
+          "content-type": "application/octet-stream",
+          "content-length": String(effect.measuredBytes),
+          "x-kestrel-browser-download-sha256": effect.sha256,
+        });
+        await pipeline(source, response);
+        return;
       }
       const body = await readJson(request);
       if (terminating && pathname !== "/v1/viewer-cleanup") {
@@ -413,6 +452,28 @@ export function startHostedBrowserWorker(input: {
         ) throw new Error("BROWSER_SESSION_LOST");
         return writeJson(response, 200, await engine.prepareUpload(requestBody));
       }
+      if (pathname === "/v1/download/prepare") {
+        const record = requireRecord(body);
+        const requestBody = record.request as BrowserDownloadPreparationRequestV1;
+        const claims = verifyHostedBrowserDownloadPreparationCapability({
+          token: requiredString(record.capability),
+          publicKeyPem: config.capabilityPublicKeyPem,
+        });
+        if (
+          typeof engine.prepareDownload !== "function" ||
+          claims.organizationId !== config.organizationId ||
+          claims.environmentId !== config.environmentId ||
+          claims.projectId !== config.projectId ||
+          claims.userId !== config.userId ||
+          claims.threadId !== config.threadId ||
+          claims.sessionId !== config.sessionId ||
+          claims.generation !== config.generation ||
+          claims.runId !== requestBody?.runId ||
+          claims.pendingDownloadId !== requestBody?.effectiveInput?.pendingDownloadId ||
+          claims.effectRevision !== hashCanonical(requestBody)
+        ) throw new Error("BROWSER_SESSION_LOST");
+        return writeJson(response, 200, await engine.prepareDownload(requestBody));
+      }
       if (pathname === "/v1/operations/invoke") {
         const record = requireRecord(body);
         const operationId = requiredString(record.operationId);
@@ -445,6 +506,15 @@ export function startHostedBrowserWorker(input: {
           throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
         }
         operation.phase = "committing";
+        if (operation.prepared.activation.descriptor.toolId === "browser.download") {
+          if (typeof engine.commitDownload !== "function") {
+            throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+          }
+          await engine.commitDownload({
+            operationId,
+            effect: requirePreparedDownloadEffect(operation.prepared),
+          });
+        }
         operation.commit();
         try {
           await operation.execution;
@@ -478,6 +548,15 @@ export function startHostedBrowserWorker(input: {
             throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
           }
           await engine.cancelUpload(operationId);
+        }
+        if (operation.prepared.activation.descriptor.toolId === "browser.download") {
+          if (typeof engine.cancelDownload !== "function") {
+            throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+          }
+          await engine.cancelDownload({
+            operationId,
+            effect: requirePreparedDownloadEffect(operation.prepared),
+          });
         }
         if (cancelledPhase === "accepted") {
           operation.cancelInvoke(knownWorkerFailure("BROWSER_DESTINATION_BLOCKED"));
@@ -830,7 +909,6 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     this.#authority = input.authority;
     const operation = input.prepared.activation.descriptor.toolId;
     this.#installGatewayProxy(input.gatewayProxy, input.authority, operation);
-    if (operation === "browser.download") throw new Error("BROWSER_SERVICE_UNAVAILABLE");
     if (!this.#service) {
       if (operation !== "browser.open" || !input.session) {
         throw new Error("BROWSER_SESSION_LOST");
@@ -844,6 +922,29 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
         input.session.generation !== this.#session.generation)
     ) {
       throw new Error("BROWSER_SESSION_LOST");
+    }
+    if (operation === "browser.download") {
+      const effect = requirePreparedDownloadEffect(input.prepared);
+      const current = await this.#service.prepareDownload({
+        version: "browser_download_preparation_v1",
+        runId: input.prepared.runId,
+        threadId: this.#session!.threadId,
+        effectiveInput: input.prepared.effectiveInput,
+        authority: {
+          threadId: this.#session!.threadId,
+          projectId: input.authority.projectId,
+        },
+      });
+      if (hashCanonical(current) !== hashCanonical(effect)) {
+        throw knownWorkerFailure("BROWSER_DOWNLOAD_UNAVAILABLE");
+      }
+      await lifecycle.acknowledgeDispatch();
+      const output = {
+        version: "hosted_browser_download_result_v1",
+        download: effect,
+      };
+      await lifecycle.persistCompletedResult(output);
+      return output;
     }
     const projectRoot = hostedProjectRoot(input.authority.projectId);
     return await this.#service.execute(input.prepared, {
@@ -878,6 +979,43 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       input.effectiveInput.generation !== this.#config.generation
     ) throw new Error("BROWSER_SESSION_LOST");
     return await this.#service.prepareUpload(input);
+  }
+
+  async prepareDownload(
+    input: BrowserDownloadPreparationRequestV1,
+  ): Promise<BrowserDownloadPreparedEffectV1> {
+    await this.#uploadReconciliation;
+    if (!(this.#service && this.#session)) throw new Error("BROWSER_SESSION_LOST");
+    if (
+      input.threadId !== this.#config.threadId ||
+      input.effectiveInput.sessionId !== this.#config.sessionId ||
+      input.effectiveInput.generation !== this.#config.generation
+    ) throw new Error("BROWSER_SESSION_LOST");
+    return await this.#service.prepareDownload(input);
+  }
+
+  async openDownload(input: {
+    operationId: string;
+    effect: BrowserDownloadPreparedEffectV1;
+  }): Promise<NodeJS.ReadableStream> {
+    if (!(this.#service && this.#session)) throw new Error("BROWSER_SESSION_LOST");
+    return await this.#service.openPreparedDownload(input.effect);
+  }
+
+  async commitDownload(input: {
+    operationId: string;
+    effect: BrowserDownloadPreparedEffectV1;
+  }): Promise<void> {
+    if (!this.#service) throw new Error("BROWSER_SESSION_LOST");
+    await this.#service.removePreparedDownload(input.effect);
+  }
+
+  async cancelDownload(input: {
+    operationId: string;
+    effect: BrowserDownloadPreparedEffectV1;
+  }): Promise<void> {
+    if (!this.#service) throw new Error("BROWSER_SESSION_LOST");
+    await this.#service.removePreparedDownload(input.effect);
   }
 
   async receiveUpload(input: {
@@ -1710,6 +1848,16 @@ function requirePreparedUploadEffect(
   );
   if (matches.length !== 1) throw new Error("BROWSER_SESSION_LOST");
   return parseBrowserUploadPreparedEffectV1(matches[0]!.metadata);
+}
+
+function requirePreparedDownloadEffect(
+  prepared: PreparedToolCallV1,
+): BrowserDownloadPreparedEffectV1 {
+  const matches = prepared.inputAdapters.filter(
+    (adapter) => adapter.adapterId === "kestrel.browser-download-effect:v1",
+  );
+  if (matches.length !== 1) throw new Error("BROWSER_SESSION_LOST");
+  return parseBrowserDownloadPreparedEffectV1(matches[0]!.metadata);
 }
 
 function requireAuthority(value: unknown): BrowserEffectiveDomainAuthorityV1 {

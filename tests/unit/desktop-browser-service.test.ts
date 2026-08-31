@@ -59,6 +59,7 @@ import type {
   BrowserOperationLifecycleV1,
   BrowserSessionV1,
 } from "../../src/browser/contracts.js";
+import { BROWSER_DOWNLOAD_PREPARATION_VERSION } from "../../src/browser/contracts.js";
 import type { DesktopBrowserViewerStateV1 } from "../../src/desktopShell/contracts.js";
 import type { PreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
 import type {
@@ -2988,7 +2989,7 @@ test("approved active-turn upload revalidates exact metadata and target before o
   });
   const sessionId = await openSession(fixture.service);
   const invocation = fixture.engine.opened[0]!;
-  assert.equal((await stat(invocation.blockedDownloadPath)).mode & 0o777, 0);
+  assert.equal((await stat(invocation.blockedDownloadPath)).mode & 0o777, 0o700);
   const snapshot = asRecord(await fixture.service.execute(
     prepared("browser.snapshot", { sessionId }),
     createLifecycle(),
@@ -3294,19 +3295,24 @@ test("upload cancellation during staging stops before acknowledgement and remove
 test("download remains unavailable before engine dispatch", async () => {
   const fixture = await createFixture();
   const sessionId = await openSession(fixture.service);
-  const lifecycle = createLifecycle();
   await assert.rejects(
-    fixture.service.execute(
-      prepared("browser.download", { sessionId, pendingDownloadId: "download-1" }),
-      lifecycle,
-    ),
+    fixture.service.prepareDownload({
+      version: BROWSER_DOWNLOAD_PREPARATION_VERSION,
+      runId: "run-1",
+      threadId: "thread-1",
+      effectiveInput: {
+        sessionId,
+        generation: 1,
+        pendingDownloadId: "download-1",
+      },
+      authority: { threadId: "thread-1", projectId: "project-1" },
+    }),
     hasCode("BROWSER_DOWNLOAD_UNAVAILABLE"),
   );
-  assert.deepEqual(lifecycle.events, []);
   await fixture.service.close();
 });
 
-test("an intercepted page download returns stable unavailable without writing a default download", async () => {
+test("an intercepted page download returns a redacted pending descriptor from private quarantine", async () => {
   const engine = new FakeEngine();
   const metrics: DesktopBrowserMetric[] = [];
   engine.downloadOnCommand = "click";
@@ -3319,8 +3325,8 @@ test("an intercepted page download returns stable unavailable without writing a 
     ),
   );
   const lifecycle = createLifecycle();
-  await assert.rejects(
-    fixture.service.execute(
+  const output = asRecord(
+    await fixture.service.execute(
       prepared("browser.interact", {
         sessionId,
         snapshotId: snapshot.snapshotId,
@@ -3330,12 +3336,24 @@ test("an intercepted page download returns stable unavailable without writing a 
       }),
       lifecycle,
     ),
-    hasCode("BROWSER_DOWNLOAD_UNAVAILABLE"),
   );
-  assert.deepEqual(lifecycle.events, ["ack"]);
+  assert.deepEqual(lifecycle.events, ["ack", "persist"]);
+  assert.deepEqual(asRecord(output.pendingDownload), {
+    downloadId: "download-intercepted",
+    filename: "blocked.bin",
+    measuredBytes: 29,
+    declaredMediaType: "application/octet-stream",
+    normalizedSourceOrigin: "https://example.com",
+    sha256: createHash("sha256")
+      .update("download:download-intercepted")
+      .digest("hex"),
+    createdAt: asRecord(output.pendingDownload).createdAt,
+    expiresAt: asRecord(output.pendingDownload).expiresAt,
+  });
+  assert.equal("ownedPath" in asRecord(output.pendingDownload), false);
   assert.equal(
     (await stat(engine.opened[0]!.blockedDownloadPath)).mode & 0o777,
-    0,
+    0o700,
   );
   assert.equal(
     metrics.some((metric) => metric.name === "browser_unknown_outcome"),
@@ -3344,7 +3362,7 @@ test("an intercepted page download returns stable unavailable without writing a 
   await fixture.service.close();
 });
 
-test("download events queued behind a command are observed by the protocol barrier", async () => {
+test("download events queued behind a command are returned after the protocol barrier", async () => {
   const engine = new FakeEngine();
   engine.downloadOnBarrierCommand = "click";
   const fixture = await createFixture({ engine });
@@ -3356,8 +3374,8 @@ test("download events queued behind a command are observed by the protocol barri
     ),
   );
   const lifecycle = createLifecycle();
-  await assert.rejects(
-    fixture.service.execute(
+  const output = asRecord(
+    await fixture.service.execute(
       prepared("browser.interact", {
         sessionId,
         snapshotId: snapshot.snapshotId,
@@ -3367,13 +3385,13 @@ test("download events queued behind a command are observed by the protocol barri
       }),
       lifecycle,
     ),
-    hasCode("BROWSER_DOWNLOAD_UNAVAILABLE"),
   );
-  assert.deepEqual(lifecycle.events, ["ack"]);
+  assert.deepEqual(lifecycle.events, ["ack", "persist"]);
+  assert.equal(asRecord(output.pendingDownload).downloadId, "download-intercepted");
   await fixture.service.close();
 });
 
-test("an intercepted download wins over an engine error from the same command", async () => {
+test("a completed intercepted download wins over an engine response error from the same command", async () => {
   const engine = new FakeEngine();
   engine.downloadOnCommand = "click";
   engine.failAfterDownloadCommand = "click";
@@ -3385,8 +3403,8 @@ test("an intercepted download wins over an engine error from the same command", 
       createLifecycle(),
     ),
   );
-  await assert.rejects(
-    fixture.service.execute(
+  const output = asRecord(
+    await fixture.service.execute(
       prepared("browser.interact", {
         sessionId,
         snapshotId: snapshot.snapshotId,
@@ -3396,22 +3414,12 @@ test("an intercepted download wins over an engine error from the same command", 
       }),
       createLifecycle(),
     ),
-    hasCode("BROWSER_DOWNLOAD_UNAVAILABLE"),
   );
-  await waitFor(async () => {
-    const ledger = JSON.parse(
-      await readFile(
-        path.join(fixture.homePath, "browser", "sessions.json"),
-        "utf8",
-      ),
-    ) as { sessions: BrowserSessionV1[] };
-    return (
-      ledger.sessions[0]?.terminalReason === "BROWSER_DOWNLOAD_UNAVAILABLE"
-    );
-  });
+  assert.equal(asRecord(output.pendingDownload).downloadId, "download-intercepted");
+  await fixture.service.close();
 });
 
-test("a download observed after command return terminalizes the session with its stable reason", async () => {
+test("a download observed after command return remains preparable without terminalizing the session", async () => {
   const engine = new FakeEngine();
   const fixture = await createFixture({ engine });
   const sessionId = await openSession(fixture.service);
@@ -3420,87 +3428,102 @@ test("a download observed after command return terminalizes the session with its
     createLifecycle(),
   );
 
-  engine.emitDownload();
+  await engine.emitDownload();
 
-  await assert.rejects(
-    fixture.service.execute(
-      prepared("browser.snapshot", { sessionId }),
-      createLifecycle(),
-    ),
-    hasCode("BROWSER_DOWNLOAD_UNAVAILABLE"),
-  );
-  await waitFor(async () => {
-    const ledger = JSON.parse(
-      await readFile(
-        path.join(fixture.homePath, "browser", "sessions.json"),
-        "utf8",
-      ),
-    ) as { sessions: BrowserSessionV1[] };
-    return (
-      ledger.sessions[0]?.state === "failed" &&
-      ledger.sessions[0]?.terminalReason === "BROWSER_DOWNLOAD_UNAVAILABLE" &&
-      engine.closed.length === 1
-    );
+  const effect = await fixture.service.prepareDownload({
+    version: BROWSER_DOWNLOAD_PREPARATION_VERSION,
+    runId: "run-1",
+    threadId: "thread-1",
+    effectiveInput: {
+      sessionId,
+      generation: 1,
+      pendingDownloadId: "late-download",
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
   });
-  await assert.rejects(
-    fixture.service.execute(
-      prepared("browser.snapshot", { sessionId }),
-      createLifecycle(),
-    ),
-    hasCode("BROWSER_DOWNLOAD_UNAVAILABLE"),
+  assert.equal(effect.pendingDownloadId, "late-download");
+  await fixture.service.execute(
+    prepared("browser.snapshot", { sessionId }),
+    createLifecycle(),
   );
+  assert.equal(engine.closed.length, 0);
+  await fixture.service.close();
 });
 
-test("a late download persists its first terminal reason before failed cleanup and restart converges it", async () => {
+test("approved Desktop download promotion publishes one deterministic file before bounded cleanup", async () => {
+  const engine = new FakeEngine();
+  const fixture = await createFixture({ engine });
+  const sessionId = await openSession(fixture.service);
+  await engine.emitDownload();
+  const effect = await fixture.service.prepareDownload({
+    version: BROWSER_DOWNLOAD_PREPARATION_VERSION,
+    runId: "run-download",
+    threadId: "thread-1",
+    effectiveInput: {
+      sessionId,
+      generation: 1,
+      pendingDownloadId: "late-download",
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  });
+  const call = prepared("browser.download", {
+    sessionId,
+    generation: 1,
+    pendingDownloadId: "late-download",
+  });
+  call.inputAdapters = [{
+    adapterId: "kestrel.browser-download-effect:v1",
+    metadata: { ...effect },
+  }];
+  let durableOutput: unknown;
+  const lifecycle = createLifecycle();
+  lifecycle.persistCompletedResult = async (output) => {
+    lifecycle.events.push("persist");
+    durableOutput = structuredClone(output);
+    const ownedPath = path.join(
+      engine.opened[0]!.blockedDownloadPath,
+      "123e4567-e89b-42d3-a456-426614174000",
+    );
+    await rm(ownedPath, { force: true });
+    await mkdir(ownedPath);
+  };
+  const output = asRecord(await fixture.service.execute(call, lifecycle));
+  assert.deepEqual(output, durableOutput);
+  assert.deepEqual(lifecycle.events, ["ack", "persist"]);
+  const artifact = asRecord(output.artifact);
+  assert.match(String(artifact.id), /^file-browser-[0-9a-f]{64}$/u);
+  assert.equal(artifact.kind, "browser-download");
+  const attachments = await new (
+    await import("../../src/localCore/desktopAttachments.js")
+  ).DesktopAttachmentStore(fixture.homePath).list("thread-1");
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0]?.fileId, artifact.id);
+  assert.deepEqual(
+    await fixture.service.authorizeArtifact({
+      version: "browser_artifact_authorization_v1",
+      runId: call.runId,
+      threadId: "thread-1",
+      callId: call.callId,
+      toolName: "browser.download",
+      sessionId,
+      artifactId: String(artifact.id),
+      artifactKind: "browser-download",
+    }),
+    artifact,
+  );
+  await fixture.service.close();
+});
+
+test("Session teardown removes unpromoted quarantine bytes", async () => {
   const engine = new FakeEngine();
   const fixture = await createFixture({ engine });
   const sessionId = await openSession(fixture.service);
   const invocation = engine.opened[0]!;
-  engine.failNextClose = new Error("termination unproven");
-
-  engine.emitDownload();
-
-  await waitFor(async () => {
-    const ledger = JSON.parse(
-      await readFile(
-        path.join(fixture.homePath, "browser", "sessions.json"),
-        "utf8",
-      ),
-    ) as { sessions: BrowserSessionV1[] };
-    return (
-      ledger.sessions[0]?.state === "failed" &&
-      ledger.sessions[0]?.terminalReason === "BROWSER_DOWNLOAD_UNAVAILABLE"
-    );
-  });
-  await stat(invocation.runtimePath);
-  await stat(invocation.socketPath);
-
-  const recoveringEngine = new FakeEngine();
-  const recovered = await createFixture({
-    homePath: fixture.homePath,
-    engine: recoveringEngine,
-  });
-  const ledger = JSON.parse(
-    await readFile(
-      path.join(fixture.homePath, "browser", "sessions.json"),
-      "utf8",
-    ),
-  ) as { sessions: BrowserSessionV1[] };
-  assert.equal(ledger.sessions[0]?.state, "failed");
-  assert.equal(
-    ledger.sessions[0]?.terminalReason,
-    "BROWSER_DOWNLOAD_UNAVAILABLE",
-  );
-  assert.equal(recoveringEngine.closed.length, 1);
+  await engine.emitDownload();
+  await stat(path.join(invocation.blockedDownloadPath, "123e4567-e89b-42d3-a456-426614174000"));
+  await fixture.service.close();
   await assert.rejects(stat(invocation.runtimePath), { code: "ENOENT" });
   await assert.rejects(stat(invocation.socketPath), { code: "ENOENT" });
-  await assert.rejects(
-    recovered.service.execute(
-      prepared("browser.snapshot", { sessionId }),
-      createLifecycle(),
-    ),
-    hasCode("BROWSER_DOWNLOAD_UNAVAILABLE"),
-  );
 });
 
 test("initial navigation download returns stable unavailable before open success", async () => {
@@ -3652,6 +3675,11 @@ test(
   "download synchronization drains asynchronously delivered denial events before its protocol acknowledgement",
   { timeout: 5_000 },
   async (t) => {
+    const quarantinePath = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-download-interception-"),
+    );
+    t.after(() => rm(quarantinePath, { recursive: true, force: true }));
+    const guid = "123e4567-e89b-42d3-a456-426614174001";
     const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     await new Promise<void>((resolve) => server.once("listening", resolve));
     t.after(
@@ -3680,13 +3708,20 @@ test(
             JSON.stringify({
               method: "Browser.downloadWillBegin",
               params: {
-                guid: "async-download",
+                guid,
                 suggestedFilename: "async.bin",
                 url: "https://example.com/private?token=not-recorded",
               },
             }),
           );
-          setImmediate(() => {
+          setImmediate(async () => {
+            await writeFile(path.join(quarantinePath, guid), "download");
+            socket.send(
+              JSON.stringify({
+                method: "Browser.downloadProgress",
+                params: { guid, state: "completed", receivedBytes: 8 },
+              }),
+            );
             socket.send(JSON.stringify({ id: command.id, result: {} }));
           });
         });
@@ -3695,13 +3730,76 @@ test(
 
     const interception = await installAgentBrowserDownloadInterception(
       `ws://127.0.0.1:${address.port}/devtools/browser/test`,
-      (download) => downloads.push(download.downloadId),
+      quarantinePath,
+      (download) => {
+        downloads.push(download.downloadId);
+      },
     );
     t.after(() => interception.stop());
     await interception.synchronize();
-    assert.deepEqual(downloads, ["async-download"]);
+    assert.equal(downloads.length, 1);
   },
 );
+
+test("download admission and measured-size rejection remove only the exact quarantine file", { timeout: 5_000 }, async (t) => {
+  const quarantinePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-download-rejection-"));
+  t.after(() => rm(quarantinePath, { recursive: true, force: true }));
+  const admissionGuid = "123e4567-e89b-42d3-a456-426614174011";
+  const oversizedGuid = "123e4567-e89b-42d3-a456-426614174012";
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  t.after(() => new Promise<void>((resolve) => {
+    for (const client of server.clients) client.terminate();
+    server.close(() => resolve());
+  }));
+  const address = server.address();
+  if (address === null || typeof address === "string") assert.fail("download rejection fixture did not bind TCP");
+  let barriers = 0;
+  let cancellationObserved = false;
+  server.on("connection", (socket) => {
+    socket.on("message", async (raw) => {
+      const command = JSON.parse(raw.toString("utf8")) as { id: number; method: string };
+      if (command.method === "Browser.cancelDownload") {
+        cancellationObserved = true;
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+        return;
+      }
+      if (command.method !== "Browser.setDownloadBehavior") return;
+      barriers += 1;
+      if (barriers === 1) {
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+        return;
+      }
+      const guid = barriers === 2 ? admissionGuid : oversizedGuid;
+      await writeFile(path.join(quarantinePath, guid), "download");
+      socket.send(JSON.stringify({
+        method: "Browser.downloadWillBegin",
+        params: { guid, suggestedFilename: "unsafe.bin", url: "https://example.com/private?secret=1" },
+      }));
+      socket.send(JSON.stringify({
+        method: "Browser.downloadProgress",
+        params: {
+          guid,
+          state: "completed",
+          receivedBytes: barriers === 2 ? 8 : 100 * 1024 * 1024 + 1,
+        },
+      }));
+      socket.send(JSON.stringify({ id: command.id, result: {} }));
+    });
+  });
+
+  const interception = await installAgentBrowserDownloadInterception(
+    `ws://127.0.0.1:${address.port}/devtools/browser/test`,
+    quarantinePath,
+    async () => { throw new Error("BROWSER_ARTIFACT_TOO_LARGE: admission rejected"); },
+  );
+  t.after(() => interception.stop());
+  await assert.rejects(interception.synchronize(), /admission rejected/u);
+  await assert.rejects(stat(path.join(quarantinePath, admissionGuid)), { code: "ENOENT" });
+  await assert.rejects(interception.synchronize(), /exceeded the quarantine file limit/u);
+  await assert.rejects(stat(path.join(quarantinePath, oversizedGuid)), { code: "ENOENT" });
+  assert.equal(cancellationObserved, true);
+});
 
 test("daemon cleanup accepts only the exact exited agent-browser zombie identity", () => {
   assert.equal(
@@ -5339,11 +5437,7 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
       if (!this.pendingDownload && !this.downloadOnOpen) return;
       this.pendingDownload = false;
       this.downloadOnOpen = false;
-      input.onDownloadIntercepted?.({
-        downloadId: "download-intercepted",
-        filename: "blocked.bin",
-        sourceOrigin: "https://example.com",
-      });
+      await emitFakeDownload(input, "download-intercepted");
     };
     this.opened.push(input);
     if (this.failNextOpen !== undefined) {
@@ -5413,11 +5507,10 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
         }
       }
       if (input.command[0] === this.downloadOnCommand) {
-        this.opened[0]?.onDownloadIntercepted?.({
-          downloadId: "download-intercepted",
-          filename: "blocked.bin",
-          sourceOrigin: "https://example.com",
-        });
+        const invocation = this.opened[0];
+        if (invocation !== undefined) {
+          await emitFakeDownload(invocation, "download-intercepted");
+        }
       }
       if (input.command[0] === this.failAfterDownloadCommand) {
         throw new Error("engine failed after dispatching a download");
@@ -5495,12 +5588,11 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
     this.revokedNativeHandoffs.push(structuredClone(input.authority));
   }
 
-  emitDownload(): void {
-    this.opened[0]?.onDownloadIntercepted?.({
-      downloadId: "late-download",
-      filename: "late.bin",
-      sourceOrigin: "https://example.com",
-    });
+  async emitDownload(): Promise<void> {
+    const invocation = this.opened[0];
+    if (invocation !== undefined) {
+      await emitFakeDownload(invocation, "late-download");
+    }
   }
 
   removeTab(tabId: string): void {
@@ -5525,6 +5617,31 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
   triggerLoss(): void {
     this.lossListener?.();
   }
+}
+
+async function emitFakeDownload(
+  invocation: DesktopBrowserEngineInvocation,
+  downloadId: string,
+): Promise<void> {
+  const browserGuid = "123e4567-e89b-42d3-a456-426614174000";
+  const bytes = Buffer.from(`download:${downloadId}`, "utf8");
+  const ownedPath = path.join(invocation.blockedDownloadPath, browserGuid);
+  await mkdir(invocation.blockedDownloadPath, { recursive: true, mode: 0o700 });
+  await chmod(invocation.blockedDownloadPath, 0o700);
+  await writeFile(ownedPath, bytes, { mode: 0o600 });
+  const createdAt = new Date().toISOString();
+  await invocation.onDownloadIntercepted?.({
+    downloadId,
+    browserGuid,
+    filename: "blocked.bin",
+    declaredMediaType: "application/octet-stream",
+    normalizedSourceOrigin: "https://example.com",
+    measuredBytes: bytes.byteLength,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    createdAt,
+    expiresAt: new Date(Date.parse(createdAt) + 30 * 60 * 1000).toISOString(),
+    ownedPath,
+  });
 }
 
 class FakeProxy implements LocalCoreBrowserEgressProxy {

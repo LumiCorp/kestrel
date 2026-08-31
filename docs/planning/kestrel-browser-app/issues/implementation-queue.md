@@ -4,8 +4,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
-
 ## In progress
 
 ## Blocked
@@ -19,6 +17,8 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 - [Enforce Gateway-only Browser worker egress](05a-enforce-gateway-only-worker-egress.md) — input/output policy and routed image smoke are review-clean; blocked on live Fly proof
 
 ## Implemented
+
+- [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md) — exact Desktop and hosted quarantine, promotion, cleanup, idempotency, artifact projection, and additive persistence changes are focused-green and awaiting independent review
 
 - [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — remaining review findings are assigned to the existing 06b lifecycle and 06c scheduling owners
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)

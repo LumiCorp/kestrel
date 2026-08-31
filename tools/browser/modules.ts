@@ -6,6 +6,7 @@ import {
 } from "../../src/kestrel/contracts/tool-contract.js";
 import {
   BROWSER_CONTRACT_VERSION,
+  BROWSER_DOWNLOAD_PREPARATION_VERSION,
   BROWSER_POLICY_RESOLUTION_VERSION,
   BROWSER_UPLOAD_PREPARATION_VERSION,
   BROWSER_TOOL_NAMES,
@@ -16,6 +17,7 @@ import {
   isBrowserToolName,
   normalizeBrowserHostFailure,
   parseBrowserAuthorizedArtifactV1,
+  parseBrowserDownloadPreparedEffectV1,
   parseBrowserPolicyResolutionV1,
   parseBrowserUploadPreparedEffectV1,
   requireBrowserServicePort,
@@ -40,6 +42,7 @@ import type {
 
 const RESULT_NORMALIZER_ID = "kestrel.browser-contract:v1";
 const UPLOAD_EFFECT_ADAPTER_ID = "kestrel.browser-upload-effect:v1";
+const DOWNLOAD_EFFECT_ADAPTER_ID = "kestrel.browser-download-effect:v1";
 
 function resolveBrowserHostAuthority(
   context: SharedToolContext,
@@ -169,10 +172,55 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           approval: contract.approval,
         },
       };
-      if (contract.toolId !== "browser.upload" || context === undefined) {
+      if (
+        (contract.toolId !== "browser.upload" && contract.toolId !== "browser.download") ||
+        context === undefined
+      ) {
         return base;
       }
       const runtime = context.runtime;
+      if (contract.toolId === "browser.download") {
+        if (runtime?.threadId === undefined) {
+          throw browserFailure(
+            "BROWSER_SERVICE_UNAVAILABLE",
+            "Browser download promotion requires trusted Thread authority.",
+            { recoverable: false, operation: contract.toolId },
+          );
+        }
+        const service = requireBrowserServicePort(context.browserService);
+        if (typeof service.prepareDownload !== "function") {
+          throw browserFailure(
+            "BROWSER_SERVICE_UNAVAILABLE",
+            "The active Browser host cannot prepare download promotion.",
+            { recoverable: false, operation: contract.toolId },
+          );
+        }
+        const preparedEffect = parseBrowserDownloadPreparedEffectV1(
+          await service.prepareDownload({
+            version: BROWSER_DOWNLOAD_PREPARATION_VERSION,
+            runId: runtime.runId,
+            threadId: runtime.threadId,
+            effectiveInput: input,
+            authority: resolveBrowserHostAuthority(context, runtime),
+          }),
+        );
+        if (
+          preparedEffect.threadId !== runtime.threadId ||
+          preparedEffect.sessionId !== input.sessionId ||
+          preparedEffect.generation !== input.generation ||
+          preparedEffect.pendingDownloadId !== input.pendingDownloadId
+        ) {
+          throw browserFailure(
+            "BROWSER_SERVICE_UNAVAILABLE",
+            "The Browser host returned divergent download preparation authority.",
+            { recoverable: false, operation: contract.toolId },
+          );
+        }
+        return {
+          adapterId: DOWNLOAD_EFFECT_ADAPTER_ID,
+          metadata: { ...preparedEffect },
+        };
+      }
       if (
         runtime?.turnId === undefined ||
         runtime.threadId === undefined ||

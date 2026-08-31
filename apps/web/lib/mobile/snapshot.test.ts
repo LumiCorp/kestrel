@@ -163,6 +163,35 @@ test("mobile snapshots expose file-share download fields without changing other 
   ]);
 });
 
+test("promoted Browser downloads use the existing non-controlling mobile artifact shape", () => {
+  const parts = mobileMessageParts([{
+    type: "data-kestrel-artifact",
+    data: {
+      id: "file-browser-download-1",
+      title: "report.txt",
+      kind: "browser-download",
+      url: "/api/files/file-browser-download-1/content",
+      mediaType: "text/plain",
+      metadata: { sizeBytes: 24, sha256: "a".repeat(64) },
+    },
+  }]);
+
+  assert.deepEqual(parts, [{
+    type: "artifact",
+    id: "file-browser-download-1",
+    title: "report.txt",
+    kind: "browser-download",
+    url: "/api/files/file-browser-download-1/content",
+    mediaType: "text/plain",
+    previewId: null,
+    sizeBytes: 24,
+    fileCount: null,
+    expiresAt: null,
+    warning: null,
+  }]);
+  assert.equal(JSON.stringify(parts).includes("pendingDownloadId"), false);
+});
+
 test("mobile snapshots never label runtime progress as agent progress", () => {
   const parts = mobileMessageParts([
     {

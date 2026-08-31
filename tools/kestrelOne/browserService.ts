@@ -2,6 +2,7 @@ import {
   BROWSER_SERVICE_PORT_VERSION,
   parseBrowserAllowlistAdoptionReceiptV1,
   parseBrowserAuthorizedArtifactV1,
+  parseBrowserDownloadPreparedEffectV1,
   parseBrowserPolicyResolutionV1,
   parseBrowserUploadPreparedEffectV1,
   type BrowserServicePort,
@@ -30,6 +31,13 @@ type UploadStagedReceipt = {
   receiptId: string;
   operationId: string;
   operation: "browser.upload";
+};
+
+type DownloadStagedReceipt = {
+  version: "hosted_browser_download_staged_receipt_v1";
+  receiptId: string;
+  operationId: string;
+  operation: "browser.download";
 };
 
 export function createKestrelOneBrowserService(
@@ -75,6 +83,11 @@ export function createKestrelOneBrowserService(
         await request("upload", "prepare-upload", input),
       );
     },
+    async prepareDownload(input) {
+      return parseBrowserDownloadPreparedEffectV1(
+        await request("download", "prepare-download", input),
+      );
+    },
     async execute(prepared: PreparedToolCallV1, lifecycle) {
       const capability = prepared.activation.descriptor.toolId.slice(
         "browser.".length,
@@ -93,14 +106,17 @@ export function createKestrelOneBrowserService(
       }
       const receipt = accepted as DispatchReceipt;
       assertDispatchReceipt(receipt, prepared);
-      let invokeReceipt: DispatchReceipt | UploadStagedReceipt = receipt;
-      if (prepared.activation.descriptor.toolId === "browser.upload") {
+      let invokeReceipt: DispatchReceipt | UploadStagedReceipt | DownloadStagedReceipt = receipt;
+      if (
+        prepared.activation.descriptor.toolId === "browser.upload" ||
+        prepared.activation.descriptor.toolId === "browser.download"
+      ) {
         const staged = await request(capability, "invoke", {
           prepared,
           authority: lifecycle.authority,
           receipt,
-        }) as UploadStagedReceipt;
-        assertUploadStagedReceipt(staged, prepared, receipt);
+        }) as UploadStagedReceipt | DownloadStagedReceipt;
+        assertStagedReceipt(staged, prepared, receipt);
         invokeReceipt = staged;
       }
       await lifecycle.acknowledgeDispatch();
@@ -143,16 +159,18 @@ export function createKestrelOneBrowserService(
   };
 }
 
-function assertUploadStagedReceipt(
-  staged: UploadStagedReceipt,
+function assertStagedReceipt(
+  staged: UploadStagedReceipt | DownloadStagedReceipt,
   prepared: PreparedToolCallV1,
   accepted: DispatchReceipt,
 ): void {
   if (
-    staged?.version !== "hosted_browser_upload_staged_receipt_v1" ||
+    staged?.version !== (prepared.activation.descriptor.toolId === "browser.upload"
+      ? "hosted_browser_upload_staged_receipt_v1"
+      : "hosted_browser_download_staged_receipt_v1") ||
     staged.receiptId !== accepted.receiptId ||
     staged.operationId !== prepared.callId ||
-    staged.operation !== "browser.upload"
+    staged.operation !== prepared.activation.descriptor.toolId
   ) {
     throw new RuntimeFailure(
       "BROWSER_ENGINE_FAILURE",

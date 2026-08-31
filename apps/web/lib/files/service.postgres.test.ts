@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import test from "node:test";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
@@ -143,6 +144,124 @@ test(
     assert.equal(inventory[0]?.fileId, fileId);
     assert.equal(inventory[0]?.blobId, blobId);
     assert.equal(inventory[0]?.availabilityStatus, "available");
+  },
+);
+
+test(
+  "hosted Browser download promotion reconciles response loss and compensates a proven uncommitted object",
+  async (context) => {
+    assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
+    const previousStorageProvider = process.env.STORAGE_PROVIDER;
+    const previousStorageRoot = process.env.STORAGE_LOCAL_ROOT;
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-download-"));
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.POSTGRES_URL = databaseUrl;
+    process.env.STORAGE_PROVIDER = "local";
+    process.env.STORAGE_LOCAL_ROOT = storageRoot;
+
+    const [
+      { resetDbRuntimeForTests },
+      files,
+      { getStorageAdapter, resetStorageAdapterForTests },
+    ] = await Promise.all([
+      import("@/lib/db/runtime"),
+      import("./service"),
+      import("@/lib/storage"),
+    ]);
+    resetStorageAdapterForTests();
+    const sql = postgres(databaseUrl, { max: 4 });
+    const suffix = crypto.randomUUID();
+    const userId = `browser-download-user-${suffix}`;
+    const organizationId = `browser-download-org-${suffix}`;
+    const threadId = `browser-download-thread-${suffix}`;
+    const deniedThreadId = `browser-download-denied-thread-${suffix}`;
+    const bytes = Buffer.from("exact hosted Browser download bytes", "utf8");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const identity = {
+      operationId: `browser-download-operation-${suffix}`,
+      organizationId,
+      threadId,
+      userId,
+      sessionId: `browser-session-${suffix}`,
+      generation: 1,
+      pendingDownloadId: `pending-download-${suffix}`,
+      filename: "report.txt",
+      declaredMediaType: "text/plain",
+      sizeBytes: bytes.byteLength,
+      sha256,
+    };
+
+    context.after(async () => {
+      await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+      await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+      await resetDbRuntimeForTests();
+      resetStorageAdapterForTests();
+      if (previousStorageProvider === undefined) delete process.env.STORAGE_PROVIDER;
+      else process.env.STORAGE_PROVIDER = previousStorageProvider;
+      if (previousStorageRoot === undefined) delete process.env.STORAGE_LOCAL_ROOT;
+      else process.env.STORAGE_LOCAL_ROOT = previousStorageRoot;
+      await rm(storageRoot, { recursive: true, force: true });
+      await sql.end({ timeout: 0 });
+    });
+
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt")
+        VALUES (${userId}, 'Browser Download User', ${`${userId}@example.test`}, true, now(), now())
+      `;
+      await transaction`
+        INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+        VALUES (${organizationId}, 'Browser Download Org', ${organizationId}, now())
+      `;
+      await transaction`
+        INSERT INTO "member" ("id", "organizationId", "userId", "role", "createdAt")
+        VALUES (${`browser-download-member-${suffix}`}, ${organizationId}, ${userId}, 'owner', now())
+      `;
+      for (const id of [threadId, deniedThreadId]) {
+        await transaction`
+          INSERT INTO "threads" ("id", "title", "created_by_user_id", "organization_id", "origin")
+          VALUES (${id}, 'Browser Download Thread', ${userId}, ${organizationId}, 'web')
+        `;
+      }
+    });
+
+    await files.stageHostedBrowserDownload({ ...identity, body: Readable.from(bytes) });
+    const [first, replay] = await Promise.all([
+      files.commitHostedBrowserDownload(identity),
+      files.commitHostedBrowserDownload(identity),
+    ]);
+    assert.equal(replay.id, first.id);
+    const afterResponseLoss = await files.commitHostedBrowserDownload(identity);
+    assert.equal(afterResponseLoss.id, first.id);
+    const [counts] = await sql<Array<{ promotions: number; files: number; grants: number }>>`
+      SELECT
+        (SELECT count(*)::int FROM "browser_download_promotions" WHERE "organization_id" = ${organizationId}) AS promotions,
+        (SELECT count(*)::int FROM "kestrel_files" WHERE "organization_id" = ${organizationId}) AS files,
+        (SELECT count(*)::int FROM "file_scope_grants" WHERE "organization_id" = ${organizationId}) AS grants
+    `;
+    assert.deepEqual(counts, { promotions: 1, files: 1, grants: 1 });
+
+    const uncommitted = {
+      ...identity,
+      operationId: `browser-download-uncommitted-${suffix}`,
+      threadId: deniedThreadId,
+      pendingDownloadId: `pending-uncommitted-${suffix}`,
+    };
+    await files.stageHostedBrowserDownload({ ...uncommitted, body: Readable.from(bytes) });
+    const uncommittedBlobId = `blob-browser-${createHash("sha256").update(JSON.stringify({
+      organizationId,
+      sessionId: uncommitted.sessionId,
+      generation: uncommitted.generation,
+      pendingDownloadId: uncommitted.pendingDownloadId,
+      sha256,
+    })).digest("hex")}`;
+    const uncommittedKey = getStorageAdapter().buildObjectKey(
+      "files", organizationId, uncommittedBlobId, "original",
+    );
+    assert.equal(await getStorageAdapter().objectExists(uncommittedKey), true);
+    await sql`DELETE FROM "threads" WHERE "id" = ${deniedThreadId}`;
+    await assert.rejects(files.commitHostedBrowserDownload(uncommitted), /Thread not found/u);
+    assert.equal(await getStorageAdapter().objectExists(uncommittedKey), false);
   },
 );
 

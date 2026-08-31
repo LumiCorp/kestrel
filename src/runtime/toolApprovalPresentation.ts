@@ -6,7 +6,10 @@ import type {
 } from "../mode/contracts.js";
 import { isRememberApprovalEligibleV1 } from "../mode/contracts.js";
 import { canonicalizePublicBrowserDestination } from "../browser/domainAuthority.js";
-import { parseBrowserUploadPreparedEffectV1 } from "../browser/contracts.js";
+import {
+  parseBrowserDownloadPreparedEffectV1,
+  parseBrowserUploadPreparedEffectV1,
+} from "../browser/contracts.js";
 import type { PreparedToolInputAdapterV1 } from "../kestrel/contracts/tool-invocation.js";
 
 export interface BrowserDomainGrantApprovalPresentationV1 {
@@ -439,6 +442,40 @@ export function buildToolApprovalPresentation(input: {
       ],
       warnings: [
         "Only this approved attachment is transferred to this exact current file input.",
+      ],
+      policy: {
+        mode: "ask",
+        reasonCode: disposition.reasonCode,
+        explanation: approvalReasonExplanation(disposition.reasonCode),
+        authorityKind: disposition.authority.kind,
+        authorityRevision: disposition.authority.revision,
+        rememberApprovalEligible: false,
+      },
+    };
+  }
+  if (input.toolName === "browser.download") {
+    const matches = (input.inputAdapters ?? []).filter(
+      (adapter) => adapter.adapterId === "kestrel.browser-download-effect:v1",
+    );
+    if (matches.length !== 1) {
+      throw new Error("Browser download approval is missing exact prepared effect authority.");
+    }
+    const effect = parseBrowserDownloadPreparedEffectV1(matches[0]!.metadata);
+    return {
+      title: "Promote browser download",
+      summary: "Publish this quarantined Browser download as one file in the current Thread.",
+      fields: [
+        { label: "File", value: effect.filename },
+        {
+          label: "Measured size",
+          value: `${effect.measuredBytes} bytes (${CONVERSATION_ATTACHMENT_MAX_FILE_BYTES / (1024 * 1024)} MiB maximum)`,
+        },
+        { label: "Declared media type", value: `${effect.declaredMediaType} (untrusted metadata)` },
+        { label: "Source origin", value: effect.normalizedSourceOrigin },
+        { label: "Result", value: "One file in the current Thread" },
+      ],
+      warnings: [
+        "Only this exact completed quarantine item is published. Browser paths and storage locations remain hidden.",
       ],
       policy: {
         mode: "ask",

@@ -24,6 +24,10 @@ import {
   issueHostedBrowserUploadPreparationCapability,
 } from "../../src/browser/hostedUploadCapability.js";
 import {
+  HOSTED_BROWSER_DOWNLOAD_PREPARATION_CAPABILITY_VERSION,
+  issueHostedBrowserDownloadPreparationCapability,
+} from "../../src/browser/hostedDownloadCapability.js";
+import {
   HOSTED_BROWSER_WORKER_HOME_PATH,
   HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES,
   AgentBrowserHostedWorkerEngine,
@@ -195,6 +199,121 @@ test("hosted worker prepares and stages one exact approved attachment upload", a
   };
   assert.equal((await jsonRequest("/v1/operations/invoke", operationBody)).status, 200);
   assert.equal((await jsonRequest("/v1/operations/commit", operationBody)).status, 200);
+  await worker.close();
+});
+
+test("hosted worker prepares, streams, and retires one exact quarantined download", async () => {
+  const bytes = Buffer.from("quarantined download");
+  const effect = preparedDownloadEffect(bytes);
+  const prepared = preparedDownload(effect);
+  const operationCapability = operationCapabilityFor(prepared, "revision-1");
+  const requestBody = {
+    version: "browser_download_preparation_v1" as const,
+    runId: "run-1",
+    threadId: "thread-1",
+    effectiveInput: prepared.effectiveInput,
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  };
+  const preparationCapability = issueHostedBrowserDownloadPreparationCapability({
+    privateKeyPem,
+    claims: {
+      version: HOSTED_BROWSER_DOWNLOAD_PREPARATION_CAPABILITY_VERSION,
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      sessionId: "browser-session-1",
+      generation: 1,
+      pendingDownloadId: effect.pendingDownloadId,
+      effectRevision: hashCanonical(requestBody),
+      expiresAt: new Date(Date.now() + 30_000).toISOString(),
+    },
+  });
+  const retired: string[] = [];
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async prepareDownload(input) {
+        assert.deepEqual(input, requestBody);
+        return effect;
+      },
+      async openDownload(input) {
+        assert.equal(input.operationId, prepared.callId);
+        assert.deepEqual(input.effect, effect);
+        return Readable.from(bytes);
+      },
+      async commitDownload(input) {
+        assert.deepEqual(input.effect, effect);
+        retired.push(input.operationId);
+      },
+      async cancelDownload(input) {
+        retired.push(`cancel:${input.operationId}`);
+      },
+      async execute(_input, lifecycle) {
+        await lifecycle.acknowledgeDispatch();
+        const output = { version: "hosted_browser_download_result_v1", download: effect };
+        await lifecycle.persistCompletedResult(output);
+        return output;
+      },
+      async adopt() { return 0; },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const jsonRequest = (pathname: string, body: unknown) => fetch(
+    `http://[::1]:${port}${pathname}`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+  );
+  const preparedResponse = await jsonRequest("/v1/download/prepare", {
+    request: requestBody,
+    capability: preparationCapability,
+  });
+  assert.equal(preparedResponse.status, 200);
+  assert.deepEqual(await preparedResponse.json(), effect);
+  const crossScope = await jsonRequest("/v1/download/prepare", {
+    request: { ...requestBody, runId: "run-other" },
+    capability: preparationCapability,
+  });
+  assert.equal(crossScope.status, 400);
+  assert.equal((await jsonRequest("/v1/operations/accept", {
+    capability: operationCapability,
+    prepared,
+    authority,
+  })).status, 200);
+  const streamed = await fetch(`http://[::1]:${port}/v1/download/bytes`, {
+    method: "POST",
+    headers: {
+      "x-kestrel-browser-operation-id": prepared.callId,
+      "x-kestrel-browser-operation-capability": operationCapability,
+    },
+  });
+  assert.equal(streamed.status, 200);
+  assert.equal(streamed.headers.get("x-kestrel-browser-download-sha256"), effect.sha256);
+  assert.deepEqual(Buffer.from(await streamed.arrayBuffer()), bytes);
+  const invoked = await jsonRequest("/v1/operations/invoke", {
+    operationId: prepared.callId,
+    capability: operationCapability,
+  });
+  assert.equal(invoked.status, 200);
+  assert.deepEqual(await invoked.json(), {
+    version: "hosted_browser_download_result_v1",
+    download: effect,
+  });
+  assert.equal((await jsonRequest("/v1/operations/commit", {
+    operationId: prepared.callId,
+    capability: operationCapability,
+  })).status, 200);
+  assert.deepEqual(retired, [prepared.callId]);
+  assert.equal((await fetch(`http://[::1]:${port}/v1/download/bytes`, {
+    method: "POST",
+    headers: {
+      "x-kestrel-browser-operation-id": prepared.callId,
+      "x-kestrel-browser-operation-capability": operationCapability,
+    },
+  })).status, 400);
   await worker.close();
 });
 
@@ -2236,6 +2355,56 @@ function preparedUpload(effect = preparedUploadEffect()) {
     },
     inputAdapters: [{
       adapterId: "kestrel.browser-upload-effect:v1",
+      metadata: { ...effect },
+    }],
+    policy: {
+      decision: "allow",
+      policyRevision: hashCanonical({ revision: 1 }),
+      reasonCode: "environment_policy",
+    },
+    preparedAt: new Date().toISOString(),
+  });
+}
+
+function preparedDownloadEffect(bytes = Buffer.from("quarantined download")) {
+  const createdAt = new Date();
+  return {
+    version: "browser_download_preparation_v1" as const,
+    threadId: "thread-1",
+    sessionId: "browser-session-1",
+    generation: 1,
+    pendingDownloadId: "download-1",
+    filename: "report.txt",
+    measuredBytes: bytes.byteLength,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    declaredMediaType: "text/plain",
+    normalizedSourceOrigin: "https://example.com",
+    createdAt: createdAt.toISOString(),
+    expiresAt: new Date(createdAt.getTime() + 30 * 60_000).toISOString(),
+  };
+}
+
+function preparedDownload(effect = preparedDownloadEffect()) {
+  const descriptor = defaultToolCatalog.getDescriptorRef("browser.download");
+  assert.ok(descriptor);
+  return parsePreparedToolCallV1({
+    version: "v1",
+    runId: "run-1",
+    sessionId: "runtime-session-1",
+    callId: "call-download-1",
+    activation: createToolActivationRefV1({
+      descriptor,
+      registryGeneration: "hosted-worker-download-test",
+      scopeFingerprint: fingerprintToolScopeV1({ hostedBrowserWorker: true }),
+    }),
+    origin: { kind: "trusted_runtime", producerId: "test", adapterId: "test" },
+    effectiveInput: {
+      sessionId: effect.sessionId,
+      generation: effect.generation,
+      pendingDownloadId: effect.pendingDownloadId,
+    },
+    inputAdapters: [{
+      adapterId: "kestrel.browser-download-effect:v1",
       metadata: { ...effect },
     }],
     policy: {

@@ -12,6 +12,7 @@ import { HostedBrowserStore } from "./store";
 import { createHostedBrowserArtifactAuthority } from "./artifact-composition";
 import { resolveTurnAttachments } from "@/lib/files/turn-attachment-resolver";
 import { HostedBrowserUploadWorkerClient } from "./upload-worker-client";
+import { HostedBrowserDownloadWorkerClient } from "./download-worker-client";
 
 export async function resolveHostedBrowserService(input: {
   ticket: EnvironmentExecutionTicket;
@@ -79,6 +80,9 @@ export async function resolveHostedBrowserServiceForAuthority(input: {
     gatewayMachineId: environment.flyGatewayMachineId,
     routerUrl: environment.routerUrl,
     uploads: new HostedBrowserUploadWorkerClient({
+      environmentPrivateKeyPem: required("KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY"),
+    }),
+    downloads: new HostedBrowserDownloadWorkerClient({
       environmentPrivateKeyPem: required("KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY"),
     }),
     async resolveUploadAttachment(request) {

@@ -1,11 +1,13 @@
 import { createHash, createPublicKey } from "node:crypto";
 import {
   BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION,
+  BROWSER_DOWNLOAD_PREPARATION_VERSION,
   BROWSER_POLICY_RESOLUTION_VERSION,
   BROWSER_SERVICE_PORT_VERSION,
   BROWSER_UPLOAD_PREPARATION_VERSION,
   isBrowserToolName,
   parseBrowserSessionV1,
+  parseBrowserDownloadPreparedEffectV1,
   parseBrowserUploadPreparedEffectV1,
   validateBrowserResultAuthority,
   validateBrowserResultSemantics,
@@ -17,6 +19,8 @@ import {
   type BrowserPolicyResolutionV1,
   type BrowserServicePort,
   type BrowserSessionV1,
+  type BrowserDownloadPreparationRequestV1,
+  type BrowserDownloadPreparedEffectV1,
   type BrowserUploadPreparationRequestV1,
   type BrowserUploadPreparedEffectV1,
 } from "../../../../src/browser/contracts.js";
@@ -52,6 +56,11 @@ import {
 } from "../../../../src/browser/hostedUploadCapability.js";
 import { hashCanonical } from "../../../../src/kestrel/contracts/tool-contract.js";
 import type { HostedBrowserUploadWorkerPort } from "./upload-worker-client";
+import type { HostedBrowserDownloadWorkerPort } from "./download-worker-client";
+import {
+  HOSTED_BROWSER_DOWNLOAD_PREPARATION_CAPABILITY_VERSION,
+  issueHostedBrowserDownloadPreparationCapability,
+} from "../../../../src/browser/hostedDownloadCapability.js";
 
 const IDLE_MS = 30 * 60_000;
 const HARD_MS = 8 * 60 * 60_000;
@@ -145,6 +154,17 @@ export interface HostedBrowserArtifactPort {
     bytes: Uint8Array;
     sha256: string;
   }): Promise<BrowserAuthorizedArtifactV1>;
+  stageDownload?(input: {
+    origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
+    generation: number; pendingDownloadId: string; filename: string;
+    declaredMediaType: string; sizeBytes: number; sha256: string;
+    body: NodeJS.ReadableStream;
+  }): Promise<void>;
+  commitDownload?(input: {
+    origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
+    generation: number; pendingDownloadId: string; filename: string;
+    declaredMediaType: string; sizeBytes: number; sha256: string;
+  }): Promise<BrowserAuthorizedArtifactV1>;
 }
 
 export interface HostedBrowserMetricPort {
@@ -180,6 +200,7 @@ export class HostedBrowserService implements BrowserServicePort {
       runtimeImageDigest: string;
       routerUrl?: string | undefined;
       uploads?: HostedBrowserUploadWorkerPort | undefined;
+      downloads?: HostedBrowserDownloadWorkerPort | undefined;
       resolveUploadAttachment?(input: { turnId: string; attachmentId: string }): Promise<{
         attachmentId: string;
         threadId: string;
@@ -296,6 +317,76 @@ export class HostedBrowserService implements BrowserServicePort {
     });
   }
 
+  async prepareDownload(
+    input: BrowserDownloadPreparationRequestV1,
+  ): Promise<BrowserDownloadPreparedEffectV1> {
+    if (
+      input.version !== BROWSER_DOWNLOAD_PREPARATION_VERSION ||
+      !this.options.routerUrl ||
+      !this.options.downloads
+    ) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+    const origin = await this.#resolvePreparedOrigin({
+      runId: input.runId,
+      threadId: input.threadId,
+      stableAuthority: undefined,
+      hostProjectId: input.authority.projectId,
+    });
+    const policy = await this.options.policy.resolve({
+      origin,
+      effectiveInput: input.effectiveInput,
+      operation: "browser.download",
+    });
+    if (policy.resolution.decision === "deny") {
+      throw this.#failure("BROWSER_DESTINATION_BLOCKED");
+    }
+    const sessionId = requiredText(input.effectiveInput.sessionId);
+    const pendingDownloadId = requiredText(input.effectiveInput.pendingDownloadId);
+    const record = await this.options.store.read(sessionId);
+    if (
+      !record?.resource ||
+      record.session.threadId !== input.threadId ||
+      record.session.state !== "ready" ||
+      record.session.generation !== input.effectiveInput.generation
+    ) throw this.#failure("BROWSER_SESSION_LOST");
+    const storedOrigin = await this.options.store.resolveCurrentOrigin(sessionId);
+    if (!sameBrowserIdentity(storedOrigin, origin)) {
+      throw this.#failure("BROWSER_SESSION_LOST");
+    }
+    const now = this.#now();
+    const capability = issueHostedBrowserDownloadPreparationCapability({
+      privateKeyPem: this.options.capabilityPrivateKeyPem,
+      now,
+      claims: {
+        version: HOSTED_BROWSER_DOWNLOAD_PREPARATION_CAPABILITY_VERSION,
+        organizationId: origin.organizationId,
+        environmentId: origin.environmentId,
+        projectId: origin.projectId,
+        userId: origin.userId,
+        threadId: origin.threadId,
+        runId: input.runId,
+        sessionId,
+        generation: record.session.generation,
+        pendingDownloadId,
+        effectRevision: hashCanonical(input),
+        expiresAt: new Date(now.getTime() + OPERATION_CAPABILITY_MS).toISOString(),
+      },
+    });
+    return await this.options.downloads.prepare({
+      routerUrl: this.options.routerUrl,
+      organizationId: origin.organizationId,
+      environmentId: origin.environmentId,
+      projectId: origin.projectId,
+      userId: origin.userId,
+      threadId: origin.threadId,
+      runId: input.runId,
+      sessionId,
+      appName: this.options.appName,
+      machineId: record.resource.machineId,
+      capability,
+      request: input,
+    });
+  }
+
   async execute(
     prepared: PreparedToolCallV1,
     lifecycle: BrowserOperationLifecycleV1,
@@ -311,9 +402,6 @@ export class HostedBrowserService implements BrowserServicePort {
   ): Promise<HostedBrowserRelayInstructionV1> {
     const operation = prepared.activation.descriptor.toolId;
     if (!isBrowserToolName(operation)) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
-    if (operation === "browser.download") {
-      throw this.#failure("BROWSER_DOWNLOAD_UNAVAILABLE");
-    }
     const origin = await this.#resolvePreparedOrigin({
       runId: prepared.runId,
       threadId: authority.threadId,
@@ -516,6 +604,52 @@ export class HostedBrowserService implements BrowserServicePort {
         ...(signal ? { signal } : {}),
       });
     }
+    if (operation === "browser.download") {
+      if (!(
+        this.options.routerUrl &&
+        this.options.downloads &&
+        this.options.artifacts.stageDownload
+      )) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+      const effect = requirePreparedDownloadEffect(prepared);
+      if (
+        effect.threadId !== origin.threadId ||
+        effect.sessionId !== record.session.sessionId ||
+        effect.generation !== record.session.generation
+      ) throw this.#failure("BROWSER_SESSION_LOST");
+      const source = await this.options.downloads.open({
+        routerUrl: this.options.routerUrl,
+        organizationId: origin.organizationId,
+        environmentId: origin.environmentId,
+        projectId: origin.projectId,
+        userId: origin.userId,
+        threadId: origin.threadId,
+        runId: prepared.runId,
+        sessionId: record.session.sessionId,
+        appName: this.options.appName,
+        machineId: record.resource.machineId,
+        operationId: prepared.callId,
+        capability: acceptedInstruction.capability,
+        sizeBytes: effect.measuredBytes,
+        sha256: effect.sha256,
+        ...(signal ? { signal } : {}),
+      });
+      try {
+        await this.options.artifacts.stageDownload({
+          origin,
+          operationId: prepared.callId,
+          sessionId: effect.sessionId,
+          generation: effect.generation,
+          pendingDownloadId: effect.pendingDownloadId,
+          filename: effect.filename,
+          declaredMediaType: effect.declaredMediaType,
+          sizeBytes: effect.measuredBytes,
+          sha256: effect.sha256,
+          body: source,
+        });
+      } finally {
+        (source as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.();
+      }
+    }
     return {
       version: "hosted_browser_relay_instruction_v1",
       phase: "invoke",
@@ -561,6 +695,45 @@ export class HostedBrowserService implements BrowserServicePort {
     );
     if (!sameBrowserIdentity(storedOrigin, origin)) {
       throw this.#failure("BROWSER_SESSION_LOST");
+    }
+    if (operation === "browser.download") {
+      if (!this.options.artifacts.commitDownload) {
+        throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+      }
+      let envelope: ReturnType<typeof parseHostedBrowserDownloadEnvelope>;
+      let effect: BrowserDownloadPreparedEffectV1;
+      try {
+        envelope = parseHostedBrowserDownloadEnvelope(output);
+        effect = requirePreparedDownloadEffect(prepared);
+      } catch {
+        throw this.#failure("BROWSER_DOWNLOAD_UNAVAILABLE");
+      }
+      if (hashCanonical(envelope.download) !== hashCanonical(effect)) {
+        throw this.#failure("BROWSER_DOWNLOAD_UNAVAILABLE");
+      }
+      try {
+        const artifact = await this.options.artifacts.commitDownload({
+          origin,
+          operationId: prepared.callId,
+          sessionId: effect.sessionId,
+          generation: effect.generation,
+          pendingDownloadId: effect.pendingDownloadId,
+          filename: effect.filename,
+          declaredMediaType: effect.declaredMediaType,
+          sizeBytes: effect.measuredBytes,
+          sha256: effect.sha256,
+        });
+        const { version: _artifactAuthorityVersion, ...artifactOutput } = artifact;
+        output = {
+          version: "browser_tool_result_v1",
+          operation: "browser.download",
+          sessionId: effect.sessionId,
+          generation: effect.generation,
+          artifact: artifactOutput,
+        };
+      } catch {
+        throw this.#failure("BROWSER_ACTION_OUTCOME_UNKNOWN");
+      }
     }
     try {
       if (operation === "browser.capture") {
@@ -1583,4 +1756,31 @@ function requirePreparedUploadEffect(
   );
   if (matches.length !== 1) throw new Error("BROWSER_SESSION_LOST");
   return parseBrowserUploadPreparedEffectV1(matches[0]!.metadata);
+}
+
+function requirePreparedDownloadEffect(
+  prepared: PreparedToolCallV1,
+): BrowserDownloadPreparedEffectV1 {
+  const matches = prepared.inputAdapters.filter(
+    (adapter) => adapter.adapterId === "kestrel.browser-download-effect:v1",
+  );
+  if (matches.length !== 1) throw new Error("BROWSER_SESSION_LOST");
+  return parseBrowserDownloadPreparedEffectV1(matches[0]!.metadata);
+}
+
+function parseHostedBrowserDownloadEnvelope(value: unknown): {
+  version: "hosted_browser_download_result_v1";
+  download: BrowserDownloadPreparedEffectV1;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("BROWSER_ENGINE_FAILURE");
+  }
+  const record = value as Record<string, unknown>;
+  if (record.version !== "hosted_browser_download_result_v1") {
+    throw new Error("BROWSER_ENGINE_FAILURE");
+  }
+  return {
+    version: "hosted_browser_download_result_v1",
+    download: parseBrowserDownloadPreparedEffectV1(record.download),
+  };
 }

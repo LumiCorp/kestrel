@@ -52,6 +52,21 @@ export interface HostedBrowserArtifactFilePort {
     organizationId: string;
     userId: string;
   }): Promise<HostedBrowserArtifactFileV1>;
+  stageDownload?(input: {
+    operationId: string; organizationId: string; threadId: string; userId: string;
+    sessionId: string; generation: number; pendingDownloadId: string;
+    filename: string; declaredMediaType: string; sizeBytes: number; sha256: string;
+    body: NodeJS.ReadableStream;
+  }): Promise<void>;
+  commitDownload?(input: {
+    operationId: string; organizationId: string; threadId: string; userId: string;
+    sessionId: string; generation: number; pendingDownloadId: string;
+    filename: string; declaredMediaType: string; sizeBytes: number; sha256: string;
+  }): Promise<HostedBrowserArtifactFileV1>;
+  readDownloadPromotion?(input: {
+    operationId: string; fileId: string; organizationId: string; threadId: string;
+    userId: string; sessionId: string; generation: number;
+  }): Promise<HostedBrowserArtifactFileV1 | undefined>;
 }
 
 export interface HostedBrowserArtifactUploadInstructionV1 {
@@ -177,6 +192,67 @@ export class HostedBrowserArtifactAuthority {
     return uploaded;
   }
 
+  async stageDownload(input: {
+    origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
+    generation: number; pendingDownloadId: string; filename: string;
+    declaredMediaType: string; sizeBytes: number; sha256: string;
+    body: NodeJS.ReadableStream;
+  }): Promise<void> {
+    if (!this.options.files.stageDownload) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+    await this.options.files.stageDownload({
+      operationId: input.operationId,
+      organizationId: input.origin.organizationId,
+      threadId: input.origin.threadId,
+      userId: input.origin.userId,
+      sessionId: input.sessionId,
+      generation: input.generation,
+      pendingDownloadId: input.pendingDownloadId,
+      filename: input.filename,
+      declaredMediaType: input.declaredMediaType,
+      sizeBytes: input.sizeBytes,
+      sha256: input.sha256,
+      body: input.body,
+    });
+  }
+
+  async commitDownload(input: {
+    origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
+    generation: number; pendingDownloadId: string; filename: string;
+    declaredMediaType: string; sizeBytes: number; sha256: string;
+  }): Promise<BrowserAuthorizedArtifactV1> {
+    if (!this.options.files.commitDownload) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+    const file = await this.options.files.commitDownload({
+      operationId: input.operationId,
+      organizationId: input.origin.organizationId,
+      threadId: input.origin.threadId,
+      userId: input.origin.userId,
+      sessionId: input.sessionId,
+      generation: input.generation,
+      pendingDownloadId: input.pendingDownloadId,
+      filename: input.filename,
+      declaredMediaType: input.declaredMediaType,
+      sizeBytes: input.sizeBytes,
+      sha256: input.sha256,
+    });
+    if (
+      file.organizationId !== input.origin.organizationId ||
+      file.uploaderUserId !== input.origin.userId ||
+      file.filename !== input.filename ||
+      file.sizeBytes !== input.sizeBytes ||
+      file.sha256 !== input.sha256 ||
+      file.lifecycleState !== "ready"
+    ) throw new Error("BROWSER_ARTIFACT_AUTHORITY_INVALID");
+    return {
+      version: BROWSER_AUTHORIZED_ARTIFACT_VERSION,
+      id: file.id,
+      title: file.filename,
+      kind: "browser-download",
+      mediaType: file.detectedMediaType ?? file.declaredMediaType ?? "application/octet-stream",
+      bytes: file.sizeBytes,
+      sha256: input.sha256,
+    };
+  }
+
   /**
    * Canonicalizes screenshot bytes already carried by the bounded App relay.
    * This follows the same draft -> ready, single-use authority path as the
@@ -230,6 +306,36 @@ export class HostedBrowserArtifactAuthority {
     origin: HostedBrowserOriginAuthority;
     generation: number;
   }): Promise<BrowserAuthorizedArtifactV1 | undefined> {
+    if (input.toolName === "browser.download" && input.artifactKind === "browser-download") {
+      if (!this.options.files.readDownloadPromotion) return;
+      let file: HostedBrowserArtifactFileV1;
+      try {
+        const promoted = await this.options.files.readDownloadPromotion({
+          operationId: input.callId,
+          fileId: input.artifactId,
+          threadId: input.threadId,
+          organizationId: input.origin.organizationId,
+          userId: input.origin.userId,
+          sessionId: input.sessionId,
+          generation: input.generation,
+        });
+        if (!promoted) return;
+        file = promoted;
+      } catch {
+        return;
+      }
+      if (!(file.sha256 && file.lifecycleState === "ready")) return;
+      return {
+        version: BROWSER_AUTHORIZED_ARTIFACT_VERSION,
+        id: file.id,
+        title: file.filename,
+        kind: "browser-download",
+        url: `/api/files/${encodeURIComponent(file.id)}/content`,
+        mediaType: file.detectedMediaType ?? file.declaredMediaType ?? "application/octet-stream",
+        bytes: file.sizeBytes,
+        sha256: file.sha256,
+      };
+    }
     if (
       input.toolName !== "browser.capture" ||
       input.artifactKind !== "browser-screenshot"

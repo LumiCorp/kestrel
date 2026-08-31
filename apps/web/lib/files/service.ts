@@ -60,6 +60,296 @@ export class FileUploadVerificationError extends Error {
   }
 }
 
+export interface HostedBrowserDownloadFileIdentity {
+  operationId: string;
+  organizationId: string;
+  threadId: string;
+  userId: string;
+  sessionId: string;
+  generation: number;
+  pendingDownloadId: string;
+  filename: string;
+  declaredMediaType: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
+export async function stageHostedBrowserDownload(input: HostedBrowserDownloadFileIdentity & {
+  body: NodeJS.ReadableStream;
+}): Promise<void> {
+  if (!await getThreadForUser(input.threadId, input.userId, input.organizationId)) {
+    throw new Error("Thread not found.");
+  }
+  validateHostedBrowserDownloadIdentity(input);
+  const storage = getManagedFileStorageProvider();
+  const blobId = hostedBrowserDownloadBlobId(input);
+  const objectKey = storage.buildOriginalKey({
+    organizationId: input.organizationId,
+    blobId,
+  });
+  const verifier = new FileVerificationTransform(input.sizeBytes);
+  try {
+    await storage.putStream({
+      key: objectKey,
+      body: input.body.pipe(verifier),
+      contentType: normalizeMediaType(input.declaredMediaType) ?? "application/octet-stream",
+      contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(sanitizeFilename(input.filename))}`,
+    });
+    const verified = verifier.result();
+    if (verified.sizeBytes !== input.sizeBytes || verified.sha256 !== input.sha256) {
+      throw new FileUploadVerificationError("FILE_HASH_MISMATCH");
+    }
+  } catch (error) {
+    await storage.delete(objectKey).catch(() => {});
+    throw error;
+  }
+}
+
+export async function commitHostedBrowserDownload(
+  input: HostedBrowserDownloadFileIdentity,
+) {
+  validateHostedBrowserDownloadIdentity(input);
+  const storage = getManagedFileStorageProvider();
+  const blobId = hostedBrowserDownloadBlobId(input);
+  const fileId = hostedBrowserDownloadFileId(input);
+  const objectKey = storage.buildOriginalKey({ organizationId: input.organizationId, blobId });
+  if (!await getThreadForUser(input.threadId, input.userId, input.organizationId)) {
+    let provenUnpromoted = false;
+    try {
+      const promoted = await knowledgeDb.query.browserDownloadPromotions.findFirst({
+        where: (table, { and: andOp, eq: eqOp }) => andOp(
+          eqOp(table.organizationId, input.organizationId),
+          eqOp(table.sessionId, input.sessionId),
+          eqOp(table.generation, input.generation),
+          eqOp(table.pendingDownloadId, input.pendingDownloadId),
+        ),
+      });
+      provenUnpromoted = !promoted;
+    } catch {
+      // Database uncertainty cannot prove the staged object is unreferenced.
+    }
+    if (provenUnpromoted) await storage.delete(objectKey).catch(() => {});
+    throw new Error("Thread not found.");
+  }
+  const existing = await reconcileHostedBrowserDownloadPromotion(input);
+  if (existing) return existing;
+  if (!await storage.exists(objectKey)) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+  const createdAt = new Date();
+  const mediaType = normalizeMediaType(input.declaredMediaType) ?? "application/octet-stream";
+  let canonicalBlob = await knowledgeDb.query.fileBlobs.findFirst({
+    where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(
+      eqOp(table.organizationId, input.organizationId),
+      eqOp(table.sha256, input.sha256),
+      isNullOp(table.deletedAt),
+    ),
+  });
+  if (canonicalBlob) {
+    await ensureFileBlobAvailable({
+      blobId: canonicalBlob.id,
+      objectKey: canonicalBlob.objectKey,
+      availabilityStatus: canonicalBlob.availabilityStatus,
+      deletedAt: canonicalBlob.deletedAt,
+    });
+  }
+  try {
+    await knowledgeDb.transaction(async (tx) => {
+      if (!canonicalBlob) {
+        [canonicalBlob] = await tx.insert(schema.fileBlobs).values({
+          id: blobId,
+          organizationId: input.organizationId,
+          objectKey,
+          sizeBytes: input.sizeBytes,
+          sha256: input.sha256,
+          availabilityStatus: "available",
+          availabilityCheckedAt: createdAt,
+          scanStatus: "unavailable",
+          createdAt,
+        }).returning();
+      }
+      if (!canonicalBlob) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+      await tx.insert(schema.kestrelFiles).values({
+        id: fileId,
+        organizationId: input.organizationId,
+        uploaderUserId: input.userId,
+        blobId: canonicalBlob.id,
+        filename: sanitizeFilename(input.filename),
+        declaredMediaType: mediaType,
+        detectedMediaType: mediaType,
+        sizeBytes: input.sizeBytes,
+        sha256: input.sha256,
+        lifecycleState: "ready",
+        createdAt,
+      });
+      await tx.insert(schema.fileScopeGrants).values({
+        id: `grant-${createHash("sha256").update(`browser-download\0${fileId}`).digest("hex")}`,
+        fileId,
+        organizationId: input.organizationId,
+        scopeType: "thread",
+        threadId: input.threadId,
+        projectId: null,
+        createdByUserId: input.userId,
+        createdAt,
+      });
+      await tx.insert(schema.fileRepresentations).values({
+        id: `representation-${createHash("sha256").update(`browser-download\0${fileId}`).digest("hex")}`,
+        blobId: canonicalBlob.id,
+        kind: "metadata_only",
+        status: "pending",
+        mediaType,
+        error: "Representation processing has not completed.",
+        createdAt,
+        updatedAt: createdAt,
+      }).onConflictDoNothing();
+      await tx.insert(schema.browserDownloadPromotions).values({
+        operationId: input.operationId,
+        organizationId: input.organizationId,
+        threadId: input.threadId,
+        sessionId: input.sessionId,
+        generation: input.generation,
+        pendingDownloadId: input.pendingDownloadId,
+        sha256: input.sha256,
+        effectRevision: hostedBrowserDownloadEffectRevision(input),
+        fileId,
+        createdAt,
+      });
+    });
+  } catch (error) {
+    const reconciled = await reconcileHostedBrowserDownloadPromotion(input);
+    if (reconciled) return reconciled;
+    const racedBlob = await knowledgeDb.query.fileBlobs.findFirst({
+      where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(
+        eqOp(table.organizationId, input.organizationId),
+        eqOp(table.sha256, input.sha256),
+        isNullOp(table.deletedAt),
+      ),
+    });
+    if (racedBlob && racedBlob.id !== blobId) {
+      return await commitHostedBrowserDownload(input);
+    }
+    await storage.delete(objectKey).catch(() => {});
+    throw error;
+  }
+  const committedBlob = canonicalBlob;
+  if (!committedBlob) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+  const committed = await requireThreadFileForUser({
+    fileId,
+    threadId: input.threadId,
+    organizationId: input.organizationId,
+    userId: input.userId,
+  });
+  if (committedBlob.objectKey !== objectKey) {
+    await storage.delete(objectKey).catch(() => {});
+  }
+  return committed;
+}
+
+export async function readHostedBrowserDownloadPromotion(input: {
+  operationId: string;
+  fileId: string;
+  organizationId: string;
+  threadId: string;
+  userId: string;
+  sessionId: string;
+  generation: number;
+}) {
+  const result = await knowledgeDb.query.browserDownloadPromotions.findFirst({
+    where: (table, { and: andOp, eq: eqOp }) => andOp(
+      eqOp(table.operationId, input.operationId),
+      eqOp(table.fileId, input.fileId),
+      eqOp(table.organizationId, input.organizationId),
+      eqOp(table.threadId, input.threadId),
+      eqOp(table.sessionId, input.sessionId),
+      eqOp(table.generation, input.generation),
+    ),
+  });
+  if (!result) return;
+  return await requireThreadFileForUser({
+    fileId: result.fileId,
+    threadId: input.threadId,
+    organizationId: input.organizationId,
+    userId: input.userId,
+  });
+}
+
+async function reconcileHostedBrowserDownloadPromotion(
+  input: HostedBrowserDownloadFileIdentity,
+) {
+  const result = await knowledgeDb.query.browserDownloadPromotions.findFirst({
+    where: (table, { and: andOp, eq: eqOp }) => andOp(
+      eqOp(table.organizationId, input.organizationId),
+      eqOp(table.sessionId, input.sessionId),
+      eqOp(table.generation, input.generation),
+      eqOp(table.pendingDownloadId, input.pendingDownloadId),
+    ),
+  });
+  if (!result) return;
+  if (
+    result.threadId !== input.threadId ||
+    result.sha256 !== input.sha256 ||
+    result.effectRevision !== hostedBrowserDownloadEffectRevision(input)
+  ) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+  return await requireThreadFileForUser({
+    fileId: result.fileId,
+    threadId: input.threadId,
+    organizationId: input.organizationId,
+    userId: input.userId,
+  });
+}
+
+function validateHostedBrowserDownloadIdentity(input: HostedBrowserDownloadFileIdentity): void {
+  for (const value of [
+    input.operationId,
+    input.organizationId,
+    input.threadId,
+    input.userId,
+    input.sessionId,
+    input.pendingDownloadId,
+    input.filename,
+    input.declaredMediaType,
+  ]) {
+    if (typeof value !== "string" || value.length === 0) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+  }
+  if (!Number.isSafeInteger(input.generation) || input.generation < 1) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+  validateFileSize(input.sizeBytes);
+  if (!/^[0-9a-f]{64}$/u.test(input.sha256)) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+}
+
+function hostedBrowserDownloadBlobId(input: HostedBrowserDownloadFileIdentity): string {
+  return `blob-browser-${createHash("sha256").update(JSON.stringify({
+    organizationId: input.organizationId,
+    sessionId: input.sessionId,
+    generation: input.generation,
+    pendingDownloadId: input.pendingDownloadId,
+    sha256: input.sha256,
+  })).digest("hex")}`;
+}
+
+function hostedBrowserDownloadFileId(input: HostedBrowserDownloadFileIdentity): string {
+  return `file-browser-${createHash("sha256").update(JSON.stringify({
+    organizationId: input.organizationId,
+    threadId: input.threadId,
+    sessionId: input.sessionId,
+    generation: input.generation,
+    pendingDownloadId: input.pendingDownloadId,
+    sha256: input.sha256,
+  })).digest("hex")}`;
+}
+
+function hostedBrowserDownloadEffectRevision(input: HostedBrowserDownloadFileIdentity): string {
+  return createHash("sha256").update(JSON.stringify({
+    organizationId: input.organizationId,
+    threadId: input.threadId,
+    userId: input.userId,
+    sessionId: input.sessionId,
+    generation: input.generation,
+    pendingDownloadId: input.pendingDownloadId,
+    filename: sanitizeFilename(input.filename),
+    declaredMediaType: normalizeMediaType(input.declaredMediaType) ?? "application/octet-stream",
+    sizeBytes: input.sizeBytes,
+    sha256: input.sha256,
+  })).digest("hex");
+}
+
 export async function createPublishedFileFromBuffer(input: {
   organizationId: string;
   uploaderUserId: string;

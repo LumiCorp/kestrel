@@ -54,6 +54,10 @@ export async function handleHostedBrowserControl(input: {
         return NextResponse.json(
           await service.prepareUpload(parseUploadPreparationRequest(body)),
         );
+      case "prepare-download":
+        return NextResponse.json(
+          await service.prepareDownload(parseDownloadPreparationRequest(body)),
+        );
       case "accept": {
         const record = requireRecord(body);
         const prepared = parsePreparedToolCallV1(record.prepared);
@@ -160,6 +164,22 @@ function parseUploadPreparationRequest(value: unknown) {
     Array.isArray(record.attachment)
   ) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
   return record as unknown as Parameters<HostedBrowserService["prepareUpload"]>[0];
+}
+
+function parseDownloadPreparationRequest(value: unknown) {
+  const record = requireRecord(value);
+  if (
+    record.version !== "browser_download_preparation_v1" ||
+    typeof record.runId !== "string" ||
+    typeof record.threadId !== "string" ||
+    !record.effectiveInput ||
+    typeof record.effectiveInput !== "object" ||
+    Array.isArray(record.effectiveInput) ||
+    !record.authority ||
+    typeof record.authority !== "object" ||
+    Array.isArray(record.authority)
+  ) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+  return record as unknown as Parameters<HostedBrowserService["prepareDownload"]>[0];
 }
 
 function readBrowserDetails(error: unknown): Record<string, unknown> | undefined {

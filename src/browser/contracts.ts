@@ -24,6 +24,8 @@ export const BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION =
   "browser_allowlist_adoption_receipt_v1" as const;
 export const BROWSER_UPLOAD_PREPARATION_VERSION =
   "browser_upload_preparation_v1" as const;
+export const BROWSER_DOWNLOAD_PREPARATION_VERSION =
+  "browser_download_preparation_v1" as const;
 
 export const BROWSER_TOOL_NAMES = [
   "browser.open",
@@ -110,6 +112,9 @@ export interface BrowserServicePort {
   prepareUpload?(
     input: BrowserUploadPreparationRequestV1,
   ): Promise<BrowserUploadPreparedEffectV1>;
+  prepareDownload?(
+    input: BrowserDownloadPreparationRequestV1,
+  ): Promise<BrowserDownloadPreparedEffectV1>;
   execute(
     prepared: PreparedToolCallV1,
     lifecycle: BrowserOperationLifecycleV1,
@@ -212,6 +217,92 @@ export function parseBrowserUploadPreparedEffectV1(
     documentRevision: requireString(record.documentRevision, "BrowserUploadPreparedEffectV1.documentRevision"),
     targetRef: requireString(record.targetRef, "BrowserUploadPreparedEffectV1.targetRef"),
     targetLabel: requireString(record.targetLabel, "BrowserUploadPreparedEffectV1.targetLabel"),
+  };
+}
+
+export interface BrowserDownloadPreparationRequestV1 {
+  version: typeof BROWSER_DOWNLOAD_PREPARATION_VERSION;
+  runId: string;
+  threadId: string;
+  effectiveInput: Record<string, unknown>;
+  authority: BrowserHostExecutionAuthorityV1;
+}
+
+export interface BrowserDownloadPreparedEffectV1 {
+  version: typeof BROWSER_DOWNLOAD_PREPARATION_VERSION;
+  threadId: string;
+  sessionId: string;
+  generation: number;
+  pendingDownloadId: string;
+  filename: string;
+  measuredBytes: number;
+  sha256: string;
+  declaredMediaType: string;
+  normalizedSourceOrigin: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export function parseBrowserDownloadPreparedEffectV1(
+  value: unknown,
+): BrowserDownloadPreparedEffectV1 {
+  const record = requireRecord(value, "BrowserDownloadPreparedEffectV1");
+  rejectUnknown(
+    record,
+    new Set([
+      "version",
+      "threadId",
+      "sessionId",
+      "generation",
+      "pendingDownloadId",
+      "filename",
+      "measuredBytes",
+      "sha256",
+      "declaredMediaType",
+      "normalizedSourceOrigin",
+      "createdAt",
+      "expiresAt",
+    ]),
+    "BrowserDownloadPreparedEffectV1",
+  );
+  if (record.version !== BROWSER_DOWNLOAD_PREPARATION_VERSION) {
+    throw new Error("BrowserDownloadPreparedEffectV1.version is invalid.");
+  }
+  const sha256 = requireString(
+    record.sha256,
+    "BrowserDownloadPreparedEffectV1.sha256",
+  );
+  if (!/^[0-9a-f]{64}$/u.test(sha256)) {
+    throw new Error("BrowserDownloadPreparedEffectV1.sha256 is invalid.");
+  }
+  const createdAt = requireString(
+    record.createdAt,
+    "BrowserDownloadPreparedEffectV1.createdAt",
+  );
+  const expiresAt = requireString(
+    record.expiresAt,
+    "BrowserDownloadPreparedEffectV1.expiresAt",
+  );
+  if (
+    Number.isNaN(Date.parse(createdAt)) ||
+    Number.isNaN(Date.parse(expiresAt)) ||
+    Date.parse(expiresAt) <= Date.parse(createdAt)
+  ) {
+    throw new Error("BrowserDownloadPreparedEffectV1 timestamps are invalid.");
+  }
+  return {
+    version: BROWSER_DOWNLOAD_PREPARATION_VERSION,
+    threadId: requireString(record.threadId, "BrowserDownloadPreparedEffectV1.threadId"),
+    sessionId: requireString(record.sessionId, "BrowserDownloadPreparedEffectV1.sessionId"),
+    generation: requirePositiveSafeInteger(record.generation, "BrowserDownloadPreparedEffectV1.generation"),
+    pendingDownloadId: requireString(record.pendingDownloadId, "BrowserDownloadPreparedEffectV1.pendingDownloadId"),
+    filename: requireString(record.filename, "BrowserDownloadPreparedEffectV1.filename"),
+    measuredBytes: requireNonNegativeSafeInteger(record.measuredBytes, "BrowserDownloadPreparedEffectV1.measuredBytes"),
+    sha256,
+    declaredMediaType: requireString(record.declaredMediaType, "BrowserDownloadPreparedEffectV1.declaredMediaType"),
+    normalizedSourceOrigin: requireString(record.normalizedSourceOrigin, "BrowserDownloadPreparedEffectV1.normalizedSourceOrigin"),
+    createdAt,
+    expiresAt,
   };
 }
 

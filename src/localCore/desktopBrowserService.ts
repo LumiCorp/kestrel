@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { constants, realpathSync } from "node:fs";
 import { createConnection } from "node:net";
 import {
   chmod,
@@ -18,6 +18,7 @@ import WebSocket from "ws";
 
 import {
   BROWSER_AUTHORIZED_ARTIFACT_VERSION,
+  BROWSER_DOWNLOAD_PREPARATION_VERSION,
   BROWSER_POLICY_RESOLUTION_VERSION,
   BROWSER_SERVICE_PORT_VERSION,
   BROWSER_TOOL_RESULT_VERSION,
@@ -25,11 +26,14 @@ import {
   browserFailure,
   isBrowserToolName,
   normalizeBrowserHostFailure,
+  parseBrowserDownloadPreparedEffectV1,
   parseBrowserSessionV1,
   parseBrowserUploadPreparedEffectV1,
   type BrowserAllowlistAdoptionReceiptV1,
   type BrowserArtifactAuthorizationRequestV1,
   type BrowserAuthorizedArtifactV1,
+  type BrowserDownloadPreparationRequestV1,
+  type BrowserDownloadPreparedEffectV1,
   type BrowserHostExecutionAuthorityV1,
   type BrowserOperationLifecycleV1,
   type BrowserPolicyResolutionV1,
@@ -55,7 +59,9 @@ import {
 } from "../browser/domainAuthority.js";
 import type { PreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
 import {
+  DESKTOP_MAX_ATTACHMENTS_PER_MESSAGE,
   DESKTOP_MAX_ATTACHMENT_BYTES,
+  DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES,
   DesktopAttachmentStore,
   type DesktopAttachmentMetadata,
 } from "./desktopAttachments.js";
@@ -87,6 +93,9 @@ const AGENT_BROWSER_INTERNAL_SHUTDOWN_ACTION =
   "__agent_browser_internal_shutdown";
 const AGENT_BROWSER_SHUTDOWN_TIMEOUT_MS = 5_000;
 const MAX_BROWSER_TABS = 100;
+const BROWSER_DOWNLOAD_RETENTION_MS = 30 * 60 * 1000;
+const BROWSER_DOWNLOAD_GUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const DESKTOP_BROWSER_SESSION_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const DESKTOP_BROWSER_INPUT_LEASE_MS = 30_000;
@@ -135,8 +144,15 @@ export interface DesktopBrowserAcceptedOperation {
 
 export interface DesktopBrowserInterceptedDownload {
   readonly downloadId: string;
+  readonly browserGuid: string;
   readonly filename: string;
-  readonly sourceOrigin: string;
+  readonly declaredMediaType: string;
+  readonly normalizedSourceOrigin: string;
+  readonly measuredBytes: number;
+  readonly sha256: string;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  readonly ownedPath: string;
 }
 
 export interface DesktopBrowserUploadStreamHook {
@@ -312,7 +328,7 @@ export interface DesktopBrowserEngineInvocation {
   launchProcessGroupId?: number | undefined;
   daemonPid?: number | undefined;
   onDownloadIntercepted?:
-    | ((download: DesktopBrowserInterceptedDownload) => void)
+    | ((download: DesktopBrowserInterceptedDownload) => void | Promise<void>)
     | undefined;
   stopDownloadInterception?: (() => void) | undefined;
   synchronizeDownloads?: (() => Promise<void>) | undefined;
@@ -388,6 +404,7 @@ interface ActiveDesktopBrowserRuntime {
   continuations: Map<string, BrowserContinuation>;
   interceptedDownloads: DesktopBrowserInterceptedDownload[];
   interceptedDownloadCount: number;
+  downloadExpiryTimers: Map<string, ReturnType<typeof setTimeout>>;
   authorityResolutionDepth: number;
   takeoverRequested: boolean;
   viewerConnections: Map<string, DesktopBrowserViewerConnection>;
@@ -1218,6 +1235,81 @@ export class DesktopBrowserService implements BrowserServicePort {
     return await operation;
   }
 
+  async prepareDownload(
+    input: BrowserDownloadPreparationRequestV1,
+  ): Promise<BrowserDownloadPreparedEffectV1> {
+    await this.#requireInitialized();
+    if (input.version !== BROWSER_DOWNLOAD_PREPARATION_VERSION) {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "Browser download preparation is invalid.",
+      );
+    }
+    const sessionId = requireText(input.effectiveInput.sessionId, "sessionId");
+    const generation = requireGeneration(input.effectiveInput.generation);
+    const pendingDownloadId = requireText(
+      input.effectiveInput.pendingDownloadId,
+      "pendingDownloadId",
+    );
+    const runtime = this.#requireRuntime(sessionId, input.threadId);
+    if (generation !== runtime.session.generation) {
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "Browser download preparation authority is stale.",
+      );
+    }
+    await this.#assertUsable(runtime, false);
+    const download = await this.#requirePendingDownload(
+      runtime,
+      pendingDownloadId,
+    );
+    return this.#downloadPreparedEffect(runtime, download);
+  }
+
+  async openPreparedDownload(
+    effectValue: BrowserDownloadPreparedEffectV1,
+  ): Promise<NodeJS.ReadableStream> {
+    await this.#requireInitialized();
+    const effect = parseBrowserDownloadPreparedEffectV1(effectValue);
+    const runtime = this.#requireRuntime(effect.sessionId, effect.threadId);
+    if (runtime.session.generation !== effect.generation) {
+      throw browserFailure("BROWSER_SESSION_LOST", "Browser download authority is stale.");
+    }
+    const download = await this.#requirePendingDownload(
+      runtime,
+      effect.pendingDownloadId,
+    );
+    if (hashCanonicalDownload(download) !== hashCanonicalDownload(effect)) {
+      throw this.#downloadUnavailable();
+    }
+    const handle = await openExactOwnedBrowserDownload(
+      download.ownedPath,
+      effect.measuredBytes,
+    );
+    if ((await handle.stat()).size !== effect.measuredBytes) {
+      await handle.close();
+      throw this.#downloadUnavailable();
+    }
+    return handle.createReadStream({ autoClose: true });
+  }
+
+  async removePreparedDownload(
+    effectValue: BrowserDownloadPreparedEffectV1,
+  ): Promise<void> {
+    await this.#requireInitialized();
+    const effect = parseBrowserDownloadPreparedEffectV1(effectValue);
+    const runtime = this.#requireRuntime(effect.sessionId, effect.threadId);
+    if (runtime.session.generation !== effect.generation) return;
+    const download = await this.#requirePendingDownload(
+      runtime,
+      effect.pendingDownloadId,
+    );
+    if (hashCanonicalDownload(download) !== hashCanonicalDownload(effect)) {
+      throw this.#downloadUnavailable();
+    }
+    await this.#removePendingDownload(runtime, effect.pendingDownloadId);
+  }
+
   async execute(
     prepared: PreparedToolCallV1,
     lifecycle: BrowserOperationLifecycleV1,
@@ -1811,6 +1903,7 @@ export class DesktopBrowserService implements BrowserServicePort {
         continuations: new Map(),
         interceptedDownloads: [],
         interceptedDownloadCount: 0,
+        downloadExpiryTimers: new Map(),
         authorityResolutionDepth: 0,
         takeoverRequested: false,
         viewerConnections: new Map(),
@@ -1821,25 +1914,10 @@ export class DesktopBrowserService implements BrowserServicePort {
       const launchedEngine = {
         ...engine,
         destination,
-        onDownloadIntercepted: (
+        onDownloadIntercepted: async (
           download: DesktopBrowserInterceptedDownload,
         ) => {
-          runtime!.interceptedDownloadCount += 1;
-          runtime!.interceptedDownloads.push(download);
-          if (runtime!.interceptedDownloads.length > 32) {
-            runtime!.interceptedDownloads.shift();
-          }
-          if (
-            runtime!.session.state === "ready" &&
-            runtime!.terminationRequested === undefined &&
-            this.#active.get(runtime!.session.sessionId) === runtime
-          ) {
-            void this.#requestTermination(
-              runtime!,
-              "failed",
-              "BROWSER_DOWNLOAD_UNAVAILABLE",
-            ).catch(() => undefined);
-          }
+          await this.#admitDownload(runtime!, download);
         },
       };
       activeRuntime.engine = launchedEngine;
@@ -1984,10 +2062,7 @@ export class DesktopBrowserService implements BrowserServicePort {
       return output;
     }
     if (operation === "browser.download") {
-      throw browserFailure(
-        "BROWSER_DOWNLOAD_UNAVAILABLE",
-        "Browser download promotion is unavailable; downloads are cancelled before storage.",
-      );
+      return await this.#promoteDownload(runtime, prepared, lifecycle);
     }
     if (operation === "browser.request_takeover") {
       await this.#refreshAuthorityBeforeDispatch(
@@ -2277,6 +2352,103 @@ export class DesktopBrowserService implements BrowserServicePort {
     }
   }
 
+  async #promoteDownload(
+    runtime: ActiveDesktopBrowserRuntime,
+    prepared: PreparedToolCallV1,
+    lifecycle: BrowserOperationLifecycleV1,
+  ): Promise<unknown> {
+    const effect = requirePreparedBrowserDownloadEffect(prepared);
+    if (
+      effect.threadId !== runtime.session.threadId ||
+      effect.sessionId !== runtime.session.sessionId ||
+      effect.generation !== runtime.session.generation ||
+      effect.pendingDownloadId !== prepared.effectiveInput.pendingDownloadId
+    ) {
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The approved Browser download authority is stale.",
+        { browserOutcomeKnown: true, effectDispatched: false },
+      );
+    }
+    const download = await this.#requirePendingDownload(
+      runtime,
+      effect.pendingDownloadId,
+    );
+    if (hashCanonicalDownload(download) !== hashCanonicalDownload(effect)) {
+      throw browserFailure(
+        "BROWSER_DOWNLOAD_UNAVAILABLE",
+        "The quarantined Browser download changed after approval.",
+        { browserOutcomeKnown: true, effectDispatched: false },
+      );
+    }
+    const measured = await measureOwnedBrowserDownload(
+      download.ownedPath,
+      DESKTOP_MAX_ATTACHMENT_BYTES,
+    );
+    if (
+      measured.measuredBytes !== effect.measuredBytes ||
+      measured.sha256 !== effect.sha256
+    ) {
+      throw browserFailure(
+        "BROWSER_DOWNLOAD_UNAVAILABLE",
+        "The quarantined Browser download failed integrity validation.",
+        { browserOutcomeKnown: true, effectDispatched: false },
+      );
+    }
+    lifecycle.signal?.throwIfAborted();
+    await lifecycle.acknowledgeDispatch();
+    const fileId = `file-browser-${digest({
+      threadId: effect.threadId,
+      sessionId: effect.sessionId,
+      generation: effect.generation,
+      pendingDownloadId: effect.pendingDownloadId,
+      operationId: prepared.callId,
+    })}`;
+    const imported = await (
+      this.#options.attachmentStore ??
+      new DesktopAttachmentStore(this.#options.homePath)
+    ).importPath({
+      threadId: effect.threadId,
+      filename: effect.filename,
+      sourcePath: download.ownedPath,
+      mimeType: effect.declaredMediaType,
+      sha256: effect.sha256,
+      trustedFileId: fileId,
+    });
+    const authorization: BrowserAuthorizedArtifactV1 = {
+      version: BROWSER_AUTHORIZED_ARTIFACT_VERSION,
+      id: imported.fileId,
+      title: effect.filename,
+      kind: "browser-download",
+      mediaType: imported.mimeType,
+      bytes: imported.sizeBytes,
+      sha256: imported.sha256,
+    };
+    this.#artifacts.set(imported.fileId, {
+      runId: prepared.runId,
+      threadId: effect.threadId,
+      callId: prepared.callId,
+      toolName: "browser.download",
+      sessionId: effect.sessionId,
+      authorization,
+    });
+    await this.#persist();
+    const output = browserOutput("browser.download", {
+      sessionId: effect.sessionId,
+      generation: effect.generation,
+      artifact: authorization,
+    });
+    await lifecycle.persistCompletedResult(output);
+    // The durable completed result is the promotion commit boundary. A failed
+    // quarantine cleanup must not turn the already committed file into an
+    // unknown outcome; the retained exact item remains bounded by its timer and
+    // Session teardown, and a same-call replay imports the same trusted file ID.
+    await this.#removePendingDownload(runtime, effect.pendingDownloadId).catch(
+      () => undefined,
+    );
+    return output;
+  }
+
   async #runOperation(
     runtime: ActiveDesktopBrowserRuntime,
     prepared: PreparedToolCallV1,
@@ -2410,7 +2582,7 @@ export class DesktopBrowserService implements BrowserServicePort {
         kind === "url" ? ["open", requireText(input.url, "url")] : [kind];
       const priorDownloads = runtime.interceptedDownloadCount;
       await this.#command(runtime, acceptedOperation, command);
-      this.#throwIfDownloadIntercepted(runtime, priorDownloads);
+      const pendingDownload = this.#pendingDownloadSince(runtime, priorDownloads);
       runtime.snapshots.clear();
       runtime.continuations.clear();
       const page = await this.#readPageIdentity(runtime, acceptedOperation);
@@ -2426,6 +2598,9 @@ export class DesktopBrowserService implements BrowserServicePort {
         generation: runtime.session.generation,
         outcome: "completed",
         normalizedOrigin: page.origin,
+        ...(pendingDownload
+          ? { pendingDownload: publicPendingBrowserDownload(pendingDownload) }
+          : {}),
       });
     }
     if (operation === "browser.interact") {
@@ -2446,7 +2621,7 @@ export class DesktopBrowserService implements BrowserServicePort {
       const command = mapInteraction(kind, ref, action);
       const priorDownloads = runtime.interceptedDownloadCount;
       await this.#command(runtime, acceptedOperation, command);
-      this.#throwIfDownloadIntercepted(runtime, priorDownloads);
+      const pendingDownload = this.#pendingDownloadSince(runtime, priorDownloads);
       await this.#refreshActivePageAuthority(
         runtime,
         prepared,
@@ -2461,6 +2636,9 @@ export class DesktopBrowserService implements BrowserServicePort {
         generation: runtime.session.generation,
         outcome: "completed",
         documentRevision: `changed-${this.#id()}`,
+        ...(pendingDownload
+          ? { pendingDownload: publicPendingBrowserDownload(pendingDownload) }
+          : {}),
       });
     }
     if (operation === "browser.tabs") {
@@ -3184,9 +3362,9 @@ export class DesktopBrowserService implements BrowserServicePort {
     } catch (error) {
       synchronizationError = error;
     }
-    // An observed, denied download is the exact known outcome even when the
-    // engine command or the post-command protocol fence also failed.
-    this.#throwIfDownloadIntercepted(runtime, priorDownloads);
+    if (runtime.interceptedDownloadCount > priorDownloads) {
+      return result ?? { stdout: "", stderr: "" };
+    }
     if (synchronizationError !== undefined) {
       void this.#requestTermination(
         runtime,
@@ -3376,10 +3554,127 @@ export class DesktopBrowserService implements BrowserServicePort {
     throw this.#downloadUnavailable();
   }
 
+  #pendingDownloadSince(
+    runtime: ActiveDesktopBrowserRuntime,
+    priorCount: number,
+  ): DesktopBrowserInterceptedDownload | undefined {
+    if (runtime.interceptedDownloadCount <= priorCount) return;
+    return runtime.interceptedDownloads.at(-1);
+  }
+
+  async #admitDownload(
+    runtime: ActiveDesktopBrowserRuntime,
+    download: DesktopBrowserInterceptedDownload,
+  ): Promise<void> {
+    if (
+      this.#active.get(runtime.session.sessionId) !== runtime ||
+      runtime.terminationRequested !== undefined ||
+      TERMINAL_STATES.has(runtime.session.state)
+    ) {
+      throw this.#downloadUnavailable();
+    }
+    await this.#pruneExpiredDownloads(runtime);
+    if (
+      runtime.interceptedDownloads.some(
+        (candidate) => candidate.downloadId === download.downloadId,
+      ) ||
+      runtime.interceptedDownloads.length >= DESKTOP_MAX_ATTACHMENTS_PER_MESSAGE ||
+      runtime.interceptedDownloads.reduce(
+        (total, candidate) => total + candidate.measuredBytes,
+        0,
+      ) + download.measuredBytes > DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES
+    ) {
+      throw browserFailure(
+        "BROWSER_ARTIFACT_TOO_LARGE",
+        "The Browser download quarantine limit was reached.",
+        { browserOutcomeKnown: true, downloadIntercepted: true },
+      );
+    }
+    runtime.interceptedDownloadCount += 1;
+    runtime.interceptedDownloads.push(download);
+    const delay = Math.max(1, Date.parse(download.expiresAt) - this.#now().getTime());
+    const timer = setTimeout(() => {
+      void this.#serialize(async () => {
+        await this.#removePendingDownload(runtime, download.downloadId);
+      }).catch(() => undefined);
+    }, delay);
+    timer.unref?.();
+    runtime.downloadExpiryTimers.set(download.downloadId, timer);
+  }
+
+  async #pruneExpiredDownloads(runtime: ActiveDesktopBrowserRuntime): Promise<void> {
+    const now = this.#now().getTime();
+    for (const download of [...runtime.interceptedDownloads]) {
+      if (Date.parse(download.expiresAt) <= now) {
+        await this.#removePendingDownload(runtime, download.downloadId);
+      }
+    }
+  }
+
+  async #requirePendingDownload(
+    runtime: ActiveDesktopBrowserRuntime,
+    pendingDownloadId: string,
+  ): Promise<DesktopBrowserInterceptedDownload> {
+    await this.#pruneExpiredDownloads(runtime);
+    const matches = runtime.interceptedDownloads.filter(
+      (download) => download.downloadId === pendingDownloadId,
+    );
+    if (matches.length !== 1) throw this.#downloadUnavailable();
+    return matches[0]!;
+  }
+
+  #downloadPreparedEffect(
+    runtime: ActiveDesktopBrowserRuntime,
+    download: DesktopBrowserInterceptedDownload,
+  ): BrowserDownloadPreparedEffectV1 {
+    return {
+      version: BROWSER_DOWNLOAD_PREPARATION_VERSION,
+      threadId: runtime.session.threadId,
+      sessionId: runtime.session.sessionId,
+      generation: runtime.session.generation,
+      pendingDownloadId: download.downloadId,
+      filename: download.filename,
+      measuredBytes: download.measuredBytes,
+      sha256: download.sha256,
+      declaredMediaType: download.declaredMediaType,
+      normalizedSourceOrigin: download.normalizedSourceOrigin,
+      createdAt: download.createdAt,
+      expiresAt: download.expiresAt,
+    };
+  }
+
+  async #removePendingDownload(
+    runtime: ActiveDesktopBrowserRuntime,
+    pendingDownloadId: string,
+  ): Promise<void> {
+    const download = runtime.interceptedDownloads.find(
+      (candidate) => candidate.downloadId === pendingDownloadId,
+    );
+    if (!download) return;
+    const timer = runtime.downloadExpiryTimers.get(pendingDownloadId);
+    if (timer) clearTimeout(timer);
+    runtime.downloadExpiryTimers.delete(pendingDownloadId);
+    const quarantineRoot = path.resolve(runtime.engine.blockedDownloadPath);
+    const ownedPath = path.resolve(download.ownedPath);
+    if (
+      path.dirname(ownedPath) !== quarantineRoot ||
+      path.basename(ownedPath) !== download.browserGuid
+    ) {
+      throw browserFailure(
+        "BROWSER_ENGINE_FAILURE",
+        "Browser download quarantine ownership changed.",
+      );
+    }
+    await rm(ownedPath, { force: true });
+    runtime.interceptedDownloads = runtime.interceptedDownloads.filter(
+      (candidate) => candidate !== download,
+    );
+  }
+
   #downloadUnavailable(): ReturnType<typeof browserFailure> {
     return browserFailure(
       "BROWSER_DOWNLOAD_UNAVAILABLE",
-      "Browser download promotion is unavailable; the download was cancelled before storage.",
+      "The exact quarantined Browser download is unavailable.",
       { browserOutcomeKnown: true, downloadIntercepted: true },
     );
   }
@@ -4155,8 +4450,8 @@ export class DesktopBrowserService implements BrowserServicePort {
     await mkdir(profilePath, { recursive: true, mode: 0o700 });
     await mkdir(configPath, { recursive: true, mode: 0o700 });
     await prepareOwnedSocketDirectory(socketPath);
-    await mkdir(blockedDownloadPath, { recursive: true, mode: 0o000 });
-    await chmod(blockedDownloadPath, 0o000);
+    await mkdir(blockedDownloadPath, { recursive: true, mode: 0o700 });
+    await chmod(blockedDownloadPath, 0o700);
     return {
       sessionId,
       runtimePath,
@@ -4257,6 +4552,9 @@ export class DesktopBrowserService implements BrowserServicePort {
     runtime.engine.stopDownloadInterception?.();
     runtime.engine.stopDownloadInterception = undefined;
     runtime.engine.synchronizeDownloads = undefined;
+    for (const timer of runtime.downloadExpiryTimers.values()) clearTimeout(timer);
+    runtime.downloadExpiryTimers.clear();
+    runtime.interceptedDownloads = [];
     const ownedPaths = desktopBrowserOwnedPaths(
       this.#runtimeRoot,
       runtime.session.sessionId,
@@ -4649,9 +4947,10 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
         );
       });
     }
-    const interception = await this.#openStep("download_denial", () =>
+    const interception = await this.#openStep("download_quarantine", () =>
       installAgentBrowserDownloadInterception(
         extractScalar(cdp.stdout, "cdpUrl"),
+        input.blockedDownloadPath,
         input.onDownloadIntercepted ?? (() => undefined),
       ),
     );
@@ -5295,12 +5594,20 @@ export async function denyAgentBrowserDownloads(
 
 export async function installAgentBrowserDownloadInterception(
   cdpUrl: string,
-  onDownloadIntercepted: (download: DesktopBrowserInterceptedDownload) => void,
+  quarantinePath: string,
+  onDownloadIntercepted: (
+    download: DesktopBrowserInterceptedDownload,
+  ) => void | Promise<void>,
 ): Promise<{
   stop: () => void;
   synchronize: () => Promise<void>;
 }> {
   const parsed = parseLocalBrowserCdpUrl(cdpUrl);
+  const quarantineRoot = requireAbsolutePath(
+    quarantinePath,
+    "Browser download quarantine path",
+  );
+  await mkdir(quarantineRoot, { recursive: true, mode: 0o700 });
   return await new Promise<{
     stop: () => void;
     synchronize: () => Promise<void>;
@@ -5310,6 +5617,13 @@ export async function installAgentBrowserDownloadInterception(
     let nextCommandId = commandId;
     let settled = false;
     let stopped = false;
+    let eventTail = Promise.resolve();
+    let eventFailure: Error | undefined;
+    const pendingDownloads = new Map<string, {
+      filename: string;
+      normalizedSourceOrigin: string;
+      createdAt: string;
+    }>();
     const barriers = new Map<
       number,
       {
@@ -5364,10 +5678,20 @@ export async function installAgentBrowserDownloadInterception(
           JSON.stringify({
             id,
             method: "Browser.setDownloadBehavior",
-            params: { behavior: "deny", eventsEnabled: true },
+            params: {
+              behavior: "allowAndName",
+              downloadPath: quarantineRoot,
+              eventsEnabled: true,
+            },
           }),
         );
       });
+      await eventTail;
+      if (eventFailure) {
+        const failure = eventFailure;
+        eventFailure = undefined;
+        throw failure;
+      }
     };
     const finish = (error?: Error) => {
       if (settled) return;
@@ -5385,7 +5709,11 @@ export async function installAgentBrowserDownloadInterception(
         JSON.stringify({
           id: commandId,
           method: "Browser.setDownloadBehavior",
-          params: { behavior: "deny", eventsEnabled: true },
+          params: {
+            behavior: "allowAndName",
+            downloadPath: quarantineRoot,
+            eventsEnabled: true,
+          },
         }),
       );
     });
@@ -5427,24 +5755,85 @@ export async function installAgentBrowserDownloadInterception(
         }
         return;
       }
-      if (message.method !== "Browser.downloadWillBegin") return;
-      const params = requireOptionalRecord(message.params);
-      if (params === undefined) return;
-      const downloadId =
-        typeof params.guid === "string" ? params.guid : "download";
-      const filename =
-        typeof params.suggestedFilename === "string"
-          ? path.basename(params.suggestedFilename).slice(0, 255)
-          : "download";
-      let sourceOrigin = "null";
-      if (typeof params.url === "string") {
-        try {
-          sourceOrigin = new URL(params.url).origin;
-        } catch {
-          // Keep an opaque origin rather than exposing an invalid source URL.
+      try {
+        const params = requireOptionalRecord(message.params);
+        if (params === undefined) return;
+        if (message.method === "Browser.downloadWillBegin") {
+          const guid = requireBrowserDownloadGuid(params.guid);
+          pendingDownloads.set(guid, {
+            filename: sanitizeBrowserDownloadFilename(params.suggestedFilename),
+            normalizedSourceOrigin: normalizeBrowserDownloadSourceOrigin(params.url),
+            createdAt: new Date().toISOString(),
+          });
+          return;
         }
+        if (message.method !== "Browser.downloadProgress") return;
+        const guid = requireBrowserDownloadGuid(params.guid);
+        const pending = pendingDownloads.get(guid);
+        if (!pending) return;
+        const state = params.state;
+        const receivedBytes = params.receivedBytes;
+        eventTail = eventTail.then(async () => {
+        const ownedPath = path.join(quarantineRoot, guid);
+        if (
+          typeof receivedBytes === "number" &&
+          receivedBytes > DESKTOP_MAX_ATTACHMENT_BYTES
+        ) {
+          socket.send(JSON.stringify({
+            id: ++nextCommandId,
+            method: "Browser.cancelDownload",
+            params: { guid },
+          }));
+          pendingDownloads.delete(guid);
+          await rm(ownedPath, { force: true });
+          throw browserFailure(
+            "BROWSER_ARTIFACT_TOO_LARGE",
+            "The Browser download exceeded the quarantine file limit.",
+            { browserOutcomeKnown: true, downloadIntercepted: true },
+          );
+        }
+        if (state === "canceled") {
+          pendingDownloads.delete(guid);
+          await rm(ownedPath, { force: true });
+          return;
+        }
+        if (state !== "completed") return;
+        pendingDownloads.delete(guid);
+        const measured = await measureOwnedBrowserDownload(
+          ownedPath,
+          DESKTOP_MAX_ATTACHMENT_BYTES,
+        );
+        const createdAt = pending.createdAt;
+        const download: DesktopBrowserInterceptedDownload = {
+          downloadId: `download-${digest({ guid })}`,
+          browserGuid: guid,
+          filename: pending.filename,
+          declaredMediaType: "application/octet-stream",
+          normalizedSourceOrigin: pending.normalizedSourceOrigin,
+          measuredBytes: measured.measuredBytes,
+          sha256: measured.sha256,
+          createdAt,
+          expiresAt: new Date(
+            Date.parse(createdAt) + BROWSER_DOWNLOAD_RETENTION_MS,
+          ).toISOString(),
+          ownedPath,
+        };
+        try {
+          await onDownloadIntercepted(download);
+        } catch (error) {
+          await rm(ownedPath, { force: true }).catch(() => undefined);
+          throw error;
+        }
+        }).catch((error) => {
+          eventFailure ??= error instanceof Error
+            ? error
+            : new Error("BROWSER_ENGINE_FAILURE");
+        });
+      } catch (error) {
+        eventFailure ??= error instanceof Error
+          ? error
+          : new Error("BROWSER_ENGINE_FAILURE");
       }
-      onDownloadIntercepted({ downloadId, filename, sourceOrigin });
     });
     const failConnection = () => {
       const error = new Error(
@@ -6712,7 +7101,7 @@ function parsePersistedArtifact(value: unknown): PendingArtifact {
   const sha256 = requireText(authorization.sha256, "artifact.sha256");
   if (
     authorization.version !== BROWSER_AUTHORIZED_ARTIFACT_VERSION ||
-    kind !== "browser-screenshot" ||
+    (kind !== "browser-screenshot" && kind !== "browser-download") ||
     !Number.isSafeInteger(bytes) ||
     (bytes as number) < 0 ||
     !/^[0-9a-f]{64}$/u.test(sha256)
@@ -6760,6 +7149,161 @@ function requirePreparedBrowserUploadEffect(
     );
   }
   return parseBrowserUploadPreparedEffectV1(adapters[0]!.metadata);
+}
+
+function requirePreparedBrowserDownloadEffect(
+  prepared: PreparedToolCallV1,
+): BrowserDownloadPreparedEffectV1 {
+  const adapters = prepared.inputAdapters.filter(
+    (adapter) => adapter.adapterId === "kestrel.browser-download-effect:v1",
+  );
+  if (adapters.length !== 1) {
+    throw browserFailure(
+      "BROWSER_SERVICE_UNAVAILABLE",
+      "The Browser download is missing exact prepared-effect authority.",
+      { browserOutcomeKnown: true, effectDispatched: false },
+    );
+  }
+  return parseBrowserDownloadPreparedEffectV1(adapters[0]!.metadata);
+}
+
+function canonicalBrowserDownloadMetadata(input: {
+  pendingDownloadId?: string;
+  downloadId?: string;
+  filename: string;
+  measuredBytes: number;
+  sha256: string;
+  declaredMediaType: string;
+  normalizedSourceOrigin: string;
+  createdAt: string;
+  expiresAt: string;
+}): Record<string, unknown> {
+  return {
+    pendingDownloadId: input.pendingDownloadId ?? input.downloadId,
+    filename: input.filename,
+    measuredBytes: input.measuredBytes,
+    sha256: input.sha256,
+    declaredMediaType: input.declaredMediaType,
+    normalizedSourceOrigin: input.normalizedSourceOrigin,
+    createdAt: input.createdAt,
+    expiresAt: input.expiresAt,
+  };
+}
+
+function hashCanonicalDownload(
+  input: DesktopBrowserInterceptedDownload | BrowserDownloadPreparedEffectV1,
+): string {
+  return digest(canonicalBrowserDownloadMetadata(input));
+}
+
+function publicPendingBrowserDownload(
+  download: DesktopBrowserInterceptedDownload,
+): Record<string, unknown> {
+  return {
+    downloadId: download.downloadId,
+    filename: download.filename,
+    measuredBytes: download.measuredBytes,
+    declaredMediaType: download.declaredMediaType,
+    normalizedSourceOrigin: download.normalizedSourceOrigin,
+    sha256: download.sha256,
+    createdAt: download.createdAt,
+    expiresAt: download.expiresAt,
+  };
+}
+
+async function measureOwnedBrowserDownload(
+  ownedPath: string,
+  maximumBytes: number,
+): Promise<{ measuredBytes: number; sha256: string }> {
+  const handle = await openExactOwnedBrowserDownload(ownedPath, maximumBytes);
+  try {
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let measuredBytes = 0;
+    while (true) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      measuredBytes += bytesRead;
+      if (measuredBytes > maximumBytes) {
+        throw browserFailure(
+          "BROWSER_ARTIFACT_TOO_LARGE",
+          "The Browser download exceeded the quarantine file limit.",
+          { browserOutcomeKnown: true, downloadIntercepted: true },
+        );
+      }
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+    return { measuredBytes, sha256: hash.digest("hex") };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function openExactOwnedBrowserDownload(
+  ownedPath: string,
+  maximumBytes: number,
+) {
+  const before = await lstat(ownedPath);
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1) {
+    throw browserFailure(
+      "BROWSER_DOWNLOAD_UNAVAILABLE",
+      "The Browser download quarantine entry is not an exact owned file.",
+      { browserOutcomeKnown: true, effectDispatched: false },
+    );
+  }
+  const handle = await open(ownedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const opened = await handle.stat();
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino
+    ) {
+      throw browserFailure(
+        "BROWSER_DOWNLOAD_UNAVAILABLE",
+        "The Browser download quarantine identity changed.",
+        { browserOutcomeKnown: true, effectDispatched: false },
+      );
+    }
+    if (opened.size > maximumBytes || opened.size < 0) {
+      throw browserFailure(
+        "BROWSER_ARTIFACT_TOO_LARGE",
+        "The Browser download exceeded the quarantine file limit.",
+        { browserOutcomeKnown: true, downloadIntercepted: true },
+      );
+    }
+    return handle;
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+function requireBrowserDownloadGuid(value: unknown): string {
+  const guid = requireText(value, "Browser download GUID");
+  if (!BROWSER_DOWNLOAD_GUID_PATTERN.test(guid)) {
+    throw new Error("BROWSER_ENGINE_FAILURE: Browser download GUID is invalid.");
+  }
+  return guid;
+}
+
+function sanitizeBrowserDownloadFilename(value: unknown): string {
+  if (typeof value !== "string") return "download";
+  return sanitizeBrowserUploadResultFilename(value) || "download";
+}
+
+function normalizeBrowserDownloadSourceOrigin(value: unknown): string {
+  if (typeof value !== "string") return "unknown";
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "unknown";
+    }
+    return parsed.origin;
+  } catch {
+    return "unknown";
+  }
 }
 
 function attachmentMatchesAuthorization(
