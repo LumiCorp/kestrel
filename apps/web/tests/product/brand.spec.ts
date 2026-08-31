@@ -76,8 +76,12 @@ test(
     await expectLockupTone(home, "black");
 
     await page.getByRole("radio", { name: "Light" }).check();
-    await page.getByText("Choose light palette", { exact: true }).click();
-    await page.getByText("Choose dark palette", { exact: true }).click();
+    await page
+      .locator("summary:visible", { hasText: "Choose light palette" })
+      .click();
+    await page
+      .locator("summary:visible", { hasText: "Choose dark palette" })
+      .click();
     for (const palette of PALETTES) {
       await page
         .getByRole("radiogroup", { name: "Light palette" })

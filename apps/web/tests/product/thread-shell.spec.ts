@@ -126,7 +126,7 @@ test("Thread shell keeps document fixed while the transcript scrolls", async ({
   expect(metrics.transcript.overflowY).toBe("auto");
   expect(metrics.windowScrollY).toBe(0);
 
-  const transcript = page.locator('[data-slot="thread-transcript"]');
+  const transcript = page.locator('[data-slot="thread-transcript"]:visible');
   await transcript.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });

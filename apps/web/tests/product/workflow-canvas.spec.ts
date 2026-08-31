@@ -66,6 +66,8 @@ test.beforeEach(async ({ page, request }) => {
                 enabled: true,
                 resourceReady: true,
                 runtimeName: "github.issue.create",
+                workflowUse: "action",
+                descriptorContractRevision: null,
                 accessMode: "write",
                 inputSchema: {
                   type: "object",
@@ -82,6 +84,8 @@ test.beforeEach(async ({ page, request }) => {
                 enabled: false,
                 resourceReady: true,
                 runtimeName: "github.repository.delete",
+                workflowUse: "action",
+                descriptorContractRevision: null,
                 accessMode: "write",
                 inputSchema: { type: "object", properties: {} },
               },
@@ -130,16 +134,28 @@ test("generated workflow graphs render without cross-component updates", async (
               config: { instructions: "Summarize the repository state." },
             },
             {
+              id: "create-issue",
+              kind: "tool",
+              label: "Create issue",
+              position: { x: 320, y: 440 },
+              config: {
+                toolName: "github.issue.create",
+                input: {},
+                inputBindings: {},
+              },
+            },
+            {
               id: "output",
               kind: "output",
               label: "Final output",
-              position: { x: 320, y: 440 },
+              position: { x: 320, y: 660 },
               config: {},
             },
           ],
           edges: [
             { id: "trigger-summarize", source: "trigger", target: "summarize" },
-            { id: "summarize-output", source: "summarize", target: "output" },
+            { id: "summarize-create-issue", source: "summarize", target: "create-issue" },
+            { id: "create-issue-output", source: "create-issue", target: "output" },
           ],
         },
       }),
@@ -166,8 +182,13 @@ test("generated workflow graphs render without cross-component updates", async (
   await page.getByRole("button", { name: "Generate graph" }).click();
 
   await expect(page.getByText("Summarize repository")).toBeVisible();
+  await expect(page.getByText("Create issue", { exact: true })).toBeVisible();
   await expect(page.getByText("Final output")).toBeVisible();
   await expect(page.getByTestId("workflow-canvas")).toBeVisible();
+  await page.locator(".react-flow__node").filter({ hasText: "Create issue" }).dblclick();
+  await expect(page.getByRole("dialog", { name: "Action" })).toBeVisible();
+  await expect(page.getByText("Dynamic values", { exact: true })).toBeVisible();
+  await expect(page.getByText("Fixed value", { exact: true }).first()).toBeVisible();
   await expect.poll(() => renderingErrors).toEqual([]);
 });
 
@@ -216,7 +237,7 @@ test("canvas-first controls expose project tools and node dialogs", async ({
   await expect(page.getByText("Delete repository", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: /Create issue/u }).click();
   await expect(page.getByText("Issue title", { exact: true })).toBeVisible();
-  await expect(page.getByText("Fixed value", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Dynamic values", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Done" }).click({ force: true });
 
   await page.locator(".react-flow__node").filter({ hasText: "Action" }).dblclick();
