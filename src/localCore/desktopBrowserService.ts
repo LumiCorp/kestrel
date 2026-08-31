@@ -1315,7 +1315,7 @@ export class DesktopBrowserService implements BrowserServicePort {
 
   async releasePreparedDownload(
     prepared: PreparedToolCallV1,
-    authority: BrowserHostExecutionAuthorityV1,
+    authority?: BrowserHostExecutionAuthorityV1,
   ): Promise<void> {
     if (prepared.activation.descriptor.toolId !== "browser.download") {
       throw this.#downloadUnavailable();
@@ -1325,10 +1325,15 @@ export class DesktopBrowserService implements BrowserServicePort {
     );
     if (adapters.length !== 1) throw this.#downloadUnavailable();
     const effect = parseBrowserDownloadPreparedEffectV1(adapters[0]!.metadata);
-    if (effect.threadId !== authority.threadId) throw this.#downloadUnavailable();
+    if (authority && effect.threadId !== authority.threadId) {
+      throw this.#downloadUnavailable();
+    }
     const runtime = this.#active.get(effect.sessionId);
     if (!runtime || runtime.session.generation !== effect.generation) return;
-    if (runtime.authority.projectId !== authority.projectId) {
+    if (runtime.session.threadId !== effect.threadId) {
+      throw this.#downloadUnavailable();
+    }
+    if (authority && runtime.authority.projectId !== authority.projectId) {
       throw this.#downloadUnavailable();
     }
     const download = runtime.interceptedDownloads.find(

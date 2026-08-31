@@ -3476,10 +3476,7 @@ test("releasing a denied prepared download removes only its exact quarantine aut
     adapterId: "kestrel.browser-download-effect:v1",
     metadata: { ...effect },
   }];
-  await fixture.service.releasePreparedDownload(
-    call,
-    { threadId: "thread-1", projectId: "project-1" },
-  );
+  await fixture.service.releasePreparedDownload(call);
   await fixture.service.releasePreparedDownload(
     call,
     { threadId: "thread-1", projectId: "project-1" },

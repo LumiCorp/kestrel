@@ -317,13 +317,6 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
                     threadId: stableAuthority.threadId,
                     projectId: stableAuthority.projectId,
                   };
-            if (authority === undefined) {
-              throw browserFailure(
-                "BROWSER_SERVICE_UNAVAILABLE",
-                "Browser download release requires trusted Thread authority.",
-                { recoverable: true, operation: contract.toolId },
-              );
-            }
             await service.releasePreparedDownload(
               prepared,
               authority,

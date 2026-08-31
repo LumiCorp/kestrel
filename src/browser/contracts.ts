@@ -117,7 +117,7 @@ export interface BrowserServicePort {
   ): Promise<BrowserDownloadPreparedEffectV1>;
   releasePreparedDownload?(
     prepared: PreparedToolCallV1,
-    authority: BrowserHostExecutionAuthorityV1,
+    authority?: BrowserHostExecutionAuthorityV1,
   ): Promise<void>;
   execute(
     prepared: PreparedToolCallV1,

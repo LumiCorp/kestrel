@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { createKestrelOneBrowserService } from "../../tools/kestrelOne/browserService.js";
 
 const prepared = {
@@ -235,6 +236,29 @@ test("prepared download release uses the Browser-only cleanup action", async () 
   );
   assert.equal(requests.length, 1);
   assert.match(requests[0] ?? "", /control\/release-download$/u);
+});
+
+test("hosted prepared download release never accepts missing stable authority", async () => {
+  let requests = 0;
+  const service = createKestrelOneBrowserService({
+    kestrelOne: {
+      appRelayUrl: "https://relay.example.test",
+      appRelayToken: "relay-token-1",
+      executionRunId: "run-1",
+    },
+    fetchImpl: (async () => {
+      requests += 1;
+      return Response.json({ released: true });
+    }) as typeof fetch,
+  });
+  assert.ok(service.releasePreparedDownload);
+  await assert.rejects(
+    service.releasePreparedDownload(preparedDownload),
+    (error: unknown) =>
+      error instanceof RuntimeFailure &&
+      error.code === "BROWSER_SERVICE_UNAVAILABLE",
+  );
+  assert.equal(requests, 0);
 });
 
 test("invalid acceptance never acknowledges or invokes", async () => {

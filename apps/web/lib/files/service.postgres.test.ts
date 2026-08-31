@@ -169,6 +169,7 @@ test(
       import("@/lib/storage"),
     ]);
     resetStorageAdapterForTests();
+    const storageAdapter = getStorageAdapter();
     const sql = postgres(databaseUrl, { max: 4 });
     const suffix = crypto.randomUUID();
     const userId = `browser-download-user-${suffix}`;
@@ -233,6 +234,126 @@ test(
       WHERE "operation_id" = ${identity.operationId}
     `;
     assert.equal(reservedExpiry?.expiresAt.toISOString(), identity.expiresAt);
+
+    const receivingRace = {
+      ...identity,
+      operationId: `browser-download-receiving-race-${suffix}`,
+      pendingDownloadId: `pending-receiving-race-${suffix}`,
+    };
+    assert.equal(await files.reserveHostedBrowserDownload(receivingRace), "reserved");
+    const originalPutObjectStream = storageAdapter.putObjectStream.bind(storageAdapter);
+    let putStartedResolve!: () => void;
+    let releasePutResolve!: () => void;
+    const putStarted = new Promise<void>((resolve) => { putStartedResolve = resolve; });
+    const releasePut = new Promise<void>((resolve) => { releasePutResolve = resolve; });
+    storageAdapter.putObjectStream = async (putInput) => {
+      putStartedResolve();
+      await releasePut;
+      return await originalPutObjectStream(putInput);
+    };
+    const receivingStage = files.stageHostedBrowserDownload(
+      { ...receivingRace, body: Readable.from(bytes) },
+      () => new Date(Date.parse(receivingRace.expiresAt) - 1),
+    );
+    await putStarted;
+    await files.reconcileHostedBrowserDownloadStaging(
+      new Date(Date.parse(receivingRace.expiresAt) - 1),
+    );
+    const [stillReceiving] = await sql<Array<{ state: string }>>`
+      SELECT "state" FROM "browser_download_staged_objects"
+      WHERE "operation_id" = ${receivingRace.operationId}
+    `;
+    assert.equal(stillReceiving?.state, "receiving");
+    await files.cancelHostedBrowserDownload(receivingRace);
+    releasePutResolve();
+    await assert.rejects(receivingStage, /BROWSER_ACTION_OUTCOME_UNKNOWN/u);
+    storageAdapter.putObjectStream = originalPutObjectStream;
+    const receivingRaceBlobId = `blob-browser-${createHash("sha256").update(JSON.stringify({
+      organizationId,
+      sessionId: receivingRace.sessionId,
+      generation: receivingRace.generation,
+      pendingDownloadId: receivingRace.pendingDownloadId,
+      sha256,
+    })).digest("hex")}`;
+    const receivingRaceKey = storageAdapter.buildObjectKey(
+      "files", organizationId, receivingRaceBlobId, "original",
+    );
+    assert.equal(await storageAdapter.objectExists(receivingRaceKey), false);
+
+    const lateTransfer = {
+      ...identity,
+      operationId: `browser-download-late-transfer-${suffix}`,
+      pendingDownloadId: `pending-late-transfer-${suffix}`,
+    };
+    assert.equal(await files.reserveHostedBrowserDownload(lateTransfer), "reserved");
+    await assert.rejects(
+      files.stageHostedBrowserDownload(
+        { ...lateTransfer, body: Readable.from(bytes) },
+        () => new Date(Date.parse(lateTransfer.expiresAt) + 1),
+      ),
+      /BROWSER_DOWNLOAD_UNAVAILABLE/u,
+    );
+    const lateTransferBlobId = `blob-browser-${createHash("sha256").update(JSON.stringify({
+      organizationId,
+      sessionId: lateTransfer.sessionId,
+      generation: lateTransfer.generation,
+      pendingDownloadId: lateTransfer.pendingDownloadId,
+      sha256,
+    })).digest("hex")}`;
+    const lateTransferKey = storageAdapter.buildObjectKey(
+      "files", organizationId, lateTransferBlobId, "original",
+    );
+    assert.equal(await storageAdapter.objectExists(lateTransferKey), false);
+
+    const lateCommit = {
+      ...identity,
+      operationId: `browser-download-late-commit-${suffix}`,
+      pendingDownloadId: `pending-late-commit-${suffix}`,
+    };
+    assert.equal(await files.reserveHostedBrowserDownload(lateCommit), "reserved");
+    await files.stageHostedBrowserDownload(
+      { ...lateCommit, body: Readable.from(bytes) },
+      () => new Date(Date.parse(lateCommit.expiresAt) - 1),
+    );
+    await assert.rejects(
+      files.commitHostedBrowserDownload(
+        lateCommit,
+        () => new Date(Date.parse(lateCommit.expiresAt) + 1),
+      ),
+      /BROWSER_DOWNLOAD_UNAVAILABLE/u,
+    );
+    const lateCommitBlobId = `blob-browser-${createHash("sha256").update(JSON.stringify({
+      organizationId,
+      sessionId: lateCommit.sessionId,
+      generation: lateCommit.generation,
+      pendingDownloadId: lateCommit.pendingDownloadId,
+      sha256,
+    })).digest("hex")}`;
+    const lateCommitKey = storageAdapter.buildObjectKey(
+      "files", organizationId, lateCommitBlobId, "original",
+    );
+    assert.equal(await storageAdapter.objectExists(lateCommitKey), false);
+    const lateCommitFileId = `file-browser-${createHash("sha256").update(JSON.stringify({
+      organizationId,
+      threadId,
+      sessionId: lateCommit.sessionId,
+      generation: lateCommit.generation,
+      pendingDownloadId: lateCommit.pendingDownloadId,
+      sha256,
+    })).digest("hex")}`;
+    const [lateCommitVisibility] = await sql<
+      Array<{ files: number; grants: number; promotions: number }>
+    >`
+      SELECT
+        (SELECT count(*)::int FROM "kestrel_files"
+          WHERE "id" = ${lateCommitFileId}) AS files,
+        (SELECT count(*)::int FROM "file_scope_grants"
+          WHERE "file_id" = ${lateCommitFileId}) AS grants,
+        (SELECT count(*)::int FROM "browser_download_promotions"
+          WHERE "operation_id" = ${lateCommit.operationId}) AS promotions
+    `;
+    assert.deepEqual(lateCommitVisibility, { files: 0, grants: 0, promotions: 0 });
+
     await files.stageHostedBrowserDownload({ ...identity, body: Readable.from(bytes) });
     const [first, replay] = await Promise.all([
       files.commitHostedBrowserDownload(identity),

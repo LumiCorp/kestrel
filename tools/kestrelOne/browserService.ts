@@ -89,6 +89,17 @@ export function createKestrelOneBrowserService(
       );
     },
     async releasePreparedDownload(prepared, authority) {
+      if (authority === undefined) {
+        throw new RuntimeFailure(
+          "BROWSER_SERVICE_UNAVAILABLE",
+          "Hosted Browser download release requires stable Thread authority.",
+          {
+            subsystem: "browser",
+            classification: "configuration",
+            recoverable: true,
+          },
+        );
+      }
       await request("download", "release-download", { prepared, authority });
     },
     async execute(prepared: PreparedToolCallV1, lifecycle) {

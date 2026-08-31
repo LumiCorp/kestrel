@@ -405,12 +405,15 @@ export class HostedBrowserService implements BrowserServicePort {
 
   async releasePreparedDownload(
     prepared: PreparedToolCallV1,
-    authority: BrowserOperationLifecycleV1["authority"],
+    authority?: BrowserOperationLifecycleV1["authority"],
   ): Promise<void> {
     if (prepared.activation.descriptor.toolId !== "browser.download") {
       throw this.#failure("BROWSER_DOWNLOAD_UNAVAILABLE");
     }
     if (!(this.options.routerUrl && this.options.downloads?.release)) {
+      throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+    }
+    if (authority === undefined) {
       throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
     }
     const effect = requirePreparedDownloadEffect(prepared);

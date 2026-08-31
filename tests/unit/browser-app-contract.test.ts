@@ -1293,6 +1293,75 @@ test("Browser download denial rehydrates the exact release hook after process re
   await restarted.close();
 });
 
+test("Desktop Browser download denial rehydrates local ownership without hosted authority", async () => {
+  let releaseAttempts = 0;
+  let quarantinePresent = true;
+  let failBeforeCleanup = true;
+  const browserService = passiveBrowserPort();
+  browserService.releasePreparedDownload = async (prepared, authority) => {
+    releaseAttempts += 1;
+    assert.equal(authority, undefined);
+    const adapters = prepared.inputAdapters.filter(
+      (adapter) => adapter.adapterId === "kestrel.browser-download-effect:v1",
+    );
+    assert.equal(adapters.length, 1);
+    assert.equal(adapters[0]?.metadata.pendingDownloadId, "download-1");
+    if (failBeforeCleanup) {
+      throw new RuntimeFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "Local quarantine cleanup failed before effect.",
+        {
+          subsystem: "browser",
+          classification: "runtime",
+          recoverable: true,
+        },
+      );
+    }
+    quarantinePresent = false;
+  };
+  const original = new UnifiedToolRegistry({
+    allowlist: ["browser.download"],
+    context: { browserService },
+  });
+  const { prepared, approvalAuthorityRevision } = await prepareBrowserCall(
+    original,
+    "browser.download",
+    validInputs["browser.download"],
+    { decision: "approval_required", approval: true, hosted: false },
+  );
+  assert.equal(prepared.stableAuthority, undefined);
+  assert.equal(
+    prepared.approval?.authorityRevision,
+    derivePreparedToolApprovalAuthorityRevisionV1({
+      activation: prepared.activation,
+      effectiveInput: prepared.effectiveInput,
+      inputAdapters: prepared.inputAdapters,
+      policyRevision: prepared.policy.policyRevision,
+      upstreamAuthorityRevision: approvalAuthorityRevision,
+    }),
+  );
+  await original.close();
+
+  const restarted = new UnifiedToolRegistry({
+    allowlist: ["browser.download"],
+    context: { browserService },
+  });
+  await assert.rejects(
+    restarted.releasePreparedToolCall(prepared),
+    (error: unknown) =>
+      error instanceof RuntimeFailure &&
+      error.code === "BROWSER_SERVICE_UNAVAILABLE",
+  );
+  assert.equal(quarantinePresent, true);
+  failBeforeCleanup = false;
+  await restarted.releasePreparedToolCall(prepared);
+  assert.equal(quarantinePresent, false);
+  assert.equal(releaseAttempts, 2);
+  await restarted.releasePreparedToolCall(prepared);
+  assert.equal(releaseAttempts, 2);
+  await restarted.close();
+});
+
 test("Browser upload cannot replace the trusted active-turn attachment with model input", async () => {
   await assert.rejects(
     prepareBrowserCall(
