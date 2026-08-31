@@ -24,6 +24,7 @@ import {
   readBoundedBrowserViewerWorkerBody,
 } from "../src/browser-viewer.js";
 import { startHostedBrowserWorker } from "../../../src/browser/hostedWorkerServer.js";
+import { BROWSER_RUNTIME_RELEASE_MANIFEST } from "../../../src/browser/runtimeReleaseManifest.js";
 
 const environmentKeys = generateKeyPairSync("ed25519");
 const environmentPrivateKey = environmentKeys.privateKey
@@ -534,8 +535,8 @@ test("Web-shaped Router requests preserve ticket and lease expiry from the real 
       projectId: "project-1",
       userId: "user-1",
       threadId: "thread-1",
-      engineRevision: "v0.35.0",
-      chromeRevision: "152.0.7977.54",
+      engineRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision,
+      chromeRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.chrome.revision,
       effectiveAllowlistRevision: "revision-1",
       imageDigest: `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
       capabilityPublicKeyPem: viewerPublicKey,

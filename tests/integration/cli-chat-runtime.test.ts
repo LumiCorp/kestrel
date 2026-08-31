@@ -2038,6 +2038,17 @@ test("KestrelChatRuntime resolves session turns through the canonical orchestrat
       } as unknown as Kestrel;
 
       const threadRuntime = {
+        findMainThreadForSession: async () => ({
+          threadId: "thread-web-main",
+          sessionId: "session-canonical-thread",
+          title: "Main thread",
+          status: "IDLE",
+          metadata: {
+            mainThread: true,
+          },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
         ensureMainThreadForSession: async () => ({
           threadId: "thread-web-main",
           sessionId: "session-canonical-thread",
