@@ -1044,6 +1044,7 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
       webviewTag: true,
     },
   });
+  const rendererWebContentsId = window.webContents.id;
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => {
     if (event.url !== window.webContents.getURL()) {
@@ -1072,7 +1073,7 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
   window.on("closed", () => {
     void loseCurrentDesktopBrowserViewerAuthority(
       "window_closed",
-      window.webContents.id,
+      rendererWebContentsId,
     );
     clearDesktopRendererBootstrapTimeout();
     if (mainWindow === window) {
@@ -1091,7 +1092,7 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
   window.webContents.on("render-process-gone", () => {
     void loseCurrentDesktopBrowserViewerAuthority(
       "renderer_crashed",
-      window.webContents.id,
+      rendererWebContentsId,
     );
     if (desktopAppQuitting || rendererFallbackActive) {
       return;
