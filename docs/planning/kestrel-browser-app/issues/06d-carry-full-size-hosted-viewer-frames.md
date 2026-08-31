@@ -78,18 +78,23 @@ relay. Its worker, Router, Web client, and WebSocket bounds must derive from one
   `Page.captureScreenshot` before its optional file write. The Desktop viewer
   now uses that earlier engine-owned CDP result directly and creates no file.
 - Viewer CDP admission requires the strict pinned CLI envelopes, exactly one
-  active page target, and a credential-free loopback
-  `ws://.../devtools/browser/<id>` endpoint. The bounded connection uses exact
-  attach/capture/detach request IDs and session identity, rejects events,
-  unknown, duplicate, malformed, mismatched, or oversized responses, and closes
-  on every outcome under an explicit timeout. A final tab-list check rejects
-  target drift rather than presenting the wrong page.
+  active page target from the pinned `{data:{tabs:[...]}}` response, and a
+  credential-free loopback `ws://.../devtools/browser/<id>` endpoint. The
+  bounded connection uses exact
+  attach/capture/detach request IDs and session identity. It accepts only the
+  one expected `Target.attachedToTarget` and `Target.detachedFromTarget`
+  lifecycle event before each matching response, requires exact target/session
+  agreement, rejects unrelated, duplicate, malformed, mismatched, or oversized
+  messages, and closes on every outcome under an explicit timeout. A final
+  tab-list check rejects target drift rather than presenting the wrong page.
 - Canonical Base64 and PNG signature are validated before return; exactly
   20 MiB raw succeeds and one byte over fails with no file, retry, fallback,
   compression, downscale, or chunking. A real local WebSocket CDP fixture plus
   pinned-contract fake CLI proves all boundaries, protocol failures,
   detach/close cleanup, timeout, target drift, and the unchanged generic
-  512 KiB stdout collector.
+  512 KiB stdout collector. An opt-in real Chromium probe also passes against
+  local Chrome for Testing 149, proving the normal attach-event/response,
+  capture-response, and detach-event/response sequence end to end.
 - Environment Router uses the derived viewer-frame response bound only after a
   successful `frame` response. Every non-OK response, including a typed frame
   error, retains the ordinary 20 MiB control-response bound.

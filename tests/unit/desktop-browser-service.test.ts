@@ -4212,8 +4212,14 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
     | "malformed"
     | "mismatched_id"
     | "wrong_session"
-    | "event"
-    | "duplicate"
+    | "unrelated_event"
+    | "attach_target_mismatch"
+    | "attach_session_mismatch"
+    | "duplicate_attach_event"
+    | "duplicate_attach_response"
+    | "detach_target_mismatch"
+    | "detach_session_mismatch"
+    | "duplicate_detach_event"
     | "close"
     | "timeout";
   const startCdpServer = async (
@@ -4249,7 +4255,7 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
             socket.send(JSON.stringify({ id: 9, result: {} }));
             return;
           }
-          if (mode === "event") {
+          if (mode === "unrelated_event") {
             socket.send(
               JSON.stringify({
                 method: "Target.targetInfoChanged",
@@ -4258,12 +4264,37 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
             );
             return;
           }
+          const eventSessionId =
+            mode === "attach_session_mismatch"
+              ? "EVENT_SESSION"
+              : "CDP_SESSION";
+          const attachedEvent = {
+            method: "Target.attachedToTarget",
+            params: {
+              sessionId: eventSessionId,
+              targetInfo: {
+                targetId:
+                  mode === "attach_target_mismatch" ? targetB : targetA,
+                type: "page",
+                title: "Example",
+                url: "https://example.com/",
+                attached: true,
+              },
+              waitingForDebugger: false,
+            },
+          };
+          socket.send(JSON.stringify(attachedEvent));
+          if (mode === "duplicate_attach_event") {
+            socket.send(JSON.stringify(attachedEvent));
+          }
           const attached = {
             id: 1,
             result: { sessionId: "CDP_SESSION" },
           };
           socket.send(JSON.stringify(attached));
-          if (mode === "duplicate") socket.send(JSON.stringify(attached));
+          if (mode === "duplicate_attach_response") {
+            socket.send(JSON.stringify(attached));
+          }
           return;
         }
         if (request.id === 2) {
@@ -4288,6 +4319,21 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
           return;
         }
         if (request.id === 3) {
+          const detachedEvent = {
+            method: "Target.detachedFromTarget",
+            params: {
+              sessionId:
+                mode === "detach_session_mismatch"
+                  ? "OTHER_SESSION"
+                  : "CDP_SESSION",
+              targetId:
+                mode === "detach_target_mismatch" ? targetB : targetA,
+            },
+          };
+          socket.send(JSON.stringify(detachedEvent));
+          if (mode === "duplicate_detach_event") {
+            socket.send(JSON.stringify(detachedEvent));
+          }
           socket.send(JSON.stringify({ id: 3, result: {} }));
         }
       });
@@ -4328,7 +4374,7 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
         '  fs.writeFileSync(statePath, String(count + 1));',
         '  fs.appendFileSync(commandLog, "tab\\n");',
         `  const targetId = count === 0 ? ${JSON.stringify(targetA)} : ${JSON.stringify(afterTargetId)};`,
-        '  process.stdout.write(JSON.stringify({ success: true, data: [{ tabId: "t1", targetId, label: null, title: "Example", url: "https://example.com/", type: "page", active: true }], error: null }));',
+        '  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ tabId: "t1", targetId, label: null, title: "Example", url: "https://example.com/", type: "page", active: true }] }, error: null }));',
         '} else if (args.includes("get") && args.includes("cdp-url")) {',
         '  fs.appendFileSync(commandLog, "cdp\\n");',
         `  process.stdout.write(JSON.stringify({ success: true, data: { cdpUrl: ${JSON.stringify(cdpUrl)} }, error: null }));`,
@@ -4443,8 +4489,14 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
       "malformed",
       "mismatched_id",
       "wrong_session",
-      "event",
-      "duplicate",
+      "unrelated_event",
+      "attach_target_mismatch",
+      "attach_session_mismatch",
+      "duplicate_attach_event",
+      "duplicate_attach_response",
+      "detach_target_mismatch",
+      "detach_session_mismatch",
+      "duplicate_detach_event",
       "close",
     ] as const) {
       const result = await runScenario({
@@ -4454,7 +4506,12 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
       });
       assert.match(String(result.failure), /Browser viewer capture failed/u);
       assert.equal(result.frame, undefined);
-      if (mode === "wrong_session" || mode === "duplicate") {
+      if (
+        mode === "wrong_session" ||
+        mode === "duplicate_attach_response" ||
+        mode.startsWith("detach_") ||
+        mode === "duplicate_detach_event"
+      ) {
         assert.equal(
           result.requests.at(-1)?.method,
           "Target.detachFromTarget",
@@ -4499,6 +4556,138 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test(
+  "viewer screenshot capture matches a real Chrome CDP lifecycle when enabled",
+  { timeout: 20_000 },
+  async (t) => {
+    const chromiumPath = process.env.KESTREL_BROWSER_CDP_PROBE_EXECUTABLE;
+    if (chromiumPath === undefined) {
+      t.skip("set KESTREL_BROWSER_CDP_PROBE_EXECUTABLE for the real CDP probe");
+      return;
+    }
+    const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-viewer-chrome-"));
+    const profilePath = path.join(root, "profile");
+    await mkdir(profilePath, { mode: 0o700 });
+    const portServer = createServer();
+    await new Promise<void>((resolve, reject) => {
+      portServer.once("error", reject);
+      portServer.listen(0, "127.0.0.1", resolve);
+    });
+    const portAddress = portServer.address();
+    if (portAddress === null || typeof portAddress === "string") {
+      throw new Error("Could not reserve a local Chrome CDP port.");
+    }
+    const devtoolsPort = String(portAddress.port);
+    await new Promise<void>((resolve) => portServer.close(() => resolve()));
+    const chrome = spawn(
+      chromiumPath,
+      [
+        "--headless=new",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-default-browser-check",
+        `--remote-debugging-port=${devtoolsPort}`,
+        `--user-data-dir=${profilePath}`,
+        "about:blank",
+      ],
+      { stdio: "ignore" },
+    );
+    try {
+      let cdpUrl = "";
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (chrome.exitCode !== null) {
+          throw new Error("Chrome exited before publishing its CDP endpoint.");
+        }
+        try {
+          const versionResponse = await fetch(
+            `http://127.0.0.1:${devtoolsPort}/json/version`,
+          );
+          const version = (await versionResponse.json()) as Record<
+            string,
+            unknown
+          >;
+          if (typeof version.webSocketDebuggerUrl === "string") {
+            cdpUrl = version.webSocketDebuggerUrl;
+            break;
+          }
+        } catch {
+          // Chrome writes the endpoint only after its Browser process is ready.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      assert.match(
+        cdpUrl,
+        /^ws:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/devtools\/browser\/[A-Za-z0-9_-]+$/u,
+      );
+      const targetsResponse = await fetch(
+        `http://127.0.0.1:${devtoolsPort}/json/list`,
+      );
+      assert.equal(targetsResponse.ok, true);
+      const targets = (await targetsResponse.json()) as Array<
+        Record<string, unknown>
+      >;
+      const target = targets.find(
+        (candidate) =>
+          candidate.type === "page" && typeof candidate.id === "string",
+      );
+      if (typeof target?.id !== "string") {
+        throw new Error("Chrome did not expose one exact page target.");
+      }
+      const targetId = target.id;
+      const executable = path.join(root, "agent-browser");
+      await writeFile(
+        executable,
+        [
+          `#!${process.execPath}`,
+          "const args = process.argv.slice(2);",
+          `const tab = ${JSON.stringify({
+            tabId: "t1",
+            targetId,
+            label: null,
+            title: "about:blank",
+            url: "about:blank",
+            type: "page",
+            active: true,
+          })};`,
+          `const cdpUrl = ${JSON.stringify(cdpUrl)};`,
+          'if (args.includes("tab") && args.includes("list")) {',
+          '  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [tab] }, error: null }));',
+          '} else if (args.includes("get") && args.includes("cdp-url")) {',
+          '  process.stdout.write(JSON.stringify({ success: true, data: { cdpUrl }, error: null }));',
+          "} else { process.exit(10); }",
+        ].join("\n"),
+      );
+      await chmod(executable, 0o755);
+      const adapter = new AgentBrowserCliAdapter({
+        engineExecutablePath: executable,
+        chromeExecutablePath: chromiumPath,
+      });
+      const frame = await adapter.captureViewerFrame({
+        ...engineInvocation(),
+        runtimePath: root,
+        socketPath: root,
+        profilePath,
+        configPath: root,
+        screenshotPath: path.join(root, "screenshot.png"),
+      });
+      assert.equal(frame.mediaType, "image/png");
+      assert.deepEqual(
+        Buffer.from(frame.dataBase64, "base64").subarray(0, 8),
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      );
+    } finally {
+      if (chrome.exitCode === null && chrome.signalCode === null) {
+        const exited = new Promise<void>((resolve) => {
+          chrome.once("exit", () => resolve());
+        });
+        chrome.kill("SIGKILL");
+        await settleWithin(exited, 2000);
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 async function createFixture(
   input: {

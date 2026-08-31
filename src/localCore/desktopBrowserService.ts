@@ -5354,13 +5354,19 @@ function requirePinnedViewerResponse(stdout: string): unknown {
 }
 
 function requirePinnedViewerActiveTarget(stdout: string): string {
-  const data = requirePinnedViewerResponse(stdout);
-  if (!Array.isArray(data) || data.length === 0 || data.length > MAX_BROWSER_TABS) {
+  const data = requireOptionalRecord(requirePinnedViewerResponse(stdout));
+  if (
+    data === undefined ||
+    !exactRecordKeys(data, ["tabs"]) ||
+    !Array.isArray(data.tabs) ||
+    data.tabs.length === 0 ||
+    data.tabs.length > MAX_BROWSER_TABS
+  ) {
     throw new Error(
       "BROWSER_ENGINE_FAILURE: agent-browser active viewer target was invalid.",
     );
   }
-  const targets = data.map((candidate) => {
+  const targets = data.tabs.map((candidate) => {
     const tab = requireOptionalRecord(candidate);
     if (
       tab === undefined ||
@@ -5464,6 +5470,8 @@ async function captureViewerPngThroughCdp(
       perMessageDeflate: false,
     });
     let stage: "attach" | "capture" | "detach" = "attach";
+    let attachedEventSessionId: string | undefined;
+    let detachedEventSeen = false;
     let sessionId: string | undefined;
     let frame: { mediaType: "image/png"; dataBase64: string } | undefined;
     let detachSent = false;
@@ -5566,14 +5574,41 @@ async function captureViewerPngThroughCdp(
         return;
       }
       if (stage === "attach") {
+        if (message.method === "Target.attachedToTarget") {
+          const params = requireOptionalRecord(message.params);
+          const targetInfo = requireOptionalRecord(params?.targetInfo);
+          if (
+            attachedEventSessionId !== undefined ||
+            !exactRecordKeys(message, ["method", "params"]) ||
+            params === undefined ||
+            !exactRecordKeys(params, [
+              "sessionId",
+              "targetInfo",
+              "waitingForDebugger",
+            ]) ||
+            typeof params.sessionId !== "string" ||
+            !/^[A-Za-z0-9_-]{1,256}$/u.test(params.sessionId) ||
+            params.waitingForDebugger !== false ||
+            targetInfo === undefined ||
+            targetInfo.targetId !== targetId ||
+            targetInfo.type !== "page" ||
+            targetInfo.attached !== true
+          ) {
+            finish(viewerCdpFailure());
+            return;
+          }
+          attachedEventSessionId = params.sessionId;
+          return;
+        }
         const result = requireOptionalRecord(message.result);
         if (
+          attachedEventSessionId === undefined ||
           !exactRecordKeys(message, ["id", "result"]) ||
           message.id !== 1 ||
           result === undefined ||
           !exactRecordKeys(result, ["sessionId"]) ||
           typeof result.sessionId !== "string" ||
-          !/^[A-Za-z0-9_-]{1,256}$/u.test(result.sessionId)
+          result.sessionId !== attachedEventSessionId
         ) {
           finish(viewerCdpFailure());
           return;
@@ -5611,8 +5646,25 @@ async function captureViewerPngThroughCdp(
         if (!sendDetach()) finish(viewerCdpFailure());
         return;
       }
+      if (message.method === "Target.detachedFromTarget") {
+        const params = requireOptionalRecord(message.params);
+        if (
+          detachedEventSeen ||
+          !exactRecordKeys(message, ["method", "params"]) ||
+          params === undefined ||
+          !exactRecordKeys(params, ["sessionId", "targetId"]) ||
+          params.sessionId !== sessionId ||
+          params.targetId !== targetId
+        ) {
+          finish(viewerCdpFailure());
+          return;
+        }
+        detachedEventSeen = true;
+        return;
+      }
       const result = requireOptionalRecord(message.result);
       if (
+        !detachedEventSeen ||
         !exactRecordKeys(message, ["id", "result"]) ||
         message.id !== 3 ||
         result === undefined ||
