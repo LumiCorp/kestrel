@@ -480,6 +480,7 @@ export class RuntimeComposer {
     record: ThreadAssemblyRecord;
     bundle: AssemblyBundleRecord;
   }> {
+    const current = await this.getActiveAssembly(input.threadId);
     const record: ThreadAssemblyRecord = {
       recordId: `assembly-record-${randomUUID()}`,
       threadId: input.threadId,
@@ -487,7 +488,7 @@ export class RuntimeComposer {
       cause: input.cause,
       authority: input.authority,
       ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
-      createdAt: new Date().toISOString(),
+      createdAt: nextAssemblyRecordTimestamp(current?.record.createdAt),
     };
     await this.store.appendThreadAssemblyRecord(record);
     return {
@@ -495,6 +496,14 @@ export class RuntimeComposer {
       bundle: input.bundle,
     };
   }
+}
+
+function nextAssemblyRecordTimestamp(previous: string | undefined): string {
+  const now = Date.now();
+  const previousMillis = previous === undefined ? Number.NaN : Date.parse(previous);
+  return new Date(
+    Number.isFinite(previousMillis) ? Math.max(now, previousMillis + 1) : now,
+  ).toISOString();
 }
 
 function shouldMigrateLegacyDesktopAssembly(
