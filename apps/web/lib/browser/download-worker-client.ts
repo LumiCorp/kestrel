@@ -12,6 +12,7 @@ import {
   type BrowserDownloadPreparationRequestV1,
   type BrowserDownloadPreparedEffectV1,
 } from "../../../../src/browser/contracts.js";
+import { HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS } from "./download-transport";
 
 type Scope = {
   routerUrl: string;
@@ -126,7 +127,7 @@ export class HostedBrowserDownloadWorkerClient implements HostedBrowserDownloadW
         operation,
         operationBinding: `sha256:${createHash("sha256").update(body).digest("base64url")}`,
         issuedAt,
-        expiresAt: issuedAt + 60,
+        expiresAt: issuedAt + Math.ceil(HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS / 1000),
         nonce: randomUUID(),
       },
     });
@@ -140,8 +141,11 @@ export class HostedBrowserDownloadWorkerClient implements HostedBrowserDownloadW
       body,
       redirect: "error",
       signal: input.signal
-        ? AbortSignal.any([input.signal, AbortSignal.timeout(60_000)])
-        : AbortSignal.timeout(60_000),
+        ? AbortSignal.any([
+            input.signal,
+            AbortSignal.timeout(HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS),
+          ])
+        : AbortSignal.timeout(HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
     return response;

@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
+import { HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS } from "../browser/download-transport";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
@@ -241,32 +242,89 @@ test(
       pendingDownloadId: `pending-receiving-race-${suffix}`,
     };
     assert.equal(await files.reserveHostedBrowserDownload(receivingRace), "reserved");
+    const [receivingLease] = await sql<Array<{ updatedAt: Date }>>`
+      SELECT "updated_at" AS "updatedAt"
+      FROM "browser_download_staged_objects"
+      WHERE "operation_id" = ${receivingRace.operationId}
+    `;
+    assert.ok(receivingLease);
+    const leaseExpiresAt = new Date(
+      receivingLease.updatedAt.getTime() + HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS,
+    );
     const originalPutObjectStream = storageAdapter.putObjectStream.bind(storageAdapter);
     let putStartedResolve!: () => void;
-    let releasePutResolve!: () => void;
+    let attemptLatePublication!: () => Promise<void>;
+    let storageAbortObserved = false;
+    let latePublicationBlocked = false;
     const putStarted = new Promise<void>((resolve) => { putStartedResolve = resolve; });
-    const releasePut = new Promise<void>((resolve) => { releasePutResolve = resolve; });
     storageAdapter.putObjectStream = async (putInput) => {
       putStartedResolve();
-      await releasePut;
-      return await originalPutObjectStream(putInput);
+      await new Promise<void>((resolve, reject) => {
+        putInput.signal?.addEventListener("abort", () => {
+          storageAbortObserved = true;
+          reject(putInput.signal?.reason);
+        }, { once: true });
+        attemptLatePublication = async () => {
+          if (putInput.signal?.aborted) {
+            latePublicationBlocked = true;
+            return;
+          }
+          await originalPutObjectStream(putInput);
+          resolve();
+        };
+      });
+      return { key: putInput.key };
     };
+    const transferController = new AbortController();
+    const ignoredSource = new Readable({ read() {} });
+    ignoredSource.on("error", () => {});
     const receivingStage = files.stageHostedBrowserDownload(
-      { ...receivingRace, body: Readable.from(bytes) },
-      () => new Date(Date.parse(receivingRace.expiresAt) - 1),
+      { ...receivingRace, body: ignoredSource },
+      () => receivingLease.updatedAt,
+      transferController.signal,
     );
     await putStarted;
+    ignoredSource.destroy(new Error("simulated worker response-body abort"));
     await files.reconcileHostedBrowserDownloadStaging(
-      new Date(Date.parse(receivingRace.expiresAt) - 1),
+      new Date(receivingLease.updatedAt.getTime() + 1),
     );
-    const [stillReceiving] = await sql<Array<{ state: string }>>`
+    const [cleanupIntent] = await sql<Array<{ state: string; updatedAt: Date }>>`
+      SELECT "state", "updated_at" AS "updatedAt"
+      FROM "browser_download_staged_objects"
+      WHERE "operation_id" = ${receivingRace.operationId}
+    `;
+    assert.equal(cleanupIntent?.state, "cleanup_pending");
+    assert.equal(cleanupIntent?.updatedAt.toISOString(), leaseExpiresAt.toISOString());
+    await files.reconcileHostedBrowserDownloadStaging(
+      new Date(leaseExpiresAt.getTime() - 1),
+    );
+    const [beforeLease] = await sql<Array<{ state: string }>>`
       SELECT "state" FROM "browser_download_staged_objects"
       WHERE "operation_id" = ${receivingRace.operationId}
     `;
-    assert.equal(stillReceiving?.state, "receiving");
-    await files.cancelHostedBrowserDownload(receivingRace);
-    releasePutResolve();
-    await assert.rejects(receivingStage, /BROWSER_ACTION_OUTCOME_UNKNOWN/u);
+    assert.equal(beforeLease?.state, "cleanup_pending");
+    const originalDeleteObject = storageAdapter.deleteObject.bind(storageAdapter);
+    let deleteAttempts = 0;
+    storageAdapter.deleteObject = async (key) => {
+      deleteAttempts += 1;
+      if (deleteAttempts === 1) throw new Error("simulated transient object delete failure");
+      await originalDeleteObject(key);
+    };
+    let cleanupAtLeaseSettled = false;
+    const cleanupAtLease = files.reconcileHostedBrowserDownloadStaging(leaseExpiresAt)
+      .finally(() => { cleanupAtLeaseSettled = true; });
+    const cleanupAtLeaseFailure = assert.rejects(
+      cleanupAtLease,
+      /simulated transient object delete failure/u,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(cleanupAtLeaseSettled, false);
+    transferController.abort(new Error("hosted Browser download transfer lease expired"));
+    await assert.rejects(receivingStage, /hosted Browser download transfer lease expired/u);
+    await cleanupAtLeaseFailure;
+    assert.equal(storageAbortObserved, true);
+    await attemptLatePublication();
+    assert.equal(latePublicationBlocked, true);
     storageAdapter.putObjectStream = originalPutObjectStream;
     const receivingRaceBlobId = `blob-browser-${createHash("sha256").update(JSON.stringify({
       organizationId,
@@ -278,7 +336,22 @@ test(
     const receivingRaceKey = storageAdapter.buildObjectKey(
       "files", organizationId, receivingRaceBlobId, "original",
     );
+    await storageAdapter.putObject({ key: receivingRaceKey, body: bytes });
+    const [afterDeleteFailure] = await sql<Array<{ state: string }>>`
+      SELECT "state" FROM "browser_download_staged_objects"
+      WHERE "operation_id" = ${receivingRace.operationId}
+    `;
+    assert.equal(afterDeleteFailure?.state, "cleanup_pending");
+    storageAdapter.deleteObject = originalDeleteObject;
+    await files.reconcileHostedBrowserDownloadStaging(
+      new Date(leaseExpiresAt.getTime() + 1),
+    );
     assert.equal(await storageAdapter.objectExists(receivingRaceKey), false);
+    const [afterRestartCleanup] = await sql<Array<{ state: string }>>`
+      SELECT "state" FROM "browser_download_staged_objects"
+      WHERE "operation_id" = ${receivingRace.operationId}
+    `;
+    assert.equal(afterRestartCleanup?.state, "cleaned");
 
     const lateTransfer = {
       ...identity,
@@ -313,7 +386,6 @@ test(
     assert.equal(await files.reserveHostedBrowserDownload(lateCommit), "reserved");
     await files.stageHostedBrowserDownload(
       { ...lateCommit, body: Readable.from(bytes) },
-      () => new Date(Date.parse(lateCommit.expiresAt) - 1),
     );
     await assert.rejects(
       files.commitHostedBrowserDownload(

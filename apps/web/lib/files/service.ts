@@ -37,6 +37,7 @@ import {
   matchesExpectedUploadMediaType,
   type InternalExpectedUploadMediaType,
 } from "./internal-upload-policy";
+import { HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS } from "@/lib/browser/download-transport";
 
 export type FileScanResult = "clean" | "quarantined" | "unavailable";
 export type FileScanner = (input: {
@@ -121,7 +122,8 @@ export async function reserveHostedBrowserDownload(
 
 export async function stageHostedBrowserDownload(input: HostedBrowserDownloadFileIdentity & {
   body: NodeJS.ReadableStream;
-}, now: () => Date = systemHostedBrowserDownloadNow): Promise<void> {
+}, now: () => Date = systemHostedBrowserDownloadNow,
+transferSignal?: AbortSignal): Promise<void> {
   if (!await getThreadForUser(input.threadId, input.userId, input.organizationId)) {
     throw new Error("Thread not found.");
   }
@@ -136,36 +138,58 @@ export async function stageHostedBrowserDownload(input: HostedBrowserDownloadFil
   if (!stage) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
   const stageState = requireMatchingHostedBrowserDownloadStage(stage, input);
   if (stageState === "staged" || stageState === "promoted") return;
+  const transferStartedAt = now();
+  const transferLeaseExpiresAt = new Date(
+    stage.updatedAt.getTime() + HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS,
+  );
+  if (transferLeaseExpiresAt <= transferStartedAt) {
+    await cleanupHostedBrowserDownload(input, transferStartedAt);
+    throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+  }
+  const leaseRemainingMs = transferLeaseExpiresAt.getTime() - transferStartedAt.getTime();
+  const leaseSignal = AbortSignal.timeout(leaseRemainingMs);
+  const storageSignal = transferSignal
+    ? AbortSignal.any([transferSignal, leaseSignal])
+    : leaseSignal;
   const verifier = new FileVerificationTransform(input.sizeBytes);
   let stageTransitionLost = false;
   try {
-    await storage.putStream({
-      key: objectKey,
-      body: input.body.pipe(verifier),
-      contentType: normalizeMediaType(input.declaredMediaType) ?? "application/octet-stream",
-      contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(sanitizeFilename(input.filename))}`,
+    await withHostedBrowserDownloadTransferLock(input.operationId, async (transaction) => {
+      const [lockedStage] = await transaction.select()
+        .from(schema.browserDownloadStagedObjects)
+        .where(eq(schema.browserDownloadStagedObjects.operationId, input.operationId));
+      if (!lockedStage) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+      const lockedStageState = requireMatchingHostedBrowserDownloadStage(lockedStage, input);
+      if (lockedStageState === "staged" || lockedStageState === "promoted") return;
+      await storage.putStream({
+        key: objectKey,
+        body: input.body.pipe(verifier),
+        contentType: normalizeMediaType(input.declaredMediaType) ?? "application/octet-stream",
+        contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(sanitizeFilename(input.filename))}`,
+        signal: storageSignal,
+      });
+      const verified = verifier.result();
+      if (verified.sizeBytes !== input.sizeBytes || verified.sha256 !== input.sha256) {
+        throw new FileUploadVerificationError("FILE_HASH_MISMATCH");
+      }
+      if (new Date(input.expiresAt) <= now()) {
+        throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+      }
+      const updated = await transaction.update(schema.browserDownloadStagedObjects)
+        .set({ state: "staged", updatedAt: now() })
+        .where(and(
+          eq(schema.browserDownloadStagedObjects.operationId, input.operationId),
+          eq(schema.browserDownloadStagedObjects.state, "receiving"),
+        )).returning({ operationId: schema.browserDownloadStagedObjects.operationId });
+      stageTransitionLost = updated.length !== 1;
     });
-    const verified = verifier.result();
-    if (verified.sizeBytes !== input.sizeBytes || verified.sha256 !== input.sha256) {
-      throw new FileUploadVerificationError("FILE_HASH_MISMATCH");
-    }
-    if (new Date(input.expiresAt) <= now()) {
-      throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
-    }
-    const updated = await knowledgeDb.update(schema.browserDownloadStagedObjects)
-      .set({ state: "staged", updatedAt: new Date() })
-      .where(and(
-        eq(schema.browserDownloadStagedObjects.operationId, input.operationId),
-        eq(schema.browserDownloadStagedObjects.state, "receiving"),
-      )).returning({ operationId: schema.browserDownloadStagedObjects.operationId });
-    if (updated.length !== 1) {
-      stageTransitionLost = true;
-      await eraseHostedBrowserDownloadAttemptAfterLostStage(input);
+    if (stageTransitionLost) {
+      await eraseHostedBrowserDownloadAttemptAfterLostStage(input, now());
       throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
     }
   } catch (error) {
     if (!stageTransitionLost) {
-      await cleanupHostedBrowserDownload(input).catch(() => {});
+      await cleanupHostedBrowserDownload(input, now()).catch(() => {});
     }
     throw error;
   }
@@ -175,7 +199,7 @@ export async function cancelHostedBrowserDownload(
   input: HostedBrowserDownloadFileIdentity,
 ): Promise<void> {
   validateHostedBrowserDownloadIdentity(input);
-  await cleanupHostedBrowserDownload(input);
+  await cleanupHostedBrowserDownload(input, new Date());
 }
 
 export async function commitHostedBrowserDownload(
@@ -190,7 +214,7 @@ export async function commitHostedBrowserDownload(
   if (!await getThreadForUser(input.threadId, input.userId, input.organizationId)) {
     // The staged-object row, not an absence query, owns deletion. Its locked
     // state cannot race a visibility transaction into deleting referenced data.
-    await cleanupHostedBrowserDownload(input).catch(() => {});
+    await cleanupHostedBrowserDownload(input, new Date()).catch(() => {});
     throw new Error("Thread not found.");
   }
   const existing = await reconcileHostedBrowserDownloadPromotion(input);
@@ -293,7 +317,7 @@ export async function commitHostedBrowserDownload(
     });
   } catch (error) {
     if (error instanceof HostedBrowserDownloadExpiredError) {
-      await cleanupHostedBrowserDownload(input).catch(() => {});
+      await cleanupHostedBrowserDownload(input, now()).catch(() => {});
       throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
     }
     const reconciled = await reconcileHostedBrowserDownloadPromotion(input);
@@ -319,12 +343,15 @@ export async function commitHostedBrowserDownload(
     userId: input.userId,
   });
   if (committedBlob.objectKey !== objectKey) {
-    await cleanupHostedBrowserDownload(input).catch(() => {});
+    await cleanupHostedBrowserDownload(input, new Date()).catch(() => {});
   }
   return committed;
 }
 
 async function cleanupExpiredHostedBrowserDownloads(now = new Date()): Promise<number> {
+  const staleReceivingBefore = new Date(
+    now.getTime() - HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS,
+  );
   const expired = await knowledgeDb.select().from(schema.browserDownloadStagedObjects)
     .where(and(
       inArray(schema.browserDownloadStagedObjects.state, [
@@ -333,17 +360,24 @@ async function cleanupExpiredHostedBrowserDownloads(now = new Date()): Promise<n
         "cleanup_pending",
       ]),
       or(
-        eq(schema.browserDownloadStagedObjects.state, "cleanup_pending"),
-        lte(schema.browserDownloadStagedObjects.expiresAt, now),
         and(
-          sql`${schema.browserDownloadStagedObjects.state} <> 'receiving'`,
-          sql`not exists (
-            select 1
-            from ${schema.browserSessions}
-            where ${schema.browserSessions.sessionId} = ${schema.browserDownloadStagedObjects.sessionId}
-              and ${schema.browserSessions.generation} = ${schema.browserDownloadStagedObjects.generation}
-              and ${schema.browserSessions.state} in ('opening', 'ready', 'human_control', 'closing')
-          )`,
+          eq(schema.browserDownloadStagedObjects.state, "cleanup_pending"),
+          lte(schema.browserDownloadStagedObjects.updatedAt, now),
+        ),
+        and(
+          eq(schema.browserDownloadStagedObjects.state, "receiving"),
+          or(
+            lte(schema.browserDownloadStagedObjects.expiresAt, now),
+            lte(schema.browserDownloadStagedObjects.updatedAt, staleReceivingBefore),
+            missingActiveHostedBrowserSession(),
+          ),
+        ),
+        and(
+          eq(schema.browserDownloadStagedObjects.state, "staged"),
+          or(
+            lte(schema.browserDownloadStagedObjects.expiresAt, now),
+            missingActiveHostedBrowserSession(),
+          ),
         ),
       ),
     ))
@@ -356,7 +390,7 @@ async function cleanupExpiredHostedBrowserDownloads(now = new Date()): Promise<n
     await cleanupHostedBrowserDownload({
       ...row,
       expiresAt: row.expiresAt.toISOString(),
-    });
+    }, now);
   }
   return expired.length;
 }
@@ -373,6 +407,7 @@ async function cleanupHostedBrowserDownload(
   input: Pick<HostedBrowserDownloadFileIdentity,
     "operationId" | "organizationId" | "threadId" | "userId" | "sessionId" |
     "generation" | "pendingDownloadId" | "sha256"> & Partial<HostedBrowserDownloadFileIdentity>,
+  now: Date,
 ): Promise<void> {
   let objectKey: string | undefined;
   await knowledgeDb.transaction(async (tx) => {
@@ -389,7 +424,7 @@ async function cleanupHostedBrowserDownload(
       row.pendingDownloadId !== input.pendingDownloadId ||
       row.sha256 !== input.sha256
     ) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
-    if (row.state === "promoted") return;
+    if (row.state === "promoted" || row.state === "cleaned") return;
     const [referenced] = await tx.select({ id: schema.fileBlobs.id })
       .from(schema.fileBlobs)
       .where(and(
@@ -398,49 +433,129 @@ async function cleanupHostedBrowserDownload(
       ))
       .limit(1);
     if (referenced) return;
-    objectKey = row.objectKey;
-    if (row.state !== "cleaned") {
+    if (row.state === "receiving") {
+      const transferLeaseExpiresAt = new Date(
+        row.updatedAt.getTime() + HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS,
+      );
       await tx.update(schema.browserDownloadStagedObjects).set({
         state: "cleanup_pending",
-        updatedAt: new Date(),
+        updatedAt: transferLeaseExpiresAt,
+      }).where(eq(schema.browserDownloadStagedObjects.operationId, row.operationId));
+      return;
+    }
+    if (row.state === "cleanup_pending" && row.updatedAt > now) return;
+    objectKey = row.objectKey;
+    if (row.state === "staged") {
+      await tx.update(schema.browserDownloadStagedObjects).set({
+        state: "cleanup_pending",
+        updatedAt: now,
       }).where(eq(schema.browserDownloadStagedObjects.operationId, row.operationId));
     }
   });
   if (!objectKey) return;
-  await getManagedFileStorageProvider().delete(objectKey);
-  await knowledgeDb.update(schema.browserDownloadStagedObjects).set({
-    state: "cleaned",
-    updatedAt: new Date(),
-  }).where(and(
-    eq(schema.browserDownloadStagedObjects.operationId, input.operationId),
-    inArray(schema.browserDownloadStagedObjects.state, ["cleanup_pending", "cleaned"]),
-  ));
-}
-
-async function eraseHostedBrowserDownloadAttemptAfterLostStage(
-  input: HostedBrowserDownloadFileIdentity,
-): Promise<void> {
-  let objectKey: string | undefined;
-  await knowledgeDb.transaction(async (tx) => {
-    const [row] = await tx.select().from(schema.browserDownloadStagedObjects)
+  await withHostedBrowserDownloadTransferLock(input.operationId, async (transaction) => {
+    const [row] = await transaction.select().from(schema.browserDownloadStagedObjects)
       .where(eq(schema.browserDownloadStagedObjects.operationId, input.operationId))
       .for("update");
     if (!row) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
     assertMatchingHostedBrowserDownloadStage(row, input);
-    if (row.state === "staged" || row.state === "promoted") return;
-    if (row.state !== "cleanup_pending" && row.state !== "cleaned") {
-      throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
-    }
-    const [referenced] = await tx.select({ id: schema.fileBlobs.id })
+    if (row.state === "promoted" || row.state === "cleaned") return;
+    const [referenced] = await transaction.select({ id: schema.fileBlobs.id })
       .from(schema.fileBlobs)
       .where(and(
         eq(schema.fileBlobs.objectKey, row.objectKey),
         isNull(schema.fileBlobs.deletedAt),
       ))
       .limit(1);
-    if (!referenced) objectKey = row.objectKey;
+    if (referenced) return;
+    if (row.state === "receiving") {
+      await transaction.update(schema.browserDownloadStagedObjects).set({
+        state: "cleanup_pending",
+        updatedAt: new Date(
+          row.updatedAt.getTime() + HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS,
+        ),
+      }).where(eq(schema.browserDownloadStagedObjects.operationId, row.operationId));
+      return;
+    }
+    if (row.state === "cleanup_pending" && row.updatedAt > now) return;
+    if (row.state === "staged") {
+      await transaction.update(schema.browserDownloadStagedObjects).set({
+        state: "cleanup_pending",
+        updatedAt: now,
+      }).where(eq(schema.browserDownloadStagedObjects.operationId, row.operationId));
+    }
+    await getManagedFileStorageProvider().delete(row.objectKey);
+    await transaction.update(schema.browserDownloadStagedObjects).set({
+      state: "cleaned",
+      updatedAt: now,
+    }).where(and(
+      eq(schema.browserDownloadStagedObjects.operationId, input.operationId),
+      eq(schema.browserDownloadStagedObjects.state, "cleanup_pending"),
+    ));
   });
-  if (objectKey) await getManagedFileStorageProvider().delete(objectKey);
+}
+
+async function eraseHostedBrowserDownloadAttemptAfterLostStage(
+  input: HostedBrowserDownloadFileIdentity,
+  now: Date,
+): Promise<void> {
+  await withHostedBrowserDownloadTransferLock(input.operationId, async (transaction) => {
+    const [row] = await transaction.select().from(schema.browserDownloadStagedObjects)
+      .where(eq(schema.browserDownloadStagedObjects.operationId, input.operationId))
+      .for("update");
+    if (!row) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+    assertMatchingHostedBrowserDownloadStage(row, input);
+    if (row.state === "staged" || row.state === "promoted" || row.state === "cleaned") return;
+    if (row.state !== "cleanup_pending") {
+      throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+    }
+    const [referenced] = await transaction.select({ id: schema.fileBlobs.id })
+      .from(schema.fileBlobs)
+      .where(and(
+        eq(schema.fileBlobs.objectKey, row.objectKey),
+        isNull(schema.fileBlobs.deletedAt),
+      ))
+      .limit(1);
+    if (referenced) return;
+    await transaction.update(schema.browserDownloadStagedObjects).set({
+      state: "cleanup_pending",
+      updatedAt: now,
+    }).where(eq(schema.browserDownloadStagedObjects.operationId, row.operationId));
+    await getManagedFileStorageProvider().delete(row.objectKey);
+    await transaction.update(schema.browserDownloadStagedObjects).set({
+      state: "cleaned",
+      updatedAt: now,
+    }).where(and(
+      eq(schema.browserDownloadStagedObjects.operationId, input.operationId),
+      eq(schema.browserDownloadStagedObjects.state, "cleanup_pending"),
+    ));
+  });
+}
+
+type HostedBrowserDownloadTransaction = Parameters<
+  Parameters<typeof knowledgeDb.transaction>[0]
+>[0];
+
+async function withHostedBrowserDownloadTransferLock<T>(
+  operationId: string,
+  action: (transaction: HostedBrowserDownloadTransaction) => Promise<T>,
+): Promise<T> {
+  return await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:browser-download-transfer:${operationId}`}, 0))`,
+    );
+    return await action(transaction);
+  });
+}
+
+function missingActiveHostedBrowserSession(): SQL {
+  return sql`not exists (
+    select 1
+    from ${schema.browserSessions}
+    where ${schema.browserSessions.sessionId} = ${schema.browserDownloadStagedObjects.sessionId}
+      and ${schema.browserSessions.generation} = ${schema.browserDownloadStagedObjects.generation}
+      and ${schema.browserSessions.state} in ('opening', 'ready', 'human_control', 'closing')
+  )`;
 }
 
 class HostedBrowserDownloadExpiredError extends Error {
