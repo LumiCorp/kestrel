@@ -19,8 +19,9 @@ interface FakeOpenRouterScenarioState {
 }
 
 export async function startFakeOpenRouterServer(
-  input: { port?: number | undefined } = {},
+  input: { port?: number | undefined; model?: string | undefined } = {},
 ): Promise<FakeOpenRouterServer> {
+  const model = input.model ?? PRODUCT_CONTRACT_MODEL;
   const requests: Array<{ schemaName: string; userMessage: string }> = [];
   const scenarios: FakeOpenRouterScenarioState = {
     delayReleased: false,
@@ -30,7 +31,7 @@ export async function startFakeOpenRouterServer(
   };
   const sockets = new Set<Socket>();
   const server = http.createServer((request, response) => {
-    void handleFakeOpenRouterRequest(request, response, requests, scenarios);
+    void handleFakeOpenRouterRequest(request, response, requests, scenarios, model);
   });
   server.on("connection", (socket) => {
     sockets.add(socket);
@@ -77,6 +78,7 @@ async function handleFakeOpenRouterRequest(
   response: ServerResponse,
   requests: Array<{ schemaName: string; userMessage: string }>,
   scenarios: FakeOpenRouterScenarioState,
+  model: string,
 ): Promise<void> {
   if (request.url === "/health") {
     response.writeHead(200, { "content-type": "application/json" });
@@ -93,7 +95,7 @@ async function handleFakeOpenRouterRequest(
       JSON.stringify({
         data: [
           {
-            id: PRODUCT_CONTRACT_MODEL,
+            id: model,
             context_length: 131_072,
             top_provider: {
               context_length: 131_072,
@@ -128,7 +130,7 @@ async function handleFakeOpenRouterRequest(
   }
 
   if (
-    request.url === "/api/v1/model/z-ai/glm-5.2" &&
+    request.url === `/api/v1/model/${model}` &&
     request.method === "GET"
   ) {
     const authorization = request.headers.authorization;
@@ -147,8 +149,8 @@ async function handleFakeOpenRouterRequest(
     response.end(
       JSON.stringify({
         data: {
-          id: PRODUCT_CONTRACT_MODEL,
-          canonical_slug: PRODUCT_CONTRACT_MODEL,
+          id: model,
+          canonical_slug: model,
           context_length: 131_072,
           top_provider: {
             context_length: 131_072,
@@ -293,7 +295,7 @@ async function handleFakeOpenRouterRequest(
         object: "response",
         created_at: Math.floor(Date.now() / 1000),
         status: "completed",
-        model: PRODUCT_CONTRACT_MODEL,
+        model,
         output: [
           {
             id: `fake-message-${requests.length}`,
@@ -329,7 +331,7 @@ async function handleFakeOpenRouterRequest(
       connection: "close",
     });
     response.end(JSON.stringify({
-      model: PRODUCT_CONTRACT_MODEL,
+      model,
       choices: [{
         message: {
           content: JSON.stringify({
@@ -352,7 +354,7 @@ async function handleFakeOpenRouterRequest(
     });
     response.end(
       JSON.stringify({
-        model: PRODUCT_CONTRACT_MODEL,
+        model,
         choices: [
           {
             finish_reason: "stop",
@@ -401,7 +403,7 @@ async function handleFakeOpenRouterRequest(
     });
     response.end(
       JSON.stringify({
-        model: PRODUCT_CONTRACT_MODEL,
+        model,
         choices: [
           { message: { content: JSON.stringify({ notNextAction: true }) } },
         ],
@@ -426,7 +428,7 @@ async function handleFakeOpenRouterRequest(
         : undefined;
     if (modeToolName !== undefined && toolNames.has("exec_command") === false) {
       scenarios.commitStep = 0;
-      writeToolCallResponse(response, parsed.stream === true, {
+      writeToolCallResponse(response, parsed.stream === true, model, {
         callId: `fake-mode-call-${requests.length}`,
         name: modeToolName,
         input: {
@@ -449,7 +451,7 @@ async function handleFakeOpenRouterRequest(
       const command = commands[scenarios.commitStep];
       if (command !== undefined) {
         scenarios.commitStep += 1;
-        writeToolCallResponse(response, parsed.stream === true, {
+        writeToolCallResponse(response, parsed.stream === true, model, {
           callId: `fake-commit-call-${requests.length}`,
           name: "exec_command",
           input: {
@@ -465,7 +467,7 @@ async function handleFakeOpenRouterRequest(
           ? "kestrel.finalize"
           : undefined;
       if (commitFinalizeToolName !== undefined) {
-        writeToolCallResponse(response, parsed.stream === true, {
+        writeToolCallResponse(response, parsed.stream === true, model, {
           callId: `fake-commit-finalize-${requests.length}`,
           name: commitFinalizeToolName,
           input: {
@@ -516,7 +518,7 @@ async function handleFakeOpenRouterRequest(
       });
       response.write(
         `data: ${JSON.stringify({
-          model: PRODUCT_CONTRACT_MODEL,
+          model,
           choices: [
             {
               delta: {
@@ -546,7 +548,7 @@ async function handleFakeOpenRouterRequest(
     });
     response.end(
       JSON.stringify({
-        model: PRODUCT_CONTRACT_MODEL,
+        model,
         output: [{ content: [functionCall] }],
         choices: [
           {
@@ -578,7 +580,7 @@ async function handleFakeOpenRouterRequest(
   });
   response.end(
     JSON.stringify({
-      model: PRODUCT_CONTRACT_MODEL,
+      model,
       choices: [
         {
           message: {
@@ -629,6 +631,7 @@ async function handleFakeOpenRouterRequest(
 function writeToolCallResponse(
   response: ServerResponse,
   stream: boolean,
+  model: string,
   call: { callId: string; name: string; input: Record<string, unknown> },
 ): void {
   const args = JSON.stringify(call.input);
@@ -638,7 +641,7 @@ function writeToolCallResponse(
       connection: "close",
     });
     response.write(`data: ${JSON.stringify({
-      model: PRODUCT_CONTRACT_MODEL,
+      model,
       choices: [{
         delta: {
           role: "assistant",
@@ -659,7 +662,7 @@ function writeToolCallResponse(
     connection: "close",
   });
   response.end(JSON.stringify({
-    model: PRODUCT_CONTRACT_MODEL,
+    model,
     output: [{
       content: [{
         id: call.callId,

@@ -18,6 +18,7 @@ import {
 import { isLegacyGeneratedDesktopSelection } from "../../../src/profile/runtimeProfile.js";
 import {
   composeKestrelOneProfile,
+  defaultApprovalPolicyPackForPreset,
   KESTREL_ONE_POLICY_ID,
 } from "../../../src/profile/kestrelOnePolicy.js";
 import {
@@ -251,7 +252,7 @@ export function createDefaultDesktopSettings(
     capabilityVerifications: {},
     developerShellEnvMode: "inherit",
     developerShellAllowedEnvNames: [],
-    approvalPolicyPackId: "dev",
+    approvalPolicyPackId: "isolated_code",
     advancedWorkspaceEnabled: false,
     modelConfigurations: [createDesktopModelConfiguration(fallbackModelPolicy)],
     defaultModelConfigurationId: DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID,
@@ -345,12 +346,14 @@ export function normalizeDesktopSettings(
         ),
       ].sort()
     : [];
-  const approvalPolicyPackId =
+  const requestedApprovalPolicyPackId =
+    settings?.approvalPolicyPackId === "dev" ||
+    settings?.approvalPolicyPackId === "isolated_code" ||
     settings?.approvalPolicyPackId === "ci_bot" ||
     settings?.approvalPolicyPackId === "hosted_workspace" ||
     settings?.approvalPolicyPackId === "production"
       ? settings.approvalPolicyPackId
-      : "dev";
+      : undefined;
   const hasAnyKey =
     openrouterApiKey !== undefined ||
     openrouterModel !== undefined ||
@@ -484,12 +487,21 @@ export function normalizeDesktopSettings(
   const capabilityPacks = normalizeDesktopCapabilityPacks(
     requestedCapabilityPacks,
   );
+  const presetId = capabilityPacks.includes("dev_shell")
+    ? "desktop_dev_local"
+    : "desktop_safe_local";
+  const presetApprovalPolicyPackId =
+    defaultApprovalPolicyPackForPreset(presetId);
+  const approvalPolicyPackId =
+    requestedApprovalPolicyPackId === "dev" ||
+    requestedApprovalPolicyPackId === "isolated_code" ||
+    requestedApprovalPolicyPackId === undefined
+      ? presetApprovalPolicyPackId
+      : requestedApprovalPolicyPackId;
   return {
     selectedProvider,
     databaseMode,
-    presetId: capabilityPacks.includes("dev_shell")
-      ? "desktop_dev_local"
-      : "desktop_safe_local",
+    presetId,
     capabilityPacks,
     projectTombstones: normalizeDesktopProjectTombstones(
       settings?.projectTombstones,
@@ -765,6 +777,7 @@ export async function readDesktopSettings(
       : undefined;
     const approvalPolicyPackId =
       parsed.approvalPolicyPackId === "dev" ||
+      parsed.approvalPolicyPackId === "isolated_code" ||
       parsed.approvalPolicyPackId === "ci_bot" ||
       parsed.approvalPolicyPackId === "hosted_workspace" ||
       parsed.approvalPolicyPackId === "production"

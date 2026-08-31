@@ -39,6 +39,34 @@ test("Desktop includes the Browser App installed but disabled", () => {
   assert.equal(BROWSER_TOOL_NAMES.length, 12);
 });
 
+test("Desktop safe defaults use the isolated-code approval policy", () => {
+  const defaults = createDefaultDesktopSettings();
+
+  assert.equal(defaults.presetId, "desktop_safe_local");
+  assert.equal(defaults.capabilityPacks.includes("sandbox_code"), true);
+  assert.equal(defaults.approvalPolicyPackId, "isolated_code");
+  assert.equal(
+    buildDesktopRunnerProfile(createDefaultModelPolicy(), defaults).approvalPolicyPackId,
+    "isolated_code",
+  );
+});
+
+test("Desktop settings migrate preset-incompatible local approval policies", () => {
+  const safe = normalizeDesktopSettings({
+    presetId: "desktop_safe_local",
+    capabilityPacks: ["balanced", "filesystem", "desktop_host", "sandbox_code"],
+    approvalPolicyPackId: "dev",
+  });
+  const developer = normalizeDesktopSettings({
+    presetId: "desktop_dev_local",
+    capabilityPacks: ["balanced", "filesystem", "desktop_host", "dev_shell"],
+    approvalPolicyPackId: "isolated_code",
+  });
+
+  assert.equal(safe.approvalPolicyPackId, "isolated_code");
+  assert.equal(developer.approvalPolicyPackId, "dev");
+});
+
 test("Desktop settings round-trip versioned non-secret onboarding progress", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "kestrel-onboarding-settings-"));
   const settingsPath = path.join(directory, "settings.json");
