@@ -4,7 +4,6 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md)
 - [Promote a quarantined browser download](08-promote-a-quarantined-browser-download.md)
 
 ## In progress
@@ -14,7 +13,7 @@ None.
 ## Blocked
 
 - [Add hosted browser viewing and human takeover](06-add-hosted-browser-viewing-and-takeover.md) — blocked on issues 06a-06e and the live Vercel/PostgreSQL/combined hosted proof
-- [Prove hosted passkey takeover](06e-prove-hosted-passkey-takeover.md) — blocked on issue 06d and the client-side WebAuthn delivery boundary
+- [Prove hosted passkey takeover](06e-prove-hosted-passkey-takeover.md) — blocked on the client-side WebAuthn delivery boundary
 - [Add Desktop browser viewing and human takeover](04-add-desktop-browser-viewing-and-takeover.md) — implementation is review-clean; blocked only on issue 04c's signed platform-authenticator canary
 - [Complete native authentication takeover](04c-complete-native-authentication-takeover.md) — code path is review-clean; blocked on signed platform-authenticator canary
 - [Run safe Browser App sessions in Kestrel One](05-run-safe-browser-sessions-in-kestrel-one.md) — blocked on issues 05a-05g and the remaining live Fly canaries
@@ -22,7 +21,7 @@ None.
 
 ## Implemented
 
-- [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — shared viewer frame bounds, file-free pinned-Session CDP capture with exact lifecycle events, and status-aware Router bounds pass 118 focused transport/lifecycle tests plus deterministic and real-Chromium CDP regressions; awaiting independent review
+- [Upload an approved Thread attachment](07-upload-an-approved-thread-attachment.md) — implemented awaiting independent review; exact active-turn approval authority and dedicated Desktop/hosted upload transport pass 174 focused tests
 - [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — remaining review findings are assigned to the existing 06b lifecycle and 06c scheduling owners
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)
 - [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)
@@ -31,6 +30,7 @@ None.
 
 ## Done
 
+- [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — approved at `7d1a8feb0`; shared bounds, exact pinned-Session CDP lifecycle, and deterministic plus real-Chromium capture proofs are green
 - [Bound and prioritize hosted viewer transport](06c-bound-and-prioritize-hosted-viewer-transport.md) — approved at `554be10e8`; final worker-admission repairs pass 108 focused tests
 - [Revoke hosted viewer authority exactly](06b-revoke-hosted-viewer-authority-exactly.md) — policy A and post-reconciliation authority rereads pass the focused Web lifecycle regressions
 - [Close an unfinished upload after an early response](05m-close-unfinished-upload-after-early-response.md)

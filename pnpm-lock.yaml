@@ -386,6 +386,9 @@ importers:
 
   apps/environment-router:
     dependencies:
+      '@kestrel-agents/conversation':
+        specifier: workspace:^
+        version: link:../../packages/conversation
       '@kestrel-agents/protocol':
         specifier: workspace:^
         version: link:../../packages/protocol

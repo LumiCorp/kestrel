@@ -7,6 +7,7 @@ import {
 import {
   BROWSER_CONTRACT_VERSION,
   BROWSER_POLICY_RESOLUTION_VERSION,
+  BROWSER_UPLOAD_PREPARATION_VERSION,
   BROWSER_TOOL_NAMES,
   browserArtifactAuthorizationRequest,
   browserArtifactPresentation,
@@ -16,6 +17,7 @@ import {
   normalizeBrowserHostFailure,
   parseBrowserAuthorizedArtifactV1,
   parseBrowserPolicyResolutionV1,
+  parseBrowserUploadPreparedEffectV1,
   requireBrowserServicePort,
   validateBrowserResultSemantics,
   validateBrowserResultAuthority,
@@ -37,6 +39,7 @@ import type {
 } from "../contracts.js";
 
 const RESULT_NORMALIZER_ID = "kestrel.browser-contract:v1";
+const UPLOAD_EFFECT_ADAPTER_ID = "kestrel.browser-upload-effect:v1";
 
 function resolveBrowserHostAuthority(
   context: SharedToolContext,
@@ -152,8 +155,8 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
     resolveExecutionClass(input) {
       return resolveBrowserToolExecutionClass(contract.toolId, input);
     },
-    prepareInputAdapter(input) {
-      return {
+    async prepareInputAdapter(input, context) {
+      const base = {
         adapterId: RESULT_NORMALIZER_ID,
         metadata: {
           contractVersion: BROWSER_CONTRACT_VERSION,
@@ -165,6 +168,82 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           exactEffects: [...resolveExactEffects(contract, input)],
           approval: contract.approval,
         },
+      };
+      if (contract.toolId !== "browser.upload" || context === undefined) {
+        return base;
+      }
+      const runtime = context.runtime;
+      if (
+        runtime?.turnId === undefined ||
+        runtime.threadId === undefined ||
+        runtime.activeTurnAttachments === undefined
+      ) {
+        throw browserFailure(
+          "BROWSER_SERVICE_UNAVAILABLE",
+          "Browser upload requires the trusted active-turn attachment authority.",
+          { recoverable: false, operation: contract.toolId },
+        );
+      }
+      const attachmentId = typeof input.attachmentId === "string"
+        ? input.attachmentId
+        : "";
+      const matches = runtime.activeTurnAttachments.filter(
+        (attachment) => attachment.attachmentId === attachmentId,
+      );
+      if (matches.length !== 1) {
+        throw browserFailure(
+          "BROWSER_SERVICE_UNAVAILABLE",
+          "The requested attachment is not an exact member of the active turn.",
+          { recoverable: false, operation: contract.toolId },
+        );
+      }
+      const attachment = matches[0]!;
+      const service = requireBrowserServicePort(context.browserService);
+      if (typeof service.prepareUpload !== "function") {
+        throw browserFailure(
+          "BROWSER_SERVICE_UNAVAILABLE",
+          "The active Browser host cannot prepare attachment upload.",
+          { recoverable: false, operation: contract.toolId },
+        );
+      }
+      const preparedEffect = parseBrowserUploadPreparedEffectV1(
+        await service.prepareUpload({
+          version: BROWSER_UPLOAD_PREPARATION_VERSION,
+          runId: runtime.runId,
+          threadId: runtime.threadId,
+          turnId: runtime.turnId,
+          effectiveInput: input,
+          attachment: {
+            attachmentId: attachment.attachmentId,
+            filename: attachment.filename,
+            declaredMediaType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            sha256: attachment.sha256,
+          },
+          authority: resolveBrowserHostAuthority(context, runtime),
+        }),
+      );
+      if (
+        preparedEffect.turnId !== runtime.turnId ||
+        preparedEffect.threadId !== runtime.threadId ||
+        preparedEffect.attachmentId !== attachment.attachmentId ||
+        preparedEffect.filename !== attachment.filename ||
+        preparedEffect.declaredMediaType !== attachment.mimeType ||
+        preparedEffect.sizeBytes !== attachment.sizeBytes ||
+        preparedEffect.sha256 !== attachment.sha256 ||
+        preparedEffect.sessionId !== input.sessionId ||
+        preparedEffect.snapshotId !== input.snapshotId ||
+        preparedEffect.targetRef !== input.targetRef
+      ) {
+        throw browserFailure(
+          "BROWSER_SERVICE_UNAVAILABLE",
+          "The Browser host returned divergent upload preparation authority.",
+          { recoverable: false, operation: contract.toolId },
+        );
+      }
+      return {
+        adapterId: UPLOAD_EFFECT_ADAPTER_ID,
+        metadata: { ...preparedEffect },
       };
     },
     ...(contract.toolId === "browser.request_grant"

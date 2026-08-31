@@ -49,3 +49,44 @@ Add shared, Desktop, hosted, process, PostgreSQL, Chromium, approval, and cleanu
 - Extend the Browser engine adapter with a read-only file-input description and an exact upload operation. Preparation validates snapshot/document revision, proves `targetRef` resolves to `input[type=file]`, and derives its display label. Execution repeats that target check, materializes the approved stream only inside the owned per-session runtime, invokes pinned agent-browser as `upload <targetRef> <ownedPath>`, and removes only that owned staging file.
 - Desktop supplies the existing `DesktopBrowserUploadStreamHook` from `DesktopAttachmentStore`. Hosted Web mints a one-time, body-bound upload capability only after approval and streams storage bytes through a dedicated Web-to-Environment-Router-to-worker route. This byte route is separate from the ordinary 20 MiB App relay and exposes no object URL or storage credential to the Browser, model, or client.
 - The prepared-effect adapter drives the existing approval presentation and web/mobile interaction projection. Do not add another approval system or a mobile Browser surface.
+
+## Implementation evidence
+
+- Trusted runtime preparation now projects only the exact active durable turn ID
+  and metadata for its resolved attachments. `browser.upload` adds one strict
+  prepared-effect adapter whose turn, Thread, attachment, immutable hash,
+  measured size, Session generation, snapshot/document revision, file-input
+  reference, and derived target label are hashed by the existing approval
+  authority. Model input cannot replace that attachment context.
+- Desktop independently re-resolves the approved file through
+  `DesktopAttachmentStore`, revalidates the exact file input before access and
+  again before dispatch, measures and hashes the stream into one unique owned
+  Session staging file, invokes pinned agent-browser as
+  `upload <targetRef> <ownedPath>`, and removes only that owned file while
+  preserving the primary failure.
+- Hosted Web re-runs the existing active-turn attachment resolver before
+  preparation and execution, signs a one-time fixed-key capability for the
+  exact prepared effect, and streams storage bytes through a dedicated
+  authenticated Web-to-Environment-Router-to-worker route. The Router and
+  worker enforce the shared 100 MiB conversation attachment limit, exact body
+  length, hash, operation, actor, tenant, turn, Session, generation, snapshot,
+  and target bindings. Transfer authority is consumed when byte transfer
+  begins; no object URL, storage credential, host path, or file bytes enter the
+  ordinary App relay or approval/result surfaces.
+- Existing web and mobile interaction envelopes carry the same approval. Its
+  presenter shows only the filename, measured size and canonical maximum,
+  untrusted declared media type, and Browser target label; it cannot be
+  remembered and contains no path, URL, credential, hash, or file bytes.
+- The exact combined shared/Desktop/hosted/Web/Router/approval command passes
+  174 tests: 173 passed, one optional real-Chromium CDP probe skipped, zero
+  failed. Root and Environment Router typechecks/builds, root build, frozen
+  lockfile verification, scoped changed-file lint, and `git diff --check` pass.
+- Repository-wide gate status is recorded without treating unrelated failures
+  as upload evidence: `pnpm validate` passes preflight and builds before the
+  existing unassigned `tests/unit/hosted-browser-viewer.test.ts` manifest
+  blocker; `pnpm validate:process` passes its first TUI journey but was
+  interrupted after a silent PTY wait; `pnpm validate:postgres` passes the
+  Browser lifecycle contract and then fails in existing Email Receiving/OAuth
+  suites; `pnpm validate:chromium` passes the production build and 28 of 32
+  product tests, with four unrelated appearance, brand, Thread-shell, and
+  workflow-canvas failures.

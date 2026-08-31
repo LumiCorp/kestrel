@@ -6,6 +6,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  open,
   readFile,
   rename,
   rm,
@@ -20,10 +21,12 @@ import {
   BROWSER_POLICY_RESOLUTION_VERSION,
   BROWSER_SERVICE_PORT_VERSION,
   BROWSER_TOOL_RESULT_VERSION,
+  BROWSER_UPLOAD_PREPARATION_VERSION,
   browserFailure,
   isBrowserToolName,
   normalizeBrowserHostFailure,
   parseBrowserSessionV1,
+  parseBrowserUploadPreparedEffectV1,
   type BrowserAllowlistAdoptionReceiptV1,
   type BrowserArtifactAuthorizationRequestV1,
   type BrowserAuthorizedArtifactV1,
@@ -32,6 +35,8 @@ import {
   type BrowserPolicyResolutionV1,
   type BrowserServicePort,
   type BrowserSessionV1,
+  type BrowserUploadPreparationRequestV1,
+  type BrowserUploadPreparedEffectV1,
 } from "../browser/contracts.js";
 import { resolveBrowserToolExecutionClass } from "../browser/browserAppContract.fixture.js";
 import { HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED } from "../browser/hostedViewer.js";
@@ -164,6 +169,19 @@ export interface DesktopBrowserEngineAdapter {
       acceptedOperation: DesktopBrowserAcceptedOperation;
     },
   ): Promise<DesktopBrowserEngineCommandResult>;
+  describeFileInput?(
+    input: DesktopBrowserEngineInvocation & {
+      targetRef: string;
+      acceptedOperation: DesktopBrowserAcceptedOperation;
+    },
+  ): Promise<{ targetRef: string; targetLabel: string }>;
+  uploadFile?(
+    input: DesktopBrowserEngineInvocation & {
+      targetRef: string;
+      ownedPath: string;
+      acceptedOperation: DesktopBrowserAcceptedOperation;
+    },
+  ): Promise<void>;
   close(
     input: DesktopBrowserEngineInvocation & {
       acceptedOperation?: DesktopBrowserAcceptedOperation | undefined;
@@ -306,7 +324,8 @@ export interface DesktopBrowserServiceOptions {
   engine?: DesktopBrowserEngineAdapter | undefined;
   createProxy?: typeof createLocalCoreBrowserEgressProxy | undefined;
   attachmentStore?:
-    | Pick<DesktopAttachmentStore, "importPath" | "list">
+    | (Pick<DesktopAttachmentStore, "importPath" | "list"> &
+        Partial<Pick<DesktopAttachmentStore, "resolve">>)
     | undefined;
   uploadStream?: DesktopBrowserUploadStreamHook | undefined;
   metrics?: DesktopBrowserMetricSink | undefined;
@@ -1132,6 +1151,69 @@ export class DesktopBrowserService implements BrowserServicePort {
     };
   }
 
+  async prepareUpload(
+    input: BrowserUploadPreparationRequestV1,
+  ): Promise<BrowserUploadPreparedEffectV1> {
+    await this.#requireInitialized();
+    if (input.version !== BROWSER_UPLOAD_PREPARATION_VERSION) {
+      throw browserFailure("BROWSER_SERVICE_UNAVAILABLE", "Browser upload preparation is invalid.");
+    }
+    const sessionId = requireText(input.effectiveInput.sessionId, "sessionId");
+    const generation = requireGeneration(input.effectiveInput.generation);
+    const snapshotId = requireText(input.effectiveInput.snapshotId, "snapshotId");
+    const targetRef = requireEngineRef(
+      requireText(input.effectiveInput.targetRef, "targetRef"),
+    );
+    const attachmentId = requireText(input.effectiveInput.attachmentId, "attachmentId");
+    const runtime = this.#requireRuntime(sessionId, input.threadId);
+    if (
+      generation !== runtime.session.generation ||
+      attachmentId !== input.attachment.attachmentId
+    ) {
+      throw browserFailure("BROWSER_SESSION_LOST", "Browser upload preparation authority is stale.");
+    }
+    const resolved = await this.#resolveUploadAttachment(
+      input.threadId,
+      input.attachment,
+    );
+    const operation = runtime.operationTail.then(async () => {
+      await this.#assertUsable(runtime, false);
+      const accepted = await this.#engine.acceptOperation({
+        ...runtime.engine,
+        operationId: `prepare-upload:${input.runId}:${this.#id()}`,
+        grantGeneration: runtime.session.generation,
+      });
+      try {
+        const snapshot = await this.#revalidateUploadTarget(
+          runtime,
+          snapshotId,
+          targetRef,
+          accepted,
+        );
+        return {
+          version: BROWSER_UPLOAD_PREPARATION_VERSION,
+          turnId: input.turnId,
+          threadId: input.threadId,
+          attachmentId,
+          filename: resolved.filename,
+          declaredMediaType: input.attachment.declaredMediaType,
+          sizeBytes: resolved.sizeBytes,
+          sha256: resolved.sha256,
+          sessionId,
+          generation,
+          snapshotId,
+          documentRevision: snapshot.documentRevision,
+          targetRef,
+          targetLabel: snapshot.targetLabel,
+        } satisfies BrowserUploadPreparedEffectV1;
+      } finally {
+        this.#engine.releaseOperation(accepted);
+      }
+    });
+    runtime.operationTail = operation.then(() => undefined, () => undefined);
+    return await operation;
+  }
+
   async execute(
     prepared: PreparedToolCallV1,
     lifecycle: BrowserOperationLifecycleV1,
@@ -1897,14 +1979,10 @@ export class DesktopBrowserService implements BrowserServicePort {
       await lifecycle.persistCompletedResult(output);
       return output;
     }
-    if (operation === "browser.upload" || operation === "browser.download") {
+    if (operation === "browser.download") {
       throw browserFailure(
-        operation === "browser.download"
-          ? "BROWSER_DOWNLOAD_UNAVAILABLE"
-          : "BROWSER_SERVICE_UNAVAILABLE",
-        operation === "browser.upload"
-          ? "Browser upload is unavailable until Thread attachment streaming is installed."
-          : "Browser download promotion is unavailable; downloads are cancelled before storage.",
+        "BROWSER_DOWNLOAD_UNAVAILABLE",
+        "Browser download promotion is unavailable; downloads are cancelled before storage.",
       );
     }
     if (operation === "browser.request_takeover") {
@@ -1929,6 +2007,9 @@ export class DesktopBrowserService implements BrowserServicePort {
     }
     if (operation === "browser.request_grant") {
       return await this.#requestGrant(runtime, prepared, lifecycle);
+    }
+    if (operation === "browser.upload") {
+      return await this.#upload(runtime, prepared, lifecycle);
     }
     await this.#refreshAuthorityBeforeDispatch(
       runtime,
@@ -2017,6 +2098,166 @@ export class DesktopBrowserService implements BrowserServicePort {
     this.#assertCommitAllowed(runtime);
     await lifecycle.persistCompletedResult(output);
     return output;
+  }
+
+  async #upload(
+    runtime: ActiveDesktopBrowserRuntime,
+    prepared: PreparedToolCallV1,
+    lifecycle: BrowserOperationLifecycleV1,
+  ): Promise<unknown> {
+    const effect = requirePreparedBrowserUploadEffect(prepared);
+    if (
+      effect.threadId !== runtime.session.threadId ||
+      effect.sessionId !== runtime.session.sessionId ||
+      effect.generation !== runtime.session.generation ||
+      effect.snapshotId !== prepared.effectiveInput.snapshotId ||
+      effect.targetRef !== prepared.effectiveInput.targetRef ||
+      effect.attachmentId !== prepared.effectiveInput.attachmentId
+    ) {
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "The approved Browser upload authority is stale.",
+        { browserOutcomeKnown: true, effectDispatched: false },
+      );
+    }
+    await this.#resolveUploadAttachment(effect.threadId, {
+      attachmentId: effect.attachmentId,
+      filename: effect.filename,
+      declaredMediaType: effect.declaredMediaType,
+      sizeBytes: effect.sizeBytes,
+      sha256: effect.sha256,
+    });
+    const uploadStream = this.#options.uploadStream;
+    if (uploadStream === undefined) {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "The Browser attachment stream is unavailable.",
+        { browserOutcomeKnown: true, effectDispatched: false },
+      );
+    }
+    const accepted = await this.#engine.acceptOperation({
+      ...runtime.engine,
+      operationId: prepared.callId,
+      grantGeneration: runtime.session.generation,
+    });
+    const ownedPath = path.join(
+      runtime.engine.runtimePath,
+      `upload-${this.#id()}.bin`,
+    );
+    let primaryFailure: unknown;
+    try {
+      const target = await this.#revalidateUploadTarget(
+        runtime,
+        effect.snapshotId,
+        effect.targetRef,
+        accepted,
+      );
+      if (
+        target.documentRevision !== effect.documentRevision ||
+        target.targetLabel !== effect.targetLabel
+      ) {
+        throw this.#targetStale(
+          runtime,
+          "browser.upload",
+          "The Browser upload target changed after approval.",
+          "approved_target",
+        );
+      }
+      await lifecycle.acknowledgeDispatch();
+      const stream = await uploadStream.open({
+        threadId: effect.threadId,
+        sessionId: effect.sessionId,
+        generation: effect.generation,
+        attachmentId: effect.attachmentId,
+        maximumBytes: DESKTOP_MAX_ATTACHMENT_BYTES,
+      });
+      const handle = await open(ownedPath, "wx", 0o600);
+      const hash = createHash("sha256");
+      let bytes = 0;
+      try {
+        for await (const value of stream) {
+          const chunk = Buffer.from(value);
+          bytes += chunk.byteLength;
+          if (bytes > DESKTOP_MAX_ATTACHMENT_BYTES || bytes > effect.sizeBytes) {
+            throw browserFailure(
+              "BROWSER_ARTIFACT_TOO_LARGE",
+              "The approved Browser upload stream exceeded its exact bound.",
+              { browserOutcomeKnown: true, effectDispatched: false },
+            );
+          }
+          hash.update(chunk);
+          await handle.write(chunk);
+        }
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      if (bytes !== effect.sizeBytes || hash.digest("hex") !== effect.sha256) {
+        throw browserFailure(
+          "BROWSER_SERVICE_UNAVAILABLE",
+          "The approved Browser upload stream failed integrity validation.",
+          { browserOutcomeKnown: true, effectDispatched: false },
+        );
+      }
+      await this.#resolveUploadAttachment(effect.threadId, {
+        attachmentId: effect.attachmentId,
+        filename: effect.filename,
+        declaredMediaType: effect.declaredMediaType,
+        sizeBytes: effect.sizeBytes,
+        sha256: effect.sha256,
+      });
+      const currentTarget = await this.#revalidateUploadTarget(
+        runtime,
+        effect.snapshotId,
+        effect.targetRef,
+        accepted,
+      );
+      if (
+        currentTarget.documentRevision !== effect.documentRevision ||
+        currentTarget.targetLabel !== effect.targetLabel
+      ) {
+        throw this.#targetStale(
+          runtime,
+          "browser.upload",
+          "The Browser upload target changed before dispatch.",
+          "dispatch_target",
+        );
+      }
+      if (typeof this.#engine.uploadFile !== "function") {
+        throw browserFailure(
+          "BROWSER_SERVICE_UNAVAILABLE",
+          "The Browser engine upload operation is unavailable.",
+        );
+      }
+      await this.#engine.uploadFile({
+        ...runtime.engine,
+        targetRef: effect.targetRef,
+        ownedPath,
+        acceptedOperation: accepted,
+      });
+      runtime.snapshots.clear();
+      runtime.continuations.clear();
+      this.#touch(runtime);
+      await this.#persist();
+      const output = browserOutput("browser.upload", {
+        sessionId: runtime.session.sessionId,
+        generation: runtime.session.generation,
+        outcome: "uploaded",
+        attachmentId: effect.attachmentId,
+      });
+      await lifecycle.persistCompletedResult(output);
+      return output;
+    } catch (error) {
+      primaryFailure = error;
+      throw error;
+    } finally {
+      this.#engine.releaseOperation(accepted);
+      try {
+        await rm(ownedPath, { force: true });
+      } catch (cleanupError) {
+        if (primaryFailure === undefined) throw cleanupError;
+      }
+    }
   }
 
   async #runOperation(
@@ -2989,6 +3230,122 @@ export class DesktopBrowserService implements BrowserServicePort {
         "document_revision",
       );
     }
+  }
+
+  async #resolveUploadAttachment(
+    threadId: string,
+    expected: BrowserUploadPreparationRequestV1["attachment"],
+  ) {
+    let resolved;
+    try {
+      const store = this.#options.attachmentStore;
+      if (store !== undefined && typeof store.resolve !== "function") {
+        if (this.#options.hostedSession !== undefined) {
+          return {
+            attachmentId: expected.attachmentId,
+            threadId,
+            filename: expected.filename,
+            mimeType: expected.declaredMediaType,
+            sizeBytes: expected.sizeBytes,
+            sha256: expected.sha256,
+          };
+        }
+        throw new Error("Attachment resolution is unavailable.");
+      }
+      [resolved] = await (store ?? new DesktopAttachmentStore(this.#options.homePath))
+        .resolve!(threadId, [expected.attachmentId]);
+    } catch {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "The approved Thread attachment is no longer available.",
+        { browserOutcomeKnown: true, effectDispatched: false },
+      );
+    }
+    if (
+      resolved === undefined ||
+      resolved.attachmentId !== expected.attachmentId ||
+      resolved.threadId !== threadId ||
+      resolved.filename !== expected.filename ||
+      resolved.mimeType !== expected.declaredMediaType ||
+      resolved.sizeBytes !== expected.sizeBytes ||
+      resolved.sha256 !== expected.sha256
+    ) {
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "The approved Thread attachment metadata changed.",
+        { browserOutcomeKnown: true, effectDispatched: false },
+      );
+    }
+    return resolved;
+  }
+
+  async #revalidateUploadTarget(
+    runtime: ActiveDesktopBrowserRuntime,
+    snapshotId: string,
+    targetRef: string,
+    acceptedOperation: DesktopBrowserAcceptedOperation,
+  ): Promise<SnapshotAuthority & { targetLabel: string }> {
+    const snapshot = runtime.snapshots.get(snapshotId);
+    if (snapshot === undefined) {
+      throw this.#targetStale(
+        runtime,
+        "browser.upload",
+        "The Browser upload target snapshot is stale.",
+        "snapshot_authority",
+      );
+    }
+    await this.#selectExactTab(
+      runtime,
+      snapshot.tabId,
+      "browser.upload",
+      acceptedOperation,
+      true,
+    );
+    const current = await this.#command(runtime, acceptedOperation, ["snapshot"]);
+    const page = await this.#readPageIdentity(runtime, acceptedOperation);
+    if (
+      page.tabId !== snapshot.tabId ||
+      digest({
+        documentIdentity: page.documentIdentity,
+        content: extractEngineContent(current),
+      }) !== snapshot.documentRevision
+    ) {
+      runtime.snapshots.clear();
+      runtime.continuations.clear();
+      throw this.#targetStale(
+        runtime,
+        "browser.upload",
+        "The Browser document changed after the upload target snapshot was captured.",
+        "document_revision",
+      );
+    }
+    let target;
+    try {
+      if (typeof this.#engine.describeFileInput !== "function") {
+        throw new Error("Browser engine file-input description is unavailable.");
+      }
+      target = await this.#engine.describeFileInput({
+        ...runtime.engine,
+        targetRef,
+        acceptedOperation,
+      });
+    } catch {
+      throw this.#targetStale(
+        runtime,
+        "browser.upload",
+        "The Browser upload target is no longer an exact file input.",
+        "file_input",
+      );
+    }
+    if (target.targetRef !== targetRef || target.targetLabel.length === 0) {
+      throw this.#targetStale(
+        runtime,
+        "browser.upload",
+        "The Browser upload target identity changed.",
+        "file_input_identity",
+      );
+    }
+    return { ...snapshot, targetLabel: target.targetLabel };
   }
 
   #throwIfDownloadIntercepted(
@@ -4296,6 +4653,53 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
   ): Promise<DesktopBrowserEngineCommandResult> {
     this.#assertAccepted(input, input.acceptedOperation);
     return await this.#run(input, input.command);
+  }
+
+  async describeFileInput(
+    input: DesktopBrowserEngineInvocation & {
+      targetRef: string;
+      acceptedOperation: DesktopBrowserAcceptedOperation;
+    },
+  ): Promise<{ targetRef: string; targetLabel: string }> {
+    this.#assertAccepted(input, input.acceptedOperation);
+    const targetRef = requireEngineRef(input.targetRef);
+    const type = extractScalar(
+      (await this.#run(input, ["get", "attr", targetRef, "type"])).stdout,
+      "value",
+    ).toLowerCase();
+    if (type !== "file") {
+      throw new Error("BROWSER_TARGET_STALE: target is not input[type=file].");
+    }
+    let accessibleLabel: string | undefined;
+    try {
+      accessibleLabel = extractScalar(
+        (await this.#run(input, ["get", "attr", targetRef, "aria-label"])).stdout,
+        "value",
+      ).trim();
+    } catch {
+      accessibleLabel = undefined;
+    }
+    return {
+      targetRef,
+      targetLabel: (accessibleLabel || `File input ${targetRef}`).slice(0, 512),
+    };
+  }
+
+  async uploadFile(
+    input: DesktopBrowserEngineInvocation & {
+      targetRef: string;
+      ownedPath: string;
+      acceptedOperation: DesktopBrowserAcceptedOperation;
+    },
+  ): Promise<void> {
+    this.#assertAccepted(input, input.acceptedOperation);
+    const targetRef = requireEngineRef(input.targetRef);
+    const runtimeRoot = path.resolve(input.runtimePath);
+    const ownedPath = path.resolve(input.ownedPath);
+    if (path.dirname(ownedPath) !== runtimeRoot) {
+      throw new Error("BROWSER_ENGINE_FAILURE: upload staging path is not owned.");
+    }
+    await this.#run(input, ["upload", targetRef, ownedPath]);
   }
 
   async captureViewerFrame(
@@ -6299,6 +6703,22 @@ function requirePersistedArtifactToolName(
     throw new Error("Browser persisted artifact tool name is invalid.");
   }
   return value;
+}
+
+function requirePreparedBrowserUploadEffect(
+  prepared: PreparedToolCallV1,
+): BrowserUploadPreparedEffectV1 {
+  const adapters = prepared.inputAdapters.filter(
+    (adapter) => adapter.adapterId === "kestrel.browser-upload-effect:v1",
+  );
+  if (adapters.length !== 1) {
+    throw browserFailure(
+      "BROWSER_SERVICE_UNAVAILABLE",
+      "The Browser upload is missing exact prepared-effect authority.",
+      { browserOutcomeKnown: true, effectDispatched: false },
+    );
+  }
+  return parseBrowserUploadPreparedEffectV1(adapters[0]!.metadata);
 }
 
 function attachmentMatchesAuthorization(

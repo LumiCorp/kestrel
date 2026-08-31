@@ -17,6 +17,7 @@ import { PreviewRelay } from "./preview-relay.js";
 import { handleWorkspaceIdle } from "./workspace-idle.js";
 import { handleBrowserRevisionControl } from "./browser-revision.js";
 import { handleBrowserViewerControl } from "./browser-viewer.js";
+import { handleBrowserUpload } from "./browser-upload.js";
 import { HostedBrowserEgressRegistry } from "./browser-egress.js";
 
 const ENVIRONMENT_GATEWAY_CONTRACT_REVISION = 3;
@@ -137,6 +138,21 @@ const server = createServer(async (request, response) => {
       publicKey,
       environmentId,
       expectedAppName,
+    });
+    return;
+  }
+  if (
+    request.method === "POST" &&
+    (pathname === "/internal/browser/upload/prepare" ||
+      pathname === "/internal/browser/upload/bytes")
+  ) {
+    await handleBrowserUpload({
+      request,
+      response,
+      publicKey,
+      environmentId,
+      expectedAppName,
+      prepare: pathname.endsWith("/prepare"),
     });
     return;
   }

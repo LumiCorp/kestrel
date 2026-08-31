@@ -3,6 +3,7 @@ import {
   parseBrowserAllowlistAdoptionReceiptV1,
   parseBrowserAuthorizedArtifactV1,
   parseBrowserPolicyResolutionV1,
+  parseBrowserUploadPreparedEffectV1,
   type BrowserServicePort,
 } from "../../src/browser/contracts.js";
 import type { PreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
@@ -60,6 +61,11 @@ export function createKestrelOneBrowserService(
     async resolvePolicy(input) {
       return parseBrowserPolicyResolutionV1(
         await request("request_grant", "policy", input),
+      );
+    },
+    async prepareUpload(input) {
+      return parseBrowserUploadPreparedEffectV1(
+        await request("upload", "prepare-upload", input),
       );
     },
     async execute(prepared: PreparedToolCallV1, lifecycle) {

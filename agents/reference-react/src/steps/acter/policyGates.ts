@@ -1071,6 +1071,9 @@ async function maybeRequireToolApproval(input: {
   const approvalPresentation = buildToolApprovalPresentation({
     toolName: input.toolName,
     effectiveInput: effectiveToolInput,
+    ...(preparedToolCall === undefined
+      ? {}
+      : { inputAdapters: preparedToolCall.inputAdapters }),
     disposition: effectiveDisposition,
   });
   const approvalReason = approvalReasonExplanation(

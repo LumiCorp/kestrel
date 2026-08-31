@@ -6,13 +6,14 @@ import {
   extractAttachmentTextIsolated,
   isAttachmentTextExtractable,
 } from "@kestrel-agents/files";
+import { CONVERSATION_ATTACHMENT_MAX_FILE_BYTES } from "@kestrel-agents/conversation";
 import sharp from "sharp";
 
 import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 import { resolveLocalCorePaths } from "./home.js";
 
 export const DESKTOP_MAX_ATTACHMENTS_PER_MESSAGE = 20;
-export const DESKTOP_MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+export const DESKTOP_MAX_ATTACHMENT_BYTES = CONVERSATION_ATTACHMENT_MAX_FILE_BYTES;
 export const DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES = 500 * 1024 * 1024;
 export const DESKTOP_DRAFT_ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_INLINE_TEXT_BYTES = 1024 * 1024;

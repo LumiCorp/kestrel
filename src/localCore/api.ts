@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import {
   chmod,
@@ -1177,6 +1177,7 @@ export function createPackagedDesktopBrowserService(input: {
   );
   if (!existsSync(engineExecutablePath) || !existsSync(chromeExecutablePath))
     return;
+  const attachmentStore = new DesktopAttachmentStore(input.homePath);
   return new DesktopBrowserService({
     homePath: input.homePath,
     engineExecutablePath,
@@ -1190,6 +1191,23 @@ export function createPackagedDesktopBrowserService(input: {
     viewerEvents: createLocalCoreDesktopBrowserViewerEventSink({
       homePath: input.homePath,
     }),
+    attachmentStore,
+    uploadStream: {
+      async open(request) {
+        const [attachment] = await attachmentStore.resolve(
+          request.threadId,
+          [request.attachmentId],
+        );
+        if (
+          attachment === undefined ||
+          attachment.sizeBytes > request.maximumBytes ||
+          typeof attachment.path !== "string"
+        ) {
+          throw new Error("Desktop Browser attachment stream is unavailable.");
+        }
+        return createReadStream(attachment.path);
+      },
+    },
     nativeAuthenticationHandoff: true,
     withAuthorityAdmission: input.withAuthorityAdmission,
     engine: input.runtimeDependencies?.engine,

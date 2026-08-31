@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   mkdtemp,
   mkdir,
+  readdir,
   chmod,
   readFile,
   rm,
@@ -16,7 +18,7 @@ import { EventEmitter } from "node:events";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import test from "node:test";
 import { WebSocketServer } from "ws";
 
@@ -2951,14 +2953,33 @@ test("Desktop Browser derives a short private socket path and removes it on clea
   await assert.rejects(stat(invocation.socketPath), { code: "ENOENT" });
 });
 
-test("upload and download are rejected before engine dispatch and the download directory is non-writable", async () => {
+test("approved active-turn upload revalidates exact metadata and target before owned staging and dispatch", async () => {
+  const bytes = Buffer.from("approved attachment bytes");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
   let uploadStreamsOpened = 0;
   const fixture = await createFixture({
+    attachmentStore: {
+      async importPath() { throw new Error("not used"); },
+      async list() { return []; },
+      async resolve(threadId, attachmentIds) {
+        assert.equal(threadId, "thread-1");
+        assert.deepEqual(attachmentIds, ["file-1"]);
+        return [{
+          attachmentId: "file-1",
+          threadId,
+          filename: "evidence.txt",
+          mimeType: "text/plain",
+          sizeBytes: bytes.byteLength,
+          sha256,
+        }];
+      },
+    },
     uploadStream: {
-      async open() {
+      async open(input) {
         uploadStreamsOpened += 1;
+        assert.equal(input.maximumBytes, 100 * 1024 * 1024);
         return (async function* () {
-          yield new Uint8Array([1]);
+          yield bytes;
         })();
       },
     },
@@ -2966,27 +2987,228 @@ test("upload and download are rejected before engine dispatch and the download d
   const sessionId = await openSession(fixture.service);
   const invocation = fixture.engine.opened[0]!;
   assert.equal((await stat(invocation.blockedDownloadPath)).mode & 0o777, 0);
-  const commandCount = fixture.engine.commands.length;
-  for (const [toolName, input] of [
-    [
-      "browser.upload",
-      { sessionId, snapshotId: "s", targetRef: "@e1", attachmentId: "file-1" },
-    ],
-    ["browser.download", { sessionId, pendingDownloadId: "download-1" }],
-  ] as const) {
-    const lifecycle = createLifecycle();
-    await assert.rejects(
-      fixture.service.execute(prepared(toolName, input), lifecycle),
-      hasCode(
-        toolName === "browser.download"
-          ? "BROWSER_DOWNLOAD_UNAVAILABLE"
-          : "BROWSER_SERVICE_UNAVAILABLE",
-      ),
-    );
-    assert.deepEqual(lifecycle.events, []);
-  }
-  assert.equal(fixture.engine.commands.length, commandCount);
-  assert.equal(uploadStreamsOpened, 0);
+  const snapshot = asRecord(await fixture.service.execute(
+    prepared("browser.snapshot", { sessionId }),
+    createLifecycle(),
+  ));
+  const effect = await fixture.service.prepareUpload({
+    version: "browser_upload_preparation_v1",
+    runId: "run-upload",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    effectiveInput: {
+      sessionId,
+      generation: 1,
+      snapshotId: snapshot.snapshotId,
+      targetRef: "@e1",
+      attachmentId: "file-1",
+    },
+    attachment: {
+      attachmentId: "file-1",
+      filename: "evidence.txt",
+      declaredMediaType: "text/plain",
+      sizeBytes: bytes.byteLength,
+      sha256,
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  });
+  const upload = prepared("browser.upload", {
+    sessionId,
+    generation: 1,
+    snapshotId: snapshot.snapshotId,
+    targetRef: "@e1",
+    attachmentId: "file-1",
+  });
+  upload.inputAdapters = [{
+    adapterId: "kestrel.browser-upload-effect:v1",
+    metadata: { ...effect },
+  }];
+  const lifecycle = createLifecycle();
+  assert.deepEqual(await fixture.service.execute(upload, lifecycle), {
+    version: "browser_tool_result_v1",
+    operation: "browser.upload",
+    sessionId,
+    generation: 1,
+    outcome: "uploaded",
+    attachmentId: "file-1",
+  });
+  assert.deepEqual(lifecycle.events, ["ack", "persist"]);
+  assert.equal(uploadStreamsOpened, 1);
+  assert.deepEqual(fixture.engine.uploadedFiles, [{
+    targetRef: "@e1",
+    bytes,
+  }]);
+  assert.equal(
+    (await readdir(invocation.runtimePath)).some((name) => name.startsWith("upload-")),
+    false,
+  );
+  await fixture.service.close();
+});
+
+test("changed attachment metadata rejects before upload bytes are opened", async () => {
+  const bytes = Buffer.from("approved attachment bytes");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  let resolutions = 0;
+  let streamsOpened = 0;
+  const fixture = await createFixture({
+    attachmentStore: {
+      async importPath() { throw new Error("not used"); },
+      async list() { return []; },
+      async resolve(threadId) {
+        resolutions += 1;
+        return [{
+          attachmentId: "file-1",
+          threadId,
+          filename: "evidence.txt",
+          mimeType: "text/plain",
+          sizeBytes: bytes.byteLength,
+          sha256: resolutions === 1 ? sha256 : "b".repeat(64),
+        }];
+      },
+    },
+    uploadStream: {
+      async open() {
+        streamsOpened += 1;
+        return Readable.from(bytes);
+      },
+    },
+  });
+  const sessionId = await openSession(fixture.service);
+  const snapshot = asRecord(await fixture.service.execute(
+    prepared("browser.snapshot", { sessionId }),
+    createLifecycle(),
+  ));
+  const effect = await fixture.service.prepareUpload({
+    version: "browser_upload_preparation_v1",
+    runId: "run-upload-stale",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    effectiveInput: {
+      sessionId,
+      generation: 1,
+      snapshotId: snapshot.snapshotId,
+      targetRef: "@e1",
+      attachmentId: "file-1",
+    },
+    attachment: {
+      attachmentId: "file-1",
+      filename: "evidence.txt",
+      declaredMediaType: "text/plain",
+      sizeBytes: bytes.byteLength,
+      sha256,
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  });
+  const upload = prepared("browser.upload", {
+    sessionId,
+    generation: 1,
+    snapshotId: snapshot.snapshotId,
+    targetRef: "@e1",
+    attachmentId: "file-1",
+  });
+  upload.inputAdapters = [{
+    adapterId: "kestrel.browser-upload-effect:v1",
+    metadata: { ...effect },
+  }];
+  const lifecycle = createLifecycle();
+  await assert.rejects(
+    fixture.service.execute(upload, lifecycle),
+    hasCode("BROWSER_SERVICE_UNAVAILABLE"),
+  );
+  assert.deepEqual(lifecycle.events, []);
+  assert.equal(streamsOpened, 0);
+  assert.deepEqual(fixture.engine.uploadedFiles, []);
+  await fixture.service.close();
+});
+
+test("upload stream integrity failure preserves the failure and removes owned staging", async () => {
+  const expected = Buffer.from("approved attachment bytes");
+  const corrupted = Buffer.from("corrupted attachment byte");
+  assert.equal(corrupted.byteLength, expected.byteLength);
+  const sha256 = createHash("sha256").update(expected).digest("hex");
+  const fixture = await createFixture({
+    attachmentStore: {
+      async importPath() { throw new Error("not used"); },
+      async list() { return []; },
+      async resolve(threadId) {
+        return [{
+          attachmentId: "file-1",
+          threadId,
+          filename: "evidence.txt",
+          mimeType: "text/plain",
+          sizeBytes: expected.byteLength,
+          sha256,
+        }];
+      },
+    },
+    uploadStream: {
+      async open() { return Readable.from(corrupted); },
+    },
+  });
+  const sessionId = await openSession(fixture.service);
+  const invocation = fixture.engine.opened[0]!;
+  const snapshot = asRecord(await fixture.service.execute(
+    prepared("browser.snapshot", { sessionId }),
+    createLifecycle(),
+  ));
+  const effect = await fixture.service.prepareUpload({
+    version: "browser_upload_preparation_v1",
+    runId: "run-upload-integrity",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    effectiveInput: {
+      sessionId,
+      generation: 1,
+      snapshotId: snapshot.snapshotId,
+      targetRef: "@e1",
+      attachmentId: "file-1",
+    },
+    attachment: {
+      attachmentId: "file-1",
+      filename: "evidence.txt",
+      declaredMediaType: "text/plain",
+      sizeBytes: expected.byteLength,
+      sha256,
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  });
+  const upload = prepared("browser.upload", {
+    sessionId,
+    generation: 1,
+    snapshotId: snapshot.snapshotId,
+    targetRef: "@e1",
+    attachmentId: "file-1",
+  });
+  upload.inputAdapters = [{
+    adapterId: "kestrel.browser-upload-effect:v1",
+    metadata: { ...effect },
+  }];
+  const lifecycle = createLifecycle();
+  await assert.rejects(
+    fixture.service.execute(upload, lifecycle),
+    hasCode("BROWSER_SERVICE_UNAVAILABLE"),
+  );
+  assert.deepEqual(lifecycle.events, ["ack"]);
+  assert.deepEqual(fixture.engine.uploadedFiles, []);
+  assert.equal(
+    (await readdir(invocation.runtimePath)).some((name) => name.startsWith("upload-")),
+    false,
+  );
+  await fixture.service.close();
+});
+
+test("download remains unavailable before engine dispatch", async () => {
+  const fixture = await createFixture();
+  const sessionId = await openSession(fixture.service);
+  const lifecycle = createLifecycle();
+  await assert.rejects(
+    fixture.service.execute(
+      prepared("browser.download", { sessionId, pendingDownloadId: "download-1" }),
+      lifecycle,
+    ),
+    hasCode("BROWSER_DOWNLOAD_UNAVAILABLE"),
+  );
+  assert.deepEqual(lifecycle.events, []);
   await fixture.service.close();
 });
 
@@ -3953,6 +4175,49 @@ test("agent-browser adapter requires the exact accepted operation token before i
   );
 });
 
+test("agent-browser adapter uploads only an exact Browser-owned staged file through the pinned CLI", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-upload-cli-"));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  const executable = path.join(root, "agent-browser-upload-fixture");
+  const argumentsPath = path.join(root, "arguments.txt");
+  await writeFile(
+    executable,
+    `#!/bin/sh\nprintf '%s\\n' "$@" > '${argumentsPath}'\n`,
+  );
+  await chmod(executable, 0o755);
+  const invocation = {
+    ...engineInvocation(),
+    runtimePath: path.join(root, "runtime"),
+    profilePath: path.join(root, "runtime", "profile"),
+    configPath: path.join(root, "runtime", "config"),
+    screenshotPath: path.join(root, "runtime", "screenshot.png"),
+    blockedDownloadPath: path.join(root, "runtime", "downloads-disabled"),
+  };
+  await mkdir(invocation.runtimePath, { recursive: true, mode: 0o700 });
+  const stagedPath = path.join(invocation.runtimePath, "upload-exact.bin");
+  await writeFile(stagedPath, "approved attachment", { mode: 0o600 });
+  const adapter = new AgentBrowserCliAdapter({
+    engineExecutablePath: executable,
+    chromeExecutablePath: "/usr/bin/true",
+  });
+  const accepted = await adapter.acceptOperation({
+    ...invocation,
+    operationId: "call-upload-exact",
+    grantGeneration: invocation.proxy.generation,
+  });
+  await adapter.uploadFile({
+    ...invocation,
+    targetRef: "@e1",
+    ownedPath: stagedPath,
+    acceptedOperation: accepted,
+  });
+  const args = (await readFile(argumentsPath, "utf8")).trim().split("\n");
+  assert.deepEqual(args.slice(-3), ["upload", "@e1", stagedPath]);
+  adapter.releaseOperation(accepted);
+});
+
 test("agent-browser cleanup treats a missing pre-PID socket as already clean", async () => {
   const adapter = new AgentBrowserCliAdapter({
     engineExecutablePath: "/bin/echo",
@@ -4728,6 +4993,14 @@ async function createFixture(
           lifecycleState: "ready";
         }>
       >;
+      resolve?(threadId: string, attachmentIds: string[]): Promise<Array<{
+        attachmentId: string;
+        threadId: string;
+        filename: string;
+        mimeType: string;
+        sizeBytes: number;
+        sha256: string;
+      }>>;
     };
     projectRunRegistry?: ConstructorParameters<
       typeof DesktopBrowserService
@@ -4866,6 +5139,8 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
   resumeCommand?: Promise<void> | undefined;
   screenshotBytes?: number | undefined;
   readonly viewerInputs: unknown[] = [];
+  readonly uploadedFiles: Array<{ targetRef: string; bytes: Buffer }> = [];
+  fileInputLabel = "Fixture attachment";
   readonly nativeHandoffs: DesktopBrowserNativeHandoffAuthority[] = [];
   readonly revokedNativeHandoffs: DesktopBrowserNativeHandoffAuthority[] = [];
   failNextNativePresentation?: Error | undefined;
@@ -5025,6 +5300,17 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
     } finally {
       this.concurrentCommands -= 1;
     }
+  }
+
+  async describeFileInput(input: { targetRef: string }) {
+    return { targetRef: input.targetRef, targetLabel: this.fileInputLabel };
+  }
+
+  async uploadFile(input: { targetRef: string; ownedPath: string }) {
+    this.uploadedFiles.push({
+      targetRef: input.targetRef,
+      bytes: await readFile(input.ownedPath),
+    });
   }
 
   async close(input: DesktopBrowserEngineInvocation): Promise<void> {

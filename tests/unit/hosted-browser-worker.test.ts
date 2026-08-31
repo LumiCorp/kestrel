@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import test from "node:test";
 
 import { defaultToolCatalog } from "../../tools/catalog.js";
@@ -18,6 +19,10 @@ import {
   HOSTED_BROWSER_CAPABILITY_VERSION,
   issueHostedBrowserOperationCapability,
 } from "../../src/browser/hostedCapability.js";
+import {
+  HOSTED_BROWSER_UPLOAD_PREPARATION_CAPABILITY_VERSION,
+  issueHostedBrowserUploadPreparationCapability,
+} from "../../src/browser/hostedUploadCapability.js";
 import {
   HOSTED_BROWSER_WORKER_HOME_PATH,
   HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES,
@@ -75,6 +80,144 @@ const authority: BrowserEffectiveDomainAuthorityV1 = {
 
 test("hosted worker uses the settled 20 MiB serialized payload ceiling", () => {
   assert.equal(HOSTED_BROWSER_WORKER_MAX_SERIALIZED_BYTES, 20 * 1024 * 1024);
+});
+
+test("hosted worker prepares and stages one exact approved attachment upload", async () => {
+  const bytes = Buffer.from("approved attachment");
+  const effect = preparedUploadEffect(bytes);
+  const prepared = preparedUpload(effect);
+  const operationCapability = operationCapabilityFor(prepared, "revision-1");
+  const preparationRequest = {
+    version: "browser_upload_preparation_v1" as const,
+    runId: "run-1",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    effectiveInput: prepared.effectiveInput,
+    attachment: {
+      attachmentId: effect.attachmentId,
+      filename: effect.filename,
+      declaredMediaType: effect.declaredMediaType,
+      sizeBytes: effect.sizeBytes,
+      sha256: effect.sha256,
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  };
+  const preparationCapability = issueHostedBrowserUploadPreparationCapability({
+    privateKeyPem,
+    claims: {
+      version: HOSTED_BROWSER_UPLOAD_PREPARATION_CAPABILITY_VERSION,
+      organizationId: "org-1",
+      environmentId: "env-1",
+      projectId: "project-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      runId: "run-1",
+      sessionId: "browser-session-1",
+      generation: 1,
+      attachmentId: effect.attachmentId,
+      snapshotId: effect.snapshotId,
+      targetRef: effect.targetRef,
+      effectRevision: hashCanonical(preparationRequest),
+      expiresAt: new Date(Date.now() + 30_000).toISOString(),
+    },
+  });
+  const received: Buffer[] = [];
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async prepareUpload(input) {
+        assert.deepEqual(input, preparationRequest);
+        return effect;
+      },
+      async receiveUpload(input) {
+        assert.equal(input.operationId, prepared.callId);
+        assert.deepEqual(input.effect, effect);
+        for await (const chunk of input.body) received.push(Buffer.from(chunk));
+      },
+      async execute(_input, lifecycle) {
+        await lifecycle.acknowledgeDispatch();
+        const output = { uploaded: true };
+        await lifecycle.persistCompletedResult(output);
+        return output;
+      },
+      async adopt() { return 0; },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const jsonRequest = (pathname: string, body: unknown) => fetch(
+    `http://[::1]:${port}${pathname}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+
+  const preparedResponse = await jsonRequest("/v1/upload/prepare", {
+    request: preparationRequest,
+    capability: preparationCapability,
+  });
+  assert.equal(preparedResponse.status, 200);
+  assert.deepEqual(await preparedResponse.json(), effect);
+  const crossScope = await jsonRequest("/v1/upload/prepare", {
+    request: {
+      ...preparationRequest,
+      turnId: "turn-other",
+    },
+    capability: preparationCapability,
+  });
+  assert.equal(crossScope.status, 400);
+  const accepted = await jsonRequest("/v1/operations/accept", {
+    capability: operationCapability,
+    prepared,
+    authority,
+  });
+  assert.equal(accepted.status, 200);
+  const staged = await fetch(`http://[::1]:${port}/v1/upload/bytes`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/octet-stream",
+      "content-length": String(bytes.byteLength),
+      "x-kestrel-browser-operation-id": prepared.callId,
+      "x-kestrel-browser-operation-capability": operationCapability,
+    },
+    body: bytes,
+  });
+  assert.equal(staged.status, 200);
+  assert.deepEqual(Buffer.concat(received), bytes);
+  const operationBody = {
+    capability: operationCapability,
+    operationId: prepared.callId,
+  };
+  assert.equal((await jsonRequest("/v1/operations/invoke", operationBody)).status, 200);
+  assert.equal((await jsonRequest("/v1/operations/commit", operationBody)).status, 200);
+  await worker.close();
+});
+
+test("hosted upload byte authority is consumed at transfer start and cannot be retried", async () => {
+  const expected = Buffer.from("approved attachment");
+  const effect = preparedUploadEffect(expected);
+  const engine = new AgentBrowserHostedWorkerEngine(workerConfig());
+  await assert.rejects(
+    engine.receiveUpload({
+      operationId: "call-upload-consumed",
+      effect,
+      body: Readable.from(Buffer.alloc(effect.sizeBytes)),
+    }),
+    hasBrowserCode("BROWSER_ENGINE_FAILURE"),
+  );
+  await assert.rejects(
+    engine.receiveUpload({
+      operationId: "call-upload-consumed",
+      effect,
+      body: Readable.from(expected),
+    }),
+    hasBrowserCode("BROWSER_ACTION_OUTCOME_UNKNOWN"),
+  );
+  await engine.destroy();
 });
 
 test("hosted worker carries a 20 MiB raw viewer frame and rejects one byte over before transport", async () => {
@@ -1900,6 +2043,60 @@ function preparedNavigate() {
       kind: "url",
       url: "https://example.com/next",
     },
+    policy: {
+      decision: "allow",
+      policyRevision: hashCanonical({ revision: 1 }),
+      reasonCode: "environment_policy",
+    },
+    preparedAt: new Date().toISOString(),
+  });
+}
+
+function preparedUploadEffect(bytes = Buffer.from("approved attachment")) {
+  return {
+    version: "browser_upload_preparation_v1" as const,
+    turnId: "turn-1",
+    threadId: "thread-1",
+    attachmentId: "attachment-1",
+    filename: "evidence.txt",
+    declaredMediaType: "text/plain",
+    sizeBytes: bytes.byteLength,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    sessionId: "browser-session-1",
+    generation: 1,
+    snapshotId: "snapshot-1",
+    documentRevision: "document-revision-1",
+    targetRef: "@e1",
+    targetLabel: "Evidence file",
+  };
+}
+
+function preparedUpload(effect = preparedUploadEffect()) {
+  const descriptor = defaultToolCatalog.getDescriptorRef("browser.upload");
+  assert.ok(descriptor);
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "hosted-worker-upload-test",
+    scopeFingerprint: fingerprintToolScopeV1({ hostedBrowserWorker: true }),
+  });
+  return parsePreparedToolCallV1({
+    version: "v1",
+    runId: "run-1",
+    sessionId: "runtime-session-1",
+    callId: "call-upload-1",
+    activation,
+    origin: { kind: "trusted_runtime", producerId: "test", adapterId: "test" },
+    effectiveInput: {
+      sessionId: effect.sessionId,
+      generation: effect.generation,
+      snapshotId: effect.snapshotId,
+      targetRef: effect.targetRef,
+      attachmentId: effect.attachmentId,
+    },
+    inputAdapters: [{
+      adapterId: "kestrel.browser-upload-effect:v1",
+      metadata: { ...effect },
+    }],
     policy: {
       decision: "allow",
       policyRevision: hashCanonical({ revision: 1 }),

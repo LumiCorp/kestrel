@@ -1,5 +1,6 @@
 import "server-only";
 
+import { Readable } from "node:stream";
 import { and, eq } from "drizzle-orm";
 import type { EnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import { requireImmutableHostedBrowserWorkerImage } from "../../../../src/browser/runtimeReleaseManifest.js";
@@ -9,6 +10,8 @@ import { HostedBrowserPolicy } from "./policy";
 import { HostedBrowserService } from "./service";
 import { HostedBrowserStore } from "./store";
 import { createHostedBrowserArtifactAuthority } from "./artifact-composition";
+import { resolveTurnAttachments } from "@/lib/files/turn-attachment-resolver";
+import { HostedBrowserUploadWorkerClient } from "./upload-worker-client";
 
 export async function resolveHostedBrowserService(input: {
   ticket: EnvironmentExecutionTicket;
@@ -37,6 +40,7 @@ export async function resolveHostedBrowserServiceForAuthority(input: {
       region: true,
       flyAppName: true,
       flyGatewayMachineId: true,
+      routerUrl: true,
     },
   });
   if (
@@ -44,7 +48,8 @@ export async function resolveHostedBrowserServiceForAuthority(input: {
     environment.provider !== "fly" ||
     environment.status !== "ready" ||
     !environment.flyAppName ||
-    !environment.flyGatewayMachineId
+    !environment.flyGatewayMachineId ||
+    !environment.routerUrl
   ) {
     throw new Error("BROWSER_SERVICE_UNAVAILABLE");
   }
@@ -72,6 +77,40 @@ export async function resolveHostedBrowserServiceForAuthority(input: {
     },
     appName: environment.flyAppName,
     gatewayMachineId: environment.flyGatewayMachineId,
+    routerUrl: environment.routerUrl,
+    uploads: new HostedBrowserUploadWorkerClient({
+      environmentPrivateKeyPem: required("KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY"),
+    }),
+    async resolveUploadAttachment(request) {
+      const resolved = await resolveTurnAttachments({ turnId: request.turnId });
+      const matches = resolved.attachments.filter(
+        (attachment) => attachment.attachmentId === request.attachmentId,
+      );
+      if (matches.length !== 1) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+      const attachment = matches[0]!;
+      return {
+        attachmentId: attachment.attachmentId,
+        threadId: attachment.threadId ?? "",
+        filename: attachment.filename,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        sha256: attachment.sha256,
+        async openStream() {
+          if (typeof attachment.data === "string") {
+            return Readable.from(Buffer.from(attachment.data, "base64"));
+          }
+          if (typeof attachment.sourceUrl !== "string") {
+            throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+          }
+          const response = await fetch(attachment.sourceUrl, {
+            redirect: "error",
+            signal: AbortSignal.timeout(30_000),
+          });
+          if (!(response.ok && response.body)) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+          return Readable.fromWeb(response.body as never);
+        },
+      };
+    },
     region: environment.region,
     runtimeImageDigest,
   });

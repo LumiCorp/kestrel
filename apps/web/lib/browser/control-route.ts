@@ -50,6 +50,10 @@ export async function handleHostedBrowserControl(input: {
     switch (input.action) {
       case "policy":
         return NextResponse.json(await service.resolvePolicy(parsePolicyRequest(body)));
+      case "prepare-upload":
+        return NextResponse.json(
+          await service.prepareUpload(parseUploadPreparationRequest(body)),
+        );
       case "accept": {
         const record = requireRecord(body);
         const prepared = parsePreparedToolCallV1(record.prepared);
@@ -138,6 +142,23 @@ export async function handleHostedBrowserControl(input: {
       { status: readBrowserStatus(error, code) },
     );
   }
+}
+
+function parseUploadPreparationRequest(value: unknown) {
+  const record = requireRecord(value);
+  if (
+    record.version !== "browser_upload_preparation_v1" ||
+    typeof record.runId !== "string" ||
+    typeof record.threadId !== "string" ||
+    typeof record.turnId !== "string" ||
+    !record.effectiveInput ||
+    typeof record.effectiveInput !== "object" ||
+    Array.isArray(record.effectiveInput) ||
+    !record.attachment ||
+    typeof record.attachment !== "object" ||
+    Array.isArray(record.attachment)
+  ) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+  return record as unknown as Parameters<HostedBrowserService["prepareUpload"]>[0];
 }
 
 function readBrowserDetails(error: unknown): Record<string, unknown> | undefined {

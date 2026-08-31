@@ -3,8 +3,10 @@ import {
   BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION,
   BROWSER_POLICY_RESOLUTION_VERSION,
   BROWSER_SERVICE_PORT_VERSION,
+  BROWSER_UPLOAD_PREPARATION_VERSION,
   isBrowserToolName,
   parseBrowserSessionV1,
+  parseBrowserUploadPreparedEffectV1,
   validateBrowserResultAuthority,
   validateBrowserResultSemantics,
   type BrowserAllowlistAdoptionReceiptV1,
@@ -15,6 +17,8 @@ import {
   type BrowserPolicyResolutionV1,
   type BrowserServicePort,
   type BrowserSessionV1,
+  type BrowserUploadPreparationRequestV1,
+  type BrowserUploadPreparedEffectV1,
 } from "../../../../src/browser/contracts.js";
 import type { BrowserEffectiveDomainAuthorityV1 } from "../../../../src/browser/domainAuthority.js";
 import { browserFailure } from "../../../../src/browser/contracts.js";
@@ -42,6 +46,12 @@ import type {
   HostedBrowserRevisionInstructionV1,
 } from "./worker-contract";
 import type { HostedBrowserArtifactUploadInstructionV1 } from "./artifact-authority";
+import {
+  HOSTED_BROWSER_UPLOAD_PREPARATION_CAPABILITY_VERSION,
+  issueHostedBrowserUploadPreparationCapability,
+} from "../../../../src/browser/hostedUploadCapability.js";
+import { hashCanonical } from "../../../../src/kestrel/contracts/tool-contract.js";
+import type { HostedBrowserUploadWorkerPort } from "./upload-worker-client";
 
 const IDLE_MS = 30 * 60_000;
 const HARD_MS = 8 * 60 * 60_000;
@@ -168,6 +178,17 @@ export class HostedBrowserService implements BrowserServicePort {
       gatewayMachineId: string;
       region: string;
       runtimeImageDigest: string;
+      routerUrl?: string | undefined;
+      uploads?: HostedBrowserUploadWorkerPort | undefined;
+      resolveUploadAttachment?(input: { turnId: string; attachmentId: string }): Promise<{
+        attachmentId: string;
+        threadId: string;
+        filename: string;
+        mimeType: string;
+        sizeBytes: number;
+        sha256: string;
+        openStream(): Promise<NodeJS.ReadableStream>;
+      }>;
       now?: (() => Date) | undefined;
     },
   ) {}
@@ -186,6 +207,93 @@ export class HostedBrowserService implements BrowserServicePort {
     })).resolution;
   }
 
+  async prepareUpload(
+    input: BrowserUploadPreparationRequestV1,
+  ): Promise<BrowserUploadPreparedEffectV1> {
+    if (input.version !== BROWSER_UPLOAD_PREPARATION_VERSION) {
+      throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+    }
+    if (!(
+      this.options.routerUrl
+      && this.options.uploads
+      && this.options.resolveUploadAttachment
+    )) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+    const origin = await this.#resolvePreparedOrigin({
+      runId: input.runId,
+      threadId: input.threadId,
+      stableAuthority: undefined,
+      hostProjectId: input.authority.projectId,
+    });
+    const policy = await this.options.policy.resolve({
+      origin,
+      effectiveInput: input.effectiveInput,
+      operation: "browser.upload",
+    });
+    if (policy.resolution.decision === "deny") {
+      throw this.#failure("BROWSER_DESTINATION_BLOCKED");
+    }
+    const sessionId = requiredText(input.effectiveInput.sessionId);
+    const record = await this.options.store.read(sessionId);
+    if (
+      !record?.resource ||
+      record.session.threadId !== input.threadId ||
+      record.session.state !== "ready" ||
+      record.session.generation !== input.effectiveInput.generation
+    ) throw this.#failure("BROWSER_SESSION_LOST");
+    const storedOrigin = await this.options.store.resolveCurrentOrigin(sessionId);
+    if (!sameBrowserIdentity(storedOrigin, origin)) {
+      throw this.#failure("BROWSER_SESSION_LOST");
+    }
+    const attachment = await this.options.resolveUploadAttachment({
+      turnId: input.turnId,
+      attachmentId: input.attachment.attachmentId,
+    });
+    if (
+      attachment.threadId !== input.threadId ||
+      attachment.attachmentId !== input.attachment.attachmentId ||
+      attachment.filename !== input.attachment.filename ||
+      attachment.mimeType !== input.attachment.declaredMediaType ||
+      attachment.sizeBytes !== input.attachment.sizeBytes ||
+      attachment.sha256 !== input.attachment.sha256
+    ) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+    const now = this.#now();
+    const capability = issueHostedBrowserUploadPreparationCapability({
+      privateKeyPem: this.options.capabilityPrivateKeyPem,
+      now,
+      claims: {
+        version: HOSTED_BROWSER_UPLOAD_PREPARATION_CAPABILITY_VERSION,
+        organizationId: origin.organizationId,
+        environmentId: origin.environmentId,
+        projectId: origin.projectId,
+        userId: origin.userId,
+        threadId: origin.threadId,
+        turnId: input.turnId,
+        runId: input.runId,
+        sessionId,
+        generation: record.session.generation,
+        attachmentId: attachment.attachmentId,
+        snapshotId: requiredText(input.effectiveInput.snapshotId),
+        targetRef: requiredText(input.effectiveInput.targetRef),
+        effectRevision: hashCanonical(input),
+        expiresAt: new Date(now.getTime() + OPERATION_CAPABILITY_MS).toISOString(),
+      },
+    });
+    return await this.options.uploads.prepare({
+      routerUrl: this.options.routerUrl,
+      organizationId: origin.organizationId,
+      environmentId: origin.environmentId,
+      projectId: origin.projectId,
+      userId: origin.userId,
+      threadId: origin.threadId,
+      runId: input.runId,
+      sessionId,
+      appName: this.options.appName,
+      machineId: record.resource.machineId,
+      capability,
+      request: input,
+    });
+  }
+
   async execute(
     prepared: PreparedToolCallV1,
     lifecycle: BrowserOperationLifecycleV1,
@@ -201,9 +309,6 @@ export class HostedBrowserService implements BrowserServicePort {
   ): Promise<HostedBrowserRelayInstructionV1> {
     const operation = prepared.activation.descriptor.toolId;
     if (!isBrowserToolName(operation)) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
-    if (operation === "browser.upload") {
-      throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
-    }
     if (operation === "browser.download") {
       throw this.#failure("BROWSER_DOWNLOAD_UNAVAILABLE");
     }
@@ -367,6 +472,44 @@ export class HostedBrowserService implements BrowserServicePort {
       accepted.identity.imageDigest !== this.options.runtimeImageDigest
     ) {
       throw this.#failure("BROWSER_ENGINE_FAILURE");
+    }
+    if (operation === "browser.upload") {
+      if (!(
+        this.options.routerUrl
+        && this.options.uploads
+        && this.options.resolveUploadAttachment
+      )) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+      const effect = requirePreparedUploadEffect(prepared);
+      const attachment = await this.options.resolveUploadAttachment({
+        turnId: effect.turnId,
+        attachmentId: effect.attachmentId,
+      });
+      if (
+        attachment.threadId !== effect.threadId ||
+        attachment.filename !== effect.filename ||
+        attachment.mimeType !== effect.declaredMediaType ||
+        attachment.sizeBytes !== effect.sizeBytes ||
+        attachment.sha256 !== effect.sha256 ||
+        effect.sessionId !== record.session.sessionId ||
+        effect.generation !== record.session.generation
+      ) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+      await this.options.uploads.transfer({
+        routerUrl: this.options.routerUrl,
+        organizationId: origin.organizationId,
+        environmentId: origin.environmentId,
+        projectId: origin.projectId,
+        userId: origin.userId,
+        threadId: origin.threadId,
+        runId: prepared.runId,
+        sessionId: record.session.sessionId,
+        appName: this.options.appName,
+        machineId: record.resource.machineId,
+        operationId: prepared.callId,
+        capability: acceptedInstruction.capability,
+        sizeBytes: effect.sizeBytes,
+        sha256: effect.sha256,
+        body: await attachment.openStream(),
+      });
     }
     return {
       version: "hosted_browser_relay_instruction_v1",
@@ -1418,4 +1561,21 @@ function hostedBrowserSessionId(
     .update(prepared.callId, "utf8")
     .digest("hex");
   return `browser-${digest}`;
+}
+
+function requiredText(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+  }
+  return value;
+}
+
+function requirePreparedUploadEffect(
+  prepared: PreparedToolCallV1,
+): BrowserUploadPreparedEffectV1 {
+  const matches = prepared.inputAdapters.filter(
+    (adapter) => adapter.adapterId === "kestrel.browser-upload-effect:v1",
+  );
+  if (matches.length !== 1) throw new Error("BROWSER_SESSION_LOST");
+  return parseBrowserUploadPreparedEffectV1(matches[0]!.metadata);
 }

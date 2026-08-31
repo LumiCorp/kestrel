@@ -134,10 +134,22 @@ export interface RuntimeToolRunContext {
   projectId?: string | undefined;
   approvalId?: string | undefined;
   threadId?: string | undefined;
+  /** Trusted active durable turn identity; never populated from tool input. */
+  turnId?: string | undefined;
+  /** Metadata-only attachment authority for the active turn. */
+  activeTurnAttachments?: readonly RuntimeToolAttachmentMetadata[] | undefined;
   activeTaskId?: string | undefined;
   delegationId?: string | undefined;
   delegationDepth?: number | undefined;
   rootDelegationId?: string | undefined;
+}
+
+export interface RuntimeToolAttachmentMetadata {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
 }
 
 export interface DelegationTaskSnapshot {
@@ -341,7 +353,9 @@ export interface SharedToolModule {
   prepareInputAdapter?(
     input: Record<string, unknown>,
     context?: SharedToolContext | undefined,
-  ): import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1;
+  ):
+    | import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1
+    | Promise<import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1>;
   resolvePolicy?(
     context: SharedToolContext,
     input: Record<string, unknown>,
@@ -400,7 +414,10 @@ export interface ToolCatalog {
     name: string,
     input: Record<string, unknown>,
     context?: SharedToolContext | undefined,
-  ): import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1 | undefined;
+  ):
+    | import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1
+    | Promise<import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1>
+    | undefined;
   resolvePolicy(
     name: string,
     context: SharedToolContext,

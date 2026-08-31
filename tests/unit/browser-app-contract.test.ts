@@ -1179,7 +1179,7 @@ test("QA Browser upload and download still prepare their exact approval waits", 
       },
     });
 
-    const { prepared } = await prepareBrowserCall(
+    const { prepared, approvalAuthorityRevision } = await prepareBrowserCall(
       registry,
       toolName,
       validInputs[toolName],
@@ -1188,7 +1188,44 @@ test("QA Browser upload and download still prepare their exact approval waits", 
     assert.equal(prepared.policy.decision, "approval_required", toolName);
     assert.ok(prepared.approval, toolName);
     assert.equal(dynamicGrantPolicyCalls, 0, toolName);
+    if (toolName === "browser.upload") {
+      const uploadEffect = prepared.inputAdapters.find(
+        (adapter) => adapter.adapterId === "kestrel.browser-upload-effect:v1",
+      );
+      assert.ok(uploadEffect);
+      assert.equal(uploadEffect.metadata.filename, "evidence.txt");
+      assert.equal(uploadEffect.metadata.targetLabel, "Fixture attachment");
+      assert.equal(
+        prepared.approval?.authorityRevision,
+        derivePreparedToolApprovalAuthorityRevisionV1({
+          activation: prepared.activation,
+          effectiveInput: prepared.effectiveInput,
+          inputAdapters: prepared.inputAdapters,
+          policyRevision: prepared.policy.policyRevision,
+          upstreamAuthorityRevision: approvalAuthorityRevision,
+        }),
+      );
+    }
   }
+});
+
+test("Browser upload cannot replace the trusted active-turn attachment with model input", async () => {
+  await assert.rejects(
+    prepareBrowserCall(
+      new UnifiedToolRegistry({
+        allowlist: ["browser.upload"],
+        context: { browserService: passiveBrowserPort() },
+      }),
+      "browser.upload",
+      validInputs["browser.upload"],
+      {
+        decision: "approval_required",
+        approval: true,
+        activeAttachmentId: "different-active-attachment",
+      },
+    ),
+    hasBrowserCode("BROWSER_SERVICE_UNAVAILABLE"),
+  );
 });
 
 test("tabs preparation keeps input-dependent execution class consistent", async () => {
@@ -1714,6 +1751,22 @@ async function executeBrowserCall(
   const effectiveRawInput =
     toolName === "browser.open" ? rawInput : { generation: 1, ...rawInput };
   const sequence = nextBrowserCallSequence++;
+  const activeTurnPayload = toolName === "browser.upload"
+    ? {
+        metadata: {
+          threadId: `prepared-session-${sequence}`,
+          turnId: `turn-${sequence}`,
+          activeTurnId: `turn-${sequence}`,
+        },
+        attachments: [{
+          attachmentId: "attachment-1",
+          filename: "evidence.txt",
+          mimeType: "text/plain",
+          sizeBytes: 8,
+          sha256: "a".repeat(64),
+        }],
+      }
+    : {};
   const runContext = {
     runId: `run-${toolName}-${String(rawInput.operation ?? "operation")}-${sequence}`,
     sessionId: "thread-session-1",
@@ -1764,17 +1817,35 @@ async function prepareBrowserCall(
     decision?: "allow" | "approval_required" | "deny";
     approval?: boolean;
     hosted?: boolean;
+    activeAttachmentId?: string;
   } = {},
 ) {
   const effectiveRawInput =
     toolName === "browser.open" ? rawInput : { generation: 1, ...rawInput };
   const sequence = nextBrowserCallSequence++;
+  const activeTurnPayload = toolName === "browser.upload"
+    ? {
+        metadata: {
+          threadId: `prepared-session-${sequence}`,
+          turnId: `turn-${sequence}`,
+          activeTurnId: `turn-${sequence}`,
+        },
+        attachments: [{
+          attachmentId: policy.activeAttachmentId ?? "attachment-1",
+          filename: "evidence.txt",
+          mimeType: "text/plain",
+          sizeBytes: 8,
+          sha256: "a".repeat(64),
+        }],
+      }
+    : {};
   const runContext = {
     runId: `prepared-${toolName}-${sequence}`,
     sessionId: `prepared-session-${sequence}`,
     payload:
       policy.approval && policy.hosted !== false
         ? {
+            ...activeTurnPayload,
             hostedApprovalAuthority: {
               organizationId: "organization-1",
               environmentId: "environment-1",
@@ -1783,7 +1854,7 @@ async function prepareBrowserCall(
             },
             actor: { actorType: "end_user", actorId: "user-1" },
           }
-        : {},
+        : activeTurnPayload,
     sessionState: {},
   };
   const snapshot = await registry.createToolSurfaceSnapshot({
@@ -1833,6 +1904,24 @@ function passiveBrowserPort(): BrowserServicePort {
         decision: "allow",
         policyRevision: "browser-policy-1",
         sessionMode: "operator",
+      };
+    },
+    async prepareUpload(input) {
+      return {
+        version: "browser_upload_preparation_v1",
+        turnId: input.turnId,
+        threadId: input.threadId,
+        attachmentId: input.attachment.attachmentId,
+        filename: input.attachment.filename,
+        declaredMediaType: input.attachment.declaredMediaType,
+        sizeBytes: input.attachment.sizeBytes,
+        sha256: input.attachment.sha256,
+        sessionId: String(input.effectiveInput.sessionId),
+        generation: Number(input.effectiveInput.generation),
+        snapshotId: String(input.effectiveInput.snapshotId),
+        documentRevision: "document-1",
+        targetRef: String(input.effectiveInput.targetRef),
+        targetLabel: "Fixture attachment",
       };
     },
     async execute() {
@@ -1892,6 +1981,14 @@ function readBrowserAdapter(prepared: PreparedToolCallV1) {
   return prepared.inputAdapters.find(
     (adapter) => adapter.adapterId === "kestrel.browser-contract:v1",
   )?.metadata;
+}
+
+function hasBrowserCode(code: string) {
+  return (error: unknown) =>
+    Boolean(
+      error && typeof error === "object" && "code" in error &&
+      (error as { code?: unknown }).code === code,
+    );
 }
 
 function browserExecutionAuthority(

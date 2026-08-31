@@ -22,6 +22,8 @@ export const BROWSER_ALLOWLIST_ADOPTION_VERSION =
   "browser_allowlist_adoption_v1" as const;
 export const BROWSER_ALLOWLIST_ADOPTION_RECEIPT_VERSION =
   "browser_allowlist_adoption_receipt_v1" as const;
+export const BROWSER_UPLOAD_PREPARATION_VERSION =
+  "browser_upload_preparation_v1" as const;
 
 export const BROWSER_TOOL_NAMES = [
   "browser.open",
@@ -105,6 +107,9 @@ export interface BrowserServicePort {
     effectiveInput: Record<string, unknown>;
     authority: BrowserHostExecutionAuthorityV1;
   }): Promise<BrowserPolicyResolutionV1>;
+  prepareUpload?(
+    input: BrowserUploadPreparationRequestV1,
+  ): Promise<BrowserUploadPreparedEffectV1>;
   execute(
     prepared: PreparedToolCallV1,
     lifecycle: BrowserOperationLifecycleV1,
@@ -115,6 +120,99 @@ export interface BrowserServicePort {
   adoptAllowlistRevision(
     input: BrowserAllowlistAdoptionRequestV1,
   ): Promise<BrowserAllowlistAdoptionReceiptV1>;
+}
+
+export interface BrowserUploadAttachmentMetadataV1 {
+  attachmentId: string;
+  filename: string;
+  declaredMediaType: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
+export interface BrowserUploadPreparationRequestV1 {
+  version: typeof BROWSER_UPLOAD_PREPARATION_VERSION;
+  runId: string;
+  threadId: string;
+  turnId: string;
+  effectiveInput: Record<string, unknown>;
+  attachment: BrowserUploadAttachmentMetadataV1;
+  authority: BrowserHostExecutionAuthorityV1;
+}
+
+export interface BrowserUploadPreparedEffectV1 {
+  version: typeof BROWSER_UPLOAD_PREPARATION_VERSION;
+  turnId: string;
+  threadId: string;
+  attachmentId: string;
+  filename: string;
+  declaredMediaType: string;
+  sizeBytes: number;
+  sha256: string;
+  sessionId: string;
+  generation: number;
+  snapshotId: string;
+  documentRevision: string;
+  targetRef: string;
+  targetLabel: string;
+}
+
+export function parseBrowserUploadPreparedEffectV1(
+  value: unknown,
+): BrowserUploadPreparedEffectV1 {
+  const record = requireRecord(value, "BrowserUploadPreparedEffectV1");
+  rejectUnknown(
+    record,
+    new Set([
+      "version",
+      "turnId",
+      "threadId",
+      "attachmentId",
+      "filename",
+      "declaredMediaType",
+      "sizeBytes",
+      "sha256",
+      "sessionId",
+      "generation",
+      "snapshotId",
+      "documentRevision",
+      "targetRef",
+      "targetLabel",
+    ]),
+    "BrowserUploadPreparedEffectV1",
+  );
+  if (record.version !== BROWSER_UPLOAD_PREPARATION_VERSION) {
+    throw new Error("BrowserUploadPreparedEffectV1.version is invalid.");
+  }
+  const sha256 = requireString(
+    record.sha256,
+    "BrowserUploadPreparedEffectV1.sha256",
+  );
+  if (!/^[0-9a-f]{64}$/u.test(sha256)) {
+    throw new Error("BrowserUploadPreparedEffectV1.sha256 is invalid.");
+  }
+  return {
+    version: BROWSER_UPLOAD_PREPARATION_VERSION,
+    turnId: requireString(record.turnId, "BrowserUploadPreparedEffectV1.turnId"),
+    threadId: requireString(record.threadId, "BrowserUploadPreparedEffectV1.threadId"),
+    attachmentId: requireString(record.attachmentId, "BrowserUploadPreparedEffectV1.attachmentId"),
+    filename: requireString(record.filename, "BrowserUploadPreparedEffectV1.filename"),
+    declaredMediaType: requireString(record.declaredMediaType, "BrowserUploadPreparedEffectV1.declaredMediaType"),
+    sizeBytes: requireNonNegativeSafeInteger(record.sizeBytes, "BrowserUploadPreparedEffectV1.sizeBytes"),
+    sha256,
+    sessionId: requireString(record.sessionId, "BrowserUploadPreparedEffectV1.sessionId"),
+    generation: requirePositiveSafeInteger(record.generation, "BrowserUploadPreparedEffectV1.generation"),
+    snapshotId: requireString(record.snapshotId, "BrowserUploadPreparedEffectV1.snapshotId"),
+    documentRevision: requireString(record.documentRevision, "BrowserUploadPreparedEffectV1.documentRevision"),
+    targetRef: requireString(record.targetRef, "BrowserUploadPreparedEffectV1.targetRef"),
+    targetLabel: requireString(record.targetLabel, "BrowserUploadPreparedEffectV1.targetLabel"),
+  };
+}
+
+function requirePositiveSafeInteger(value: unknown, label: string): number {
+  const parsed = requireNonNegativeSafeInteger(value, label);
+  if (parsed < 1) throw new Error(`${label} is invalid.`);
+  return parsed;
 }
 
 export interface BrowserAllowlistAdoptionRequestV1 {

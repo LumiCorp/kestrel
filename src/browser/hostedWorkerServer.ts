@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, open, readFile, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import path from "node:path";
@@ -10,8 +11,11 @@ import {
 } from "./runtimeReleaseManifest.js";
 import {
   BROWSER_SERVICE_PORT_VERSION,
+  parseBrowserUploadPreparedEffectV1,
   parseBrowserSessionV1,
   type BrowserSessionV1,
+  type BrowserUploadPreparationRequestV1,
+  type BrowserUploadPreparedEffectV1,
 } from "./contracts.js";
 import type { BrowserEffectiveDomainAuthorityV1 } from "./domainAuthority.js";
 import {
@@ -20,6 +24,7 @@ import {
 } from "../kestrel/contracts/tool-invocation.js";
 import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
 import { verifyHostedBrowserCapabilitySignature } from "./hostedCapability.js";
+import { verifyHostedBrowserUploadPreparationCapability } from "./hostedUploadCapability.js";
 import {
   HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED,
   HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE,
@@ -120,6 +125,12 @@ export interface HostedBrowserWorkerEngine {
     gatewayProxy?: HostedBrowserGatewayProxyBindingV1 | undefined;
     gatewayClosedUnauthorizedConnections?: number | undefined;
   }): Promise<number>;
+  prepareUpload?(input: BrowserUploadPreparationRequestV1): Promise<BrowserUploadPreparedEffectV1>;
+  receiveUpload?(input: {
+    operationId: string;
+    effect: BrowserUploadPreparedEffectV1;
+    body: AsyncIterable<Uint8Array>;
+  }): Promise<void>;
   viewer?(input: {
     action: "connect" | "frame" | "accept" | "renew" | "input" | "return" | "disconnect" | "close";
     claims: HostedBrowserViewerTicketClaimsV1;
@@ -168,6 +179,26 @@ export function startHostedBrowserWorker(input: {
       const pathname = new URL(request.url ?? "/", "http://worker.internal").pathname;
       if (terminating && pathname !== "/v1/viewer-cleanup") {
         throw new Error("BROWSER_SESSION_LOST");
+      }
+      if (pathname === "/v1/upload/bytes") {
+        const operationId = requiredHeader(request, "x-kestrel-browser-operation-id");
+        const capability = requiredHeader(request, "x-kestrel-browser-operation-capability");
+        const operation = accepted.get(operationId);
+        if (
+          !operation ||
+          operation.capability !== capability ||
+          operation.prepared.activation.descriptor.toolId !== "browser.upload" ||
+          typeof engine.receiveUpload !== "function"
+        ) throw new Error("BROWSER_SESSION_LOST");
+        const effect = requirePreparedUploadEffect(operation.prepared);
+        const declared = Number(request.headers["content-length"] ?? "-1");
+        if (declared !== effect.sizeBytes) throw new Error("BROWSER_ENGINE_FAILURE");
+        await engine.receiveUpload({
+          operationId,
+          effect,
+          body: incomingBody(request, effect.sizeBytes),
+        });
+        return writeJson(response, 200, { staged: true, operationId });
       }
       const body = await readJson(request);
       if (terminating && pathname !== "/v1/viewer-cleanup") {
@@ -347,6 +378,31 @@ export function startHostedBrowserWorker(input: {
           accepted.delete(prepared.callId);
           throw error;
         }
+      }
+      if (pathname === "/v1/upload/prepare") {
+        const record = requireRecord(body);
+        const requestBody = record.request as BrowserUploadPreparationRequestV1;
+        const claims = verifyHostedBrowserUploadPreparationCapability({
+          token: requiredString(record.capability),
+          publicKeyPem: config.capabilityPublicKeyPem,
+        });
+        if (
+          typeof engine.prepareUpload !== "function" ||
+          claims.organizationId !== config.organizationId ||
+          claims.environmentId !== config.environmentId ||
+          claims.projectId !== config.projectId ||
+          claims.userId !== config.userId ||
+          claims.threadId !== config.threadId ||
+          claims.sessionId !== config.sessionId ||
+          claims.generation !== config.generation ||
+          claims.turnId !== requestBody?.turnId ||
+          claims.runId !== requestBody?.runId ||
+          claims.attachmentId !== requestBody?.attachment?.attachmentId ||
+          claims.snapshotId !== requestBody?.effectiveInput?.snapshotId ||
+          claims.targetRef !== requestBody?.effectiveInput?.targetRef ||
+          claims.effectRevision !== hashCanonical(requestBody)
+        ) throw new Error("BROWSER_SESSION_LOST");
+        return writeJson(response, 200, await engine.prepareUpload(requestBody));
       }
       if (pathname === "/v1/operations/invoke") {
         const record = requireRecord(body);
@@ -708,6 +764,8 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
   #session: BrowserSessionV1 | undefined;
   #service: DesktopBrowserService | undefined;
   readonly #screenshots = new HostedRelayScreenshotStore();
+  readonly #uploads = new Map<string, { effect: BrowserUploadPreparedEffectV1; path: string }>();
+  readonly #consumedUploadAuthorities = new Set<string>();
   #gatewayProxy: HostedBrowserGatewayProxyBindingV1 | undefined;
   #remoteProxy: RemoteGatewayBrowserProxy | undefined;
 
@@ -742,10 +800,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     this.#authority = input.authority;
     const operation = input.prepared.activation.descriptor.toolId;
     this.#installGatewayProxy(input.gatewayProxy, input.authority, operation);
-    if (
-      operation === "browser.upload" ||
-      operation === "browser.download"
-    ) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+    if (operation === "browser.download") throw new Error("BROWSER_SERVICE_UNAVAILABLE");
     if (!this.#service) {
       if (operation !== "browser.open" || !input.session) {
         throw new Error("BROWSER_SESSION_LOST");
@@ -781,6 +836,59 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     });
   }
 
+  async prepareUpload(
+    input: BrowserUploadPreparationRequestV1,
+  ): Promise<BrowserUploadPreparedEffectV1> {
+    if (!(this.#service && this.#session)) throw new Error("BROWSER_SESSION_LOST");
+    if (
+      input.threadId !== this.#config.threadId ||
+      input.effectiveInput.sessionId !== this.#config.sessionId ||
+      input.effectiveInput.generation !== this.#config.generation
+    ) throw new Error("BROWSER_SESSION_LOST");
+    return await this.#service.prepareUpload(input);
+  }
+
+  async receiveUpload(input: {
+    operationId: string;
+    effect: BrowserUploadPreparedEffectV1;
+    body: AsyncIterable<Uint8Array>;
+  }): Promise<void> {
+    if (this.#consumedUploadAuthorities.has(input.operationId)) {
+      throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+    }
+    this.#consumedUploadAuthorities.add(input.operationId);
+    const pathName = path.join(
+      this.#runtimeRoot,
+      `hosted-upload-${createHash("sha256").update(input.operationId).digest("hex")}.bin`,
+    );
+    await mkdir(this.#runtimeRoot, { recursive: true, mode: 0o700 });
+    const handle = await open(pathName, "wx", 0o600);
+    const hash = createHash("sha256");
+    let size = 0;
+    try {
+      for await (const value of input.body) {
+        const chunk = Buffer.from(value);
+        size += chunk.byteLength;
+        if (size > input.effect.sizeBytes) {
+          throw new Error("BROWSER_ARTIFACT_TOO_LARGE");
+        }
+        hash.update(chunk);
+        await handle.write(chunk);
+      }
+      await handle.sync();
+    } catch (error) {
+      await handle.close().catch(() => {});
+      await rm(pathName, { force: true }).catch(() => {});
+      throw error;
+    }
+    await handle.close();
+    if (size !== input.effect.sizeBytes || hash.digest("hex") !== input.effect.sha256) {
+      await rm(pathName, { force: true }).catch(() => {});
+      throw new Error("BROWSER_ENGINE_FAILURE");
+    }
+    this.#uploads.set(input.operationId, { effect: input.effect, path: pathName });
+  }
+
   async adopt(input: {
     authority: BrowserEffectiveDomainAuthorityV1;
     cause: "personal_grant" | "personal_revocation";
@@ -788,7 +896,7 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     gatewayClosedUnauthorizedConnections?: number | undefined;
   }): Promise<number> {
     this.#authority = input.authority;
-    if (!this.#service || !this.#session) throw new Error("BROWSER_SESSION_LOST");
+    if (!(this.#service && this.#session)) throw new Error("BROWSER_SESSION_LOST");
     if (!input.gatewayProxy || input.gatewayClosedUnauthorizedConnections === undefined) {
       throw new Error("BROWSER_SESSION_LOST");
     }
@@ -949,6 +1057,8 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
     this.#viewerAdmissions.clear();
     this.#retiredViewerConnections.clear();
     this.#retiredViewerAuthorityExpiresAt = 0;
+    this.#uploads.clear();
+    this.#consumedUploadAuthorities.clear();
     await this.#service?.close().catch(() => {});
     await rm(this.#runtimeRoot, { recursive: true, force: true });
   }
@@ -1110,6 +1220,29 @@ export class AgentBrowserHostedWorkerEngine implements HostedBrowserWorkerEngine
       createProxy: async () => this.#remoteProxy!,
       scheduleExpiry: false,
       attachmentStore: this.#screenshots,
+      uploadStream: {
+        open: async (request) => {
+          const matches = [...this.#uploads.entries()].filter(([, upload]) =>
+            upload.effect.threadId === request.threadId &&
+            upload.effect.sessionId === request.sessionId &&
+            upload.effect.generation === request.generation &&
+            upload.effect.attachmentId === request.attachmentId &&
+            upload.effect.sizeBytes <= request.maximumBytes
+          );
+          if (matches.length !== 1) throw new Error("BROWSER_SESSION_LOST");
+          const [operationId, upload] = matches[0]!;
+          this.#uploads.delete(operationId);
+          const source = createReadStream(upload.path);
+          return (async function* () {
+            try {
+              for await (const chunk of source) yield Buffer.from(chunk);
+            } finally {
+              source.destroy();
+              await rm(upload.path, { force: true });
+            }
+          })();
+        },
+      },
       writeLedger: async () => {},
     });
   }
@@ -1388,6 +1521,38 @@ async function readJson(request: IncomingMessage) {
     chunks.push(buffer);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+}
+
+function requiredHeader(request: IncomingMessage, name: string): string {
+  const value = request.headers[name];
+  if (typeof value !== "string" || value.length === 0 || value.length > 16_384) {
+    throw new Error("BROWSER_SESSION_LOST");
+  }
+  return value;
+}
+
+async function* incomingBody(
+  request: IncomingMessage,
+  maximumBytes: number,
+): AsyncIterable<Uint8Array> {
+  let bytes = 0;
+  for await (const value of request) {
+    const chunk = Buffer.from(value);
+    bytes += chunk.byteLength;
+    if (bytes > maximumBytes) throw new Error("BROWSER_ARTIFACT_TOO_LARGE");
+    yield chunk;
+  }
+  if (bytes !== maximumBytes) throw new Error("BROWSER_ENGINE_FAILURE");
+}
+
+function requirePreparedUploadEffect(
+  prepared: PreparedToolCallV1,
+): BrowserUploadPreparedEffectV1 {
+  const matches = prepared.inputAdapters.filter(
+    (adapter) => adapter.adapterId === "kestrel.browser-upload-effect:v1",
+  );
+  if (matches.length !== 1) throw new Error("BROWSER_SESSION_LOST");
+  return parseBrowserUploadPreparedEffectV1(matches[0]!.metadata);
 }
 
 function requireAuthority(value: unknown): BrowserEffectiveDomainAuthorityV1 {

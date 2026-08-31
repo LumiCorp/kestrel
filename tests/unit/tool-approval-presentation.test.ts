@@ -4,6 +4,53 @@ import test from "node:test";
 import { buildToolApprovalPresentation } from "../../src/runtime/toolApprovalPresentation.js";
 import { normalizeToolActionInput } from "../../tools/runtime/normalizeToolInput.js";
 
+test("Browser upload approval presents only the exact approval-hashed effect", () => {
+  const presentation = buildToolApprovalPresentation({
+    toolName: "browser.upload",
+    effectiveInput: {
+      sessionId: "browser-session-1",
+      snapshotId: "snapshot-1",
+      targetRef: "@e1",
+      attachmentId: "attachment-1",
+      sourceUrl: "https://storage.example/secret",
+    },
+    inputAdapters: [{
+      adapterId: "kestrel.browser-upload-effect:v1",
+      metadata: {
+        version: "browser_upload_preparation_v1",
+        turnId: "turn-1",
+        threadId: "thread-1",
+        attachmentId: "attachment-1",
+        filename: "evidence.txt",
+        declaredMediaType: "text/plain",
+        sizeBytes: 19,
+        sha256: "a".repeat(64),
+        sessionId: "browser-session-1",
+        generation: 1,
+        snapshotId: "snapshot-1",
+        documentRevision: "document-1",
+        targetRef: "@e1",
+        targetLabel: "Supporting evidence",
+      },
+    }],
+    disposition: {
+      mode: "ask",
+      reasonCode: "tool_minimum",
+      authority: { kind: "runtime_policy", revision: "approval-revision" },
+    },
+  });
+
+  assert.equal(presentation.title, "Upload attachment");
+  assert.deepEqual(presentation.fields, [
+    { label: "File", value: "evidence.txt" },
+    { label: "Measured size", value: "19 bytes (100 MiB maximum)" },
+    { label: "Declared media type", value: "text/plain (untrusted metadata)" },
+    { label: "Browser target", value: "Supporting evidence" },
+  ]);
+  assert.equal(presentation.policy.rememberApprovalEligible, false);
+  assert.doesNotMatch(JSON.stringify(presentation), /sourceUrl|storage\.example|sha256/u);
+});
+
 test("approval presenters show meaningful normalized fields without transport secrets", () => {
   const presentation = buildToolApprovalPresentation({
     toolName: "kestrel_one.google_calendar_create_event",

@@ -1,9 +1,13 @@
+import { CONVERSATION_ATTACHMENT_MAX_FILE_BYTES } from "@kestrel-agents/conversation";
+
 import type {
   ToolApprovalDispositionV1,
   ToolApprovalReasonCode,
 } from "../mode/contracts.js";
 import { isRememberApprovalEligibleV1 } from "../mode/contracts.js";
 import { canonicalizePublicBrowserDestination } from "../browser/domainAuthority.js";
+import { parseBrowserUploadPreparedEffectV1 } from "../browser/contracts.js";
+import type { PreparedToolInputAdapterV1 } from "../kestrel/contracts/tool-invocation.js";
 
 export interface BrowserDomainGrantApprovalPresentationV1 {
   version: "browser_domain_grant_approval_v1";
@@ -336,6 +340,7 @@ const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
 export function buildToolApprovalPresentation(input: {
   toolName: string;
   effectiveInput: unknown;
+  inputAdapters?: readonly PreparedToolInputAdapterV1[] | undefined;
   disposition?: ToolApprovalDispositionV1 | undefined;
   hostedApprovalScope?: {
     requestingActorId: string;
@@ -410,6 +415,39 @@ export function buildToolApprovalPresentation(input: {
         rememberApprovalEligible: false,
       },
       browserDomainGrant,
+    };
+  }
+  if (input.toolName === "browser.upload") {
+    const matches = (input.inputAdapters ?? []).filter(
+      (adapter) => adapter.adapterId === "kestrel.browser-upload-effect:v1",
+    );
+    if (matches.length !== 1) {
+      throw new Error("Browser upload approval is missing exact prepared effect authority.");
+    }
+    const effect = parseBrowserUploadPreparedEffectV1(matches[0]!.metadata);
+    return {
+      title: "Upload attachment",
+      summary: "Upload this active-turn attachment to the selected Browser file input.",
+      fields: [
+        { label: "File", value: effect.filename },
+        {
+          label: "Measured size",
+          value: `${effect.sizeBytes} bytes (${CONVERSATION_ATTACHMENT_MAX_FILE_BYTES / (1024 * 1024)} MiB maximum)`,
+        },
+        { label: "Declared media type", value: `${effect.declaredMediaType} (untrusted metadata)` },
+        { label: "Browser target", value: effect.targetLabel },
+      ],
+      warnings: [
+        "Only this approved attachment is transferred to this exact current file input.",
+      ],
+      policy: {
+        mode: "ask",
+        reasonCode: disposition.reasonCode,
+        explanation: approvalReasonExplanation(disposition.reasonCode),
+        authorityKind: disposition.authority.kind,
+        authorityRevision: disposition.authority.revision,
+        rememberApprovalEligible: false,
+      },
     };
   }
   const fields =

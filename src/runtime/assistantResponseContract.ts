@@ -345,6 +345,7 @@ export function projectHostedToolApprovalInteractionV4(input: {
   const presentation = buildToolApprovalPresentation({
     toolName: prepared.activation.descriptor.toolId,
     effectiveInput: prepared.effectiveInput,
+    inputAdapters: prepared.inputAdapters,
     hostedApprovalScope: {
       requestingActorId: binding.requestingActor.actorId,
       environmentId: prepared.stableAuthority.environmentId,

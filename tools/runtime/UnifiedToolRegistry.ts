@@ -151,7 +151,9 @@ type PinnedExecutionSource = {
     | undefined;
   inputAdapterId?: string | undefined;
   resolveExecutionClass?: ((input: Record<string, unknown>) => import("../../src/mode/contracts.js").ToolExecutionClass) | undefined;
-  prepareInputAdapter?: ((input: Record<string, unknown>) => import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1) | undefined;
+  prepareInputAdapter?: ((input: Record<string, unknown>) =>
+    | import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1
+    | Promise<import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1>) | undefined;
   resolvePolicy?: ((input: Record<string, unknown>) => Promise<import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined>) | undefined;
 };
 
@@ -868,7 +870,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               ]),
           ...(source.prepareInputAdapter === undefined
             ? []
-            : [source.prepareInputAdapter(asRecord(effectiveInput) ?? {})]),
+            : [await source.prepareInputAdapter(asRecord(effectiveInput) ?? {})]),
           ...(input.activation.descriptor.toolId === "dev.shell.run" ||
           input.activation.descriptor.toolId === "exec_command"
             ? [
@@ -2737,6 +2739,12 @@ function resolveRuntimeToolRunContext(
   const threadId =
     asNonEmptyString(orchestration?.threadId) ??
     asNonEmptyString(metadata?.threadId);
+  const turnId = asNonEmptyString(metadata?.turnId);
+  const activeTurnId = asNonEmptyString(metadata?.activeTurnId);
+  const activeTurnAttachments =
+    turnId !== undefined && activeTurnId === turnId
+      ? projectActiveTurnAttachmentMetadata(payloadRecord?.attachments)
+      : undefined;
   const activeTaskId =
     asNonEmptyString(orchestration?.activeTaskId) ??
     asNonEmptyString(orchestration?.taskId) ??
@@ -2758,11 +2766,47 @@ function resolveRuntimeToolRunContext(
     ...(projectId !== undefined ? { projectId } : {}),
     ...(approvalId !== undefined ? { approvalId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
+    ...(turnId !== undefined && activeTurnId === turnId ? { turnId } : {}),
+    ...(activeTurnAttachments === undefined ? {} : { activeTurnAttachments }),
     ...(activeTaskId !== undefined ? { activeTaskId } : {}),
     ...(delegationId !== undefined ? { delegationId } : {}),
     ...(delegationDepth !== undefined ? { delegationDepth } : {}),
     ...(rootDelegationId !== undefined ? { rootDelegationId } : {}),
   };
+}
+
+function projectActiveTurnAttachmentMetadata(value: unknown) {
+  if (!Array.isArray(value)) return;
+  const attachments = value.map((candidate) => {
+    const record = asRecord(candidate);
+    const attachmentId = asNonEmptyString(record?.attachmentId);
+    const filename = asNonEmptyString(record?.filename);
+    const mimeType = asNonEmptyString(record?.mimeType);
+    const sha256 = asNonEmptyString(record?.sha256);
+    const sizeBytes = record?.sizeBytes;
+    if (
+      attachmentId === undefined ||
+      filename === undefined ||
+      mimeType === undefined ||
+      sha256 === undefined ||
+      !/^[0-9a-f]{64}$/u.test(sha256) ||
+      !Number.isSafeInteger(sizeBytes) ||
+      Number(sizeBytes) < 0
+    ) return;
+    return {
+      attachmentId,
+      filename,
+      mimeType,
+      sizeBytes: Number(sizeBytes),
+      sha256,
+    };
+  });
+  if (attachments.some((attachment) => attachment === undefined)) return;
+  const resolved = attachments as NonNullable<typeof attachments[number]>[];
+  if (new Set(resolved.map((attachment) => attachment.attachmentId)).size !== resolved.length) {
+    return;
+  }
+  return resolved;
 }
 
 function readPendingApprovalId(state: unknown): string | undefined {

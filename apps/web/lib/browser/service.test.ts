@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
+import { Readable } from "node:stream";
 
 import { defaultToolCatalog } from "../../../../tools/catalog.js";
 import {
@@ -324,6 +325,52 @@ test("hosted capture prepares an exact host-private Thread upload authority", as
   }]);
 });
 
+test("hosted upload re-resolves the active-turn file before preparation and dedicated transfer", async () => {
+  const fixture = serviceFixture("ready", "allow");
+  const request = {
+    version: "browser_upload_preparation_v1" as const,
+    runId: "run-1",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    effectiveInput: {
+      sessionId: "browser-session-1",
+      generation: 1,
+      snapshotId: "snapshot-1",
+      targetRef: "@e1",
+      attachmentId: "attachment-1",
+    },
+    attachment: {
+      attachmentId: "attachment-1",
+      filename: "evidence.txt",
+      declaredMediaType: "text/plain",
+      sizeBytes: 8,
+      sha256: "a".repeat(64),
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  };
+  const effect = await fixture.service.prepareUpload(request);
+  assert.equal(fixture.preparedUploads.length, 1);
+  assert.doesNotMatch(JSON.stringify(effect), /sourceUrl|credential|path/u);
+  const prepared = preparedUpload(effect);
+  const receipt = acceptedReceipt(
+    prepared.callId,
+    fixture.session.sessionId,
+    now,
+    new Date(now.getTime() + 30_000),
+    "browser.upload",
+  );
+  const instruction = await fixture.service.dispatchAcceptedOperation(
+    prepared,
+    { threadId: "thread-1", projectId: "project-1" },
+    receipt,
+  );
+  assert.equal(instruction.phase, "invoke");
+  assert.deepEqual(fixture.transferredUploads, [{
+    operationId: prepared.callId,
+    bytes: Buffer.from("12345678"),
+  }]);
+});
+
 test("hosted artifact authorization binds the stored generation", async () => {
   const fixture = serviceFixture("ready", "allow");
   const authorized = await fixture.service.authorizeArtifact({
@@ -511,6 +558,8 @@ function serviceFixture(
     origin: typeof origin;
   }> = [];
   const canonicalizedArtifacts: Array<{ bytes: Buffer; sha256: string }> = [];
+  const preparedUploads: unknown[] = [];
+  const transferredUploads: Array<{ operationId: string; bytes: Buffer }> = [];
   const service = new HostedBrowserService({
     store: {
       async resolveOrigin() { return origin; },
@@ -659,6 +708,46 @@ function serviceFixture(
     gatewayMachineId: "gateway-machine-1",
     region: "iad",
     runtimeImageDigest: imageDigest,
+    routerUrl: "https://router.example.test",
+    uploads: {
+      async prepare(input) {
+        preparedUploads.push(input);
+        return {
+          version: "browser_upload_preparation_v1",
+          turnId: input.request.turnId,
+          threadId: input.request.threadId,
+          attachmentId: input.request.attachment.attachmentId,
+          filename: input.request.attachment.filename,
+          declaredMediaType: input.request.attachment.declaredMediaType,
+          sizeBytes: input.request.attachment.sizeBytes,
+          sha256: input.request.attachment.sha256,
+          sessionId: String(input.request.effectiveInput.sessionId),
+          generation: Number(input.request.effectiveInput.generation),
+          snapshotId: String(input.request.effectiveInput.snapshotId),
+          documentRevision: "document-1",
+          targetRef: String(input.request.effectiveInput.targetRef),
+          targetLabel: "Fixture attachment",
+        };
+      },
+      async transfer(input) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of input.body) chunks.push(Buffer.from(chunk));
+        transferredUploads.push({ operationId: input.operationId, bytes: Buffer.concat(chunks) });
+      },
+    },
+    async resolveUploadAttachment(input) {
+      assert.equal(input.turnId, "turn-1");
+      assert.equal(input.attachmentId, "attachment-1");
+      return {
+        attachmentId: "attachment-1",
+        threadId: "thread-1",
+        filename: "evidence.txt",
+        mimeType: "text/plain",
+        sizeBytes: 8,
+        sha256: "a".repeat(64),
+        async openStream() { return Readable.from(Buffer.from("12345678")); },
+      };
+    },
     now: () => now,
   });
   return {
@@ -671,6 +760,8 @@ function serviceFixture(
     preparedArtifacts,
     authorizedArtifacts,
     canonicalizedArtifacts,
+    preparedUploads,
+    transferredUploads,
     stateTransitions,
     terminalMarks,
   };
@@ -722,6 +813,40 @@ function preparedCapture() {
       generation: 1,
       kind: "screenshot",
     },
+    policy: {
+      decision: "allow",
+      policyRevision: hashCanonical({ revision: 1 }),
+      reasonCode: "environment_policy",
+    },
+    preparedAt: now.toISOString(),
+  });
+}
+
+function preparedUpload(effect: Awaited<ReturnType<HostedBrowserService["prepareUpload"]>>) {
+  const descriptor = defaultToolCatalog.getDescriptorRef("browser.upload");
+  assert.ok(descriptor);
+  return parsePreparedToolCallV1({
+    version: "v1",
+    runId: "run-1",
+    sessionId: "runtime-session-1",
+    callId: "call-upload-1",
+    activation: createToolActivationRefV1({
+      descriptor,
+      registryGeneration: "hosted-service-test",
+      scopeFingerprint: fingerprintToolScopeV1({ hostedBrowser: true }),
+    }),
+    origin: { kind: "trusted_runtime", producerId: "test", adapterId: "test" },
+    effectiveInput: {
+      sessionId: effect.sessionId,
+      generation: effect.generation,
+      snapshotId: effect.snapshotId,
+      targetRef: effect.targetRef,
+      attachmentId: effect.attachmentId,
+    },
+    inputAdapters: [{
+      adapterId: "kestrel.browser-upload-effect:v1",
+      metadata: { ...effect },
+    }],
     policy: {
       decision: "allow",
       policyRevision: hashCanonical({ revision: 1 }),
