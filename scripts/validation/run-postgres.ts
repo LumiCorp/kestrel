@@ -78,6 +78,9 @@ const groups = [
   {
     name: "Apps",
     databaseUrl: required("KESTREL_APPS_DB_TEST_URL"),
+    environment: {
+      NEXT_PUBLIC_APP_URL: "https://one.example.test",
+    },
     files: [
       "lib/apps/browser-domain-service.postgres.test.ts",
       "lib/apps/hosted-approval-proof.postgres.test.ts",
@@ -221,6 +224,7 @@ function runGroup(group: (typeof groups)[number]): Promise<void> {
           ...process.env,
           DATABASE_URL: group.databaseUrl,
           POSTGRES_URL: group.databaseUrl,
+          ...(group.environment ?? {}),
         },
         stdio: "inherit",
       },
