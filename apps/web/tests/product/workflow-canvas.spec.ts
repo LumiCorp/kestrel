@@ -198,8 +198,8 @@ test("canvas-first controls expose project tools and node dialogs", async ({
   await page.goto("/workflows/new");
   await page.getByRole("button", { name: "Start manually" }).click();
 
-  const editor = page.getByTestId("workflow-editor");
-  const canvas = page.getByTestId("workflow-canvas");
+  const editor = page.locator('[data-testid="workflow-editor"]:visible');
+  const canvas = page.locator('[data-testid="workflow-canvas"]:visible');
   await expect(editor).toBeVisible();
   await expect(canvas).toBeVisible();
   const [editorBox, canvasBox] = await Promise.all([
@@ -211,15 +211,15 @@ test("canvas-first controls expose project tools and node dialogs", async ({
   expect(Math.abs(editorBox!.width - canvasBox!.width)).toBeLessThan(2);
   expect(Math.abs(editorBox!.height - canvasBox!.height)).toBeLessThan(2);
 
-  const triggerBox = await page
+  const triggerBox = await canvas
     .locator(".react-flow__node")
     .filter({ hasText: "Run manually" })
     .boundingBox();
-  const kestrelBox = await page
+  const kestrelBox = await canvas
     .locator(".react-flow__node")
     .filter({ hasText: "Kestrel step" })
     .boundingBox();
-  const outputBox = await page
+  const outputBox = await canvas
     .locator(".react-flow__node")
     .filter({ hasText: "Workflow output" })
     .boundingBox();
@@ -240,11 +240,14 @@ test("canvas-first controls expose project tools and node dialogs", async ({
   await expect(page.getByText("Dynamic values", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Done" }).click({ force: true });
 
-  await page.locator(".react-flow__node").filter({ hasText: "Action" }).dblclick();
+  await canvas.locator(".react-flow__node").filter({ hasText: "Action" }).dblclick();
   await expect(page.getByRole("dialog", { name: "Action" })).toBeVisible();
   await page.getByRole("button", { name: "Done" }).click({ force: true });
 
-  await page.locator(".react-flow__node").filter({ hasText: "Run manually" }).dblclick();
+  await canvas
+    .locator(".react-flow__node")
+    .filter({ hasText: "Run manually" })
+    .dblclick();
   await expect(page.getByRole("combobox", { name: "Start workflow" })).toBeVisible();
   await page.getByRole("button", { name: "Done" }).click({ force: true });
 
@@ -252,7 +255,7 @@ test("canvas-first controls expose project tools and node dialogs", async ({
   await expect(page.getByRole("combobox", { name: "Check" })).toBeVisible();
   await page.getByRole("button", { name: "Done" }).click({ force: true });
 
-  const connections = page.locator(".react-flow__edge");
+  const connections = canvas.locator(".react-flow__edge");
   const connectionCount = await connections.count();
   await connections.first().dispatchEvent("click");
   await expect(
@@ -270,7 +273,7 @@ test("canvas-first controls expose project tools and node dialogs", async ({
   await expect(page.getByRole("dialog", { name: "Workflow details" })).toBeVisible();
   await expect(page.getByLabel("Name")).toHaveValue("Untitled workflow");
 
-  const minimap = page.locator(".react-flow__minimap");
+  const minimap = canvas.locator(".react-flow__minimap");
   await expect(minimap).toBeVisible();
   const minimapBox = await minimap.boundingBox();
   expect(minimapBox?.width).toBeLessThanOrEqual(120);
