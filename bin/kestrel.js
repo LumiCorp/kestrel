@@ -17,6 +17,9 @@ const childEnv = {
   ...repoEnv,
   ...process.env,
 };
+if (typeof childEnv.NODE_ENV !== "string" || childEnv.NODE_ENV.trim().length === 0) {
+  childEnv.NODE_ENV = "production";
+}
 applySourcePostgresBundleEnv(childEnv, repoRoot);
 
 const child = spawn(
