@@ -1,17 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { constants as fsConstants, realpathSync } from "node:fs";
+import { constants as fsConstants, realpathSync, type Stats } from "node:fs";
 import { createConnection } from "node:net";
 import {
   chmod,
+  type FileHandle,
   lstat,
   mkdir,
   open as openFile,
   readFile,
+  realpath,
   rename,
   rm,
   stat,
-  unlink,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -4298,17 +4299,33 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
   async captureViewerFrame(
     input: DesktopBrowserEngineInvocation,
   ): Promise<{ mediaType: "image/png"; dataBase64: string }> {
-    const screenshotPath = requireOwnedViewerScreenshotPath(input);
-    await removeOwnedViewerScreenshot(screenshotPath);
+    const runtime = await openOwnedViewerRuntimeDirectory(input);
+    const screenshotPath = path.join(
+      runtime.canonicalPath,
+      `viewer-${randomUUID()}.png`,
+    );
+    let captureHandled = false;
     try {
+      await requireAbsentOwnedViewerCapture(runtime, screenshotPath);
+      await assertOwnedViewerRuntimeDirectory(runtime);
       const result = await this.#run(input, ["screenshot", screenshotPath]);
+      await assertOwnedViewerRuntimeDirectory(runtime);
       requireExactViewerScreenshotResponse(result.stdout, screenshotPath);
+      captureHandled = true;
       return {
         mediaType: "image/png",
-        dataBase64: (await readOwnedViewerPng(screenshotPath)).toString("base64"),
+        dataBase64: (
+          await readAndEraseOwnedViewerPng(runtime, screenshotPath)
+        ).toString("base64"),
       };
     } finally {
-      await removeOwnedViewerScreenshot(screenshotPath);
+      try {
+        if (!captureHandled) {
+          await eraseOwnedViewerCaptureIfPresent(runtime, screenshotPath);
+        }
+      } finally {
+        await runtime.directory.close();
+      }
     }
   }
 
@@ -5323,20 +5340,134 @@ function viewerModifierMask(
     (modifiers?.includes("shift") ? 8 : 0);
 }
 
-function requireOwnedViewerScreenshotPath(
+interface OwnedViewerRuntimeDirectory {
+  runtimePath: string;
+  canonicalPath: string;
+  directory: FileHandle;
+  dev: number;
+  ino: number;
+  uid: number;
+}
+
+interface OwnedViewerCaptureFile {
+  file: FileHandle;
+  dev: number;
+  ino: number;
+  uid: number;
+}
+
+async function openOwnedViewerRuntimeDirectory(
   input: DesktopBrowserEngineInvocation,
-): string {
+): Promise<OwnedViewerRuntimeDirectory> {
   const runtimePath = path.resolve(input.runtimePath);
-  const screenshotPath = path.resolve(input.screenshotPath);
+  const configuredScreenshotPath = path.resolve(input.screenshotPath);
   if (
-    path.dirname(screenshotPath) !== runtimePath ||
-    path.basename(screenshotPath) !== "screenshot.png"
+    path.dirname(configuredScreenshotPath) !== runtimePath ||
+    path.basename(configuredScreenshotPath) !== "screenshot.png"
   ) {
     throw new Error(
       "BROWSER_ENGINE_FAILURE: Browser viewer screenshot path escaped its owned Session.",
     );
   }
-  return screenshotPath;
+  const before = await lstat(runtimePath);
+  assertPrivateOwnedViewerRuntimeMetadata(before);
+  const canonicalPath = await realpath(runtimePath);
+  const canonical = await lstat(canonicalPath);
+  assertPrivateOwnedViewerRuntimeMetadata(canonical);
+  if (canonical.dev !== before.dev || canonical.ino !== before.ino) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser viewer runtime directory identity changed.",
+    );
+  }
+  const directory = await openFile(
+    canonicalPath,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+  );
+  try {
+    const opened = await directory.stat();
+    assertPrivateOwnedViewerRuntimeMetadata(opened);
+    if (opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: Browser viewer runtime directory identity changed.",
+      );
+    }
+    const runtime = {
+      runtimePath,
+      canonicalPath,
+      directory,
+      dev: opened.dev,
+      ino: opened.ino,
+      uid: opened.uid,
+    };
+    await assertOwnedViewerRuntimeDirectory(runtime);
+    return runtime;
+  } catch (error) {
+    await directory.close();
+    throw error;
+  }
+}
+
+function assertPrivateOwnedViewerRuntimeMetadata(
+  metadata: Stats,
+): void {
+  const uid = process.getuid?.();
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    (uid !== undefined && metadata.uid !== uid) ||
+    (metadata.mode & 0o077) !== 0
+  ) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser viewer runtime directory is not owned and private.",
+    );
+  }
+}
+
+async function assertOwnedViewerRuntimeDirectory(
+  runtime: OwnedViewerRuntimeDirectory,
+): Promise<void> {
+  const [lexical, canonical, opened, resolved] = await Promise.all([
+    lstat(runtime.runtimePath),
+    lstat(runtime.canonicalPath),
+    runtime.directory.stat(),
+    realpath(runtime.runtimePath),
+  ]);
+  for (const metadata of [lexical, canonical, opened]) {
+    assertPrivateOwnedViewerRuntimeMetadata(metadata);
+    if (
+      metadata.dev !== runtime.dev ||
+      metadata.ino !== runtime.ino ||
+      metadata.uid !== runtime.uid
+    ) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: Browser viewer runtime directory identity changed.",
+      );
+    }
+  }
+  if (resolved !== runtime.canonicalPath) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser viewer runtime directory identity changed.",
+    );
+  }
+}
+
+async function requireAbsentOwnedViewerCapture(
+  runtime: OwnedViewerRuntimeDirectory,
+  screenshotPath: string,
+): Promise<void> {
+  await assertOwnedViewerRuntimeDirectory(runtime);
+  try {
+    await lstat(screenshotPath);
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      await assertOwnedViewerRuntimeDirectory(runtime);
+      return;
+    }
+    throw error;
+  }
+  throw new Error(
+    "BROWSER_ENGINE_FAILURE: Browser viewer capture identity already exists.",
+  );
 }
 
 function requireExactViewerScreenshotResponse(
@@ -5360,31 +5491,32 @@ function requireExactViewerScreenshotResponse(
   }
 }
 
-async function readOwnedViewerPng(screenshotPath: string): Promise<Buffer> {
+async function openOwnedViewerCapture(
+  runtime: OwnedViewerRuntimeDirectory,
+  screenshotPath: string,
+): Promise<OwnedViewerCaptureFile> {
+  await assertOwnedViewerRuntimeDirectory(runtime);
   const before = await lstat(screenshotPath);
   const uid = process.getuid?.();
   if (
     !before.isFile() ||
     before.isSymbolicLink() ||
+    before.nlink !== 1 ||
     (uid !== undefined && before.uid !== uid)
   ) {
     throw new Error(
       "BROWSER_ENGINE_FAILURE: Browser viewer screenshot was not an owned regular file.",
     );
   }
-  if (before.size > HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES) {
-    throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer frame failed validation.",
-    );
-  }
   const file = await openFile(
     screenshotPath,
-    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    fsConstants.O_RDWR | fsConstants.O_NOFOLLOW,
   );
   try {
     const opened = await file.stat();
     if (
       !opened.isFile() ||
+      opened.nlink !== 1 ||
       opened.dev !== before.dev ||
       opened.ino !== before.ino ||
       (uid !== undefined && opened.uid !== uid)
@@ -5393,12 +5525,67 @@ async function readOwnedViewerPng(screenshotPath: string): Promise<Buffer> {
         "BROWSER_ENGINE_FAILURE: Browser viewer screenshot identity changed.",
       );
     }
+    await assertOwnedViewerRuntimeDirectory(runtime);
+    return {
+      file,
+      dev: opened.dev,
+      ino: opened.ino,
+      uid: opened.uid,
+    };
+  } catch (error) {
+    await file.close();
+    throw error;
+  }
+}
+
+function assertOpenedViewerCaptureIdentity(
+  capture: OwnedViewerCaptureFile,
+  metadata: Stats,
+): void {
+  if (
+    !metadata.isFile() ||
+    metadata.nlink !== 1 ||
+    metadata.dev !== capture.dev ||
+    metadata.ino !== capture.ino ||
+    metadata.uid !== capture.uid
+  ) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot identity changed.",
+    );
+  }
+}
+
+async function eraseOpenedViewerCapture(
+  capture: OwnedViewerCaptureFile,
+): Promise<void> {
+  assertOpenedViewerCaptureIdentity(capture, await capture.file.stat());
+  // The verified inode is the only safe immediate cleanup authority. Its
+  // unpredictable zero-byte name remains for owned Session-runtime teardown;
+  // this path must never pathname-unlink a capture leaf.
+  await capture.file.truncate(0);
+  await capture.file.sync();
+  const erased = await capture.file.stat();
+  assertOpenedViewerCaptureIdentity(capture, erased);
+  if (erased.size !== 0) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot bytes were not erased.",
+    );
+  }
+}
+
+async function readAndEraseOwnedViewerPng(
+  runtime: OwnedViewerRuntimeDirectory,
+  screenshotPath: string,
+): Promise<Buffer> {
+  const capture = await openOwnedViewerCapture(runtime, screenshotPath);
+  try {
+    assertOpenedViewerCaptureIdentity(capture, await capture.file.stat());
     const bytes = Buffer.allocUnsafe(
       HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES + 1,
     );
     let length = 0;
     while (length < bytes.byteLength) {
-      const read = await file.read(
+      const read = await capture.file.read(
         bytes,
         length,
         bytes.byteLength - length,
@@ -5421,19 +5608,37 @@ async function readOwnedViewerPng(screenshotPath: string): Promise<Buffer> {
     }
     return png;
   } finally {
-    await file.close();
+    try {
+      let parentFailure: unknown;
+      try {
+        await assertOwnedViewerRuntimeDirectory(runtime);
+      } catch (error) {
+        parentFailure = error;
+      }
+      await eraseOpenedViewerCapture(capture);
+      if (parentFailure !== undefined) throw parentFailure;
+    } finally {
+      await capture.file.close();
+    }
   }
 }
 
-async function removeOwnedViewerScreenshot(screenshotPath: string): Promise<void> {
+async function eraseOwnedViewerCaptureIfPresent(
+  runtime: OwnedViewerRuntimeDirectory,
+  screenshotPath: string,
+): Promise<void> {
+  await assertOwnedViewerRuntimeDirectory(runtime);
   try {
-    await unlink(screenshotPath);
+    await lstat(screenshotPath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot cleanup failed.",
-      { cause: error },
-    );
+    if (isMissingPathError(error)) return;
+    throw error;
+  }
+  const capture = await openOwnedViewerCapture(runtime, screenshotPath);
+  try {
+    await eraseOpenedViewerCapture(capture);
+  } finally {
+    await capture.file.close();
   }
 }
 

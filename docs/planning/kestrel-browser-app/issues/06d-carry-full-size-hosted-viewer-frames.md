@@ -23,6 +23,11 @@ relay. Its worker, Router, Web client, and WebSocket bounds must derive from one
   existing independent bounds.
 - Reject raw frames above 20 MiB before base64 transport. Do not compress, retry,
   downscale, chunk, or fall back to another transport.
+- Desktop capture uses one unpredictable leaf per attempt beneath the proven
+  private per-Session runtime. Immediate cleanup means truncating and syncing
+  the verified opened inode to zero; capture names are reclaimed only by the
+  existing owned Session-runtime teardown. Capture code never pathname-unlinks
+  a leaf or follows a changed runtime parent.
 - Treat an oversized frame as a bounded frame error and release viewer authority
   according to the settled lifecycle; never retain a partial or queued frame.
 - Add exact boundary tests at 20 MiB raw, one byte over, and serialized envelope
@@ -68,18 +73,23 @@ relay. Its worker, Router, Web client, and WebSocket bounds must derive from one
 ### Independent-review repair evidence
 
 - Pinned agent-browser v0.35.0 (`585e740fcef069d74e21f0e88e8bf4ea7df34385`)
-  viewer capture now uses its real
-  `screenshot <path>` contract with one exact per-Session path inside the
-  Browser-owned runtime root. The adapter requires the returned `data.path` to
-  equal that requested path, rejects symlinks/non-files and changed file
-  identity, reads at most 20 MiB plus one byte before base64 encoding, and
-  removes only that exact owned path on success or failure. There is no retry,
+  viewer capture now uses its real `screenshot <path>` contract with an
+  unpredictable unique path inside the Browser-owned per-Session runtime. The
+  adapter holds and revalidates the canonical private runtime identity, requires
+  returned `data.path` equality, rejects symlinks, non-files, wrong ownership,
+  hardlinks, and inode changes, and reads at most 20 MiB plus one byte through a
+  no-follow opened file before base64 encoding.
+- Capture cleanup never pathname-unlinks a leaf. Once identity is proven, the
+  same opened inode is truncated to zero and fsynced before close; zero-byte
+  unique entries remain inside the private runtime until the existing owned
+  Session teardown reclaims their names. A changed parent fails closed before
+  path access and leaves teardown to the Session owner. There is no retry,
   fallback, alternate path trust, or widened command output collector.
 - A real process-backed fixture shaped like the pinned CLI response proves an
   exact 20 MiB owned PNG succeeds, 20 MiB plus one is rejected before base64,
-  mismatched paths and symlinks are rejected without deleting their targets,
-  every exact owned screenshot is cleaned up, and generic stdout remains
-  bounded at 512 KiB.
+  every safe capture leaves only a zero-byte unique residue, mismatched paths,
+  symlinks, and hardlinks disclose no bytes, parent symlink/swap attacks leave
+  external victims untouched, and generic stdout remains bounded at 512 KiB.
 - Environment Router uses the derived viewer-frame response bound only after a
   successful `frame` response. Every non-OK response, including a typed frame
   error, retains the ordinary 20 MiB control-response bound.
