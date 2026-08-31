@@ -22,7 +22,7 @@ None.
 
 ## Implemented
 
-- [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — shared viewer frame bounds, pinned-contract Desktop unique-file capture with verified-inode byte erasure, and status-aware Router bounds pass 118 focused transport/lifecycle tests plus the adversarial owned-file regression; awaiting independent review
+- [Carry full-size hosted viewer frames](06d-carry-full-size-hosted-viewer-frames.md) — shared viewer frame bounds, file-free pinned-Session CDP capture, and status-aware Router bounds pass 118 focused transport/lifecycle tests plus the real local-CDP regression; awaiting independent review
 - [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — remaining review findings are assigned to the existing 06b lifecycle and 06c scheduling owners
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md)
 - [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md)

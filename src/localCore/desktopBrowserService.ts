@@ -1,15 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { constants as fsConstants, realpathSync, type Stats } from "node:fs";
+import { realpathSync } from "node:fs";
 import { createConnection } from "node:net";
 import {
   chmod,
-  type FileHandle,
   lstat,
   mkdir,
-  open as openFile,
   readFile,
-  realpath,
   rename,
   rm,
   stat,
@@ -38,7 +35,11 @@ import {
 } from "../browser/contracts.js";
 import { resolveBrowserToolExecutionClass } from "../browser/browserAppContract.fixture.js";
 import { HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED } from "../browser/hostedViewer.js";
-import { HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES } from "../browser/hostedViewerProtocol.js";
+import {
+  HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
+  HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES,
+  hostedBrowserViewerPngBase64ByteLength,
+} from "../browser/hostedViewerProtocol.js";
 import {
   BROWSER_EFFECTIVE_DOMAIN_AUTHORITY_VERSION,
   BROWSER_QA_TARGET_VERSION,
@@ -84,6 +85,7 @@ const MAX_BROWSER_TABS = 100;
 const DESKTOP_BROWSER_SESSION_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const DESKTOP_BROWSER_INPUT_LEASE_MS = 30_000;
+const DESKTOP_BROWSER_VIEWER_CAPTURE_TIMEOUT_MS = 5000;
 
 export interface DesktopBrowserAuthorityResolutionInput {
   runId: string;
@@ -4299,34 +4301,22 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
   async captureViewerFrame(
     input: DesktopBrowserEngineInvocation,
   ): Promise<{ mediaType: "image/png"; dataBase64: string }> {
-    const runtime = await openOwnedViewerRuntimeDirectory(input);
-    const screenshotPath = path.join(
-      runtime.canonicalPath,
-      `viewer-${randomUUID()}.png`,
+    const activeTargetId = requirePinnedViewerActiveTarget(
+      (await this.#run(input, ["tab", "list"])).stdout,
     );
-    let captureHandled = false;
-    try {
-      await requireAbsentOwnedViewerCapture(runtime, screenshotPath);
-      await assertOwnedViewerRuntimeDirectory(runtime);
-      const result = await this.#run(input, ["screenshot", screenshotPath]);
-      await assertOwnedViewerRuntimeDirectory(runtime);
-      requireExactViewerScreenshotResponse(result.stdout, screenshotPath);
-      captureHandled = true;
-      return {
-        mediaType: "image/png",
-        dataBase64: (
-          await readAndEraseOwnedViewerPng(runtime, screenshotPath)
-        ).toString("base64"),
-      };
-    } finally {
-      try {
-        if (!captureHandled) {
-          await eraseOwnedViewerCaptureIfPresent(runtime, screenshotPath);
-        }
-      } finally {
-        await runtime.directory.close();
-      }
+    const cdpUrl = requirePinnedViewerCdpUrl(
+      (await this.#run(input, ["get", "cdp-url"])).stdout,
+    );
+    const frame = await captureViewerPngThroughCdp(cdpUrl, activeTargetId);
+    const currentTargetId = requirePinnedViewerActiveTarget(
+      (await this.#run(input, ["tab", "list"])).stdout,
+    );
+    if (currentTargetId !== activeTargetId) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: Browser viewer target changed during capture.",
+      );
     }
+    return frame;
   }
 
   async dispatchViewerInput(
@@ -5340,306 +5330,328 @@ function viewerModifierMask(
     (modifiers?.includes("shift") ? 8 : 0);
 }
 
-interface OwnedViewerRuntimeDirectory {
-  runtimePath: string;
-  canonicalPath: string;
-  directory: FileHandle;
-  dev: number;
-  ino: number;
-  uid: number;
-}
-
-interface OwnedViewerCaptureFile {
-  file: FileHandle;
-  dev: number;
-  ino: number;
-  uid: number;
-}
-
-async function openOwnedViewerRuntimeDirectory(
-  input: DesktopBrowserEngineInvocation,
-): Promise<OwnedViewerRuntimeDirectory> {
-  const runtimePath = path.resolve(input.runtimePath);
-  const configuredScreenshotPath = path.resolve(input.screenshotPath);
-  if (
-    path.dirname(configuredScreenshotPath) !== runtimePath ||
-    path.basename(configuredScreenshotPath) !== "screenshot.png"
-  ) {
-    throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot path escaped its owned Session.",
-    );
-  }
-  const before = await lstat(runtimePath);
-  assertPrivateOwnedViewerRuntimeMetadata(before);
-  const canonicalPath = await realpath(runtimePath);
-  const canonical = await lstat(canonicalPath);
-  assertPrivateOwnedViewerRuntimeMetadata(canonical);
-  if (canonical.dev !== before.dev || canonical.ino !== before.ino) {
-    throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer runtime directory identity changed.",
-    );
-  }
-  const directory = await openFile(
-    canonicalPath,
-    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
-  );
-  try {
-    const opened = await directory.stat();
-    assertPrivateOwnedViewerRuntimeMetadata(opened);
-    if (opened.dev !== before.dev || opened.ino !== before.ino) {
-      throw new Error(
-        "BROWSER_ENGINE_FAILURE: Browser viewer runtime directory identity changed.",
-      );
-    }
-    const runtime = {
-      runtimePath,
-      canonicalPath,
-      directory,
-      dev: opened.dev,
-      ino: opened.ino,
-      uid: opened.uid,
-    };
-    await assertOwnedViewerRuntimeDirectory(runtime);
-    return runtime;
-  } catch (error) {
-    await directory.close();
-    throw error;
-  }
-}
-
-function assertPrivateOwnedViewerRuntimeMetadata(
-  metadata: Stats,
-): void {
-  const uid = process.getuid?.();
-  if (
-    !metadata.isDirectory() ||
-    metadata.isSymbolicLink() ||
-    (uid !== undefined && metadata.uid !== uid) ||
-    (metadata.mode & 0o077) !== 0
-  ) {
-    throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer runtime directory is not owned and private.",
-    );
-  }
-}
-
-async function assertOwnedViewerRuntimeDirectory(
-  runtime: OwnedViewerRuntimeDirectory,
-): Promise<void> {
-  const [lexical, canonical, opened, resolved] = await Promise.all([
-    lstat(runtime.runtimePath),
-    lstat(runtime.canonicalPath),
-    runtime.directory.stat(),
-    realpath(runtime.runtimePath),
-  ]);
-  for (const metadata of [lexical, canonical, opened]) {
-    assertPrivateOwnedViewerRuntimeMetadata(metadata);
-    if (
-      metadata.dev !== runtime.dev ||
-      metadata.ino !== runtime.ino ||
-      metadata.uid !== runtime.uid
-    ) {
-      throw new Error(
-        "BROWSER_ENGINE_FAILURE: Browser viewer runtime directory identity changed.",
-      );
-    }
-  }
-  if (resolved !== runtime.canonicalPath) {
-    throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer runtime directory identity changed.",
-    );
-  }
-}
-
-async function requireAbsentOwnedViewerCapture(
-  runtime: OwnedViewerRuntimeDirectory,
-  screenshotPath: string,
-): Promise<void> {
-  await assertOwnedViewerRuntimeDirectory(runtime);
-  try {
-    await lstat(screenshotPath);
-  } catch (error) {
-    if (isMissingPathError(error)) {
-      await assertOwnedViewerRuntimeDirectory(runtime);
-      return;
-    }
-    throw error;
-  }
-  throw new Error(
-    "BROWSER_ENGINE_FAILURE: Browser viewer capture identity already exists.",
-  );
-}
-
-function requireExactViewerScreenshotResponse(
-  stdout: string,
-  expectedPath: string,
-): void {
+function requirePinnedViewerResponse(stdout: string): unknown {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
   } catch {
     throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot response was invalid.",
+      "BROWSER_ENGINE_FAILURE: agent-browser viewer metadata was invalid.",
     );
   }
   const response = requireOptionalRecord(parsed);
-  const data = requireOptionalRecord(response?.data);
-  if (response?.success !== true || data?.path !== expectedPath) {
-    throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot path was not proven.",
-    );
-  }
-}
-
-async function openOwnedViewerCapture(
-  runtime: OwnedViewerRuntimeDirectory,
-  screenshotPath: string,
-): Promise<OwnedViewerCaptureFile> {
-  await assertOwnedViewerRuntimeDirectory(runtime);
-  const before = await lstat(screenshotPath);
-  const uid = process.getuid?.();
   if (
-    !before.isFile() ||
-    before.isSymbolicLink() ||
-    before.nlink !== 1 ||
-    (uid !== undefined && before.uid !== uid)
+    response === undefined ||
+    !exactRecordKeys(response, ["success", "data", "error"]) ||
+    response.success !== true ||
+    response.error !== null
   ) {
     throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot was not an owned regular file.",
+      "BROWSER_ENGINE_FAILURE: agent-browser viewer metadata was invalid.",
     );
   }
-  const file = await openFile(
-    screenshotPath,
-    fsConstants.O_RDWR | fsConstants.O_NOFOLLOW,
-  );
-  try {
-    const opened = await file.stat();
+  return response.data;
+}
+
+function requirePinnedViewerActiveTarget(stdout: string): string {
+  const data = requirePinnedViewerResponse(stdout);
+  if (!Array.isArray(data) || data.length === 0 || data.length > MAX_BROWSER_TABS) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser active viewer target was invalid.",
+    );
+  }
+  const targets = data.map((candidate) => {
+    const tab = requireOptionalRecord(candidate);
     if (
-      !opened.isFile() ||
-      opened.nlink !== 1 ||
-      opened.dev !== before.dev ||
-      opened.ino !== before.ino ||
-      (uid !== undefined && opened.uid !== uid)
+      tab === undefined ||
+      !exactRecordKeys(tab, [
+        "tabId",
+        "targetId",
+        "label",
+        "title",
+        "url",
+        "type",
+        "active",
+      ]) ||
+      typeof tab.tabId !== "string" ||
+      !/^t[1-9][0-9]*$/u.test(tab.tabId) ||
+      typeof tab.targetId !== "string" ||
+      !/^[A-Za-z0-9_-]{1,256}$/u.test(tab.targetId) ||
+      (tab.label !== null &&
+        (typeof tab.label !== "string" || tab.label.length > 256)) ||
+      typeof tab.title !== "string" ||
+      tab.title.length > 2048 ||
+      typeof tab.url !== "string" ||
+      tab.url.length === 0 ||
+      tab.url.length > 8192 ||
+      typeof tab.type !== "string" ||
+      tab.type.length === 0 ||
+      tab.type.length > 64 ||
+      typeof tab.active !== "boolean"
     ) {
       throw new Error(
-        "BROWSER_ENGINE_FAILURE: Browser viewer screenshot identity changed.",
+        "BROWSER_ENGINE_FAILURE: agent-browser active viewer target was invalid.",
       );
     }
-    await assertOwnedViewerRuntimeDirectory(runtime);
-    return {
-      file,
-      dev: opened.dev,
-      ino: opened.ino,
-      uid: opened.uid,
+    return tab as {
+      targetId: string;
+      type: string;
+      active: boolean;
     };
-  } catch (error) {
-    await file.close();
-    throw error;
+  });
+  if (new Set(targets.map((target) => target.targetId)).size !== targets.length) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser active viewer target was invalid.",
+    );
   }
+  const active = targets.filter((target) => target.active);
+  const activeTarget = active[0];
+  if (active.length !== 1 || activeTarget?.type !== "page") {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser active viewer target was invalid.",
+    );
+  }
+  return activeTarget.targetId;
 }
 
-function assertOpenedViewerCaptureIdentity(
-  capture: OwnedViewerCaptureFile,
-  metadata: Stats,
-): void {
+function requirePinnedViewerCdpUrl(stdout: string): string {
+  const data = requireOptionalRecord(requirePinnedViewerResponse(stdout));
   if (
-    !metadata.isFile() ||
-    metadata.nlink !== 1 ||
-    metadata.dev !== capture.dev ||
-    metadata.ino !== capture.ino ||
-    metadata.uid !== capture.uid
+    data === undefined ||
+    !exactRecordKeys(data, ["cdpUrl"]) ||
+    typeof data.cdpUrl !== "string"
   ) {
     throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot identity changed.",
+      "BROWSER_ENGINE_FAILURE: agent-browser viewer CDP identity was invalid.",
     );
   }
-}
-
-async function eraseOpenedViewerCapture(
-  capture: OwnedViewerCaptureFile,
-): Promise<void> {
-  assertOpenedViewerCaptureIdentity(capture, await capture.file.stat());
-  // The verified inode is the only safe immediate cleanup authority. Its
-  // unpredictable zero-byte name remains for owned Session-runtime teardown;
-  // this path must never pathname-unlink a capture leaf.
-  await capture.file.truncate(0);
-  await capture.file.sync();
-  const erased = await capture.file.stat();
-  assertOpenedViewerCaptureIdentity(capture, erased);
-  if (erased.size !== 0) {
+  const parsed = parseLocalBrowserCdpUrl(data.cdpUrl);
+  if (
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    !Number.isSafeInteger(Number(parsed.port)) ||
+    Number(parsed.port) < 1 ||
+    Number(parsed.port) > 65_535 ||
+    !/^\/devtools\/browser\/[A-Za-z0-9_-]{1,256}$/u.test(parsed.pathname)
+  ) {
     throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser viewer screenshot bytes were not erased.",
+      "BROWSER_ENGINE_FAILURE: agent-browser viewer CDP identity was invalid.",
     );
   }
+  return parsed.toString();
 }
 
-async function readAndEraseOwnedViewerPng(
-  runtime: OwnedViewerRuntimeDirectory,
-  screenshotPath: string,
-): Promise<Buffer> {
-  const capture = await openOwnedViewerCapture(runtime, screenshotPath);
-  try {
-    assertOpenedViewerCaptureIdentity(capture, await capture.file.stat());
-    const bytes = Buffer.allocUnsafe(
-      HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES + 1,
-    );
-    let length = 0;
-    while (length < bytes.byteLength) {
-      const read = await capture.file.read(
-        bytes,
-        length,
-        bytes.byteLength - length,
-        length,
-      );
-      if (read.bytesRead === 0) break;
-      length += read.bytesRead;
-    }
-    const png = bytes.subarray(0, length);
-    if (
-      png.byteLength === 0 ||
-      png.byteLength > HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES ||
-      !png.subarray(0, 8).equals(
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      )
-    ) {
-      throw new Error(
-        "BROWSER_ENGINE_FAILURE: Browser viewer frame failed validation.",
-      );
-    }
-    return png;
-  } finally {
-    try {
-      let parentFailure: unknown;
+function exactRecordKeys(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  return (
+    Object.keys(record).length === keys.length &&
+    keys.every((key) => Object.hasOwn(record, key))
+  );
+}
+
+async function captureViewerPngThroughCdp(
+  cdpUrl: string,
+  targetId: string,
+): Promise<{ mediaType: "image/png"; dataBase64: string }> {
+  return await new Promise((resolve, reject) => {
+    const socket = new WebSocket(cdpUrl, {
+      handshakeTimeout: DESKTOP_BROWSER_VIEWER_CAPTURE_TIMEOUT_MS,
+      maxPayload: HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
+      perMessageDeflate: false,
+    });
+    let stage: "attach" | "capture" | "detach" = "attach";
+    let sessionId: string | undefined;
+    let frame: { mediaType: "image/png"; dataBase64: string } | undefined;
+    let detachSent = false;
+    let settled = false;
+    const close = () => {
+      if (socket.readyState === WebSocket.CLOSED) return;
       try {
-        await assertOwnedViewerRuntimeDirectory(runtime);
-      } catch (error) {
-        parentFailure = error;
+        if (socket.readyState === WebSocket.CONNECTING) socket.terminate();
+        else socket.close();
+      } catch {
+        socket.terminate();
       }
-      await eraseOpenedViewerCapture(capture);
-      if (parentFailure !== undefined) throw parentFailure;
-    } finally {
-      await capture.file.close();
-    }
-  }
+    };
+    const send = (message: Record<string, unknown>) => {
+      try {
+        socket.send(JSON.stringify(message), (error) => {
+          if (error) finish(viewerCdpFailure());
+        });
+      } catch {
+        finish(viewerCdpFailure());
+      }
+    };
+    const sendDetach = () => {
+      if (
+        detachSent ||
+        sessionId === undefined ||
+        socket.readyState !== WebSocket.OPEN
+      ) {
+        return false;
+      }
+      detachSent = true;
+      send({
+        id: 3,
+        method: "Target.detachFromTarget",
+        params: { sessionId },
+      });
+      return true;
+    };
+    const finish = (
+      error?: Error,
+      result?: { mediaType: "image/png"; dataBase64: string },
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error !== undefined && sendDetach()) {
+        setImmediate(close);
+      } else {
+        close();
+      }
+      if (error !== undefined) reject(error);
+      else if (result !== undefined) resolve(result);
+      else reject(viewerCdpFailure());
+    };
+    const timer = setTimeout(() => {
+      finish(
+        new Error(
+          "BROWSER_ENGINE_TIMEOUT: Browser viewer capture was not acknowledged.",
+        ),
+      );
+    }, DESKTOP_BROWSER_VIEWER_CAPTURE_TIMEOUT_MS);
+    socket.once("open", () => {
+      send({
+        id: 1,
+        method: "Target.attachToTarget",
+        params: { targetId, flatten: true },
+      });
+    });
+    socket.once("error", () => finish(viewerCdpFailure()));
+    socket.once("close", () => {
+      if (!settled) finish(viewerCdpFailure());
+    });
+    socket.on("message", (raw, isBinary) => {
+      if (settled) return;
+      if (isBinary) {
+        finish(viewerCdpFailure());
+        return;
+      }
+      const bytes = Buffer.isBuffer(raw)
+        ? raw
+        : Array.isArray(raw)
+          ? Buffer.concat(raw)
+          : Buffer.from(raw);
+      if (bytes.byteLength > HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES) {
+        finish(viewerCdpFailure());
+        return;
+      }
+      let message: Record<string, unknown>;
+      try {
+        message = requireRecord(
+          JSON.parse(bytes.toString("utf8")),
+          "Browser viewer CDP response",
+        );
+      } catch {
+        finish(viewerCdpFailure());
+        return;
+      }
+      if (message.error !== undefined) {
+        finish(viewerCdpFailure());
+        return;
+      }
+      if (stage === "attach") {
+        const result = requireOptionalRecord(message.result);
+        if (
+          !exactRecordKeys(message, ["id", "result"]) ||
+          message.id !== 1 ||
+          result === undefined ||
+          !exactRecordKeys(result, ["sessionId"]) ||
+          typeof result.sessionId !== "string" ||
+          !/^[A-Za-z0-9_-]{1,256}$/u.test(result.sessionId)
+        ) {
+          finish(viewerCdpFailure());
+          return;
+        }
+        sessionId = result.sessionId;
+        stage = "capture";
+        send({
+          id: 2,
+          sessionId,
+          method: "Page.captureScreenshot",
+          params: { format: "png", fromSurface: true },
+        });
+        return;
+      }
+      if (stage === "capture") {
+        const result = requireOptionalRecord(message.result);
+        if (
+          !exactRecordKeys(message, ["id", "sessionId", "result"]) ||
+          message.id !== 2 ||
+          message.sessionId !== sessionId ||
+          result === undefined ||
+          !exactRecordKeys(result, ["data"]) ||
+          typeof result.data !== "string"
+        ) {
+          finish(viewerCdpFailure());
+          return;
+        }
+        try {
+          frame = requireCanonicalViewerPng(result.data);
+        } catch {
+          finish(viewerCdpFailure());
+          return;
+        }
+        stage = "detach";
+        if (!sendDetach()) finish(viewerCdpFailure());
+        return;
+      }
+      const result = requireOptionalRecord(message.result);
+      if (
+        !exactRecordKeys(message, ["id", "result"]) ||
+        message.id !== 3 ||
+        result === undefined ||
+        !exactRecordKeys(result, []) ||
+        frame === undefined
+      ) {
+        finish(viewerCdpFailure());
+        return;
+      }
+      finish(undefined, frame);
+    });
+  });
 }
 
-async function eraseOwnedViewerCaptureIfPresent(
-  runtime: OwnedViewerRuntimeDirectory,
-  screenshotPath: string,
-): Promise<void> {
-  await assertOwnedViewerRuntimeDirectory(runtime);
-  try {
-    await lstat(screenshotPath);
-  } catch (error) {
-    if (isMissingPathError(error)) return;
-    throw error;
+function requireCanonicalViewerPng(
+  dataBase64: string,
+): { mediaType: "image/png"; dataBase64: string } {
+  const byteLength = hostedBrowserViewerPngBase64ByteLength(dataBase64);
+  if (
+    byteLength === undefined ||
+    byteLength === 0 ||
+    byteLength > HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES
+  ) {
+    throw viewerCdpFailure();
   }
-  const capture = await openOwnedViewerCapture(runtime, screenshotPath);
-  try {
-    await eraseOpenedViewerCapture(capture);
-  } finally {
-    await capture.file.close();
+  const bytes = Buffer.from(dataBase64, "base64");
+  if (
+    bytes.byteLength !== byteLength ||
+    !bytes.subarray(0, 8).equals(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    )
+  ) {
+    throw viewerCdpFailure();
   }
+  return { mediaType: "image/png", dataBase64 };
+}
+
+function viewerCdpFailure(): Error {
+  return new Error("BROWSER_ENGINE_FAILURE: Browser viewer capture failed.");
 }
 
 export async function spawnAndCollect(input: {

@@ -1,12 +1,9 @@
 import assert from "node:assert/strict";
 import {
-  lstat,
   mkdtemp,
   mkdir,
   chmod,
   readFile,
-  readdir,
-  rename,
   rm,
   stat,
   symlink,
@@ -52,7 +49,10 @@ import {
   canonicalizePublicBrowserDestination,
   type BrowserEffectiveDomainAuthorityV1,
 } from "../../src/browser/domainAuthority.js";
-import { HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES } from "../../src/browser/hostedViewerProtocol.js";
+import {
+  HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
+  HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES,
+} from "../../src/browser/hostedViewerProtocol.js";
 import type {
   BrowserOperationLifecycleV1,
   BrowserSessionV1,
@@ -4198,241 +4198,306 @@ test("engine command collection waits for stdio close after process exit", async
   assert.equal(result.stdout, "late-output");
 });
 
-test("viewer screenshot capture uses only its exact owned file contract", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-viewer-file-"));
-  t.after(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
-  const pngHeader = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-  const createRuntime = async (name: string): Promise<string> => {
-    const runtimePath = path.join(root, name);
-    await mkdir(runtimePath, { mode: 0o700 });
-    return runtimePath;
-  };
-  const invocationFor = (runtimePath: string) => ({
-    ...engineInvocation(),
-    runtimePath,
-    socketPath: runtimePath,
-    profilePath: runtimePath,
-    configPath: runtimePath,
-    screenshotPath: path.join(runtimePath, "screenshot.png"),
-  });
-  const writeExecutable = async (
+test("viewer screenshot capture uses the pinned CDP Session without files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-viewer-cdp-"));
+  const pngHeader = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  ]);
+  const targetA = "TARGET_A";
+  const targetB = "TARGET_B";
+  type ScenarioMode =
+    | "exact"
+    | "raw_plus_one"
+    | "oversized_message"
+    | "malformed"
+    | "mismatched_id"
+    | "wrong_session"
+    | "event"
+    | "duplicate"
+    | "close"
+    | "timeout";
+  const startCdpServer = async (
     name: string,
-    runtimePath: string,
-    body: readonly string[],
-  ): Promise<string> => {
-    const executable = path.join(root, name);
+    mode: ScenarioMode,
+    dataBase64?: string,
+  ) => {
+    const requests: Record<string, unknown>[] = [];
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+    let resolveClientClosed!: () => void;
+    const clientClosed = new Promise<void>((resolve) => {
+      resolveClientClosed = resolve;
+    });
+    server.on("connection", (socket) => {
+      socket.once("close", resolveClientClosed);
+      socket.on("message", (raw) => {
+        const request = JSON.parse(raw.toString("utf8")) as Record<
+          string,
+          unknown
+        >;
+        requests.push(request);
+        if (request.id === 1) {
+          if (mode === "timeout") return;
+          if (mode === "malformed") {
+            socket.send("{");
+            return;
+          }
+          if (mode === "mismatched_id") {
+            socket.send(JSON.stringify({ id: 9, result: {} }));
+            return;
+          }
+          if (mode === "event") {
+            socket.send(
+              JSON.stringify({
+                method: "Target.targetInfoChanged",
+                params: {},
+              }),
+            );
+            return;
+          }
+          const attached = {
+            id: 1,
+            result: { sessionId: "CDP_SESSION" },
+          };
+          socket.send(JSON.stringify(attached));
+          if (mode === "duplicate") socket.send(JSON.stringify(attached));
+          return;
+        }
+        if (request.id === 2) {
+          if (mode === "oversized_message") {
+            socket.send(
+              "x".repeat(HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES + 1),
+            );
+            return;
+          }
+          if (mode === "close") {
+            socket.close();
+            return;
+          }
+          socket.send(
+            JSON.stringify({
+              id: 2,
+              sessionId:
+                mode === "wrong_session" ? "OTHER_SESSION" : "CDP_SESSION",
+              result: { data: dataBase64 },
+            }),
+          );
+          return;
+        }
+        if (request.id === 3) {
+          socket.send(JSON.stringify({ id: 3, result: {} }));
+        }
+      });
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("CDP test server did not bind a TCP port.");
+    }
+    return {
+      url: `ws://127.0.0.1:${String(address.port)}/devtools/browser/${name}`,
+      requests,
+      clientClosed,
+      close: async () => {
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      },
+    };
+  };
+  const writePinnedCli = async (
+    name: string,
+    cdpUrl: string,
+    afterTargetId: string,
+  ) => {
+    const executable = path.join(root, `${name}-agent-browser`);
+    const statePath = path.join(root, `${name}-tab-state`);
+    const commandLog = path.join(root, `${name}-commands.log`);
     await writeFile(
       executable,
       [
         `#!${process.execPath}`,
         'const fs = require("node:fs");',
-        'const path = require("node:path");',
-        `const configuredRuntime = ${JSON.stringify(runtimePath)};`,
-        'const commandIndex = process.argv.indexOf("screenshot");',
-        "const requestedPath = process.argv[commandIndex + 1];",
-        'if (commandIndex < 0 || process.argv.includes("--base64")) process.exit(9);',
-        'if (path.dirname(requestedPath) !== fs.realpathSync(configuredRuntime)) process.exit(10);',
-        'if (!/^viewer-[0-9a-f-]{36}\\.png$/u.test(path.basename(requestedPath))) process.exit(11);',
-        ...body,
+        `const statePath = ${JSON.stringify(statePath)};`,
+        `const commandLog = ${JSON.stringify(commandLog)};`,
+        "const args = process.argv.slice(2);",
+        'if (args.includes("screenshot")) process.exit(9);',
+        'if (args.includes("tab") && args.includes("list")) {',
+        '  const count = fs.existsSync(statePath) ? Number(fs.readFileSync(statePath, "utf8")) : 0;',
+        '  fs.writeFileSync(statePath, String(count + 1));',
+        '  fs.appendFileSync(commandLog, "tab\\n");',
+        `  const targetId = count === 0 ? ${JSON.stringify(targetA)} : ${JSON.stringify(afterTargetId)};`,
+        '  process.stdout.write(JSON.stringify({ success: true, data: [{ tabId: "t1", targetId, label: null, title: "Example", url: "https://example.com/", type: "page", active: true }], error: null }));',
+        '} else if (args.includes("get") && args.includes("cdp-url")) {',
+        '  fs.appendFileSync(commandLog, "cdp\\n");',
+        `  process.stdout.write(JSON.stringify({ success: true, data: { cdpUrl: ${JSON.stringify(cdpUrl)} }, error: null }));`,
+        "} else { process.exit(10); }",
       ].join("\n"),
     );
     await chmod(executable, 0o755);
-    return executable;
+    return { executable, commandLog };
   };
-  const adapterFor = (executable: string) =>
-    new AgentBrowserCliAdapter({
-      engineExecutablePath: executable,
+  const runScenario = async (input: {
+    name: string;
+    mode: ScenarioMode;
+    dataBase64?: string | undefined;
+    afterTargetId?: string | undefined;
+  }) => {
+    const server = await startCdpServer(
+      input.name,
+      input.mode,
+      input.dataBase64,
+    );
+    const runtimePath = path.join(root, `${input.name}-runtime`);
+    await mkdir(runtimePath, { mode: 0o700 });
+    const cli = await writePinnedCli(
+      input.name,
+      server.url,
+      input.afterTargetId ?? targetA,
+    );
+    const adapter = new AgentBrowserCliAdapter({
+      engineExecutablePath: cli.executable,
       chromeExecutablePath: "/usr/bin/true",
     });
+    let frame:
+      | { mediaType: "image/png"; dataBase64: string }
+      | undefined;
+    let failure: unknown;
+    try {
+      frame = await adapter.captureViewerFrame({
+        ...engineInvocation(),
+        runtimePath,
+        socketPath: runtimePath,
+        profilePath: runtimePath,
+        configPath: runtimePath,
+        screenshotPath: path.join(runtimePath, "screenshot.png"),
+      });
+    } catch (error) {
+      failure = error;
+    }
+    await settleWithin(server.clientClosed, 1000);
+    await server.close();
+    return {
+      frame,
+      failure,
+      requests: server.requests,
+      commands: (await readFile(cli.commandLog, "utf8")).trim().split("\n"),
+    };
+  };
 
-  const validRuntime = await createRuntime("valid-runtime");
-  const validLog = path.join(root, "valid-paths.log");
-  const validExecutable = await writeExecutable(
-    "valid-viewer-frame",
-    validRuntime,
-    [
-      `const bytes = Buffer.alloc(${String(HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES)});`,
-      `Buffer.from(${JSON.stringify(pngHeader)}).copy(bytes);`,
-      "fs.writeFileSync(requestedPath, bytes, { mode: 0o600 });",
-      `fs.appendFileSync(${JSON.stringify(validLog)}, requestedPath + "\\n");`,
-      "process.stdout.write(JSON.stringify({ success: true, data: { path: requestedPath }, error: null }));",
-    ],
-  );
-  const validAdapter = adapterFor(validExecutable);
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const frame = await validAdapter.captureViewerFrame(
-      invocationFor(validRuntime),
-    );
+  try {
+    const exactBytes = Buffer.alloc(HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES);
+    pngHeader.copy(exactBytes);
+    const exactBase64 = exactBytes.toString("base64");
+    const exact = await runScenario({
+      name: "exact",
+      mode: "exact",
+      dataBase64: exactBase64,
+    });
     assert.equal(
-      Buffer.from(frame.dataBase64, "base64").byteLength,
-      HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES,
+      exact.failure,
+      undefined,
+      JSON.stringify({ requests: exact.requests, commands: exact.commands }),
     );
+    assert.equal(exact.frame?.dataBase64, exactBase64);
+    assert.deepEqual(exact.commands, ["tab", "cdp", "tab"]);
+    assert.deepEqual(
+      exact.requests.map((request) => request.method),
+      [
+        "Target.attachToTarget",
+        "Page.captureScreenshot",
+        "Target.detachFromTarget",
+      ],
+    );
+    assert.deepEqual(exact.requests[0], {
+      id: 1,
+      method: "Target.attachToTarget",
+      params: { targetId: targetA, flatten: true },
+    });
+    assert.deepEqual(exact.requests[1], {
+      id: 2,
+      sessionId: "CDP_SESSION",
+      method: "Page.captureScreenshot",
+      params: { format: "png", fromSurface: true },
+    });
+
+    const plusOneBytes = Buffer.alloc(
+      HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES + 1,
+    );
+    pngHeader.copy(plusOneBytes);
+    const plusOne = await runScenario({
+      name: "plus-one",
+      mode: "raw_plus_one",
+      dataBase64: plusOneBytes.toString("base64"),
+    });
+    assert.match(String(plusOne.failure), /Browser viewer capture failed/u);
+    assert.equal(plusOne.frame, undefined);
+    assert.equal(
+      plusOne.requests.at(-1)?.method,
+      "Target.detachFromTarget",
+    );
+
+    for (const mode of [
+      "oversized_message",
+      "malformed",
+      "mismatched_id",
+      "wrong_session",
+      "event",
+      "duplicate",
+      "close",
+    ] as const) {
+      const result = await runScenario({
+        name: mode.replaceAll("_", "-"),
+        mode,
+        dataBase64: exactBase64,
+      });
+      assert.match(String(result.failure), /Browser viewer capture failed/u);
+      assert.equal(result.frame, undefined);
+      if (mode === "wrong_session" || mode === "duplicate") {
+        assert.equal(
+          result.requests.at(-1)?.method,
+          "Target.detachFromTarget",
+        );
+      }
+    }
+
+    const drift = await runScenario({
+      name: "target-drift",
+      mode: "exact",
+      dataBase64: exactBase64,
+      afterTargetId: targetB,
+    });
+    assert.match(String(drift.failure), /target changed during capture/u);
+    assert.deepEqual(drift.commands, ["tab", "cdp", "tab"]);
+
+    const timeout = await runScenario({
+      name: "timeout",
+      mode: "timeout",
+    });
+    assert.match(String(timeout.failure), /capture was not acknowledged/u);
+    assert.equal(timeout.frame, undefined);
+
+    const genericExecutable = path.join(root, "generic-large-output");
+    await writeFile(
+      genericExecutable,
+      [
+        `#!${process.execPath}`,
+        'process.stdout.write("x".repeat(2 * 1024 * 1024));',
+      ].join("\n"),
+    );
+    await chmod(genericExecutable, 0o755);
+    const generic = await spawnAndCollect({
+      executable: genericExecutable,
+      args: [],
+      cwd: root,
+      env: { PATH: "", LANG: "C.UTF-8" },
+      timeoutMs: 2000,
+    });
+    assert.equal(Buffer.byteLength(generic.stdout, "utf8"), 512 * 1024);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
-  const validPaths = (await readFile(validLog, "utf8")).trim().split("\n");
-  assert.equal(validPaths.length, 2);
-  assert.equal(new Set(validPaths).size, 2);
-  for (const capturePath of validPaths) {
-    assert.equal((await stat(capturePath)).size, 0);
-  }
-
-  const oversizedRuntime = await createRuntime("oversized-runtime");
-  const oversizedLog = path.join(root, "oversized-path.log");
-  const oversizedExecutable = await writeExecutable(
-    "oversized-viewer-frame",
-    oversizedRuntime,
-    [
-      `const bytes = Buffer.alloc(${String(HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES + 1)});`,
-      `Buffer.from(${JSON.stringify(pngHeader)}).copy(bytes);`,
-      "fs.writeFileSync(requestedPath, bytes, { mode: 0o600 });",
-      `fs.writeFileSync(${JSON.stringify(oversizedLog)}, requestedPath);`,
-      "process.stdout.write(JSON.stringify({ success: true, data: { path: requestedPath }, error: null }));",
-    ],
-  );
-  await assert.rejects(
-    adapterFor(oversizedExecutable).captureViewerFrame(
-      invocationFor(oversizedRuntime),
-    ),
-    /frame failed validation/u,
-  );
-  assert.equal(
-    (await stat(await readFile(oversizedLog, "utf8"))).size,
-    0,
-  );
-
-  const mismatchRuntime = await createRuntime("mismatch-runtime");
-  const mismatchLog = path.join(root, "mismatch-path.log");
-  const mismatchPath = path.join(root, "untrusted.png");
-  const mismatchExecutable = await writeExecutable(
-    "mismatched-viewer-frame",
-    mismatchRuntime,
-    [
-      `const bytes = Buffer.from(${JSON.stringify(pngHeader)});`,
-      "fs.writeFileSync(requestedPath, bytes, { mode: 0o600 });",
-      `fs.writeFileSync(${JSON.stringify(mismatchLog)}, requestedPath);`,
-      `process.stdout.write(JSON.stringify({ success: true, data: { path: ${JSON.stringify(mismatchPath)} }, error: null }));`,
-    ],
-  );
-  await assert.rejects(
-    adapterFor(mismatchExecutable).captureViewerFrame(
-      invocationFor(mismatchRuntime),
-    ),
-    /path was not proven/u,
-  );
-  assert.equal((await stat(await readFile(mismatchLog, "utf8"))).size, 0);
-  await assert.rejects(stat(mismatchPath), { code: "ENOENT" });
-
-  const symlinkRuntime = await createRuntime("symlink-runtime");
-  const symlinkTarget = path.join(root, "symlink-target.png");
-  await writeFile(symlinkTarget, Buffer.from(pngHeader));
-  const symlinkExecutable = await writeExecutable(
-    "symlink-viewer-frame",
-    symlinkRuntime,
-    [
-      `fs.symlinkSync(${JSON.stringify(symlinkTarget)}, requestedPath);`,
-      "process.stdout.write(JSON.stringify({ success: true, data: { path: requestedPath }, error: null }));",
-    ],
-  );
-  await assert.rejects(
-    adapterFor(symlinkExecutable).captureViewerFrame(
-      invocationFor(symlinkRuntime),
-    ),
-    /not an owned regular file/u,
-  );
-  assert.deepEqual(await readFile(symlinkTarget), Buffer.from(pngHeader));
-  assert.equal(
-    (await lstat(path.join(symlinkRuntime, (await readdir(symlinkRuntime))[0]!)))
-      .isSymbolicLink(),
-    true,
-  );
-
-  const hardlinkRuntime = await createRuntime("hardlink-runtime");
-  const hardlinkTarget = path.join(root, "hardlink-target.png");
-  await writeFile(hardlinkTarget, Buffer.from(pngHeader));
-  const hardlinkExecutable = await writeExecutable(
-    "hardlink-viewer-frame",
-    hardlinkRuntime,
-    [
-      `fs.linkSync(${JSON.stringify(hardlinkTarget)}, requestedPath);`,
-      "process.stdout.write(JSON.stringify({ success: true, data: { path: requestedPath }, error: null }));",
-    ],
-  );
-  await assert.rejects(
-    adapterFor(hardlinkExecutable).captureViewerFrame(
-      invocationFor(hardlinkRuntime),
-    ),
-    /not an owned regular file/u,
-  );
-  assert.deepEqual(await readFile(hardlinkTarget), Buffer.from(pngHeader));
-  assert.equal((await stat(hardlinkTarget)).nlink, 2);
-
-  const externalBeforeDispatch = await createRuntime("external-before");
-  const beforeDispatchRuntime = await createRuntime("symlinked-parent");
-  const savedBeforeDispatchRuntime = path.join(root, "saved-parent");
-  await rename(beforeDispatchRuntime, savedBeforeDispatchRuntime);
-  await symlink(externalBeforeDispatch, beforeDispatchRuntime);
-  const externalVictim = path.join(externalBeforeDispatch, "screenshot.png");
-  const invocationMarker = path.join(root, "unexpected-invocation");
-  await writeFile(externalVictim, "victim");
-  const neverExecutable = path.join(root, "never-viewer-frame");
-  await writeFile(neverExecutable, [
-    `#!${process.execPath}`,
-    `require("node:fs").writeFileSync(${JSON.stringify(invocationMarker)}, "called");`,
-  ].join("\n"));
-  await chmod(neverExecutable, 0o755);
-  await assert.rejects(
-    adapterFor(neverExecutable).captureViewerFrame(
-      invocationFor(beforeDispatchRuntime),
-    ),
-    /runtime directory is not owned and private/u,
-  );
-  assert.equal(await readFile(externalVictim, "utf8"), "victim");
-  await assert.rejects(stat(invocationMarker), { code: "ENOENT" });
-
-  const swapRuntime = await createRuntime("swap-runtime");
-  const swappedRuntime = path.join(root, "swapped-runtime");
-  const swapExternal = await createRuntime("swap-external");
-  const swapVictim = path.join(swapExternal, "screenshot.png");
-  await writeFile(swapVictim, "victim");
-  const swapExecutable = await writeExecutable(
-    "swap-viewer-frame",
-    swapRuntime,
-    [
-      `fs.renameSync(configuredRuntime, ${JSON.stringify(swappedRuntime)});`,
-      `fs.symlinkSync(${JSON.stringify(swapExternal)}, configuredRuntime);`,
-      `fs.writeFileSync(requestedPath, Buffer.from(${JSON.stringify(pngHeader)}), { mode: 0o600 });`,
-      "process.stdout.write(JSON.stringify({ success: true, data: { path: requestedPath }, error: null }));",
-    ],
-  );
-  await assert.rejects(
-    adapterFor(swapExecutable).captureViewerFrame(invocationFor(swapRuntime)),
-    /runtime directory is not owned and private/u,
-  );
-  assert.equal(await readFile(swapVictim, "utf8"), "victim");
-  const swapExternalCaptures = (await readdir(swapExternal)).filter(
-    (name) => name !== "screenshot.png",
-  );
-  assert.equal(swapExternalCaptures.length, 1);
-  assert.equal(
-    (await stat(path.join(swapExternal, swapExternalCaptures[0]!))).size,
-    pngHeader.length,
-  );
-
-  const genericExecutable = path.join(root, "generic-large-output");
-  await writeFile(genericExecutable, [
-    `#!${process.execPath}`,
-    'process.stdout.write("x".repeat(2 * 1024 * 1024));',
-  ].join("\n"));
-  await chmod(genericExecutable, 0o755);
-  const generic = await spawnAndCollect({
-    executable: genericExecutable,
-    args: [],
-    cwd: root,
-    env: { PATH: "", LANG: "C.UTF-8" },
-    timeoutMs: 2000,
-  });
-  assert.equal(Buffer.byteLength(generic.stdout, "utf8"), 512 * 1024);
 });
 
 async function createFixture(
