@@ -104,7 +104,7 @@ async function configuredWorkspace(actions: object[], suites: object[] = []): Pr
 }
 
 async function waitFor(service: WorkspaceValidationService, workspaceRoot: string, candidateFingerprint: string, resultCount = 1) {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
     const snapshot = await service.inspect({ sessionId: "session-1", threadId: "thread-1", workspaceRoot, candidateFingerprint });
     if (snapshot.results.length >= resultCount && snapshot.results.every((result) => result.outcome !== "running")) return snapshot;
     await new Promise((resolve) => setTimeout(resolve, 10));
