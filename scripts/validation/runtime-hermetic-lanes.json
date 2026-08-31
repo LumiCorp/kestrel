@@ -354,6 +354,7 @@
         "tests/unit/google-calendar-tools.test.ts",
         "tests/unit/hosted-browser-artifact-capability.test.ts",
         "tests/unit/hosted-browser-image.test.ts",
+        "tests/unit/hosted-browser-viewer.test.ts",
         "tests/unit/hosted-mcp-context.test.ts",
         "tests/unit/internet-migration-guard.test.ts",
         "tests/unit/internet-tools.test.ts",

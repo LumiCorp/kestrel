@@ -45,7 +45,10 @@ import {
   fingerprintToolScopeV1,
   hashCanonical,
 } from "../../src/kestrel/contracts/tool-contract.js";
-import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import {
+  parsePreparedToolCallV1,
+  type PreparedToolInputAdapterV1,
+} from "../../src/kestrel/contracts/tool-invocation.js";
 import { derivePreparedToolApprovalAuthorityRevisionV1 } from "../../src/io/ToolInvocationSupport.js";
 
 function buildExecConfig() {
@@ -139,6 +142,7 @@ function buildLocalPreparedBrowserCall(input: {
   policyRevision: string;
   authorityRevision: string;
   decision: "allow" | "approval_required";
+  inputAdapters?: readonly PreparedToolInputAdapterV1[] | undefined;
   hostedIdentity?: boolean | undefined;
   runId?: string | undefined;
 }) {
@@ -179,11 +183,12 @@ function buildLocalPreparedBrowserCall(input: {
       authorityRevision: derivePreparedToolApprovalAuthorityRevisionV1({
         activation,
         effectiveInput: input.effectiveInput,
-        inputAdapters: [],
+        inputAdapters: input.inputAdapters ?? [],
         policyRevision: input.policyRevision,
         upstreamAuthorityRevision: input.authorityRevision,
       }),
     },
+    inputAdapters: input.inputAdapters ?? [],
     preparedAt: "2026-08-29T12:00:00.000Z",
   });
 }
@@ -200,6 +205,7 @@ function buildHostedPreparedBrowserCall(input: {
   authorityRevision: string;
   capabilities: readonly string[];
   executionClass: "read_only" | "external_side_effect";
+  inputAdapters?: readonly PreparedToolInputAdapterV1[] | undefined;
   decision?: "allow" | "approval_required" | undefined;
   runId?: string | undefined;
 }) {
@@ -257,7 +263,7 @@ function buildHostedPreparedBrowserCall(input: {
       authorityRevision: derivePreparedToolApprovalAuthorityRevisionV1({
         activation,
         effectiveInput: input.effectiveInput,
-        inputAdapters: [],
+        inputAdapters: input.inputAdapters ?? [],
         policyRevision: input.policyRevision,
         upstreamAuthorityRevision: input.authorityRevision,
       }),
@@ -276,6 +282,7 @@ function buildHostedPreparedBrowserCall(input: {
       version: "prepared_tool_execution_requirements_v1",
       credentials: ["live_handler_capability"],
     },
+    inputAdapters: input.inputAdapters ?? [],
     preparedAt: "2026-08-29T12:00:00.000Z",
   });
 }
@@ -2458,6 +2465,44 @@ test("Browser upload and download approvals prepare and resume the exact Desktop
         };
         let inspectedInput: Record<string, unknown> = operation.toolInput;
         let preparations = 0;
+        const inputAdapters: readonly PreparedToolInputAdapterV1[] = operation.toolName === "browser.upload"
+          ? [{
+              adapterId: "kestrel.browser-upload-effect:v1",
+              metadata: {
+                version: "browser_upload_preparation_v1",
+                turnId: "turn-1",
+                threadId: "session-1",
+                attachmentId: operation.toolInput.attachmentId,
+                filename: "evidence.txt",
+                declaredMediaType: "text/plain",
+                detectedMediaType: "text/plain",
+                sizeBytes: 19,
+                sha256: "a".repeat(64),
+                sessionId: operation.toolInput.sessionId,
+                generation: 1,
+                snapshotId: operation.toolInput.snapshotId,
+                documentRevision: "document-1",
+                targetRef: operation.toolInput.targetRef,
+                targetLabel: "Supporting evidence",
+              },
+            }]
+          : [{
+              adapterId: "kestrel.browser-download-effect:v1",
+              metadata: {
+                version: "browser_download_preparation_v1",
+                threadId: "session-1",
+                sessionId: operation.toolInput.sessionId,
+                generation: 1,
+                pendingDownloadId: operation.toolInput.pendingDownloadId,
+                filename: "report.bin",
+                measuredBytes: 10,
+                sha256: "b".repeat(64),
+                declaredMediaType: "application/octet-stream",
+                normalizedSourceOrigin: "https://example.com",
+                createdAt: "2026-08-29T12:00:00.000Z",
+                expiresAt: "2026-08-29T12:30:00.000Z",
+              },
+            }];
         const io: StepIO = {
           useModel: async () => { throw new Error("not expected"); },
           inspectTool: async () => ({
@@ -2476,6 +2521,7 @@ test("Browser upload and download approvals prepare and resume the exact Desktop
                   authorityRevision: approval.authorityRevision,
                   capabilities: approval.capabilities,
                   executionClass: "external_side_effect",
+                  inputAdapters,
                 })
               : buildLocalPreparedBrowserCall({
                   toolName: operation.toolName,
@@ -2484,6 +2530,7 @@ test("Browser upload and download approvals prepare and resume the exact Desktop
                   policyRevision: approval.policyRevision,
                   authorityRevision: approval.authorityRevision,
                   decision: "approval_required",
+                  inputAdapters,
                 });
           },
           useTool: async () => { throw new Error("Browser call must be durable"); },
