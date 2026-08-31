@@ -8,13 +8,17 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
-import {
-  DESKTOP_BROWSER_VIEWER_INPUT_VERSION,
-  DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
-  type DesktopBrowserViewerBindingV1,
-  type DesktopBrowserViewerFrameV1,
-  type DesktopBrowserViewerStateV1,
+import type {
+  DesktopBrowserViewerBindingV1,
+  DesktopBrowserViewerFrameV1,
+  DesktopBrowserViewerInputV1,
+  DesktopBrowserViewerStateV1,
 } from "../../src/contracts";
+
+const DESKTOP_BROWSER_VIEWER_REQUEST_VERSION: DesktopBrowserViewerBindingV1["version"] =
+  "desktop_browser_viewer_request_v1";
+const DESKTOP_BROWSER_VIEWER_INPUT_VERSION: DesktopBrowserViewerInputV1["version"] =
+  "desktop_browser_viewer_input_v1";
 
 const VIEWER_DISCOVERY_MS = 1_000;
 const VIEWER_FRAME_MS = 500;
