@@ -52,7 +52,8 @@ const authority: BrowserEffectiveDomainAuthorityV1 = {
     canonicalDomain: "example.com",
     includeSubdomains: true,
     port: 443,
-  }],
+  },
+  ],
   qaTarget: null,
   effectiveAllowlistRevision: "revision-1",
 };
@@ -189,7 +190,8 @@ test("viewer termination commits the exact terminal generation before machine cl
   assert.deepEqual(fixture.terminalMarks, [{
     expectedGeneration: 1,
     expectedMachineId: "machine-1",
-  }]);
+  },
+  ]);
   assert.equal(fixture.cleanupConfirmed, 0);
 });
 
@@ -198,7 +200,7 @@ test("only successful validated open completion promotes the stored session to r
   const prepared = preparedOpen();
   const opening = fixture.session;
   const receipt = acceptedReceipt(prepared.callId, opening.sessionId);
-  const result = await fixture.service.completeAcceptedOperation(
+  const result = (await fixture.service.completeAcceptedOperation(
     prepared,
     { threadId: "thread-1", projectId: "project-1" },
     receipt,
@@ -208,7 +210,7 @@ test("only successful validated open completion promotes the stored session to r
       outcome: "opened",
       session: { ...opening, state: "ready" },
     },
-  ) as { session: { state: string } };
+  )) as { session: { state: string } };
   assert.equal(result.session.state, "ready");
   assert.equal(fixture.session.state, "ready");
   assert.deepEqual(fixture.stateTransitions, ["ready"]);
@@ -229,7 +231,8 @@ test("failed open completion never promotes the opening session", async () => {
       outcome: "opened",
       session: { ...fixture.session, sessionId: "browser-session-other" },
     },
-  ), (error: unknown) => readCode(error) === "BROWSER_ENGINE_FAILURE");
+  ), (error: unknown) => readCode(error) === "BROWSER_ENGINE_FAILURE",
+  );
   assert.equal(fixture.session.state, "failed");
   assert.equal(fixture.stateTransitions.includes("ready"), false);
   assert.deepEqual(fixture.deletedMachines, ["machine-1"]);
@@ -266,7 +269,8 @@ test("terminal race during open completion cannot resurrect the session", async 
       outcome: "opened",
       session: { ...opening, state: "ready" },
     },
-  ), (error: unknown) => readCode(error) === "BROWSER_ENGINE_FAILURE");
+  ), (error: unknown) => readCode(error) === "BROWSER_ENGINE_FAILURE",
+  );
   assert.equal(fixture.session.state, "lost");
   assert.deepEqual(fixture.stateTransitions, ["lost"]);
   assert.equal(fixture.touches, 0);
@@ -289,7 +293,7 @@ test("hosted open completion projects lifecycle and runtime truth from the store
     idleExpiresAt: "2020-01-01T00:30:00.000Z",
     hardExpiresAt: "2020-01-01T08:00:00.000Z",
   });
-  const result = await fixture.service.completeAcceptedOperation(
+  const result = (await fixture.service.completeAcceptedOperation(
     prepared,
     { threadId: "thread-1", projectId: "project-1" },
     receipt,
@@ -299,7 +303,7 @@ test("hosted open completion projects lifecycle and runtime truth from the store
       outcome: "opened",
       session: forgedLifecycle,
     },
-  ) as { session: unknown };
+  )) as { session: unknown };
   assert.deepEqual(result.session, storedSession);
   assert.deepEqual(fixture.terminalReasons, []);
   assert.deepEqual(fixture.deletedMachines, []);
@@ -322,7 +326,8 @@ test("hosted capture prepares an exact host-private Thread upload authority", as
     callId: prepared.callId,
     byteLength: 9,
     sha256: "a".repeat(64),
-  }]);
+  },
+  ]);
 });
 
 test("hosted upload re-resolves the active-turn file before preparation and dedicated transfer", async () => {
@@ -369,7 +374,8 @@ test("hosted upload re-resolves the active-turn file before preparation and dedi
   assert.deepEqual(fixture.transferredUploads, [{
     operationId: prepared.callId,
     bytes: Buffer.from("12345678"),
-  }]);
+  },
+  ]);
 });
 
 test("hosted artifact authorization binds the stored generation", async () => {
@@ -394,7 +400,7 @@ test("hosted capture canonicalizes relayed PNG bytes into Thread artifact author
   const prepared = preparedCapture();
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const sha256 = createHash("sha256").update(png).digest("hex");
-  const result = await fixture.service.completeAcceptedOperation(
+  const result = (await fixture.service.completeAcceptedOperation(
     prepared,
     { threadId: "thread-1", projectId: "project-1" },
     acceptedReceipt(
@@ -431,10 +437,12 @@ test("hosted capture canonicalizes relayed PNG bytes into Thread artifact author
         base64: png.toString("base64"),
       },
     },
-  ) as { artifact: { id: string; url: string } };
+  )) as { artifact: { id: string; url: string } };
   assert.equal(result.artifact.id, "file-browser-authorized");
-  assert.equal(result.artifact.url, "/api/files/file-browser-authorized/content");
-  assert.equal(fixture.canonicalizedArtifacts[0]?.bytes.toString("hex"), png.toString("hex"));
+  assert.equal(result.artifact.url, "/api/files/file-browser-authorized/content",
+  );
+  assert.equal(fixture.canonicalizedArtifacts[0]?.bytes.toString("hex"), png.toString("hex"),
+  );
   assert.equal(fixture.touches, 1);
 });
 
@@ -508,7 +516,7 @@ test("hosted capture authenticates the operation before storing relayed bytes", 
   assert.equal(fixture.canonicalizedArtifacts.length, 0);
 });
 
-test("hosted download stages dedicated bytes before dispatch and commits one canonical Thread artifact", async () => {
+test("hosted download uploads a deterministic Thread draft before dispatch and commits one artifact", async () => {
   const fixture = serviceFixture("ready", "allow");
   const request = {
     version: "browser_download_preparation_v1" as const,
@@ -537,26 +545,33 @@ test("hosted download stages dedicated bytes before dispatch and commits one can
   );
   assert.equal(instruction.phase, "invoke");
   assert.equal(fixture.preparedDownloads.length, 1);
-  assert.deepEqual(fixture.stagedDownloads, [{
+  assert.deepEqual(fixture.stagedDownloads, [
+    {
     operationId: prepared.callId,
     bytes: Buffer.from("hosted-download"),
-  }]);
+    },
+  ]);
   const output = await fixture.service.completeAcceptedOperation(
     prepared,
     { threadId: "thread-1", projectId: "project-1" },
     receipt,
     { version: "hosted_browser_download_result_v1", download: effect },
   );
-  assert.equal((output as Record<string, unknown>).operation, "browser.download");
   assert.equal(
-    ((output as Record<string, unknown>).artifact as Record<string, unknown>).kind,
+    (output as Record<string, unknown>).operation,
+    "browser.download",
+  );
+  assert.equal(
+    ((output as Record<string, unknown>).artifact as Record<string, unknown>)
+      .kind,
     "browser-download",
   );
   assert.deepEqual(fixture.committedDownloads, [prepared.callId]);
 });
 
 test("hosted download distinguishes invalid worker proof from an unknown visibility commit", async () => {
-  const fixture = serviceFixture("ready", "allow", { downloadCommitFailure: true });
+  const fixture = serviceFixture("ready", "allow", { downloadCommitFailure: true,
+  });
   const request = {
     version: "browser_download_preparation_v1" as const,
     runId: "run-1",
@@ -596,15 +611,18 @@ test("hosted download distinguishes invalid worker proof from an unknown visibil
       prepared,
       { threadId: "thread-1", projectId: "project-1" },
       receipt,
-      { version: "hosted_browser_download_result_v1", download: { ...effect, sha256: "a".repeat(64) } },
+      { version: "hosted_browser_download_result_v1", download: { ...effect, sha256: "a".repeat(64) },
+      },
     ),
     (error: unknown) => readCode(error) === "BROWSER_DOWNLOAD_UNAVAILABLE",
   );
   assert.deepEqual(fixture.terminalMarks, []);
 });
 
-test("hosted download response-loss replay does not reopen reserved worker bytes", async () => {
-  const fixture = serviceFixture("ready", "allow", { downloadReservation: "staged" });
+test("hosted download response-loss replay does not reopen bytes for a reconciled ready file", async () => {
+  const fixture = serviceFixture("ready", "allow", {
+    downloadFileState: "ready",
+  });
   const request = {
     version: "browser_download_preparation_v1" as const,
     runId: "run-1",
@@ -634,41 +652,9 @@ test("hosted download response-loss replay does not reopen reserved worker bytes
   assert.deepEqual(fixture.stagedDownloads, []);
 });
 
-test("hosted download open failure cancels the exact reservation with its original expiry", async () => {
-  const fixture = serviceFixture("ready", "allow", { downloadOpenFailure: true });
-  const request = {
-    version: "browser_download_preparation_v1" as const,
-    runId: "run-1",
-    threadId: "thread-1",
-    effectiveInput: {
-      sessionId: "browser-session-1",
-      generation: 1,
-      pendingDownloadId: "download-1",
-    },
-    authority: { threadId: "thread-1", projectId: "project-1" },
-  };
-  const effect = await fixture.service.prepareDownload(request);
-  const prepared = preparedDownload(effect);
-  const receipt = acceptedReceipt(
-    prepared.callId,
-    "browser-session-1",
-    now,
-    new Date(now.getTime() + 30_000),
-    "browser.download",
-  );
-  await assert.rejects(
-    fixture.service.dispatchAcceptedOperation(prepared, request.authority, receipt),
-    /worker byte stream unavailable/u,
-  );
-  assert.deepEqual(fixture.reservedDownloadExpiries, [effect.expiresAt]);
-  assert.deepEqual(fixture.cancelledDownloadExpiries, [effect.expiresAt]);
-  assert.equal(fixture.openedDownloads, 1);
-});
-
-test("hosted download reports unknown when exact reservation rollback cannot be proven", async () => {
+test("hosted download open failure leaves the deterministic draft for generic cleanup", async () => {
   const fixture = serviceFixture("ready", "allow", {
     downloadOpenFailure: true,
-    downloadCancelFailure: true,
   });
   const request = {
     version: "browser_download_preparation_v1" as const,
@@ -691,9 +677,66 @@ test("hosted download reports unknown when exact reservation rollback cannot be 
     "browser.download",
   );
   await assert.rejects(
-    fixture.service.dispatchAcceptedOperation(prepared, request.authority, receipt),
-    (error: unknown) => readCode(error) === "BROWSER_ACTION_OUTCOME_UNKNOWN",
+    fixture.service.dispatchAcceptedOperation(
+      prepared,
+      request.authority,
+      receipt,
+    ),
+    (error: unknown) =>
+      readCode(error) === "BROWSER_SERVICE_UNAVAILABLE" &&
+      Boolean(
+        error &&
+        typeof error === "object" &&
+        "details" in error &&
+        (error.details as { browserOutcomeKnown?: unknown })
+          ?.browserOutcomeKnown === true,
+      ),
   );
+  assert.deepEqual(fixture.preparedDownloadExpiries, [effect.expiresAt]);
+  assert.equal(fixture.openedDownloads, 1);
+});
+
+test("hosted download preserves a ready-file response-loss outcome as unknown", async () => {
+  const fixture = serviceFixture("ready", "allow", {
+    downloadUploadFailure: "unknown",
+  });
+  const request = {
+    version: "browser_download_preparation_v1" as const,
+    runId: "run-1",
+    threadId: "thread-1",
+    effectiveInput: {
+      sessionId: "browser-session-1",
+      generation: 1,
+      pendingDownloadId: "download-1",
+    },
+    authority: { threadId: "thread-1", projectId: "project-1" },
+  };
+  const effect = await fixture.service.prepareDownload(request);
+  const prepared = preparedDownload(effect);
+  const receipt = acceptedReceipt(
+    prepared.callId,
+    "browser-session-1",
+    now,
+    new Date(now.getTime() + 30_000),
+    "browser.download",
+  );
+  await assert.rejects(
+    fixture.service.dispatchAcceptedOperation(
+      prepared,
+      request.authority,
+      receipt,
+    ),
+    (error: unknown) =>
+      readCode(error) === "BROWSER_ACTION_OUTCOME_UNKNOWN" &&
+      Boolean(
+        error &&
+        typeof error === "object" &&
+        "details" in error &&
+        (error.details as { browserOutcomeKnown?: unknown })
+          ?.browserOutcomeKnown === false,
+      ),
+  );
+  assert.equal(fixture.openedDownloads, 1);
 });
 
 function serviceFixture(
@@ -706,8 +749,8 @@ function serviceFixture(
     machineDeleteFailure?: boolean;
     downloadCommitFailure?: boolean;
     downloadOpenFailure?: boolean;
-    downloadCancelFailure?: boolean;
-    downloadReservation?: "reserved" | "staged" | "promoted";
+    downloadFileState?: "upload_required" | "ready";
+    downloadUploadFailure?: "known" | "unknown";
   } = {},
 ) {
   let session = parseBrowserSessionV1({
@@ -755,8 +798,7 @@ function serviceFixture(
   const transferredUploads: Array<{ operationId: string; bytes: Buffer }> = [];
   const preparedDownloads: unknown[] = [];
   const stagedDownloads: Array<{ operationId: string; bytes: Buffer }> = [];
-  const reservedDownloadExpiries: string[] = [];
-  const cancelledDownloadExpiries: string[] = [];
+  const preparedDownloadExpiries: string[] = [];
   let openedDownloads = 0;
   const committedDownloads: string[] = [];
   const downloadBytes = Buffer.from("hosted-download");
@@ -896,18 +938,26 @@ function serviceFixture(
           sha256: input.sha256,
         };
       },
-      async stageDownload(input) {
+      async uploadDownload(input) {
         const chunks: Buffer[] = [];
         for await (const chunk of input.body) chunks.push(Buffer.from(chunk));
-        stagedDownloads.push({ operationId: input.operationId, bytes: Buffer.concat(chunks) });
+        stagedDownloads.push({
+          operationId: input.operationId,
+          bytes: Buffer.concat(chunks),
+        });
+        if (options.downloadUploadFailure === "unknown") {
+          throw Object.assign(new Error("ready file response lost"), {
+            code: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+            details: { browserOutcomeKnown: false },
+          });
+        }
+        if (options.downloadUploadFailure === "known") {
+          throw new Error("download upload rejected before commit");
+        }
       },
-      async reserveDownload(input) {
-        reservedDownloadExpiries.push(input.expiresAt);
-        return options.downloadReservation ?? "reserved";
-      },
-      async cancelDownload(input) {
-        cancelledDownloadExpiries.push(input.expiresAt);
-        if (options.downloadCancelFailure) throw new Error("download rollback unavailable");
+      async prepareDownload(input) {
+        preparedDownloadExpiries.push(input.expiresAt);
+        return options.downloadFileState ?? "upload_required";
       },
       async commitDownload(input) {
         if (options.downloadCommitFailure === true) {
@@ -961,7 +1011,10 @@ function serviceFixture(
       async transfer(input) {
         const chunks: Buffer[] = [];
         for await (const chunk of input.body) chunks.push(Buffer.from(chunk));
-        transferredUploads.push({ operationId: input.operationId, bytes: Buffer.concat(chunks) });
+        transferredUploads.push({
+          operationId: input.operationId,
+          bytes: Buffer.concat(chunks),
+        });
       },
     },
     downloads: {
@@ -972,7 +1025,9 @@ function serviceFixture(
           threadId: input.request.threadId,
           sessionId: String(input.request.effectiveInput.sessionId),
           generation: Number(input.request.effectiveInput.generation),
-          pendingDownloadId: String(input.request.effectiveInput.pendingDownloadId),
+          pendingDownloadId: String(
+            input.request.effectiveInput.pendingDownloadId,
+          ),
           filename: "report.bin",
           measuredBytes: downloadBytes.byteLength,
           sha256: createHash("sha256").update(downloadBytes).digest("hex"),
@@ -984,7 +1039,8 @@ function serviceFixture(
       },
       async open() {
         openedDownloads += 1;
-        if (options.downloadOpenFailure) throw new Error("worker byte stream unavailable");
+        if (options.downloadOpenFailure)
+          throw new Error("worker byte stream unavailable");
         return Readable.from(downloadBytes);
       },
     },
@@ -999,18 +1055,26 @@ function serviceFixture(
         detectedMediaType: "text/plain",
         sizeBytes: 8,
         sha256: "a".repeat(64),
-        async openStream() { return Readable.from(Buffer.from("12345678")); },
+        async openStream() {
+          return Readable.from(Buffer.from("12345678"));
+        },
       };
     },
     now: () => now,
   });
   return {
     service,
-    get session() { return session; },
+    get session() {
+      return session;
+    },
     terminalReasons,
     deletedMachines,
-    get cleanupConfirmed() { return cleanupConfirmed; },
-    get touches() { return touches; },
+    get cleanupConfirmed() {
+      return cleanupConfirmed;
+    },
+    get touches() {
+      return touches;
+    },
     preparedArtifacts,
     authorizedArtifacts,
     canonicalizedArtifacts,
@@ -1018,9 +1082,10 @@ function serviceFixture(
     transferredUploads,
     preparedDownloads,
     stagedDownloads,
-    reservedDownloadExpiries,
-    cancelledDownloadExpiries,
-    get openedDownloads() { return openedDownloads; },
+    preparedDownloadExpiries,
+    get openedDownloads() {
+      return openedDownloads;
+    },
     committedDownloads,
     stateTransitions,
     terminalMarks,
@@ -1082,7 +1147,8 @@ function preparedCapture() {
   });
 }
 
-function preparedUpload(effect: Awaited<ReturnType<HostedBrowserService["prepareUpload"]>>) {
+function preparedUpload(effect: Awaited<ReturnType<HostedBrowserService["prepareUpload"]>>,
+) {
   const descriptor = defaultToolCatalog.getDescriptorRef("browser.upload");
   assert.ok(descriptor);
   return parsePreparedToolCallV1({
@@ -1106,7 +1172,8 @@ function preparedUpload(effect: Awaited<ReturnType<HostedBrowserService["prepare
     inputAdapters: [{
       adapterId: "kestrel.browser-upload-effect:v1",
       metadata: { ...effect },
-    }],
+    },
+    ],
     policy: {
       decision: "allow",
       policyRevision: hashCanonical({ revision: 1 }),
@@ -1116,7 +1183,8 @@ function preparedUpload(effect: Awaited<ReturnType<HostedBrowserService["prepare
   });
 }
 
-function preparedDownload(effect: Awaited<ReturnType<HostedBrowserService["prepareDownload"]>>) {
+function preparedDownload(effect: Awaited<ReturnType<HostedBrowserService["prepareDownload"]>>,
+) {
   const descriptor = defaultToolCatalog.getDescriptorRef("browser.download");
   assert.ok(descriptor);
   return parsePreparedToolCallV1({
@@ -1138,7 +1206,8 @@ function preparedDownload(effect: Awaited<ReturnType<HostedBrowserService["prepa
     inputAdapters: [{
       adapterId: "kestrel.browser-download-effect:v1",
       metadata: { ...effect },
-    }],
+    },
+    ],
     policy: {
       decision: "allow",
       policyRevision: hashCanonical({ revision: 1 }),

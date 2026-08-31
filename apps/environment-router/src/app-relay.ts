@@ -778,25 +778,34 @@ async function handleBrowserInvokeRelay(input: {
         body: privateBody,
       });
     } catch {
-      const cancelled = await provePrivateBrowserCancellation(input, retained.instruction);
-      browserRelayReceipts.delete(receiptId);
-      writeJson(input.response, cancelled ? 503 : 409, {
+      writeJson(input.response, 409, {
         error: {
-          code: cancelled ? "BROWSER_SERVICE_UNAVAILABLE" : "BROWSER_ACTION_OUTCOME_UNKNOWN",
-          details: { browserOutcomeKnown: cancelled },
+          code: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+          details: { browserOutcomeKnown: false },
         },
       });
       return;
     }
     if (!authorized.ok) {
       const known = await isKnownBrowserOutcomeResponse(authorized);
+      if (!known) {
+        writeJson(input.response, 409, {
+          error: {
+            code: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+            details: { browserOutcomeKnown: false },
+          },
+        });
+        return;
+      }
       const cancelled = await provePrivateBrowserCancellation(input, retained.instruction);
-      browserRelayReceipts.delete(receiptId);
-      if (known && cancelled) return writeFetchResponse(input.response, authorized);
-      writeJson(input.response, cancelled ? 503 : 409, {
+      if (cancelled) {
+        browserRelayReceipts.delete(receiptId);
+        return writeFetchResponse(input.response, authorized);
+      }
+      writeJson(input.response, 409, {
         error: {
-          code: cancelled ? "BROWSER_SERVICE_UNAVAILABLE" : "BROWSER_ACTION_OUTCOME_UNKNOWN",
-          details: { browserOutcomeKnown: cancelled },
+          code: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+          details: { browserOutcomeKnown: false },
         },
       });
       return;
@@ -805,12 +814,10 @@ async function handleBrowserInvokeRelay(input: {
       instruction = parseBrowserPrivateInstruction(await authorized.json(), "invoke");
       assertSameBrowserInvocationInstruction(instruction, retained.instruction);
     } catch {
-      const cancelled = await provePrivateBrowserCancellation(input, retained.instruction);
-      browserRelayReceipts.delete(receiptId);
-      writeJson(input.response, cancelled ? 503 : 409, {
+      writeJson(input.response, 409, {
         error: {
-          code: cancelled ? "BROWSER_ENGINE_FAILURE" : "BROWSER_ACTION_OUTCOME_UNKNOWN",
-          details: { browserOutcomeKnown: cancelled },
+          code: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+          details: { browserOutcomeKnown: false },
         },
       });
       return;

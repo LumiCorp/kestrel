@@ -175,6 +175,7 @@ export function startHostedBrowserWorker(input: {
   const config = validateConfig(input.config);
   const engine = input.engine ?? new AgentBrowserHostedWorkerEngine(config);
   const accepted = new Map<string, AcceptedOperation>();
+  const claimedDownloads = new Map<string, string>();
   let terminating = false;
   const terminationStarted = deferred<void>();
   let revisionInstalling = false;
@@ -236,10 +237,15 @@ export function startHostedBrowserWorker(input: {
           typeof engine.openDownload !== "function" ||
           operation.downloadBytesConsumed
         ) throw new Error("BROWSER_SESSION_LOST");
+        const effect = requirePreparedDownloadEffect(operation.prepared);
+        const claimedBy = claimedDownloads.get(effect.pendingDownloadId);
+        if (claimedBy !== undefined && claimedBy !== operationId) {
+          throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+        }
         // Reserve the exact byte authority before opening the source. A
         // concurrent request or response-loss replay must never open it twice.
+        claimedDownloads.set(effect.pendingDownloadId, operationId);
         operation.downloadBytesConsumed = true;
-        const effect = requirePreparedDownloadEffect(operation.prepared);
         const source = await engine.openDownload({ operationId, effect });
         response.writeHead(200, {
           "cache-control": "no-store",
@@ -555,6 +561,7 @@ export function startHostedBrowserWorker(input: {
             operationId,
             effect: requirePreparedDownloadEffect(operation.prepared),
           });
+          releaseDownloadClaim(claimedDownloads, operationId, operation.prepared);
         }
         operation.commit();
         try {
@@ -591,13 +598,10 @@ export function startHostedBrowserWorker(input: {
           await engine.cancelUpload(operationId);
         }
         if (operation.prepared.activation.descriptor.toolId === "browser.download") {
-          if (typeof engine.cancelDownload !== "function") {
-            throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
-          }
-          await engine.cancelDownload({
-            operationId,
-            effect: requirePreparedDownloadEffect(operation.prepared),
-          });
+          // A known pre-effect file upload failure consumes this approved
+          // operation but leaves the quarantined item for a newly approved
+          // operation. Approval denial uses /v1/download/release instead.
+          releaseDownloadClaim(claimedDownloads, operationId, operation.prepared);
         }
         if (cancelledPhase === "accepted") {
           operation.cancelInvoke(knownWorkerFailure("BROWSER_DESTINATION_BLOCKED"));
@@ -1899,6 +1903,17 @@ function requirePreparedDownloadEffect(
   );
   if (matches.length !== 1) throw new Error("BROWSER_SESSION_LOST");
   return parseBrowserDownloadPreparedEffectV1(matches[0]!.metadata);
+}
+
+function releaseDownloadClaim(
+  claims: Map<string, string>,
+  operationId: string,
+  prepared: PreparedToolCallV1,
+): void {
+  const pendingDownloadId = requirePreparedDownloadEffect(prepared).pendingDownloadId;
+  if (claims.get(pendingDownloadId) === operationId) {
+    claims.delete(pendingDownloadId);
+  }
 }
 
 function requireAuthority(value: unknown): BrowserEffectiveDomainAuthorityV1 {

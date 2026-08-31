@@ -482,7 +482,10 @@ test("Browser upload staging is known pre-effect only after exact worker cancell
           });
         }
         return Response.json({
-          error: { code: "BROWSER_SERVICE_UNAVAILABLE" },
+          error: {
+            code: "BROWSER_SERVICE_UNAVAILABLE",
+            details: { browserOutcomeKnown: true },
+          },
         }, { status: 503 });
       }) as typeof fetch,
       browserWorkerFetchImpl: (async (url) => {
@@ -538,6 +541,138 @@ test("Browser upload staging is known pre-effect only after exact worker cancell
       assert.equal(payload.error.code, expectedCode);
       assert.equal(payload.error.details.browserOutcomeKnown, cancelProven);
       assert.equal(workerInvokes, 0);
+    } finally {
+      relay.close();
+      fixture.config.stop();
+    }
+  }
+});
+
+test("Browser download staging cancels only a proven known pre-effect failure", async () => {
+  for (const scenario of [
+    {
+      name: "known with cancellation proof",
+      controlCode: "BROWSER_SERVICE_UNAVAILABLE",
+      controlThrows: false,
+      cancelProven: true,
+      expectedCode: "BROWSER_SERVICE_UNAVAILABLE",
+      expectedKnown: true,
+      expectedCancellations: 1,
+    },
+    {
+      name: "known without cancellation proof",
+      controlCode: "BROWSER_SERVICE_UNAVAILABLE",
+      controlThrows: false,
+      cancelProven: false,
+      expectedCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      expectedKnown: false,
+      expectedCancellations: 1,
+    },
+    {
+      name: "ready file outcome unknown",
+      controlCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      controlThrows: false,
+      cancelProven: true,
+      expectedCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      expectedKnown: false,
+      expectedCancellations: 0,
+    },
+    {
+      name: "control response lost",
+      controlCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      controlThrows: true,
+      cancelProven: true,
+      expectedCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      expectedKnown: false,
+      expectedCancellations: 0,
+    },
+  ] as const) {
+    const fixture = await createRelayFixture();
+    const operationId = `call-download-${scenario.name.replaceAll(" ", "-")}`;
+    const instruction = {
+      version: "hosted_browser_relay_instruction_v1",
+      operationId,
+      operation: "browser.download",
+      sessionId: `browser-session-${operationId}`,
+      generation: 1,
+      capability: `private-${operationId}`,
+      machine: { appName: "kestrel-env-test", machineId: "machine-browser-download" },
+    };
+    let cancellations = 0;
+    const relay = createServer((request, response) => void handleAppRelay({
+      request,
+      response,
+      config: fixture.config,
+      fetchImpl: (async (url) => {
+        const pathname = new URL(String(url)).pathname;
+        if (pathname.endsWith("/accept")) {
+          return Response.json({
+            ...instruction,
+            phase: "accept",
+            prepared: { callId: operationId },
+            authority: { effectiveAllowlistRevision: "revision-1" },
+          });
+        }
+        if (scenario.controlThrows) throw new Error("control response lost");
+        return Response.json({
+          error: {
+            code: scenario.controlCode,
+            details: { browserOutcomeKnown: scenario.controlCode !== "BROWSER_ACTION_OUTCOME_UNKNOWN" },
+          },
+        }, { status: scenario.controlCode === "BROWSER_SERVICE_UNAVAILABLE" ? 503 : 409 });
+      }) as typeof fetch,
+      browserWorkerFetchImpl: (async (url) => {
+        const pathname = new URL(String(url)).pathname;
+        if (pathname.endsWith("/accept")) {
+          return Response.json({
+            accepted: true,
+            operationId,
+            sessionId: instruction.sessionId,
+            generation: 1,
+            identity: {
+              sessionId: instruction.sessionId,
+              generation: 1,
+              engineRevision: "v0.35.0",
+              chromeRevision: "152.0.7977.54",
+              imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+            },
+          });
+        }
+        if (pathname.endsWith("/cancel")) {
+          cancellations += 1;
+          if (!scenario.cancelProven) throw new Error("cancel response lost");
+          return Response.json({ cancelled: true, operationId });
+        }
+        return Response.json({ error: { code: "unexpected" } }, { status: 500 });
+      }) as typeof fetch,
+    }));
+    relay.listen(0, "127.0.0.1");
+    await once(relay, "listening");
+    const address = relay.address();
+    assert.ok(address && typeof address !== "string");
+    const base = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/download/auto/control`;
+    const headers = {
+      authorization: `Bearer ${fixture.workspaceToken}`,
+      "content-type": "application/json",
+    };
+    try {
+      const accepted = await fetch(`${base}/accept`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ prepared: { callId: operationId } }),
+      });
+      const receipt = await accepted.json();
+      const failed = await fetch(`${base}/invoke`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ prepared: { callId: operationId }, receipt }),
+      });
+      const payload = await failed.json() as {
+        error: { code: string; details: { browserOutcomeKnown: boolean } };
+      };
+      assert.equal(payload.error.code, scenario.expectedCode, scenario.name);
+      assert.equal(payload.error.details.browserOutcomeKnown, scenario.expectedKnown, scenario.name);
+      assert.equal(cancellations, scenario.expectedCancellations, scenario.name);
     } finally {
       relay.close();
       fixture.config.stop();

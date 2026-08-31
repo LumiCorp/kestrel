@@ -185,7 +185,8 @@ test("hosted Browser download promotion returns and authorizes one ordinary Thre
     sha256,
     expiresAt: "2026-08-30T12:30:00.000Z",
   };
-  await fixture.authority.stageDownload({ ...input, body: Readable.from(bytes) });
+  assert.equal(await fixture.authority.prepareDownload(input), "upload_required");
+  await fixture.authority.uploadDownload({ ...input, body: Readable.from(bytes) });
   const artifact = await fixture.authority.commitDownload(input);
   assert.deepEqual(artifact, {
     version: "browser_authorized_artifact_v1",
@@ -261,20 +262,12 @@ function createFixture() {
       ) throw new Error("not found");
       return file;
     },
-    async stageDownload(input) {
+    async uploadDownload(input) {
       const chunks: Buffer[] = [];
       for await (const chunk of input.body) chunks.push(Buffer.from(chunk));
       const bytes = Buffer.concat(chunks);
       assert.equal(bytes.byteLength, input.sizeBytes);
       assert.equal(createHash("sha256").update(bytes).digest("hex"), input.sha256);
-    },
-    async reserveDownload() {
-      return "reserved" as const;
-    },
-    async cancelDownload() {},
-    async commitDownload(input) {
-      const existing = files.get("file-browser-download-1");
-      if (existing) return existing;
       const file: HostedBrowserArtifactFileV1 = {
         id: "file-browser-download-1",
         organizationId: input.organizationId,
@@ -287,6 +280,13 @@ function createFixture() {
         lifecycleState: "ready",
       };
       files.set(file.id, file);
+    },
+    async prepareDownload() {
+      return files.has("file-browser-download-1") ? "ready" : "upload_required";
+    },
+    async commitDownload() {
+      const file = files.get("file-browser-download-1");
+      if (!file) throw new Error("missing ready download");
       return file;
     },
     async readDownloadPromotion(input) {

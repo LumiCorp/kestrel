@@ -1,14 +1,12 @@
 import "server-only";
 
 import {
-  commitHostedBrowserDownload,
-  cancelHostedBrowserDownload,
+  completeHostedBrowserDownload,
   getThreadFileForUser,
   initializeThreadFile,
-  stageHostedBrowserDownload,
+  uploadHostedBrowserDownload,
   readHostedBrowserDownloadPromotion,
-  reconcileHostedBrowserDownloadStaging,
-  reserveHostedBrowserDownload,
+  prepareHostedBrowserDownload,
   uploadThreadFile,
 } from "@/lib/files/service";
 import { HostedBrowserArtifactAuthority } from "./artifact-authority";
@@ -19,7 +17,6 @@ export function createHostedBrowserArtifactAuthority(
   return new HostedBrowserArtifactAuthority({
     privateKeyPem,
     files: {
-      reconcileDownloads: reconcileHostedBrowserDownloadStaging,
       initialize: async (input) => initializeThreadFile({
         threadId: input.threadId,
         organizationId: input.organizationId,
@@ -41,10 +38,9 @@ export function createHostedBrowserArtifactAuthority(
         singleUseDraft: true,
       }),
       read: getThreadFileForUser,
-      stageDownload: stageHostedBrowserDownload,
-      reserveDownload: reserveHostedBrowserDownload,
-      cancelDownload: cancelHostedBrowserDownload,
-      commitDownload: commitHostedBrowserDownload,
+      uploadDownload: uploadHostedBrowserDownload,
+      prepareDownload: prepareHostedBrowserDownload,
+      commitDownload: completeHostedBrowserDownload,
       readDownloadPromotion: readHostedBrowserDownloadPromotion,
     },
   });

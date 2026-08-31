@@ -99,9 +99,11 @@ export interface HostedBrowserSessionStorePort {
     session: BrowserSessionV1;
     resource: HostedBrowserResourceRecord | null;
   } | null>;
-  resolveCurrentOrigin(sessionId: string): Promise<HostedBrowserOriginAuthority>;
+  resolveCurrentOrigin(sessionId: string,
+  ): Promise<HostedBrowserOriginAuthority>;
   updateSession(session: BrowserSessionV1): Promise<void>;
-  touchActivity(sessionId: string, generation: number, now: Date): Promise<void>;
+  touchActivity(sessionId: string, generation: number, now: Date,
+  ): Promise<void>;
   adoptRevision(input: {
     sessionId: string;
     expectedRevision: string;
@@ -118,7 +120,8 @@ export interface HostedBrowserSessionStorePort {
   }): Promise<BrowserSessionV1>;
   confirmCleanup(sessionId: string, now?: Date): Promise<void>;
   listForReconciliation(): Promise<
-    Array<{ session: BrowserSessionV1; resource: HostedBrowserResourceRecord | null }>
+    Array<{ session: BrowserSessionV1; resource: HostedBrowserResourceRecord | null;
+    }>
   >;
 }
 
@@ -156,25 +159,19 @@ export interface HostedBrowserArtifactPort {
     bytes: Uint8Array;
     sha256: string;
   }): Promise<BrowserAuthorizedArtifactV1>;
-  stageDownload?(input: {
+  uploadDownload?(input: {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
     expiresAt: string;
     body: NodeJS.ReadableStream;
   }): Promise<void>;
-  reserveDownload?(input: {
+  prepareDownload?(input: {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
     declaredMediaType: string; sizeBytes: number; sha256: string;
     expiresAt: string;
-  }): Promise<"reserved" | "in_progress" | "staged" | "promoted">;
-  cancelDownload?(input: {
-    origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
-    generation: number; pendingDownloadId: string; filename: string;
-    declaredMediaType: string; sizeBytes: number; sha256: string;
-    expiresAt: string;
-  }): Promise<void>;
+  }): Promise<"upload_required" | "ready">;
   commitDownload?(input: {
     origin: HostedBrowserOriginAuthority; operationId: string; sessionId: string;
     generation: number; pendingDownloadId: string; filename: string;
@@ -217,7 +214,8 @@ export class HostedBrowserService implements BrowserServicePort {
       routerUrl?: string | undefined;
       uploads?: HostedBrowserUploadWorkerPort | undefined;
       downloads?: HostedBrowserDownloadWorkerPort | undefined;
-      resolveUploadAttachment?(input: { turnId: string; attachmentId: string }): Promise<{
+      resolveUploadAttachment?(input: { turnId: string; attachmentId: string;
+      }): Promise<{
         attachmentId: string;
         threadId: string;
         filename: string;
@@ -231,7 +229,8 @@ export class HostedBrowserService implements BrowserServicePort {
     },
   ) {}
 
-  async resolvePolicy(input: Parameters<BrowserServicePort["resolvePolicy"]>[0]) {
+  async resolvePolicy(input: Parameters<BrowserServicePort["resolvePolicy"]>[0],
+  ) {
     const origin = await this.#resolvePreparedOrigin({
       runId: input.runId,
       threadId: input.threadId,
@@ -314,7 +313,8 @@ export class HostedBrowserService implements BrowserServicePort {
         snapshotId: requiredText(input.effectiveInput.snapshotId),
         targetRef: requiredText(input.effectiveInput.targetRef),
         effectRevision: hashCanonical(input),
-        expiresAt: new Date(now.getTime() + OPERATION_CAPABILITY_MS).toISOString(),
+        expiresAt: new Date(now.getTime() + OPERATION_CAPABILITY_MS,
+        ).toISOString(),
       },
     });
     return await this.options.uploads.prepare({
@@ -356,7 +356,8 @@ export class HostedBrowserService implements BrowserServicePort {
       throw this.#failure("BROWSER_DESTINATION_BLOCKED");
     }
     const sessionId = requiredText(input.effectiveInput.sessionId);
-    const pendingDownloadId = requiredText(input.effectiveInput.pendingDownloadId);
+    const pendingDownloadId = requiredText(input.effectiveInput.pendingDownloadId,
+    );
     const record = await this.options.store.read(sessionId);
     if (
       !record?.resource ||
@@ -384,7 +385,8 @@ export class HostedBrowserService implements BrowserServicePort {
         generation: record.session.generation,
         pendingDownloadId,
         effectRevision: hashCanonical(input),
-        expiresAt: new Date(now.getTime() + OPERATION_CAPABILITY_MS).toISOString(),
+        expiresAt: new Date(now.getTime() + OPERATION_CAPABILITY_MS,
+        ).toISOString(),
       },
     });
     return await this.options.downloads.prepare({
@@ -426,7 +428,8 @@ export class HostedBrowserService implements BrowserServicePort {
     if (effect.threadId !== origin.threadId) throw this.#failure("BROWSER_DOWNLOAD_UNAVAILABLE");
     const record = await this.options.store.read(effect.sessionId);
     if (!record?.resource || record.session.generation !== effect.generation) return;
-    const storedOrigin = await this.options.store.resolveCurrentOrigin(effect.sessionId);
+    const storedOrigin = await this.options.store.resolveCurrentOrigin(effect.sessionId,
+    );
     if (!sameBrowserIdentity(storedOrigin, origin)) {
       throw this.#failure("BROWSER_SESSION_LOST");
     }
@@ -447,7 +450,8 @@ export class HostedBrowserService implements BrowserServicePort {
         operationId: prepared.callId,
         pendingDownloadId: effect.pendingDownloadId,
         effectRevision: hashCanonical(effect),
-        expiresAt: new Date(now.getTime() + OPERATION_CAPABILITY_MS).toISOString(),
+        expiresAt: new Date(now.getTime() + OPERATION_CAPABILITY_MS,
+        ).toISOString(),
       },
     });
     await this.options.downloads.release({
@@ -574,8 +578,7 @@ export class HostedBrowserService implements BrowserServicePort {
           verifyHostedBrowserOperationCapability({
           token: acceptedInstruction.capability,
           publicKeyPem: createPublicKey(
-            this.options.capabilityPrivateKeyPem,
-          )
+            this.options.capabilityPrivateKeyPem)
             .export({ type: "spki", format: "pem" })
             .toString(),
           now: this.#now(),
@@ -688,9 +691,9 @@ export class HostedBrowserService implements BrowserServicePort {
       if (!(
         this.options.routerUrl &&
         this.options.downloads &&
-        this.options.artifacts.stageDownload &&
-        this.options.artifacts.reserveDownload
-      )) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+        this.options.artifacts.uploadDownload &&
+        this.options.artifacts.prepareDownload
+        )) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
       const effect = requirePreparedDownloadEffect(prepared);
       if (
         effect.threadId !== origin.threadId ||
@@ -709,11 +712,8 @@ export class HostedBrowserService implements BrowserServicePort {
         sha256: effect.sha256,
         expiresAt: effect.expiresAt,
       };
-      const reservation = await this.options.artifacts.reserveDownload(artifactIdentity);
-      if (reservation === "in_progress") {
-        throw this.#failure("BROWSER_ACTION_OUTCOME_UNKNOWN");
-      }
-      if (reservation !== "reserved") {
+      const fileState = await this.options.artifacts.prepareDownload(artifactIdentity);
+      if (fileState === "ready") {
         return {
           version: "hosted_browser_relay_instruction_v1",
           phase: "invoke",
@@ -744,22 +744,24 @@ export class HostedBrowserService implements BrowserServicePort {
           sha256: effect.sha256,
           ...(signal ? { signal } : {}),
         });
-        await this.options.artifacts.stageDownload({
+        await this.options.artifacts.uploadDownload({
           ...artifactIdentity,
           body: source,
         });
       } catch (error) {
-        try {
-          if (!this.options.artifacts.cancelDownload) {
-            throw this.#failure("BROWSER_ACTION_OUTCOME_UNKNOWN");
-          }
-          await this.options.artifacts.cancelDownload(artifactIdentity);
-        } catch {
-          throw this.#failure("BROWSER_ACTION_OUTCOME_UNKNOWN");
+        if (isBrowserOutcomeUnknownFailure(error)) {
+            throw browserFailure("BROWSER_ACTION_OUTCOME_UNKNOWN",
+            "BROWSER_ACTION_OUTCOME_UNKNOWN",
+            { browserOutcomeKnown: false },
+          );
         }
-        throw error;
-      } finally {
-        (source as (NodeJS.ReadableStream & { destroy?: () => void }) | undefined)
+        // The Environment Router will release the accepted worker operation
+        // and may report a known pre-effect failure only after exact worker
+        // cancellation proves that its pending-download claim was released.
+        throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+        } finally {
+        (source as
+            | (NodeJS.ReadableStream & { destroy?: () => void }) | undefined)
           ?.destroy?.();
       }
     }
@@ -893,7 +895,7 @@ export class HostedBrowserService implements BrowserServicePort {
     const resultRevision = operation === "browser.request_grant" &&
         output && typeof output === "object" && !Array.isArray(output) &&
         typeof (output as Record<string, unknown>).effectiveAllowlistRevision === "string"
-      ? (output as Record<string, unknown>).effectiveAllowlistRevision as string
+      ? ((output as Record<string, unknown>).effectiveAllowlistRevision as string)
       : record.session.effectiveAllowlistRevision;
     let validatedOutput: unknown;
     try {
@@ -921,7 +923,8 @@ export class HostedBrowserService implements BrowserServicePort {
       if (
         compileToolJsonSchemaV1(getBrowserToolContract(operation).outputSchema, {
           surface: "output",
-        })(validatedOutput) !== true
+        },
+        )(validatedOutput) !== true
       ) {
         throw new Error("Browser result schema is invalid.");
       }
@@ -945,7 +948,8 @@ export class HostedBrowserService implements BrowserServicePort {
           workerIdentity.chromeRevision !== BROWSER_RUNTIME_RELEASE_MANIFEST.chrome.revision ||
           workerIdentity.imageDigest !== this.options.runtimeImageDigest
         ) {
-          throw new Error("Browser open result does not match hosted authority.");
+          throw new Error("Browser open result does not match hosted authority.",
+          );
         }
       }
       validateBrowserResultAuthority(prepared, validatedOutput, {
@@ -1036,8 +1040,7 @@ export class HostedBrowserService implements BrowserServicePort {
         envelope.screenshot.sha256 ||
       bytes.byteLength < 8 ||
       !bytes.subarray(0, 8).equals(
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      )
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
     ) {
       throw this.#failure("BROWSER_ENGINE_FAILURE");
     }
@@ -1048,7 +1051,8 @@ export class HostedBrowserService implements BrowserServicePort {
       callId: input.callId,
       bytes,
       sha256: envelope.screenshot.sha256,
-    });
+    },
+    );
     const { version: _artifactAuthorityVersion, ...artifactOutput } = artifact;
     return {
       ...envelope.output,
@@ -1093,7 +1097,8 @@ export class HostedBrowserService implements BrowserServicePort {
       record.session.state !== "ready" ||
       record.session.terminalReason !== undefined
     ) return;
-    const storedOrigin = await this.options.store.resolveCurrentOrigin(input.sessionId);
+    const storedOrigin = await this.options.store.resolveCurrentOrigin(input.sessionId,
+    );
     const currentOrigin = await this.options.store.resolveOrigin({
       runId: input.runId,
       threadId: input.threadId,
@@ -1136,7 +1141,8 @@ export class HostedBrowserService implements BrowserServicePort {
     if (policy.resolution.decision !== "allow") {
       throw this.#failure("BROWSER_DESTINATION_BLOCKED");
     }
-    const active = await this.#requireActive(prepared, origin, policy.authority);
+    const active = await this.#requireActive(prepared, origin, policy.authority,
+    );
     if (active.session.state !== "ready") {
       throw this.#failure("BROWSER_SESSION_LOST");
     }
@@ -1188,7 +1194,9 @@ export class HostedBrowserService implements BrowserServicePort {
     if (!record?.resource || record.session.threadId !== input.threadId) {
       throw this.#failure("BROWSER_SESSION_LOST");
     }
-    const storedOrigin = await this.options.store.resolveCurrentOrigin(input.sessionId);
+    const storedOrigin = await this.options.store.resolveCurrentOrigin(
+      input.sessionId,
+    );
     const origin = await this.options.store.resolveOrigin({
       runId: input.runId,
       threadId: input.threadId,
@@ -1299,13 +1307,17 @@ export class HostedBrowserService implements BrowserServicePort {
       record.session.generation !== input.generation ||
       (record.session.state !== "ready" &&
         record.session.state !== "human_control")
-    ) throw this.#failure("BROWSER_SESSION_LOST");
-    const origin = await this.options.store.resolveCurrentOrigin(input.sessionId);
+    )
+      throw this.#failure("BROWSER_SESSION_LOST");
+    const origin = await this.options.store.resolveCurrentOrigin(
+      input.sessionId,
+    );
     if (
       origin.organizationId !== this.options.requestAuthority.organizationId ||
       origin.environmentId !== this.options.requestAuthority.environmentId ||
       origin.userId !== this.options.requestAuthority.userId
-    ) throw this.#failure("BROWSER_SESSION_LOST");
+    )
+      throw this.#failure("BROWSER_SESSION_LOST");
     const terminal = await this.options.store.markTerminal({
       sessionId: record.session.sessionId,
       expectedGeneration: input.generation,
@@ -1371,13 +1383,7 @@ export class HostedBrowserService implements BrowserServicePort {
       hardExpiresAt: new Date(now.getTime() + HARD_MS).toISOString(),
     });
     await this.options.store.createOpening({ session, origin });
-    return this.#ensureOpenMachine(
-      prepared,
-      origin,
-      authority,
-      session,
-      null,
-    );
+    return this.#ensureOpenMachine(prepared, origin, authority, session, null);
   }
 
   async #ensureOpenMachine(
@@ -1394,7 +1400,8 @@ export class HostedBrowserService implements BrowserServicePort {
       if (
         !["opening", "ready"].includes(session.state) ||
         session.generation < 1 ||
-        session.engineRevision !== BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision ||
+        session.engineRevision !==
+          BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision ||
         (session.state === "ready" && !persistedResource) ||
         (persistedResource &&
           (persistedResource.sessionId !== session.sessionId ||
@@ -1437,7 +1444,8 @@ export class HostedBrowserService implements BrowserServicePort {
           .toString(),
       };
       if (!machineId) {
-        const machine = await this.options.machines.createBrowserMachine(machineInput);
+        const machine =
+          await this.options.machines.createBrowserMachine(machineInput);
         machineId = machine.id;
         createdMachineId = machine.id;
       }
@@ -1490,7 +1498,10 @@ export class HostedBrowserService implements BrowserServicePort {
       }
       const current = await this.options.store.read(session.sessionId);
       if (
-        !(current?.resource &&["opening", "ready"].includes(current.session.state) ) ||
+        !(
+          current?.resource &&
+          ["opening", "ready"].includes(current.session.state)
+        ) ||
         current.session.generation !== session.generation ||
         current.session.engineRevision !==
           BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision ||
@@ -1563,7 +1574,8 @@ export class HostedBrowserService implements BrowserServicePort {
     ) {
       throw this.#failure("BROWSER_SESSION_LOST");
     }
-    const storedOrigin = await this.options.store.resolveCurrentOrigin(sessionId);
+    const storedOrigin =
+      await this.options.store.resolveCurrentOrigin(sessionId);
     if (!sameBrowserIdentity(storedOrigin, origin)) {
       throw this.#failure("BROWSER_SESSION_LOST");
     }
@@ -1611,7 +1623,8 @@ export class HostedBrowserService implements BrowserServicePort {
       record.session.generation !== instruction.generation ||
       instruction.machine.appName !== this.options.appName ||
       instruction.machine.machineId !== record.resource.machineId
-    ) return;
+    )
+      return;
     const storedOrigin = await this.options.store.resolveCurrentOrigin(
       instruction.sessionId,
     );
@@ -1634,8 +1647,7 @@ export class HostedBrowserService implements BrowserServicePort {
           sessionId: record.session.sessionId,
           generation: record.session.generation,
           operationId: instruction.operationId,
-          effectiveAllowlistRevision:
-            record.session.effectiveAllowlistRevision,
+          effectiveAllowlistRevision: record.session.effectiveAllowlistRevision,
         },
       });
     } catch {
@@ -1694,7 +1706,8 @@ export class HostedBrowserService implements BrowserServicePort {
           stable.projectId !== input.hostProjectId ||
           stable.organizationId !==
             this.options.requestAuthority.organizationId ||
-          stable.environmentId !== this.options.requestAuthority.environmentId ||
+          stable.environmentId !==
+            this.options.requestAuthority.environmentId ||
           stable.actor.actorId !== this.options.requestAuthority.userId))
     ) {
       throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
@@ -1727,8 +1740,7 @@ export class HostedBrowserService implements BrowserServicePort {
         sessionId: input.session.sessionId,
         generation: input.session.generation,
         operationId: input.operationId,
-        effectiveAllowlistRevision:
-          input.session.effectiveAllowlistRevision,
+        effectiveAllowlistRevision: input.session.effectiveAllowlistRevision,
         expiresAt: new Date(
           this.#now().getTime() + OPERATION_CAPABILITY_MS,
         ).toISOString(),
@@ -1743,6 +1755,15 @@ export class HostedBrowserService implements BrowserServicePort {
   #now(): Date {
     return this.options.now?.() ?? new Date();
   }
+}
+
+function isBrowserOutcomeUnknownFailure(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    error.code === "BROWSER_ACTION_OUTCOME_UNKNOWN",
+  );
 }
 
 function sameBrowserIdentity(
@@ -1825,7 +1846,8 @@ function parseHostedBrowserScreenshotEnvelope(
   };
 }
 
-function readPreviewLeaseId(input: Record<string, unknown>): string | undefined {
+function readPreviewLeaseId(input: Record<string, unknown>,
+): string | undefined {
   const target = input.target;
   if (!target || typeof target !== "object" || Array.isArray(target)) return;
   const record = target as Record<string, unknown>;

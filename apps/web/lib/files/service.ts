@@ -2,7 +2,9 @@ import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
 import { Readable, Transform, type TransformCallback } from "node:stream";
-import { and, desc, eq, ilike, inArray, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNull, lt,
+  or, sql, type SQL,
+} from "drizzle-orm";
 import {
   CONVERSATION_ATTACHMENT_DRAFT_RETENTION_MS,
   CONVERSATION_ATTACHMENT_MAX_COUNT,
@@ -12,7 +14,8 @@ import {
   type ConversationFileReference,
 } from "@kestrel-agents/conversation";
 import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
-import { extractAttachmentTextIsolated, isAttachmentTextExtractable } from "@kestrel-agents/files";
+import { extractAttachmentTextIsolated, isAttachmentTextExtractable,
+} from "@kestrel-agents/files";
 import { configurePdfCanvasNativeBinding } from "./pdf-runtime-binding";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { canManageOrganization } from "@/lib/knowledge/organization-access";
@@ -37,7 +40,6 @@ import {
   matchesExpectedUploadMediaType,
   type InternalExpectedUploadMediaType,
 } from "./internal-upload-policy";
-import { HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS } from "@/lib/browser/download-transport";
 
 export type FileScanResult = "clean" | "quarantined" | "unavailable";
 export type FileScanner = (input: {
@@ -55,9 +57,20 @@ export class FileUploadVerificationError extends Error {
     | "FILE_SIZE_MISMATCH"
     | "FILE_HASH_MISMATCH"
     | "FILE_MEDIA_TYPE_MISMATCH"
-    | "FILE_UPLOAD_ALREADY_USED") {
+    | "FILE_UPLOAD_ALREADY_USED",
+  ) {
     super(code);
     this.name = "FileUploadVerificationError";
+  }
+}
+
+export class FileUploadOutcomeUnknownError extends Error {
+  readonly code = "BROWSER_ACTION_OUTCOME_UNKNOWN";
+  readonly details = { browserOutcomeKnown: false } as const;
+
+  constructor(cause?: unknown) {
+    super("BROWSER_ACTION_OUTCOME_UNKNOWN", { cause });
+    this.name = "FileUploadOutcomeUnknownError";
   }
 }
 
@@ -76,540 +89,121 @@ export interface HostedBrowserDownloadFileIdentity {
   expiresAt: string;
 }
 
-export async function reserveHostedBrowserDownload(
+export async function prepareHostedBrowserDownload(
   input: HostedBrowserDownloadFileIdentity,
-): Promise<"reserved" | "in_progress" | "staged" | "promoted"> {
-  if (!await getThreadForUser(input.threadId, input.userId, input.organizationId)) {
+): Promise<"upload_required" | "ready"> {
+  if (
+    !(await getThreadForUser(
+      input.threadId,
+      input.userId,
+      input.organizationId,
+    ))
+  ) {
     throw new Error("Thread not found.");
   }
   validateHostedBrowserDownloadIdentity(input);
-  await cleanupExpiredHostedBrowserDownloads();
-  const storage = getManagedFileStorageProvider();
-  const objectKey = storage.buildOriginalKey({
-    organizationId: input.organizationId,
-    blobId: hostedBrowserDownloadBlobId(input),
-  });
-  const existing = await findHostedBrowserDownloadStage(input);
-  if (existing) return requireMatchingHostedBrowserDownloadStage(existing, input);
-  const now = new Date();
-  const expiresAt = new Date(input.expiresAt);
-  if (expiresAt <= now) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
-  try {
-    await knowledgeDb.insert(schema.browserDownloadStagedObjects).values({
-      operationId: input.operationId,
-      organizationId: input.organizationId,
-      threadId: input.threadId,
-      userId: input.userId,
-      sessionId: input.sessionId,
-      generation: input.generation,
-      pendingDownloadId: input.pendingDownloadId,
-      sha256: input.sha256,
-      effectRevision: hostedBrowserDownloadEffectRevision(input),
-      objectKey,
-      state: "receiving",
-      fileId: null,
-      expiresAt,
-      createdAt: now,
-      updatedAt: now,
-    });
-    return "reserved";
-  } catch (error) {
-    const raced = await findHostedBrowserDownloadStage(input);
-    if (!raced) throw error;
-    return requireMatchingHostedBrowserDownloadStage(raced, input);
-  }
-}
-
-export async function stageHostedBrowserDownload(input: HostedBrowserDownloadFileIdentity & {
-  body: NodeJS.ReadableStream;
-}, now: () => Date = systemHostedBrowserDownloadNow,
-transferSignal?: AbortSignal): Promise<void> {
-  if (!await getThreadForUser(input.threadId, input.userId, input.organizationId)) {
-    throw new Error("Thread not found.");
-  }
-  validateHostedBrowserDownloadIdentity(input);
-  const storage = getManagedFileStorageProvider();
-  const blobId = hostedBrowserDownloadBlobId(input);
-  const objectKey = storage.buildOriginalKey({
-    organizationId: input.organizationId,
-    blobId,
-  });
-  const stage = await findHostedBrowserDownloadStage(input);
-  if (!stage) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
-  const stageState = requireMatchingHostedBrowserDownloadStage(stage, input);
-  if (stageState === "staged" || stageState === "promoted") return;
-  const transferStartedAt = now();
-  const transferLeaseExpiresAt = new Date(
-    stage.updatedAt.getTime() + HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS,
-  );
-  if (transferLeaseExpiresAt <= transferStartedAt) {
-    await cleanupHostedBrowserDownload(input, transferStartedAt);
-    throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
-  }
-  const leaseRemainingMs = transferLeaseExpiresAt.getTime() - transferStartedAt.getTime();
-  const leaseSignal = AbortSignal.timeout(leaseRemainingMs);
-  const storageSignal = transferSignal
-    ? AbortSignal.any([transferSignal, leaseSignal])
-    : leaseSignal;
-  const verifier = new FileVerificationTransform(input.sizeBytes);
-  let stageTransitionLost = false;
-  try {
-    await withHostedBrowserDownloadTransferLock(input.operationId, async (transaction) => {
-      const [lockedStage] = await transaction.select()
-        .from(schema.browserDownloadStagedObjects)
-        .where(eq(schema.browserDownloadStagedObjects.operationId, input.operationId));
-      if (!lockedStage) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
-      const lockedStageState = requireMatchingHostedBrowserDownloadStage(lockedStage, input);
-      if (lockedStageState === "staged" || lockedStageState === "promoted") return;
-      await storage.putStream({
-        key: objectKey,
-        body: input.body.pipe(verifier),
-        contentType: normalizeMediaType(input.declaredMediaType) ?? "application/octet-stream",
-        contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(sanitizeFilename(input.filename))}`,
-        signal: storageSignal,
-      });
-      const verified = verifier.result();
-      if (verified.sizeBytes !== input.sizeBytes || verified.sha256 !== input.sha256) {
-        throw new FileUploadVerificationError("FILE_HASH_MISMATCH");
-      }
-      if (new Date(input.expiresAt) <= now()) {
-        throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
-      }
-      const updated = await transaction.update(schema.browserDownloadStagedObjects)
-        .set({ state: "staged", updatedAt: now() })
-        .where(and(
-          eq(schema.browserDownloadStagedObjects.operationId, input.operationId),
-          eq(schema.browserDownloadStagedObjects.state, "receiving"),
-        )).returning({ operationId: schema.browserDownloadStagedObjects.operationId });
-      stageTransitionLost = updated.length !== 1;
-    });
-    if (stageTransitionLost) {
-      await eraseHostedBrowserDownloadAttemptAfterLostStage(input, now());
-      throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
-    }
-  } catch (error) {
-    if (!stageTransitionLost) {
-      await cleanupHostedBrowserDownload(input, now()).catch(() => {});
-    }
-    throw error;
-  }
-}
-
-export async function cancelHostedBrowserDownload(
-  input: HostedBrowserDownloadFileIdentity,
-): Promise<void> {
-  validateHostedBrowserDownloadIdentity(input);
-  await cleanupHostedBrowserDownload(input, new Date());
-}
-
-export async function commitHostedBrowserDownload(
-  input: HostedBrowserDownloadFileIdentity,
-  now: () => Date = systemHostedBrowserDownloadNow,
-) {
-  validateHostedBrowserDownloadIdentity(input);
-  const storage = getManagedFileStorageProvider();
-  const blobId = hostedBrowserDownloadBlobId(input);
+  const promoted = await reconcileHostedBrowserDownloadPromotion(input);
+  if (promoted) return "ready";
   const fileId = hostedBrowserDownloadFileId(input);
-  const objectKey = storage.buildOriginalKey({ organizationId: input.organizationId, blobId });
-  if (!await getThreadForUser(input.threadId, input.userId, input.organizationId)) {
-    // The staged-object row, not an absence query, owns deletion. Its locked
-    // state cannot race a visibility transaction into deleting referenced data.
-    await cleanupHostedBrowserDownload(input, new Date()).catch(() => {});
-    throw new Error("Thread not found.");
-  }
-  const existing = await reconcileHostedBrowserDownloadPromotion(input);
-  if (existing) return existing;
-  if (!await storage.exists(objectKey)) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
-  const createdAt = new Date();
-  const mediaType = normalizeMediaType(input.declaredMediaType) ?? "application/octet-stream";
-  let canonicalBlob = await knowledgeDb.query.fileBlobs.findFirst({
-    where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(
-      eqOp(table.organizationId, input.organizationId),
-      eqOp(table.sha256, input.sha256),
-      isNullOp(table.deletedAt),
-    ),
-  });
-  if (canonicalBlob) {
-    await ensureFileBlobAvailable({
-      blobId: canonicalBlob.id,
-      objectKey: canonicalBlob.objectKey,
-      availabilityStatus: canonicalBlob.availabilityStatus,
-      deletedAt: canonicalBlob.deletedAt,
-    });
-  }
+  let file;
   try {
-    await knowledgeDb.transaction(async (tx) => {
-      const [stage] = await tx.select().from(schema.browserDownloadStagedObjects)
-        .where(eq(schema.browserDownloadStagedObjects.operationId, input.operationId))
-        .for("update");
-      if (!stage || requireMatchingHostedBrowserDownloadStage(stage, input) !== "staged") {
-        throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
-      }
-      if (stage.expiresAt <= now()) {
-        throw new HostedBrowserDownloadExpiredError();
-      }
-      if (!canonicalBlob) {
-        [canonicalBlob] = await tx.insert(schema.fileBlobs).values({
-          id: blobId,
-          organizationId: input.organizationId,
-          objectKey,
-          sizeBytes: input.sizeBytes,
-          sha256: input.sha256,
-          availabilityStatus: "available",
-          availabilityCheckedAt: createdAt,
-          scanStatus: "unavailable",
-          createdAt,
-        }).returning();
-      }
-      if (!canonicalBlob) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
-      await tx.insert(schema.kestrelFiles).values({
-        id: fileId,
-        organizationId: input.organizationId,
-        uploaderUserId: input.userId,
-        blobId: canonicalBlob.id,
-        filename: sanitizeFilename(input.filename),
-        declaredMediaType: mediaType,
-        detectedMediaType: mediaType,
-        sizeBytes: input.sizeBytes,
-        sha256: input.sha256,
-        lifecycleState: "ready",
-        createdAt,
-      });
-      await tx.insert(schema.fileScopeGrants).values({
-        id: `grant-${createHash("sha256").update(`browser-download\0${fileId}`).digest("hex")}`,
-        fileId,
-        organizationId: input.organizationId,
-        scopeType: "thread",
-        threadId: input.threadId,
-        projectId: null,
-        createdByUserId: input.userId,
-        createdAt,
-      });
-      await tx.insert(schema.fileRepresentations).values({
-        id: `representation-${createHash("sha256").update(`browser-download\0${fileId}`).digest("hex")}`,
-        blobId: canonicalBlob.id,
-        kind: "metadata_only",
-        status: "pending",
-        mediaType,
-        error: "Representation processing has not completed.",
-        createdAt,
-        updatedAt: createdAt,
-      }).onConflictDoNothing();
-      await tx.insert(schema.browserDownloadPromotions).values({
-        operationId: input.operationId,
-        organizationId: input.organizationId,
-        threadId: input.threadId,
-        sessionId: input.sessionId,
-        generation: input.generation,
-        pendingDownloadId: input.pendingDownloadId,
-        sha256: input.sha256,
-        effectRevision: hostedBrowserDownloadEffectRevision(input),
-        fileId,
-        createdAt,
-      });
-      await tx.update(schema.browserDownloadStagedObjects).set({
-        state: canonicalBlob.objectKey === objectKey
-          ? "promoted"
-          : "cleanup_pending",
-        fileId,
-        updatedAt: createdAt,
-      }).where(eq(schema.browserDownloadStagedObjects.operationId, input.operationId));
+    file = await requireThreadFileForUser({
+      fileId,
+      threadId: input.threadId,
+      organizationId: input.organizationId,
+      userId: input.userId,
     });
-  } catch (error) {
-    if (error instanceof HostedBrowserDownloadExpiredError) {
-      await cleanupHostedBrowserDownload(input, now()).catch(() => {});
+  } catch {
+    if (new Date(input.expiresAt) <= new Date()) {
       throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
     }
-    const reconciled = await reconcileHostedBrowserDownloadPromotion(input);
-    if (reconciled) return reconciled;
-    const racedBlob = await knowledgeDb.query.fileBlobs.findFirst({
-      where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(
-        eqOp(table.organizationId, input.organizationId),
-        eqOp(table.sha256, input.sha256),
-        isNullOp(table.deletedAt),
-      ),
-    });
-    if (racedBlob && racedBlob.id !== blobId) {
-      return await commitHostedBrowserDownload(input, now);
+    try {
+      file = await initializeThreadFile({
+        threadId: input.threadId,
+        organizationId: input.organizationId,
+        userId: input.userId,
+        filename: input.filename,
+        sizeBytes: input.sizeBytes,
+        declaredMediaType:
+          normalizeMediaType(input.declaredMediaType) ??
+          "application/octet-stream",
+        trustedFileId: fileId,
+      });
+    } catch (error) {
+      try {
+        file = await requireThreadFileForUser({
+          fileId,
+          threadId: input.threadId,
+          organizationId: input.organizationId,
+          userId: input.userId,
+        });
+      } catch {
+        throw error;
+      }
     }
-    throw error;
   }
-  const committedBlob = canonicalBlob;
-  if (!committedBlob) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
-  const committed = await requireThreadFileForUser({
-    fileId,
+  assertMatchingHostedBrowserDownloadFile(file, input);
+  if (file.lifecycleState === "ready") {
+    if (file.sha256 !== input.sha256)
+      throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+    await persistHostedBrowserDownloadPromotion(input, file.id);
+    return "ready";
+  }
+  if (new Date(input.expiresAt) <= new Date()) {
+    throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+  }
+  if (file.lifecycleState !== "draft")
+    throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+  return "upload_required";
+}
+
+export async function uploadHostedBrowserDownload(
+  input: HostedBrowserDownloadFileIdentity & {
+    body: NodeJS.ReadableStream;
+  },
+): Promise<void> {
+  if ((await prepareHostedBrowserDownload(input)) === "ready") return;
+  const uploaded = await uploadThreadFile({
+    fileId: hostedBrowserDownloadFileId(input),
     threadId: input.threadId,
     organizationId: input.organizationId,
     userId: input.userId,
+    body: Readable.toWeb(
+      Readable.from(input.body as AsyncIterable<Uint8Array>),
+    ) as unknown as ReadableStream<Uint8Array>,
+    contentLength: input.sizeBytes,
+    expectedSha256: input.sha256,
+    singleUseDraft: true,
+    readyBefore: new Date(input.expiresAt),
   });
-  if (committedBlob.objectKey !== objectKey) {
-    await cleanupHostedBrowserDownload(input, new Date()).catch(() => {});
+  assertMatchingHostedBrowserDownloadFile(uploaded, input);
+  if (uploaded.lifecycleState !== "ready" || uploaded.sha256 !== input.sha256) {
+    throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
   }
-  return committed;
-}
-
-async function cleanupExpiredHostedBrowserDownloads(now = new Date()): Promise<number> {
-  const staleReceivingBefore = new Date(
-    now.getTime() - HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS,
-  );
-  const expired = await knowledgeDb.select().from(schema.browserDownloadStagedObjects)
-    .where(and(
-      inArray(schema.browserDownloadStagedObjects.state, [
-        "receiving",
-        "staged",
-        "cleanup_pending",
-      ]),
-      or(
-        and(
-          eq(schema.browserDownloadStagedObjects.state, "cleanup_pending"),
-          lte(schema.browserDownloadStagedObjects.updatedAt, now),
-        ),
-        and(
-          eq(schema.browserDownloadStagedObjects.state, "receiving"),
-          or(
-            lte(schema.browserDownloadStagedObjects.expiresAt, now),
-            lte(schema.browserDownloadStagedObjects.updatedAt, staleReceivingBefore),
-            missingActiveHostedBrowserSession(),
-          ),
-        ),
-        and(
-          eq(schema.browserDownloadStagedObjects.state, "staged"),
-          or(
-            lte(schema.browserDownloadStagedObjects.expiresAt, now),
-            missingActiveHostedBrowserSession(),
-          ),
-        ),
-      ),
-    ))
-    .orderBy(
-      schema.browserDownloadStagedObjects.expiresAt,
-      schema.browserDownloadStagedObjects.operationId,
-    )
-    .limit(20);
-  for (const row of expired) {
-    await cleanupHostedBrowserDownload({
-      ...row,
-      expiresAt: row.expiresAt.toISOString(),
-    }, now);
-  }
-  return expired.length;
-}
-
-export async function reconcileHostedBrowserDownloadStaging(
-  now = new Date(),
-): Promise<void> {
-  while (await cleanupExpiredHostedBrowserDownloads(now) === 20) {
-    // Continue in bounded pages until restart reconciliation owns every expiry.
+  try {
+    await persistHostedBrowserDownloadPromotion(input, uploaded.id);
+  } catch (error) {
+    // The ordinary Thread file is already durably ready. A promotion-result
+    // write failure is an unknown operation outcome and must reconcile by the
+    // deterministic file ID instead of authorizing a second upload.
+    throw new FileUploadOutcomeUnknownError(error);
   }
 }
 
-async function cleanupHostedBrowserDownload(
-  input: Pick<HostedBrowserDownloadFileIdentity,
-    "operationId" | "organizationId" | "threadId" | "userId" | "sessionId" |
-    "generation" | "pendingDownloadId" | "sha256"> & Partial<HostedBrowserDownloadFileIdentity>,
-  now: Date,
-): Promise<void> {
-  let objectKey: string | undefined;
-  await knowledgeDb.transaction(async (tx) => {
-    const [row] = await tx.select().from(schema.browserDownloadStagedObjects)
-      .where(eq(schema.browserDownloadStagedObjects.operationId, input.operationId))
-      .for("update");
-    if (!row) return;
-    if (
-      row.organizationId !== input.organizationId ||
-      row.threadId !== input.threadId ||
-      row.userId !== input.userId ||
-      row.sessionId !== input.sessionId ||
-      row.generation !== input.generation ||
-      row.pendingDownloadId !== input.pendingDownloadId ||
-      row.sha256 !== input.sha256
-    ) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
-    if (row.state === "promoted" || row.state === "cleaned") return;
-    const [referenced] = await tx.select({ id: schema.fileBlobs.id })
-      .from(schema.fileBlobs)
-      .where(and(
-        eq(schema.fileBlobs.objectKey, row.objectKey),
-        isNull(schema.fileBlobs.deletedAt),
-      ))
-      .limit(1);
-    if (referenced) return;
-    if (row.state === "receiving") {
-      const transferLeaseExpiresAt = new Date(
-        row.updatedAt.getTime() + HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS,
-      );
-      await tx.update(schema.browserDownloadStagedObjects).set({
-        state: "cleanup_pending",
-        updatedAt: transferLeaseExpiresAt,
-      }).where(eq(schema.browserDownloadStagedObjects.operationId, row.operationId));
-      return;
-    }
-    if (row.state === "cleanup_pending" && row.updatedAt > now) return;
-    objectKey = row.objectKey;
-    if (row.state === "staged") {
-      await tx.update(schema.browserDownloadStagedObjects).set({
-        state: "cleanup_pending",
-        updatedAt: now,
-      }).where(eq(schema.browserDownloadStagedObjects.operationId, row.operationId));
-    }
-  });
-  if (!objectKey) return;
-  await withHostedBrowserDownloadTransferLock(input.operationId, async (transaction) => {
-    const [row] = await transaction.select().from(schema.browserDownloadStagedObjects)
-      .where(eq(schema.browserDownloadStagedObjects.operationId, input.operationId))
-      .for("update");
-    if (!row) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
-    assertMatchingHostedBrowserDownloadStage(row, input);
-    if (row.state === "promoted" || row.state === "cleaned") return;
-    const [referenced] = await transaction.select({ id: schema.fileBlobs.id })
-      .from(schema.fileBlobs)
-      .where(and(
-        eq(schema.fileBlobs.objectKey, row.objectKey),
-        isNull(schema.fileBlobs.deletedAt),
-      ))
-      .limit(1);
-    if (referenced) return;
-    if (row.state === "receiving") {
-      await transaction.update(schema.browserDownloadStagedObjects).set({
-        state: "cleanup_pending",
-        updatedAt: new Date(
-          row.updatedAt.getTime() + HOSTED_BROWSER_DOWNLOAD_TRANSFER_TIMEOUT_MS,
-        ),
-      }).where(eq(schema.browserDownloadStagedObjects.operationId, row.operationId));
-      return;
-    }
-    if (row.state === "cleanup_pending" && row.updatedAt > now) return;
-    if (row.state === "staged") {
-      await transaction.update(schema.browserDownloadStagedObjects).set({
-        state: "cleanup_pending",
-        updatedAt: now,
-      }).where(eq(schema.browserDownloadStagedObjects.operationId, row.operationId));
-    }
-    await getManagedFileStorageProvider().delete(row.objectKey);
-    await transaction.update(schema.browserDownloadStagedObjects).set({
-      state: "cleaned",
-      updatedAt: now,
-    }).where(and(
-      eq(schema.browserDownloadStagedObjects.operationId, input.operationId),
-      eq(schema.browserDownloadStagedObjects.state, "cleanup_pending"),
-    ));
-  });
-}
-
-async function eraseHostedBrowserDownloadAttemptAfterLostStage(
+export async function completeHostedBrowserDownload(
   input: HostedBrowserDownloadFileIdentity,
-  now: Date,
-): Promise<void> {
-  await withHostedBrowserDownloadTransferLock(input.operationId, async (transaction) => {
-    const [row] = await transaction.select().from(schema.browserDownloadStagedObjects)
-      .where(eq(schema.browserDownloadStagedObjects.operationId, input.operationId))
-      .for("update");
-    if (!row) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
-    assertMatchingHostedBrowserDownloadStage(row, input);
-    if (row.state === "staged" || row.state === "promoted" || row.state === "cleaned") return;
-    if (row.state !== "cleanup_pending") {
-      throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
-    }
-    const [referenced] = await transaction.select({ id: schema.fileBlobs.id })
-      .from(schema.fileBlobs)
-      .where(and(
-        eq(schema.fileBlobs.objectKey, row.objectKey),
-        isNull(schema.fileBlobs.deletedAt),
-      ))
-      .limit(1);
-    if (referenced) return;
-    await transaction.update(schema.browserDownloadStagedObjects).set({
-      state: "cleanup_pending",
-      updatedAt: now,
-    }).where(eq(schema.browserDownloadStagedObjects.operationId, row.operationId));
-    await getManagedFileStorageProvider().delete(row.objectKey);
-    await transaction.update(schema.browserDownloadStagedObjects).set({
-      state: "cleaned",
-      updatedAt: now,
-    }).where(and(
-      eq(schema.browserDownloadStagedObjects.operationId, input.operationId),
-      eq(schema.browserDownloadStagedObjects.state, "cleanup_pending"),
-    ));
-  });
-}
-
-type HostedBrowserDownloadTransaction = Parameters<
-  Parameters<typeof knowledgeDb.transaction>[0]
->[0];
-
-async function withHostedBrowserDownloadTransferLock<T>(
-  operationId: string,
-  action: (transaction: HostedBrowserDownloadTransaction) => Promise<T>,
-): Promise<T> {
-  return await knowledgeDb.transaction(async (transaction) => {
-    await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:browser-download-transfer:${operationId}`}, 0))`,
-    );
-    return await action(transaction);
-  });
-}
-
-function missingActiveHostedBrowserSession(): SQL {
-  return sql`not exists (
-    select 1
-    from ${schema.browserSessions}
-    where ${schema.browserSessions.sessionId} = ${schema.browserDownloadStagedObjects.sessionId}
-      and ${schema.browserSessions.generation} = ${schema.browserDownloadStagedObjects.generation}
-      and ${schema.browserSessions.state} in ('opening', 'ready', 'human_control', 'closing')
-  )`;
-}
-
-class HostedBrowserDownloadExpiredError extends Error {
-  constructor() {
-    super("BROWSER_DOWNLOAD_UNAVAILABLE");
-    this.name = "HostedBrowserDownloadExpiredError";
+) {
+  validateHostedBrowserDownloadIdentity(input);
+  const promoted = await reconcileHostedBrowserDownloadPromotion(input);
+  if (promoted) return promoted;
+  if ((await prepareHostedBrowserDownload(input)) !== "ready") {
+    throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
   }
+  const reconciled = await reconcileHostedBrowserDownloadPromotion(input);
+  if (!reconciled) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+  return reconciled;
 }
 
-function systemHostedBrowserDownloadNow(): Date {
-  return new Date();
-}
-
-async function findHostedBrowserDownloadStage(input: HostedBrowserDownloadFileIdentity) {
-  return await knowledgeDb.query.browserDownloadStagedObjects.findFirst({
-    where: (table, { and: andOp, eq: eqOp, or: orOp }) => orOp(
-      eqOp(table.operationId, input.operationId),
-      andOp(
-        eqOp(table.organizationId, input.organizationId),
-        eqOp(table.sessionId, input.sessionId),
-        eqOp(table.generation, input.generation),
-        eqOp(table.pendingDownloadId, input.pendingDownloadId),
-      ),
-    ),
-  });
-}
-
-function requireMatchingHostedBrowserDownloadStage(
-  row: typeof schema.browserDownloadStagedObjects.$inferSelect,
-  input: HostedBrowserDownloadFileIdentity,
-): "in_progress" | "staged" | "promoted" {
-  assertMatchingHostedBrowserDownloadStage(row, input);
-  if (row.state === "receiving") return "in_progress";
-  if (row.state === "staged") return "staged";
-  if (row.state === "promoted") return "promoted";
-  throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
-}
-
-function assertMatchingHostedBrowserDownloadStage(
-  row: typeof schema.browserDownloadStagedObjects.$inferSelect,
-  input: HostedBrowserDownloadFileIdentity,
-): void {
-  if (
-    row.operationId !== input.operationId ||
-    row.organizationId !== input.organizationId ||
-    row.threadId !== input.threadId ||
-    row.userId !== input.userId ||
-    row.sessionId !== input.sessionId ||
-    row.generation !== input.generation ||
-    row.pendingDownloadId !== input.pendingDownloadId ||
-    row.sha256 !== input.sha256 ||
-    row.effectRevision !== hostedBrowserDownloadEffectRevision(input)
-  ) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
-}
 
 export async function readHostedBrowserDownloadPromotion(input: {
   operationId: string;
@@ -652,9 +246,11 @@ async function reconcileHostedBrowserDownloadPromotion(
   });
   if (!result) return;
   if (
+    result.operationId !== input.operationId ||
     result.threadId !== input.threadId ||
     result.sha256 !== input.sha256 ||
-    result.effectRevision !== hostedBrowserDownloadEffectRevision(input)
+    result.effectRevision !== hostedBrowserDownloadEffectRevision(input) ||
+    result.fileId !== hostedBrowserDownloadFileId(input)
   ) throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
   return await requireThreadFileForUser({
     fileId: result.fileId,
@@ -664,7 +260,55 @@ async function reconcileHostedBrowserDownloadPromotion(
   });
 }
 
-function validateHostedBrowserDownloadIdentity(input: HostedBrowserDownloadFileIdentity): void {
+async function persistHostedBrowserDownloadPromotion(
+  input: HostedBrowserDownloadFileIdentity,
+  fileId: string,
+): Promise<void> {
+  const existing = await reconcileHostedBrowserDownloadPromotion(input);
+  if (existing) {
+    if (existing.id !== fileId)
+      throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+    return;
+  }
+  try {
+    await knowledgeDb.insert(schema.browserDownloadPromotions).values({
+      operationId: input.operationId,
+      organizationId: input.organizationId,
+      threadId: input.threadId,
+      sessionId: input.sessionId,
+      generation: input.generation,
+      pendingDownloadId: input.pendingDownloadId,
+      sha256: input.sha256,
+      effectRevision: hostedBrowserDownloadEffectRevision(input),
+      fileId,
+      createdAt: new Date(),
+    });
+  } catch (error) {
+    const reconciled = await reconcileHostedBrowserDownloadPromotion(input);
+    if (reconciled?.id === fileId) return;
+    throw error;
+  }
+}
+
+function assertMatchingHostedBrowserDownloadFile(
+  file: Awaited<ReturnType<typeof requireThreadFileForUser>>,
+  input: HostedBrowserDownloadFileIdentity,
+): void {
+  if (
+    file.id !== hostedBrowserDownloadFileId(input) ||
+    file.organizationId !== input.organizationId ||
+    file.uploaderUserId !== input.userId ||
+    file.filename !== sanitizeFilename(input.filename) ||
+    file.declaredMediaType !==
+      (normalizeMediaType(input.declaredMediaType) ??
+        "application/octet-stream") ||
+    file.sizeBytes !== input.sizeBytes
+  )
+    throw new Error("BROWSER_ACTION_OUTCOME_UNKNOWN");
+}
+
+function validateHostedBrowserDownloadIdentity(input: HostedBrowserDownloadFileIdentity,
+): void {
   for (const value of [
     input.operationId,
     input.organizationId,
@@ -673,7 +317,6 @@ function validateHostedBrowserDownloadIdentity(input: HostedBrowserDownloadFileI
     input.sessionId,
     input.pendingDownloadId,
     input.filename,
-    input.declaredMediaType,
   ]) {
     if (typeof value !== "string" || value.length === 0) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
   }
@@ -683,28 +326,22 @@ function validateHostedBrowserDownloadIdentity(input: HostedBrowserDownloadFileI
   if (Number.isNaN(Date.parse(input.expiresAt))) throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
 }
 
-function hostedBrowserDownloadBlobId(input: HostedBrowserDownloadFileIdentity): string {
-  return `blob-browser-${createHash("sha256").update(JSON.stringify({
-    organizationId: input.organizationId,
-    sessionId: input.sessionId,
-    generation: input.generation,
-    pendingDownloadId: input.pendingDownloadId,
-    sha256: input.sha256,
-  })).digest("hex")}`;
-}
-
-function hostedBrowserDownloadFileId(input: HostedBrowserDownloadFileIdentity): string {
+function hostedBrowserDownloadFileId(input: HostedBrowserDownloadFileIdentity,
+): string {
   return `file-browser-${createHash("sha256").update(JSON.stringify({
+        operationId: input.operationId,
     organizationId: input.organizationId,
     threadId: input.threadId,
     sessionId: input.sessionId,
     generation: input.generation,
     pendingDownloadId: input.pendingDownloadId,
     sha256: input.sha256,
-  })).digest("hex")}`;
+  }),
+    ).digest("hex")}`;
 }
 
-function hostedBrowserDownloadEffectRevision(input: HostedBrowserDownloadFileIdentity): string {
+function hostedBrowserDownloadEffectRevision(input: HostedBrowserDownloadFileIdentity,
+): string {
   return createHash("sha256").update(JSON.stringify({
     organizationId: input.organizationId,
     threadId: input.threadId,
@@ -717,7 +354,8 @@ function hostedBrowserDownloadEffectRevision(input: HostedBrowserDownloadFileIde
     sizeBytes: input.sizeBytes,
     sha256: input.sha256,
     expiresAt: input.expiresAt,
-  })).digest("hex");
+  }),
+    ).digest("hex");
 }
 
 export async function createPublishedFileFromBuffer(input: {
@@ -772,7 +410,9 @@ export async function createPublishedFileFromBuffer(input: {
       contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
     });
     try {
-      const [createdBlob] = await knowledgeDb.insert(schema.fileBlobs).values({
+      const [createdBlob] = await knowledgeDb
+        .insert(schema.fileBlobs)
+        .values({
         id: blobId,
         organizationId: input.organizationId,
         objectKey,
@@ -781,12 +421,14 @@ export async function createPublishedFileFromBuffer(input: {
         availabilityStatus: "available",
         availabilityCheckedAt: new Date(),
         scanStatus: "unavailable",
-      }).returning();
+        })
+        .returning();
       blob = createdBlob;
     } catch (error) {
       await storage.delete(objectKey).catch(() => {});
       blob = await knowledgeDb.query.fileBlobs.findFirst({
-        where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(
+        where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) =>
+          andOp(
           eqOp(table.organizationId, input.organizationId),
           eqOp(table.sha256, sha256),
           isNullOp(table.deletedAt),
@@ -821,7 +463,7 @@ export async function createPublishedFileFromBuffer(input: {
       createdByUserId: input.uploaderUserId,
     });
   });
-  if (await hasReusableRepresentation(blob.id, detectedMediaType) === false) {
+  if ((await hasReusableRepresentation(blob.id, detectedMediaType)) === false) {
     await processStoredFileRepresentation({
       blobId: blob.id,
       objectKey: blob.objectKey,
@@ -851,7 +493,8 @@ type FileRow = {
   blobDeletedAt: Date | null;
   lifecycleState: "draft" | "ready" | "quarantined" | "failed" | "deleted";
   createdAt: Date;
-  representationStatus: "native_image" | "extracted_text" | "staged_file" | "metadata_only";
+  representationStatus:
+    | "native_image" | "extracted_text" | "staged_file" | "metadata_only";
   metadataOnlyReason: string | null;
   representationText: string | null;
   textTruncated: boolean;
@@ -871,7 +514,8 @@ export async function initializeThreadFile(input: {
   /** Internal deterministic identity; public file APIs never accept this field. */
   trustedFileId?: string | undefined;
 }) {
-  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId,
+  );
   if (!thread) throw new Error("Thread not found.");
   validateFileSize(input.sizeBytes);
   const filename = sanitizeFilename(input.filename);
@@ -884,7 +528,10 @@ export async function initializeThreadFile(input: {
   }
   const blobId = `blob-${randomUUID()}`;
   const storage = getManagedFileStorageProvider();
-  const objectKey = storage.buildOriginalKey({ organizationId: input.organizationId, blobId });
+  const objectKey = storage.buildOriginalKey({
+    organizationId: input.organizationId,
+    blobId,
+  });
   const createdAt = new Date();
   await knowledgeDb.transaction(async (tx) => {
     await tx.insert(schema.fileBlobs).values({
@@ -925,7 +572,9 @@ export async function initializeThreadFile(input: {
       blobId,
       kind: "metadata_only",
       status: "pending",
-      mediaType: normalizeMediaType(input.declaredMediaType) ?? "application/octet-stream",
+      mediaType:
+        normalizeMediaType(input.declaredMediaType) ??
+        "application/octet-stream",
       error: "Upload has not completed.",
       createdAt,
       updatedAt: createdAt,
@@ -945,6 +594,8 @@ export async function uploadThreadFile(input: {
   expectedSha256?: string | undefined;
   expectedMediaType?: InternalExpectedUploadMediaType | undefined;
   singleUseDraft?: boolean | undefined;
+  /** Internal commit deadline. Bytes may arrive before this time, but visibility may not. */
+  readyBefore?: Date | undefined;
 }) {
   if (!input.body) throw new Error("File body is required.");
   if (
@@ -959,6 +610,12 @@ export async function uploadThreadFile(input: {
   ) {
     throw new FileUploadVerificationError("FILE_HASH_MISMATCH");
   }
+  if (
+    input.readyBefore !== undefined &&
+    !Number.isFinite(input.readyBefore.getTime())
+  ) {
+    throw new Error("File ready deadline is invalid.");
+  }
   const file = await requireThreadFileForUser(input);
   if (input.singleUseDraft === true) {
     if (file.lifecycleState !== "draft") {
@@ -970,7 +627,8 @@ export async function uploadThreadFile(input: {
       .where(and(
         eq(schema.kestrelFiles.id, file.id),
         eq(schema.kestrelFiles.lifecycleState, "draft"),
-      ))
+      ),
+      )
       .returning({ id: schema.kestrelFiles.id });
     if (claimed.length !== 1) {
       throw new FileUploadVerificationError("FILE_UPLOAD_ALREADY_USED");
@@ -983,14 +641,22 @@ export async function uploadThreadFile(input: {
   }
   const verifier = new FileVerificationTransform(file.sizeBytes);
   const storage = getManagedFileStorageProvider();
+  let readyCommitAttempted = false;
+  let readyCommitConfirmed = false;
+  let verifiedSha256: string | undefined;
   try {
     await storage.putStream({
       key: file.objectKey,
-      body: Readable.fromWeb(input.body as unknown as import("node:stream/web").ReadableStream).pipe(verifier),
+      body: Readable.fromWeb(input.body as unknown as import("node:stream/web").ReadableStream,
+      ).pipe(verifier),
       contentType: normalizeMediaType(file.declaredMediaType) ?? "application/octet-stream",
       contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
     });
     const verified = verifier.result();
+    verifiedSha256 = verified.sha256;
+    if (input.readyBefore !== undefined && input.readyBefore <= new Date()) {
+      throw new Error("BROWSER_DOWNLOAD_UNAVAILABLE");
+    }
     if (
       input.expectedMediaType !== undefined &&
       !matchesExpectedUploadMediaType(verifier.header, input.expectedMediaType)
@@ -1003,52 +669,135 @@ export async function uploadThreadFile(input: {
     ) {
       throw new FileUploadVerificationError("FILE_HASH_MISMATCH");
     }
-    const detectedMediaType = detectMediaType(verifier.header, file.filename, file.declaredMediaType ?? undefined);
-    const scanResult = await input.scanner?.({
+    const detectedMediaType = detectMediaType(
+      verifier.header,
+      file.filename,
+      file.declaredMediaType ?? undefined,
+    );
+    const scanResult =
+      (await input.scanner?.({
       fileId: file.id,
       objectKey: file.objectKey,
       filename: file.filename,
       detectedMediaType,
       sizeBytes: verified.sizeBytes,
       sha256: verified.sha256,
-    }) ?? "unavailable";
+      })) ?? "unavailable";
     const canonicalBlob = await finalizeBlobDeduplication({
       file,
       sha256: verified.sha256,
       scanResult,
       detectedMediaType,
     });
-    const quarantined = scanResult === "quarantined" || canonicalBlob.scanStatus === "quarantined";
-    await knowledgeDb.update(schema.kestrelFiles).set({
+    const quarantined =
+      scanResult === "quarantined" ||
+      canonicalBlob.scanStatus === "quarantined";
+    readyCommitAttempted = true;
+    const committed = await knowledgeDb
+      .update(schema.kestrelFiles)
+      .set({
       blobId: canonicalBlob.id,
       detectedMediaType,
       sha256: verified.sha256,
       lifecycleState: quarantined ? "quarantined" : "ready",
-    }).where(eq(schema.kestrelFiles.id, file.id));
-    if (
-      quarantined === false
-      && (
-        canonicalBlob.id === file.blobId
-        || await hasReusableRepresentation(canonicalBlob.id, detectedMediaType) === false
+      })
+      .where(
+        and(
+          eq(schema.kestrelFiles.id, file.id),
+          input.singleUseDraft === true
+            ? eq(schema.kestrelFiles.lifecycleState, "failed")
+            : inArray(schema.kestrelFiles.lifecycleState, ["draft", "failed"]),
+          input.readyBefore === undefined
+            ? undefined
+            : sql`${input.readyBefore} > now()`,
+        ),
       )
+      .returning({ id: schema.kestrelFiles.id });
+    if (committed.length !== 1) {
+      throw new Error(
+        input.readyBefore !== undefined
+          ? "BROWSER_DOWNLOAD_UNAVAILABLE"
+          : "File upload could not be committed.",
+      );
+    }
+    readyCommitConfirmed = true;
+    if (
+      quarantined === false &&
+      (canonicalBlob.id === file.blobId ||
+        (await hasReusableRepresentation(
+          canonicalBlob.id,
+          detectedMediaType,
+        )) === false)
     ) {
+      try {
       await processBlobRepresentation({
         blobId: canonicalBlob.id,
         objectKey: canonicalBlob.objectKey,
         filename: file.filename,
         mediaType: detectedMediaType,
       });
+      } catch {
+        // The verified ready file is authoritative. Representation work has
+        // its own retryable record and cannot roll file visibility backward.
+      }
     }
     return await requireThreadFileForUser(input);
   } catch (error) {
+    if (readyCommitConfirmed) {
+      // Visibility is monotonic. A representation/read failure after the ready
+      // commit must not delete bytes or roll the file back to failed.
+      throw new FileUploadOutcomeUnknownError(error);
+    }
+    if (readyCommitAttempted) {
+      try {
+        const [current] = await selectFileRows([
+          eq(schema.kestrelFiles.id, file.id),
+          eq(schema.kestrelFiles.organizationId, file.organizationId),
+        ]);
+        if (
+          current &&
+          (current.lifecycleState === "ready" ||
+            current.lifecycleState === "quarantined") &&
+          current.sha256 === verifiedSha256
+        ) {
+          return current;
+        }
+        if (
+          !current ||
+          (current.lifecycleState !== "draft" &&
+            current.lifecycleState !== "failed")
+        ) {
+          throw new FileUploadOutcomeUnknownError(error);
+        }
+      } catch {
+        // The ready update may have committed even though its response was
+        // lost. Unknown authoritative state forbids destructive compensation.
+        throw new FileUploadOutcomeUnknownError(error);
+      }
+    }
     await storage.delete(file.objectKey).catch(() => {});
-    await knowledgeDb.update(schema.kestrelFiles).set({ lifecycleState: "failed" })
-      .where(eq(schema.kestrelFiles.id, file.id));
-    await knowledgeDb.update(schema.fileRepresentations).set({
+    const failed = await knowledgeDb
+      .update(schema.kestrelFiles)
+      .set({ lifecycleState: "failed" })
+      .where(
+        and(
+          eq(schema.kestrelFiles.id, file.id),
+          inArray(schema.kestrelFiles.lifecycleState, ["draft", "failed"]),
+        ),
+      )
+      .returning({ id: schema.kestrelFiles.id });
+    if (failed.length !== 1) throw new FileUploadOutcomeUnknownError(error);
+    await knowledgeDb
+      .update(schema.fileRepresentations)
+      .set({
       status: "failed",
-      error: error instanceof Error ? error.message.slice(0, 500) : "Upload failed.",
+        error:
+          error instanceof Error
+            ? error.message.slice(0, 500)
+            : "Upload failed.",
       updatedAt: new Date(),
-    }).where(eq(schema.fileRepresentations.blobId, file.blobId));
+      })
+      .where(eq(schema.fileRepresentations.blobId, file.blobId));
     throw error;
   }
 }
@@ -1067,17 +816,20 @@ export async function getFileByIdForUser(input: {
   organizationId: string;
   userId: string;
 }) {
-  const rows = await selectFileRows([eq(schema.kestrelFiles.id, input.fileId), eq(schema.kestrelFiles.organizationId, input.organizationId)]);
+  const rows = await selectFileRows([eq(schema.kestrelFiles.id, input.fileId), eq(schema.kestrelFiles.organizationId, input.organizationId),
+  ]);
   const file = rows[0];
   if (!file || file.lifecycleState === "deleted") throw new Error("File not found.");
   const grants = await knowledgeDb.select().from(schema.fileScopeGrants).where(and(
     eq(schema.fileScopeGrants.fileId, file.id),
     isNull(schema.fileScopeGrants.revokedAt),
-  ));
+  ),
+    );
   for (const grant of grants) {
     if (grant.scopeType === "organization") return file;
     if (grant.scopeType === "thread" && grant.threadId) {
-      const thread = await getThreadForUser(grant.threadId, input.userId, input.organizationId);
+      const thread = await getThreadForUser(grant.threadId, input.userId, input.organizationId,
+      );
       if (thread) return file;
     }
     if (grant.scopeType === "project" && grant.projectId) {
@@ -1106,7 +858,8 @@ export async function getFileMetadataForUser(input: {
   }).from(schema.fileScopeGrants).where(and(
     eq(schema.fileScopeGrants.fileId, file.id),
     isNull(schema.fileScopeGrants.revokedAt),
-  ));
+  ),
+    );
   return { ...file, scopes };
 }
 
@@ -1116,7 +869,8 @@ export async function getVisibleFileForThread(input: {
   organizationId: string;
   userId: string;
 }) {
-  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId,
+  );
   if (!thread) throw new Error("Thread not found.");
   const rows = await selectFileRows([
     eq(schema.kestrelFiles.id, input.fileId),
@@ -1133,7 +887,8 @@ export async function getVisibleFileForThread(input: {
     )`,
   ]);
   const file = rows[0];
-  if (!file || file.lifecycleState === "deleted") throw new Error("File not found.");
+  if (!file || file.lifecycleState === "deleted")
+    throw new Error("File not found.");
   return file;
 }
 
@@ -1207,7 +962,8 @@ export async function discardUnreferencedFile(
     blobId: schema.kestrelFiles.blobId,
     objectKey: schema.fileBlobs.objectKey,
   }).from(schema.kestrelFiles)
-    .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId))
+    .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId),
+    )
     .where(and(
       eq(schema.kestrelFiles.id, fileId),
       sql`not exists (select 1 from ${schema.threadMessageFiles} where ${schema.threadMessageFiles.fileId} = ${schema.kestrelFiles.id})`,
@@ -1215,12 +971,18 @@ export async function discardUnreferencedFile(
       options.removeScopeGrants
         ? undefined
         : sql`not exists (select 1 from ${schema.fileScopeGrants} where ${schema.fileScopeGrants.fileId} = ${schema.kestrelFiles.id} and ${schema.fileScopeGrants.revokedAt} is null)`,
-    )).limit(1);
+      ),
+    )
+    .limit(1);
   if (!file[0]) return false;
   if (options.removeScopeGrants) {
-    await knowledgeDb.delete(schema.fileScopeGrants).where(eq(schema.fileScopeGrants.fileId, fileId));
+    await knowledgeDb
+      .delete(schema.fileScopeGrants)
+      .where(eq(schema.fileScopeGrants.fileId, fileId));
   }
-  await knowledgeDb.delete(schema.kestrelFiles).where(eq(schema.kestrelFiles.id, fileId));
+  await knowledgeDb
+    .delete(schema.kestrelFiles)
+    .where(eq(schema.kestrelFiles.id, fileId));
   await scheduleBlobDeletionIfUnreferenced(file[0].blobId);
   return true;
 }
@@ -1239,7 +1001,8 @@ export async function revokeFileScopeForManagement(input: {
       ? eq(schema.fileScopeGrants.projectId, input.projectId ?? "")
       : isNull(schema.fileScopeGrants.projectId),
     isNull(schema.fileScopeGrants.revokedAt),
-  ));
+  ),
+    );
 }
 
 export async function resolveReadyThreadFiles(input: {
@@ -1250,7 +1013,8 @@ export async function resolveReadyThreadFiles(input: {
 }) {
   validateSelection(input.fileIds);
   if (input.fileIds.length === 0) return [];
-  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId,
+  );
   if (!thread) throw new Error("Thread not found.");
   const grants = await knowledgeDb.select({ fileId: schema.fileScopeGrants.fileId }).from(schema.fileScopeGrants).where(and(
     eq(schema.fileScopeGrants.organizationId, input.organizationId),
@@ -1258,16 +1022,20 @@ export async function resolveReadyThreadFiles(input: {
     eq(schema.fileScopeGrants.threadId, input.threadId),
     isNull(schema.fileScopeGrants.revokedAt),
     inArray(schema.fileScopeGrants.fileId, input.fileIds),
-  ));
+  ),
+    );
   const granted = new Set(grants.map((grant) => grant.fileId));
   const rows = await selectFileRows([
     eq(schema.kestrelFiles.organizationId, input.organizationId),
     inArray(schema.kestrelFiles.id, input.fileIds),
   ]);
   const byId = new Map(rows.map((row) => [row.id, row]));
-  const ordered = input.fileIds.map((id) => granted.has(id) ? byId.get(id) : undefined);
-  if (ordered.some((row) => !row || row.lifecycleState !== "ready" || !row.sha256 || !row.detectedMediaType)) {
-    throw new Error("One or more files are unavailable, incomplete, or quarantined.");
+  const ordered = input.fileIds.map((id) => granted.has(id) ? byId.get(id) : undefined,
+  );
+  if (ordered.some((row) => !row || row.lifecycleState !== "ready" || !row.sha256 || !row.detectedMediaType,
+    )) {
+    throw new Error("One or more files are unavailable, incomplete, or quarantined.",
+    );
   }
   const readyFiles = ordered as Array<FileRow & { sha256: string; detectedMediaType: string }>;
   await Promise.all(readyFiles.map((file) => ensureEffectiveFileAvailability({
@@ -1277,7 +1045,9 @@ export async function resolveReadyThreadFiles(input: {
     objectKey: file.objectKey,
     availabilityStatus: file.availabilityStatus,
     blobDeletedAt: file.blobDeletedAt,
-  })));
+  }),
+    ),
+  );
   if (ordered.reduce((sum, row) => sum + (row?.sizeBytes ?? 0), 0) > CONVERSATION_ATTACHMENT_MAX_TURN_BYTES) {
     throw new Error("Files exceed the 500 MiB per-message limit.");
   }
@@ -1298,13 +1068,16 @@ export async function resolveThreadFilesForExecution(input: {
       file.metadataOnlyReason,
     );
     const kind = file.representationStatus === "native_image"
-      ? "image" as const
-      : file.representationStatus === "extracted_text" ? "text" as const : "file" as const;
-    const resolvedSource = await resolveRunnerAttachmentSource(storage, file.objectKey, 900);
+      ? ("image" as const)
+          : file.representationStatus === "extracted_text" ? ("text" as const)
+            : ("file" as const);
+    const resolvedSource = await resolveRunnerAttachmentSource(storage, file.objectKey, 900,
+      );
     const source = resolvedSource.sourceUrl
       ? {
           sourceUrl: resolvedSource.sourceUrl,
-          sourceUrlExpiresAt: new Date(Date.now() + 14 * 60 * 1000).toISOString(),
+          sourceUrlExpiresAt: new Date(Date.now() + 14 * 60 * 1000,
+            ).toISOString(),
         }
       : { data: resolvedSource.data };
     return {
@@ -1323,7 +1096,8 @@ export async function resolveThreadFilesForExecution(input: {
       ...(file.textTruncated ? { textTruncated: true } : {}),
       ...(metadataOnlyReason ? { metadataOnlyReason } : {}),
     } satisfies RunnerTurnAttachment;
-  }));
+  }),
+  );
 }
 
 export async function linkFilesToMessage(input: {
@@ -1339,7 +1113,8 @@ export async function linkFilesToMessage(input: {
       messageId: input.messageId,
       fileId: file.id,
       ordinal,
-    }))).onConflictDoNothing();
+    })),
+      ).onConflictDoNothing();
   }
   return files.map(toFileReference);
 }
@@ -1357,7 +1132,8 @@ export async function publishFileScope(input: {
     userId: input.userId,
   });
   if (file.uploaderUserId !== input.userId && !canManage) {
-    throw new Error("Only the uploader or an organization administrator can publish this file.");
+    throw new Error("Only the uploader or an organization administrator can publish this file.",
+    );
   }
   if (input.scope === "project") {
     if (!input.projectId) throw new Error("Project scope requires a project ID.");
@@ -1368,7 +1144,8 @@ export async function publishFileScope(input: {
       minimumRole: "editor",
     });
   } else if (!canManage) {
-    throw new Error("Organization administrator access is required to publish organization files.");
+    throw new Error("Organization administrator access is required to publish organization files.",
+    );
   }
   const scopePredicate = and(
     eq(schema.fileScopeGrants.fileId, file.id),
@@ -1388,12 +1165,17 @@ export async function publishFileScope(input: {
     organizationId: input.organizationId,
     scopeType: input.scope,
     threadId: null,
-    projectId: input.scope === "project" ? input.projectId ?? null : null,
+      projectId: input.scope === "project" ? (input.projectId ?? null) : null,
     createdByUserId: input.userId,
-  }).onConflictDoNothing().returning();
+    })
+    .onConflictDoNothing()
+    .returning();
   if (grant) return grant;
-  const concurrent = await knowledgeDb.select().from(schema.fileScopeGrants)
-    .where(scopePredicate).limit(1);
+  const concurrent = await knowledgeDb
+    .select()
+    .from(schema.fileScopeGrants)
+    .where(scopePredicate)
+    .limit(1);
   if (concurrent[0]) return concurrent[0];
   throw new Error("File scope grant could not be created or reused.");
 }
@@ -1411,7 +1193,8 @@ export async function revokeFileScope(input: {
     userId: input.userId,
   });
   if (file.uploaderUserId !== input.userId && !canManage) {
-    throw new Error("Only the uploader or an organization administrator can revoke this file scope.");
+    throw new Error("Only the uploader or an organization administrator can revoke this file scope.",
+    );
   }
   if (input.scope === "project") {
     if (!input.projectId) throw new Error("Project scope requires a project ID.");
@@ -1422,7 +1205,8 @@ export async function revokeFileScope(input: {
       minimumRole: "editor",
     });
   } else if (!canManage) {
-    throw new Error("Organization administrator access is required to revoke organization files.");
+    throw new Error("Organization administrator access is required to revoke organization files.",
+    );
   }
   const revoked = await knowledgeDb.update(schema.fileScopeGrants).set({ revokedAt: new Date() }).where(and(
     eq(schema.fileScopeGrants.fileId, file.id),
@@ -1431,7 +1215,8 @@ export async function revokeFileScope(input: {
       ? eq(schema.fileScopeGrants.projectId, input.projectId as string)
       : isNull(schema.fileScopeGrants.projectId),
     isNull(schema.fileScopeGrants.revokedAt),
-  )).returning({ id: schema.fileScopeGrants.id });
+  ),
+    ).returning({ id: schema.fileScopeGrants.id });
   return revoked.length > 0;
 }
 
@@ -1442,7 +1227,8 @@ export async function listThreadFileInventory(input: {
   limit?: number | undefined;
   checkAvailability?: boolean | undefined;
 }) {
-  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId,
+  );
   if (!thread) throw new Error("Thread not found.");
   const rows = await knowledgeDb.select({
     fileId: schema.kestrelFiles.id,
@@ -1457,8 +1243,10 @@ export async function listThreadFileInventory(input: {
     blobDeletedAt: schema.fileBlobs.deletedAt,
     createdAt: schema.kestrelFiles.createdAt,
   }).from(schema.fileScopeGrants)
-    .innerJoin(schema.kestrelFiles, eq(schema.kestrelFiles.id, schema.fileScopeGrants.fileId))
-    .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId))
+    .innerJoin(schema.kestrelFiles, eq(schema.kestrelFiles.id, schema.fileScopeGrants.fileId),
+    )
+    .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId),
+    )
     .where(and(
       eq(schema.fileScopeGrants.organizationId, input.organizationId),
       eq(schema.fileScopeGrants.scopeType, "thread"),
@@ -1468,7 +1256,8 @@ export async function listThreadFileInventory(input: {
       input.checkAvailability === false
         ? eq(schema.fileBlobs.availabilityStatus, "available")
         : undefined,
-    ))
+    ),
+    )
     .orderBy(desc(schema.kestrelFiles.createdAt))
     .limit(Math.min(Math.max(input.limit ?? 50, 1), 100));
   if (input.checkAvailability !== false) {
@@ -1479,7 +1268,9 @@ export async function listThreadFileInventory(input: {
       objectKey: row.objectKey,
       availabilityStatus: row.availabilityStatus,
       blobDeletedAt: row.blobDeletedAt,
-    })));
+    }),
+      ),
+    );
   }
   return rows;
 }
@@ -1493,7 +1284,8 @@ export async function searchVisibleFiles(input: {
   includeThread?: boolean | undefined;
   limit?: number | undefined;
 }) {
-  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId,
+  );
   if (!thread) throw new Error("Thread not found.");
   if (input.projectId && input.projectId !== thread.projectId) {
     throw new Error("Project file scope does not belong to this Thread.");
@@ -1512,31 +1304,50 @@ export async function searchVisibleFiles(input: {
     limit 1
   )`;
   const scope = or(
-    ...(input.includeThread === false ? [] : [and(
+    ...(input.includeThread === false
+      ? []
+      : [
+          and(
       eq(schema.fileScopeGrants.scopeType, "thread"),
       eq(schema.fileScopeGrants.threadId, input.threadId),
-    )]),
-    ...(thread.projectId ? [and(
+          ),
+        ]),
+    ...(thread.projectId
+      ? [
+          and(
       eq(schema.fileScopeGrants.scopeType, "project"),
       eq(schema.fileScopeGrants.projectId, thread.projectId),
-    )] : []),
+          ),
+        ]
+      : []),
     eq(schema.fileScopeGrants.scopeType, "organization"),
   );
-  return await knowledgeDb.selectDistinct({
+  return await knowledgeDb
+    .selectDistinct({
     fileId: schema.kestrelFiles.id,
     filename: schema.kestrelFiles.filename,
     mediaType: schema.kestrelFiles.detectedMediaType,
     sizeBytes: schema.kestrelFiles.sizeBytes,
     sha256: schema.kestrelFiles.sha256,
     representation: schema.fileRepresentations.kind,
-    text: sql<string | null>`coalesce(${schema.fileRepresentations.textContent}, ${legacyKnowledgeText})`,
-  }).from(schema.fileScopeGrants)
-    .innerJoin(schema.kestrelFiles, eq(schema.kestrelFiles.id, schema.fileScopeGrants.fileId))
-    .leftJoin(schema.fileRepresentations, and(
+      text: sql<
+        string | null
+      >`coalesce(${schema.fileRepresentations.textContent}, ${legacyKnowledgeText})`,
+    })
+    .from(schema.fileScopeGrants)
+    .innerJoin(
+      schema.kestrelFiles,
+      eq(schema.kestrelFiles.id, schema.fileScopeGrants.fileId),
+    )
+    .leftJoin(
+      schema.fileRepresentations,
+      and(
       eq(schema.fileRepresentations.blobId, schema.kestrelFiles.blobId),
       eq(schema.fileRepresentations.status, "ready"),
-    ))
-    .where(and(
+      ),
+    )
+    .where(
+      and(
       eq(schema.fileScopeGrants.organizationId, input.organizationId),
       isNull(schema.fileScopeGrants.revokedAt),
       scope,
@@ -1553,39 +1364,69 @@ export async function searchVisibleFiles(input: {
             and chunk.content ilike ${likeQuery}
         )`,
       ),
-    ))
+      ),
+    )
     .limit(Math.min(Math.max(input.limit ?? 10, 1), 25));
 }
 
 export async function cleanupExpiredFiles(now = new Date()): Promise<number> {
   await cleanupPendingBlobDeletions(now);
-  const cutoff = new Date(now.getTime() - CONVERSATION_ATTACHMENT_DRAFT_RETENTION_MS);
+  const cutoff = new Date(now.getTime() - CONVERSATION_ATTACHMENT_DRAFT_RETENTION_MS,
+  );
   const candidates = await knowledgeDb.select({
     id: schema.kestrelFiles.id,
     blobId: schema.kestrelFiles.blobId,
-    objectKey: schema.fileBlobs.objectKey,
-  }).from(schema.kestrelFiles)
-    .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId))
-    .where(and(
-      inArray(schema.kestrelFiles.lifecycleState, ["draft", "ready", "failed"]),
-      lt(schema.kestrelFiles.createdAt, cutoff),
-      sql`not exists (select 1 from ${schema.threadMessageFiles} where ${schema.threadMessageFiles.fileId} = ${schema.kestrelFiles.id})`,
-      sql`not exists (select 1 from ${schema.fileScopeGrants} where ${schema.fileScopeGrants.fileId} = ${schema.kestrelFiles.id} and ${schema.fileScopeGrants.scopeType} <> 'thread' and ${schema.fileScopeGrants.revokedAt} is null)`,
-    ));
+    }).from(schema.kestrelFiles)
+    .where(expiredFileCleanupPredicate(cutoff));
+  let deletedCount = 0;
   for (const candidate of candidates) {
-    await knowledgeDb.delete(schema.kestrelFiles).where(eq(schema.kestrelFiles.id, candidate.id));
+    const deleted = await knowledgeDb.transaction(async (tx) => {
+      // Lock the referenced file row before the final eligibility check. A
+      // concurrent Browser promotion insert must take a foreign-key key-share
+      // lock, so it either becomes visible before this check or cannot commit
+      // after the file is deleted.
+      await tx.execute(
+        sql`select ${schema.kestrelFiles.id} from ${schema.kestrelFiles} where ${schema.kestrelFiles.id} = ${candidate.id} for update`,
+      );
+      return await tx
+        .delete(schema.kestrelFiles)
+        .where(
+          and(
+            eq(schema.kestrelFiles.id, candidate.id),
+            expiredFileCleanupPredicate(cutoff),
+          ),
+        )
+        .returning({ id: schema.kestrelFiles.id });
+    });
+    if (deleted.length !== 1) continue;
+    deletedCount += 1;
     await scheduleBlobDeletionIfUnreferenced(candidate.blobId);
   }
-  await knowledgeDb.delete(schema.threads).where(and(
+  await knowledgeDb
+    .delete(schema.threads)
+    .where(
+      and(
     lt(schema.threads.createdAt, cutoff),
     isNull(schema.threads.activeStreamId),
     sql`not exists (select 1 from ${schema.threadMessages} where ${schema.threadMessages.threadId} = ${schema.threads.id})`,
     sql`not exists (select 1 from ${schema.fileScopeGrants} where ${schema.fileScopeGrants.threadId} = ${schema.threads.id})`,
-  ));
-  return candidates.length;
+      ),
+    );
+  return deletedCount;
 }
 
-export function toCompatibilityReference(file: FileRow): ConversationAttachmentReference {
+function expiredFileCleanupPredicate(cutoff: Date): SQL {
+  return and(
+    inArray(schema.kestrelFiles.lifecycleState, ["draft", "ready", "failed"]),
+    lt(schema.kestrelFiles.createdAt, cutoff),
+    sql`not exists (select 1 from ${schema.threadMessageFiles} where ${schema.threadMessageFiles.fileId} = ${schema.kestrelFiles.id})`,
+    sql`not exists (select 1 from ${schema.browserDownloadPromotions} where ${schema.browserDownloadPromotions.fileId} = ${schema.kestrelFiles.id})`,
+    sql`not exists (select 1 from ${schema.fileScopeGrants} where ${schema.fileScopeGrants.fileId} = ${schema.kestrelFiles.id} and ${schema.fileScopeGrants.scopeType} <> 'thread' and ${schema.fileScopeGrants.revokedAt} is null)`,
+  ) as SQL;
+}
+
+export function toCompatibilityReference(file: FileRow,
+): ConversationAttachmentReference {
   return {
     type: "kestrel-attachment",
     attachmentId: file.id,
@@ -1604,7 +1445,8 @@ async function requireThreadFileForUser(input: {
   organizationId: string;
   userId: string;
 }) {
-  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId,
+  );
   if (!thread) throw new Error("Thread not found.");
   const rows = await selectFileRows([
     eq(schema.kestrelFiles.id, input.fileId),
@@ -1612,12 +1454,13 @@ async function requireThreadFileForUser(input: {
     sql`exists (select 1 from ${schema.fileScopeGrants} grant_row where grant_row.file_id = ${schema.kestrelFiles.id} and grant_row.scope_type = 'thread' and grant_row.thread_id = ${input.threadId} and grant_row.revoked_at is null)`,
   ]);
   const file = rows[0];
-  if (!file || file.lifecycleState === "deleted") throw new Error("File not found.");
+  if (!file || file.lifecycleState === "deleted")
+    throw new Error("File not found.");
   return file;
 }
 
 async function selectFileRows(conditions: Array<SQL | undefined>) {
-  return await knowledgeDb.select({
+  return (await knowledgeDb.select({
     id: schema.kestrelFiles.id,
     organizationId: schema.kestrelFiles.organizationId,
     uploaderUserId: schema.kestrelFiles.uploaderUserId,
@@ -1636,17 +1479,24 @@ async function selectFileRows(conditions: Array<SQL | undefined>) {
     metadataOnlyReason: schema.fileRepresentations.error,
     representationText: schema.fileRepresentations.textContent,
     textTruncated: sql<boolean>`coalesce(${schema.fileRepresentations.truncated}, false)`,
-  }).from(schema.kestrelFiles)
-    .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId))
-    .leftJoin(schema.fileRepresentations, and(
+    })
+    .from(schema.kestrelFiles)
+    .innerJoin(
+      schema.fileBlobs,
+      eq(schema.fileBlobs.id, schema.kestrelFiles.blobId),
+    )
+    .leftJoin(
+      schema.fileRepresentations,
+      and(
       eq(schema.fileRepresentations.blobId, schema.kestrelFiles.blobId),
       or(
         eq(schema.fileRepresentations.kind, "native_image"),
         eq(schema.fileRepresentations.kind, "extracted_text"),
         eq(schema.fileRepresentations.kind, "metadata_only"),
       ),
-    ))
-    .where(and(...conditions)) as FileRow[];
+      ),
+    )
+    .where(and(...conditions))) as FileRow[];
 }
 
 async function finalizeBlobDeduplication(input: {
@@ -1663,45 +1513,55 @@ async function finalizeBlobDeduplication(input: {
     ),
   });
   if (existing && existing.id !== input.file.blobId) {
-    const source = await getManagedFileStorageProvider().readStream(input.file.objectKey);
+    const source = await getManagedFileStorageProvider().readStream(input.file.objectKey,
+    );
     const restored = await ensureReusableBlob(existing, {
       body: Readable.from(source),
       contentType: input.detectedMediaType,
       contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(input.file.filename)}`,
     });
-    await knowledgeDb.update(schema.kestrelFiles).set({ blobId: existing.id })
+    await knowledgeDb
+      .update(schema.kestrelFiles)
+      .set({ blobId: existing.id })
       .where(eq(schema.kestrelFiles.id, input.file.id));
-    await knowledgeDb.delete(schema.fileBlobs).where(eq(schema.fileBlobs.id, input.file.blobId));
-    await getManagedFileStorageProvider().delete(input.file.objectKey).catch(() => {});
+    await scheduleBlobDeletionIfUnreferenced(input.file.blobId);
     return restored;
   }
   let updated: typeof schema.fileBlobs.$inferSelect | undefined;
   try {
-    [updated] = await knowledgeDb.update(schema.fileBlobs).set({
+    [updated] = await knowledgeDb
+      .update(schema.fileBlobs)
+      .set({
       sha256: input.sha256,
       scanStatus: input.scanResult,
       availabilityStatus: "available",
       availabilityCheckedAt: new Date(),
-    }).where(eq(schema.fileBlobs.id, input.file.blobId)).returning();
+      })
+      .where(eq(schema.fileBlobs.id, input.file.blobId))
+      .returning();
   } catch (error) {
     const raced = await knowledgeDb.query.fileBlobs.findFirst({
-      where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(
+      where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) =>
+        andOp(
         eqOp(table.organizationId, input.file.organizationId),
         eqOp(table.sha256, input.sha256),
         isNullOp(table.deletedAt),
       ),
     });
     if (!raced || raced.id === input.file.blobId) throw error;
-    const source = await getManagedFileStorageProvider().readStream(input.file.objectKey);
+    const source = await getManagedFileStorageProvider().readStream(
+      input.file.objectKey,
+    );
     const restored = await ensureReusableBlob(raced, {
       body: Readable.from(source),
       contentType: input.detectedMediaType,
       contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(input.file.filename)}`,
     });
-    await knowledgeDb.update(schema.kestrelFiles).set({ blobId: raced.id })
+    await knowledgeDb
+      .update(schema.kestrelFiles)
+      .set({ blobId: raced.id })
       .where(eq(schema.kestrelFiles.id, input.file.id));
-    await knowledgeDb.delete(schema.fileBlobs).where(eq(schema.fileBlobs.id, input.file.blobId));
-    await getManagedFileStorageProvider().delete(input.file.objectKey).catch(() => {});
+    await scheduleBlobDeletionIfUnreferenced(input.file.blobId);
     return restored;
   }
   if (!updated) throw new Error("File blob could not be finalized.");
@@ -1758,7 +1618,8 @@ async function ensureReusableBlob(
       eq(schema.fileBlobs.sha256, current.sha256 ?? ""),
       eq(schema.fileBlobs.availabilityStatus, "missing"),
       isNull(schema.fileBlobs.deletedAt),
-    )).returning();
+    ),
+      ).returning();
     if (restored) return restored;
     const committed = await knowledgeDb.query.fileBlobs.findFirst({
       where: eq(schema.fileBlobs.id, current.id),
@@ -1828,14 +1689,17 @@ export async function processStoredFileRepresentation(input: {
     }
   }
   await knowledgeDb.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:file-representation:${input.blobId}`}, 0))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:file-representation:${input.blobId}`}, 0))`,
+    );
     await tx.delete(schema.fileRepresentations)
       .where(eq(schema.fileRepresentations.blobId, input.blobId));
     await tx.insert(schema.fileRepresentations).values({
       id: `representation-${randomUUID()}`,
       blobId: input.blobId,
       kind,
-      status: failureCategory === "extraction_failed" || failureCategory === "empty_extraction"
+      status:
+        failureCategory === "extraction_failed" ||
+        failureCategory === "empty_extraction"
         ? "failed"
         : "ready",
       mediaType: input.mediaType,
@@ -1856,23 +1720,28 @@ export async function processStoredFileRepresentation(input: {
 
 const processBlobRepresentation = processStoredFileRepresentation;
 
-async function hasReusableRepresentation(blobId: string, mediaType: string): Promise<boolean> {
+async function hasReusableRepresentation(blobId: string, mediaType: string,
+): Promise<boolean> {
   const row = await knowledgeDb.query.fileRepresentations.findFirst({
     where: (table, { eq: eqOp }) => eqOp(table.blobId, blobId),
   });
-  return row !== undefined && isReusableFileRepresentation({
+  return (
+    row !== undefined && isReusableFileRepresentation({
     kind: row.kind,
     status: row.status,
     mediaType,
-  });
+  })
+  );
 }
 
-async function scheduleBlobDeletionIfUnreferenced(blobId: string): Promise<void> {
+async function scheduleBlobDeletionIfUnreferenced(blobId: string,
+): Promise<void> {
   const reference = await knowledgeDb.select({ id: schema.kestrelFiles.id }).from(schema.kestrelFiles)
     .where(eq(schema.kestrelFiles.blobId, blobId)).limit(1);
   if (reference.length > 0) return;
   await knowledgeDb.update(schema.fileBlobs).set({ deletedAt: new Date() })
-    .where(and(eq(schema.fileBlobs.id, blobId), isNull(schema.fileBlobs.deletedAt)));
+    .where(and(eq(schema.fileBlobs.id, blobId), isNull(schema.fileBlobs.deletedAt)),
+    );
 }
 
 async function cleanupPendingBlobDeletions(now: Date): Promise<number> {
@@ -1883,14 +1752,19 @@ async function cleanupPendingBlobDeletions(now: Date): Promise<number> {
   }).from(schema.fileBlobs).where(and(
     lt(schema.fileBlobs.deletedAt, cutoff),
     sql`not exists (select 1 from ${schema.kestrelFiles} where ${schema.kestrelFiles.blobId} = ${schema.fileBlobs.id})`,
-  ));
+      ),
+    );
   const storage = getManagedFileStorageProvider();
   for (const candidate of candidates) {
     await storage.delete(candidate.objectKey);
-    await knowledgeDb.delete(schema.fileBlobs).where(and(
+    await knowledgeDb
+      .delete(schema.fileBlobs)
+      .where(
+        and(
       eq(schema.fileBlobs.id, candidate.id),
       sql`not exists (select 1 from ${schema.kestrelFiles} where ${schema.kestrelFiles.blobId} = ${schema.fileBlobs.id})`,
-    ));
+        ),
+      );
   }
   return candidates.length;
 }
@@ -1927,7 +1801,8 @@ class FileVerificationTransform extends Transform {
   sizeBytes = 0;
   constructor(private readonly expectedSizeBytes: number) { super(); }
   get header(): Buffer { return Buffer.concat(this.headerChunks).subarray(0, 512); }
-  override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
+  override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback,
+  ): void {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     this.sizeBytes += bytes.byteLength;
     if (this.sizeBytes > CONVERSATION_ATTACHMENT_MAX_FILE_BYTES || this.sizeBytes > this.expectedSizeBytes) {
@@ -1957,7 +1832,8 @@ function normalizeMediaType(value?: string | null): string | undefined {
   return normalized && /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u.test(normalized) ? normalized : undefined;
 }
 
-function detectMediaType(header: Buffer, filename: string, declared?: string): string {
+function detectMediaType(header: Buffer, filename: string, declared?: string,
+): string {
   if (header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
   if (header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) return "image/jpeg";
   if (["GIF87a", "GIF89a"].includes(header.subarray(0, 6).toString("ascii"))) return "image/gif";
@@ -1966,11 +1842,13 @@ function detectMediaType(header: Buffer, filename: string, declared?: string): s
   if (header.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) return officeMediaType(filename, declared) ?? "application/zip";
   const normalized = normalizeMediaType(declared);
   if (normalized) return normalized;
-  if (/\.(txt|md|markdown|csv|json|ya?ml|html?|css|[cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|sh|sql|xml|toml)$/iu.test(filename)) return "text/plain";
+  if (/\.(txt|md|markdown|csv|json|ya?ml|html?|css|[cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|sh|sql|xml|toml)$/iu.test(filename,
+    )) return "text/plain";
   return "application/octet-stream";
 }
 
-function officeMediaType(filename: string, declared?: string): string | undefined {
+function officeMediaType(filename: string, declared?: string,
+): string | undefined {
   const supported = [
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

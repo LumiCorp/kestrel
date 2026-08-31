@@ -1017,58 +1017,6 @@ export const browserDownloadPromotions = pgTable(
   ],
 );
 
-export const browserDownloadStagedObjects = pgTable(
-  "browser_download_staged_objects",
-  {
-    operationId: text("operation_id").primaryKey(),
-    organizationId: text("organization_id").notNull().references(
-      () => organizations.id,
-      { onDelete: "cascade" },
-    ),
-    threadId: text("thread_id").notNull(),
-    userId: text("user_id").notNull(),
-    sessionId: text("session_id").notNull(),
-    generation: integer("generation").notNull(),
-    pendingDownloadId: text("pending_download_id").notNull(),
-    sha256: text("sha256").notNull(),
-    effectRevision: text("effect_revision").notNull(),
-    objectKey: text("object_key").notNull(),
-    state: text("state", {
-      enum: ["receiving", "staged", "cleanup_pending", "cleaned", "promoted"],
-    }).notNull(),
-    fileId: text("file_id").references(() => kestrelFiles.id, {
-      onDelete: "set null",
-    }),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("browser_download_staged_objects_quarantine_idx").on(
-      table.organizationId,
-      table.sessionId,
-      table.generation,
-      table.pendingDownloadId,
-    ),
-    index("browser_download_staged_objects_expiry_idx").on(
-      table.state,
-      table.expiresAt,
-    ),
-    check(
-      "browser_download_staged_objects_generation_check",
-      sql`${table.generation} > 0`,
-    ),
-    check(
-      "browser_download_staged_objects_sha256_check",
-      sql`${table.sha256} ~ '^[a-f0-9]{64}$'`,
-    ),
-    check(
-      "browser_download_staged_objects_state_check",
-      sql`${table.state} in ('receiving', 'staged', 'cleanup_pending', 'cleaned', 'promoted')`,
-    ),
-  ],
-);
-
 export const fileRepresentations = pgTable(
   "file_representations",
   {

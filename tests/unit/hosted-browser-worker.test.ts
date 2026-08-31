@@ -404,6 +404,137 @@ test("hosted worker consumes download byte authority before a failing stream ope
   await worker.close();
 });
 
+test("hosted worker keeps one pending-download claim across approved operations", async () => {
+  const bytes = Buffer.from("claimed download");
+  const effect = preparedDownloadEffect(bytes);
+  const first = preparedDownload(effect, "call-download-first");
+  const second = preparedDownload(effect, "call-download-second");
+  const firstCapability = operationCapabilityFor(first, "revision-1");
+  const secondCapability = operationCapabilityFor(second, "revision-1");
+  let openedStreams = 0;
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async openDownload() {
+        openedStreams += 1;
+        return Readable.from(bytes);
+      },
+      async commitDownload() {},
+      async cancelDownload() {},
+      async execute(_input, lifecycle) {
+        await lifecycle.acknowledgeDispatch();
+        throw Object.assign(new Error("known pre-effect failure"), {
+          details: { browserOutcomeKnown: true },
+        });
+      },
+      async adopt() { return 0; },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const post = (pathname: string, body: unknown) => fetch(`http://[::1]:${port}${pathname}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  assert.equal((await post("/v1/operations/accept", {
+    capability: firstCapability,
+    prepared: first,
+    authority,
+  })).status, 200);
+  assert.equal((await fetch(`http://[::1]:${port}/v1/download/bytes`, {
+    method: "POST",
+    headers: {
+      "x-kestrel-browser-operation-id": first.callId,
+      "x-kestrel-browser-operation-capability": firstCapability,
+    },
+  })).status, 200);
+  assert.equal((await post("/v1/operations/invoke", {
+    operationId: first.callId,
+    capability: firstCapability,
+  })).status, 400);
+  assert.equal((await post("/v1/operations/accept", {
+    capability: secondCapability,
+    prepared: second,
+    authority,
+  })).status, 200);
+  assert.equal((await fetch(`http://[::1]:${port}/v1/download/bytes`, {
+    method: "POST",
+    headers: {
+      "x-kestrel-browser-operation-id": second.callId,
+      "x-kestrel-browser-operation-capability": secondCapability,
+    },
+  })).status, 409);
+  assert.equal(openedStreams, 1);
+  await worker.close();
+});
+
+test("hosted worker releases a failed operation claim for a newly approved retry", async () => {
+  const bytes = Buffer.from("retryable claimed download");
+  const effect = preparedDownloadEffect(bytes);
+  const first = preparedDownload(effect, "call-download-failed-upload");
+  const second = preparedDownload(effect, "call-download-new-approval");
+  const firstCapability = operationCapabilityFor(first, "revision-1");
+  const secondCapability = operationCapabilityFor(second, "revision-1");
+  let openedStreams = 0;
+  let quarantineCancellations = 0;
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async openDownload() {
+        openedStreams += 1;
+        return Readable.from(bytes);
+      },
+      async commitDownload() {},
+      async cancelDownload() { quarantineCancellations += 1; },
+      async execute(_input, lifecycle) {
+        await lifecycle.acknowledgeDispatch();
+        throw new Error("must be cancelled before dispatch");
+      },
+      async adopt() { return 0; },
+      async destroy() {},
+    },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const post = (pathname: string, body: unknown) => fetch(`http://[::1]:${port}${pathname}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const openBytes = (operationId: string, capability: string) =>
+    fetch(`http://[::1]:${port}/v1/download/bytes`, {
+      method: "POST",
+      headers: {
+        "x-kestrel-browser-operation-id": operationId,
+        "x-kestrel-browser-operation-capability": capability,
+      },
+    });
+
+  assert.equal((await post("/v1/operations/accept", {
+    capability: firstCapability,
+    prepared: first,
+    authority,
+  })).status, 200);
+  assert.equal((await openBytes(first.callId, firstCapability)).status, 200);
+  assert.equal((await post("/v1/operations/cancel", {
+    operationId: first.callId,
+    capability: firstCapability,
+    reason: "BROWSER_DESTINATION_BLOCKED",
+  })).status, 200);
+  assert.equal(quarantineCancellations, 0);
+
+  assert.equal((await post("/v1/operations/accept", {
+    capability: secondCapability,
+    prepared: second,
+    authority,
+  })).status, 200);
+  assert.equal((await openBytes(second.callId, secondCapability)).status, 200);
+  assert.equal(openedStreams, 2);
+  await worker.close();
+});
+
 test("hosted worker releases a denied prepared download without accepting an operation", async () => {
   const effect = preparedDownloadEffect();
   const operationId = "call-denied-download";
@@ -673,7 +804,7 @@ test("hosted worker measures exact installed engine and Chrome revisions", async
     async probe(executablePath, args) {
       calls.push({ executablePath, args });
       return executablePath.endsWith("agent-browser")
-        ? { stdout: "agent-browser 0.35.0\n", stderr: "" }
+        ? { stdout: "agent-browser 0.35.0-kestrel.1\n", stderr: "" }
         : {
             stdout: "Google Chrome for Testing 152.0.7977.54\n",
             stderr: "",
@@ -794,7 +925,7 @@ test("hosted worker deduplicates exact accept while one adapter acceptance waits
       projectId: "project-1",
       userId: "user-1",
       threadId: "thread-1",
-      engineRevision: "v0.35.0",
+      engineRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision,
       chromeRevision: "152.0.7977.54",
       effectiveAllowlistRevision: "revision-1",
       imageDigest: `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
@@ -857,7 +988,7 @@ test("hosted worker rejects a capability for another actor before engine accepta
       sessionId: "browser-session-1", generation: 1,
       organizationId: "org-1", environmentId: "env-1", projectId: "project-1",
       userId: "user-1", threadId: "thread-1",
-      engineRevision: "v0.35.0", chromeRevision: "152.0.7977.54",
+      engineRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision, chromeRevision: "152.0.7977.54",
       effectiveAllowlistRevision: "revision-1",
       imageDigest: `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
       capabilityPublicKeyPem: publicKeyPem,
@@ -906,7 +1037,7 @@ test("hosted worker returns an exact pre-dispatch result without accepting an ad
       sessionId: "browser-session-1", generation: 1,
       organizationId: "org-1", environmentId: "env-1", projectId: "project-1",
       userId: "user-1", threadId: "thread-1",
-      engineRevision: "v0.35.0", chromeRevision: "152.0.7977.54",
+      engineRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision, chromeRevision: "152.0.7977.54",
       effectiveAllowlistRevision: "revision-1",
       imageDigest: `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
       capabilityPublicKeyPem: publicKeyPem,
@@ -979,7 +1110,7 @@ test("hosted worker destroys the session after an unmarked post-accept engine fa
       sessionId: "browser-session-1", generation: 1,
       organizationId: "org-1", environmentId: "env-1", projectId: "project-1",
       userId: "user-1", threadId: "thread-1",
-      engineRevision: "v0.35.0", chromeRevision: "152.0.7977.54",
+      engineRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision, chromeRevision: "152.0.7977.54",
       effectiveAllowlistRevision: "revision-1",
       imageDigest: `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
       capabilityPublicKeyPem: publicKeyPem,
@@ -2514,14 +2645,17 @@ function preparedDownloadEffect(bytes = Buffer.from("quarantined download")) {
   };
 }
 
-function preparedDownload(effect = preparedDownloadEffect()) {
+function preparedDownload(
+  effect = preparedDownloadEffect(),
+  callId = "call-download-1",
+) {
   const descriptor = defaultToolCatalog.getDescriptorRef("browser.download");
   assert.ok(descriptor);
   return parsePreparedToolCallV1({
     version: "v1",
     runId: "run-1",
     sessionId: "runtime-session-1",
-    callId: "call-download-1",
+    callId,
     activation: createToolActivationRefV1({
       descriptor,
       registryGeneration: "hosted-worker-download-test",
@@ -2616,8 +2750,8 @@ function workerConfig() {
     projectId: "project-1",
     userId: "user-1",
     threadId: "thread-1",
-    engineRevision: "v0.35.0",
-    chromeRevision: "152.0.7977.54",
+    engineRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision,
+    chromeRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.chrome.revision,
     effectiveAllowlistRevision: "revision-1",
     imageDigest: `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
     capabilityPublicKeyPem: publicKeyPem,
@@ -2638,7 +2772,7 @@ function openingHostedSession(): BrowserSessionV1 {
     threadId: "thread-1",
     mode: "operator",
     state: "opening",
-    engineRevision: "v0.35.0",
+    engineRevision: BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision,
     generation: 1,
     effectiveAllowlistRevision: "revision-1",
     createdAt: now,

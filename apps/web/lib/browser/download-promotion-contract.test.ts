@@ -6,22 +6,28 @@ import test from "node:test";
 
 const webRoot = path.resolve(import.meta.dirname, "../..");
 const schema = fs.readFileSync(path.join(webRoot, "drizzle/schema.ts"), "utf8");
-const migration = fs.readFileSync(
-  path.join(webRoot, "lib/db/migrations/0099_browser_download_promotions.sql"),
+const fileService = fs.readFileSync(
+  path.join(webRoot, "lib/files/service.ts"),
   "utf8",
 );
-const stagingMigration = fs.readFileSync(
-  path.join(webRoot, "lib/db/migrations/0100_browser_download_staging.sql"),
+const reconciliationSchedule = fs.readFileSync(
+  path.join(webRoot, "lib/environments/reconcile-schedule.ts"),
+  "utf8",
+);
+const migration = fs.readFileSync(
+  path.join(webRoot, "lib/db/migrations/0099_browser_download_promotions.sql"),
   "utf8",
 );
 const journal = JSON.parse(fs.readFileSync(
   path.join(webRoot, "lib/db/migrations/meta/_journal.json"),
   "utf8",
-)) as { entries: Array<{ tag: string }> };
+),
+) as { entries: Array<{ tag: string }> };
 const historyLock = JSON.parse(fs.readFileSync(
   path.join(webRoot, "lib/db/migrations/meta/history-lock.json"),
   "utf8",
-)) as Record<string, string>;
+),
+) as Record<string, string>;
 
 test("Browser download promotion migration is additive and matches the exact result authority", () => {
   for (const field of [
@@ -40,26 +46,51 @@ test("Browser download promotion migration is additive and matches the exact res
   assert.match(migration, /browser_download_promotions_quarantine_idx/u);
   assert.match(migration, /browser_download_promotions_effect_revision_check/u);
   assert.doesNotMatch(migration, /(?:^|\n)(?:DROP|DELETE|UPDATE|TRUNCATE)\s/u);
-  assert.ok(journal.entries.some((entry) => entry.tag === "0099_browser_download_promotions"));
+  assert.ok(journal.entries.some((entry) => entry.tag === "0099_browser_download_promotions",
+    ),
+  );
   assert.equal(
     historyLock["0099_browser_download_promotions"],
     `1787961600000:${createHash("sha256").update(migration).digest("hex")}`,
   );
   assert.match(schema, /export const browserDownloadPromotions = pgTable/u);
-  assert.match(schema, /effectRevision: text\("effect_revision"\)\.notNull\(\)/u);
+  assert.match(
+    schema,
+    /effectRevision: text\("effect_revision"\)\.notNull\(\)/u,
+  );
 });
 
-test("Browser download staging migration durably owns unreferenced objects", () => {
-  for (const field of [
-    "operation_id", "object_key", "state", "expires_at", "file_id",
-  ]) assert.match(stagingMigration, new RegExp(`"${field}"`, "u"));
-  assert.match(stagingMigration, /cleanup_pending/u);
-  assert.match(stagingMigration, /browser_download_staged_objects_quarantine_idx/u);
-  assert.doesNotMatch(stagingMigration, /(?:^|\n)(?:DROP|DELETE|UPDATE|TRUNCATE)\s/u);
-  assert.ok(journal.entries.some((entry) => entry.tag === "0100_browser_download_staging"));
+test("Browser downloads use the standard Thread draft lifecycle without a staging ledger", () => {
   assert.equal(
-    historyLock["0100_browser_download_staging"],
-    `1787965200000:${createHash("sha256").update(stagingMigration).digest("hex")}`,
+    journal.entries.some(
+      (entry) => entry.tag === "0100_browser_download_staging",
+    ),
+    false,
   );
-  assert.match(schema, /export const browserDownloadStagedObjects = pgTable/u);
+  assert.equal(historyLock["0100_browser_download_staging"], undefined);
+  assert.doesNotMatch(schema, /browserDownloadStagedObjects/u);
+  assert.doesNotMatch(
+    fileService,
+    /reserveHostedBrowserDownload|stageHostedBrowserDownload|reconcileHostedBrowserDownloadStaging/u,
+  );
+  assert.doesNotMatch(
+    reconciliationSchedule,
+    /reconcileHostedBrowserDownload/u,
+  );
+  assert.match(fileService, /initializeThreadFile\(\{/u);
+  assert.match(fileService, /singleUseDraft: true/u);
+  assert.match(fileService, /readyBefore: new Date\(input\.expiresAt\)/u);
+  assert.match(fileService, /readyCommitAttempted = true/u);
+  assert.match(fileService, /readyCommitConfirmed/u);
+  assert.match(fileService, /The verified ready file is authoritative/u);
+  assert.match(
+    fileService,
+    /not exists \(select 1 from \$\{schema\.browserDownloadPromotions\}/u,
+  );
+  assert.match(fileService, /for update/u);
+  assert.match(fileService, /expiredFileCleanupPredicate\(cutoff\)/u);
+  assert.match(
+    fileService,
+    /scheduleBlobDeletionIfUnreferenced\(input\.file\.blobId\)/u,
+  );
 });
