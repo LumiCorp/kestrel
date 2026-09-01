@@ -17,10 +17,10 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 ## Implemented
 
 - [Block Browser worker reverse channels](05e-block-worker-reverse-channels.md) — independent review and local routed image smoke are green; live Fly 6PN proof remains
-- [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — implementation and unsigned package proof are green; signed/notarized package proof and packaged live Browser canaries remain before `Done`
 
 ## Done
 
+- [Run safe Browser App sessions on Desktop](03-run-safe-browser-sessions-on-desktop.md) — signed/notarized Desktop 0.8.6 candidate, packaged Browser QA, terminal cleanup, and isolated LaunchServices launch/relaunch/persistence passed for the exact qualified Browser tree merged by PR #562
 - [Settle viewer connect before socket close](06a2-settle-viewer-connect-before-socket-close.md) — independently approved; socket close waits for connect settlement and lifecycle findings remain owned by 06b/06c
 - [Preserve unconfirmed viewer fail-close](06a1-preserve-unconfirmed-viewer-fail-close.md) — independently approved with exact cleanup or Session fail-close for uncertain connection establishment
 - [Establish exact hosted viewer connections](06a-establish-exact-hosted-viewer-connections.md) — independently approved with shared in-flight exact connects, settled Local Core revalidation, expiry cleanup convergence, and bounded replacement-capacity proof; 38 hosted-worker tests pass
