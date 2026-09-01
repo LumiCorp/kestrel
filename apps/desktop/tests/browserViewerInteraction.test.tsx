@@ -147,6 +147,46 @@ test("Desktop Browser viewer accepts takeover, sends typed secret input, and ret
     text: "S",
   });
 
+  const image = container.querySelector<HTMLImageElement>(".browser-viewer-frame img");
+  assert.ok(image);
+  Object.defineProperties(image, {
+    naturalWidth: { configurable: true, value: 200 },
+    naturalHeight: { configurable: true, value: 100 },
+  });
+  image.getBoundingClientRect = () => ({
+    x: 20,
+    y: 20,
+    left: 20,
+    top: 20,
+    right: 120,
+    bottom: 70,
+    width: 100,
+    height: 50,
+    toJSON: () => ({}),
+  });
+  await act(async () => {
+    frame.dispatchEvent(new browser.MouseEvent("pointermove", {
+      bubbles: true,
+      clientX: 10,
+      clientY: 45,
+    }));
+    image.dispatchEvent(new browser.MouseEvent("pointermove", {
+      bubbles: true,
+      clientX: 70,
+      clientY: 45,
+    }));
+    await Promise.resolve();
+  });
+  assert.equal(inputs.length, 2, "Letterbox input must not dispatch outside the image.");
+  assert.deepEqual(inputs[1]?.input, {
+    version: "desktop_browser_viewer_input_v1",
+    kind: "pointer",
+    phase: "move",
+    x: 100,
+    y: 50,
+    button: "none",
+  });
+
   const returnControl = [...container.querySelectorAll("button")].find(
     (button) => button.textContent === "Return to agent",
   );
@@ -156,5 +196,16 @@ test("Desktop Browser viewer accepts takeover, sends typed secret input, and ret
     await Promise.resolve();
   });
   assert.match(container.textContent ?? "", /Agent control/u);
+
+  state = {
+    ...state,
+    sessionState: "human_control",
+  };
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+  });
+  assert.match(container.textContent ?? "", /Reconnect required/u);
+  assert.match(container.textContent ?? "", /Input paused · Reconnect to continue/u);
+  assert.ok(container.querySelector('button[aria-label="Disconnect viewer"]'));
   await act(async () => root.unmount());
 });

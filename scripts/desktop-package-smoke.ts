@@ -50,6 +50,7 @@ const mcpScreenshotPath = path.join(evidenceDir, "mcp.png");
 const mcpEditorScreenshotPath = path.join(evidenceDir, "mcp-editor.png");
 const settingsScreenshotPath = path.join(evidenceDir, "settings.png");
 const diagnosticsScreenshotPath = path.join(evidenceDir, "diagnostics.png");
+const browserViewerScreenshotPath = path.join(evidenceDir, "browser-viewer.png");
 const evidencePath = path.join(evidenceDir, "evidence.json");
 
 assert.equal(
@@ -285,6 +286,7 @@ try {
     window,
     coreHome,
     onboardingProjectPath,
+    fakeOpenRouter,
   );
   const liveModel = liveModelApproved
     ? await verifyLiveModelResponse(window)
@@ -616,6 +618,7 @@ async function verifyPackagedBrowserQa(
   window: Page,
   coreHome: string,
   projectPath: string,
+  fakeOpenRouter: Awaited<ReturnType<typeof startFakeOpenRouterServer>>,
 ): Promise<{
   verified: true;
   sessionId: string;
@@ -692,6 +695,85 @@ async function verifyPackagedBrowserQa(
     })}`,
   );
   await window.getByRole("button", { name: "Send message", exact: true }).click();
+  try {
+    await fakeOpenRouter.waitForBrowserQaCapture();
+    const viewer = window.getByRole("region", { name: "Live Browser viewer" });
+    await viewer.locator(".browser-viewer-frame img").waitFor({
+      state: "visible",
+      timeout: 30_000,
+    });
+    const presentation = await viewer.evaluate((element) => {
+      const pane = element.closest(".conversation-pane");
+      const frame = element.querySelector<HTMLElement>(".browser-viewer-frame");
+      const image = element.querySelector<HTMLImageElement>(".browser-viewer-frame img");
+      const disconnect = element.querySelector<HTMLElement>('[aria-label="Disconnect viewer"]');
+      const close = element.querySelector<HTMLElement>('[aria-label="Close session"]');
+      const viewerBounds = element.getBoundingClientRect();
+      const paneBounds = pane?.getBoundingClientRect();
+      const frameBounds = frame?.getBoundingClientRect();
+      let framePixelRange = 0;
+      if (image !== null && image.naturalWidth > 0 && image.naturalHeight > 0) {
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.min(image.naturalWidth, 64);
+        canvas.height = Math.min(image.naturalHeight, 64);
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (context !== null) {
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          let darkest = 255;
+          let lightest = 0;
+          for (let offset = 0; offset < pixels.length; offset += 4) {
+            const luminance = Math.round(
+              pixels[offset]! * 0.2126
+                + pixels[offset + 1]! * 0.7152
+                + pixels[offset + 2]! * 0.0722,
+            );
+            darkest = Math.min(darkest, luminance);
+            lightest = Math.max(lightest, luminance);
+          }
+          framePixelRange = lightest - darkest;
+        }
+      }
+      return {
+        width: viewerBounds.width,
+        height: viewerBounds.height,
+        centered: paneBounds === undefined
+          ? false
+          : Math.abs(
+              viewerBounds.left + viewerBounds.width / 2
+                - (paneBounds.left + paneBounds.width / 2),
+            ) < 2,
+        frameHeight: frameBounds?.height ?? 0,
+        status: element.querySelector(".browser-viewer-status")?.textContent?.trim(),
+        disconnectVisible: disconnect?.getClientRects().length === 1,
+        closeVisible: close?.getClientRects().length === 1,
+        imageWidth: image?.naturalWidth ?? 0,
+        imageHeight: image?.naturalHeight ?? 0,
+        imageSourceLength: image?.src.length ?? 0,
+        framePixelRange,
+        overflowFree: element.scrollWidth <= element.clientWidth,
+      };
+    });
+    assert.equal(presentation.width <= 900, true, "Browser viewer exceeded the conversation column.");
+    assert.equal(presentation.height <= 560, true, "Browser viewer exceeded its compact height.");
+    assert.equal(presentation.centered, true, "Browser viewer was not centered in the conversation.");
+    assert.equal(presentation.frameHeight >= 240, true, "Browser viewport was clipped.");
+    assert.equal(presentation.frameHeight <= 420, true, "Browser viewport exceeded its height bound.");
+    assert.equal(presentation.status, "Agent control");
+    assert.equal(presentation.disconnectVisible, true);
+    assert.equal(presentation.closeVisible, true);
+    assert.equal(presentation.imageWidth > 0 && presentation.imageHeight > 0, true);
+    assert.equal(presentation.imageSourceLength > 200, true, "Browser frame was blank.");
+    assert.equal(
+      presentation.framePixelRange >= 24,
+      true,
+      "Browser frame did not contain meaningful pixel variance.",
+    );
+    assert.equal(presentation.overflowFree, true, "Browser viewer overflowed horizontally.");
+    await viewer.screenshot({ path: browserViewerScreenshotPath });
+  } finally {
+    fakeOpenRouter.releaseBrowserQa();
+  }
   await window.waitForFunction(
     (token) => {
       if (Array.from(document.querySelectorAll(".timeline-entry-assistant .message-body"))

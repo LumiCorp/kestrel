@@ -5,6 +5,8 @@ import { pathToFileURL } from "node:url";
 export interface FakeOpenRouterServer {
   url: string;
   requests: Array<{ schemaName: string; userMessage: string }>;
+  waitForBrowserQaCapture(timeoutMs?: number): Promise<void>;
+  releaseBrowserQa(): void;
   close(): Promise<void>;
 }
 
@@ -18,6 +20,10 @@ interface FakeOpenRouterScenarioState {
   commitStep: number;
   browserQaStep: number;
   browserQaSession?: { sessionId: string; generation: number } | undefined;
+  browserQaCaptureReady: boolean;
+  browserQaReleased: boolean;
+  browserQaCaptureWaiters: Set<() => void>;
+  browserQaReleaseWaiters: Set<() => void>;
 }
 
 export async function startFakeOpenRouterServer(
@@ -31,6 +37,10 @@ export async function startFakeOpenRouterServer(
     failedAttempts: 0,
     commitStep: 0,
     browserQaStep: 0,
+    browserQaCaptureReady: false,
+    browserQaReleased: false,
+    browserQaCaptureWaiters: new Set(),
+    browserQaReleaseWaiters: new Set(),
   };
   const sockets = new Set<Socket>();
   const server = http.createServer((request, response) => {
@@ -59,7 +69,29 @@ export async function startFakeOpenRouterServer(
   return {
     url: `http://127.0.0.1:${address.port}`,
     requests,
+    async waitForBrowserQaCapture(timeoutMs = 30_000) {
+      if (scenarios.browserQaCaptureReady) return;
+      await new Promise<void>((resolve, reject) => {
+        const done = () => {
+          clearTimeout(timer);
+          scenarios.browserQaCaptureWaiters.delete(done);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          scenarios.browserQaCaptureWaiters.delete(done);
+          reject(new Error("Timed out waiting for Browser QA capture."));
+        }, timeoutMs);
+        scenarios.browserQaCaptureWaiters.add(done);
+      });
+    },
+    releaseBrowserQa() {
+      scenarios.browserQaReleased = true;
+      for (const resolve of scenarios.browserQaReleaseWaiters) resolve();
+      scenarios.browserQaReleaseWaiters.clear();
+    },
     async close() {
+      for (const resolve of scenarios.browserQaReleaseWaiters) resolve();
+      scenarios.browserQaReleaseWaiters.clear();
       for (const socket of sockets) {
         socket.destroy();
       }
@@ -215,6 +247,11 @@ async function handleFakeOpenRouterRequest(
     scenarios.failedAttempts = 0;
     scenarios.commitStep = 0;
     scenarios.browserQaStep = 0;
+    scenarios.browserQaCaptureReady = false;
+    scenarios.browserQaReleased = false;
+    scenarios.browserQaCaptureWaiters.clear();
+    for (const resolve of scenarios.browserQaReleaseWaiters) resolve();
+    scenarios.browserQaReleaseWaiters.clear();
     delete scenarios.browserQaSession;
     delete scenarios.waitingCallId;
     response.writeHead(204, { connection: "close" });
@@ -544,6 +581,14 @@ async function handleFakeOpenRouterRequest(
           `Browser QA capture did not return screenshot evidence: ${browserQaResultDiagnostic(parsed.messages, "browser.capture")}`,
         );
         return;
+      }
+      scenarios.browserQaCaptureReady = true;
+      for (const resolve of scenarios.browserQaCaptureWaiters) resolve();
+      scenarios.browserQaCaptureWaiters.clear();
+      if (!scenarios.browserQaReleased) {
+        await new Promise<void>((resolve) => {
+          scenarios.browserQaReleaseWaiters.add(resolve);
+        });
       }
       scenarios.browserQaStep = 3;
       writeToolCallResponse(response, parsed.stream === true, model, {

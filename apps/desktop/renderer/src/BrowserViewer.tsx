@@ -7,6 +7,15 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import {
+  Bot,
+  Hand,
+  LoaderCircle,
+  Monitor,
+  TriangleAlert,
+  Unplug,
+  X,
+} from "lucide-react";
 
 import type {
   DesktopBrowserViewerBindingV1,
@@ -24,28 +33,28 @@ const VIEWER_DISCOVERY_MS = 1_000;
 const VIEWER_FRAME_MS = 500;
 const VIEWER_LEASE_RENEW_MS = 15_000;
 
-export function BrowserViewer(props: {
-  threadId: string;
-  projectId: string;
-}) {
+export function BrowserViewer(props: { threadId: string; projectId: string }) {
   const [viewer, setViewer] = useState<DesktopBrowserViewerStateV1>();
   const [frame, setFrame] = useState<DesktopBrowserViewerFrameV1>();
   const [error, setError] = useState<string>();
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const imageRef = useRef<HTMLImageElement>(null);
 
-  const binding = useMemo<DesktopBrowserViewerBindingV1>(() => ({
-    version: DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
-    threadId: props.threadId,
-    projectId: props.projectId,
-    ...(viewer?.sessionId === undefined
-      ? {}
-      : {
-          sessionId: viewer.sessionId,
-          generation: viewer.generation,
-          connectionId: viewer.connectionId,
-        }),
-  }), [props.threadId, props.projectId, viewer]);
+  const binding = useMemo<DesktopBrowserViewerBindingV1>(
+    () => ({
+      version: DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
+      threadId: props.threadId,
+      projectId: props.projectId,
+      ...(viewer?.sessionId === undefined
+        ? {}
+        : {
+            sessionId: viewer.sessionId,
+            generation: viewer.generation,
+            connectionId: viewer.connectionId,
+          }),
+    }),
+    [props.threadId, props.projectId, viewer],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -96,7 +105,8 @@ export function BrowserViewer(props: {
       viewer.sessionId === undefined ||
       viewer.generation === undefined ||
       viewer.connectionId === undefined
-    ) return;
+    )
+      return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = async () => {
@@ -134,7 +144,8 @@ export function BrowserViewer(props: {
       viewer.sessionId === undefined ||
       viewer.generation === undefined ||
       viewer.connectionId === undefined
-    ) return;
+    )
+      return;
     const leaseId = viewer.inputLeaseId;
     const timer = setInterval(() => {
       void window.kestrelDesktop
@@ -160,16 +171,39 @@ export function BrowserViewer(props: {
 
   if (!viewer?.available) {
     return error === undefined ? null : (
-      <section className="browser-viewer browser-viewer-unavailable" aria-live="polite">
-        <span>{error}</span>
+      <section
+        className="browser-viewer browser-viewer-unavailable"
+        aria-label="Browser session unavailable"
+        aria-live="polite"
+      >
+        <div className="browser-viewer-unavailable-copy">
+          <TriangleAlert aria-hidden="true" size={16} />
+          <div>
+            <strong>Browser viewer unavailable</strong>
+            <span>{error}</span>
+          </div>
+        </div>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => setConnectionAttempt((current) => current + 1)}
+        >
+          Retry
+        </button>
       </section>
     );
   }
 
   const leaseActive = viewer.inputLeaseId !== undefined;
-  const frameSource = frame === undefined
-    ? undefined
-    : `data:${frame.mediaType};base64,${frame.dataBase64}`;
+  const controlState = leaseActive
+    ? "human"
+    : viewer.sessionState === "human_control"
+      ? "reconnect"
+      : "agent";
+  const frameSource =
+    frame === undefined
+      ? undefined
+      : `data:${frame.mediaType};base64,${frame.dataBase64}`;
 
   async function acceptTakeover(): Promise<void> {
     setError(undefined);
@@ -185,10 +219,12 @@ export function BrowserViewer(props: {
     if (viewer?.inputLeaseId === undefined) return;
     setError(undefined);
     try {
-      setViewer(await window.kestrelDesktop.returnBrowserControl({
-        ...binding,
-        leaseId: viewer.inputLeaseId,
-      }));
+      setViewer(
+        await window.kestrelDesktop.returnBrowserControl({
+          ...binding,
+          leaseId: viewer.inputLeaseId,
+        }),
+      );
     } catch {
       setError("Kestrel could not return Browser control to the agent.");
     }
@@ -220,11 +256,19 @@ export function BrowserViewer(props: {
     if (!leaseActive || viewer?.inputLeaseId === undefined) return;
     event.currentTarget.parentElement?.focus();
     const image = imageRef.current;
-    if (image === null || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+    if (image === null || image.naturalWidth <= 0 || image.naturalHeight <= 0)
+      return;
     const bounds = image.getBoundingClientRect();
-    const x = Math.max(0, (event.clientX - bounds.left) * image.naturalWidth / bounds.width);
-    const y = Math.max(0, (event.clientY - bounds.top) * image.naturalHeight / bounds.height);
-    if (phase === "down") event.currentTarget.setPointerCapture(event.pointerId);
+    const x = Math.max(
+      0,
+      ((event.clientX - bounds.left) * image.naturalWidth) / bounds.width,
+    );
+    const y = Math.max(
+      0,
+      ((event.clientY - bounds.top) * image.naturalHeight) / bounds.height,
+    );
+    if (phase === "down")
+      event.currentTarget.setPointerCapture(event.pointerId);
     const modifiers = eventModifiers(event);
     await sendInput({
       version: DESKTOP_BROWSER_VIEWER_INPUT_VERSION,
@@ -250,67 +294,167 @@ export function BrowserViewer(props: {
       phase,
       key: event.key,
       code: event.code,
-      ...(phase === "down" && event.key.length === 1 ? { text: event.key } : {}),
+      ...(phase === "down" && event.key.length === 1
+        ? { text: event.key }
+        : {}),
       ...(modifiers === undefined ? {} : { modifiers }),
     });
   }
 
   async function sendInput(
-    input: Parameters<typeof window.kestrelDesktop.sendBrowserViewerInput>[0]["input"],
+    input: Parameters<
+      typeof window.kestrelDesktop.sendBrowserViewerInput
+    >[0]["input"],
   ): Promise<void> {
     if (viewer?.inputLeaseId === undefined) return;
     try {
-      setViewer(await window.kestrelDesktop.sendBrowserViewerInput({
-        ...binding,
-        leaseId: viewer.inputLeaseId,
-        input,
-      }));
+      setViewer(
+        await window.kestrelDesktop.sendBrowserViewerInput({
+          ...binding,
+          leaseId: viewer.inputLeaseId,
+          input,
+        }),
+      );
     } catch {
       setError("Browser input control is no longer available.");
     }
   }
 
   return (
-    <section className="browser-viewer" aria-label="Live Browser viewer">
-      <header>
-        <div>
-          <strong>Live Browser</strong>
-          <span>{viewer.sessionState === "human_control" ? "Human control" : "Agent control"}</span>
+    <section
+      className={`browser-viewer browser-viewer-${controlState}-control`}
+      aria-label="Live Browser viewer"
+    >
+      <header className="browser-viewer-header">
+        <div className="browser-viewer-identity">
+          <span className="browser-viewer-icon" aria-hidden="true">
+            <Monitor size={15} strokeWidth={1.8} />
+          </span>
+          <div className="browser-viewer-heading">
+            <strong>Browser session</strong>
+            <span
+              className={`browser-viewer-status browser-viewer-status-${controlState}`}
+            >
+              <i aria-hidden="true" />
+              {controlState === "human"
+                ? "Human control"
+                : controlState === "reconnect"
+                  ? "Reconnect required"
+                  : "Agent control"}
+            </span>
+          </div>
         </div>
         <div className="browser-viewer-actions">
-          {(viewer.takeoverRequested || (viewer.sessionState === "human_control" && !leaseActive)) ? (
-            <button type="button" onClick={() => void acceptTakeover()}>
+          {viewer.takeoverRequested ||
+          (viewer.sessionState === "human_control" && !leaseActive) ? (
+            <button
+              className="primary-button browser-viewer-primary-action"
+              type="button"
+              onClick={() => void acceptTakeover()}
+            >
+              <Hand aria-hidden="true" size={13} />
               {viewer.takeoverRequested ? "Take control" : "Reconnect input"}
             </button>
           ) : null}
           {leaseActive ? (
-            <button type="button" onClick={() => void returnControl()}>Return to agent</button>
+            <button
+              className="primary-button browser-viewer-primary-action"
+              type="button"
+              onClick={() => void returnControl()}
+            >
+              <Bot aria-hidden="true" size={13} />
+              Return to agent
+            </button>
           ) : null}
-          <button type="button" onClick={() => void disconnect()}>Disconnect viewer</button>
-          <button type="button" onClick={() => void closeSession()}>Close session</button>
+          <button
+            className="secondary-button browser-viewer-disconnect"
+            type="button"
+            aria-label="Disconnect viewer"
+            onClick={() => void disconnect()}
+          >
+            <Unplug aria-hidden="true" size={13} />
+            <span>Disconnect viewer</span>
+          </button>
+          <button
+            className="icon-button browser-viewer-close"
+            type="button"
+            title="Close Browser session"
+            aria-label="Close session"
+            onClick={() => void closeSession()}
+          >
+            <X aria-hidden="true" size={15} />
+          </button>
         </div>
       </header>
-      <div
-        className={`browser-viewer-frame ${leaseActive ? "browser-viewer-frame-input" : ""}`}
-        tabIndex={leaseActive ? 0 : -1}
-        onKeyDown={(event) => void sendKeyboard(event, "down")}
-        onKeyUp={(event) => void sendKeyboard(event, "up")}
-      >
-        {frameSource === undefined ? (
-          <span>Waiting for the live frame…</span>
-        ) : (
-          <img
-            ref={imageRef}
-            src={frameSource}
-            alt="Current Browser Session"
-            draggable={false}
-            onPointerMove={(event) => void sendPointer(event, "move")}
-            onPointerDown={(event) => void sendPointer(event, "down")}
-            onPointerUp={(event) => void sendPointer(event, "up")}
-          />
-        )}
+      <div className="browser-viewer-viewport">
+        <div className="browser-viewer-viewport-bar" aria-hidden="true">
+          <span className="browser-viewer-window-controls">
+            <i />
+            <i />
+            <i />
+          </span>
+          <span className="browser-viewer-live-indicator">
+            <i /> Live
+          </span>
+        </div>
+        <div
+          className={`browser-viewer-frame ${leaseActive ? "browser-viewer-frame-input" : ""}`}
+          tabIndex={leaseActive ? 0 : -1}
+          aria-busy={frameSource === undefined}
+          aria-label={
+            leaseActive ? "Interactive Browser viewport" : "Browser viewport"
+          }
+          onKeyDown={(event) => void sendKeyboard(event, "down")}
+          onKeyUp={(event) => void sendKeyboard(event, "up")}
+        >
+          {frameSource === undefined ? (
+            <div className="browser-viewer-loading" role="status">
+              <LoaderCircle aria-hidden="true" size={20} />
+              <strong>Connecting to Browser</strong>
+              <span>The live page will appear here.</span>
+            </div>
+          ) : (
+            <img
+              ref={imageRef}
+              src={frameSource}
+              alt="Current Browser Session"
+              draggable={false}
+              onPointerMove={(event) => void sendPointer(event, "move")}
+              onPointerDown={(event) => void sendPointer(event, "down")}
+              onPointerUp={(event) => void sendPointer(event, "up")}
+            />
+          )}
+        </div>
+        <div className="browser-viewer-footer">
+          <span>
+            {controlState === "human" ? (
+              <>
+                <Hand aria-hidden="true" size={12} /> Keyboard and pointer input
+                are active
+              </>
+            ) : controlState === "reconnect" ? (
+              <>
+                <Unplug aria-hidden="true" size={12} /> Input paused · Reconnect
+                to continue
+              </>
+            ) : (
+              <>
+                <Bot aria-hidden="true" size={12} /> View only · Kestrel
+                controls this session
+              </>
+            )}
+          </span>
+          <span>
+            {frame === undefined ? "Connecting" : `Frame ${frame.sequence}`}
+          </span>
+        </div>
       </div>
-      {error === undefined ? null : <p role="status">{error}</p>}
+      {error === undefined ? null : (
+        <p className="browser-viewer-error" role="status">
+          <TriangleAlert aria-hidden="true" size={13} />
+          {error}
+        </p>
+      )}
     </section>
   );
 }

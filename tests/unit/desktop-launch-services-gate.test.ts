@@ -37,7 +37,7 @@ test("packaged Desktop smoke advertises the model it seeds for onboarding", () =
   );
   assert.match(
     source,
-    /startFakeOpenRouterServer\(\{ model: DEFAULT_OPENROUTER_MODEL \}\)/u,
+    /startFakeOpenRouterServer\(\{\s*model:\s*DEFAULT_OPENROUTER_MODEL,?\s*\}\)/u,
   );
   assert.match(
     source,
